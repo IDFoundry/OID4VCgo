@@ -44,6 +44,39 @@ them.
   an org-iso-mdoc response that didn't decrypt or verify: a `switch`
   over the reasons handles it.
 
+### mdoc curves (`credential/mdoc`, `proximity`, `mdocdcapi`, `verifier`, `wallet`, `issuer`, `statuslist`, `identifierlist`)
+
+ISO/IEC 18013-5 has an mdoc reader support every curve it lists. Of
+those, P-384 and P-521 are now supported alongside P-256 and Ed25519,
+with ES384 (`oid4vci.COSEES384`, COSE -35) and ES512
+(`oid4vci.COSEES512`, -36). Material that was refused with an error
+naming its curve is now accepted:
+
+- **Verifiers and readers** verify an IssuerAuth, device signature or
+  reader authentication signed on P-384 or P-521, with the algorithm of
+  the verified key's curve; a COSE_Key with crv 2 (P-384) or 3 (P-521)
+  is a device key. A header marked with RFC 9864's ESP384 (-51) or
+  ESP512 (-52) verifies as ES384 or ES512, as ESP256 (-9) does as
+  ES256. Device MAC works on any of the three curves, with the device
+  key and the reader's ephemeral key on the same one.
+- **A proximity reader** accepts an EDeviceKey on P-384 or P-521 and
+  generates its EReaderKey on the same curve; ephemeral keys on two
+  curves are refused. A holder still generates its own on P-256.
+- **Status and identifier lists:** a CWT token signed by a P-384 or
+  P-521 key verifies, and `statuslist.Publisher` and
+  `identifierlist.Publisher` sign with one. JWT tokens stay ES256 or
+  EdDSA: a `statuslist.Publisher` whose signer is on P-384 or P-521
+  must set `DefaultForm` to `FormCWT`, or it signs nothing, and answers
+  a request for the JWT form alone 406 Not Acceptable.
+- **An issuer** may set `MdocSigner.Alg` to ES384 or ES512 with a
+  P-384 or P-521 signer. `New` now refuses an `MdocSigner` whose `Alg`
+  isn't its signer's key's, which before failed each issuance instead.
+- **A wallet**'s `VPFormats` matches an mdoc signed on P-384 or P-521
+  against `issuerauth_alg_values` listing -35 or -51, or -36 or -52.
+
+The brainpool curves and Ed448, which Go's standard library doesn't
+implement, are still refused.
+
 ## v0.62.0 → v0.63.0
 
 ### Issuer (`issuer`)

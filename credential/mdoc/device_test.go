@@ -241,7 +241,7 @@ func TestComputeDeviceMACFromSharedSecretVerifies(t *testing.T) {
 
 func TestComputeDeviceMACFromSharedSecretRejectsBadLength(t *testing.T) {
 	st := testSessionTranscriptBytes(t)
-	for _, n := range []int{0, 31, 33, 48} {
+	for _, n := range []int{0, 31, 33, 47, 49, 65, 67} {
 		if _, err := ComputeDeviceMACFromSharedSecret(make([]byte, n), st, testDeviceDocType, testDeviceNameSpaces()); err == nil {
 			t.Errorf("accepted a %d-byte shared secret", n)
 		}
@@ -264,14 +264,15 @@ func TestVerifyDeviceMACRejectsWrongDeviceKey(t *testing.T) {
 	}
 }
 
-func TestDeriveEMacKeyRejectsNonP256(t *testing.T) {
+// deriveEMacKey needs both keys on one curve (§9.1.3.5).
+func TestDeriveEMacKeyRejectsMixedCurves(t *testing.T) {
 	p384Priv, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
 	_, p256Pub := testP256KeyPair(t)
 	if _, err := deriveEMacKey(p384Priv, p256Pub, []byte("st")); err == nil {
-		t.Errorf("deriveEMacKey accepted a non-P-256 private key")
+		t.Errorf("deriveEMacKey accepted a P-384 private key with a P-256 public key")
 	}
 
 	p256Priv, _ := testP256KeyPair(t)
@@ -280,7 +281,7 @@ func TestDeriveEMacKeyRejectsNonP256(t *testing.T) {
 		t.Fatalf("generate key: %v", err)
 	}
 	if _, err := deriveEMacKey(p256Priv, &p384Pub.PublicKey, []byte("st")); err == nil {
-		t.Errorf("deriveEMacKey accepted a non-P-256 public key")
+		t.Errorf("deriveEMacKey accepted a P-256 private key with a P-384 public key")
 	}
 }
 

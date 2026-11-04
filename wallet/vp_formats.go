@@ -124,12 +124,26 @@ func (f VPFormat) acceptsMdoc(held HeldCredential) bool {
 	if slices.Contains(f.IssuerAuthAlgValues, alg) {
 		return true
 	}
-	// Appendix B.2.3: -9 matches -7 signed with a P-256 key.
-	return alg == int64(cose.ES256) && slices.Contains(f.IssuerAuthAlgValues, coseESP256) && signedWithP256(protected, unprotected)
+	// Appendix B.2.3: -9 matches -7 signed with a P-256 key, and so
+	// RFC 9864's -51 and -52 match -35 and -36 on P-384 and P-521.
+	esp, ok := coseESPAliases[alg]
+	return ok && slices.Contains(f.IssuerAuthAlgValues, esp.alias) && signedOnCurve(esp.curve, protected, unprotected)
 }
 
-// signedWithP256 reports whether the x5chain leaf's key is P-256.
-func signedWithP256(headers ...cose.Headers) bool {
+// coseESPAliases are the fully specified ECDSA identifiers (RFC 9864)
+// of ES256, ES384 and ES512, by those algorithms' own, with the one
+// curve each names.
+var coseESPAliases = map[int64]struct {
+	alias int64
+	curve elliptic.Curve
+}{
+	int64(cose.ES256): {coseESP256, elliptic.P256()},
+	int64(cose.ES384): {-51, elliptic.P384()},
+	int64(cose.ES512): {-52, elliptic.P521()},
+}
+
+// signedOnCurve reports whether the x5chain leaf's key is on curve.
+func signedOnCurve(curve elliptic.Curve, headers ...cose.Headers) bool {
 	for _, h := range headers {
 		if len(h.X5Chain) == 0 {
 			continue
@@ -139,7 +153,7 @@ func signedWithP256(headers ...cose.Headers) bool {
 			return false
 		}
 		pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
-		return ok && pub.Curve == elliptic.P256()
+		return ok && pub.Curve == curve
 	}
 	return false
 }

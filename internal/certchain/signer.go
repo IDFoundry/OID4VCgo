@@ -33,10 +33,11 @@ func SignerChainDERs(signer crypto.Signer, chain []*x509.Certificate) ([][]byte,
 	return ders, nil
 }
 
-// SignerKeyIsEdDSA reports whether a token signer's key, pub, signs
+// SignerKeyIsEdDSA reports whether a JWT token signer's key, pub, signs
 // with EdDSA (Ed25519) rather than ES256 (ECDSA on P-256), the two algs
-// this module verifies tokens with; any other key is an error, with no
-// package prefix.
+// this module verifies JWTs with; any other key is an error, with no
+// package prefix. A COSE token's signer takes cose.AlgForKey, which
+// also has P-384 and P-521.
 func SignerKeyIsEdDSA(pub crypto.PublicKey) (bool, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:

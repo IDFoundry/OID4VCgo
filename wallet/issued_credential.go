@@ -391,12 +391,9 @@ func joseAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
 }
 
 func coseAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported issuer key type %T", pub)
+	alg, err := cose.AlgForKey(pub)
+	if err != nil {
+		return 0, fmt.Errorf("issuer key: %w", err)
 	}
+	return alg, nil
 }

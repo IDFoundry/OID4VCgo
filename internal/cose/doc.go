@@ -4,14 +4,18 @@
 // DeviceMac — ISO/IEC 18013-5) and statuslist (CWT-encoded Status List
 // Tokens).
 //
-// It supports the same curated algorithm set as internal/jose for
-// signing — ES256 (P-256/SHA-256, COSE algorithm -7) and EdDSA
-// (Ed25519, COSE algorithm -8), RFC 9053 §2 — for the same reason:
-// these are what mdoc's own worked examples use and what real
-// wallets/issuers commonly deploy today. HMAC256 ("HMAC 256/256", COSE
-// algorithm 5, mac0.go) is the only MAC algorithm supported, since it's
-// the only one mdoc's DeviceMac uses. Extend as a real need arises
-// rather than pre-building the full COSE algorithm registry.
+// It signs and verifies with ES256 (P-256/SHA-256, COSE algorithm -7),
+// ES384 (P-384/SHA-384, -35), ES512 (P-521/SHA-512, -36) and EdDSA
+// (Ed25519, -8), RFC 9053 §2, each ECDSA algorithm with its own curve
+// only; a header marked with the fully-specified ESP256 (-9), ESP384
+// (-51) or ESP512 (-52) of RFC 9864 verifies as ES256, ES384 or ES512.
+// ISO/IEC 18013-5 has an mdoc reader verify all of ES256, ES384, ES512
+// and EdDSA (§9.1.2.4, §9.1.3.6, §9.1.4); AlgForKey picks the one a
+// key verifies with. The brainpool curves and Ed448 it also lists
+// aren't in Go's standard library, and aren't supported: a key on one
+// is refused. internal/jose, for SD-JWT VC, stays at ES256 and EdDSA.
+// HMAC256 ("HMAC 256/256", COSE algorithm 5, mac0.go) is the only MAC
+// algorithm supported, since it's the only one mdoc's DeviceMac uses.
 //
 // This package only builds and verifies the COSE_Sign1/COSE_Mac0
 // envelopes themselves — the four-element [protected, unprotected,

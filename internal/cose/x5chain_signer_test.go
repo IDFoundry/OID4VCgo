@@ -33,6 +33,16 @@ func TestX5ChainSigner(t *testing.T) {
 		t.Fatal(err)
 	}
 	p384 := testcert.LeafFor(t, "P-384 signer", &p384Key.PublicKey, ca, caKey)
+	p521Key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p521 := testcert.LeafFor(t, "P-521 signer", &p521Key.PublicKey, ca, caKey)
+	p224Key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p224 := testcert.LeafFor(t, "P-224 signer", &p224Key.PublicKey, ca, caKey)
 
 	// X5ChainSigner doesn't check the signature, so any key signs a
 	// token carrying a leaf it can't sign with.
@@ -62,6 +72,8 @@ func TestX5ChainSigner(t *testing.T) {
 	}{
 		"P-256":       {token(ES256, p256Key, p256, nil), trust(true, roots), p256, ES256},
 		"Ed25519":     {token(EdDSA, edKey, ed, nil), trust(true, roots), ed, EdDSA},
+		"P-384":       {token(ES384, p384Key, p384, nil), trust(true, roots), p384, ES384},
+		"P-521":       {token(ES512, p521Key, p521, nil), trust(true, roots), p521, ES512},
 		"unprotected": {token(ES256, p256Key, nil, p256), trust(false, roots), p256, ES256},
 	} {
 		leaf, alg, err := X5ChainSigner(ctx, tc.sign1, tc.trust)
@@ -74,7 +86,7 @@ func TestX5ChainSigner(t *testing.T) {
 		trust X5ChainTrust
 		want  string
 	}{
-		"P-384":                      {token(ES256, p256Key, p384, nil), trust(true, roots), "token signer: an ECDSA key on P-384, but only P-256 (ES256) is supported"},
+		"P-224":                      {token(ES256, p256Key, p224, nil), trust(true, roots), "token signer: an ECDSA key on P-224, but only P-256 (ES256), P-384 (ES384), P-521 (ES512) and Ed25519 (EdDSA) are supported"},
 		"unprotected, ProtectedOnly": {token(ES256, p256Key, nil, p256), trust(true, roots), "token signer"},
 		"untrusted":                  {token(ES256, p256Key, p256, nil), trust(true, x509.NewCertPool()), "token signer"},
 		"not a COSE_Sign1":           {[]byte{0xa0}, trust(true, roots), "decode token"},

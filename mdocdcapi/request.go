@@ -29,7 +29,8 @@ const nonceBytes = 32
 // ReaderKey signs a request as one mdoc reader: a document provider
 // shows, and decides whether to answer, by the certificate.
 type ReaderKey struct {
-	// Signer is the reader's private key: P-256 ECDSA or Ed25519.
+	// Signer is the reader's private key: ECDSA on P-256, P-384 or
+	// P-521, or Ed25519.
 	Signer crypto.Signer
 	// Chain is its certificate chain, leaf first, carried in each
 	// signature's x5chain header (ISO/IEC 18013-5 §12.5). The leaf

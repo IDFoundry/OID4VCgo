@@ -164,7 +164,8 @@ func encodeCoseKey(pub *ecdsa.PublicKey) ([]byte, error) {
 }
 
 // decodeCoseKey decodes an ephemeral key's COSE_Key bytes, which cipher
-// suite 1 requires to be P-256 (§9.1.5.2).
+// suite 1 requires to be on one of its ECDH curves (§9.1.5.2): of
+// those, Go's standard library has P-256, P-384 and P-521.
 func decodeCoseKey(b []byte) (*ecdsa.PublicKey, error) {
 	var key mdoc.CoseKey
 	if err := decMode.Unmarshal(b, &key); err != nil {
@@ -176,7 +177,7 @@ func decodeCoseKey(b []byte) (*ecdsa.PublicKey, error) {
 	}
 	ec, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
-		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs a P-256 key, got %T", pub)
+		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs an ECDH key on P-256, P-384 or P-521, got %T", pub)
 	}
 	return ec, nil
 }
@@ -202,26 +203,48 @@ func decodeEDeviceKey(b []byte) (*ecdsa.PublicKey, error) {
 	if key.Y == nil || decMode.Unmarshal(key.Y, &odd) != nil {
 		return decodeCoseKey(b)
 	}
-	if key.Kty != 2 || key.Crv != 1 || len(key.X) != 32 {
-		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs a P-256 key")
+	curve, ok := ephemeralCurve(key.Crv)
+	if key.Kty != 2 || !ok {
+		return nil, fmt.Errorf("proximity: COSE_Key: cipher suite 1 needs an EC2 key on P-256, P-384 or P-521")
+	}
+	size := (curve.Params().BitSize + 7) / 8
+	if len(key.X) != size {
+		return nil, fmt.Errorf("proximity: COSE_Key: x is %d bytes, %s's are %d", len(key.X), curve.Params().Name, size)
 	}
 	prefix := byte(2)
 	if odd {
 		prefix = 3
 	}
-	x, y := elliptic.UnmarshalCompressed(elliptic.P256(), append([]byte{prefix}, key.X...))
+	x, y := elliptic.UnmarshalCompressed(curve, append([]byte{prefix}, key.X...))
 	if x == nil {
-		return nil, fmt.Errorf("proximity: COSE_Key: compressed point isn't on P-256")
+		return nil, fmt.Errorf("proximity: COSE_Key: compressed point isn't on %s", curve.Params().Name)
 	}
-	uncompressed := make([]byte, 65)
+	uncompressed := make([]byte, 1+2*size)
 	uncompressed[0] = 4
-	x.FillBytes(uncompressed[1:33])
-	y.FillBytes(uncompressed[33:])
-	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), uncompressed)
+	x.FillBytes(uncompressed[1 : 1+size])
+	y.FillBytes(uncompressed[1+size:])
+	pub, err := ecdsa.ParseUncompressedPublicKey(curve, uncompressed)
 	if err != nil {
 		return nil, fmt.Errorf("proximity: COSE_Key: %w", err)
 	}
 	return pub, nil
+}
+
+// ephemeralCurve is the curve an ephemeral key's COSE curve identifier
+// (RFC 9053 §7.1) names, if it's one this package agrees keys on.
+// Cipher suite 1's brainpool curves (§9.1.5.2) aren't in Go's standard
+// library.
+func ephemeralCurve(crv int64) (elliptic.Curve, bool) {
+	switch crv {
+	case 1:
+		return elliptic.P256(), true
+	case 2:
+		return elliptic.P384(), true
+	case 3:
+		return elliptic.P521(), true
+	default:
+		return nil, false
+	}
 }
 
 // decodeSessionData size-checks and decodes msg as a SessionData.
@@ -251,7 +274,12 @@ func statusPtr(s uint64) *uint64 { return &s }
 
 // newSessionCipher converts the ECDSA-typed ephemeral keys (the form
 // credential/mdoc's DeviceMAC takes) to crypto/ecdh for key agreement.
+// Both must be on one curve (§9.1.5.2): a reader answers an EDeviceKey
+// with an EReaderKey on its curve.
 func newSessionCipher(own *ecdsa.PrivateKey, remote *ecdsa.PublicKey, sessionTranscriptBytes []byte, isReader bool) (*cipherState, error) {
+	if own.Curve != remote.Curve {
+		return nil, fmt.Errorf("proximity: the ephemeral keys are on different curves, %s and %s", own.Curve.Params().Name, remote.Curve.Params().Name)
+	}
 	ownECDH, err := own.ECDH()
 	if err != nil {
 		return nil, fmt.Errorf("proximity: ephemeral key: %w", err)

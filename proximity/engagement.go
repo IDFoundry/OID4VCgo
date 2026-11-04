@@ -16,7 +16,9 @@ import (
 const engagementVersion = "1.0"
 
 // cipherSuite1 is the only cipher suite ISO/IEC 18013-5 defines
-// (§9.1.5.2): ECDH over P-256, HKDF-SHA256, AES-256-GCM.
+// (§9.1.5.2): ECDH over one of its curves, HKDF-SHA256, AES-256-GCM.
+// This package agrees keys on P-256, P-384 and P-521; the brainpool
+// curves aren't in Go's standard library.
 const cipherSuite1 = 1
 
 // qrScheme prefixes a QR code's DeviceEngagement (§8.2.2.3).
@@ -136,9 +138,9 @@ type parsedEngagement struct {
 }
 
 // parseDeviceEngagement decodes b as a DeviceEngagement: version 1.x,
-// cipher suite 1 with a P-256 EDeviceKey, and the first BLE retrieval
-// method that offers a mode with a 16-byte UUID, preferring mdoc
-// central client mode when both are offered.
+// cipher suite 1 with a P-256, P-384 or P-521 EDeviceKey, and the
+// first BLE retrieval method that offers a mode with a 16-byte UUID,
+// preferring mdoc central client mode when both are offered.
 func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 	if len(b) > MaxMessageBytes {
 		return parsedEngagement{}, fmt.Errorf("proximity: DeviceEngagement is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)

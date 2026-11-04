@@ -556,7 +556,7 @@ then. Added within ABI version 12.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which replaces it under the same ID once issued (don't delete it meanwhile: the refreshed copies would be discarded). One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 or EdDSA (Ed25519) is a `protocol` error. Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status or identifier list is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 or EdDSA (Ed25519) — or, for an mdoc's CWT lists, ES384 (P-384) or ES512 (P-521) — is a `protocol` error. Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status or identifier list is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
@@ -874,10 +874,15 @@ may be nil for a reader that doesn't sign. Its `Start(qrCode)` begins a
 can't use is `invalid_input`.
 
 The reader verifies IssuerAuth and the device signature with ES256
-(P-256) or EdDSA (Ed25519) only: an mdoc whose document signer or device
-key is on another curve is refused, with an error naming the curve. The
-session's ephemeral keys are P-256 (cipher suite 1); the mdoc's may come
-compressed.
+(P-256), ES384 (P-384), ES512 (P-521) or EdDSA (Ed25519), the algorithm
+of the key's curve: an mdoc whose document signer or device key is on
+another curve (brainpool, Ed448) is refused, with an error naming the
+curve. The session's ephemeral keys are on one curve (cipher suite 1):
+the reader answers an mdoc's P-256, P-384 or P-521 EDeviceKey, which may
+come compressed, with an EReaderKey on the same curve. The holder's own
+EDeviceKey is P-256, and it verifies a reader signature (`reader_auth`)
+by a P-256, P-384, P-521 or Ed25519 reader key. P-384 and P-521 were
+added within ABI 14: before, they were refused.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",

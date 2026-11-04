@@ -847,7 +847,13 @@ func testDocumentSigner(t testing.TB, ca *x509.Certificate, caKey *ecdsa.Private
 
 func testCert(t testing.TB, subject pkix.Name, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, isCA bool, ekus []asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	return testCertOn(t, elliptic.P256(), subject, parent, parentKey, isCA, ekus)
+}
+
+// testCertOn is testCert with a key on curve.
+func testCertOn(t testing.TB, curve elliptic.Curve, subject pkix.Name, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, isCA bool, ekus []asn1.ObjectIdentifier) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}

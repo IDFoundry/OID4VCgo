@@ -90,7 +90,7 @@ func TestPublisher_Refuses(t *testing.T) {
 	ca, caKey := testcert.CA(t, "status CA")
 	cert, key := testcert.Leaf(t, "signer", ca, caKey)
 	statuses := func(context.Context) ([]uint8, error) { return []uint8{0}, nil }
-	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestPublisher_Refuses(t *testing.T) {
 		"no chain":        {URI: "https://i.example/s", Signer: key, Statuses: statuses},
 		"no statuses":     {URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}},
 		"statuses error":  {URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}, Statuses: func(context.Context) ([]uint8, error) { return nil, errors.New("db down") }},
-		"P-384 signer":    {URI: "https://i.example/s", Signer: p384, Chain: []*x509.Certificate{cert}, Statuses: statuses},
+		"P-224 signer":    {URI: "https://i.example/s", Signer: p224, Chain: []*x509.Certificate{cert}, Statuses: statuses},
 		"bad status bits": {URI: "https://i.example/s", Signer: key, Chain: []*x509.Certificate{cert}, Statuses: func(context.Context) ([]uint8, error) { return []uint8{2}, nil }},
 	} {
 		rec := httptest.NewRecorder()

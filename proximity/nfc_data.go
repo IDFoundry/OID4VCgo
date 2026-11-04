@@ -176,15 +176,11 @@ func newNFCDataReaderSession(hs, hr []byte, opts ...ReaderOption) (*ReaderSessio
 	if err != nil {
 		return nil, err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
 	handover, err := nfcHandover(hs, hr)
 	if err != nil {
 		return nil, err
 	}
-	r, err := newReaderSession(key, slices.Clone(de), handover)
+	r, err := newReaderSession(nil, slices.Clone(de), handover)
 	if err != nil {
 		return nil, err
 	}

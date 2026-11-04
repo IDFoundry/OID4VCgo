@@ -37,6 +37,8 @@ func TestVPFormats_Accepts(t *testing.T) {
 	}
 	sdjwt := wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: credential, HolderKeyAlg: jose.ES256}
 	mdl := heldMdoc(t, testmdoc.Issue(t))
+	mdl384 := heldMdoc(t, testmdoc.IssueOn(t, elliptic.P384(), elliptic.P256()))
+	mdl521 := heldMdoc(t, testmdoc.IssueOn(t, elliptic.P521(), elliptic.P256()))
 
 	for name, tc := range map[string]struct {
 		formats wallet.VPFormats
@@ -52,6 +54,12 @@ func TestVPFormats_Accepts(t *testing.T) {
 		"mdoc issuerauth -7":    {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-7}}}, mdl, true},
 		"mdoc issuerauth -9":    {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-9}}}, mdl, true},
 		"mdoc issuerauth -35":   {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-35}}}, mdl, false},
+		"P-384 mdoc -35":        {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-35}}}, mdl384, true},
+		"P-384 mdoc -51":        {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-51}}}, mdl384, true},
+		"P-384 mdoc -7, -9":     {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-7, -9}}}, mdl384, false},
+		"P-384 mdoc -52":        {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-52}}}, mdl384, false},
+		"P-521 mdoc -52":        {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-52}}}, mdl521, true},
+		"P-521 mdoc -51":        {wallet.VPFormats{"mso_mdoc": {IssuerAuthAlgValues: []int64{-51}}}, mdl521, false},
 		"mdoc deviceauth -9":    {wallet.VPFormats{"mso_mdoc": {DeviceAuthAlgValues: []int64{-9}}}, mdl, true},
 		"mdoc deviceauth mac":   {wallet.VPFormats{"mso_mdoc": {DeviceAuthAlgValues: []int64{-65537}}}, mdl, false},
 	} {

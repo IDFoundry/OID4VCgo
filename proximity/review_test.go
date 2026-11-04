@@ -62,15 +62,23 @@ func TestVerifiedCarriesStatus(t *testing.T) {
 func TestKeyAlg(t *testing.T) {
 	p256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p521, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	p224, _ := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	edPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	if alg, err := keyAlg(&p256.PublicKey); err != nil || alg != cose.ES256 {
 		t.Errorf("P-256: %v, %v", alg, err)
 	}
+	if alg, err := keyAlg(&p384.PublicKey); err != nil || alg != cose.ES384 {
+		t.Errorf("P-384: %v, %v", alg, err)
+	}
+	if alg, err := keyAlg(&p521.PublicKey); err != nil || alg != cose.ES512 {
+		t.Errorf("P-521: %v, %v", alg, err)
+	}
 	if alg, err := keyAlg(edPub); err != nil || alg != cose.EdDSA {
 		t.Errorf("Ed25519: %v, %v", alg, err)
 	}
-	if _, err := keyAlg(&p384.PublicKey); err == nil {
-		t.Error("P-384 was given an algorithm")
+	if _, err := keyAlg(&p224.PublicKey); err == nil {
+		t.Error("P-224 was given an algorithm")
 	}
 }
 

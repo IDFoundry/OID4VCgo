@@ -58,12 +58,16 @@ real-device interoperability and specification review remain required
 before claiming conformance.
 
 Keys and algorithms: the session uses cipher suite 1, so both ephemeral
-keys are P-256; the reader accepts the mdoc's EDeviceKey compressed or
-uncompressed, and sends EReaderKey uncompressed. IssuerAuth and the
-device signature are verified with ES256 (P-256) or EdDSA (Ed25519)
-only, as `credential/mdoc` supports: an mdoc whose document signer or
-device key is on another curve (P-384, P-521, brainpool) is refused with
-an error naming the curve.
+keys are on one curve. The mdoc generates its EDeviceKey on P-256; the
+reader accepts one on P-256, P-384 or P-521, compressed or uncompressed,
+generates its EReaderKey on the same curve, and sends it uncompressed.
+IssuerAuth, the device signature and reader authentication are verified
+with ES256 (P-256), ES384 (P-384), ES512 (P-521) or EdDSA (Ed25519), the
+algorithm of the verified key's curve, as `credential/mdoc` supports;
+device MAC needs the device key on the session's curve. The brainpool
+curves and Ed448, which ISO/IEC 18013-5 also lists, aren't in Go's
+standard library: an mdoc, ephemeral key or reader certificate on one is
+refused with an error naming the curve.
 
 The BLE details below follow ISO/IEC 18013-5:2021 §8.3.3.1.1 (Tables 11–13),
 cross-checked against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s

@@ -51,9 +51,16 @@
 //     both selects central client mode (§8.3.3.1.1.1).
 //   - SessionTranscript (§9.1.5.1): [DeviceEngagementBytes,
 //     EReaderKeyBytes, Handover], Handover null for QR engagement.
-//   - Session keys (§9.1.5.2): ECDH over P-256, then HKDF-SHA256 with
-//     salt SHA-256(SessionTranscriptBytes) and info "SKReader" or
-//     "SKDevice".
+//   - Session keys (§9.1.5.2): ECDH, then HKDF-SHA256 with salt
+//     SHA-256(SessionTranscriptBytes) and info "SKReader" or
+//     "SKDevice". The mdoc generates its EDeviceKey on P-256; a reader
+//     accepts one on P-256, P-384 or P-521 and generates its EReaderKey
+//     on the same curve. The brainpool curves cipher suite 1 also
+//     lists aren't in Go's standard library, and aren't supported.
+//   - Signatures: IssuerAuth, the device signature and readerAuth
+//     verify with ES256, ES384, ES512 or EdDSA, the algorithm of the
+//     verified key's curve (P-256, P-384, P-521, Ed25519); a key on a
+//     brainpool curve or Ed448 is refused.
 //   - SessionEstablishment and SessionData (§9.1.1.4), encrypted with
 //     AES-256-GCM (§9.1.1.5): IV = 8-byte direction identifier (0
 //     reader→mdoc, 1 mdoc→reader) || 4-byte big-endian counter, from 1

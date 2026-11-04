@@ -493,7 +493,7 @@ func TestX5ChainRoundTripsThroughCBOR(t *testing.T) {
 }
 
 func TestIsSupportedSigningAlg(t *testing.T) {
-	cases := map[Alg]bool{ES256: true, EdDSA: true, HMAC256: false, 0: false, -999: false}
+	cases := map[Alg]bool{ES256: true, ES384: true, ES512: true, EdDSA: true, HMAC256: false, esp256: false, 0: false, -999: false}
 	for alg, want := range cases {
 		if got := IsSupportedSigningAlg(alg); got != want {
 			t.Errorf("IsSupportedSigningAlg(%d) = %v, want %v", alg, got, want)
