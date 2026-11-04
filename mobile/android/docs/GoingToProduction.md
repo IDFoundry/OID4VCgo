@@ -155,9 +155,90 @@ authorizations: it is for development only.
   roots, such as a Verifier's leaf in `verifierRoots`, is checked
   against its CA's CRL: give that CA's certificate in `crlIssuers`, or
   it's refused. A `ProximityReader` takes the same, for its document
-  signers and status lists.
+  signers and status lists. `Wallet.refreshCRLs` can do the fetching:
+  see [Keeping revocation lists current](#keeping-revocation-lists-current).
 - As a Credential Manager provider, see the open caveat in
   [Presenting to Chrome](PresentingToChrome.md).
+
+### Keeping revocation lists current
+
+Rather than fetching CRLs yourself, name the distribution points in
+`crlDistributionPoints`, each with the certificate of the CA whose list
+it serves, or set `crlDistributionPointsFromRoots` to fetch the points
+your roots' self-signed CAs (IACAs, say) name for their own lists.
+`Wallet.refreshCRLs` then fetches each one, keeps every list its CA
+signed that is current and not older than the one held, and returns a
+`CRLRefreshResult`: each point's outcome, every list now held as `crls`,
+and `nextRefresh`. A failed point keeps its list, so a refresh never
+makes things worse. Fetches go to public addresses only (outside
+`development`), over `http` or `https`: CRLs are signed, so
+distribution points are usually plain `http`; `crlRequireHTTPS` refuses
+those, where your CAs serve `https`. A `ProximityReader` has the same
+`refreshCRLs`.
+
+The library schedules nothing and depends on no scheduler. Refresh when
+the app starts and comes to the foreground, and in the background with
+WorkManager, and keep `crls` to pass back as `WalletConfiguration.crls`
+at the next launch, so checks work before the first refresh and an
+older list is still refused after a restart:
+
+```kotlin
+import dev.idfoundry.oid4vcwallet.CRLRefreshResult
+import dev.idfoundry.oid4vcwallet.Wallet
+import java.io.File
+import java.time.Duration
+import java.time.Instant
+
+/** The lists kept last time, for `WalletConfiguration.crls`. */
+fun savedCRLs(file: File): String = if (file.exists()) file.readText() else ""
+
+/**
+ * One refresh: keeps the lists for the next launch and returns how long
+ * to wait before the next one. A failure is retried in 15 minutes.
+ */
+suspend fun refreshAndKeepCRLs(wallet: Wallet, file: File): Duration {
+    val result: CRLRefreshResult = try {
+        wallet.refreshCRLs()
+    } catch (e: dev.idfoundry.oid4vcwallet.WalletException) {
+        return Duration.ofMinutes(15)
+    }
+    val temp = File(file.parentFile, file.name + ".tmp")
+    temp.writeText(result.crls)
+    temp.renameTo(file)
+    return Duration.between(Instant.now(), result.nextRefresh).coerceAtLeast(Duration.ofMinutes(1))
+}
+```
+
+In the background, a `CoroutineWorker` (add `androidx.work:work-runtime-ktx`
+to your app; the library doesn't depend on it) runs that and enqueues
+the next run at the delay it returns. WorkManager runs it when the
+system allows, often later, and needs a network connection:
+
+```
+class CRLRefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val app = applicationContext as MyApp
+        val delay = refreshAndKeepCRLs(app.wallet, app.crlFile)
+        schedule(applicationContext, delay)
+        return Result.success()
+    }
+
+    companion object {
+        fun schedule(context: Context, delay: Duration) {
+            val request = OneTimeWorkRequestBuilder<CRLRefreshWorker>()
+                .setInitialDelay(delay)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork("crl-refresh", ExistingWorkPolicy.REPLACE, request)
+        }
+    }
+}
+```
+
+At the foreground, call `refreshAndKeepCRLs` from the app's scope in
+`ProcessLifecycleOwner`'s `onStart`, and schedule the worker with its
+result. A list that does pass its nextUpdate unrefreshed fails its
+role's checks closed until a fresh one arrives.
 
 ### Settings to decide
 
