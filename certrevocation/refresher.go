@@ -178,9 +178,9 @@ type RefresherConfig struct {
 // one pass, for a caller that schedules refreshes itself. Fetch once
 // with Refresh before serving, or CRLs fails closed with
 // ErrNoCurrentCRL until Run's first pass completes. On a phone, let
-// the operating system's background scheduler drive refreshes and
-// hand the lists to the mobile library's SetCRLs (mobile/ABI.md)
-// instead: an app's own goroutine doesn't run while it's suspended.
+// the operating system's background scheduler drive refreshes instead,
+// calling the mobile library's RefreshCRLs (mobile/ABI.md): an app's
+// own goroutine doesn't run while it's suspended.
 //
 // A fetched list must not be older than the newest this Refresher has
 // accepted from the same issuer, nor than Floors. Nothing bounds the

@@ -52,9 +52,11 @@ is a complete, working app on this library to compare against.
   ecosystem's CAs publish CRLs, the role in `revocation`, its CAs' CRLs
   in `crls`, and, for a certificate pinned in the roots, its CA's
   certificate in `crlIssuers`; otherwise the role in
-  `noRevocationCheck`, a deliberate decision. Fresh CRLs are fetched in
-  the background and handed over with `Wallet.setCRLs` before the old
-  ones expire. *Check:* `Wallet(...)` succeeds with your production
+  `noRevocationCheck`, a deliberate decision. Fresh CRLs are fetched
+  before the old ones expire: by `Wallet.refreshCRLs` over
+  `crlDistributionPoints`, at start, at foreground and from WorkManager,
+  its `crls` kept for the next launch, or by the app and handed over
+  with `Wallet.setCRLs`. *Check:* `Wallet(...)` succeeds with your production
   configuration, and a certificate on a CRL is refused.
   ([Going to production](GoingToProduction.md))
 
@@ -191,7 +193,7 @@ is a complete, working app on this library to compare against.
   plus a reader key and chain with the reader-authentication EKU if
   holders should see who's asking.
 - [ ] `development` not set, with each role (`ISSUER`, `STATUS`) in
-  `revocation` (with `crls`, refreshed by `setCRLs`) or
+  `revocation` (with `crls`, refreshed by `refreshCRLs` or `setCRLs`) or
   `noRevocationCheck`, `anyIssuerForAnyType` or
   `issuerRootsByDocType` deciding which IACAs issue which document type,
   and `statusCheck = StatusCheck.CHECK`, so a session is `Verified` only

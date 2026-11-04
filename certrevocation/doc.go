@@ -50,8 +50,9 @@
 // http distribution points. Its Run loop refreshes each list well before its nextUpdate,
 // in a goroutine the caller starts; Refresher.Checker is the CRLs to
 // check against. On a phone, the operating system's background
-// scheduler should drive refreshes instead, handing the lists to the
-// mobile library's SetCRLs.
+// scheduler should drive refreshes instead: the mobile library's
+// RefreshCRLs runs one pass, through a Refresher per distribution
+// point, and SetCRLs takes lists the app fetched itself.
 //
 // NoCheck declines checking revocation at all, as a visible line of
 // code rather than a field left unset. OCSP (RFC 6960), or any other

@@ -115,7 +115,103 @@ chain.
   against its CA's CRL: give that CA's certificate in
   ``WalletConfiguration/crlIssuers``, or it's refused. A
   ``ProximityReader`` takes the same, for its document signers and
-  status lists.
+  status lists. ``Wallet/refreshCRLs()`` can do the fetching: see
+  below.
+
+### Keeping revocation lists current
+
+Rather than fetching CRLs yourself, name the distribution points in
+``WalletConfiguration/crlDistributionPoints``, each with the
+certificate of the CA whose list it serves, or set
+``WalletConfiguration/crlDistributionPointsFromRoots`` to fetch the
+points your roots' self-signed CAs (IACAs, say) name for their own
+lists. ``Wallet/refreshCRLs()`` then fetches each one, keeps every list
+its CA signed that is current and not older than the one held, and
+returns a ``CRLRefreshResult``: each point's outcome, every list now
+held as ``CRLRefreshResult/crls``, and
+``CRLRefreshResult/nextRefresh``. A failed point keeps its list, so a
+refresh never makes things worse. Fetches go to public addresses only
+(outside `development`), over `http` or `https`: CRLs are signed, so
+distribution points are usually plain `http`;
+``WalletConfiguration/crlRequireHTTPS`` refuses those, where your CAs
+serve `https`. A ``ProximityReader`` has the same
+``ProximityReader/refreshCRLs()``.
+
+The SDK schedules nothing: an iOS app's process is suspended in the
+background. Refresh when the app comes to the foreground and in a
+`BGAppRefreshTask`, and keep ``CRLRefreshResult/crls`` to pass back as
+``WalletConfiguration/crls`` at the next launch, so checks work before
+the first refresh and an older list is still refused after a restart.
+Register the task identifier under `BGTaskSchedulerPermittedIdentifiers`
+in `Info.plist`, and add `fetch` to `UIBackgroundModes`:
+
+```swift
+import BackgroundTasks
+import OID4VCWallet
+import UIKit
+
+/// Keeps a wallet's CRLs current: at launch, at every foreground and
+/// in background app refresh, persisting the lists for the next launch.
+@MainActor
+final class CRLRefresher {
+    static let taskIdentifier = "com.example.wallet.crl-refresh"
+    private let wallet: Wallet
+    private let storedLists: URL
+
+    init(wallet: Wallet, storedLists: URL) {
+        self.wallet = wallet
+        self.storedLists = storedLists
+    }
+
+    /// The lists kept last time, for `WalletConfiguration.crls`.
+    static func savedLists(at url: URL) -> String {
+        (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    }
+
+    /// Call once, before the app finishes launching.
+    func register() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.taskIdentifier, using: nil) { task in
+            guard let task = task as? BGAppRefreshTask else { return }
+            let work = Task { @MainActor in
+                let ok = await self.refresh()
+                task.setTaskCompleted(success: ok)
+            }
+            task.expirationHandler = { work.cancel() }
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in _ = await self.refresh() }
+        }
+    }
+
+    /// One refresh, then the next one scheduled. True when every point
+    /// was fetched.
+    @discardableResult
+    func refresh() async -> Bool {
+        var next = Date(timeIntervalSinceNow: 15 * 60)
+        defer { schedule(at: next) }
+        do {
+            let result = try await wallet.refreshCRLs()
+            try result.crls.write(to: storedLists, atomically: true, encoding: .utf8)
+            next = result.nextRefresh
+            return !result.anyFailed
+        } catch {
+            return false
+        }
+    }
+
+    private func schedule(at date: Date) {
+        let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
+        request.earliestBeginDate = date
+        try? BGTaskScheduler.shared.submit(request)
+    }
+}
+```
+
+The system runs background refresh at its discretion, often later than
+``CRLRefreshResult/nextRefresh``, and not at all once the user turns it
+off for the app: the foreground refresh is what keeps an app in use
+current. A list that does pass its nextUpdate unrefreshed fails its
+role's checks closed until a fresh one arrives.
 
 ### Settings to decide
 

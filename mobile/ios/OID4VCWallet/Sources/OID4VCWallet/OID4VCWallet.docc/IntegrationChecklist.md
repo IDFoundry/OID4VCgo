@@ -53,8 +53,11 @@ is a complete, working app on this package to compare against.
   ``WalletConfiguration/crls``, and, for a certificate pinned in the
   roots, its CA's certificate in ``WalletConfiguration/crlIssuers``;
   otherwise the role in ``WalletConfiguration/noRevocationCheck``, a
-  deliberate decision. Fresh CRLs are fetched in the background and
-  handed over with ``Wallet/setCRLs(_:)`` before the old ones expire.
+  deliberate decision. Fresh CRLs are fetched before the old ones
+  expire: by ``Wallet/refreshCRLs()`` over
+  ``WalletConfiguration/crlDistributionPoints``, at foreground and in a
+  `BGAppRefreshTask`, its ``CRLRefreshResult/crls`` kept for the next
+  launch, or by the app and handed over with ``Wallet/setCRLs(_:)``.
   *Check:* `Wallet(...)` succeeds with your production configuration,
   and a certificate on a CRL is refused. (<doc:GoingToProduction>)
 
@@ -166,7 +169,7 @@ is a complete, working app on this package to compare against.
   reader-authentication extended key usage if holders should see who's
   asking.
 - `development` not set, with each role (`issuer`, `status`) in
-  `revocation` (with `crls`, refreshed by `setCRLs`) or
+  `revocation` (with `crls`, refreshed by `refreshCRLs` or `setCRLs`) or
   `noRevocationCheck`, `anyIssuerForAnyType` or
   `issuerRootsByDocType` deciding which IACAs issue which document type,
   and `statusCheck: .check`, so a session is `.verified` only for a

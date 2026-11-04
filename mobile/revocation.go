@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 )
@@ -26,6 +27,13 @@ type crlSet struct {
 	// pinned in the roots (certrevocation.CRLs.Issuers): a pinned leaf's
 	// CRL is verified against its CA, which isn't on its path.
 	issuers []*x509.Certificate
+
+	// points are the distribution points refresh fetches (RefreshCRLs),
+	// with refreshCfg's settings, and now its clock, nil for time.Now.
+	// Set at construction only.
+	points     []crlPoint
+	refreshCfg crlRefreshConfig
+	now        func() time.Time
 }
 
 // newCRLSet is a crlSet holding the CRLs of crls, a configuration's

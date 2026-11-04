@@ -569,6 +569,17 @@ public data class ProximityReaderConfiguration(
      * roots, for a role in [revocation], as [WalletConfiguration.crlIssuers].
      */
     @SerialName("crl_issuers") val crlIssuers: String = "",
+    /** Where [ProximityReader.refreshCRLs] fetches the lists from, as [WalletConfiguration.crlDistributionPoints]. */
+    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
+    /**
+     * Also fetches the distribution point each self-signed IACA in
+     * [issuerRoots], [issuerRootsByDocType] (with [RevocationRole.ISSUER]
+     * or [RevocationRole.STATUS] in [revocation]) and [crlIssuers] names
+     * for its own list.
+     */
+    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
+    /** Refuses plain `http` distribution points. */
+    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
     /**
      * Also accepts a document signer certificate with no extended key
      * usage, which is refused by default for lacking the mDL document
@@ -683,6 +694,14 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
     public fun setCRLs(pem: String) {
         OID4VC.wrap { handle.setCRLs(pem) }
     }
+
+    /**
+     * Fetches the configuration's CRL distribution points and keeps each
+     * current list its CA signed that isn't older than the one held, for
+     * sessions already started too, as [Wallet.refreshCRLs].
+     */
+    public suspend fun refreshCRLs(): CRLRefreshResult =
+        CRLRefreshResult.of(OID4VC.cancellable { op -> handle.refreshCRLs(op) })
 
     internal fun startWith(qrCode: String, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityReaderSession =
         ProximityReaderSession(OID4VC.wrap { handle.start(qrCode) }, docType, elements, timeouts) { transport }
