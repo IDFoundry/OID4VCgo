@@ -1,6 +1,10 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.app.KeyguardManager
 import android.os.Build
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assume.assumeTrue
+import kotlin.time.Duration.Companion.minutes
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CompletableDeferred
@@ -451,6 +455,39 @@ class ProximityTest {
         val expected = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "mac" else "signature"
         assertEquals(expected, verified.deviceAuth)
         assertEquals("Doe", verified.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
+    }
+
+    /**
+     * Holder keys that require the holder for a window
+     * (holderAuthenticationTimeout) answer with deviceMac, as per-use ones
+     * can't. Runs only when the phone was unlocked in the last five
+     * minutes: issuance's proofs and the response then sign and agree
+     * without a prompt.
+     */
+    @Test
+    fun deviceMacWithTimeBoundHolderKeys(): Unit = runBlocking {
+        assumeTrue("needs API 31 for key agreement", Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
+        val timeBound = AndroidKeystoreKeyStore(
+            AndroidKeystoreKeyStore.Options(aliasPrefix = prefix, holderKeyAgreement = true, holderAuthenticationTimeout = 5.minutes),
+            object : HolderAuthenticator {
+                override suspend fun authenticate(signature: java.security.Signature) = throw StoreException("no prompt in this test")
+                override suspend fun authenticate() = throw StoreException("no prompt in this test")
+            },
+        )
+        val s = try {
+            setup(holderKeys = timeBound, deviceAuth = WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED)
+        } catch (e: WalletException) {
+            assumeTrue("needs the phone unlocked in the last five minutes: $e", false)
+            return@runBlocking
+        }
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        val verified = (awaitFinal(reader.state) { it.isFinal } as? ProximityReaderSession.State.Verified)?.result
+            ?: throw AssertionError("reader: ${reader.state.value}")
+        assertEquals("mac", verified.deviceAuth)
     }
 
     /** A wallet left at signatures signs, even with holder keys that agree keys. */
