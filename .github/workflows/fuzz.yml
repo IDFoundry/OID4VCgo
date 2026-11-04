@@ -274,6 +274,9 @@ jobs:
           - id: certrevocation-crl-acceptance
             pkg: ./certrevocation
             name: FuzzCRLAcceptance
+          - id: androidkey-parse-key-description
+            pkg: ./walletprovider/androidkey
+            name: FuzzParseKeyDescription
           - id: verifier-default-sdjwt-issuer-leaf-policy
             pkg: ./verifier
             name: FuzzDefaultSDJWTIssuerLeafPolicy
