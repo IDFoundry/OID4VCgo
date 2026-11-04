@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
@@ -19,6 +20,8 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // fetchCRL gets the issuer's CRL and checks it's one its CA signed, in
@@ -153,4 +156,124 @@ func revokeSigner(t *testing.T, env *demotest.Env, origin string) *http.Request 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", origin)
 	return req
+}
+
+// TestRevokeDocumentSigner_RevokesItsCredentials: revoking the document
+// signer revokes every credential it signed, in either format, on the
+// status list the issuer publishes (signed by the new signer), and
+// leaves those the new signer signs valid.
+func TestRevokeDocumentSigner_RevokesItsCredentials(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	receive := func() {
+		t.Helper()
+		offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := walletapp.Receive(ctx, env.WalletConfig(), offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	receive()
+	old := env.Issuer.IssuerCertificate().SerialNumber.String()
+	before := map[int]bool{}
+	for _, s := range env.Issuer.IssuedStatuses() {
+		before[s.Idx] = true
+		if s.Signer != old || s.Revoked {
+			t.Fatalf("entry signed by %q, revoked %v: want the current signer's, valid", s.Signer, s.Revoked)
+		}
+	}
+
+	resp, err := env.HTTP.Do(revokeSigner(t, env, env.IssuerURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoking: status %d", resp.StatusCode)
+	}
+	receive()
+
+	rotated := env.Issuer.IssuerCertificate()
+	jwtList, cwtList := fetchStatusList(t, env, issuerapp.StatusListPath), fetchStatusList(t, env, issuerapp.MdocStatusListPath)
+	revoked := map[string]int{}
+	entries := env.Issuer.IssuedStatuses()
+	for _, s := range entries {
+		ref := statuslist.StatusListRef{Idx: uint64(s.Idx)} // #nosec G115 -- a status list index
+		var status statuslist.StatusType
+		var err error
+		if s.Format == mdoc.CredentialFormat {
+			ref.URI = env.IssuerURL + issuerapp.MdocStatusListPath
+			status, _, err = statuslist.CheckCWT(cwtList, rotated.PublicKey, haip.RecommendedCOSEAlgorithm, ref, statuslist.VerifyOptions{})
+		} else {
+			ref.URI = env.IssuerURL + issuerapp.StatusListPath
+			status, _, err = statuslist.Check(string(jwtList), rotated.PublicKey, oid4vci.ES256, ref, statuslist.VerifyOptions{})
+		}
+		if err != nil {
+			t.Fatalf("%s: the published list: %v", s.Format, err)
+		}
+		want := statuslist.StatusValid
+		if before[s.Idx] {
+			want = statuslist.StatusInvalid
+			revoked[s.Format]++
+		} else if s.Signer != rotated.SerialNumber.String() {
+			t.Errorf("a credential issued after the revocation is recorded as signed by %q", s.Signer)
+		}
+		if status != want || s.Revoked != (want == statuslist.StatusInvalid) {
+			t.Errorf("%s issued before the revocation %v: published status %v, entry revoked %v", s.Format, before[s.Idx], status, s.Revoked)
+		}
+	}
+	if revoked[mdoc.CredentialFormat] == 0 || revoked["dc+sd-jwt"] == 0 || len(before) == len(entries) {
+		t.Errorf("revoked %v of %d entries, %d issued before: want both formats, and some issued after", revoked, len(entries), len(before))
+	}
+}
+
+// TestRevokeDocumentSigner_WalletFindsRevoked: a wallet checking the
+// status of a credential the revoked signer signed finds it revoked,
+// in either format, and one the new signer signed valid.
+func TestRevokeDocumentSigner_WalletFindsRevoked(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	w := refreshingWallet(t, env)
+	offer := func() issuerapp.Offer {
+		t.Helper()
+		o, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	old := receive(t, env, w, offer())
+	if err := env.Issuer.RevokeDocumentSigner(); err != nil {
+		t.Fatal(err)
+	}
+	fresh := receive(t, env, w, offer())
+	for want, stored := range map[string][]walletflow.StoredCredential{walletflow.StatusInvalid: old, walletflow.StatusValid: fresh} {
+		for _, c := range stored {
+			checked, err := w.CheckStatus(ctx, c.ID)
+			if err != nil {
+				t.Fatalf("%s: CheckStatus: %v", c.Format, err)
+			}
+			if checked.Status.Value != want {
+				t.Errorf("%s: the wallet found %q, want %q", c.Format, checked.Status.Value, want)
+			}
+		}
+	}
+}
+
+// fetchStatusList gets the issuer's Status List Token at path, in the
+// form it serves when the request names none.
+func fetchStatusList(t *testing.T, env *demotest.Env, path string) []byte {
+	t.Helper()
+	resp, err := env.HTTP.Get(env.IssuerURL + path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: %d %v", path, resp.StatusCode, err)
+	}
+	return body
 }

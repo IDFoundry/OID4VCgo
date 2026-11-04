@@ -25,14 +25,17 @@ func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
 
 // credentialHandler serves the Credential Endpoint: issuer.CredentialHandler
 // checks the DPoP-bound access token, and prepareCredential decides
-// what to issue.
-func (a *App) credentialHandler(iss *issuer.Issuer) (http.Handler, error) {
+// what to issue. iss signs with the document signer signer (signerID).
+func (a *App) credentialHandler(iss *issuer.Issuer, signer string) (http.Handler, error) {
 	tokens, err := fapiresource.New(a.resourceVerifier)
 	if err != nil {
 		return nil, fmt.Errorf("issuerapp: access token verifier: %w", err)
 	}
 	h, err := iss.CredentialHandler(issuer.CredentialHandlerConfig{
-		URL: &a.credentialURL, Tokens: tokens, Prepare: a.prepareCredential,
+		URL: &a.credentialURL, Tokens: tokens,
+		Prepare: func(ctx context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+			return a.prepareCredential(ctx, grant, req, signer)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("issuerapp: credential handler: %w", err)
@@ -79,13 +82,14 @@ func reserveError(err error) error {
 
 // prepareCredential finds the passport transaction the access token's
 // subject names and fills in the requested format from that passport's
-// Evidence. Each credential gets its own status list index; done
-// releases the reservation and the indexes if issuing fails.
+// Evidence. Each credential gets its own status list index, recorded
+// as signed by signer (signerID); done releases the reservation and
+// the indexes if issuing fails.
 //
 // The configuration is req.ResolvedConfigurationID, the one the token
 // authorized: a request by credential_identifier (OpenID4VCI §8.2)
 // names no credential_configuration_id at all.
-func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
+func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest, signer string) (func(bool), error) {
 	configID := req.ResolvedConfigurationID
 	// Each offered credential is issued once per passport — or again on
 	// each request, for one kept for refresh: reserve it now, release it
@@ -135,7 +139,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// Each credential — every one of a batch — gets its own status list
 	// index (HAIP 1.0 §6.1).
 	req.PerCredential = func(_ context.Context, c *issuer.CredentialInstance) error {
-		idx, err := a.statusList.allocate(credentialFormat(configID), !e.Checks.PassiveAuthentication, a.now())
+		idx, err := a.statusList.allocate(credentialFormat(configID), !e.Checks.PassiveAuthentication, signer, a.now())
 		if err != nil {
 			return err
 		}

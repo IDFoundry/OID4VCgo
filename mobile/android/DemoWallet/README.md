@@ -249,12 +249,13 @@ its nextUpdate (an hour after the demo signs it) refuses its CA's
 certificates until the next refresh.
 
 Revoke the demo issuer's document signer (its **Issued credentials**
-page, **Revoke document signer…**), then refresh the lists here: the
-Verify tab refuses an mdoc that signer signed, saying its document
-signer was revoked, and the demo's verifier refuses a presentation of
-it. The wallet itself keeps listing it as before: it checks a
-credential's signer when it receives it, not afterwards. Receive it
-again for one the new signer signs.
+page, **Revoke document signer…**): the issuer revokes every credential
+that signer signed on its status list too, as it would were the key
+compromised. The wallet shows them revoked once it next checks their
+status (at launch, or on demand), within the status list's one-minute
+ttl, and the demo's verifier refuses a presentation of them. Refresh
+the lists here too, and the Verify tab refuses an mdoc that signer
+signed. Receive it again for one the new signer signs.
 
 ### Two phones, by hand
 

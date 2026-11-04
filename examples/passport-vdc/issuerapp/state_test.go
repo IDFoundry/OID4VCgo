@@ -132,15 +132,15 @@ func TestStatusList_PersistsInStateDir(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	now := time.Now().Truncate(time.Second)
-	kept, err := s.allocate("dc+sd-jwt", true, now)
+	kept, err := s.allocate("dc+sd-jwt", true, "1", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	revoked, err := s.allocate("mso_mdoc", false, now)
+	revoked, err := s.allocate("mso_mdoc", false, "1", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	released, err := s.allocate("mso_mdoc", false, now)
+	released, err := s.allocate("mso_mdoc", false, "1", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestStatusList_RejectsDamagedFile(t *testing.T) {
 // writes nothing.
 func TestStatusList_InMemoryWithoutStateDir(t *testing.T) {
 	s := newStatusList()
-	if _, err := s.allocate("mso_mdoc", false, time.Now()); err != nil {
+	if _, err := s.allocate("mso_mdoc", false, "1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if s.path != "" {
@@ -199,7 +199,7 @@ func TestStatusList_InMemoryWithoutStateDir(t *testing.T) {
 // by handle, never by status list index, and a handle revokes its entry.
 func TestStatusPage_HidesIndices(t *testing.T) {
 	s := newStatusList()
-	idx, err := s.allocate("mso_mdoc", false, time.Now())
+	idx, err := s.allocate("mso_mdoc", false, "1", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestStatusPage_HidesIndices(t *testing.T) {
 func TestStatusPage_ShowsIssuanceDayOnly(t *testing.T) {
 	s := newStatusList()
 	issued := time.Date(2026, 9, 26, 13, 47, 5, 0, time.UTC)
-	if _, err := s.allocate("mso_mdoc", false, issued); err != nil {
+	if _, err := s.allocate("mso_mdoc", false, "1", issued); err != nil {
 		t.Fatal(err)
 	}
 	_, entries := s.snapshot()

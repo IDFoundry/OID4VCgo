@@ -147,6 +147,68 @@ func TestRevokeDocumentSigner_Persists(t *testing.T) {
 	}
 }
 
+// TestRevokeDocumentSigner_RevokesItsCredentialsAcrossRestart: the
+// signer's credentials are revoked on the saved status list, so a
+// restart keeps them revoked; an entry saved before entries named their
+// signer is the signer's in use at start; one a request under way
+// allocates for the revoked signer is revoked from the start; and the
+// new signer's credentials stay valid.
+func TestRevokeDocumentSigner_RevokesItsCredentialsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig(t, dir)
+	app, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := signerID(app.IssuerCertificate())
+	sdjwt, err := app.statusList.allocate("dc+sd-jwt", false, old, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdocIdx, err := app.statusList.allocate("mso_mdoc", false, old, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Saved before entries named their signer.
+	legacy, err := app.statusList.allocate("mso_mdoc", false, "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err = New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := app.statusList.entries[legacy].Signer; got != old {
+		t.Fatalf("an entry without a signer is %q's, want the signer in use at start, %q", got, old)
+	}
+
+	if err := app.RevokeDocumentSigner(); err != nil {
+		t.Fatal(err)
+	}
+	inFlight, err := app.statusList.allocate("dc+sd-jwt", false, old, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := app.statusList.allocate("mso_mdoc", false, signerID(app.IssuerCertificate()), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bits, _ := restarted.statusList.snapshot()
+	for name, idx := range map[string]int{"SD-JWT VC": sdjwt, "mdoc": mdocIdx, "legacy": legacy, "in flight": inFlight} {
+		if bits[idx] != 1 || !restarted.statusList.entries[idx].Revoked {
+			t.Errorf("%s credential of the revoked signer: status %d after a restart, want revoked", name, bits[idx])
+		}
+	}
+	if bits[fresh] != 0 || restarted.statusList.entries[fresh].Revoked {
+		t.Error("the new signer's credential was revoked")
+	}
+}
+
 // testConfig is an issuer's Config for tests that build an App
 // directly, keeping its state in dir.
 func testConfig(t *testing.T, dir string) Config {
