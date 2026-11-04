@@ -127,23 +127,83 @@ final class InPersonModel {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    /// The reader's last refresh of its revocation lists, this launch.
+    private(set) var readerCRLs: WalletModel.CRLRefresh?
+    private(set) var refreshingCRLs = false
+
+    /// The demo reader, made on first use from the configuration's
+    /// `reader`; nil without one.
+    private func makeReader(_ model: WalletModel) throws -> ProximityReader? {
+        if let reader { return reader }
+        guard let r = model.config?.reader else { return nil }
+        let saved = SharedWallet.defaults.string(forKey: SharedWallet.readerCRLsKey) ?? ""
+        do {
+            reader = try ProximityReader(configuration: Self.configuration(r, crls: saved), keyStore: try DemoReaderKeys(r))
+        } catch let e as WalletError where e.code == .invalidInput && !saved.isEmpty {
+            // Saved lists the reader refuses: start without them, and the
+            // next refresh fetches them again.
+            SharedWallet.defaults.removeObject(forKey: SharedWallet.readerCRLsKey)
+            reader = try ProximityReader(configuration: Self.configuration(r, crls: ""), keyStore: try DemoReaderKeys(r))
+        }
+        return reader
+    }
+
+    /// A production reader's decisions: the demo's one IACA issues every
+    /// type it reads. The roles the configuration names are checked
+    /// against the IACA's Certificate Revocation List — the document
+    /// signer's chain, and a status list signer's — with `crls` the lists
+    /// last fetched, refreshed by refreshCRLs; the others decline it, as
+    /// for services that publish no CRLs. A shipping reader checks both.
+    private static func configuration(_ r: DemoConfiguration.Reader, crls: String) -> ProximityReaderConfiguration {
+        let checked = r.revocation ?? []
+        return ProximityReaderConfiguration(issuerRoots: r.issuerRoots, readerKeyID: DemoReaderKeys.id,
+                                            readerChain: r.readerChain, maxClockSkewSeconds: 300,
+                                            crls: crls, revocation: checked,
+                                            noRevocationCheck: ProximityReaderConfiguration.RevocationRole.allCases.filter { !checked.contains($0) },
+                                            anyIssuerForAnyType: true, statusCheck: .check, development: r.development ?? false,
+                                            crlDistributionPoints: r.crlDistributionPoints ?? [],
+                                            crlDistributionPointsFromRoots: r.crlDistributionPointsFromRoots ?? false,
+                                            crlRequireHTTPS: r.crlRequireHTTPS ?? false)
+    }
+
+    /// Whether the configuration has the reader fetch revocation lists.
+    func readerFetchesCRLs(_ model: WalletModel) -> Bool {
+        guard let r = model.config?.reader else { return false }
+        return r.crlDistributionPointsFromRoots == true || !(r.crlDistributionPoints ?? []).isEmpty
+    }
+
+    /// Whether the reader's lists are due again: the last refresh failed,
+    /// or its nextRefresh has passed. The first, at launch, is the
+    /// launch's.
+    func readerCRLsDue(_ model: WalletModel) -> Bool {
+        guard readerFetchesCRLs(model), let last = readerCRLs else { return false }
+        guard let next = last.result?.nextRefresh, last.error == nil else { return true }
+        return next <= .now
+    }
+
+    /// Fetches the reader's Certificate Revocation Lists and keeps them for
+    /// the next launch, as WalletModel.refreshCRLs does the wallet's: at
+    /// launch (making the reader), on returning to the foreground once
+    /// they're due, and from the settings. Nothing schedules it in the
+    /// background (BGTaskScheduler would, at the result's nextRefresh).
+    func refreshReaderCRLs(_ model: WalletModel) async {
+        guard readerFetchesCRLs(model), !refreshingCRLs else { return }
+        refreshingCRLs = true
+        defer { refreshingCRLs = false }
+        do {
+            guard let reader = try makeReader(model) else { return }
+            let result = try await reader.refreshCRLs()
+            SharedWallet.defaults.set(result.crls, forKey: SharedWallet.readerCRLsKey)
+            readerCRLs = WalletModel.CRLRefresh(result: result, at: .now)
+        } catch {
+            readerCRLs = WalletModel.CRLRefresh(result: readerCRLs?.result, error: WalletModel.describe(error), at: .now)
+        }
+    }
+
     /// Reads the holder's `qrCode`, asking for `preset`.
     func read(_ qrCode: String, preset: ReaderPreset, model: WalletModel) {
         do {
-            if reader == nil {
-                guard let r = model.config?.reader else { return }
-                // A production reader's decisions: the demo's one IACA
-                // issues every type it reads, and the demo services
-                // publish no CRLs, so revocation is declined. A shipping
-                // reader checks it, with crls and revocation.
-                reader = try ProximityReader(
-                    configuration: ProximityReaderConfiguration(issuerRoots: r.issuerRoots, readerKeyID: DemoReaderKeys.id,
-                                                                readerChain: r.readerChain, maxClockSkewSeconds: 300,
-                                                                noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true,
-                                                                statusCheck: .check),
-                    keyStore: try DemoReaderKeys(r))
-            }
-            guard let reader else { return }
+            guard let reader = try makeReader(model) else { return }
             let session = try reader.start(qrCode: qrCode, docType: preset.docType, elements: preset.elements)
             reading = session
             readingPreset = preset
@@ -409,7 +469,8 @@ struct ReaderView: View {
                 case .waitingForResponse?:
                     ProgressView("Waiting for the holder to agree…")
                 case let s?:
-                    ReaderOutcomeView(state: s, preset: inPerson.readingPreset, mode: inPerson.reading?.mode) {
+                    ReaderOutcomeView(state: s, preset: inPerson.readingPreset, mode: inPerson.reading?.mode,
+                                      checksIssuerRevocation: model.config?.reader?.revocation?.contains(.issuer) ?? false) {
                         inPerson.closeReading()
                         model.engagementToRead = nil
                     }
@@ -465,6 +526,9 @@ private struct ReaderOutcomeView: View {
     let state: ProximityReaderSession.State
     let preset: ReaderPreset?
     let mode: ProximityBLEMode?
+    /// Whether the reader checks the document signer's chain against
+    /// its CA's revocation list.
+    let checksIssuerRevocation: Bool
     let done: () -> Void
 
     var body: some View {
@@ -497,7 +561,11 @@ private struct ReaderOutcomeView: View {
                             : "Peripheral server mode: this reader connected to the holder")
                             .accessibilityIdentifier("reader-ble-mode")
                     }
-                    if let s = v.statusList { LabeledContent("Revocation", value: "not checked: \(s.uri) #\(s.index)") }
+                    if let s = v.statusList {
+                        LabeledContent("Status list", value: v.status == nil ? "not checked: \(s.uri) #\(s.index)" : "\(statusWord(v.status)): \(s.uri) #\(s.index)")
+                    }
+                    LabeledContent("Issuer certificate", value: issuerRevocation)
+                        .accessibilityIdentifier("reader-issuer-revocation")
                 }
             case .declined:
                 Text("The holder declined.").accessibilityIdentifier("reader-outcome")
@@ -506,11 +574,35 @@ private struct ReaderOutcomeView: View {
             case .failed(let error as ProximityError):
                 Text(error.localizedDescription).foregroundStyle(.red).accessibilityIdentifier("reader-outcome")
             case .failed(let error):
-                Text("Not verified: \(WalletModel.describe(error))").foregroundStyle(.red).accessibilityIdentifier("reader-outcome")
+                Section {
+                    Label("Not verified", systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.title2)
+                        .accessibilityIdentifier("reader-outcome")
+                    // A revoked document signer, or no current list to
+                    // tell, says so; anything else, the error.
+                    Text(WalletModel.revocationReason(error) ?? WalletModel.describe(error))
+                        .accessibilityIdentifier("reader-outcome-reason")
+                }
             default:
                 EmptyView()
             }
             Section { Button("Done", action: done).accessibilityIdentifier("reader-done") }
+        }
+    }
+
+    /// Whether the document signer's certificate was checked for
+    /// revocation: a document is verified only if it wasn't revoked.
+    private var issuerRevocation: String {
+        checksIssuerRevocation ? "not revoked (checked against its CA's revocation list)" : "revocation not checked"
+    }
+
+    private func statusWord(_ status: MdocStatus?) -> String {
+        switch status {
+        case .valid?: "valid"
+        case .noStatus?: "none"
+        case .revoked?: "revoked"
+        case .suspended?: "suspended"
+        case .other(let v)?: "status \(v)"
+        case .unknown?, nil: "unknown"
         }
     }
 }

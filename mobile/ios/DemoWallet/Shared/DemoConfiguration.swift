@@ -23,9 +23,24 @@ struct DemoConfiguration: Codable, Sendable {
         var issuerRoots: String
         var readerChain: String
         var readerKey: String
+        /// The roles checked against the IACAs' Certificate Revocation
+        /// Lists, when the services publish them (the passport-vdc demo
+        /// does), and where `refreshCRLs()` fetches them, as
+        /// `ProximityReaderConfiguration`'s. Without them the reader
+        /// declines checking revocation.
+        var revocation: [ProximityReaderConfiguration.RevocationRole]?
+        var crlDistributionPoints: [CRLDistributionPoint]?
+        var crlDistributionPointsFromRoots: Bool?
+        var crlRequireHTTPS: Bool?
+        /// A development reader, which may fetch CRLs from a loopback
+        /// address (the Simulator's services).
+        var development: Bool?
 
         enum CodingKeys: String, CodingKey {
             case issuerRoots = "issuer_roots", readerChain = "reader_chain", readerKey = "reader_key"
+            case revocation, crlDistributionPoints = "crl_distribution_points"
+            case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
+            case development
         }
     }
 
@@ -36,6 +51,9 @@ struct DemoConfiguration: Codable, Sendable {
     static func load() -> DemoConfiguration? {
         if let text = ProcessInfo.processInfo.environment["OID4VC_DEMO_CONFIG"], let data = text.data(using: .utf8),
            let config = try? JSONDecoder().decode(DemoConfiguration.self, from: data) {
+            // Another configuration (new trust anchors, say) starts without
+            // the revocation lists fetched under the last one.
+            if SharedWallet.defaults.data(forKey: defaultsKey) != data { SharedWallet.forgetCRLs() }
             SharedWallet.defaults.set(data, forKey: defaultsKey)
             return config
         }

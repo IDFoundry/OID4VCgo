@@ -31,11 +31,31 @@ enum SharedWallet {
     /// shared defaults so the extension presents by it too.
     static let copyPolicyKey = "demo-copy-policy"
 
-    /// configuration with the holder's chosen copy policy, if any.
+    /// The Certificate Revocation Lists the app last fetched
+    /// (`refreshCRLs()`'s `crls`), PEM, in the shared defaults: the
+    /// wallet's, which the extension checks Verifiers and readers against
+    /// too, and the reader's. Passed back as the configuration's `crls`
+    /// at each launch, so checks work before the next refresh, and a list
+    /// older than these is still refused.
+    static let crlsKey = "demo-crls"
+    static let readerCRLsKey = "demo-reader-crls"
+
+    /// Forgets the revocation lists, for a new configuration, or lists the
+    /// wallet refuses.
+    static func forgetCRLs() {
+        defaults.removeObject(forKey: crlsKey)
+        defaults.removeObject(forKey: readerCRLsKey)
+    }
+
+    /// configuration with the holder's chosen copy policy, if any, and the
+    /// revocation lists last fetched.
     static func applyingHolderChoices(to configuration: WalletConfiguration) -> WalletConfiguration {
         var configuration = configuration
         if let saved = defaults.string(forKey: copyPolicyKey), let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
             configuration.copyPolicy = policy
+        }
+        if let crls = defaults.string(forKey: crlsKey), !crls.isEmpty, !configuration.revocation.isEmpty {
+            configuration.crls = crls
         }
         return configuration
     }

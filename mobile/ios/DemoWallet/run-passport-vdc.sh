@@ -37,6 +37,14 @@ xcrun simctl install "$DEVICE" "$BUILD/Build/Products/Debug-iphonesimulator/Demo
 CONFIG="$(python3 - "$STATE" <<'PY'
 import json, pathlib, sys
 state = pathlib.Path(sys.argv[1])
+# The trust roles checked against the demo's CRLs: the issuer CA's
+# (credentials and their status lists), the verifier CA's, the mdoc
+# reader CA's and the registrar CA's.
+REVOCATION = ["issuer", "status", "verifier"]
+if (state / "mdoc-reader-ca.pem").exists():
+    REVOCATION.append("mdoc_reader")
+if (state / "registrar-ca.pem").exists():
+    REVOCATION.append("registrar")
 config = {
     "wallet": {
         "client_id": "passport-vdc-wallet",
@@ -53,6 +61,14 @@ config = {
         # Readers in person (and org-iso-mdoc requests) are recognized by
         # the mdoc reader CA of the demo.
         "mdoc_reader_roots": (state / "mdoc-reader-ca.pem").read_text() if (state / "mdoc-reader-ca.pem").exists() else "",
+        # The demo's CAs publish CRLs at the distribution points their
+        # certificates name, over https on 127.0.0.1, which the
+        # Simulator trusts (its keychain has the demo's certificate): the
+        # app fetches them (RefreshCRLs) and checks each role's
+        # certificates against them.
+        "revocation": REVOCATION,
+        "crl_distribution_points_from_roots": True,
+        "crl_require_https": True,
     },
     "provider_url": "https://127.0.0.1:6443",
 }
@@ -67,6 +83,13 @@ if reader_file.exists():
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "reader_key": key + end + "\n",
         "reader_chain": chain.lstrip(),
+        # Documents' signers, and their status lists', are checked
+        # against the issuer CA's CRL. A development reader, to fetch it
+        # from 127.0.0.1.
+        "revocation": ["issuer", "status"],
+        "crl_distribution_points_from_roots": True,
+        "crl_require_https": True,
+        "development": True,
     }
 print(json.dumps(config))
 PY
