@@ -128,3 +128,19 @@ func TestParseStatusClaim_RejectsInvalidIdx(t *testing.T) {
 		}
 	}
 }
+
+func TestParseStatusClaimJSON(t *testing.T) {
+	got, err := ParseStatusClaimJSON([]byte(`{"status_list":{"idx":7,"uri":"https://example.com/x"}}`))
+	if want := (StatusListRef{Idx: 7, URI: "https://example.com/x"}); err != nil || got != want {
+		t.Errorf("ParseStatusClaimJSON = %+v, %v; want %+v", got, err, want)
+	}
+	for _, raw := range []string{
+		`null`, `"x"`, `[]`, `{`, `{"status_list":{"idx":-1,"uri":"https://example.com/x"}}`,
+		`{"status_list":{"idx":0,"uri":"https://example.com/x","idx":1}}`,
+		`{"status_list":{"idx":0,"uri":"https://example.com/x"},"status_list":{"idx":1,"uri":"https://example.com/y"}}`,
+	} {
+		if _, err := ParseStatusClaimJSON([]byte(raw)); err == nil {
+			t.Errorf("ParseStatusClaimJSON accepted %s", raw)
+		}
+	}
+}

@@ -505,7 +505,19 @@ changes whether *every* bullet below is `(done)`.
   key (DID resolution, an x5c chain's own trust anchor, a private
   registry, ...), the same "resolving trust is the caller's job" split
   `AttestationVerifier` already draws for a Key Attestation's own
-  `kid`/`x5c`/`trust_chain`; the binding key is re-encoded as a JWK of
+  `kid`/`x5c`/`trust_chain`. A verified key attestation's revocation is
+  `Dependencies.AttestationStatus`'s (`AttestationStatusChecker`);
+  `StatusListAttestationStatus` checks a Token Status List `status`
+  claim with a `statuslist.Checker`, binding the list's signer to the
+  attestation's own key (or, with `ListSignerUnderAttesterCA`, to the CA
+  that issued its signing certificate) so that under shared roots one
+  Wallet Provider can't decide another's attestations. Its engine is
+  `internal/attestationstatus`, which `haip.WalletAttestationStatusList`
+  reaches through it. Refusals (not VALID, an unreadable claim, none
+  where `RequireStatus` wants one) wrap `ErrKeyAttestationRevoked`;
+  anything undecided is a server error, and under production assurance
+  `New` requires its Fetcher hardened, its signers' `Revocation`
+  decided and a `Cache`; the binding key is re-encoded as a JWK of
   its public members only for `cnf.jwk`, however it was conveyed — a
   `jwk` header too, so nothing else a Wallet put there reaches the signed
   credential, and one carrying a private key is refused (Appendix F.4). `DecryptRequestBody`/`EncryptResponseBody`
@@ -1548,6 +1560,14 @@ changes whether *every* bullet below is `(done)`.
   to set, since HAIP doesn't number it, and `server.New` refuses the
   Config until it is. `RecommendedWalletClient(id, attesterIssuer)`
   returns the matching `storage.RegisteredClientConfig`.
+  `WalletAttestationStatusList` is a `server.ClientAttestationStatusChecker`
+  for a Wallet Attestation's Token Status List `status` claim
+  (Appendix E): it checks the attestation through
+  `issuer.StatusListAttestationStatus`, so the two "attestation" status
+  checks — client authentication's and the key proof's — share one set
+  of rules, and wraps `server.ErrClientAttestationRevoked` (invalid_client)
+  for a refusal. `server.New` doesn't call its `CheckConfiguration`;
+  the caller does, with the server's assurance level.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`, `PreAuthorizedCodeStore`) and `verifier` defines (`TransactionStore`, via

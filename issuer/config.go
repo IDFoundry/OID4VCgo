@@ -564,10 +564,11 @@ type ProofBindingKeyResolver interface {
 var ErrProofKeyTrustUndecided = errors.New("issuer: the proof key's trust can't be decided now")
 
 // ConfigurationCheck is implemented by a dependency that checks its own
-// configuration, as X5CAttestationVerifier and
-// X5CProofBindingKeyResolver do. New calls CheckConfiguration, with the
-// issuer's assurance level, on Dependencies.AttestationVerifier and
-// Dependencies.ProofBindingKeys when they implement it, and refuses
+// configuration, as X5CAttestationVerifier, X5CProofBindingKeyResolver
+// and StatusListAttestationStatus do. New calls CheckConfiguration, with
+// the issuer's assurance level, on Dependencies.AttestationVerifier,
+// Dependencies.ProofBindingKeys and Dependencies.AttestationStatus when
+// they implement it, and refuses
 // what it reports. A type of your own that embeds one of them (to count
 // its calls, say) has its method promoted, so it keeps its checks; one
 // that holds it in a named field implements CheckConfiguration by
@@ -664,7 +665,9 @@ type Dependencies struct {
 	// signature verifies, and refuses the proof when it returns an
 	// error; IssueDeferredCredential checks a deferred request's again.
 	// It's given the attestation's signer, to bind the Status List
-	// Token's signer to (see AttestationStatusChecker). Without it, a key attestation its Wallet
+	// Token's signer to (see AttestationStatusChecker).
+	// StatusListAttestationStatus checks a Token Status List reference,
+	// with that binding. Without it, a key attestation its Wallet
 	// Provider has since revoked is accepted until it expires: under
 	// AssuranceProduction, New requires it whenever AttestationVerifier
 	// is set, unless Config.NoAttestationStatusCheck says the issuer
@@ -766,6 +769,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		prefixError(dependenciesPrefix, validateSignerDependencies(cfg, deps)),
 		prefixError(dependenciesPrefix+"attestation_verifier: ", checkConfiguration(deps.AttestationVerifier, cfg.Assurance)),
 		prefixError(dependenciesPrefix+"proof_binding_keys: ", checkConfiguration(deps.ProofBindingKeys, cfg.Assurance)),
+		prefixError(dependenciesPrefix+"attestation_status: ", checkConfiguration(deps.AttestationStatus, cfg.Assurance)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))

@@ -30,5 +30,6 @@
 // FAPI 2.0, OAuth only, Wallet Attestation client authentication
 // (§4.4.1) under ES256, and the issuer_state extension;
 // RecommendedWalletClient registers a Wallet that authenticates that
-// way.
+// way, and WalletAttestationStatusList checks its Wallet Attestation's
+// Token Status List status.
 package haip

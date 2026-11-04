@@ -112,7 +112,13 @@ FAPIgo's server (`server.X5CAttesterChain`), whose `Revocation`
 `server.NoClientCertificateRevocationCheck{}` to decline) is required
 since FAPIgo v0.62.0; the attestation's own status claim is checked by
 `server.Dependencies.ClientAttestationStatus`, which production
-requires (`server.NoClientAttestationStatusCheck{}` to decline). Since
+requires (`haip.WalletAttestationStatusList` for a Token Status List,
+`server.NoClientAttestationStatusCheck{}` to decline). A key
+attestation's status claim is checked by
+`issuer.Dependencies.AttestationStatus`
+(`issuer.StatusListAttestationStatus`). Both bind the Status List
+Token's signer to the attestation's own key, or with
+`ListSignerUnderAttesterCA` to the CA that issued its certificate. Since
 FAPIgo v0.66.0 it also refuses a signer certificate issued for another
 role (`server.DefaultAttesterLeafPolicy`) and an `x5c` carrying the
 trust anchor.
