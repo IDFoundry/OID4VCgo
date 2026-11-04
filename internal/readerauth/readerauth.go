@@ -8,9 +8,6 @@ package readerauth
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -79,20 +76,16 @@ func CheckKey(signer crypto.Signer, chain []*x509.Certificate) (cose.Alg, error)
 	return KeyAlg(pub)
 }
 
-// KeyAlg is the COSE algorithm a reader key signs with: ES256 for
-// P-256, EdDSA for Ed25519.
+// KeyAlg is the COSE algorithm a reader key signs with
+// (cose.AlgForKey): ES256, ES384 or ES512 for P-256, P-384 or P-521,
+// EdDSA for Ed25519 — every curve ISO/IEC 18013-5 §9.1.4 lists that
+// Go's standard library has.
 func KeyAlg(pub crypto.PublicKey) (cose.Alg, error) {
-	switch k := pub.(type) {
-	case *ecdsa.PublicKey:
-		if k.Curve != elliptic.P256() {
-			return 0, errors.New("an ECDSA reader key must be P-256")
-		}
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported reader key type %T", pub)
+	alg, err := cose.AlgForKey(pub)
+	if err != nil {
+		return 0, fmt.Errorf("reader key: %w", err)
 	}
+	return alg, nil
 }
 
 // Chain is the certificate chain in sig's x5chain header, leaf first,

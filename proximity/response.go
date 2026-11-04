@@ -3,7 +3,6 @@ package proximity
 import (
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"errors"
 	"fmt"
@@ -76,7 +75,7 @@ func buildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder 
 // KeyAgreer is a device key that can agree a key with a peer — ECKA-DH
 // inside the key store — for MAC device authentication (§9.1.3.5). It
 // returns the shared secret Z, the SEC1 x-coordinate: for P-256, 32
-// octets.
+// octets. The peer is on the device key's curve, or Agree fails.
 type KeyAgreer interface {
 	Agree(peer *ecdsa.PublicKey) ([]byte, error)
 }
@@ -103,8 +102,8 @@ func BuildDeviceResponseMAC(req DocRequest, issuerSigned mdoc.IssuerSigned, hold
 	if eReaderKey == nil {
 		return nil, fmt.Errorf("proximity: build DeviceResponse: no reader key (session not established)")
 	}
-	if eReaderKey.Curve != elliptic.P256() {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: DeviceMac needs a P-256 reader key, got %s", eReaderKey.Curve.Params().Name)
+	if _, ok := mdocCurves[eReaderKey.Curve]; !ok {
+		return nil, fmt.Errorf("proximity: build DeviceResponse: DeviceMac needs a reader key on P-256, P-384 or P-521, got %s", eReaderKey.Curve.Params().Name)
 	}
 	if len(sessionTranscriptBytes) == 0 {
 		return nil, fmt.Errorf("proximity: build DeviceResponse: no session transcript (session not established)")
@@ -167,22 +166,16 @@ func checkRequested(req DocRequest, elements [][2]string) error {
 	return nil
 }
 
+// mdocCurves are the EC curves DeviceMac agrees keys on
+// (credential/mdoc's).
+var mdocCurves = map[elliptic.Curve]bool{elliptic.P256(): true, elliptic.P384(): true, elliptic.P521(): true}
+
 // keyAlg is the COSE algorithm a key signs with — a device key, or a
-// document signer's: ES256 for P-256, EdDSA for Ed25519, the two
-// credential/mdoc supports. Its errors name the key's curve or type;
-// the caller says whose key it is.
+// document signer's (cose.AlgForKey): ES256, ES384 or ES512 for P-256,
+// P-384 or P-521, EdDSA for Ed25519. Its errors name the key's curve or
+// type; the caller says whose key it is.
 func keyAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
-	switch k := pub.(type) {
-	case *ecdsa.PublicKey:
-		if k.Curve != elliptic.P256() {
-			return 0, fmt.Errorf("unsupported EC curve %s: only P-256 (ES256) and Ed25519 (EdDSA) are supported", k.Curve.Params().Name)
-		}
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported key type %T: only P-256 (ES256) and Ed25519 (EdDSA) are supported", pub)
-	}
+	return cose.AlgForKey(pub)
 }
 
 // wireDeviceResponse is the reader's own view of DeviceResponse

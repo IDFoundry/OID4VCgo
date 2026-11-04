@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
@@ -65,10 +64,11 @@ type readerConfig struct {
 type ReaderOption func(*readerConfig)
 
 // WithReaderAuth signs the request as the reader whose key is signer —
-// P-256 ECDSA or Ed25519 — and whose certificate chain, leaf first, is
-// chain (§9.1.4): Establishment adds a readerAuth, which the holder
-// verifies to show who is asking. The leaf certifies signer's public
-// key, and should carry ReaderAuthenticationEKU.
+// ECDSA on P-256, P-384 or P-521, or Ed25519 — and whose certificate
+// chain, leaf first, is chain (§9.1.4): Establishment adds a
+// readerAuth, which the holder verifies to show who is asking. The
+// leaf certifies signer's public key, and should carry
+// ReaderAuthenticationEKU.
 func WithReaderAuth(signer crypto.Signer, chain []*x509.Certificate) ReaderOption {
 	return func(c *readerConfig) { c.readerAuth = &readerKey{signer: signer, chain: slices.Clone(chain)} }
 }
@@ -234,11 +234,7 @@ func NewReaderSession(qr string, opts ...ReaderOption) (*ReaderSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("proximity: generate EReaderKey: %w", err)
-	}
-	r, err := newReaderSession(key, de, nullHandover)
+	r, err := newReaderSession(nil, de, nullHandover)
 	if err != nil {
 		return nil, err
 	}
@@ -308,11 +304,17 @@ func checkDecisions(cfg readerConfig) error {
 }
 
 // newReaderSession is the engagement-independent constructor, as for
-// newDeviceSession.
+// newDeviceSession. A nil key generates EReaderKey on EDeviceKey's
+// curve, as cipher suite 1 has both ephemeral keys on one (§9.1.5.2).
 func newReaderSession(key *ecdsa.PrivateKey, deviceEngagement []byte, handover cbor.RawMessage) (*ReaderSession, error) {
 	pe, err := parseDeviceEngagement(deviceEngagement)
 	if err != nil {
 		return nil, err
+	}
+	if key == nil {
+		if key, err = ecdsa.GenerateKey(pe.eDeviceKey.Curve, rand.Reader); err != nil {
+			return nil, fmt.Errorf("proximity: generate EReaderKey: %w", err)
+		}
 	}
 	eReaderKeyBytes, err := encodeCoseKey(&key.PublicKey)
 	if err != nil {
@@ -613,7 +615,7 @@ func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument
 	case mdoc.DeviceAuthMAC:
 		deviceKey, ok := verified.DeviceKey.(*ecdsa.PublicKey)
 		if !ok {
-			return Verified{}, fmt.Errorf("proximity: DeviceMAC needs a P-256 device key, the MSO has %T", verified.DeviceKey)
+			return Verified{}, fmt.Errorf("proximity: DeviceMAC needs an EC device key, the MSO has %T", verified.DeviceKey)
 		}
 		if err := mdoc.VerifyDeviceMAC(doc.deviceSigned, deviceKey, r.eReaderKey, r.sessionTranscriptBytes, r.docType); err != nil {
 			return Verified{}, fmt.Errorf("proximity: %w", err)

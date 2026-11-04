@@ -22,8 +22,14 @@ import (
 // the extended key usages ekus, and the pool of that CA.
 func testReader(t *testing.T, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, []*x509.Certificate, *x509.CertPool) {
 	t.Helper()
+	return testReaderOn(t, elliptic.P256(), ekus...)
+}
+
+// testReaderOn is testReader with a reader key on curve.
+func testReaderOn(t *testing.T, curve elliptic.Curve, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, []*x509.Certificate, *x509.CertPool) {
+	t.Helper()
 	ca, caKey := testcert.CA(t, "proximity test reader CA")
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,12 +177,12 @@ func TestWithReaderAuthRejects(t *testing.T) {
 	}
 	key, chain, _ := testReader(t, ReaderAuthenticationEKU)
 	otherKey, _, _ := testReader(t, ReaderAuthenticationEKU)
-	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p224, _ := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	for name, opt := range map[string]ReaderOption{
 		"no chain":        WithReaderAuth(key, nil),
 		"another key":     WithReaderAuth(otherKey, chain),
 		"no signer":       WithReaderAuth(nil, chain),
-		"unsupported key": WithReaderAuth(p384, []*x509.Certificate{testcert.SelfSigned(t, "p384", &p384.PublicKey, p384)}),
+		"unsupported key": WithReaderAuth(p224, []*x509.Certificate{testcert.SelfSigned(t, "p224", &p224.PublicKey, p224)}),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewReaderSession(holder.QRCode(), devReader(opt)...); err == nil {
