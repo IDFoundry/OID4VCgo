@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.64.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.63.0...v0.64.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** Transaction has a MdocEncryptionInfo field a TransactionStore must persist (verifiertest.TestTransactionStoreContract checks it; TransactionCodec-based stores, sqlstore's included, already do), and verifier.Reason has a new value, ReasonMdocDCAPIResponse.
+
+### Features
+
+* **cose:** sign and verify ES384 and ES512 ([ae5878f](https://github.com/IDFoundry/OID4VCgo/commit/ae5878f3f4355a80fe79441a36925a11d3ede14a))
+* **haip:** check Wallet Attestations' Token Status List status ([79d259a](https://github.com/IDFoundry/OID4VCgo/commit/79d259ae0c97e24aac1de8c2b18466af3c1ddfd1))
+* **issuer:** check key attestations' Token Status List status ([6bc166d](https://github.com/IDFoundry/OID4VCgo/commit/6bc166de481f9304ed2bc2d900132708c0c41c36))
+* **mdoc:** accept P-384 and P-521 document signer and device keys ([a69b3d4](https://github.com/IDFoundry/OID4VCgo/commit/a69b3d4b383232bfc5dc836d8b4b043b851fb669))
+* **proximity:** accept P-384 and P-521 ephemeral keys and signers ([98e383e](https://github.com/IDFoundry/OID4VCgo/commit/98e383e21b320eb21ed7ae659f6be596eeb69147))
+* **statuslist:** allocate random, never-reused status list indices ([9725b06](https://github.com/IDFoundry/OID4VCgo/commit/9725b063dce9f47dd45d6538c1e064ec35d92ff1))
+* **statuslist:** cache verified status list tokens and reuse the fetch transport ([be9910c](https://github.com/IDFoundry/OID4VCgo/commit/be9910c45d084684c1fc6fb62f2c8aa9e73823d5))
+* **statuslist:** parse a status claim still in JSON ([255dbd5](https://github.com/IDFoundry/OID4VCgo/commit/255dbd5242ec3507071d923e6d5cc7452410dea9))
+* **statuslist:** sign CWT status and identifier lists on P-384 and P-521 ([b6813d6](https://github.com/IDFoundry/OID4VCgo/commit/b6813d6f8a29e04db74e74187929b4a7b261912e))
+* **verifier:** manage org-iso-mdoc Digital Credentials API requests in Transactions ([61a5574](https://github.com/IDFoundry/OID4VCgo/commit/61a5574ca4dcbe248c565b3110aa8967f426df1c))
+* **verifier:** verify mdocs signed on P-384 and P-521 ([30cf80e](https://github.com/IDFoundry/OID4VCgo/commit/30cf80ebdde1f0996a95fc556a0c4f718915510c))
+* **walletflow:** keep fetched status lists in a statuslist.Cache ([936d98a](https://github.com/IDFoundry/OID4VCgo/commit/936d98a48d49126cbdebfc2b2e10ab0d0742fc71))
+
 ## [0.63.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.62.0...v0.63.0) (2026-11-03)
 
 
