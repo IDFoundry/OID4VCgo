@@ -170,10 +170,17 @@ trust check.
   Neither `statuslist.Publisher` nor the Checker enforces it; a list
   with any valid `bits` is read correctly.
 - **mdoc algorithms.** A reader is to support every algorithm and curve
-  ISO/IEC 18013-5 §12.3.4 and §12.7.2 list. This library supports ES256
-  (P-256) and EdDSA (Ed25519) for issuer and device authentication, and
-  refuses the others (`credential/mdoc`'s package doc, "Algorithm and
-  curve support").
+  ISO/IEC 18013-5 §12.3.4 and §12.7.2 list. This library supports the
+  ones Go's standard library implements: ES256 (P-256), ES384 (P-384),
+  ES512 (P-521) and EdDSA (Ed25519) for issuer, device and reader
+  authentication and for CWT status and identifier lists, and P-256,
+  P-384 and P-521 for a proximity session's ephemeral keys and device
+  MAC. The brainpool curves (brainpoolP256r1, P320r1, P384r1, P512r1)
+  and Ed448 are refused with an error naming the curve
+  (`credential/mdoc`'s package doc, "Algorithm and curve support"). A
+  proximity holder generates its own ephemeral key on P-256, and the
+  Digital Credentials API's HPKE suite (Annex C) is DHKEM(P-256) as
+  specified. JOSE (SD-JWT VC, JWT status lists) stays ES256 and EdDSA.
 
 ## HAIP's deviations from plain FAPI 2.0
 

@@ -135,8 +135,10 @@ changes whether *every* bullet below is `(done)`.
   than guessing at the shape now.
 - **`internal/cose`** (done) — small, self-contained COSE_Sign1 (RFC 9052
   §4.2) and COSE_Mac0 (RFC 9052 §6.2) signers/verifiers, the CBOR/COSE
-  equivalent of `internal/jose`: same curated algorithm set for signing
-  (ES256, EdDSA) plus HMAC256 ("HMAC 256/256") for MACing, same
+  equivalent of `internal/jose`: ES256 and EdDSA for signing, as there,
+  plus ES384 and ES512 for the P-384 and P-521 keys ISO/IEC 18013-5 has
+  an mdoc reader verify (`AlgForKey` picks one from a key's curve), and
+  HMAC256 ("HMAC 256/256") for MACing, same
   `Sign`/`Verify`/`DecodeUnverified` shape, but with COSE's
   protected/unprotected header split (`Headers{Alg,KID,Typ,X5Chain}`)
   instead of JOSE's single header object. Handles the untagged COSE_Sign1
@@ -271,7 +273,8 @@ changes whether *every* bullet below is `(done)`.
   - **Holder/presentation side**: `SignDeviceSignature`/
     `VerifyDeviceSignature` (ECDSA/EdDSA mdoc authentication, §12.4.6)
     and `ComputeDeviceMAC`/`VerifyDeviceMAC` (ECDH-agreed MAC
-    authentication, §12.4.5, P-256 only — see `deriveEMacKey`'s own doc
+    authentication, §12.4.5, P-256, P-384 or P-521 with both keys on
+    one curve — see `deriveEMacKey`'s own doc
     comment for why Ed25519 can't do this one) for `DeviceSigned`
     (§10.3.3), plus `CheckKeyAuthorizations` (§12.8.2 step 1) — now a
     real consumer, `verifier.VerifyResponse`'s own mdoc path, via the
