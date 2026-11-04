@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.4.0...sqlstore/v0.5.0) (2026-11-04)
+
+
+### Features
+
+* **sqlstore:** add a durable statuslist.IndexStore ([a7f9ff7](https://github.com/IDFoundry/OID4VCgo/commit/a7f9ff7c00cf9928e84230347749c3b321317a58))
+
 ## [0.4.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.3.0...sqlstore/v0.4.0) (2026-11-03)
 
 
