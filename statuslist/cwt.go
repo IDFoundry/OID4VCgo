@@ -123,6 +123,17 @@ func issueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, prote
 // VerifyToken. It does not check sub against a specific Referenced
 // Token — that's Check's job.
 func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (TokenClaims, error) {
+	parsed, err := verifyTokenCWT(token, pub, alg, opts, nil)
+	if err != nil {
+		return TokenClaims{}, err
+	}
+	return parsed.claims, nil
+}
+
+// verifyTokenCWT is VerifyTokenCWT, given the claims parsed from the
+// same token's bytes before when memo isn't nil, as verifyToken is for
+// a JWT.
+func verifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
 	// COSE_Sign1, tagged (#6.18) or untagged; nothing else in front of
 	// it, so a CWT tag (61) is refused. Draft-14 §5.2, which HAIP pins,
 	// requires neither form, and its own example is untagged; draft-21
@@ -133,53 +144,50 @@ func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	// the credentials it covers just the same.
 	limit, err := opts.maxTokenBytes()
 	if err != nil {
-		return TokenClaims{}, err
+		return parsedClaims{}, err
 	}
 	protected, _, raw, err := cose.VerifyMax(alg, pub, token, nil, limit)
 	if err != nil {
-		return TokenClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
+		return parsedClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
 	if !strings.EqualFold(protected.Typ, CWTTokenMediaType) {
-		return TokenClaims{}, fmt.Errorf("statuslist: CWT typ is %q, want %q", protected.Typ, CWTTokenMediaType)
+		return parsedClaims{}, fmt.Errorf("statuslist: CWT typ is %q, want %q", protected.Typ, CWTTokenMediaType)
 	}
+	return parsedOrMemo(raw, memo, parseCWTPayload, opts)
+}
 
+// parseCWTPayload reads a CWT Status List Token's verified payload.
+func parseCWTPayload(raw []byte) (parsedClaims, error) {
 	var decoded map[int]interface{}
 	if err := cwtDecMode.Unmarshal(raw, &decoded); err != nil {
-		return TokenClaims{}, fmt.Errorf("statuslist: unmarshal CWT claims: %w", err)
+		return parsedClaims{}, fmt.Errorf("statuslist: unmarshal CWT claims: %w", err)
 	}
 
 	claims, err := parseCWTClaims(decoded)
 	if err != nil {
-		return TokenClaims{}, err
+		return parsedClaims{}, err
 	}
 	if !claims.StatusList.Bits.valid() {
-		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
+		return parsedClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
-	// As for the JWT form: a token naming another issuer isn't this
-	// one's.
+	// As for the JWT form, a token naming another issuer isn't this
+	// one's (parsedClaims.check).
+	parsed := parsedClaims{claims: claims}
 	if v, ok := decoded[cwtClaimIss]; ok {
 		iss, isString := v.(string)
 		if !isString {
-			return TokenClaims{}, fmt.Errorf("statuslist: CWT iss claim isn't a text string")
+			return parsedClaims{}, fmt.Errorf("statuslist: CWT iss claim isn't a text string")
 		}
-		if iss != "" && opts.Issuer != "" && iss != opts.Issuer {
-			return TokenClaims{}, fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", iss, opts.Issuer)
-		}
+		parsed.iss = iss
 	}
-
-	var nbf *int64
 	if v, ok := decoded[cwtClaimNbf]; ok {
 		n, err := toNumericDateClaim(v)
 		if err != nil {
-			return TokenClaims{}, fmt.Errorf("statuslist: nbf claim: %w", err)
+			return parsedClaims{}, fmt.Errorf("statuslist: nbf claim: %w", err)
 		}
-		nbf = &n
+		parsed.nbf = &n
 	}
-	if err := checkTokenTimes(claims.Iat, claims.Exp, nbf, opts); err != nil {
-		return TokenClaims{}, err
-	}
-
-	return claims, nil
+	return parsed, nil
 }
 
 func parseCWTClaims(decoded map[int]interface{}) (TokenClaims, error) {

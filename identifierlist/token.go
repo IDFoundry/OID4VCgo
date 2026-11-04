@@ -258,35 +258,50 @@ func (o VerifyOptions) now() time.Time {
 // (§12.3.6.3). It doesn't bind the signer to an mdoc's issuer or check
 // sub against a reference: that's Check's job.
 func VerifyToken(ctx context.Context, token []byte, roots *x509.CertPool, opts VerifyOptions) (TokenClaims, error) {
-	return verifyToken(ctx, token, roots, opts.LeafPolicy, opts)
+	parsed, err := verifyToken(ctx, token, roots, opts.LeafPolicy, opts, nil)
+	return parsed.claims, err
 }
 
-// verifyToken is VerifyToken with policy in place of opts.LeafPolicy.
-func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions) (TokenClaims, error) {
+// parsedClaims are a list's claims as read from its payload: they
+// depend on the token's bytes alone, so a Cache can keep them
+// (tokenMemo).
+type parsedClaims struct {
+	claims TokenClaims
+	nbf    *int64
+}
+
+// verifyToken is VerifyToken with policy in place of opts.LeafPolicy,
+// given the claims parsed from the same token's bytes before when memo
+// isn't nil: the signer's chain, the signature and the typ are verified
+// again, and the times checked again at opts's Now, but the claims
+// aren't parsed again.
+func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
 	now := opts.now()
 	// §12.3.6.3 has the x5chain protected, where the signature covers it.
 	leaf, alg, err := cose.X5ChainSigner(ctx, token, cose.X5ChainTrust{
 		MaxBytes: maxTokenBytes, ProtectedOnly: true, Roots: roots, Policy: policy, Revocation: opts.Revocation, Now: now,
 	})
 	if err != nil {
-		return TokenClaims{}, fmt.Errorf("identifierlist: %w", err)
+		return parsedClaims{}, fmt.Errorf("identifierlist: %w", err)
 	}
 	protected, _, raw, err := cose.VerifyMax(alg, leaf.PublicKey, token, nil, maxTokenBytes)
 	if err != nil {
-		return TokenClaims{}, fmt.Errorf("identifierlist: verify CWT signature: %w", err)
+		return parsedClaims{}, fmt.Errorf("identifierlist: verify CWT signature: %w", err)
 	}
 	if !strings.EqualFold(protected.Typ, MediaType) && !strings.EqualFold(protected.Typ, BareTyp) {
-		return TokenClaims{}, fmt.Errorf("identifierlist: CWT typ is %q, want %q or %q", protected.Typ, MediaType, BareTyp)
+		return parsedClaims{}, fmt.Errorf("identifierlist: CWT typ is %q, want %q or %q", protected.Typ, MediaType, BareTyp)
 	}
-	claims, nbf, err := parseClaims(raw)
-	if err != nil {
-		return TokenClaims{}, err
+	var parsed parsedClaims
+	if memo != nil {
+		parsed = *memo
+	} else if parsed.claims, parsed.nbf, err = parseClaims(raw); err != nil {
+		return parsedClaims{}, err
 	}
 	window := jwtdate.Window{MaxAge: opts.MaxAge, MaxClockSkew: opts.MaxClockSkew, RequireExp: true}
-	if err := window.Check(claims.Iat, claims.Exp, nbf, now); err != nil {
-		return TokenClaims{}, fmt.Errorf("identifierlist: %w", err)
+	if err := window.Check(parsed.claims.Iat, parsed.claims.Exp, parsed.nbf, now); err != nil {
+		return parsedClaims{}, fmt.Errorf("identifierlist: %w", err)
 	}
-	return claims, nil
+	return parsed, nil
 }
 
 // Check verifies token as VerifyToken does, binds its signer to the
@@ -308,11 +323,11 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 // document signer chain were verified: an unverified MSO could name
 // any Certificate, and with it any list.
 func Check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, documentSignerPath []*x509.Certificate, opts VerifyOptions) (revoked bool, claims TokenClaims, err error) {
-	claims, err = check(ctx, token, roots, ref, documentSignerPath, opts)
+	parsed, err := check(ctx, token, roots, ref, documentSignerPath, opts, nil)
 	if err != nil {
-		return true, claims, err
+		return true, TokenClaims{}, err
 	}
-	return claims.Contains(ref.ID), claims, nil
+	return parsed.claims.Contains(ref.ID), parsed.claims, nil
 }
 
 func (r Ref) validate() error {
@@ -322,25 +337,27 @@ func (r Ref) validate() error {
 	return nil
 }
 
-func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, documentSignerPath []*x509.Certificate, opts VerifyOptions) (TokenClaims, error) {
+// check is Check, before deciding revoked, given memo as verifyToken
+// is.
+func check(ctx context.Context, token []byte, roots *x509.CertPool, ref Ref, documentSignerPath []*x509.Certificate, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
 	if err := ref.validate(); err != nil {
-		return TokenClaims{}, err
+		return parsedClaims{}, err
 	}
 	roots, policy, err := signerTrust(roots, ref, documentSignerPath, opts)
 	if err != nil {
-		return TokenClaims{}, err
+		return parsedClaims{}, err
 	}
 	if roots == nil {
-		return TokenClaims{}, errors.New("identifierlist: no trust anchors: roots is nil and the reference names no certificate")
+		return parsedClaims{}, errors.New("identifierlist: no trust anchors: roots is nil and the reference names no certificate")
 	}
-	claims, err := verifyToken(ctx, token, roots, policy, opts)
+	parsed, err := verifyToken(ctx, token, roots, policy, opts, memo)
 	if err != nil {
-		return TokenClaims{}, err
+		return parsedClaims{}, err
 	}
-	if claims.Sub != ref.URI {
-		return TokenClaims{}, fmt.Errorf("identifierlist: token sub %q isn't the reference's uri %q", claims.Sub, ref.URI)
+	if parsed.claims.Sub != ref.URI {
+		return parsedClaims{}, fmt.Errorf("identifierlist: token sub %q isn't the reference's uri %q", parsed.claims.Sub, ref.URI)
 	}
-	return claims, nil
+	return parsed, nil
 }
 
 // signerTrust is the roots and leaf policy a list's signer must meet
