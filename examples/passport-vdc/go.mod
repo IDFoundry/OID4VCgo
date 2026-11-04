@@ -7,7 +7,7 @@ require (
 	github.com/gmrtd/gmrtd v1.7.1
 	github.com/idfoundry/fapigo v0.69.0
 	github.com/idfoundry/fapigo/sqlstore v0.4.0
-	github.com/idfoundry/oid4vcgo v0.57.0
+	github.com/idfoundry/oid4vcgo v0.64.0
 	github.com/idfoundry/oid4vcgo/sqlstore v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
 	modernc.org/sqlite v1.61.0
