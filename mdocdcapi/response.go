@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/hpke"
 	"encoding/base64"
 	"errors"
@@ -475,13 +473,12 @@ func missing(disclosed map[string]map[string]any, requested map[string]map[strin
 	return out
 }
 
+// deviceAlgFor is the COSE algorithm the MSO's device key signs with
+// (cose.AlgForKey).
 func deviceAlgFor(pub crypto.PublicKey) (cose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("mdocdcapi: unsupported device key type %T", pub)
+	alg, err := cose.AlgForKey(pub)
+	if err != nil {
+		return 0, fmt.Errorf("mdocdcapi: device key: %w", err)
 	}
+	return alg, nil
 }

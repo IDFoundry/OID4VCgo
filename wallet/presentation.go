@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -625,14 +624,11 @@ func signAndCompactSDJWTVCPresentation(held HeldCredential, pres sdjwtvc.Present
 // never trust a wire-declared one" discipline verifier's own
 // mdocDeviceAlgForKey applies on the verification side.
 func mdocDeviceAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported holder key type %T", pub)
+	alg, err := cose.AlgForKey(pub)
+	if err != nil {
+		return 0, fmt.Errorf("holder key: %w", err)
 	}
+	return alg, nil
 }
 
 // PresentMdocParams bundles the Authorization-Request-derived context

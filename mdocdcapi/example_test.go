@@ -188,9 +188,15 @@ func newLeaf(name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ..
 	}, ca, caKey)
 }
 
-// newCert signs tmpl for a fresh key, by parent (nil: self-signed).
+// newCert signs tmpl for a fresh P-256 key, by parent (nil:
+// self-signed).
 func newCert(tmpl, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
-	key := must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader))
+	return newCertOn(elliptic.P256(), tmpl, parent, parentKey)
+}
+
+// newCertOn is newCert for a key on curve.
+func newCertOn(curve elliptic.Curve, tmpl, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+	key := must(ecdsa.GenerateKey(curve, rand.Reader))
 	tmpl.SerialNumber = must(rand.Int(rand.Reader, big.NewInt(1<<62)))
 	tmpl.NotBefore, tmpl.NotAfter = time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour)
 	if parent == nil {

@@ -1058,14 +1058,7 @@ func (v *Verifier) buildMdocSessionTranscriptBytes(req VerifyResponseRequest, th
 // applies for "dc+sd-jwt", used both for the mdoc authentication
 // (device) key and X5ChainIssuerKeyResolver's own resolved issuer key.
 func mdocAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
-	default:
-		return 0, fmt.Errorf("unsupported public key type %T", pub)
-	}
+	return cose.AlgForKey(pub)
 }
 
 // holderPublicKeyFromCNF derives the Holder Binding key from an

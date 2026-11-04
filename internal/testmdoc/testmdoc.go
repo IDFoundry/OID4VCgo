@@ -52,11 +52,26 @@ func Issue(t testing.TB) Fixture {
 // — e.g. to add a Status reference.
 func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 	t.Helper()
-	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	return issue(t, elliptic.P256(), elliptic.P256(), mutate)
+}
+
+// IssueOn is Issue with the issuer's key on issuerCurve and the device
+// key on deviceCurve, IssuerAuth signed with the issuer curve's
+// algorithm.
+func IssueOn(t testing.TB, issuerCurve, deviceCurve elliptic.Curve) Fixture {
+	t.Helper()
+	return issue(t, issuerCurve, deviceCurve, func(*mdoc.Claims) {
+		// The default claims, unchanged.
+	})
+}
+
+func issue(t testing.TB, issuerCurve, deviceCurve elliptic.Curve, mutate func(*mdoc.Claims)) Fixture {
+	t.Helper()
+	issuerKey, err := ecdsa.GenerateKey(issuerCurve, rand.Reader)
 	if err != nil {
 		t.Fatalf("testmdoc: generate issuer key: %v", err)
 	}
-	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	deviceKey, err := ecdsa.GenerateKey(deviceCurve, rand.Reader)
 	if err != nil {
 		t.Fatalf("testmdoc: generate device key: %v", err)
 	}
@@ -78,7 +93,7 @@ func IssueWith(t testing.TB, mutate func(*mdoc.Claims)) Fixture {
 		ValidUntil: signed.Add(time.Hour),
 	}
 	mutate(&claims)
-	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, claims, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
+	issuerSigned, err := mdoc.Issue(issuerKey, keyAlg(t, issuerKey), claims, mdoc.IssueOptions{X5Chain: [][]byte{cert.Raw}})
 	if err != nil {
 		t.Fatalf("testmdoc: mdoc.Issue: %v", err)
 	}
@@ -122,7 +137,7 @@ func WithMSOStatus(t testing.TB, f Fixture, status any) Fixture {
 	if payload, err = cbor.Marshal(cbor.RawTag{Number: 24, Content: content}); err != nil {
 		t.Fatalf(msoErrFormat, err)
 	}
-	if f.IssuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
+	if f.IssuerSigned.IssuerAuth, err = cose.Sign(keyAlg(t, f.IssuerKey), f.IssuerKey, protected, unprotected, payload, []byte{}); err != nil {
 		t.Fatalf("testmdoc: sign IssuerAuth: %v", err)
 	}
 	return f
@@ -190,7 +205,7 @@ func PresentDCAPI(t testing.TB, f Fixture, params oid4vpmdoc.DCAPIHandoverParams
 // which flow's own Handover built those bytes.
 func presentWithSessionTranscript(t testing.TB, f Fixture, sessionTranscriptBytes []byte) string {
 	t.Helper()
-	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, cose.ES256, sessionTranscriptBytes, DocType, map[string]map[string]interface{}{})
+	deviceSigned, err := mdoc.SignDeviceSignature(f.DeviceKey, keyAlg(t, f.DeviceKey), sessionTranscriptBytes, DocType, map[string]map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("testmdoc: SignDeviceSignature: %v", err)
 	}
@@ -216,4 +231,14 @@ func ResponseEncryptionThumbprint(t testing.TB, key *ecdsa.PrivateKey) []byte {
 		t.Fatalf("testmdoc: jwk.Thumbprint: %v", err)
 	}
 	return raw
+}
+
+// keyAlg is the COSE algorithm key signs with.
+func keyAlg(t testing.TB, key *ecdsa.PrivateKey) cose.Alg {
+	t.Helper()
+	alg, err := cose.AlgForKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("testmdoc: %v", err)
+	}
+	return alg
 }
