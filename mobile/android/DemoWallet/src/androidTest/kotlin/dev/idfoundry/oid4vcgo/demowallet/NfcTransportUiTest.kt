@@ -17,7 +17,7 @@ class NfcTransportUiTest {
     @Test fun armedNfcReaderShowsSelectionAndCanCancel() {
         var cancelled = false
         compose.setContent { MaterialTheme {
-            NfcReaderWaiting(readerPresets.last(), null, onCancel = { cancelled = true }, onRetry = {})
+            NfcReaderWaiting(testPreset, null, onCancel = { cancelled = true }, onRetry = {})
         } }
         compose.onNodeWithTag("reader-nfc-waiting").assertIsDisplayed()
         compose.onNodeWithText("NFC verification").assertIsDisplayed()
@@ -31,7 +31,7 @@ class NfcTransportUiTest {
     @Test fun nfcErrorOffersRetryWithoutClaimingReaderIsReady() {
         var retried = false
         compose.setContent { MaterialTheme {
-            NfcReaderWaiting(readerPresets.last(), "Turn on NFC and try again.", onCancel = {}, onRetry = { retried = true })
+            NfcReaderWaiting(testPreset, "Turn on NFC and try again.", onCancel = {}, onRetry = { retried = true })
         } }
         compose.onNodeWithTag("reader-nfc-ready").assertDoesNotExist()
         compose.onNodeWithText("Turn on NFC and try again.").assertIsDisplayed()
@@ -59,5 +59,6 @@ class NfcTransportUiTest {
 
     private companion object {
         const val NFC_ONLY = "NFC only"
+        val testPreset = readerPresets.first { it.title == "Test mdoc: name" }
     }
 }
