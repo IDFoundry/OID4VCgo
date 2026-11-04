@@ -54,6 +54,38 @@ through), and remembers it:
  "provider_url": "https://…"}
 ```
 
+## Revocation lists
+
+Against the passport-vdc demo, whose CAs publish Certificate Revocation
+Lists, the scripts here configure the wallet to check its trust roles
+against them (`revocation`: `issuer`, `status`, `verifier`,
+`mdoc_reader` and `registrar`) and the reader likewise (`issuer`,
+`status`), each fetching the lists from the distribution points its
+roots name (`crl_distribution_points_from_roots`, over https only:
+`crl_require_https`). The app calls the library's `refreshCRLs()` at
+launch, on returning to the foreground once the last refresh's
+`nextRefresh` has passed, and from **Settings → Revocation lists**,
+which shows each distribution point's outcome (updated, unchanged or
+failed, with why), when the lists were fetched and when they're next
+due, and **Refresh revocation lists**. It keeps the lists it gets (the
+result's `crls`) in the app group's defaults and passes them back as
+`crls` at the next launch, so checks work before the first refresh, and
+the document provider extension checks against them too. A new
+configuration starts without them. Nothing refreshes them while the app
+is closed: a shipping app would schedule `refreshCRLs()` with
+`BGTaskScheduler` at `nextRefresh` (the library's
+[GoingToProduction](../OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc/GoingToProduction.md)
+guide). A list past its nextUpdate (an hour after the demo signs it)
+refuses its CA's certificates until the next refresh.
+
+Revoke the demo issuer's document signer (its **Issued credentials**
+page, **Revoke document signer…**), then refresh the lists here: the
+Verify tab refuses an mdoc that signer signed, saying its document
+signer was revoked, and the demo's verifier refuses a presentation of
+it. The wallet itself keeps listing it as before: it checks a
+credential's signer when it receives it, not afterwards. Receive it
+again for one the new signer signs.
+
 ## In person (ISO/IEC 18013-5 over BLE)
 
 **Share in person, the Present tab:** it shows a QR code at once (iOS
@@ -75,8 +107,11 @@ Verify tab's result says which mode a session used.
 **Reader mode, the Verify tab:** with a `reader` in the configuration
 (`{"issuer_roots", "reader_chain", "reader_key"}`: the test services and
 the scripts here add one), the Verify tab in the tab bar offers what to
-ask for, scans the holder's QR code, and shows what verified.
-Revocation isn't checked: the status list reference is shown. An
+ask for, scans the holder's QR code, and shows what verified. It
+checks the document's status list before reporting it verified, and,
+with `revocation` in its `reader` configuration (the passport-vdc
+scripts set it), the document signer's certificate against its IACA's
+revocation list (see Revocation lists); without, that isn't checked. An
 `mdoc:` link opens the Verify tab too. The reader key arrives in the
 configuration as a demo shortcut; a real reader makes its key in the
 Secure Enclave.
@@ -174,6 +209,12 @@ login.
 4. On the phone, open the issuer's page in Safari, upload a passport (or
    use the sample), and open the offer link. For a presentation, open the
    verifier's page on another screen and scan its QR code in the app.
+
+A demo state directory from before the demo's CAs published CRLs gets
+new CAs the first time the demo starts with it (it logs so): their old
+keys weren't kept, so they can't sign a CRL. Run `run-device.sh` again,
+for the app to trust the new ones, and receive the credentials again.
+The same goes for the Simulator and `run-passport-vdc.sh`.
 
 ### Presenting to Safari (Digital Credentials API)
 

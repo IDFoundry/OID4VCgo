@@ -197,8 +197,11 @@ the Verify tab in the bottom bar offers what to ask for (a Photo
 ID's or a driving licence's age, or name, photo and age; the test
 services' mdoc), scans the holder's QR code, and shows what verified:
 the elements, the issuer and the IACA it chains to, validity and device
-authentication. Revocation isn't checked: the status list reference is
-shown. An `mdoc:` link opens the Verify tab too, without the camera.
+authentication. It checks the document's status list before reporting
+it verified, and, with `revocation` in its `reader` configuration
+(`run-passport-vdc.sh` sets it), the document signer's certificate
+against its IACA's revocation list (see Revocation lists below); without,
+that isn't checked. An `mdoc:` link opens the Verify tab too, without the camera.
 
 The test services give a reader (`Test Services Reader`) the wallet
 recognizes; passport-vdc's demo writes its own to
@@ -208,6 +211,50 @@ configuration: it runs the app against the passport-vdc demo, on an
 emulator or a USB-connected phone, as the iOS demo's `run-device.sh`
 does on an iPhone. Use it to try an Android phone and an iPhone
 together.
+
+A demo state directory from before the demo's CAs published CRLs gets
+new CAs the first time the demo starts with it (it logs so): their old
+keys weren't kept, so they can't sign a CRL. Run `run-passport-vdc.sh`
+again, for the app to trust the new ones, and receive the credentials
+again.
+
+### Revocation lists
+
+Against the passport-vdc demo, whose CAs publish Certificate Revocation
+Lists, `run-passport-vdc.sh` configures the wallet to check its trust
+roles against them (`revocation`: `issuer`, `status`, `verifier`,
+`mdoc_reader` and `registrar`) and the reader likewise (`issuer`,
+`status`). Its certificates name https distribution points, but Go on
+Android trusts only the system's CA files, not the demo's self-signed
+certificate (`development_roots` doesn't apply to CRL fetches), so the
+script names the copies `cmd/demo` serves over plain http on
+`127.0.0.1:8580` instead, each bound to its CA
+(`crl_distribution_points`), and forwards that port too; the reader is
+a development reader, to fetch from loopback. A CRL is signed, so http
+is the usual way to serve one.
+
+The app calls the library's `refreshCRLs()` for the wallet and the
+reader at launch, on returning to the app once the last refresh's
+`nextRefresh` has passed, and from **Settings → Revocation lists**,
+which shows each distribution point's outcome (updated, unchanged or
+failed, with why), when the lists were fetched and when they're next
+due, and **Refresh revocation lists**. It keeps the lists it gets (the
+result's `crls`) in its preferences and passes them back as `crls` at
+the next launch, so checks work before the first refresh; a new
+configuration starts without them. Nothing refreshes them while the app
+is closed: a shipping app would schedule `refreshCRLs()` with
+WorkManager at `nextRefresh` (the library's
+[GoingToProduction](../docs/GoingToProduction.md) guide). A list past
+its nextUpdate (an hour after the demo signs it) refuses its CA's
+certificates until the next refresh.
+
+Revoke the demo issuer's document signer (its **Issued credentials**
+page, **Revoke document signer…**), then refresh the lists here: the
+Verify tab refuses an mdoc that signer signed, saying its document
+signer was revoked, and the demo's verifier refuses a presentation of
+it. The wallet itself keeps listing it as before: it checks a
+credential's signer when it receives it, not afterwards. Receive it
+again for one the new signer signs.
 
 ### Two phones, by hand
 
