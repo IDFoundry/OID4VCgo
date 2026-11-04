@@ -289,6 +289,19 @@ the same services, Bluetooth on, screen lock set:
    holder shows an unknown reader).
 5. Swap the phones' roles.
 
+Two documents in one response:
+
+1. On the holder, receive two test mdocs: `curl -sk -X POST
+   'https://127.0.0.1:8600/offer?pin=493536&mdoc=2'`, open the link, enter
+   493536.
+2. On the reader, choose "Test mdocs 1 and 2: name" and scan the
+   holder's QR code (or tap by NFC).
+3. The holder sees a section per document. "Share 2 documents" asks for
+   the screen lock once: the reader shows "Verified 2 documents", each
+   with its names.
+4. Again, unticking every element of one document: the reader shows the
+   other verified, and the first under "Not shared".
+
 The demo doesn't log its QR code: the device engagement is for the
 reader that scans it, not for anything that can read the device's log.
 

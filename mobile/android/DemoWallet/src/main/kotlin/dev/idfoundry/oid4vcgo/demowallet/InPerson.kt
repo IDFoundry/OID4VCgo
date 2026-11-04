@@ -81,6 +81,7 @@ import dev.idfoundry.oid4vcwallet.MdocStatus
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPermissions
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
+import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderIdentity
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
 import dev.idfoundry.oid4vcwallet.WalletException
@@ -93,31 +94,48 @@ import java.time.format.DateTimeFormatter
 /** The reader's outcome text, for the UI tests. */
 private const val READER_OUTCOME = "reader-outcome"
 
-/** A request reader mode makes: a document type and its elements. */
-data class ReaderPreset(val title: String, val docType: String, val elements: Map<String, List<String>>)
+/** A request reader mode makes: one or more documents, each a type and its elements. */
+data class ReaderPreset(val title: String, val documents: List<ProximityReader.DocumentRequest>) {
+    /** One document: [docType]'s [elements]. */
+    constructor(title: String, docType: String, elements: Map<String, List<String>>) :
+        this(title, listOf(ProximityReader.DocumentRequest(docType, elements)))
+
+    /** What this preset asks of documents of [docType], by namespace; empty when it doesn't ask for that type. */
+    fun elementsFor(docType: String): Map<String, List<String>> = documents.firstOrNull { it.docType == docType }?.elements.orEmpty()
+}
 
 /**
  * Reader mode's requests: the passport-vdc Photo ID, an mDL, and the test
- * services' mdoc. The "another namespace" ones also ask for an AAMVA
+ * services' mdocs. The "another namespace" ones also ask for an AAMVA
  * element the document doesn't have, to see how a holder answers a
- * request it can only partly meet.
+ * request it can only partly meet. The "and" ones ask for two documents
+ * in one request: the holder shares either or both.
  */
 val readerPresets: List<ReaderPreset> = run {
     val photoID = "org.iso.23220.photoid.1" to "org.iso.23220.1"
     val mdl = "org.iso.18013.5.1.mDL" to "org.iso.18013.5.1"
     val test = "org.example.test.1"
+    val test2 = "org.example.test.2"
     val aamva = "org.iso.18013.5.1.aamva" to listOf("DHS_compliance")
     val identity = listOf("family_name", "given_name", "portrait", "age_over_18")
+    val name = listOf("family_name", "given_name")
     listOf(
         ReaderPreset("Photo ID: over 18?", photoID.first, mapOf(photoID.second to listOf("age_over_18"))),
         ReaderPreset("Photo ID: name, photo and age", photoID.first, mapOf(photoID.second to identity)),
         ReaderPreset("Photo ID: name, and another namespace's element", photoID.first,
-            mapOf(photoID.second to listOf("family_name", "given_name"), aamva)),
+            mapOf(photoID.second to name, aamva)),
         ReaderPreset("Driving licence: over 18?", mdl.first, mapOf(mdl.second to listOf("age_over_18"))),
         ReaderPreset("Driving licence: name, photo and age", mdl.first, mapOf(mdl.second to identity)),
-        ReaderPreset("Test mdoc: name", test, mapOf(test to listOf("family_name", "given_name"))),
-        ReaderPreset("Test mdoc: name, and another namespace's element", test,
-            mapOf(test to listOf("family_name", "given_name"), aamva)),
+        ReaderPreset("Photo ID and driving licence: name", listOf(
+            ProximityReader.DocumentRequest(photoID.first, mapOf(photoID.second to name)),
+            ProximityReader.DocumentRequest(mdl.first, mapOf(mdl.second to name)),
+        )),
+        ReaderPreset("Test mdoc: name", test, mapOf(test to name)),
+        ReaderPreset("Test mdoc: name, and another namespace's element", test, mapOf(test to name, aamva)),
+        ReaderPreset("Test mdocs 1 and 2: name", listOf(
+            ProximityReader.DocumentRequest(test, mapOf(test to name)),
+            ProximityReader.DocumentRequest(test2, mapOf(test2 to name)),
+        )),
     )
 }
 
@@ -269,30 +287,42 @@ internal fun NfcTapIndicator(size: Dp = 120.dp) {
     )
 }
 
-/** Who is asking, what for, and the holder's choice of elements. */
+/**
+ * Who is asking, what for, and the holder's choice: every requested
+ * document the wallet holds, each with its elements to tick, shared in
+ * one response; the ones it doesn't hold are named.
+ */
 @Composable
 private fun InPersonConsent(model: WalletModel, request: ProximityPresentation.Request, onCertificates: (List<X509Certificate>) -> Unit) {
-    // The first document the wallet can answer; the request's first otherwise.
-    val documentIndex = request.documents.indexOfFirst { it.credentials.isNotEmpty() }.takeIf { it >= 0 } ?: 0
-    val document = request.documents.getOrNull(documentIndex)
-    val credential = document?.credentials?.firstOrNull()
-    val chosen = remember(request) { mutableStateMapOf<String, Boolean>().apply { document?.elements?.forEach { put(it.namespace + "/" + it.identifier, true) } } }
+    // Each document the wallet can answer, by its number in the request, with the held mdoc that answers it.
+    val answerable = request.documents.withIndex().mapNotNull { (i, d) -> d.credentials.firstOrNull()?.let { Triple(i, d, it) } }
+    val missing = request.documents.filter { it.credentials.isEmpty() }
+    // Every element ticked to begin with, keyed by document number and element.
+    val chosen = remember(request) {
+        mutableStateMapOf<String, Boolean>().apply {
+            answerable.forEach { (i, d, _) -> d.elements.forEach { put(choiceKey(i, it), true) } }
+        }
+    }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         item { ReaderCard(request.reader, onCertificates) }
         model.notice?.let { item { Text(it, Modifier.padding(vertical = 8.dp), color = Color(0xFFE65100)) } }
-        if (document == null || credential == null) {
+        if (answerable.isEmpty()) {
             item {
                 Text(
-                    "You have nothing this reader asks for${document?.let { " (${it.doctype})" }.orEmpty()}.",
+                    "You have nothing this reader asks for (${request.documents.joinToString { it.doctype }}).",
                     Modifier.padding(vertical = 16.dp).testTag("in-person-nothing"),
                 )
             }
-        } else {
-            item {
-                Text("It asks for, from ${credential.display?.name ?: document.doctype}:", Modifier.padding(top = 16.dp, bottom = 8.dp), fontWeight = FontWeight.SemiBold)
+        }
+        for ((i, document, credential) in answerable) {
+            item(key = "document-$i") {
+                Text(
+                    "It asks for, from ${credential.display?.name ?: document.doctype}:",
+                    Modifier.padding(top = 16.dp, bottom = 8.dp).testTag("in-person-document"), fontWeight = FontWeight.SemiBold,
+                )
             }
-            items(document.elements, key = { it.namespace + "/" + it.identifier }) { e ->
-                val key = e.namespace + "/" + e.identifier
+            items(document.elements, key = { "$i/" + it.namespace + "/" + it.identifier }) { e ->
+                val key = choiceKey(i, e)
                 Row(Modifier.fillMaxWidth().clickable { chosen[key] = !(chosen[key] ?: false) }.testTag("in-person-element"), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(chosen[key] ?: false, { chosen[key] = it })
                     Column(Modifier.weight(1f)) {
@@ -302,19 +332,33 @@ private fun InPersonConsent(model: WalletModel, request: ProximityPresentation.R
                 }
             }
         }
+        if (answerable.isNotEmpty() && missing.isNotEmpty()) {
+            item {
+                Text(
+                    "It also asks for what you don't have: ${missing.joinToString { it.doctype }}.",
+                    Modifier.padding(top = 16.dp).testTag("in-person-missing"), style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         item {
+            // A document goes in the response when any of its elements is ticked.
+            val answers = answerable.mapNotNull { (i, d, c) ->
+                d.elements.filter { chosen[choiceKey(i, it)] == true }.takeIf { it.isNotEmpty() }?.let { MdocPresentation.Answer(i, c.id, it) }
+            }
             Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton({ model.declineInPerson() }, Modifier.weight(1f).testTag("in-person-decline")) { Text("Decline") }
-                val selected = document?.elements?.filter { chosen[it.namespace + "/" + it.identifier] == true }.orEmpty()
                 Button(
-                    { if (credential != null) model.respondInPerson(documentIndex, credential.id, selected) },
+                    { model.respondInPerson(answers) },
                     Modifier.weight(1f).testTag("in-person-share"),
-                    enabled = credential != null && selected.isNotEmpty(),
-                ) { Text("Share") }
+                    enabled = answers.isNotEmpty(),
+                ) { Text(if (answers.size > 1) "Share ${answers.size} documents" else "Share") }
             }
         }
     }
 }
+
+/** The consent screen's key for element [e] of document number [document]. */
+private fun choiceKey(document: Int, e: MdocPresentation.Element): String = "$document/${e.namespace}/${e.identifier}"
 
 /** The reader as the wallet knows it: its name and how far it's verified. */
 @Composable
@@ -467,7 +511,7 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { preset = p; startScan() }.testTag("reader-preset")) {
                         Column(Modifier.padding(16.dp)) {
                             Text(p.title)
-                            Text(p.elements.values.flatten().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
+                            Text(p.documents.flatMap { it.elements.values.flatten() }.distinct().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
                             // The card scans too; the button says so.
                             Button({ preset = p; startScan() }, Modifier.padding(top = 8.dp).testTag("reader-qr")) {
                                 Text(if (model.engagementToRead != null) "Read the holder's phone" else "Scan QR code")
@@ -537,37 +581,47 @@ private fun ReaderOutcome(
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
             is ProximityReaderSession.State.Verified -> {
-                val v = state.result
+                val verified = state.documents
                 item {
                     Row(Modifier.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
                         Spacer(Modifier.width(8.dp))
-                        Text("Verified", style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(READER_OUTCOME))
+                        Text(
+                            if (verified.size > 1) "Verified ${verified.size} documents" else "Verified",
+                            style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(READER_OUTCOME),
+                        )
                     }
                 }
-                for ((namespace, elements) in v.claims) {
-                    val o = elements as? JsonObject ?: continue
-                    for ((identifier, value) in o) item { ReaderClaim(identifier, value) }
-                    // What was asked for and withheld.
-                    val missing = preset?.elements?.get(namespace).orEmpty().filter { it !in o }
-                    if (missing.isNotEmpty()) item { Labeled("Not shared", missing.joinToString { elementLabel(it) }) }
+                for ((n, v) in verified.withIndex()) {
+                    if (verified.size > 1) item { Text(v.doctype, Modifier.padding(top = 8.dp).testTag("reader-document"), fontWeight = FontWeight.SemiBold) }
+                    val asked = preset?.elementsFor(v.doctype).orEmpty()
+                    for ((namespace, elements) in v.claims) {
+                        val o = elements as? JsonObject ?: continue
+                        for ((identifier, value) in o) item { ReaderClaim(identifier, value) }
+                        // What was asked for and withheld.
+                        val missing = asked[namespace].orEmpty().filter { it !in o }
+                        if (missing.isNotEmpty()) item { Labeled("Not shared", missing.joinToString { elementLabel(it) }) }
+                    }
+                    item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+                    item { Labeled("Document", v.doctype) }
+                    if (n == 0) item { ReaderDataTransport(usesNfcData, mode) }
+                    item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
+                    item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
+                    item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
+                    v.statusList?.let { s ->
+                        item { Labeled("Status list", "${v.status?.let(::statusWord) ?: "not checked"}: ${s.uri} #${s.index}") }
+                    }
+                    item {
+                        Labeled(
+                            "Issuer certificate",
+                            if (checksIssuerRevocation) "not revoked (checked against its CA's revocation list)" else "revocation not checked",
+                            Modifier.testTag("reader-issuer-revocation"),
+                        )
+                    }
                 }
-                item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-                item { Labeled("Document", v.doctype) }
-                item { ReaderDataTransport(usesNfcData, mode) }
-                item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
-                item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
-                item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
-                v.statusList?.let { s ->
-                    item { Labeled("Status list", "${v.status?.let(::statusWord) ?: "not checked"}: ${s.uri} #${s.index}") }
-                }
-                item {
-                    Labeled(
-                        "Issuer certificate",
-                        if (checksIssuerRevocation) "not revoked (checked against its CA's revocation list)" else "revocation not checked",
-                        Modifier.testTag("reader-issuer-revocation"),
-                    )
-                }
+                // Asked for and not shared at all: the holder may share some documents and not others.
+                val absent = preset?.documents.orEmpty().map { it.docType }.filter { dt -> verified.none { it.doctype == dt } }
+                if (absent.isNotEmpty()) item { Labeled("Not shared", absent.joinToString(), Modifier.testTag("reader-absent")) }
             }
             ProximityReaderSession.State.Declined -> item { Text("The holder declined.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
             ProximityReaderSession.State.Cancelled -> item { Text("Cancelled.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }

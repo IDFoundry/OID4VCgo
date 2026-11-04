@@ -1020,14 +1020,19 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Shares [elements] of [credentialID] with the reader, for document [document]. */
-    fun respondInPerson(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) {
+    /**
+     * Shares [answers] with the reader in one response: each a requested
+     * document, the credential answering it, and its chosen elements. The
+     * holder confirms once for them all.
+     */
+    fun respondInPerson(answers: List<MdocPresentation.Answer>) {
         val p = inPerson ?: return
         viewModelScope.launch {
             // A cancelled prompt leaves the request standing.
-            if (!confirmHolder("Share your credential with the reader.")) return@launch
+            val what = if (answers.size > 1) "Share ${answers.size} documents with the reader." else "Share your credential with the reader."
+            if (!confirmHolder(what)) return@launch
             try {
-                p.respond(document, credentialID, elements)
+                p.respond(answers)
             } catch (e: WalletException) {
                 // A cancelled prompt leaves the request standing: try again or decline.
                 notice = describe(e)
@@ -1141,7 +1146,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                 if (nfcReadPreset !== preset || nfcReadJob?.isActive == true || reading != null) return@launch
                 nfcReadJob = viewModelScope.launch {
                     try {
-                        val session = reader?.startFromNfc(getApplication(), tag, preset.docType, preset.elements) ?: return@launch
+                        val session = reader?.startFromNfc(getApplication(), tag, preset.documents) ?: return@launch
                         reading = session
                         readingPreset = preset
                         readingJob = viewModelScope.launch { session.state.collect { readingState = it } }
@@ -1205,7 +1210,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun read(qrCode: String, preset: ReaderPreset) {
         val reader = reader ?: return
         try {
-            val session = reader.start(getApplication(), qrCode, preset.docType, preset.elements)
+            val session = reader.start(getApplication(), qrCode, preset.documents)
             reading = session
             readingPreset = preset
             readingJob = viewModelScope.launch { session.state.collect { readingState = it } }
