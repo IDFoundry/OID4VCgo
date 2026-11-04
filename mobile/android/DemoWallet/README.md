@@ -110,7 +110,10 @@ and the keys go without chains. See the passport-vdc README's
 "The stand-in Wallet Provider". The iOS demo app sends no such
 evidence: App Attest attests the app, not its Secure Enclave keys.
 
-The demo requires Android 11/API 30 and compileSdk 37. Install a matching
+The demo requires Android 8/API 26, as the library does, and compileSdk 37.
+Below Android 11 the holder confirms a presentation with the system's screen
+lock prompt, since one prompt for biometrics or the screen lock is API 30's.
+Install a matching
 debug APK with `adb -s <device> install -r <apk>` to preserve data when the
 installed signing key matches; do not uninstall or reset an existing wallet
 just to try a new build. The test-services launch helpers reset the wallet,
