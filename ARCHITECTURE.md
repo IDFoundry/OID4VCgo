@@ -1,6 +1,7 @@
 # Architecture
 
-> **Status: every planned package is `(done)`**, including `conformance`
+> **Status: every planned package is `(done)` except `walletprovider`
+> (`(started)`)**, including `conformance`
 > (all four OIDF conformance-suite binaries built and each
 > confirmed live against a real, locally-run OIDF conformance suite
 > instance — see its own bullet below for the one deliberate, permanent
@@ -421,6 +422,56 @@ changes whether *every* bullet below is `(done)`.
   why this package only reads claims FAPIgo's own verification discards,
   never re-verifies a signature FAPIgo already checked). Tests include
   OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
+- **`walletprovider`** (started: the core package) — the Wallet
+  Provider role, which decides whether to mint what `attestation`
+  mints: it registers wallet instances from platform evidence, issues
+  HAIP §4.4.1 Wallet Attestations and §4.5.1 (OID4VCI Appendix D) Key
+  Attestations claiming only what that evidence proved, and revokes
+  instances through its own Token Status List, which issuers already
+  check (`haip.WalletAttestationStatusList`,
+  `issuer.StatusListAttestationStatus`). `Config`/`Dependencies`/`New`
+  in `issuer`'s shape; `New` refuses a signer whose certificate isn't
+  the chain HAIP and FAPIgo's `X5CAttesterChain` expect (not
+  self-signed, no anchor, naming `Config.Identifier` as a URI SAN, no
+  other role's extended key usage). Rules:
+  - **No unattested path.** A registration or Key Attestation request
+    without evidence is refused; there is no development setting that
+    changes it. Tests and emulators plug in an `EvidenceVerifier` of
+    their own (`walletprovidertest.FakeVerifier`, never for
+    production).
+  - **Evidence is pluggable, by `Kind`.** An `EvidenceVerifier` is
+    given the evidence, the consumed challenge (one-use, short-lived,
+    bound to a `Purpose`), the keys the request names and, after
+    registration, the instance; it returns what it proved per key
+    (security level, `KeyBinding`, user authentication) and of the app
+    and device. Android Key Attestation attests each key itself
+    (`KeyBindingAttested`); Apple App Attest attests the app, which
+    then signs for keys (`KeyBindingAppAssertion`), with its
+    registration key kept as `Instance.Credential` and its assertion
+    counter advanced through `InstanceStore.Update`'s compare-and-swap.
+  - **Claims come from policy, never the app.** `Policy` sets the
+    accepted platforms, security levels, minimum app versions and
+    verified boot, and is applied again at every attestation, so
+    tightening it refuses existing instances. A Key Attestation's
+    `key_storage`/`user_authentication` come only from
+    `Policy.KeyStorage`, keyed by verified evidence; an app-asserted
+    (iOS) key matches only a row naming `KeyBindingAppAssertion`, so
+    nothing is claimed for one unless the integrator says so.
+  - **Status is per instance.** Each instance holds one
+    `statuslist.Allocator` index (two bits, so SUSPENDED fits) that
+    both attestations reference; `Suspend`/`Resume`/`Revoke` and
+    `RevokeWhere` set it, and `Provider.StatusList` serves the list
+    signed with the attestations' own key, the binding issuers check by
+    default.
+  - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
+    short JWT over method, path, body hash and a `PurposeRequest`
+    challenge, signed with the instance key — what the HTTP layer will
+    require.
+
+  Still to come, each its own package or PR: `walletprovider/androidkey`
+  and `walletprovider/appattest` (the platform verifiers), the HTTP
+  handler and Go client, `sqlstore` stores, and the passport-vdc demo's
+  move onto it.
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no
