@@ -24,13 +24,31 @@ trap 'rm -rf "$WORK"' EXIT
 
 ../../build-aar.sh
 (cd .. && ./gradlew -q :DemoWallet:installDebug)
-# The demo's wallet provider, issuer, verifier and web wallet.
-for p in 6443 8543 9443 7443; do "$ADB" reverse "tcp:$p" "tcp:$p" >/dev/null; done
+# The demo's wallet provider, issuer, verifier and web wallet, and its
+# CRLs over plain http (8580).
+for p in 6443 8543 9443 7443 8580; do "$ADB" reverse "tcp:$p" "tcp:$p" >/dev/null; done
 
 # The demo's registration of its wallet (examples/passport-vdc/cmd/demo).
 python3 - "$STATE" > "$WORK/config.json" <<'PY'
 import json, pathlib, sys
 state = pathlib.Path(sys.argv[1])
+# The demo's CAs publish CRLs at the https distribution points their
+# certificates name, which Go on Android can't fetch here: it trusts
+# only the system's CAs, not the demo's self-signed certificate (the
+# app's development_roots don't apply to CRL fetches). cmd/demo serves
+# the same lists over plain http on 127.0.0.1:8580 (a CRL is signed),
+# bound here to each CA explicitly.
+CRLS = "http://127.0.0.1:8580"
+def point(path, ca):
+    return {"url": CRLS + path, "issuer": (state / ca).read_text()}
+POINTS = [point("/ca.crl", "issuer-ca.pem"), point("/verifier-ca.crl", "verifier-ca.pem"), point("/reader-ca.crl", "mdoc-reader-ca.pem")]
+# The trust roles checked against them: the issuer CA's (credentials and
+# their status lists), the verifier CA's, the mdoc reader CA's and the
+# registrar CA's.
+REVOCATION = ["issuer", "status", "verifier", "mdoc_reader"]
+if (state / "registrar-ca.pem").exists():
+    POINTS.append(point("/registrar-ca.crl", "registrar-ca.pem"))
+    REVOCATION.append("registrar")
 config = {
     "wallet": {
         "client_id": "passport-vdc-wallet",
@@ -43,6 +61,8 @@ config = {
         "mdoc_reader_require_eku": True,
         "development": True,
         "request_refresh": True,
+        "revocation": REVOCATION,
+        "crl_distribution_points": POINTS,
     },
     "provider_url": "https://127.0.0.1:6443",
 }
@@ -55,6 +75,12 @@ if reader_file.exists():
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "reader_key": key + "-----END PRIVATE KEY-----\n",
         "reader_chain": chain.lstrip(),
+        # Documents' signers, and their status lists', are checked
+        # against the issuer CA's CRL. A development reader, to fetch it
+        # from 127.0.0.1.
+        "revocation": ["issuer", "status"],
+        "crl_distribution_points": [point("/ca.crl", "issuer-ca.pem")],
+        "development": True,
     }
 print(json.dumps(config))
 PY

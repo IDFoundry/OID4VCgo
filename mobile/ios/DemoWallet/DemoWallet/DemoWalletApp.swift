@@ -16,9 +16,17 @@ struct DemoWalletApp: App {
                 // scene leaves the foreground: cover claims and portraits
                 // first.
                 .overlay { if scenePhase != .active { PrivacyCover() } }
+                // The reader's revocation lists at launch (the wallet
+                // fetches its own as it starts).
+                .task { await inPerson.refreshReaderCRLs(model) }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model.becameActive() } }
+            if phase == .active {
+                Task {
+                    await model.becameActive()
+                    if inPerson.readerCRLsDue(model) { await inPerson.refreshReaderCRLs(model) }
+                }
+            }
         }
     }
 }

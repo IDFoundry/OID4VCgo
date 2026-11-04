@@ -18,9 +18,9 @@ import (
 	"github.com/gmrtd/gmrtd/cms"
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
@@ -51,7 +51,9 @@ type Config struct {
 	// anchors for credential issuer signatures, in both trust modes.
 	// Each request also names them in DCQL trusted_authorities (by
 	// Authority Key Identifier), so a wallet offers only credentials
-	// they issued.
+	// they issued. A chain ending at one that names an http or https
+	// CRL distribution point is checked against the CRL served there
+	// (crl.go); one naming none isn't checked for revocation.
 	IssuerCAs []*x509.Certificate
 
 	// CSCAPool verifies the passport file, for a scenario re-verifying it —
@@ -67,13 +69,17 @@ type Config struct {
 	WebWalletURL string
 
 	// HTTP fetches the Token Status Lists credentials reference, to
-	// check they haven't been revoked; it must trust the issuer's TLS
-	// certificate. Nil uses http.DefaultClient.
+	// check they haven't been revoked, and the CRLs at the IssuerCAs'
+	// distribution points, to check their certificates haven't been;
+	// it must trust the issuer's TLS certificate. Nil uses
+	// http.DefaultClient for the status lists, and a client dialling
+	// public and loopback addresses for the CRLs.
 	HTTP *http.Client
 
 	// StateDir, if set, is an existing directory this verifier keeps its
-	// request-signing keys and certificates in, so wallets that trust its
-	// CA still trust it after a restart. Empty means new CAs each run.
+	// CAs, request-signing keys and certificates, and its CAs' CRLs in,
+	// so wallets that trust its CAs still trust them after a restart.
+	// Empty means new CAs each run.
 	StateDir string
 }
 
@@ -100,6 +106,11 @@ type App struct {
 	// statusCache keeps the Token Status Lists every scenario's status
 	// policy fetched (statusPolicy).
 	statusCache *statuslist.Cache
+	// crls are the verifier's CAs' revocation lists, by the path they're
+	// served at; issuerCRLs checks the issuer's certificates against its
+	// CA's.
+	crls       map[string]*democrl.CA
+	issuerCRLs *issuerCRLs
 
 	mu       sync.Mutex
 	sessions map[string]*session // by page ID, known only to whoever created the request
@@ -229,7 +240,7 @@ func New(cfg Config) (*App, error) {
 	if err := (dcql.AKITrustedAuthoritiesChecker{Anchors: cfg.IssuerCAs}).Validate(); err != nil {
 		return nil, fmt.Errorf("verifierapp: IssuerCAs: %w", err)
 	}
-	ids, err := loadIdentities(cfg.StateDir, time.Now())
+	ids, err := loadIdentities(cfg.StateDir, time.Now(), cfg.VerifierURL)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +255,12 @@ func New(cfg Config) (*App, error) {
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
 	}
 	a.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: func() time.Time { return a.now() }})
+	if a.crls, err = openCRLs(cfg.StateDir, ids, func() time.Time { return a.now() }); err != nil {
+		return nil, err
+	}
+	if a.issuerCRLs, err = newIssuerCRLs(cfg.IssuerCAs, cfg.HTTP, func() time.Time { return a.now() }); err != nil {
+		return nil, err
+	}
 	for _, sc := range Scenarios {
 		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.readers[sc].key, Chain: []*x509.Certificate{ids.readers[sc].cert}}
 		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
@@ -253,14 +270,6 @@ func New(cfg Config) (*App, error) {
 	a.handler = a.routes()
 	return a, nil
 }
-
-// issuerRevocation is the revocation check on the demo issuer's
-// certificates: none. The demo issuer discards its CA key once it has
-// certified its signers, so it can't sign a CRL, and its signers live
-// no longer than the demo's state. A real verifier passes
-// certrevocation.CRLs with each issuer CA's current CRL; credentials
-// themselves are still checked against their status lists (Accept).
-var issuerRevocation certrevocation.Checker = certrevocation.NoCheck{}
 
 // newTransactions is scenario sc's relying party: a Verifier signing
 // its requests as sg, with its own endpoints under /s/<sc>/. A trusted
@@ -292,8 +301,12 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 		}
 	}
 	verify := verifier.VerifyResponseRequest{
-		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
-		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
+		// The issuer's certificates are checked against its CA's CRL
+		// (crl.go): a credential its revoked document signer signed is
+		// refused. Credentials themselves are checked against their
+		// status lists (Status).
+		IssuerKeys:         verifier.X5CIssuerKeyResolver{Roots: a.issuerRoots, Revocation: a.issuerCRLs},
+		MdocIssuerKeys:     verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: a.issuerCRLs},
 		TrustedAuthorities: dcql.AKITrustedAuthoritiesChecker{Anchors: a.cfg.IssuerCAs},
 		MaxKeyBindingAge:   5 * time.Minute,
 		// The issuer's clock may be ahead of this one (another

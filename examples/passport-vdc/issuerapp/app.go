@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -30,6 +33,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -62,25 +66,53 @@ type App struct {
 	notifications     *notifications // what the wallets have reported
 	now               func() time.Time
 	server            *server.Server
-	issuer            *issuer.Issuer
 	resourceVerifier  *fapires.Verifier
 	transactions      *transactions
 	consent           *interactioncookie.Cookie    // the approval step's state, sealed in the browser
-	metadataHandler   http.Handler                 // the Credential Issuer Metadata, signed by the metadata signer
 	providerAnchors   server.StaticAttesterAnchors // the Wallet Provider CA, bound to Wallet.ProviderIssuer
-	documentSigner    *ecdsa.PrivateKey            // signs credentials and the status list
-	documentCert      *x509.Certificate
+	endpoints         issuer.Endpoints
+	requestKey        *ecdsa.PrivateKey // decrypts Credential Requests, whichever signer signs
 	caCert            *x509.Certificate
+	crlURL            string      // where the CA serves its CRL: IssuerURL + CRLPath
+	crl               *democrl.CA // the CA's revocation list
 	statusList        *statusList
 	statusListURI     string
 	mdocStatusListURI string
-	publishers        []*statuslist.Publisher // serve the status list; set by statusPublishers
 	handler           http.Handler
+
+	// signerMu serializes document signer rotations, which replace id
+	// and signing (RevokeDocumentSigner).
+	signerMu sync.Mutex
+	id       issuerIdentity
+	// signing is the current document signer and what signs with it.
+	signing atomic.Pointer[signing]
 }
 
-// New wires an App from cfg. Signing keys are generated per process —
-// restarting the issuer invalidates every credential it issued, which
-// is fine for a demo.
+// signing is the document signer and everything built on it: the
+// Issuer, signing credentials, the endpoints it serves, and the status
+// list publishers, signing the Status List Tokens. Revoking the signer
+// replaces it whole (RevokeDocumentSigner).
+type signing struct {
+	issuer *issuer.Issuer
+	key    *ecdsa.PrivateKey // signs credentials and the status list
+	cert   *x509.Certificate
+	// credential, deferred, notification and metadata serve the
+	// Credential, Deferred Credential and Notification Endpoints, and
+	// the Credential Issuer Metadata (signed by the metadata signer).
+	credential, deferred, notification, metadata http.Handler
+	// jwtList and cwtList serve the status list (statusPublishers).
+	jwtList, cwtList *statuslist.Publisher
+}
+
+// current is the signing in use now.
+func (a *App) current() *signing { return a.signing.Load() }
+
+// iss is the Issuer in use now.
+func (a *App) iss() *issuer.Issuer { return a.current().issuer }
+
+// New wires an App from cfg. Without Config.StateDir its CA and signing
+// keys are generated per process — restarting the issuer invalidates
+// every credential it issued, which is fine for a demo.
 func New(cfg Config) (*App, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -116,15 +148,7 @@ func New(cfg Config) (*App, error) {
 	if err := a.buildIssuer(); err != nil {
 		return nil, err
 	}
-	credentialHandler, err := a.credentialHandler()
-	if err != nil {
-		return nil, err
-	}
-	deferredHandler, notificationHandler, err := a.protectedHandlers()
-	if err != nil {
-		return nil, err
-	}
-	a.handler = a.routes(credentialHandler, deferredHandler, notificationHandler)
+	a.handler = a.routes()
 	return a, nil
 }
 
@@ -301,16 +325,40 @@ func (a *App) buildIssuer() error {
 		return err
 	}
 	a.credentialURL, a.deferredURL, a.notificationURL = credentialURL.URL(), deferredURL.URL(), notificationURL.URL()
+	a.endpoints = issuer.Endpoints{
+		Credential: credentialURL, Nonce: nonceURL, DeferredCredential: deferredURL, Notification: notificationURL,
+	}
 
-	id, err := a.identity()
+	a.crlURL = a.cfg.IssuerURL + CRLPath
+	if a.id, err = a.identity(); err != nil {
+		return err
+	}
+	a.caCert = a.id.caCert
+	crlState := ""
+	if a.cfg.StateDir != "" {
+		crlState = filepath.Join(a.cfg.StateDir, crlFile)
+	}
+	if a.crl, err = democrl.Open(crlState, a.id.caCert, a.id.caKey, a.now); err != nil {
+		return fmt.Errorf("issuerapp: %w", err)
+	}
+	// Request encryption's key, kept across signer rotations: a wallet
+	// may have read it from the metadata before one.
+	if a.requestKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+		return fmt.Errorf("issuerapp: request decryption key: %w", err)
+	}
+	s, err := a.newSigning(a.id.documentSigner, a.id.documentSignerCert)
 	if err != nil {
 		return err
 	}
-	a.caCert = id.caCert
-	requestKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("issuerapp: request decryption key: %w", err)
-	}
+	a.signing.Store(s)
+	return nil
+}
+
+// newSigning builds the Issuer and its endpoints and status list
+// publishers on the document signer key, certified by cert.
+func (a *App) newSigning(key *ecdsa.PrivateKey, cert *x509.Certificate) (*signing, error) {
+	s := &signing{key: key, cert: cert}
+	var err error
 	encValues := []oid4vci.JWEEnc{oid4vci.A256GCM, oid4vci.A128GCM}
 	// Key attestation is required, in jwt proofs' key_attestation
 	// header (HAIP 1.0 §4.5.1), whose aud binds each proof to this
@@ -320,17 +368,15 @@ func (a *App) buildIssuer() error {
 	proofTypes := map[string]oid4vci.ProofTypeConfiguration{
 		oid4vci.ProofTypeJWT: haip.RecommendedJWTKeyAttestationProofType(),
 	}
-	a.issuer, err = issuer.New(issuer.Config{
+	s.issuer, err = issuer.New(issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		// HAIP 1.0: issuer.New refuses what HAIP doesn't allow (a
 		// configuration without a scope, key binding without the Nonce
 		// Endpoint, proofs without ES256, pre-authorized codes redeemed
 		// without client authentication).
-		Profile: haip.IssuerProfile{},
-		Issuer:  a.issuerURL,
-		Endpoints: issuer.Endpoints{
-			Credential: credentialURL, Nonce: nonceURL, DeferredCredential: deferredURL, Notification: notificationURL,
-		},
+		Profile:   haip.IssuerProfile{},
+		Issuer:    a.issuerURL,
+		Endpoints: a.endpoints,
 		Limits: issuer.Limits{
 			NonceLifetime:                5 * time.Minute,
 			DeferredIssuancePollInterval: deferredPollInterval, DeferredTransactionLifetime: reviewLifetime,
@@ -348,7 +394,7 @@ func (a *App) buildIssuer() error {
 		// Response encryption requires request encryption too (§8.2),
 		// so both are required.
 		RequestEncryption: &issuer.RequestEncryptionSupport{
-			Keys:               []issuer.RequestDecryptionKey{{KeyID: "passport-vdc-request-1", PrivateKey: requestKey}},
+			Keys:               []issuer.RequestDecryptionKey{{KeyID: "passport-vdc-request-1", PrivateKey: a.requestKey}},
 			EncValuesSupported: encValues,
 			Required:           true,
 		},
@@ -394,74 +440,94 @@ func (a *App) buildIssuer() error {
 			IssuerBinding: issuer.AttestationIssuerBoundToAnchor, Anchors: keyAttestationAnchors(a.providerAnchors),
 		},
 		SDJWTSigner: &issuer.SDJWTSigner{
-			Signer: id.documentSigner, Alg: oid4vci.ES256, IssuerCertificate: id.documentSignerCert,
+			Signer: key, Alg: oid4vci.ES256, IssuerCertificate: cert,
 		},
 		MdocSigner: &issuer.MdocSigner{
-			Signer: id.documentSigner, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{id.documentSignerCert.Raw},
+			Signer: key, Alg: haip.RecommendedCOSEAlgorithm, X5Chain: [][]byte{cert.Raw},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("issuerapp: issuer.New: %w", err)
+		return nil, fmt.Errorf("issuerapp: issuer.New: %w", err)
 	}
-	if a.metadataHandler, err = issuer.NewMetadataHandler(a.issuer, &issuer.MetadataSigner{
-		Signer: id.metadataSigner, Alg: oid4vci.ES256, Certificate: id.metadataSignerCert,
+	if s.metadata, err = issuer.NewMetadataHandler(s.issuer, &issuer.MetadataSigner{
+		Signer: a.id.metadataSigner, Alg: oid4vci.ES256, Certificate: a.id.metadataSignerCert,
 	}); err != nil {
-		return fmt.Errorf("issuerapp: %w", err)
+		return nil, fmt.Errorf("issuerapp: %w", err)
 	}
-	a.documentSigner, a.documentCert = id.documentSigner, id.documentSignerCert
-	return nil
+	if s.credential, err = a.credentialHandler(s.issuer); err != nil {
+		return nil, err
+	}
+	if s.deferred, s.notification, err = a.protectedHandlers(s.issuer); err != nil {
+		return nil, err
+	}
+	s.jwtList, s.cwtList = a.statusPublishers(key, cert)
+	return s, nil
 }
 
-// documentChain is the document signer's certificate chain as signed
+// documentChain is a document signer's certificate chain as signed
 // tokens carry it: the signer's certificate, without the CA (the trust
 // anchor a verifier already holds).
-func (a *App) documentChain() []*x509.Certificate { return []*x509.Certificate{a.documentCert} }
+func documentChain(cert *x509.Certificate) []*x509.Certificate { return []*x509.Certificate{cert} }
 
 // issuerIdentity is this process's demo CA and the two keys certified
 // under it: the document signer (the SD-JWT's x5c, the mdoc's x5chain)
 // and a separate key that signs the Credential Issuer Metadata. A
 // verifier trusts the CA (App.IssuerCACertificate).
 type issuerIdentity struct {
-	caCert             *x509.Certificate
+	caCert *x509.Certificate
+	// caKey signs the CA's CRL, and the document signer that replaces a
+	// revoked one (RevokeDocumentSigner).
+	caKey              *ecdsa.PrivateKey
 	documentSigner     *ecdsa.PrivateKey
 	documentSignerCert *x509.Certificate
 	metadataSigner     *ecdsa.PrivateKey
 	metadataSignerCert *x509.Certificate
 }
 
+// Names of the demo issuer's certificates.
+const (
+	caName             = "passport-vdc demo CA"
+	documentSignerName = "passport-vdc demo document signer"
+	metadataSignerName = "passport-vdc demo metadata signer"
+)
+
 // newIssuerIdentity generates an issuerIdentity. The certificates are
 // valid for two years so they outlive any credential the one-year
-// validity cap allows; the CA key is discarded.
+// validity cap allows. Each names crlURL as its CRL distribution
+// point, where the CA, which keeps its key, serves its CRL (ISO/IEC
+// 18013-5 Annex B.1 has an IACA's certificates, and its document
+// signers', name one).
 //
 // They're valid from certificateBackdate before now: an mdoc's MSO is
 // signed at the start of its issuance's UTC day (credential.ValidFrom),
 // and ISO/IEC 18013-5 §9.3.1 has that signed time fall within the
 // document signer certificate's validity. The CA's starts as early, so
 // the signer's doesn't start before its issuer's.
-func newIssuerIdentity(now time.Time) (issuerIdentity, error) {
-	return newIssuerIdentityWithSignerEKUs(now, mdoc.MDLDocumentSignerEKU)
+func newIssuerIdentity(now time.Time, crlURL string) (issuerIdentity, error) {
+	return newIssuerIdentityWithSignerEKUs(now, crlURL, mdoc.MDLDocumentSignerEKU)
 }
 
 // newIssuerIdentityWithSignerEKUs is newIssuerIdentity, its document
 // signer's extended key usages dsEKUs.
-func newIssuerIdentityWithSignerEKUs(now time.Time, dsEKUs ...asn1.ObjectIdentifier) (issuerIdentity, error) {
+func newIssuerIdentityWithSignerEKUs(now time.Time, crlURL string, dsEKUs ...asn1.ObjectIdentifier) (issuerIdentity, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return issuerIdentity{}, fmt.Errorf("issuerapp: CA key: %w", err)
 	}
-	var id issuerIdentity
+	id := issuerIdentity{caKey: caKey}
 	id.caCert, err = democert.Create(&x509.Certificate{
-		Subject:   pkix.Name{CommonName: "passport-vdc demo CA", Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
+		Subject:   pkix.Name{CommonName: caName, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
 		NotBefore: now.Add(-certificateBackdate), NotAfter: now.AddDate(5, 0, 0),
-		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
+		CRLDistributionPoints: []string{crlURL},
 	}, nil, &caKey.PublicKey, caKey)
 	if err != nil {
 		return issuerIdentity{}, fmt.Errorf("issuerapp: %w", err)
 	}
-	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, "passport-vdc demo document signer", id.caCert, caKey, dsEKUs...); err != nil {
+	if id.documentSigner, id.documentSignerCert, err = issueSigner(now, documentSignerName, id.caCert, caKey, crlURL, dsEKUs...); err != nil {
 		return issuerIdentity{}, err
 	}
-	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, "passport-vdc demo metadata signer", id.caCert, caKey); err != nil {
+	if id.metadataSigner, id.metadataSignerCert, err = issueSigner(now, metadataSignerName, id.caCert, caKey, crlURL); err != nil {
 		return issuerIdentity{}, err
 	}
 	return id, nil
@@ -479,18 +545,25 @@ const certificateBackdate = 25 * time.Hour
 const demoCountry = "ZZ"
 
 // issueSigner generates a signing key and its certificate under ca,
-// with the extended key usages ekus, if any: the document signer's is
-// ISO/IEC 18013-5's mDL document signer's (Annex B.1.4), which
-// verifiers require of the certificate signing an mdoc.
-func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, *x509.Certificate, error) {
+// naming crlURL, the CA's CRL, as its distribution point, with the
+// extended key usages ekus, if any: the document signer's is ISO/IEC
+// 18013-5's mDL document signer's (Annex B.1.4), which verifiers
+// require of the certificate signing an mdoc. It's valid for two years,
+// or until the CA expires if that's sooner.
+func issueSigner(now time.Time, name string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, crlURL string, ekus ...asn1.ObjectIdentifier) (*ecdsa.PrivateKey, *x509.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %s key: %w", name, err)
 	}
+	notAfter := now.AddDate(2, 0, 0)
+	if notAfter.After(ca.NotAfter) {
+		notAfter = ca.NotAfter
+	}
 	cert, err := democert.Create(&x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{"IDFoundry demo"}, Country: []string{demoCountry}},
-		NotBefore: now.Add(-certificateBackdate), NotAfter: now.AddDate(2, 0, 0),
+		NotBefore: now.Add(-certificateBackdate), NotAfter: notAfter,
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
+		CRLDistributionPoints: []string{crlURL},
 	}, ca, &key.PublicKey, caKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: %w", err)
@@ -533,9 +606,10 @@ func keyAttestationAnchors(anchors server.StaticAttesterAnchors) []issuer.Attest
 	return out
 }
 
-// IssuerCertificate is this process's document signer certificate,
-// carried in each credential's x5c / x5chain.
-func (a *App) IssuerCertificate() *x509.Certificate { return a.documentCert }
+// IssuerCertificate is the current document signer certificate,
+// carried in each credential's x5c / x5chain: another after
+// RevokeDocumentSigner.
+func (a *App) IssuerCertificate() *x509.Certificate { return a.current().cert }
 
 // IssuerCACertificate is the demo CA that issued IssuerCertificate —
 // the trust anchor a verifier configures for this issuer.
@@ -546,9 +620,9 @@ func (a *App) IssuerCACertificate() *x509.Certificate { return a.caCert }
 // generated afresh otherwise.
 func (a *App) identity() (issuerIdentity, error) {
 	if a.cfg.StateDir == "" {
-		return newIssuerIdentity(a.now())
+		return newIssuerIdentity(a.now(), a.crlURL)
 	}
-	return loadOrCreateIdentity(a.cfg.StateDir, a.now())
+	return loadOrCreateIdentity(a.cfg.StateDir, a.now(), a.crlURL)
 }
 
 // loadStatusList is this issuer's status list: kept in Config.StateDir

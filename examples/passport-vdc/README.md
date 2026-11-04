@@ -233,12 +233,14 @@ be decided again, under production assurance:
   themselves and the Authorization Server's signing keys stay in
   memory, so a restart still ends the offers and grants in progress
   (`issuerapp.Config.Database`).
-- **No certificate revocation for the demo's own CAs.** The verifier
-  declines it for the issuer's certificates (`certrevocation.NoCheck{}`,
-  as `issuerRevocation`), and the Authorization Server for the Wallet
-  Provider's (`server.NoClientCertificateRevocationCheck{}`): neither
-  demo CA publishes a CRL. Credentials' own revocation is still checked,
-  through their status lists.
+- **Demo CAs with one-hour CRLs on the servers that use them.** The
+  issuer's CA and the verifier's CAs keep their keys in the state
+  directory, unencrypted, and serve their own CRLs (see
+  [Certificate revocation](#certificate-revocation)); a real CA keeps
+  its key offline or in an HSM and publishes from elsewhere. The Wallet
+  Provider's CA publishes none, so the Authorization Server declines
+  checking its certificates
+  (`server.NoClientCertificateRevocationCheck{}`).
 - **One issuer for every document type.** The Digital Credentials API
   verifier sets `AnyIssuerForAnyType`, since the demo has one issuer. A
   Verifier that trusts several says which may issue which type
@@ -259,8 +261,8 @@ go run ./cmd/demo
 
 It prints the URLs and runs until Ctrl-C. What should survive a
 restart is kept in `.demo-state/`: the TLS certificate the servers
-share, the stand-in Wallet Provider's key (only its service reads it), the issuer's CA, signing keys
-and status list, the verifier's identities (its CA, request-signing,
+share, the stand-in Wallet Provider's key (only its service reads it), the issuer's CA (its key too, which signs its CRL), signing keys,
+status list and CRL, the verifier's identities (its CAs, with their keys and CRLs, request-signing,
 registrar and mdoc reader keys and certificates, with
 `verifier-ca.pem`, `registrar-ca.pem` and `mdoc-reader-ca.pem` for
 wallets to trust), and the wallet's credentials. So a restart keeps your credentials verifying and
@@ -388,6 +390,14 @@ deleted once the credentials are issued. It can't be combined with
 again sharing that format: the verifier rejects it as revoked, while
 the other format is still accepted. The verifier fetches the status
 list on every check, so a revocation applies at once.
+
+Further down the same page, **Revoke document signer…** revokes the key
+that signed every credential so far: the issuer's CA lists it on its
+CRL and certifies a new one. Verify again with any credential received
+before: the verifier, which `cmd/demo` has fetch the CRL at once,
+rejects it (its issuer isn't trusted); receive a new one and it's
+accepted. A phone shows the same once it refreshes its revocation lists
+(see [Certificate revocation](#certificate-revocation)).
 
 **From the terminal (CLI wallet)** — `-state` points it at the demo's
 store and trust files, so both wallets see the same credentials; like
@@ -646,6 +656,63 @@ suspended or uncheckable credential is rejected, and a valid one shows
 "Revocation status: valid" on the result page. The list is cacheable
 for 60 seconds.
 
+### Certificate revocation
+
+A status list revokes one credential; a Certificate Revocation List
+(RFC 5280) revokes a certificate, and with it everything its key
+signed. Each demo CA a relying party trusts keeps its key and
+publishes a CRL at the distribution point its certificates name
+(ISO/IEC 18013-5 Annex B.1 has an IACA's certificates, and its
+document signers', name one):
+
+| CA | CRL | Checked by |
+|---|---|---|
+| issuer CA (`issuer-ca.pem`) | `<issuer>/ca.crl` | the verifier (the credential's and the status list's signer), a wallet's `issuer` and `status` roles, the in-person reader |
+| verifier CA (`verifier-ca.pem`) | `<verifier>/verifier-ca.crl` | a wallet's `verifier` role (request signers) |
+| mdoc reader CA (`mdoc-reader-ca.pem`) | `<verifier>/reader-ca.crl` | a wallet's `mdoc_reader` role (org-iso-mdoc requests, the in-person reader) |
+| registrar CA (`registrar-ca.pem`) | `<verifier>/registrar-ca.crl` | a wallet's `registrar` role |
+
+The untrusted verifier CA, which no wallet trusts, publishes none. Each
+CRL is complete and direct (no delta, no issuing distribution point),
+DER, `application/pkix-crl`, valid for an hour: signed when first
+fetched, served unchanged until half that has passed or a certificate
+is revoked, then signed again under the next CRL number. The number is
+saved before a list is served (`issuer/issuer-crl.json`,
+`verifier/*-crl.json`), so it never goes backwards across restarts,
+and a relying party holding a list refuses an older one. `cmd/demo`
+also serves the same lists over plain http on loopback, at
+`http://127.0.0.1:8580/ca.crl`, `/verifier-ca.crl`, `/reader-ca.crl`
+and `/registrar-ca.crl`, for an Android phone, whose Go code can't
+trust the demo's self-signed TLS certificate (a CRL is signed, so http
+is the usual way to serve one).
+
+The verifier fetches the issuer CA's CRL with a
+`certrevocation.Refresher` (`verifierapp.App.RunIssuerCRLRefresh`, at
+least hourly), and fetches it on a check when it holds no current one;
+`cmd/demo`'s issuer also has it fetch the list as soon as the document
+signer is revoked (`issuerapp.Config.OnSignerRevoked`), as it has it
+drop its kept status lists on a credential's revocation. The phones
+fetch every list with the mobile library's `RefreshCRLs`, at launch and
+from the app's settings (see the iOS and Android demo apps' READMEs).
+
+**Revoking the document signer** (the issuer's `/demo/status` page)
+lists it on the issuer CA's CRL and has the CA certify a new one,
+saved in the state directory: credentials and status lists from then
+on are signed by the new one, and every credential the revoked one
+signed is refused by each relying party that has fetched the CRL
+since. A wallet that has received such a credential keeps showing it —
+it checks a credential's signer on receipt, and its status list after —
+but a verifier refuses it; receive it again for a new one.
+
+**State from before CRLs** is replaced once, logged: an issuer or
+verifier identity whose CAs kept no key can't sign a CRL, so the demo
+makes new CAs (`issuer-ca.pem`, `verifier-ca.pem`, `mdoc-reader-ca.pem`
+and `registrar-ca.pem` change). So does one whose distribution points
+name another URL, as after changing `-issuer-url` or `-verifier-url`.
+Configure the phones again (`run-device.sh`, `run-passport-vdc.sh`)
+and receive the credentials again: those signed under the old CA no
+longer verify.
+
 **Demo shortcuts:**
 
 - **The holder isn't authenticated.** An offer is redeemed once, by one
@@ -698,7 +765,7 @@ It checks:
 | | Trust the issuer (age, sign-up) | Trust only the issuing country (bank, hotel) |
 |---|---|---|
 | Requested | only what the scenario needs: `age_over_18`, or names, `age_over_18` and the portrait when there is one (DCQL `claim_sets`) — shown on the result page | `gmrtd_verifiable_doc` — the whole passport file, photo included |
-| Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`) | verified, likewise |
+| Issuer signature | verified, chained to the demo issuer's CA (`issuer-ca.pem`), its signer not on the CA's CRL | verified, likewise |
 | Revocation | the issuer's Token Status List says the credential is valid | likewise |
 | Holder binding | key-binding / device signature over the verifier's nonce | likewise |
 | Data trusted because… | the demo issuer signed it | gmrtd re-verifies the file (Passive Authentication against the CSCA master list, document checks): the country signed it. The result page shows the file's photo and chip authenticity |
@@ -774,7 +841,8 @@ generator, planned for gmrtd itself).
 |---|---|
 | `passport` | gmrtd → verified `Evidence` (the issuer's upload check, and the verifier's ICAO check of a disclosed file); the birth-date rule; the portrait |
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
-| `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page |
+| `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page; its CA's CRL, and revoking the document signer |
+| `internal/democrl` | a demo CA's Certificate Revocation List: the certificates it revoked, its CRL number, the signed list it serves |
 | `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`NewService`) the wallets call (`Client`); issues attestation challenges and checks Android Key Attestation chains |
 | `internal/androidattest` | verifies an Android Key Attestation chain (signatures, the key description's security levels and challenge) and whether it ends at Google's hardware attestation roots |
 | `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |

@@ -39,7 +39,9 @@ struct RootView: View {
 
 struct ContentView: View {
     @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
     @State private var scanning = false
+    @State private var showingCRLs = false
 
     var body: some View {
         NavigationStack {
@@ -95,6 +97,14 @@ struct ContentView: View {
                             Text("Scan for the reader only (central client)").tag(Set([ProximityBLEMode.centralClient]))
                         }
                         .accessibilityIdentifier("ble-modes")
+                        if model.fetchesCRLs || inPerson.readerFetchesCRLs(model) {
+                            Button {
+                                showingCRLs = true
+                            } label: {
+                                Label("Revocation lists", systemImage: "list.bullet.rectangle")
+                            }
+                            .accessibilityIdentifier("revocation-lists")
+                        }
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
@@ -113,6 +123,7 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $scanning) { ScanView { model.open($0) } }
+            .sheet(isPresented: $showingCRLs) { RevocationListsView() }
             .sheet(isPresented: offerShown) { OfferView() }
             .alert(linkTitle, isPresented: linkShown) {
                 Button("Open") { model.confirmLink() }
@@ -389,6 +400,120 @@ extension CredentialView {
         case .failed(let reason):
             Label("Couldn't refresh: \(reason)", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
+        }
+    }
+}
+
+/// The Certificate Revocation Lists the wallet and the reader check
+/// certificates against: each distribution point's outcome at the last
+/// refresh, when the next is due, and Refresh. Fetched at launch, on
+/// returning to the app once due, and here; never in the background.
+struct RevocationListsView: View {
+    @Environment(WalletModel.self) private var model
+    @Environment(InPersonModel.self) private var inPerson
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        refresh()
+                    } label: {
+                        HStack {
+                            Text(busy ? "Fetching the revocation lists…" : "Refresh revocation lists")
+                            if busy {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(busy)
+                    .accessibilityIdentifier("refresh-crls")
+                } footer: {
+                    Text("Certificates are checked against their CAs' revocation lists: a credential whose issuer's document signer was revoked is refused once the list naming it is here. Lists past their next update refuse their CAs' certificates until refreshed.")
+                }
+                if model.fetchesCRLs {
+                    CRLRefreshSection(title: "Wallet: issuers, Verifiers, readers, registrars", refresh: model.walletCRLs)
+                }
+                if inPerson.readerFetchesCRLs(model) {
+                    CRLRefreshSection(title: "Reader: issuers", refresh: inPerson.readerCRLs)
+                }
+            }
+            .navigationTitle("Revocation lists")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Done") { dismiss() } }
+        }
+    }
+
+    private var busy: Bool { model.refreshingCRLs || inPerson.refreshingCRLs }
+
+    private func refresh() {
+        Task {
+            await model.refreshCRLs()
+            await inPerson.refreshReaderCRLs(model)
+            let failed = model.walletCRLs?.error != nil || inPerson.readerCRLs?.error != nil ||
+                model.walletCRLs?.result?.anyFailed == true || inPerson.readerCRLs?.result?.anyFailed == true
+            UINotificationFeedbackGenerator().notificationOccurred(failed ? .error : .success)
+        }
+    }
+}
+
+/// One refresh of revocation lists: when it ran, each distribution
+/// point's outcome, and when the next is due.
+private struct CRLRefreshSection: View {
+    let title: String
+    let refresh: WalletModel.CRLRefresh?
+
+    var body: some View {
+        Section(title) {
+            if let refresh {
+                (Text("Refreshed ") + Text(refresh.at, style: .relative) + Text(" ago"))
+                    .font(.caption).foregroundStyle(.secondary)
+                if let error = refresh.error {
+                    Label("Couldn't refresh: \(error)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                        .accessibilityElement(children: .combine).accessibilityIdentifier("crl-error")
+                }
+                if let result = refresh.result {
+                    ForEach(result.results, id: \.url) { point in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label(Self.word(point.outcome), systemImage: Self.icon(point.outcome))
+                                .foregroundStyle(Self.color(point.outcome))
+                            Text(point.url).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            if let error = point.error { Text(error).font(.caption).foregroundStyle(.red) }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("crl-point")
+                    }
+                    LabeledContent("Next refresh", value: result.nextRefresh.formatted(date: .omitted, time: .shortened))
+                }
+            } else {
+                Text("Not refreshed yet").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static func word(_ o: CRLRefreshResult.Outcome) -> String {
+        switch o {
+        case .updated: "Updated: a newer list"
+        case .unchanged: "Unchanged"
+        case .failed: "Failed: the list held stays"
+        }
+    }
+
+    private static func icon(_ o: CRLRefreshResult.Outcome) -> String {
+        switch o {
+        case .updated: "arrow.down.circle.fill"
+        case .unchanged: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private static func color(_ o: CRLRefreshResult.Outcome) -> Color {
+        switch o {
+        case .updated, .unchanged: .green
+        case .failed: .red
         }
     }
 }

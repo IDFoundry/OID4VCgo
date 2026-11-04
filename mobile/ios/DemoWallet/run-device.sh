@@ -60,6 +60,12 @@ xcrun devicectl device install app --device "$DEVICE" "$BUILD/Build/Products/Deb
 ENVIRONMENT="$(python3 - "$STATE" "$PROVIDER_URL" <<'PY'
 import json, pathlib, sys
 state, provider = pathlib.Path(sys.argv[1]), sys.argv[2]
+# The trust roles checked against the demo's CRLs: the issuer CA's
+# (credentials and their status lists), the verifier CA's, the mdoc
+# reader CA's and the registrar CA's.
+REVOCATION = ["issuer", "status", "verifier", "mdoc_reader"]
+if (state / "registrar-ca.pem").exists():
+    REVOCATION.append("registrar")
 config = {
     "wallet": {
         "client_id": "passport-vdc-wallet",
@@ -81,6 +87,12 @@ config = {
         # Credentials from a passport kept for refresh come with a
         # refresh token, so the app can fetch fresh copies.
         "request_refresh": True,
+        # The demo's CAs publish CRLs at the distribution points their
+        # certificates name, on the public URLs: the app fetches them
+        # (RefreshCRLs) and checks each role's certificates against them.
+        "revocation": REVOCATION,
+        "crl_distribution_points_from_roots": True,
+        "crl_require_https": True,
     },
     "provider_url": provider,
 }
@@ -95,6 +107,11 @@ if reader_file.exists():
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
         "reader_key": key + end + "\n",
         "reader_chain": chain.lstrip(),
+        # Documents' signers, and their status lists', are checked
+        # against the issuer CA's CRL.
+        "revocation": ["issuer", "status"],
+        "crl_distribution_points_from_roots": True,
+        "crl_require_https": True,
     }
 print(json.dumps({"OID4VC_DEMO_CONFIG": json.dumps(config)}))
 PY

@@ -17,11 +17,11 @@ import (
 func TestIdentity_PersistsInStateDir(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	first, err := loadOrCreateIdentity(dir, now)
+	first, err := loadOrCreateIdentity(dir, now, testCRLURL)
 	if err != nil {
 		t.Fatalf("first load: %v", err)
 	}
-	second, err := loadOrCreateIdentity(dir, now)
+	second, err := loadOrCreateIdentity(dir, now, testCRLURL)
 	if err != nil {
 		t.Fatalf("second load: %v", err)
 	}
@@ -38,11 +38,11 @@ func TestIdentity_PersistsInStateDir(t *testing.T) {
 // signers wouldn't outlive a credential issued now is replaced.
 func TestIdentity_RenewsWhenSignersWouldExpire(t *testing.T) {
 	dir := t.TempDir()
-	old, err := loadOrCreateIdentity(dir, time.Now().AddDate(-2, 0, 0))
+	old, err := loadOrCreateIdentity(dir, time.Now().AddDate(-2, 0, 0), testCRLURL)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	renewed, err := loadOrCreateIdentity(dir, time.Now())
+	renewed, err := loadOrCreateIdentity(dir, time.Now(), testCRLURL)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestIdentity_RenewsWhenSignersWouldExpire(t *testing.T) {
 func TestIdentity_ValidFromBeforeToday(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
-	id, err := loadOrCreateIdentity(dir, now)
+	id, err := loadOrCreateIdentity(dir, now, testCRLURL)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -66,11 +66,11 @@ func TestIdentity_ValidFromBeforeToday(t *testing.T) {
 	}
 
 	dir = t.TempDir()
-	late, err := loadOrCreateIdentity(dir, now.Add(48*time.Hour))
+	late, err := loadOrCreateIdentity(dir, now.Add(48*time.Hour), testCRLURL)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	renewed, err := loadOrCreateIdentity(dir, now)
+	renewed, err := loadOrCreateIdentity(dir, now, testCRLURL)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestIdentity_ValidFromBeforeToday(t *testing.T) {
 func TestIdentity_RenewsDocumentSignerWithoutEKU(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	old, err := newIssuerIdentityWithSignerEKUs(now)
+	old, err := newIssuerIdentityWithSignerEKUs(now, testCRLURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestIdentity_RenewsDocumentSignerWithoutEKU(t *testing.T) {
 	if err := writeFileAtomic(filepath.Join(dir, identityFile), encoded); err != nil {
 		t.Fatal(err)
 	}
-	renewed, err := loadOrCreateIdentity(dir, now)
+	renewed, err := loadOrCreateIdentity(dir, now, testCRLURL)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestIdentity_RejectsDamagedFile(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, identityFile), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadOrCreateIdentity(dir, time.Now()); err == nil {
+		if _, err := loadOrCreateIdentity(dir, time.Now(), testCRLURL); err == nil {
 			t.Errorf("%s: a damaged identity file was accepted", name)
 		}
 	}

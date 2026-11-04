@@ -76,9 +76,16 @@ type Config struct {
 	// once rather than within the list's ttl.
 	OnRevoke func()
 
+	// OnSignerRevoked, if set, is called once the document signer is
+	// revoked (RevokeDocumentSigner): the demo's own verifier fetches
+	// the CA's CRL at once (verifierapp.App.RefreshIssuerCRLs), rather
+	// than when its schedule next does.
+	OnSignerRevoked func()
+
 	// StateDir, if set, is an existing directory this issuer keeps its
-	// CA and signing keys and its status list in, so credentials it
-	// issued keep verifying, and revocations hold, across restarts.
+	// CA and signing keys, its status list and its CA's CRL in, so
+	// credentials it issued keep verifying, and revocations hold, across
+	// restarts.
 	// Empty keeps everything in memory: a restart starts over.
 	StateDir string
 

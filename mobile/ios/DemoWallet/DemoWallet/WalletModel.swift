@@ -59,10 +59,22 @@ final class WalletModel {
 
     private func makeWallet() throws -> Wallet {
         guard let config, let keys else { throw NotConfigured() }
-        var configuration = config.wallet
+        // With the revocation lists last fetched (SharedWallet.crlsKey).
+        var configuration = SharedWallet.applyingHolderChoices(to: config.wallet)
         configuration.copyPolicy = copyPolicy
-        return try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
-                          provider: config.providerURL.map { HTTPWalletProvider(baseURL: $0) })
+        let make = {
+            try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
+                       provider: config.providerURL.map { HTTPWalletProvider(baseURL: $0) })
+        }
+        do {
+            return try make()
+        } catch let e as WalletError where e.code == .invalidInput && configuration.crls != config.wallet.crls {
+            // Saved lists the wallet refuses: start without them, and the
+            // next refresh fetches them again.
+            SharedWallet.forgetCRLs()
+            configuration.crls = config.wallet.crls
+            return try make()
+        }
     }
 
     /// Switches the copy policy, rebuilding the wallet over the same keys
@@ -131,6 +143,9 @@ final class WalletModel {
             // At launch, before any issuance: delete keys left by one the
             // app quit in the middle of.
             if let wallet, let keys { _ = try? await wallet.sweepOrphanedKeys(in: keys) }
+            // The revocation lists first: receiving, checking status and
+            // presenting check certificates against them.
+            await refreshCRLs()
             await resumeDeferred()
             await refresh()
             await checkAllStatuses()
@@ -595,7 +610,72 @@ final class WalletModel {
     /// Not during an issuance or a presentation of the app's own.
     func becameActive() async {
         await refresh()
+        if crlsDue { await refreshCRLs() }
         if issuance == nil && presentation == nil { await refreshUsedUp() }
+    }
+
+    // MARK: Revocation lists
+
+    /// How a refresh of Certificate Revocation Lists ended: what each
+    /// distribution point did and when to refresh next, or why it
+    /// couldn't run; and when.
+    struct CRLRefresh {
+        var result: CRLRefreshResult? = nil
+        var error: String? = nil
+        var at: Date
+    }
+
+    /// The wallet's last refresh of its revocation lists, this launch.
+    private(set) var walletCRLs: CRLRefresh?
+    private(set) var refreshingCRLs = false
+
+    /// Whether the configuration has the wallet fetch revocation lists.
+    var fetchesCRLs: Bool {
+        guard let w = config?.wallet else { return false }
+        return w.crlDistributionPointsFromRoots || !w.crlDistributionPoints.isEmpty
+    }
+
+    /// Whether the lists are due again: the last refresh failed, or its
+    /// `nextRefresh` has passed. The first, at launch, is the launch's.
+    var crlsDue: Bool {
+        guard let last = walletCRLs else { return false }
+        guard let next = last.result?.nextRefresh, last.error == nil else { return true }
+        return next <= .now
+    }
+
+    /// Fetches the wallet's Certificate Revocation Lists from the CAs'
+    /// distribution points and keeps them for the next launch: at launch,
+    /// on returning to the foreground once they're due, and from the
+    /// settings. Nothing refreshes them while the app is closed; an app
+    /// that must keep them current then schedules `refreshCRLs()` with
+    /// BGTaskScheduler at the result's `nextRefresh` (the library's
+    /// GoingToProduction guide). Lists past their nextUpdate refuse
+    /// their CAs' certificates until the next refresh.
+    func refreshCRLs() async {
+        guard let wallet, fetchesCRLs, !refreshingCRLs else { return }
+        refreshingCRLs = true
+        defer { refreshingCRLs = false }
+        do {
+            let result = try await wallet.refreshCRLs()
+            SharedWallet.defaults.set(result.crls, forKey: SharedWallet.crlsKey)
+            walletCRLs = CRLRefresh(result: result, at: .now)
+        } catch {
+            walletCRLs = CRLRefresh(result: walletCRLs?.result, error: Self.describe(error), at: .now)
+        }
+    }
+
+    /// Why a reader refused a document, when its certificate revocation
+    /// is why: the error's message is for logs, but names the
+    /// certrevocation failure, which the demo spells out.
+    static func revocationReason(_ error: Error) -> String? {
+        guard let e = error as? WalletError else { return nil }
+        if e.message.contains("certificate is revoked") {
+            return "Refused: its issuer's document signer has been revoked (its CA's revocation list names it). Receive the credential again."
+        }
+        if e.message.contains("no current CRL") {
+            return "Refused: there's no current revocation list for its issuer's CA. Refresh the revocation lists in Settings."
+        }
+        return nil
     }
 
     func refresh() async {

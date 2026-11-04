@@ -93,7 +93,7 @@ func TestScenarios_Queries(t *testing.T) {
 
 func trustedForTest(t *testing.T) dcql.TrustedAuthoritiesQuery {
 	t.Helper()
-	ca, _, err := newCA(time.Now(), "test issuer CA")
+	ca, _, err := newCA(time.Now(), "test issuer CA", "")
 	if err != nil {
 		t.Fatal(err)
 	}
