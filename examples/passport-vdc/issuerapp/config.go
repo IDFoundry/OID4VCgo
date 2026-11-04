@@ -95,8 +95,11 @@ type Config struct {
 	// Issuer's (oid4vcgo/sqlstore) in place of memory, side by side, as
 	// a deployment would: pushed requests, authorization codes and
 	// refresh tokens, replayed proofs, revocations, DPoP nonces,
-	// c_nonces, pre-authorized codes, deferred issuances and
-	// notifications. New migrates it. The passports themselves, and the
+	// c_nonces, pre-authorized codes, deferred issuances,
+	// notifications, and the status list's index reservations and
+	// statuses (in place of StateDir's file). New migrates it. The
+	// status page's record of each credential stays in StateDir, when
+	// set, and in memory otherwise. The passports themselves, and the
 	// Authorization Server's signing keys, stay in memory, so a restart
 	// still ends the offers and grants in progress.
 	Database *sql.DB

@@ -7,8 +7,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
-	"math/big"
 	"net/http"
 	"slices"
 	"sync"
@@ -36,10 +36,11 @@ const StatusListPath = "/statuslists/1"
 const MdocStatusListPath = StatusListPath + "/cwt"
 
 // statusListSize is how many credentials the list can index. A
-// credential's index is drawn at random from the unused ones, so the
-// list must be much larger than the number issued for indices to stay
-// unpredictable (HAIP 1.0 §6.1: "Each Credential MUST have its own
-// unique, unpredictable status list index").
+// credential's index is drawn at random from those never handed out
+// (statuslist.Allocator), so the list must be much larger than the
+// number issued for indices to stay unpredictable (HAIP 1.0 §6.1: "Each
+// Credential MUST have its own unique, unpredictable status list
+// index"): the Allocator stops at half of it.
 const statusListSize = 1 << 16
 
 // statusTokenLifetime bounds how long a served Status List Token is
@@ -81,58 +82,83 @@ type IssuedStatus struct {
 }
 
 // statusList is this issuer's Token Status List (draft-14): one bit per
-// credential, 1 meaning revoked.
+// credential, 1 (StatusInvalid) meaning revoked. A statuslist.Allocator
+// hands its indices out and keeps their statuses, in a
+// statuslist.IndexStore: at random, never the same one twice, and up to
+// statuslist.DefaultFillLimit of the list. Beside the store, entries
+// are the demo's own record of each issued credential, for the status
+// page and for revoking a signer's credentials: the store holds only
+// reservations and statuses.
 type statusList struct {
-	mu      sync.Mutex
-	revoked []uint8
-	entries map[int]*IssuedStatus
+	mu        sync.Mutex
+	allocator *statuslist.Allocator
+	uri       string // the list's: StatusListPath's URI
+	entries   map[int]*IssuedStatus
 	// revokedSigners are the signers revokeSigner has revoked since the
 	// process started: a credential that a request already under way
 	// signs with one of them is revoked as its index is allocated.
 	revokedSigners map[string]bool
-	path           string // where it's saved on every change; "" keeps it in memory
+	path           string // where entries are saved on every change; "" keeps them in memory
 }
 
-func newStatusList() *statusList {
-	return &statusList{revoked: make([]uint8, statusListSize), entries: map[int]*IssuedStatus{}, revokedSigners: map[string]bool{}}
+// newStatusList is the list at uri, its indices and statuses in store,
+// with no entries.
+func newStatusList(store statuslist.IndexStore, uri string) *statusList {
+	return &statusList{
+		allocator: &statuslist.Allocator{
+			Lists:     []statuslist.AllocatorList{{URI: uri, Size: statusListSize}},
+			Store:     store,
+			FillLimit: statuslist.DefaultFillLimit,
+		},
+		uri: uri, entries: map[int]*IssuedStatus{}, revokedSigners: map[string]bool{},
+	}
 }
 
-// allocate reserves a random unused index for a credential of format,
-// issued unchecked or not, signed by signer (signerID).
-func (s *statusList) allocate(format string, unchecked bool, signer string, now time.Time) (int, error) {
+// ref is idx's reference in the list.
+func (s *statusList) ref(idx int) statuslist.StatusListRef {
+	return statuslist.StatusListRef{Idx: uint64(idx), URI: s.uri} // #nosec G115 -- idx is from Allocate, in [0, statusListSize)
+}
+
+// allocate reserves a random, never-before-allocated index for a
+// credential of format, issued unchecked or not, signed by signer
+// (signerID). It returns errStatusListFull once the list reaches its
+// fill limit.
+func (s *statusList) allocate(ctx context.Context, format string, unchecked bool, signer string, now time.Time) (int, error) {
+	handle, err := newHandle()
+	if err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.entries) >= statusListSize/2 {
-		return 0, errStatusListFull
+	ref, err := s.allocator.Allocate(ctx)
+	switch {
+	case errors.Is(err, statuslist.ErrListsFull):
+		return 0, fmt.Errorf("%w (%w)", errStatusListFull, err)
+	case err != nil:
+		return 0, err
 	}
-	for {
-		n, err := rand.Int(rand.Reader, big.NewInt(statusListSize))
-		if err != nil {
+	idx := int(ref.Idx) // #nosec G115 -- below statusListSize
+	// A signer revoked while the request was under way: its credential
+	// is revoked from the start. Should that fail, the credential isn't
+	// issued; its index stays reserved, as every allocated one does.
+	e := &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked, Signer: signer, Revoked: s.revokedSigners[signer]}
+	if e.Revoked {
+		if err := s.allocator.SetStatus(ctx, ref, statuslist.StatusInvalid); err != nil {
 			return 0, err
 		}
-		idx := int(n.Int64())
-		if _, used := s.entries[idx]; !used {
-			handle, err := newHandle()
-			if err != nil {
-				return 0, err
-			}
-			// A signer revoked while the request was under way: its
-			// credential is revoked from the start.
-			e := &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked, Signer: signer, Revoked: s.revokedSigners[signer]}
-			s.entries[idx] = e
-			if err := s.save(); err != nil {
-				delete(s.entries, idx)
-				return 0, err
-			}
-			if e.Revoked {
-				s.revoked[idx] = 1
-			}
-			return idx, nil
-		}
 	}
+	s.entries[idx] = e
+	if err := s.save(); err != nil {
+		delete(s.entries, idx)
+		return 0, err
+	}
+	return idx, nil
 }
 
-// release frees an index whose credential wasn't issued after all.
+// release drops the entry of an index whose credential wasn't issued
+// after all. The index itself stays reserved in the store: the
+// Allocator never hands one out twice, so nothing frees one (draft-14
+// §13.3).
 func (s *statusList) release(idx int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,34 +168,42 @@ func (s *statusList) release(idx int) {
 	}
 }
 
-// revoke marks idx's credential revoked; false if no credential has it.
-func (s *statusList) revoke(idx int) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// revoke sets idx's credential INVALID; false if no credential has it.
+// Called with s.mu held.
+func (s *statusList) revoke(ctx context.Context, idx int) (bool, error) {
 	e, ok := s.entries[idx]
 	if !ok {
-		return false
+		return false, nil
 	}
-	e.Revoked, s.revoked[idx] = true, 1
+	if err := s.allocator.SetStatus(ctx, s.ref(idx), statuslist.StatusInvalid); err != nil {
+		return true, err
+	}
+	e.Revoked = true
 	if err := s.save(); err != nil {
-		log.Printf("issuerapp: %v (the revocation holds until restart)", err)
+		// The store holds the revocation, and loading the entries
+		// takes it from there.
+		log.Printf("issuerapp: %v (the credential is revoked on the status list)", err)
 	}
-	return true
+	return true, nil
 }
 
 // revokeSigner revokes every credential signer (signerID) signed, and
 // any it's yet to sign, saving the list before it returns. It returns
 // how many it revoked.
-func (s *statusList) revokeSigner(signer string) (int, error) {
+func (s *statusList) revokeSigner(ctx context.Context, signer string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.revokedSigners[signer] = true
 	n := 0
 	for idx, e := range s.entries {
-		if e.Signer == signer && !e.Revoked {
-			e.Revoked, s.revoked[idx] = true, 1
-			n++
+		if e.Signer != signer || e.Revoked {
+			continue
 		}
+		if err := s.allocator.SetStatus(ctx, s.ref(idx), statuslist.StatusInvalid); err != nil {
+			return n, err
+		}
+		e.Revoked = true
+		n++
 	}
 	if n == 0 {
 		return 0, nil
@@ -194,16 +228,18 @@ func (s *statusList) attribute(signer string) {
 
 // revokeHandle revokes the credential whose entry has handle; false if
 // none does.
-func (s *statusList) revokeHandle(handle string) bool {
+func (s *statusList) revokeHandle(ctx context.Context, handle string) (bool, error) {
+	if handle == "" {
+		return false, nil
+	}
 	s.mu.Lock()
-	idx := -1
-	for i, e := range s.entries {
-		if handle != "" && e.Handle == handle {
-			idx = i
+	defer s.mu.Unlock()
+	for idx, e := range s.entries {
+		if e.Handle == handle {
+			return s.revoke(ctx, idx)
 		}
 	}
-	s.mu.Unlock()
-	return idx >= 0 && s.revoke(idx)
+	return false, nil
 }
 
 // newHandle is a random IssuedStatus.Handle.
@@ -215,8 +251,14 @@ func newHandle() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
-// snapshot copies the list's statuses and its entries, newest first.
-func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
+// statuses is every index's status, read from the store: what the
+// list's publishers serve.
+func (s *statusList) statuses(ctx context.Context) ([]uint8, error) {
+	return s.allocator.Statuses(s.uri)(ctx)
+}
+
+// snapshot copies the list's entries, newest first.
+func (s *statusList) snapshot() []IssuedStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries := make([]IssuedStatus, 0, len(s.entries))
@@ -224,7 +266,7 @@ func (s *statusList) snapshot() ([]uint8, []IssuedStatus) {
 		entries = append(entries, *e)
 	}
 	slices.SortFunc(entries, func(a, b IssuedStatus) int { return b.IssuedAt.Compare(a.IssuedAt) })
-	return slices.Clone(s.revoked), entries
+	return entries
 }
 
 // withStatus points one credential's claims at idx in this issuer's
@@ -249,10 +291,8 @@ func (a *App) statusPublishers(key *ecdsa.PrivateKey, cert *x509.Certificate) (j
 	publisher := func(uri string, form statuslist.Form) *statuslist.Publisher {
 		return &statuslist.Publisher{
 			URI: uri, Signer: key, Chain: documentChain(cert),
-			Statuses: func(context.Context) ([]uint8, error) {
-				revoked, _ := a.statusList.snapshot()
-				return revoked, nil
-			},
+			// Both URIs serve the one list the Allocator hands out.
+			Statuses:    a.statusList.statuses,
 			DefaultForm: form,
 			Lifetime:    statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
 		}
@@ -325,8 +365,7 @@ var statusTemplate = parsePage("status", pageHead+`</head><body>
 // IssuedStatuses lists every credential this issuer has issued, newest
 // first, with its status list index and whether it's revoked.
 func (a *App) IssuedStatuses() []IssuedStatus {
-	_, entries := a.statusList.snapshot()
-	return entries
+	return a.statusList.snapshot()
 }
 
 func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
@@ -343,7 +382,12 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}
-	if !a.statusList.revokeHandle(r.FormValue("handle")) {
+	switch found, err := a.statusList.revokeHandle(r.Context(), r.FormValue("handle")); {
+	case err != nil:
+		log.Printf("issuerapp: revoke a credential: %v", err)
+		a.writeHTMLError(w, http.StatusInternalServerError, "the credential couldn't be revoked")
+		return
+	case !found:
 		a.writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 
@@ -38,6 +39,11 @@ type stores struct {
 	deferred      issuer.DeferredTransactionStore
 	notifications issuer.NotificationStore
 
+	// statusIndices are the status list's index reservations and
+	// statuses (statuslist.Allocator's Store). In memory, they're kept
+	// in a file in Config.StateDir instead, when set (loadStatusList).
+	statusIndices statuslist.IndexStore
+
 	sweep func(ctx context.Context, now time.Time) error // nil in memory
 }
 
@@ -50,6 +56,7 @@ func memoryStores() stores {
 		preAuthCodes:  oid4vcgostorage.NewPreAuthorizedCodeStore(),
 		deferred:      oid4vcgostorage.NewDeferredTransactionStore(),
 		notifications: oid4vcgostorage.NewNotificationStore(),
+		statusIndices: &statuslist.MemoryIndexStore{},
 	}
 }
 
@@ -87,6 +94,7 @@ func databaseStores(ctx context.Context, db *sql.DB, sealer sqlstore.Sealer) (st
 		preAuthCodes:  issuerDB.PreAuthorizedCodes(),
 		deferred:      issuerDB.DeferredTransactions(),
 		notifications: issuerDB.Notifications(),
+		statusIndices: issuerDB.StatusIndices(),
 		sweep: func(ctx context.Context, now time.Time) error {
 			_, issuerErr := issuerDB.Sweep(ctx, now)
 			_, asErr := asDB.Sweep(ctx, now)

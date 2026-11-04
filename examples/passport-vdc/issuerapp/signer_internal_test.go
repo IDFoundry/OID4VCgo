@@ -1,12 +1,14 @@
 package issuerapp
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -14,8 +16,11 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
+	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // testCRLURL is the distribution point the tests' identities name.
@@ -147,65 +152,148 @@ func TestRevokeDocumentSigner_Persists(t *testing.T) {
 	}
 }
 
+// stateConfigs are an issuer's Configs keeping its state in dir: its
+// status list's indices in a file there, or in a database.
+var stateConfigs = map[string]func(t *testing.T, dir string) Config{
+	"file": testConfig,
+	"database": func(t *testing.T, dir string) Config {
+		t.Helper()
+		cfg := testConfig(t, dir)
+		db, sealer, err := OpenDatabase(filepath.Join(dir, "stores.db"), filepath.Join(dir, "stores.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		cfg.Database, cfg.DatabaseSealer = db, sealer
+		return cfg
+	},
+}
+
 // TestRevokeDocumentSigner_RevokesItsCredentialsAcrossRestart: the
 // signer's credentials are revoked on the saved status list, so a
 // restart keeps them revoked; an entry saved before entries named their
 // signer is the signer's in use at start; one a request under way
-// allocates for the revoked signer is revoked from the start; and the
-// new signer's credentials stay valid.
+// allocates for the revoked signer is revoked from the start; one
+// revoked by its handle stays revoked; and the new signer's credentials
+// stay valid. Its indices are kept in the state directory, or in the
+// database.
 func TestRevokeDocumentSigner_RevokesItsCredentialsAcrossRestart(t *testing.T) {
-	dir := t.TempDir()
-	cfg := testConfig(t, dir)
-	app, err := New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := signerID(app.IssuerCertificate())
-	sdjwt, err := app.statusList.allocate("dc+sd-jwt", false, old, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mdocIdx, err := app.statusList.allocate("mso_mdoc", false, old, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Saved before entries named their signer.
-	legacy, err := app.statusList.allocate("mso_mdoc", false, "", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	app, err = New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := app.statusList.entries[legacy].Signer; got != old {
-		t.Fatalf("an entry without a signer is %q's, want the signer in use at start, %q", got, old)
-	}
+	ctx := context.Background()
+	for name, config := range stateConfigs {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := config(t, dir)
+			app, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := signerID(app.IssuerCertificate())
+			sdjwt, err := app.statusList.allocate(ctx, "dc+sd-jwt", false, old, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			mdocIdx, err := app.statusList.allocate(ctx, "mso_mdoc", false, old, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Saved before entries named their signer.
+			legacy, err := app.statusList.allocate(ctx, "mso_mdoc", false, "", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err = New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := app.statusList.entries[legacy].Signer; got != old {
+				t.Fatalf("an entry without a signer is %q's, want the signer in use at start, %q", got, old)
+			}
 
-	if err := app.RevokeDocumentSigner(); err != nil {
-		t.Fatal(err)
-	}
-	inFlight, err := app.statusList.allocate("dc+sd-jwt", false, old, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	fresh, err := app.statusList.allocate("mso_mdoc", false, signerID(app.IssuerCertificate()), time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+			if err := app.RevokeDocumentSigner(); err != nil {
+				t.Fatal(err)
+			}
+			inFlight, err := app.statusList.allocate(ctx, "dc+sd-jwt", false, old, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := app.statusList.allocate(ctx, "mso_mdoc", false, signerID(app.IssuerCertificate()), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			byHandle, err := app.statusList.allocate(ctx, "dc+sd-jwt", false, signerID(app.IssuerCertificate()), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found, err := app.statusList.revokeHandle(ctx, app.statusList.entries[byHandle].Handle); !found || err != nil {
+				t.Fatalf("revokeHandle = %v, %v", found, err)
+			}
 
-	restarted, err := New(cfg)
+			restarted, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bits := statusesOf(t, restarted.statusList)
+			for name, idx := range map[string]int{"SD-JWT VC": sdjwt, "mdoc": mdocIdx, "legacy": legacy, "in flight": inFlight, "by handle": byHandle} {
+				if bits[idx] != 1 || !restarted.statusList.entries[idx].Revoked {
+					t.Errorf("%s credential: status %d after a restart, want revoked", name, bits[idx])
+				}
+			}
+			if bits[fresh] != 0 || restarted.statusList.entries[fresh].Revoked {
+				t.Error("the new signer's credential was revoked")
+			}
+			_, err = os.Stat(filepath.Join(dir, statusIndicesFile))
+			if inFile := err == nil; inFile != (cfg.Database == nil) {
+				t.Errorf("%s exists: %v, want it only without a database", statusIndicesFile, inFile)
+			}
+		})
+	}
+}
+
+// TestStatusPublishers_ServeAllocatorStatuses: the JWT and CWT
+// publishers both serve the Allocator's statuses, a revocation as soon
+// as they're invalidated.
+func TestStatusPublishers_ServeAllocatorStatuses(t *testing.T) {
+	ctx := context.Background()
+	app, err := New(testConfig(t, t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bits, _ := restarted.statusList.snapshot()
-	for name, idx := range map[string]int{"SD-JWT VC": sdjwt, "mdoc": mdocIdx, "legacy": legacy, "in flight": inFlight} {
-		if bits[idx] != 1 || !restarted.statusList.entries[idx].Revoked {
-			t.Errorf("%s credential of the revoked signer: status %d after a restart, want revoked", name, bits[idx])
+	idx, err := app.statusList.allocate(ctx, "mso_mdoc", false, signerID(app.IssuerCertificate()), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := func() (jwt, cwt statuslist.StatusType) {
+		t.Helper()
+		s := app.current()
+		pub := s.key.Public()
+		token, err := s.jwtList.Token(ctx, false)
+		if err != nil {
+			t.Fatal(err)
 		}
+		ref := app.statusList.ref(idx)
+		if jwt, _, err = statuslist.Check(string(token), pub, oid4vci.ES256, ref, statuslist.VerifyOptions{}); err != nil {
+			t.Fatalf("the JWT list: %v", err)
+		}
+		if token, err = s.cwtList.Token(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		ref.URI = app.mdocStatusListURI
+		if cwt, _, err = statuslist.CheckCWT(token, pub, haip.RecommendedCOSEAlgorithm, ref, statuslist.VerifyOptions{}); err != nil {
+			t.Fatalf("the CWT list: %v", err)
+		}
+		return jwt, cwt
 	}
-	if bits[fresh] != 0 || restarted.statusList.entries[fresh].Revoked {
-		t.Error("the new signer's credential was revoked")
+	if jwt, cwt := published(); jwt != statuslist.StatusValid || cwt != statuslist.StatusValid {
+		t.Fatalf("published statuses %v (JWT), %v (CWT), want valid", jwt, cwt)
+	}
+	if err := app.statusList.allocator.SetStatus(ctx, app.statusList.ref(idx), statuslist.StatusInvalid); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []*statuslist.Publisher{app.current().jwtList, app.current().cwtList} {
+		p.Invalidate()
+	}
+	if jwt, cwt := published(); jwt != statuslist.StatusInvalid || cwt != statuslist.StatusInvalid {
+		t.Errorf("published statuses %v (JWT), %v (CWT) after SetStatus, want invalid", jwt, cwt)
 	}
 }
 

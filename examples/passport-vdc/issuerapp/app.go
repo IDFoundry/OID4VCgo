@@ -126,9 +126,6 @@ func New(cfg Config) (*App, error) {
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), KeepForRefresh, cfg.maxTransactions())
 	a.statusListURI = cfg.IssuerURL + StatusListPath
 	a.mdocStatusListURI = cfg.IssuerURL + MdocStatusListPath
-	if a.statusList, err = a.loadStatusList(); err != nil {
-		return nil, err
-	}
 	a.reviews = newReviews(a.now)
 	a.progress = newProgressBoard()
 	a.stores = memoryStores()
@@ -136,6 +133,9 @@ func New(cfg Config) (*App, error) {
 		if a.stores, err = databaseStores(context.Background(), cfg.Database, cfg.DatabaseSealer); err != nil {
 			return nil, err
 		}
+	}
+	if a.statusList, err = a.loadStatusList(); err != nil {
+		return nil, err
 	}
 	a.notifications = &notifications{now: a.now}
 	if a.providerAnchors, err = attesterAnchors(cfg.Wallet.ProviderCA, cfg.Wallet.ProviderIssuer); err != nil {
@@ -636,13 +636,22 @@ func (a *App) identity() (issuerIdentity, error) {
 	return loadOrCreateIdentity(a.cfg.StateDir, a.now(), a.crlURL)
 }
 
-// loadStatusList is this issuer's status list: kept in Config.StateDir
-// when set, so revocations and allocated indices survive a restart.
+// loadStatusList is this issuer's status list. Its index reservations
+// and statuses are kept in Config.Database when set (sqlstore's
+// StatusIndices), else in Config.StateDir when set (fileIndexStore),
+// so no allocated index is handed out again, and revocations hold,
+// across a restart. Its entries, the status page's, are kept in
+// Config.StateDir when set.
 func (a *App) loadStatusList() (*statusList, error) {
-	if a.cfg.StateDir == "" {
-		return newStatusList(), nil
+	store := a.stores.statusIndices
+	if a.cfg.Database == nil && a.cfg.StateDir != "" {
+		fileStore, err := openFileIndexStore(filepath.Join(a.cfg.StateDir, statusIndicesFile))
+		if err != nil {
+			return nil, err
+		}
+		store = fileStore
 	}
-	return loadStatusList(a.cfg.StateDir)
+	return loadStatusList(context.Background(), store, a.statusListURI, a.cfg.StateDir)
 }
 
 // credentialDisplay is a passport credential's display metadata: its

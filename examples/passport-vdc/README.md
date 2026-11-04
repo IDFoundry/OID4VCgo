@@ -226,7 +226,8 @@ be decided again, under production assurance:
   `walletflow/storetest` against them. With `-db` (`cmd/demo`: a SQLite
   file in `.demo-state/issuer/stores.db`; `cmd/issuer -db FILE`) the
   issuer's Authorization Server and Credential Issuer stores are
-  durable instead, as a deployment's would be: FAPIgo's
+  durable instead, and so are its status list's index reservations
+  and statuses, as a deployment's would be: FAPIgo's
   `fapigo/sqlstore` and this repository's `sqlstore` side by side in
   one database, sealed under one key (`stores.key` beside it — a
   deployment keeps the key in a secret manager or KMS). The passports
@@ -641,8 +642,21 @@ wallet restart.
 
 Each credential carries a reference to the issuer's Token Status List
 (draft-14): an SD-JWT VC in its `status` claim, an mdoc in its MSO's
-`status`. Every credential gets its own random, unused index (HAIP 1.0
-§6.1). SD-JWT VCs reference the list at `/statuslists/1`, mdocs the
+`status`. Every credential gets its own random index, never handed out
+before (HAIP 1.0 §6.1), from the library's `statuslist.Allocator`, the
+recommended way to allocate them: it draws each index at random,
+reserves it in a `statuslist.IndexStore` so it's never handed out
+again, even for a credential that wasn't issued after all (draft-14
+§13.3), and stops at half the list's 65,536 indices, so an index stays
+unpredictable. The same store keeps each index's status, which both
+URIs publish. With `-db` it's the database's
+(`sqlstore`'s `StatusIndices`, as a deployment's would be); otherwise
+`status-indices.json` in the state directory under `cmd/demo`, and
+memory under `cmd/issuer`. The demo's own record of each credential,
+for the status page, is `status-list.json` beside it; the first start
+after an upgrade reserves every index recorded there, and sets the
+revoked ones INVALID, so credentials issued before keep their status
+and indices. SD-JWT VCs reference the list at `/statuslists/1`, mdocs the
 same list at `/statuslists/1/cwt`. Each URI serves the form the
 request's `Accept` asks for (`application/statuslist+jwt` or
 `application/statuslist+cwt`), and, when it names neither, a JWT at the
@@ -651,7 +665,7 @@ first and a CWT at the second: an mdoc reader may send no `Accept`
 certificate in `x5c` / `x5chain` (HAIP 1.0 §6.1).
 
 The issuer's **Issued credentials** page (`/status`, linked from its
-home page) lists every issued credential by index, format and time,
+home page) lists every issued credential by format and day of issue,
 and revokes one with a button. The verifier checks every presented
 credential against the list: the token's certificate must chain to the
 issuer CA, and the credential's entry must be valid. A revoked,
