@@ -168,7 +168,7 @@ func TestCheckStatus_IdentifierList(t *testing.T) {
 func TestCheckStatus_IdentifierListUnderIssuerCA(t *testing.T) {
 	iaca, iacaKey := testcert.CA(t, "IACA")
 	otherCA, otherKey := testcert.CA(t, "Other IACA")
-	ds, dsKey := testcert.Leaf(t, "Document signer", iaca, iacaKey)
+	ds, dsKey := testcert.DocumentSigner(t, "Document signer", iaca, iacaKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(iaca)
 	roots.AddCert(otherCA)

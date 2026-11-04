@@ -117,6 +117,17 @@ type CredentialCopy struct {
 	// while the copy hasn't expired its lists aren't fetched again: an
 	// older list served later can't make it valid.
 	Revoked bool
+	// IssuerUntrusted is whether Wallet.CheckStatus, when it last
+	// checked this copy, found the certificate chain that signed it
+	// refused: its signer, or a CA above it, revoked under
+	// Config.IssuerRevocation (certrevocation.ErrRevoked), or the chain
+	// no longer verifying under the issuer roots and leaf policy
+	// configured now. Unlike Revoked it isn't final: each check decides
+	// it again with the revocation lists and roots held then, as a CRL
+	// may lift a certificateHold, so it's cleared once the chain passes.
+	// A check that can't decide (no current CRL) leaves it as it was.
+	// While it's set the copy is never chosen ahead of one without it.
+	IssuerUntrusted bool
 
 	// Reservation identifies the latest presentation that reserved this
 	// copy and may still undo it: one that isn't sent undoes its
@@ -145,8 +156,9 @@ func (c StoredCredential) ShownTo(clientID string) bool {
 
 // Presentable reports whether a Verifier could accept c at now, as far
 // as the wallet knows: it holds a copy that hasn't expired and that
-// CheckStatus hasn't found revoked, and its status as last checked
-// isn't revoked or suspended. A presentation offers a credential that
+// CheckStatus hasn't found revoked or signed under a refused issuer
+// certificate (CredentialCopy.IssuerUntrusted), and its status as last
+// checked isn't revoked or suspended. A presentation offers a credential that
 // isn't after those that are (Presentation.Queries), and never picks it
 // itself (DefaultSelection), since a Verifier would refuse it once the
 // holder had disclosed its claims.
@@ -204,9 +216,10 @@ func (c StoredCredential) copyFor(policy CopyPolicy, verifierHash string, now ti
 }
 
 // copyUnusable reports whether a Verifier would refuse cp, one of c's
-// copies, at now: it has expired, or CheckStatus found it revoked.
+// copies, at now: it has expired, or CheckStatus found it revoked or
+// its issuer's certificate chain refused (IssuerUntrusted).
 func (c StoredCredential) copyUnusable(cp CredentialCopy, now time.Time) bool {
-	return cp.Revoked || c.copyExpired(cp, now)
+	return cp.Revoked || cp.IssuerUntrusted || c.copyExpired(cp, now)
 }
 
 // copyExpired reports whether cp, one of c's copies, has expired at

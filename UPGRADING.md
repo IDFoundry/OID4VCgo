@@ -6,6 +6,44 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.64.0 → next
+
+### Credential status (`walletflow`)
+
+- **`CheckStatus` checks a held credential's issuer certificate
+  again.** Besides its status and identifier lists, it now verifies
+  each live copy's signing chain (an SD-JWT VC's `x5c`, an mdoc's
+  IssuerAuth `x5chain`) under the issuer roots and leaf policy
+  configured now and against `Config.IssuerRevocation`, with the CRLs
+  held then. A copy whose signer, or a CA above it, has been revoked
+  since, or whose chain no longer verifies under the roots, is marked
+  with the new `CredentialCopy.IssuerUntrusted` and isn't chosen for a
+  presentation ahead of one without it; once no copy is left that
+  isn't, the credential is `StatusInvalid`. This isn't final, unlike a
+  list's revocation: the next check decides it again, so a CRL that no
+  longer lists the certificate makes the credential valid again.
+- **A credential with no status or identifier list is checked too**
+  when it carries a chain and the Wallet has roots for it: `CheckStatus`
+  used to return it unchanged, with an empty `Status`, and now records
+  one (`StatusValid` when its chain passes). Only a credential with
+  nothing to check — no list and no chain, or no roots configured for
+  it — is returned as it is.
+- **No current CRL is `StatusUnknown`, not an error.** A chain whose
+  revocation `certrevocation.CRLs` can't decide for want of a current
+  CRL (`certrevocation.ErrNoCurrentCRL`) — the issuer's under
+  `IssuerRevocation`, or a status list signer's under
+  `StatusRevocation`, which used to fail `CheckStatus` — now records
+  `StatusUnknown`. Refresh the lists and check again. A Checker's other
+  failures to decide are still errors.
+- **`CredentialStatus.Reason`** says why a status is what it is:
+  `ReasonStatusList`, `ReasonIdentifierList`,
+  `ReasonIssuerCertificateRevoked`, `ReasonIssuerUntrusted`,
+  `ReasonNoCurrentCRL` or `ReasonUnrecognizedStatus`; `""` for
+  `StatusValid` and for a status recorded before. A `CredentialStore`
+  of your own must keep it and `CredentialCopy.IssuerUntrusted`, as
+  `storetest.TestCredentialStoreContract` now checks; one that stores
+  the record as JSON, sqlstore's among them, already does.
+
 ## v0.63.0 → v0.64.0
 
 ### Status lists (`statuslist`, `identifierlist`, `walletflow`)
