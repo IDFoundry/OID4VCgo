@@ -116,6 +116,49 @@ class CombinedHostTest {
         }
     }
 
+    /** NFC hands over to BLE: with Bluetooth off, neither way can work, so the session ends. */
+    @Test fun bluetoothOffEndsQrAndNfcHandover(): Unit = runBlocking {
+        val arbiter = CombinedEngagementArbiter(false) {}
+        val qr = Fake { throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true) }
+        val nfc = Fake { error("NFC connected") }
+        val combined = CombinedTransport(arbiter, qr, nfc)
+        try {
+            withTimeout(1000) { combined.connect() }
+            fail("connected with Bluetooth off")
+        } catch (e: ProximityTransportException) {
+            assertTrue(e.bluetoothUnavailable)
+        }
+        assertTrue(qr.closed)
+        combined.close()
+    }
+
+    /** NFC data retrieval needs no Bluetooth: it stays available. */
+    @Test fun bluetoothOffLeavesNfcData(): Unit = runBlocking {
+        val arbiter = CombinedEngagementArbiter(true) {}
+        val qr = Fake { throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true) }
+        val combined = CombinedTransport(arbiter, qr, Fake {})
+        val job = async { combined.connect() }
+        assertTrue(arbiter.acceptNfc(select, false))
+        assertTrue(arbiter.acceptNfc(NfcCommandKind.SELECT_DATA, true))
+        withTimeout(1000) { job.await() }
+        assertEquals(SelectedEngagement.NFC_DATA, arbiter.state.value)
+        assertTrue(qr.closed)
+        combined.close()
+    }
+
+    /** Any other QR failure leaves an NFC handover to BLE available, as before. */
+    @Test fun otherQrFailureLeavesNfcHandover(): Unit = runBlocking {
+        val arbiter = CombinedEngagementArbiter(false) {}
+        val qr = Fake { throw ProximityTransportException("BLE advertising failed (1)") }
+        val combined = CombinedTransport(arbiter, qr, Fake {})
+        val job = async { combined.connect() }
+        withTimeout(1000) { while (!qr.closed) kotlinx.coroutines.yield() }
+        assertTrue(arbiter.select(true))
+        withTimeout(1000) { job.await() }
+        assertEquals(SelectedEngagement.NFC_BLE, arbiter.state.value)
+        combined.close()
+    }
+
     @Test fun appOwnerReplacementsAwaitCleanup(): Unit = runBlocking {
         class Owner { var closed = false }
         val owners = PresentationOwners<Owner> { it.closed = true }

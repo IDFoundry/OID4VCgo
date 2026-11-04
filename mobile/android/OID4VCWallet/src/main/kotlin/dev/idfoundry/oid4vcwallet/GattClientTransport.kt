@@ -52,7 +52,7 @@ internal class GattClientTransport(
     private val ident: ByteArray? = null,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
-        ?: throw ProximityTransportException("this device has no Bluetooth")
+        ?: throw ProximityTransportException("this device has no Bluetooth", bluetoothUnavailable = true)
 
     private var gatt: BluetoothGatt? = null
     /** The pending characteristic read's value, null when it failed. */
@@ -74,6 +74,14 @@ internal class GattClientTransport(
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var sessionStarted = false
     @Volatile private var closed = false
+    /**
+     * Bluetooth turned off: unlike one device's failure, which [connect]
+     * retries past, it ends the session.
+     */
+    @Volatile private var bluetoothOffFailure: ProximityTransportException? = null
+    private val bluetoothOff = BluetoothOffWatch { bluetoothTurnedOff(it) }
+    /** The running scan's result, until it has one. */
+    private var scanning: CompletableDeferred<BluetoothDevice>? = null
     private var activeScan: Pair<BluetoothLeScanner, ScanCallback>? = null
     /** Devices whose Ident wasn't this session's reader's: never again. */
     private val ignored: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -85,10 +93,13 @@ internal class GattClientTransport(
             when {
                 newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS -> pending?.complete(status)
                 newState == BluetoothProfile.STATE_DISCONNECTED -> {
-                    if (pending != null && !pending.isCompleted) {
+                    val e = disconnectionFailure(manager)
+                    if (e.bluetoothUnavailable) {
+                        bluetoothTurnedOff(e)
+                    } else if (pending != null && !pending.isCompleted) {
                         pending.complete(if (status == BluetoothGatt.GATT_SUCCESS) BluetoothGatt.GATT_FAILURE else status)
                     } else {
-                        fail(ProximityTransportException("the other device disconnected"))
+                        fail(e)
                     }
                 }
             }
@@ -151,12 +162,19 @@ internal class GattClientTransport(
     }
 
     override suspend fun connect() {
-        val adapter = manager.adapter
-        if (adapter == null || !adapter.isEnabled) throw ProximityTransportException("Bluetooth is off")
+        // Watching first: Bluetooth turning off just after the check
+        // below is caught too.
+        bluetoothOff.start(context)
+        if (manager.adapter?.isEnabled != true) {
+            // Nothing started: leave nothing registered.
+            bluetoothOff.stop()
+            throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
+        }
         var lastStatus = 0
         var attempt = 0
         while (attempt < CONNECT_ATTEMPTS) {
             if (closed) throw ProximityTransportException(SESSION_ENDED)
+            bluetoothOffFailure?.let { throw it }
             // A device that failed before (disconnecting mid-setup,
             // leaving half a message) mustn't spoil this attempt.
             incoming = Channel(INCOMING_MESSAGE_CAPACITY)
@@ -191,6 +209,7 @@ internal class GattClientTransport(
             return BluetoothGatt.GATT_SUCCESS
         } catch (e: ProximityTransportException) {
             if (closed) throw e
+            bluetoothOffFailure?.let { throw it }
             gatt?.disconnect()
             if (!e.wrongReader) {
                 Log.i(TAG, "starting the session failed: ${e.message}")
@@ -206,7 +225,7 @@ internal class GattClientTransport(
 
     /** Scans until a device advertising [serviceUUID] is found. */
     private suspend fun scan(): BluetoothDevice {
-        val scanner = manager.adapter?.bluetoothLeScanner ?: throw ProximityTransportException("Bluetooth is off")
+        val scanner = manager.adapter?.bluetoothLeScanner ?: throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
         while (true) {
             val found = CompletableDeferred<BluetoothDevice>()
             val scanCallback = object : ScanCallback() {
@@ -220,6 +239,8 @@ internal class GattClientTransport(
             }
             synchronized(this) {
                 if (closed) throw ProximityTransportException(SESSION_ENDED)
+                bluetoothOffFailure?.let { throw it }
+                scanning = found
                 activeScan = scanner to scanCallback
                 scanner.startScan(
                 listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUUID)).build()),
@@ -232,7 +253,10 @@ internal class GattClientTransport(
                 Log.i(TAG, "nothing found in ${SCAN_RESTART_MS / 1000} s: restarting the scan")
             } finally {
                 runCatching { scanner.stopScan(scanCallback) }
-                synchronized(this) { if (activeScan?.second === scanCallback) activeScan = null }
+                synchronized(this) {
+                    if (activeScan?.second === scanCallback) activeScan = null
+                    if (scanning === found) scanning = null
+                }
             }
         }
     }
@@ -240,9 +264,10 @@ internal class GattClientTransport(
     /** Connects to [device], returning the GATT status. */
     private suspend fun attemptConnection(device: BluetoothDevice): Int {
         val pending = CompletableDeferred<Int>()
-        connection = pending
         synchronized(this) {
             if (closed) throw ProximityTransportException(SESSION_ENDED)
+            bluetoothOffFailure?.let { throw it }
+            connection = pending
             gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
                 ?: return BluetoothGatt.GATT_FAILURE
         }
@@ -306,6 +331,7 @@ internal class GattClientTransport(
 
     /** Writes [value] to [characteristic], without response, and waits until it's sent. */
     private suspend fun write(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+        bluetoothOffFailure?.let { throw it }
         val g = gatt ?: throw ProximityTransportException(SESSION_ENDED)
         drain()
         val type = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
@@ -329,7 +355,7 @@ internal class GattClientTransport(
 
     private suspend fun expectSuccess(what: String) {
         val status = withTimeout(OPERATION_TIMEOUT_MS) { results.receive() }
-        if (status != BluetoothGatt.GATT_SUCCESS) throw ProximityTransportException("$what failed ($status)")
+        if (status != BluetoothGatt.GATT_SUCCESS) throw bluetoothOffFailure ?: ProximityTransportException("$what failed ($status)")
     }
 
     override suspend fun send(message: ByteArray): Unit = sending.withLock {
@@ -352,9 +378,25 @@ internal class GattClientTransport(
         results.trySend(BluetoothGatt.GATT_FAILURE)
     }
 
+    /**
+     * Ends the session with [e], once: the scan or connection under way
+     * fails, [connect] retries no more, and [send] and [receive] throw it.
+     */
+    private fun bluetoothTurnedOff(e: ProximityTransportException) {
+        val (scan, pending) = synchronized(this) {
+            if (closed || bluetoothOffFailure != null) return
+            bluetoothOffFailure = e
+            scanning to connection
+        }
+        scan?.completeExceptionally(e)
+        pending?.completeExceptionally(e)
+        fail(e)
+    }
+
     @Synchronized override fun close() {
         if (closed) return
         closed = true
+        bluetoothOff.stop()
         activeScan?.let { (scanner, callback) -> runCatching { scanner.stopScan(callback) } }
         activeScan = null
         connection?.cancel()

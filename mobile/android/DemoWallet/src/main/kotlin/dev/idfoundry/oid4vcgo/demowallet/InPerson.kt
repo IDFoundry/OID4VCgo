@@ -95,17 +95,28 @@ private const val READER_OUTCOME = "reader-outcome"
 /** A request reader mode makes: a document type and its elements. */
 data class ReaderPreset(val title: String, val docType: String, val elements: Map<String, List<String>>)
 
-/** Reader mode's requests: the passport-vdc Photo ID, an mDL, and the test services' mdoc. */
+/**
+ * Reader mode's requests: the passport-vdc Photo ID, an mDL, and the test
+ * services' mdoc. The "another namespace" ones also ask for an AAMVA
+ * element the document doesn't have, to see how a holder answers a
+ * request it can only partly meet.
+ */
 val readerPresets: List<ReaderPreset> = run {
     val photoID = "org.iso.23220.photoid.1" to "org.iso.23220.1"
     val mdl = "org.iso.18013.5.1.mDL" to "org.iso.18013.5.1"
+    val test = "org.example.test.1"
+    val aamva = "org.iso.18013.5.1.aamva" to listOf("DHS_compliance")
     val identity = listOf("family_name", "given_name", "portrait", "age_over_18")
     listOf(
         ReaderPreset("Photo ID: over 18?", photoID.first, mapOf(photoID.second to listOf("age_over_18"))),
         ReaderPreset("Photo ID: name, photo and age", photoID.first, mapOf(photoID.second to identity)),
+        ReaderPreset("Photo ID: name, and another namespace's element", photoID.first,
+            mapOf(photoID.second to listOf("family_name", "given_name"), aamva)),
         ReaderPreset("Driving licence: over 18?", mdl.first, mapOf(mdl.second to listOf("age_over_18"))),
         ReaderPreset("Driving licence: name, photo and age", mdl.first, mapOf(mdl.second to identity)),
-        ReaderPreset("Test mdoc: name", "org.example.test.1", mapOf("org.example.test.1" to listOf("family_name", "given_name"))),
+        ReaderPreset("Test mdoc: name", test, mapOf(test to listOf("family_name", "given_name"))),
+        ReaderPreset("Test mdoc: name, and another namespace's element", test,
+            mapOf(test to listOf("family_name", "given_name"), aamva)),
     )
 }
 
@@ -456,6 +467,11 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                         Column(Modifier.padding(16.dp)) {
                             Text(p.title)
                             Text(p.elements.values.flatten().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
+                            // The card scans too; the button says so.
+                            Button({ preset = p; startScan() }, Modifier.padding(top = 8.dp).testTag("reader-qr")) {
+                                Text(if (model.engagementToRead != null) "Read the holder's phone" else "Scan QR code")
+                            }
+                            Text("Or tap the holder's phone by NFC:", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
                             val startNfc = rememberBluetoothPermissions(ProximityPermissions.reader,
                                 then = { preset = p; model.armNfcReader(p) }, denied = { denied = true })
                             OutlinedButton(startNfc, Modifier.testTag("reader-nfc")) { Text("Tap with Bluetooth allowed") }

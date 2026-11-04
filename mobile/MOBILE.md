@@ -1419,6 +1419,16 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   without one. A device whose Ident differs, another session's reader
   advertising the same service, is disconnected and ignored, and the
   scan goes on, on both platforms.
+- **Bluetooth turning off ends the session:** each transport watches
+  the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
+  `close`, as the iOS SDK does with CoreBluetooth's state. Without it,
+  a holder still waiting for a reader has no link to lose, and an
+  Android 9 phone reported no disconnection when the adapter went down,
+  so either session stayed open. It fails as `BluetoothUnavailable`,
+  before or after a reader connects. A combined QR and NFC presentation
+  ends too unless its NFC side is NFC-only retrieval: an NFC handover
+  needs BLE as well. An NFC presentation not yet tapped has no
+  transport, and stays armed.
 
 ### Phase 10 findings: the iOS SDK
 

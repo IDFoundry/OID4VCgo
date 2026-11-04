@@ -99,16 +99,21 @@ internal class EitherTransport(private val transports: List<ProximityTransport>)
     }
 }
 
+/** The failure's message when Bluetooth is off, or turns off. */
+internal const val BLUETOOTH_OFF = "Bluetooth is off"
+
 /**
  * The transport failed, or the other side ended the session
  * ([peerEnded]), or the device found isn't this session's reader
- * ([wrongReader]: its Ident differs).
+ * ([wrongReader]: its Ident differs), or Bluetooth is off
+ * ([bluetoothUnavailable]).
  */
 internal class ProximityTransportException(
     message: String,
     val peerEnded: Boolean = false,
     cause: Throwable? = null,
     val wrongReader: Boolean = false,
+    val bluetoothUnavailable: Boolean = false,
 ) : Exception(message, cause)
 
 /**

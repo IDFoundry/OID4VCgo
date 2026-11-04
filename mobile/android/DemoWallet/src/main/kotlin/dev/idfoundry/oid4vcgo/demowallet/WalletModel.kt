@@ -9,8 +9,12 @@ import android.content.Intent
 import android.hardware.biometrics.BiometricManager.Authenticators
 import android.hardware.biometrics.BiometricPrompt
 import android.net.Uri
+import android.os.Build
 import android.os.CancellationSignal
 import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -934,6 +938,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun confirmHolder(reason: String): Boolean {
         val host = activity.get() ?: return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return confirmWithScreenLock(host, reason)
         return suspendCancellableCoroutine { cont ->
             val cancel = CancellationSignal()
             cont.invokeOnCancellation { cancel.cancel() }
@@ -951,6 +956,27 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                         cont.resume(false)
                     }
                 })
+        }
+    }
+
+    /**
+     * [confirmHolder] before API 30, which can't ask for biometrics or the
+     * screen lock in one prompt: the system's screen lock confirmation,
+     * which offers the fingerprint too where the device has one.
+     */
+    private suspend fun confirmWithScreenLock(host: Activity, reason: String): Boolean {
+        val registry = (host as? ComponentActivity)?.activityResultRegistry ?: return false
+        @Suppress("DEPRECATION") // its replacement, BiometricPrompt's, is API 30's
+        val intent = host.getSystemService(KeyguardManager::class.java)
+            .createConfirmDeviceCredentialIntent("Confirm it's you", reason) ?: return false
+        return suspendCancellableCoroutine { cont ->
+            lateinit var launcher: ActivityResultLauncher<Intent>
+            launcher = registry.register("confirmHolder", ActivityResultContracts.StartActivityForResult()) { result ->
+                launcher.unregister()
+                if (cont.isActive) cont.resume(result.resultCode == Activity.RESULT_OK)
+            }
+            cont.invokeOnCancellation { launcher.unregister() }
+            launcher.launch(intent)
         }
     }
 

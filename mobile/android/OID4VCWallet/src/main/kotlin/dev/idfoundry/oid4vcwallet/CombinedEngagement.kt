@@ -28,7 +28,7 @@ public enum class SelectedEngagement {
 
 /** Serializes QR connection, completed NFC handover/data selection, and cancellation. */
 internal class CombinedEngagementArbiter(
-    private val nfcData: Boolean,
+    val nfcData: Boolean,
     private val claim: (Boolean) -> Unit,
 ) {
     private val selected = MutableStateFlow<SelectedEngagement?>(null)
@@ -76,10 +76,17 @@ internal class CombinedTransport(
                 if (!arbiter.select(false)) transport.close()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                transport.close()
+                // Bluetooth off: the QR code shown is dead, and an NFC
+                // handover to BLE can't work either. Only NFC data
+                // retrieval goes on without it.
+                if (e is ProximityTransportException && e.bluetoothUnavailable && !arbiter.nfcData) {
+                    ProximityDiagnostics.event("QR offer failed: Bluetooth is off; ending the session")
+                    throw e
+                }
                 // A failed QR offer must not break NFC-only retrieval.
                 ProximityDiagnostics.event("QR offer failed; NFC remains available")
-                transport.close()
             }
         } }
         try {

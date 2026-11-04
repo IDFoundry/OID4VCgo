@@ -110,7 +110,10 @@ and the keys go without chains. See the passport-vdc README's
 "The stand-in Wallet Provider". The iOS demo app sends no such
 evidence: App Attest attests the app, not its Secure Enclave keys.
 
-The demo requires Android 11/API 30 and compileSdk 37. Install a matching
+The demo requires Android 8/API 26, as the library does, and compileSdk 37.
+Below Android 11 the holder confirms a presentation with the system's screen
+lock prompt, since one prompt for biometrics or the screen lock is API 30's.
+Install a matching
 debug APK with `adb -s <device> install -r <apk>` to preserve data when the
 installed signing key matches; do not uninstall or reset an existing wallet
 just to try a new build. The test-services launch helpers reset the wallet,
@@ -128,7 +131,8 @@ chosen below them in the same menu, which stays open for both choices. The
 two transfer modes keep the phones together for the whole exchange and
 require no Bluetooth permissions, so the menu greys out the Bluetooth modes.
 The choice is kept across launches.
-Reader presets offer **Tap with Bluetooth allowed**, which requests
+Reader presets offer **Scan QR code**, which scans the holder's QR code
+and connects over Bluetooth, and two NFC taps: **Tap with Bluetooth allowed**, which requests
 Bluetooth permissions, and **Tap without asking for Bluetooth**, which
 skips that request. Both detect the holder's selected carrier; the second
 action does not force NFC-only if Bluetooth permissions were granted

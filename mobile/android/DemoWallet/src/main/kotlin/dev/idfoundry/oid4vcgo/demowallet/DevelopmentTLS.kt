@@ -1,6 +1,7 @@
 package dev.idfoundry.oid4vcgo.demowallet
 
 import android.content.Context
+import android.os.Build
 import java.io.File
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
@@ -45,6 +46,8 @@ object DevelopmentTLS {
             extra.forEachIndexed { i, c -> setCertificateEntry("dev-$i", c) }
         }
         val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(anchors) }
-        return SSLContext.getInstance("TLSv1.3").apply { init(null, trust.trustManagers, null) }
+        // TLS 1.3 is API 29's.
+        val protocol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "TLSv1.3" else "TLSv1.2"
+        return SSLContext.getInstance(protocol).apply { init(null, trust.trustManagers, null) }
     }
 }
