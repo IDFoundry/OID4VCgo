@@ -339,15 +339,40 @@ public class ProximityPresentation internal constructor(
      * signs now, so a key store requiring the holder prompts. It returns
      * whether the copy presented had been seen by another Verifier. On a
      * [WalletException] nothing was sent and the request stands: try
-     * again, or [decline].
+     * again, or [decline]. It is [respond] with one answer.
      */
-    public suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>): Boolean {
+    public suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>): Boolean =
+        respond(listOf(MdocPresentation.Answer(document, credentialID, elements))).linkable
+
+    /**
+     * What [respond] presented.
+     *
+     * @property linkable Whether any copy presented had been seen by another Verifier.
+     * @property linkableCredentials The credentials presented with such a copy, by ID.
+     */
+    public data class Responded(val linkable: Boolean, val linkableCredentials: List<String>)
+
+    /**
+     * Presents several of the request's documents in one response, each
+     * of [answers] as the one-document [respond] presents one, and sends
+     * it, which ends the session. A document left out isn't in the
+     * response: the reader may ask for more than the holder shares. No
+     * document may be answered twice, nor one credential answer two.
+     *
+     * Each holder key signs now, in the request's order, so each key
+     * store requiring the holder prompts in turn: on Android one
+     * prompt per key (see [AndroidKeystoreKeyStore.Options.holderAuthenticationTimeout]).
+     * On a [WalletException] — one prompt cancelled, say — nothing was
+     * sent, the keys after it weren't asked, and the request stands:
+     * try again, or [decline].
+     */
+    public suspend fun respond(answers: List<MdocPresentation.Answer>): Responded {
         val request = _state.value as? State.RequestReceived
             ?: throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
         if (!_state.compareAndSet(request, State.Responding)) throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
-        val pairs = json.encodeToString(ListSerializer(ListSerializer(String.serializer())), elements.map { listOf(it.namespace, it.identifier) })
+        val answersJSON = MdocPresentation.answersJSON(answers)
         val answer = try {
-            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respond(op, document.toLong(), credentialID, pairs) })
+            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON) })
         } catch (e: WalletException) {
             _state.compareAndSet(State.Responding, request)
             throw e
@@ -363,7 +388,7 @@ public class ProximityPresentation internal constructor(
             throw error
         }
         finish(State.Presented(answer.linkable), letReaderEnd = true)
-        return answer.linkable
+        return Responded(answer.linkable, answer.linkableCredentials)
     }
 
     /** Declines the request, or ends the session before one: the reader is told, and nothing is disclosed. */
@@ -470,7 +495,11 @@ public class ProximityPresentation internal constructor(
     }
 
     @Serializable
-    private data class RespondedJSON(@Serializable(Base64Serializer::class) val send: ByteArray, val linkable: Boolean = false)
+    private data class RespondedJSON(
+        @Serializable(Base64Serializer::class) val send: ByteArray,
+        val linkable: Boolean = false,
+        @SerialName("linkable_credentials") val linkableCredentials: List<String> = emptyList(),
+    )
 
     private companion object {
         val LINGER = 5.seconds
@@ -689,10 +718,31 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
         docType: String,
         elements: Map<String, List<String>>,
         timeouts: ProximityTimeouts = ProximityTimeouts(),
+    ): ProximityReaderSession = start(context, qrCode, listOf(DocumentRequest(docType, elements)), timeouts)
+
+    /**
+     * One document a reader asks for.
+     *
+     * @property docType The requested document type.
+     * @property elements The requested elements: namespace → identifiers.
+     */
+    public data class DocumentRequest(val docType: String, val elements: Map<String, List<String>>)
+
+    /**
+     * [start] asking for several [documents] at once, each of a
+     * different type, at most eight. The holder may answer any of them:
+     * [ProximityReaderSession.State.Verified.documents] has each one it
+     * did, so check each one needed came back.
+     */
+    public fun start(
+        context: Context,
+        qrCode: String,
+        documents: List<DocumentRequest>,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
     ): ProximityReaderSession {
         ProximityPermissions.require(context, ProximityPermissions.reader)
         val session = OID4VC.wrap { handle.start(qrCode) }
-        return ProximityReaderSession(session, docType, elements, timeouts) { e ->
+        return ProximityReaderSession(session, documents, timeouts) { e ->
             val uuid = UUID.fromString(e.serviceUUID)
             if (e.bleMode == "central_client") {
                 GattServerTransport(context.applicationContext, uuid, GattCharacteristics.centralClient, Base64.getDecoder().decode(e.ident))
@@ -724,7 +774,10 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
         CRLRefreshResult.of(OID4VC.cancellable { op -> handle.refreshCRLs(op) })
 
     internal fun startWith(qrCode: String, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityReaderSession =
-        ProximityReaderSession(OID4VC.wrap { handle.start(qrCode) }, docType, elements, timeouts) { transport }
+        startWith(qrCode, listOf(DocumentRequest(docType, elements)), timeouts, transport)
+
+    internal fun startWith(qrCode: String, documents: List<DocumentRequest>, timeouts: ProximityTimeouts, transport: ProximityTransport): ProximityReaderSession =
+        ProximityReaderSession(OID4VC.wrap { handle.start(qrCode) }, documents, timeouts) { transport }
 
     internal fun startNfcWith(hs: ByteArray, hr: ByteArray?, docType: String, elements: Map<String, List<String>>, timeouts: ProximityTimeouts, nfcData: Boolean, transport: ProximityTransport): ProximityReaderSession {
         val session = OID4VC.wrap {
@@ -735,7 +788,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 else -> handle.startFromHandover(hs)
             }
         }
-        return ProximityReaderSession(session, docType, elements, timeouts, usesNfcData = nfcData) { transport }
+        return ProximityReaderSession(session, listOf(DocumentRequest(docType, elements)), timeouts, usesNfcData = nfcData) { transport }
     }
 
     /**
@@ -769,7 +822,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 }
                 connection.allowConsentDelay(timeouts.idle.inWholeMilliseconds.coerceIn(1, Int.MAX_VALUE.toLong()).toInt())
                 val transport = NfcDataReaderTransport(connection::exchange, connection::close, connection.maxTransceive, dataParameters)
-                return ProximityReaderSession(session, docType, elements, timeouts, usesNfcData = true) { transport }.also { retained = true }
+                return ProximityReaderSession(session, listOf(DocumentRequest(docType, elements)), timeouts, usesNfcData = true) { transport }.also { retained = true }
             }
             connection.close()
             ProximityPermissions.require(context, ProximityPermissions.reader)
@@ -777,7 +830,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 if (handover.hr == null) handle.startFromHandover(handover.hs)
                 else handle.startFromNegotiatedHandover(handover.hs, handover.hr)
             }
-            return ProximityReaderSession(session, docType, elements, timeouts) { e ->
+            return ProximityReaderSession(session, listOf(DocumentRequest(docType, elements)), timeouts) { e ->
             val app = context.applicationContext
             val uuid = UUID.fromString(e.serviceUUID)
             if (e.bleMode == "central_client") {
@@ -793,8 +846,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
 /** One reader session: follow [state] to [State.Verified] or another final state. */
 public class ProximityReaderSession internal constructor(
     private val handle: MobileProximityReaderSession,
-    private val docType: String,
-    private val elements: Map<String, List<String>>,
+    private val documents: List<ProximityReader.DocumentRequest>,
     private val timeouts: ProximityTimeouts,
     /** Whether this session exchanges messages over NFC rather than BLE. */
     public val usesNfcData: Boolean = false,
@@ -811,9 +863,11 @@ public class ProximityReaderSession internal constructor(
         /**
          * The mdoc verified.
          *
-         * @property result The verified mdoc.
+         * @property result The verified mdoc: the first, for several.
+         * @property documents Every verified mdoc, in the response's order: for a request
+         * of several documents, the ones the holder answered.
          */
-        public data class Verified(val result: VerifiedMdoc) : State
+        public data class Verified(val result: VerifiedMdoc, val documents: List<VerifiedMdoc> = listOf(result)) : State
 
         /** The holder declined (not authenticated: anyone nearby could send that). */
         public data object Declined : State
@@ -867,8 +921,14 @@ public class ProximityReaderSession internal constructor(
             } catch (e: TimeoutCancellationException) {
                 throw ProximityException(ProximityException.Reason.TimedOut, "the holder's device wasn't found", e)
             }
-            val elementsJSON = json.encodeToString(MapSerializer(String.serializer(), ListSerializer(String.serializer())), elements)
-            val request = decode<SendJSON>(OID4VC.offMain { handle.request(docType, elementsJSON) })
+            val elementsSerializer = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
+            val request = if (documents.size == 1) {
+                val elementsJSON = json.encodeToString(elementsSerializer, documents[0].elements)
+                decode<SendJSON>(OID4VC.offMain { handle.request(documents[0].docType, elementsJSON) })
+            } else {
+                val requestsJSON = json.encodeToString(ListSerializer(DocumentRequestJSON.serializer()), documents.map { DocumentRequestJSON(it.docType, it.elements) })
+                decode<SendJSON>(OID4VC.offMain { handle.requestDocuments(requestsJSON) })
+            }
             transport.send(request.send)
             _state.compareAndSet(State.Connecting, State.WaitingForResponse)
             val answer = try {
@@ -880,7 +940,8 @@ public class ProximityReaderSession internal constructor(
             sendLast(event)
             finish(
                 when {
-                    event.event == "verified" && event.verified != null -> settled(event.verified.toVerified())
+                    event.event == "verified" && event.verified != null ->
+                        settled((event.documents ?: listOf(event.verified)).map { it.toVerified() })
                     event.reason == "declined" -> State.Declined
                     else -> State.Failed(WalletException.from(Exception(event.error ?: "[protocol] the session failed")))
                 },
@@ -901,19 +962,24 @@ public class ProximityReaderSession internal constructor(
     }
 
     /**
-     * The final state for [mdoc], which verified: [State.Verified], unless the configuration
+     * The final state for [mdocs], which verified: [State.Verified], unless the configuration
      * checks status and it isn't [MdocStatus.Valid] or [MdocStatus.NoStatus] (a
      * [WalletException] `document_not_valid`, its [WalletException.protocolError] the status as
      * the list says it), or the check failed. The connection is closed first: the status list is
      * fetched over the network. Cancellation propagates.
      */
-    private suspend fun settled(mdoc: VerifiedMdoc): State {
-        if (!checksStatus) return State.Verified(mdoc)
+    private suspend fun settled(mdocs: List<VerifiedMdoc>): State {
+        if (!checksStatus) return State.Verified(mdocs[0], mdocs)
         transport.close()
         return try {
-            val text = decode<MdocStatusJSON>(OID4VC.cancellable { op -> handle.checkStatus(op) }).status
+            val checked = decode<MdocStatusJSON>(OID4VC.cancellable { op -> handle.checkStatus(op) })
+            val text = checked.status
             when (val status = mdocStatusOf(text)) {
-                MdocStatus.Valid, MdocStatus.NoStatus -> State.Verified(mdoc.copy(status = status))
+                MdocStatus.Valid, MdocStatus.NoStatus -> {
+                    // Each document's own status; one alone has the combined one.
+                    val each = mdocs.mapIndexed { i, m -> m.copy(status = checked.statuses.getOrNull(i)?.let(::mdocStatusOf) ?: status) }
+                    State.Verified(each[0], each)
+                }
                 else -> State.Failed(
                     WalletException(WalletException.Code.documentNotValid, text, "the document's revocation status is $text"),
                 )
@@ -1068,6 +1134,7 @@ internal data class ReaderEngagementJSON(
 internal data class ReaderEventJSON(
     val event: String,
     val verified: VerifiedJSON? = null,
+    val documents: List<VerifiedJSON>? = null,
     @Serializable(Base64Serializer::class) val send: ByteArray? = null,
     val reason: String? = null,
     val error: String? = null,
@@ -1162,4 +1229,8 @@ internal fun mdocStatusOf(text: String): MdocStatus = when (text) {
 }
 
 @Serializable
-internal data class MdocStatusJSON(val status: String)
+internal data class MdocStatusJSON(val status: String, val statuses: List<String> = emptyList())
+
+/** One document of [ProximityReaderSession]'s request, as the gomobile layer takes it. */
+@Serializable
+internal data class DocumentRequestJSON(@SerialName("doctype") val docType: String, val elements: Map<String, List<String>>)

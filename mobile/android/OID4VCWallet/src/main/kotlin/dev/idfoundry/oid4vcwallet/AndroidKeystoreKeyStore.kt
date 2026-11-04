@@ -10,6 +10,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import android.security.keystore.UserNotAuthenticatedException
 import android.util.Log
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +51,17 @@ public fun interface HolderAuthenticator {
      * cancels.
      */
     public suspend fun authenticate(signature: Signature)
+
+    /**
+     * Returns once the holder is authenticated, with no CryptoObject:
+     * for holder keys usable for a while after it
+     * ([AndroidKeystoreKeyStore.Options.holderAuthenticationTimeout]).
+     * Throws if the holder cancels. This default throws: an
+     * authenticator used with such keys implements it.
+     */
+    public suspend fun authenticate() {
+        throw StoreException("this HolderAuthenticator can't authenticate the holder without a signature")
+    }
 }
 
 // API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
@@ -69,7 +81,12 @@ public class BiometricPromptAuthenticator(
     private val title: String = "Confirm it's you",
     private val subtitle: String? = "Your credential's key signs what you share.",
 ) : HolderAuthenticator {
-    override suspend fun authenticate(signature: Signature): Unit = withContext(Dispatchers.Main) {
+    override suspend fun authenticate(signature: Signature): Unit = prompt(signature)
+
+    override suspend fun authenticate(): Unit = prompt(null)
+
+    /** Shows the prompt, over [signature] when it isn't null. */
+    private suspend fun prompt(signature: Signature?): Unit = withContext(Dispatchers.Main) {
         val host = activity() ?: throw StoreException("no activity to ask the holder in")
         suspendCancellableCoroutine { cont ->
             val cancel = CancellationSignal()
@@ -79,18 +96,20 @@ public class BiometricPromptAuthenticator(
                 .apply { subtitle?.let(::setSubtitle) }
                 .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL)
                 .build()
-            prompt.authenticate(
-                BiometricPrompt.CryptoObject(signature), cancel, host.mainExecutor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        cont.resume(Unit)
-                    }
+            val callback = object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    cont.resume(Unit)
+                }
 
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        cont.resumeWithException(StoreException("the holder wasn't authenticated: $errString"))
-                    }
-                },
-            )
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    cont.resumeWithException(StoreException("the holder wasn't authenticated: $errString"))
+                }
+            }
+            if (signature != null) {
+                prompt.authenticate(BiometricPrompt.CryptoObject(signature), cancel, host.mainExecutor, callback)
+            } else {
+                prompt.authenticate(cancel, host.mainExecutor, callback)
+            }
         }
     }
 }
@@ -128,6 +147,13 @@ public class AndroidKeystoreKeyStore(
         // one over the credential store's key, would delete that too.
         require(options.aliasPrefix.isNotEmpty() && !FileCredentialStore.DEFAULT_KEY_ALIAS.startsWith(options.aliasPrefix)) {
             "aliasPrefix must be non-empty and not cover the credential store's key"
+        }
+        val window = options.holderAuthenticationTimeout
+        require(window == kotlin.time.Duration.ZERO || (window >= kotlin.time.Duration.parse("1s") && window <= kotlin.time.Duration.parse("5m"))) {
+            "holderAuthenticationTimeout must be zero or from 1 second to 5 minutes"
+        }
+        require(window == kotlin.time.Duration.ZERO || options.holderUserAuthentication) {
+            "holderAuthenticationTimeout needs holderUserAuthentication"
         }
     }
 
@@ -194,9 +220,29 @@ public class AndroidKeystoreKeyStore(
          * there to sign, never moved to the TEE to agree keys. A holder key
          * that also requires the holder ([holderUserAuthentication]) signs
          * too: the holder is authenticated for a signature, not an
-         * agreement.
+         * agreement — unless [holderAuthenticationTimeout] makes it usable
+         * for a while after the holder authenticates: it then agrees keys.
          */
         val holderKeyAgreement: Boolean = false,
+        /**
+         * With [holderUserAuthentication], how long one authentication
+         * of the holder lets holder keys be used. Zero, the default:
+         * each signature asks the holder, bound to that one signature,
+         * so presenting three documents at once asks three times.
+         * Positive, from 1 second to 5 minutes, in whole seconds: holder
+         * keys made from now on can be used for that long after the
+         * holder authenticates, so one prompt covers every document of a
+         * presentation, as MATTR's default 20-second window and the
+         * EUDI reference wallet's 30 seconds do. A presentation prompts
+         * at its first signature, or not at all when the holder
+         * authenticated — or unlocked the device, which Android counts —
+         * within the window. Any code in the app can use any holder key
+         * during it, not only the signature the holder saw. Keys made
+         * before keep the setting they were made with: per-use keys keep
+         * prompting until their credentials are refreshed or issued
+         * again.
+         */
+        val holderAuthenticationTimeout: kotlin.time.Duration = kotlin.time.Duration.ZERO,
     )
 
     private val keystore: JavaKeyStore = JavaKeyStore.getInstance(PROVIDER).apply { load(null) }
@@ -267,16 +313,18 @@ public class AndroidKeystoreKeyStore(
      * ECDH between holder key [id] and [peerPublicKey] inside Android
      * Keystore. A key made without `PURPOSE_AGREE_KEY` (see
      * [Options.holderKeyAgreement]), below API 31, or requiring the
-     * holder, throws [KeyAgreementUnsupportedException]: the wallet signs.
+     * holder for each use, throws [KeyAgreementUnsupportedException]: the
+     * wallet signs. One usable for a while after the holder authenticates
+     * ([Options.holderAuthenticationTimeout]) agrees, asking the holder
+     * first when they haven't lately.
      */
     override fun agree(id: String, peerPublicKey: ByteArray): ByteArray {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) throw KeyAgreementUnsupportedException("key agreement in Android Keystore needs API 31")
         val key = keystore.getKey(alias(id), null) as? PrivateKey ?: throw StoreException("no key $id")
         val info = info(key)
         if (info.purposes and KeyProperties.PURPOSE_AGREE_KEY == 0) throw KeyAgreementUnsupportedException("key $id signs only")
-        if (info.isUserAuthenticationRequired) throw KeyAgreementUnsupportedException("key $id requires the holder for each signature")
-        val agreement = JavaKeyAgreement.getInstance("ECDH", PROVIDER)
-        agreement.init(key)
+        if (info.isUserAuthenticationRequired && perUse(info)) throw KeyAgreementUnsupportedException("key $id requires the holder for each signature")
+        val agreement = withHolder(id) { JavaKeyAgreement.getInstance("ECDH", PROVIDER).apply { init(key) } }
         agreement.doPhase(peerKey(peerPublicKey), true)
         return agreement.generateSecret()
     }
@@ -297,8 +345,13 @@ public class AndroidKeystoreKeyStore(
         // times.
         // The constructor refused holderUserAuthentication below API 30.
         if (purpose == KeyPurpose.HOLDER && options.holderUserAuthentication && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Zero: per use. Otherwise for the window after the holder
+            // authenticates, whichever key that was for.
             spec.setUserAuthenticationRequired(true)
-                .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+                .setUserAuthenticationParameters(
+                    options.holderAuthenticationTimeout.inWholeSeconds.toInt(),
+                    KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+                )
                 // As iOS's user presence: a new fingerprint doesn't void the key.
                 .setInvalidatedByBiometricEnrollment(false)
         }
@@ -360,15 +413,42 @@ public class AndroidKeystoreKeyStore(
 
     override fun sign(id: String, digest: ByteArray): ByteArray {
         val key = keystore.getKey(alias(id), null) as? PrivateKey ?: throw StoreException("no key $id")
-        val signature = Signature.getInstance("NONEwithECDSA").apply { initSign(key) }
-        if (requiresHolder(key)) {
-            val auth = authenticator ?: throw StoreException("holder key $id needs a HolderAuthenticator to sign")
-            // On Go's thread, never the main one: it waits for the holder.
-            runBlocking { auth.authenticate(signature) }
+        val info = info(key)
+        val signature = if (info.isUserAuthenticationRequired && !perUse(info)) {
+            // Usable for a while after the holder authenticates: without a
+            // prompt when they just did, else after one.
+            withHolder(id) { Signature.getInstance("NONEwithECDSA").apply { initSign(key) } }
+        } else {
+            Signature.getInstance("NONEwithECDSA").apply { initSign(key) }.also { signature ->
+                if (info.isUserAuthenticationRequired) {
+                    val auth = authenticator ?: throw StoreException("holder key $id needs a HolderAuthenticator to sign")
+                    // On Go's thread, never the main one: it waits for the holder.
+                    runBlocking { auth.authenticate(signature) }
+                }
+            }
         }
         signature.update(digest)
         return signature.sign()
     }
+
+    /**
+     * [use] for key [id], usable for a while after the holder
+     * authenticates; when Keystore says the holder hasn't lately, it asks
+     * them once, with no CryptoObject, and tries again.
+     */
+    private fun <T> withHolder(id: String, use: () -> T): T =
+        try {
+            use()
+        } catch (e: UserNotAuthenticatedException) {
+            val auth = authenticator ?: throw StoreException("holder key $id needs a HolderAuthenticator to sign")
+            // On Go's thread, never the main one: it waits for the holder.
+            runBlocking { auth.authenticate() }
+            use()
+        }
+
+    /** Whether a key that requires the holder asks for each use: its validity after authentication is zero. */
+    @Suppress("DEPRECATION")
+    private fun perUse(info: KeyInfo): Boolean = info.userAuthenticationValidityDurationSeconds <= 0
 
     override fun deleteKey(id: String) {
         keystore.deleteEntry(alias(id))
@@ -429,8 +509,6 @@ public class AndroidKeystoreKeyStore(
         @Suppress("DEPRECATION")
         return if (info.isInsideSecureHardware) KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT else KeyProperties.SECURITY_LEVEL_SOFTWARE
     }
-
-    private fun requiresHolder(key: PrivateKey): Boolean = info(key).isUserAuthenticationRequired
 
     private fun info(key: PrivateKey): KeyInfo =
         KeyFactory.getInstance(key.algorithm, PROVIDER).getKeySpec(key, KeyInfo::class.java)

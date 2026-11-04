@@ -28,6 +28,9 @@ import java.security.MessageDigest
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import javax.crypto.KeyAgreement
 
 /**
@@ -146,6 +149,38 @@ class AndroidKeystoreKeyStoreTest {
         // Instance and DPoP keys sign silently, even when holder keys need the holder.
         val dpop = fake.createKey(KeyPurpose.DPOP)
         assertTrue(fake.sign(dpop, digest).isNotEmpty())
+    }
+
+    /**
+     * A holder key usable for a while after the holder authenticates
+     * (holderAuthenticationTimeout) asks the holder with no CryptoObject,
+     * once, when they haven't lately, and Keystore still refuses a
+     * signature the holder didn't authenticate. A window outside 1 second
+     * to 5 minutes, or without holderUserAuthentication, is refused.
+     */
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
+    fun timeBoundHolderKeyAsksWithoutASignature() {
+        assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
+        val asks = object : HolderAuthenticator {
+            var withoutSignature = 0
+            override suspend fun authenticate(signature: java.security.Signature) = fail("asked over one signature")
+            override suspend fun authenticate() { withoutSignature++ }
+        }
+        for ((window, holderAuth) in listOf(500.milliseconds to true, 6.minutes to true, 30.seconds to false)) {
+            try {
+                AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = holderAuth, aliasPrefix = prefix, holderAuthenticationTimeout = window), asks)
+                fail("made a store with a $window window, holderUserAuthentication $holderAuth")
+            } catch (e: IllegalArgumentException) {
+                assertTrue(e.message, e.message!!.contains("holderAuthenticationTimeout"))
+            }
+        }
+        // One second: the device was unlocked longer ago than that.
+        val keys = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(aliasPrefix = prefix, holderAuthenticationTimeout = 1.seconds), asks)
+        val id = keys.createKey(KeyPurpose.HOLDER)
+        Thread.sleep(1500)
+        expectFailure("signed without the holder") { keys.sign(id, sha256().digest("presentation".toByteArray())) }
+        assertEquals(1, asks.withoutSignature)
     }
 
     /** Below API 30, holder keys can't require the holder each time: the store refuses to pretend. */
