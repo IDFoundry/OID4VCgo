@@ -14,6 +14,19 @@
 // walletflow.StartDCAPIPresentation for a wallet. A wallet built on
 // walletflow answers this protocol with walletflow.StartMdocPresentation.
 //
+// # Verifier
+//
+// Most Verifiers want verifier.Transactions to run the exchange:
+// ForTransactions, set as verifier.TransactionsConfig.MdocDCAPI, lets
+// Transactions.BeginMdocDCAPI build each request and
+// Transactions.HandleMdocDCAPIResponse verify its answer, with the
+// request kept for them — its response decryption key sealed in the
+// Verifier's TransactionStore, bound to the page's browser and origin,
+// answered at most once, its result's status checked and its claims
+// kept as an OpenID4VP request's are. The rest of this section is the
+// lower-level exchange it is built on, for a Verifier that keeps the
+// request itself.
+//
 // A Verifier's server calls BuildRequest for the page's origin, the
 // requested document type and data elements, and the reader keys that
 // sign the request (each a ReaderAuthAll, ISO/IEC 18013-5 §12.5; the
@@ -24,7 +37,9 @@
 //	    digital: {requests: [{protocol: "org-iso-mdoc", data}]}})
 //
 // and sends back the credential's data.response. VerifyResponse then
-// decrypts it with Request.Pending, which the server kept, and verifies
+// decrypts it with Request.Pending, which the server kept — secret,
+// server side, bound to the browser that asked, and taken out
+// atomically so it's answered once (see Pending) — and verifies
 // the document: its issuer signature and digests (credential/mdoc), its
 // device signature over this request's session transcript, which binds
 // it to the origin and the encryption key, and that it disclosed only
