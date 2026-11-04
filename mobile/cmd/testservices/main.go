@@ -10,7 +10,9 @@
 //	                               which the wallet recognizes (mdoc_reader_roots)
 //	POST /offer?pin=<digits>     → {"offer"}  (no pin: the authorization code grant);
 //	                               with mdoc=1, a PIN offer has the mdoc too, for
-//	                               presenting in person
+//	                               presenting in person; with mdoc=2, mdocs of two
+//	                               types (org.example.test.1 and .2), for a reader
+//	                               asking for both at once
 //	POST /request?format=<fmt>   → {"id", "link"}: the Verifier asks for family_name
 //	                               from an SD-JWT VC ("dc+sd-jwt"), an mdoc
 //	                               ("mso_mdoc") or either (no format); with
@@ -174,8 +176,11 @@ func (s services) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if pin := r.URL.Query().Get("pin"); pin != "" {
 		configs := []string{walletflowtest.SDJWTConfigurationID}
-		if r.URL.Query().Get("mdoc") == "1" {
+		switch r.URL.Query().Get("mdoc") {
+		case "1":
 			configs = append(configs, walletflowtest.MdocConfigurationID)
+		case "2":
+			configs = append(configs, walletflowtest.MdocConfigurationID, walletflowtest.MdocConfigurationID2)
 		}
 		offer, err = s.env.PreAuthorizedOffer(pin, configs...)
 	} else {
