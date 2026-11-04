@@ -518,8 +518,9 @@ private struct CRLRefreshSection: View {
     }
 }
 
-/// A credential's status: what its issuer's status list said, and how
-/// long ago that was checked, counting up.
+/// A credential's status: what its issuer's status list, or its issuer's
+/// certificate checked against its CA's revocation list, said — and why —
+/// and how long ago that was checked, counting up.
 struct StatusRow: View {
     let status: CredentialStatus?
 
@@ -541,13 +542,16 @@ struct StatusRow: View {
     }
 
     private var word: String {
-        switch status?.value {
-        case nil: "Status unknown"
-        case .valid: "Valid"
-        case .revoked: "Revoked by the issuer"
-        case .suspended: "Suspended by the issuer"
-        case .other(let v): "Status \(v)"
-        case .unknown: "Status can't be checked"
+        switch (status?.value, status?.reason) {
+        case (nil, _): "Status unknown"
+        case (.valid?, _): "Valid"
+        case (.revoked?, .issuerCertificateRevoked?): "Invalid: issuer certificate revoked"
+        case (.revoked?, .issuerUntrusted?): "Invalid: issuer no longer trusted"
+        case (.revoked?, _): "Revoked by the issuer"
+        case (.suspended?, _): "Suspended by the issuer"
+        case (.other(let v)?, _): "Status \(v)"
+        case (.unknown?, .noCurrentCRL?): "Unknown: revocation lists out of date — refresh them in Settings"
+        case (.unknown?, _): "Status can't be checked"
         }
     }
 
@@ -681,9 +685,12 @@ struct CredentialRow: View {
     static func problem(_ c: CredentialSummary) -> String? {
         if c.holderKeyPresent == false { return "Its key isn't on this device: it can't be presented" }
         if c.isExpired() { return "Expired" }
-        switch c.status?.value {
-        case .revoked: return "Revoked by the issuer"
-        case .suspended: return "Suspended by the issuer"
+        switch (c.status?.value, c.status?.reason) {
+        case (.revoked?, .issuerCertificateRevoked?): return "Its issuer's certificate has been revoked"
+        case (.revoked?, .issuerUntrusted?): return "Its issuer is no longer trusted"
+        case (.revoked?, _): return "Revoked by the issuer"
+        case (.suspended?, _): return "Suspended by the issuer"
+        case (.unknown?, .noCurrentCRL?): return "Revocation lists out of date: refresh them in Settings"
         default: return nil
         }
     }

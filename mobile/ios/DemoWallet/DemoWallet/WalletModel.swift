@@ -144,8 +144,9 @@ final class WalletModel {
             // app quit in the middle of.
             if let wallet, let keys { _ = try? await wallet.sweepOrphanedKeys(in: keys) }
             // The revocation lists first: receiving, checking status and
-            // presenting check certificates against them.
-            await refreshCRLs()
+            // presenting check certificates against them. Each status is
+            // checked below.
+            await refreshCRLs(recheck: false)
             await resumeDeferred()
             await refresh()
             await checkAllStatuses()
@@ -650,8 +651,11 @@ final class WalletModel {
     /// that must keep them current then schedules `refreshCRLs()` with
     /// BGTaskScheduler at the result's `nextRefresh` (the library's
     /// GoingToProduction guide). Lists past their nextUpdate refuse
-    /// their CAs' certificates until the next refresh.
-    func refreshCRLs() async {
+    /// their CAs' certificates until the next refresh. A list that
+    /// changed may revoke, or reinstate, a held credential's issuer
+    /// certificate, so with recheck every credential's status is checked
+    /// again then.
+    func refreshCRLs(recheck: Bool = true) async {
         guard let wallet, fetchesCRLs, !refreshingCRLs else { return }
         refreshingCRLs = true
         defer { refreshingCRLs = false }
@@ -659,20 +663,21 @@ final class WalletModel {
             let result = try await wallet.refreshCRLs()
             SharedWallet.defaults.set(result.crls, forKey: SharedWallet.crlsKey)
             walletCRLs = CRLRefresh(result: result, at: .now)
+            if recheck, result.results.contains(where: { $0.outcome == .updated }) { await checkAllStatuses() }
         } catch {
             walletCRLs = CRLRefresh(result: walletCRLs?.result, error: Self.describe(error), at: .now)
         }
     }
 
     /// Why a reader refused a document, when its certificate revocation
-    /// is why: the error's message is for logs, but names the
-    /// certrevocation failure, which the demo spells out.
+    /// is why (WalletError's isCertificateRevoked and isNoCurrentCRL),
+    /// which the demo spells out.
     static func revocationReason(_ error: Error) -> String? {
         guard let e = error as? WalletError else { return nil }
-        if e.message.contains("certificate is revoked") {
+        if e.isCertificateRevoked {
             return "Refused: its issuer's document signer has been revoked (its CA's revocation list names it). Receive the credential again."
         }
-        if e.message.contains("no current CRL") {
+        if e.isNoCurrentCRL {
             return "Refused: there's no current revocation list for its issuer's CA. Refresh the revocation lists in Settings."
         }
         return nil
