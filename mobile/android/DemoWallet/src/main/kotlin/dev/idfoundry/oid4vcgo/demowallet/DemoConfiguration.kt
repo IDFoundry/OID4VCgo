@@ -50,7 +50,11 @@ data class DemoConfiguration(
         @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint>? = null,
         @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
         @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
-        /** A development reader, which may fetch CRLs from a loopback address (adb reverse). */
+        /**
+         * A development reader, which may fetch CRLs from a loopback
+         * address (adb reverse), trusting the wallet's development CA
+         * (`development_roots`) for https ones.
+         */
         @SerialName("development") val development: Boolean = false,
     )
 

@@ -728,13 +728,21 @@ fun StatusRow(status: CredentialStatus?) {
             now = Instant.now()
         }
     }
+    val reason = status?.reason
     val (word, color) = when (val v = status?.value) {
         null -> "Status unknown" to MaterialTheme.colorScheme.onSurfaceVariant
         CredentialStatus.Value.Valid -> "Valid" to Color(0xFF2E7D32)
-        CredentialStatus.Value.Revoked -> "Revoked by the issuer" to Color(0xFFC62828)
+        CredentialStatus.Value.Revoked -> when (reason) {
+            CredentialStatus.Reason.IssuerCertificateRevoked -> "Invalid: issuer certificate revoked"
+            CredentialStatus.Reason.IssuerUntrusted -> "Invalid: issuer no longer trusted"
+            else -> "Revoked by the issuer"
+        } to Color(0xFFC62828)
         CredentialStatus.Value.Suspended -> "Suspended by the issuer" to Color(0xFFE65100)
         is CredentialStatus.Value.Other -> "Status ${v.value}" to MaterialTheme.colorScheme.onSurfaceVariant
-        CredentialStatus.Value.Unknown -> "Status can't be checked" to MaterialTheme.colorScheme.onSurfaceVariant
+        CredentialStatus.Value.Unknown -> when (reason) {
+            CredentialStatus.Reason.NoCurrentCRL -> "Unknown: revocation lists out of date — refresh them in Settings"
+            else -> "Status can't be checked"
+        } to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(Modifier.padding(vertical = 6.dp).testTag("credential-status")) {
         Text(word, style = MaterialTheme.typography.titleMedium, color = color)

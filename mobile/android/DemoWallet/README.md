@@ -224,14 +224,14 @@ Against the passport-vdc demo, whose CAs publish Certificate Revocation
 Lists, `run-passport-vdc.sh` configures the wallet to check its trust
 roles against them (`revocation`: `issuer`, `status`, `verifier`,
 `mdoc_reader` and `registrar`) and the reader likewise (`issuer`,
-`status`). Its certificates name https distribution points, but Go on
-Android trusts only the system's CA files, not the demo's self-signed
-certificate (`development_roots` doesn't apply to CRL fetches), so the
-script names the copies `cmd/demo` serves over plain http on
-`127.0.0.1:8580` instead, each bound to its CA
-(`crl_distribution_points`), and forwards that port too; the reader is
-a development reader, to fetch from loopback. A CRL is signed, so http
-is the usual way to serve one.
+`status`), each fetching the lists from the https distribution points
+its roots name (`crl_distribution_points_from_roots`, over https only:
+`crl_require_https`), on the ports `adb reverse` forwards. Go on
+Android trusts only the system's CA files, so the fetches trust the
+demo's self-signed TLS certificate through `development_roots`, as the
+wallet's other requests do: the app passes the pushed `dev-ca.pem` as
+the wallet's, and as the reader's, a development reader, to fetch from
+loopback.
 
 The app calls the library's `refreshCRLs()` for the wallet and the
 reader at launch, on returning to the app once the last refresh's
@@ -254,8 +254,19 @@ that signer signed on its status list too, as it would were the key
 compromised. The wallet shows them revoked once it next checks their
 status (at launch, or on demand), within the status list's one-minute
 ttl, and the demo's verifier refuses a presentation of them. Refresh
-the lists here too, and the Verify tab refuses an mdoc that signer
-signed. Receive it again for one the new signer signs.
+the lists here too: the Verify tab refuses an mdoc that signer signed,
+saying its document signer was revoked (the library's
+`WalletException.isCertificateRevoked`), and the wallet checks each credential's
+status again once a list changes. `checkStatus` also verifies the
+issuer's certificate against the lists held, so a credential that signer
+signed shows **Invalid: issuer certificate revoked** if the lists show
+it before its status list does, and isn't offered ahead of others to a
+verifier; once its status list revokes it, it shows **Revoked by the
+issuer**, which is final. The certificate check isn't: a later list
+that no longer names the certificate makes it valid again, unless its
+status list has revoked it. Without a current list from its CA, a
+credential shows **Unknown: revocation lists out of date** until the
+lists are refreshed. Receive it again for one the new signer signs.
 
 ### Two phones, by hand
 

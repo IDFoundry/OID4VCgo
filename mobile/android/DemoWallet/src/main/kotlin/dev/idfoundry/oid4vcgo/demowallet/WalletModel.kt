@@ -175,8 +175,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             // app quit in the middle of.
             runCatching { wallet?.sweepOrphanedKeys(keys!!) }
             // The revocation lists first: receiving, checking status,
-            // presenting and reading check certificates against them.
-            refreshCRLs()
+            // presenting and reading check certificates against them. Each
+            // status is checked below.
+            refreshCRLs(recheck = false)
             resumeDeferred()
             refresh()
             checkAllStatuses()
@@ -772,14 +773,20 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
      * an app that must keep them current then schedules `refreshCRLs`
      * with WorkManager at the result's nextRefresh (the library's
      * GoingToProduction guide). Lists past their nextUpdate refuse their
-     * CAs' certificates until the next refresh.
+     * CAs' certificates until the next refresh. A wallet list that
+     * changed may revoke, or reinstate, a held credential's issuer
+     * certificate, so with [recheck] every credential's status is checked
+     * again then.
      */
-    suspend fun refreshCRLs() {
+    suspend fun refreshCRLs(recheck: Boolean = true) {
         if (refreshingCRLs) return
         refreshingCRLs = true
         try {
             val w = wallet
-            if (walletFetchesCRLs && w != null) walletCRLs = fetchCRLs(walletCRLs, DemoConfiguration.CRLS) { w.refreshCRLs() }
+            if (walletFetchesCRLs && w != null) {
+                walletCRLs = fetchCRLs(walletCRLs, DemoConfiguration.CRLS) { w.refreshCRLs() }
+                if (recheck && walletCRLs?.result?.results.orEmpty().any { it.outcome == CRLRefreshResult.Outcome.UPDATED }) checkAllStatuses()
+            }
             if (readerFetchesCRLs) {
                 readerCRLs = fetchCRLs(readerCRLs, DemoConfiguration.READER_CRLS) {
                     (reader ?: throw IllegalStateException(notice ?: "the reader couldn't be made")).refreshCRLs()
@@ -1188,6 +1195,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             anyIssuerForAnyType = true,
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
             development = r.development,
+            // The development CA the wallet trusts (DevelopmentTLS), for
+            // refreshCRLs's https fetches.
+            developmentRoots = if (r.development) config?.wallet?.developmentRoots.orEmpty() else "",
         )
     }
 
@@ -1261,15 +1271,15 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
         /**
          * Why a reader refused a document, when its certificate revocation
-         * is why: the error's message is for logs, but names the
-         * certrevocation failure, which the demo spells out.
+         * is why ([WalletException.isCertificateRevoked],
+         * [WalletException.isNoCurrentCRL]), which the demo spells out.
          */
         fun revocationReason(e: Throwable): String? {
-            val message = (e as? WalletException)?.message ?: return null
+            val w = e as? WalletException ?: return null
             return when {
-                "certificate is revoked" in message ->
+                w.isCertificateRevoked ->
                     "its issuer's document signer has been revoked (its CA's revocation list names it). Receive the credential again."
-                "no current CRL" in message ->
+                w.isNoCurrentCRL ->
                     "there's no current revocation list for its issuer's CA. Refresh the revocation lists in Settings."
                 else -> null
             }
