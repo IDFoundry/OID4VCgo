@@ -69,4 +69,12 @@
 // (JWT or CWT form, by the request's Accept header), signed with the
 // provider's own key and certificate chain, so an issuer's default
 // check — the list signed with the attestation's own key — accepts it.
+//
+// # Requests after registration
+//
+// Proving possession of the instance key on each later request is the
+// HTTP layer's job; SignRequest and Provider.VerifyRequest are the
+// signed request it uses: a short JWT over the method, path, a hash of
+// the body and a fresh challenge, signed with the instance key, so an
+// instance ID alone is useless to anyone who learns it.
 package walletprovider
