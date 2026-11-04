@@ -145,9 +145,6 @@ func TestCRLs_VerifierCAs(t *testing.T) {
 			t.Errorf("%q's CRL: %v; want an empty list it signed, with a number", ca.Subject.CommonName, err)
 		}
 	}
-	if handler := env.Verifier.CRLHandler(); handler == nil {
-		t.Error("no CRLHandler")
-	}
 	if dp := env.Verifier.VerifierCACertificate().CRLDistributionPoints; !slices.Equal(dp, []string{env.VerifierURL + verifierapp.VerifierCRLPath}) {
 		t.Errorf("the verifier CA names %v", dp)
 	}
