@@ -52,7 +52,7 @@ internal class GattClientTransport(
     private val ident: ByteArray? = null,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
-        ?: throw ProximityTransportException("this device has no Bluetooth")
+        ?: throw ProximityTransportException("this device has no Bluetooth", bluetoothUnavailable = true)
 
     private var gatt: BluetoothGatt? = null
     /** The pending characteristic read's value, null when it failed. */
@@ -165,8 +165,11 @@ internal class GattClientTransport(
         // Watching first: Bluetooth turning off just after the check
         // below is caught too.
         bluetoothOff.start(context)
-        val adapter = manager.adapter
-        if (adapter == null || !adapter.isEnabled) throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
+        if (manager.adapter?.isEnabled != true) {
+            // Nothing started: leave nothing registered.
+            bluetoothOff.stop()
+            throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
+        }
         var lastStatus = 0
         var attempt = 0
         while (attempt < CONNECT_ATTEMPTS) {

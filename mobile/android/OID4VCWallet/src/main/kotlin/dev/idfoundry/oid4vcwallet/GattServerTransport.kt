@@ -41,7 +41,7 @@ internal class GattServerTransport(
     private val ident: ByteArray? = null,
 ) : ProximityTransport {
     private val manager = context.getSystemService(BluetoothManager::class.java)
-        ?: throw ProximityTransportException("this device has no Bluetooth")
+        ?: throw ProximityTransportException("this device has no Bluetooth", bluetoothUnavailable = true)
 
     private var server: BluetoothGattServer? = null
     private lateinit var state: BluetoothGattCharacteristic
@@ -167,9 +167,10 @@ internal class GattServerTransport(
         // Watching first: Bluetooth turning off just after the check
         // below is caught too.
         bluetoothOff.start(context)
-        val adapter = manager.adapter
-        if (adapter == null || !adapter.isEnabled) throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
-        val advertiser = adapter.bluetoothLeAdvertiser ?: throw ProximityTransportException("this device can't advertise over BLE")
+        val adapter = manager.adapter?.takeIf { it.isEnabled }
+            ?: throw unavailable(ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true))
+        val advertiser = adapter.bluetoothLeAdvertiser
+            ?: throw unavailable(ProximityTransportException("this device can't advertise over BLE", bluetoothUnavailable = true))
         synchronized(this) {
             if (closed) throw ProximityTransportException("the session ended")
             val s = manager.openGattServer(context, callback) ?: throw ProximityTransportException("couldn't open a GATT server")
@@ -276,6 +277,12 @@ internal class GattServerTransport(
         serviceAdded.completeExceptionally(e)
         advertising.completeExceptionally(e)
         started.completeExceptionally(e)
+    }
+
+    /** [e], with the watch stopped: a [connect] that fails before it starts leaves nothing registered. */
+    private fun unavailable(e: ProximityTransportException): ProximityTransportException {
+        bluetoothOff.stop()
+        return e
     }
 
     private fun stopAdvertising() {

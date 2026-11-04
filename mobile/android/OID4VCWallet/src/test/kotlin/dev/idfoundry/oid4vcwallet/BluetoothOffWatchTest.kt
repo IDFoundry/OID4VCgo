@@ -52,14 +52,11 @@ class BluetoothOffWatchTest {
         assertEquals(ProximityException.Reason.BluetoothUnavailable, e.reason)
     }
 
+    /** The flag alone decides: the message is for logs. */
     @Test
-    fun reasonFromTheMessage() {
-        for (message in listOf(BLUETOOTH_OFF, "this device has no Bluetooth", "this device can't advertise over BLE")) {
-            assertEquals(message, ProximityException.Reason.BluetoothUnavailable, transportFailure(ProximityTransportException(message)).reason)
+    fun reasonNotFromTheMessage() {
+        for (message in listOf(BLUETOOTH_OFF, "the other device disconnected")) {
+            assertEquals(message, ProximityException.Reason.ConnectionLost, transportFailure(ProximityTransportException(message)).reason)
         }
-        assertEquals(
-            ProximityException.Reason.ConnectionLost,
-            transportFailure(ProximityTransportException("the other device disconnected")).reason,
-        )
     }
 }
