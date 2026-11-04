@@ -25,6 +25,7 @@ import (
 // and the list fetched from its uri checks with statuslist.Checker (or
 // statuslist.CheckX5C). Whether an attestation without a status claim
 // is acceptable is the implementation's decision.
+// StatusListAttestationStatus is a ready-made one, doing what follows.
 //
 // Bind the Status List Token's signer to the attestation's: under
 // roots shared by several Wallet Providers, any of them could otherwise
