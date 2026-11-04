@@ -80,6 +80,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
+import dev.idfoundry.oid4vcwallet.CRLRefreshResult
 import dev.idfoundry.oid4vcwallet.CredentialDetail
 import dev.idfoundry.oid4vcwallet.CredentialStatus
 import dev.idfoundry.oid4vcwallet.CredentialSummary
@@ -103,6 +104,7 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
         var shown by remember { mutableStateOf<String?>(null) }
         var scanning by remember { mutableStateOf(false) }
+        var showingCRLs by remember { mutableStateOf(false) }
         var tab by rememberSaveable { mutableStateOf(DemoTab.WALLET) }
         val credential = shown?.let { id -> model.credentials.firstOrNull { it.id == id } }
         // An mdoc: link from another app is for the reader.
@@ -113,9 +115,13 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
             model.requestPhase != WalletModel.RequestPhase.IDLE -> RequestScreen(model, openBrowser)
             model.phase == WalletModel.Phase.Offered || model.phase == WalletModel.Phase.Receiving -> OfferScreen(model, authorize)
             credential != null -> CredentialScreen(model, credential, onBack = { shown = null })
+            showingCRLs -> RevocationListsScreen(model, onBack = { showingCRLs = false })
             tab == DemoTab.PRESENT -> PresentScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
             tab == DemoTab.VERIFY -> ReaderScreen(model, tabBar, onLeave = { tab = DemoTab.WALLET })
-            else -> HomeScreen(model, onCredential = { shown = it }, onScan = { scanning = true }, bottomBar = tabBar)
+            else -> HomeScreen(
+                model, onCredential = { shown = it }, onScan = { scanning = true }, bottomBar = tabBar,
+                onRevocationLists = { showingCRLs = true },
+            )
         }
         model.linkToConfirm?.let { link ->
             val request = link.scheme == WalletModel.REQUEST_SCHEME
@@ -134,13 +140,19 @@ fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrows
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(model: WalletModel, onCredential: (String) -> Unit, onScan: () -> Unit, bottomBar: @Composable () -> Unit = {}) {
+fun HomeScreen(
+    model: WalletModel,
+    onCredential: (String) -> Unit,
+    onScan: () -> Unit,
+    bottomBar: @Composable () -> Unit = {},
+    onRevocationLists: () -> Unit = {},
+) {
     val context = LocalContext.current
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("OID4VC Demo") },
-                navigationIcon = { SettingsMenu(model) },
+                navigationIcon = { SettingsMenu(model, onRevocationLists) },
                 actions = {
                     TextButton({
                         val text = context.getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.text?.toString()
@@ -181,9 +193,9 @@ fun DemoTabBar(selected: DemoTab, onSelect: (DemoTab) -> Unit) {
     }
 }
 
-/** The settings: which copy of a credential a presentation uses. */
+/** The settings: which copy of a credential a presentation uses, presenting in person, and the revocation lists. */
 @Composable
-private fun SettingsMenu(model: WalletModel) {
+private fun SettingsMenu(model: WalletModel, onRevocationLists: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     IconButton({ open = true }, Modifier.testTag("settings")) { Icon(Icons.Default.Settings, "Settings") }
     DropdownMenu(open, { open = false }) {
@@ -206,7 +218,85 @@ private fun SettingsMenu(model: WalletModel) {
         HorizontalDivider()
         // The in-person choices stay open together: engagement and Bluetooth mode are set in one visit.
         InPersonSettings(model.inPersonEngagement, model.bleModes, model::chooseEngagement, model::chooseBLEModes)
+        if (model.walletFetchesCRLs || model.readerFetchesCRLs) {
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Revocation lists") },
+                onClick = {
+                    open = false
+                    onRevocationLists()
+                },
+                modifier = Modifier.testTag("revocation-lists"),
+            )
+        }
     }
+}
+
+/**
+ * The Certificate Revocation Lists the wallet and the reader check
+ * certificates against: each distribution point's outcome at the last
+ * refresh, when the next is due, and Refresh. Fetched at launch, on
+ * returning to the app once due, and here; never in the background.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RevocationListsScreen(model: WalletModel, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val scope = rememberCoroutineScope()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Revocation lists") },
+                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
+            )
+        },
+    ) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), contentPadding = padding) {
+            item {
+                OutlinedButton(
+                    { scope.launch { atLeastHalfASecond { model.refreshCRLs() } } },
+                    Modifier.fillMaxWidth().padding(top = 16.dp).testTag("refresh-crls"), enabled = !model.refreshingCRLs,
+                ) {
+                    Busy(model.refreshingCRLs, "  Fetching the revocation lists…", "Refresh revocation lists")
+                }
+            }
+            item {
+                Text(
+                    "Certificates are checked against their CAs' revocation lists: a credential whose issuer's document signer was " +
+                        "revoked is refused once the list naming it is here. Lists past their next update refuse their CAs' " +
+                        "certificates until refreshed.",
+                    Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (model.walletFetchesCRLs) crlRefreshRows("Wallet: issuers, Verifiers, readers, registrars", model.walletCRLs)
+            if (model.readerFetchesCRLs) crlRefreshRows("Reader: issuers", model.readerCRLs)
+        }
+    }
+}
+
+/** One refresh of revocation lists: when it ran, each distribution point's outcome, and when the next is due. */
+private fun LazyListScope.crlRefreshRows(title: String, refresh: WalletModel.CRLRefresh?) {
+    item { SectionHeader(title) }
+    if (refresh == null) {
+        item { Text("Not refreshed yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        return
+    }
+    item { Text("Refreshed ${Credentials.dateTime(refresh.at)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    refresh.error?.let { item { Text("Couldn't refresh: $it", Modifier.testTag("crl-error"), color = Color(0xFFC62828), style = MaterialTheme.typography.bodySmall) } }
+    val result = refresh.result ?: return
+    items(result.results) { point ->
+        val (word, color) = when (point.outcome) {
+            CRLRefreshResult.Outcome.UPDATED -> "Updated: a newer list" to Color(0xFF2E7D32)
+            CRLRefreshResult.Outcome.UNCHANGED -> "Unchanged" to Color(0xFF2E7D32)
+            CRLRefreshResult.Outcome.FAILED -> "Failed: the list held stays" to Color(0xFFC62828)
+        }
+        Column(Modifier.padding(vertical = 6.dp).testTag("crl-point")) {
+            Text(word, color = color)
+            Text(point.url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            point.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFC62828)) }
+        }
+    }
+    item { Labeled("Next refresh", Credentials.dateTime(result.nextRefresh)) }
 }
 
 /**

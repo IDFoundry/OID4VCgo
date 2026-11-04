@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore
+import dev.idfoundry.oid4vcwallet.CRLRefreshResult
 import dev.idfoundry.oid4vcwallet.CredentialDetail
 import dev.idfoundry.oid4vcwallet.CredentialSummary
 import dev.idfoundry.oid4vcwallet.DeferredCredential
@@ -52,6 +53,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonElement
 import java.lang.ref.WeakReference
+import java.time.Instant
 import kotlin.coroutines.resume
 
 /**
@@ -172,6 +174,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             // At launch, before any issuance: delete keys left by one the
             // app quit in the middle of.
             runCatching { wallet?.sweepOrphanedKeys(keys!!) }
+            // The revocation lists first: receiving, checking status,
+            // presenting and reading check certificates against them.
+            refreshCRLs()
             resumeDeferred()
             refresh()
             checkAllStatuses()
@@ -184,10 +189,27 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     private fun makeWallet(): Wallet {
         val config = config ?: throw IllegalStateException("not configured")
         return sharedWallet(config, copyPolicy) {
-            Wallet(
-                config.wallet.copy(copyPolicy = copyPolicy), keys!!,
-                FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
-            )
+            val make = { crls: String ->
+                Wallet(
+                    config.wallet.copy(copyPolicy = copyPolicy, crls = crls), keys!!,
+                    FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
+                )
+            }
+            // With the revocation lists last fetched (DemoConfiguration.CRLS).
+            val saved = prefs.getString(DemoConfiguration.CRLS, null)?.takeIf { it.isNotEmpty() && config.wallet.revocation.isNotEmpty() }
+            if (saved == null) {
+                make(config.wallet.crls)
+            } else {
+                try {
+                    make(saved)
+                } catch (e: WalletException) {
+                    if (e.code != WalletException.Code.invalidInput) throw e
+                    // Saved lists the wallet refuses: start without them,
+                    // and the next refresh fetches them again.
+                    prefs.edit().remove(DemoConfiguration.CRLS).apply()
+                    make(config.wallet.crls)
+                }
+            }
         }
     }
 
@@ -697,9 +719,88 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     fun reload() {
         viewModelScope.launch {
             refresh()
+            if (crlsDue) refreshCRLs()
             if (issuance == null && presentation == null) refreshUsedUp()
         }
     }
+
+    // Revocation lists
+
+    /**
+     * How a refresh of Certificate Revocation Lists ended: what each
+     * distribution point did and when to refresh next ([result]), or why
+     * it couldn't run ([error]); and when.
+     */
+    data class CRLRefresh(val result: CRLRefreshResult?, val error: String?, val at: Instant)
+
+    /** The wallet's last refresh of its revocation lists, this launch. */
+    var walletCRLs by mutableStateOf<CRLRefresh?>(null)
+        private set
+
+    /** The reader's last refresh of its revocation lists, this launch. */
+    var readerCRLs by mutableStateOf<CRLRefresh?>(null)
+        private set
+    var refreshingCRLs by mutableStateOf(false)
+        private set
+
+    /** Whether the configuration has the wallet fetch revocation lists. */
+    val walletFetchesCRLs: Boolean
+        get() = config?.wallet?.let { it.crlDistributionPointsFromRoots || it.crlDistributionPoints.isNotEmpty() } ?: false
+
+    /** Whether the configuration has the reader fetch revocation lists. */
+    val readerFetchesCRLs: Boolean
+        get() = config?.reader?.let { it.crlDistributionPointsFromRoots || !it.crlDistributionPoints.isNullOrEmpty() } ?: false
+
+    /** Whether the reader checks a document signer's chain against its CA's revocation list. */
+    val readerChecksIssuerRevocation: Boolean
+        get() = config?.reader?.revocation?.contains(ProximityReaderConfiguration.RevocationRole.ISSUER) == true
+
+    /**
+     * Whether the lists are due again: a refresh failed, or its
+     * nextRefresh has passed. The first, at launch, is the launch's.
+     */
+    private val crlsDue: Boolean
+        get() = listOfNotNull(walletCRLs, readerCRLs).any { last ->
+            last.error != null || last.result?.let { !it.nextRefresh.isAfter(Instant.now()) } ?: true
+        }
+
+    /**
+     * Fetches the wallet's and the reader's Certificate Revocation Lists
+     * from the CAs' distribution points and keeps them for the next
+     * launch: at launch, on returning to the app once they're due, and
+     * from the settings. Nothing refreshes them while the app is closed;
+     * an app that must keep them current then schedules `refreshCRLs`
+     * with WorkManager at the result's nextRefresh (the library's
+     * GoingToProduction guide). Lists past their nextUpdate refuse their
+     * CAs' certificates until the next refresh.
+     */
+    suspend fun refreshCRLs() {
+        if (refreshingCRLs) return
+        refreshingCRLs = true
+        try {
+            val w = wallet
+            if (walletFetchesCRLs && w != null) walletCRLs = fetchCRLs(walletCRLs, DemoConfiguration.CRLS) { w.refreshCRLs() }
+            if (readerFetchesCRLs) {
+                readerCRLs = fetchCRLs(readerCRLs, DemoConfiguration.READER_CRLS) {
+                    (reader ?: throw IllegalStateException(notice ?: "the reader couldn't be made")).refreshCRLs()
+                }
+            }
+        } finally {
+            refreshingCRLs = false
+        }
+    }
+
+    /** Runs [refresh], keeping the lists it returns under [key]; [last] is the refresh before, whose result stays shown on a failure. */
+    private suspend fun fetchCRLs(last: CRLRefresh?, key: String, refresh: suspend () -> CRLRefreshResult): CRLRefresh =
+        try {
+            val result = refresh()
+            prefs.edit().putString(key, result.crls).apply()
+            CRLRefresh(result, null, Instant.now())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            CRLRefresh(last?.result, describe(e), Instant.now())
+        }
 
     suspend fun refresh() {
         val wallet = wallet ?: return
@@ -1046,23 +1147,48 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     fun pauseNfcReader() { activity.get()?.let { android.nfc.NfcAdapter.getDefaultAdapter(it)?.disableReaderMode(it) } }
 
-    private val reader: ProximityReader? by lazy {
-        val r = config?.reader ?: return@lazy null
-        runCatching {
-            // A production reader's decisions: the demo's one IACA issues
-            // every type it reads, and the demo services publish no CRLs, so
-            // revocation is declined. A shipping reader checks it, with crls
-            // and revocation.
-            ProximityReader(
-                ProximityReaderConfiguration(
-                    issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
-                    noRevocationCheck = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
-                    anyIssuerForAnyType = true,
-                    statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
-                ),
-                DemoReaderKeys(r),
-            )
+    private var madeReader: ProximityReader? = null
+
+    /** The demo reader, made on first use from the configuration's `reader`; null without one, or when it can't be made (the notice says why). */
+    private val reader: ProximityReader?
+        get() = madeReader ?: makeReader()?.also { madeReader = it }
+
+    private fun makeReader(): ProximityReader? {
+        val r = config?.reader ?: return null
+        val saved = prefs.getString(DemoConfiguration.READER_CRLS, null).orEmpty()
+        return runCatching {
+            try {
+                ProximityReader(readerConfiguration(r, saved), DemoReaderKeys(r))
+            } catch (e: WalletException) {
+                if (e.code != WalletException.Code.invalidInput || saved.isEmpty()) throw e
+                // Saved lists the reader refuses: start without them, and
+                // the next refresh fetches them again.
+                prefs.edit().remove(DemoConfiguration.READER_CRLS).apply()
+                ProximityReader(readerConfiguration(r, ""), DemoReaderKeys(r))
+            }
         }.onFailure { notice = describe(it) }.getOrNull()
+    }
+
+    /**
+     * A production reader's decisions: the demo's one IACA issues every
+     * type it reads. The roles the configuration names are checked
+     * against the IACA's Certificate Revocation List — the document
+     * signer's chain, and a status list signer's — with [crls] the lists
+     * last fetched, refreshed by [refreshCRLs]; the others decline it, as
+     * for services that publish no CRLs. A shipping reader checks both.
+     */
+    private fun readerConfiguration(r: DemoConfiguration.Reader, crls: String): ProximityReaderConfiguration {
+        val checked = r.revocation.orEmpty()
+        return ProximityReaderConfiguration(
+            issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
+            crls = crls, revocation = checked,
+            noRevocationCheck = ProximityReaderConfiguration.RevocationRole.entries.filter { it !in checked },
+            crlDistributionPoints = r.crlDistributionPoints.orEmpty(), crlDistributionPointsFromRoots = r.crlDistributionPointsFromRoots,
+            crlRequireHTTPS = r.crlRequireHTTPS,
+            anyIssuerForAnyType = true,
+            statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
+            development = r.development,
+        )
     }
 
     /** Reads the holder's [qrCode], asking for [preset]. */
@@ -1131,6 +1257,22 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             // a URL's path or query, or a remote party's own text.
             android.util.Log.w("DemoWallet", e.toString())
             return describeOnly(e)
+        }
+
+        /**
+         * Why a reader refused a document, when its certificate revocation
+         * is why: the error's message is for logs, but names the
+         * certrevocation failure, which the demo spells out.
+         */
+        fun revocationReason(e: Throwable): String? {
+            val message = (e as? WalletException)?.message ?: return null
+            return when {
+                "certificate is revoked" in message ->
+                    "its issuer's document signer has been revoked (its CA's revocation list names it). Receive the credential again."
+                "no current CRL" in message ->
+                    "there's no current revocation list for its issuer's CA. Refresh the revocation lists in Settings."
+                else -> null
+            }
         }
 
         private fun describeOnly(e: Throwable): String =

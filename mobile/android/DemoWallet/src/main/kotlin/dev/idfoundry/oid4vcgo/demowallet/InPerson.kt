@@ -77,6 +77,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.MdocPresentation
+import dev.idfoundry.oid4vcwallet.MdocStatus
 import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPermissions
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
@@ -486,7 +487,8 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                 "Keep the phones together while the holder agrees and shares by NFC…"
             else "Waiting for the holder to agree…")
             else -> ReaderOutcome(state, model.readingPreset, model.reading?.usesNfcData == true,
-                model.reading?.takeUnless { it.usesNfcData }?.mode, onDone = { model.closeReading(); preset = null })
+                model.reading?.takeUnless { it.usesNfcData }?.mode, model.readerChecksIssuerRevocation,
+                onDone = { model.closeReading(); preset = null })
         }
     }
 }
@@ -517,8 +519,21 @@ internal fun NfcReaderWaiting(preset: ReaderPreset, notice: String?, onCancel: (
     }
 }
 
+/**
+ * What a reading established: the elements, and how far the document
+ * was checked — its status list, and, when [checksIssuerRevocation], its
+ * document signer's certificate against its CA's revocation list — or
+ * why it wasn't verified.
+ */
 @Composable
-private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPreset?, usesNfcData: Boolean, mode: ProximityBLEMode?, onDone: () -> Unit) {
+private fun ReaderOutcome(
+    state: ProximityReaderSession.State,
+    preset: ReaderPreset?,
+    usesNfcData: Boolean,
+    mode: ProximityBLEMode?,
+    checksIssuerRevocation: Boolean,
+    onDone: () -> Unit,
+) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
             is ProximityReaderSession.State.Verified -> {
@@ -543,7 +558,16 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
                 item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
                 item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
-                v.statusList?.let { item { Labeled("Revocation", "not checked: ${it.uri} #${it.index}") } }
+                v.statusList?.let { s ->
+                    item { Labeled("Status list", "${v.status?.let(::statusWord) ?: "not checked"}: ${s.uri} #${s.index}") }
+                }
+                item {
+                    Labeled(
+                        "Issuer certificate",
+                        if (checksIssuerRevocation) "not revoked (checked against its CA's revocation list)" else "revocation not checked",
+                        Modifier.testTag("reader-issuer-revocation"),
+                    )
+                }
             }
             ProximityReaderSession.State.Declined -> item { Text("The holder declined.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
             ProximityReaderSession.State.Cancelled -> item { Text("Cancelled.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
@@ -552,7 +576,9 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
                 Text(
                     when (e) {
                         is ProximityException -> e.description
-                        is WalletException -> "Not verified: ${WalletModel.describe(e)}"
+                        // A revoked document signer, or no current list to
+                        // tell, says so; anything else, the error.
+                        is WalletException -> "Not verified: ${WalletModel.revocationReason(e) ?: WalletModel.describe(e)}"
                         else -> e.toString()
                     },
                     Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME), color = Color(0xFFC62828),
@@ -562,6 +588,16 @@ private fun ReaderOutcome(state: ProximityReaderSession.State, preset: ReaderPre
         }
         item { Button(onDone, Modifier.padding(vertical = 16.dp).testTag("reader-done")) { Text("Done") } }
     }
+}
+
+/** A verified document's status, as the session checked it. */
+private fun statusWord(status: MdocStatus): String = when (status) {
+    MdocStatus.Valid -> "valid"
+    MdocStatus.NoStatus -> "none"
+    MdocStatus.Revoked -> "revoked"
+    MdocStatus.Suspended -> "suspended"
+    is MdocStatus.Other -> "status ${status.value}"
+    MdocStatus.Unknown -> "unknown"
 }
 
 /** Actual session carrier; an NFC tap alone does not identify the data transport. */
