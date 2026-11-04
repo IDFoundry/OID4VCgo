@@ -53,7 +53,7 @@ func TestPublisher_ReportsErrors(t *testing.T) {
 	pki := newPKI(t)
 	chain := []*x509.Certificate{pki.leaf}
 	ids := func(context.Context) ([][]byte, error) { return nil, nil }
-	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestPublisher_ReportsErrors(t *testing.T) {
 	}{
 		"no URI":              {&Publisher{Signer: pki.key, Chain: chain, Identifiers: ids}, "are required"},
 		"identifiers error":   {&Publisher{URI: testURI, Signer: pki.key, Chain: chain, Identifiers: func(context.Context) ([][]byte, error) { return nil, dbDown }}, "db down"},
-		"P-384 signer":        {&Publisher{URI: testURI, Signer: p384, Chain: chain, Identifiers: ids}, "isn't P-256"},
+		"P-224 signer":        {&Publisher{URI: testURI, Signer: p224, Chain: chain, Identifiers: ids}, "an ECDSA key on P-224"},
 		"unknown typ":         {&Publisher{URI: testURI, Signer: pki.key, Chain: chain, Identifiers: ids, Typ: "cwt"}, "IssueOptions.Typ"},
 		"sub-second Lifetime": {&Publisher{URI: testURI, Signer: pki.key, Chain: chain, Identifiers: ids, Lifetime: time.Millisecond}, "Lifetime is 1ms"},
 		"sub-second TTL":      {&Publisher{URI: testURI, Signer: pki.key, Chain: chain, Identifiers: ids, TTL: time.Millisecond}, "TTL is 1ms"},

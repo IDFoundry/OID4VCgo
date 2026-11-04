@@ -5,9 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -28,7 +25,12 @@ import (
 // SD-JWT VC's), and DefaultForm when it names neither —
 // carrying the signer's certificate chain as x5c/x5chain, as HAIP 1.0
 // §6.1 requires. The signing algorithm follows the signer's key: ES256
-// for P-256, EdDSA for Ed25519.
+// for P-256 and EdDSA for Ed25519 in either form, and ES384 for P-384
+// and ES512 for P-521 in the CWT form only — an mdoc issuer's IACA
+// material may be on those curves (ISO/IEC 18013-5 §9.1.2.4), but this
+// module's JWTs are ES256 or EdDSA. A Publisher whose signer is on
+// P-384 or P-521 sets DefaultForm to FormCWT, and answers a request
+// for the JWT form alone 406 Not Acceptable.
 //
 // Each form's token is signed once and served for CacheFor, so
 // requests — which anyone can make — don't each cost a signature. A
@@ -120,6 +122,10 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Every Accept line: RFC 9110 §5.3 lets a client split the list
 	// across several.
 	cwt := p.servesCWT(strings.Join(r.Header.Values("Accept"), ", "))
+	if !cwt && p.cwtOnly() {
+		http.Error(w, "this status list is served as "+CWTTokenMediaType+" only", http.StatusNotAcceptable)
+		return
+	}
 	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
 	token, err := p.cachedTokenFor(r.Context(), cwt, gz)
 	if err != nil {
@@ -346,8 +352,20 @@ func (p *Publisher) validate() error {
 		return fmt.Errorf("statuslist: Publisher.TTL is %s, under the one second a ttl claim can express", p.TTL)
 	case p.TTL > p.lifetime():
 		return fmt.Errorf("statuslist: Publisher.TTL (%s) is longer than its Lifetime (%s)", p.TTL, p.lifetime())
+	case p.DefaultForm == FormJWT && p.cwtOnly():
+		return errors.New("statuslist: Publisher.Signer's key signs CWT tokens only (ES384 or ES512): set DefaultForm to FormCWT")
 	}
 	return nil
+}
+
+// cwtOnly reports whether the signer's key signs CWT tokens but not
+// JWTs: a P-384 or P-521 key.
+func (p *Publisher) cwtOnly() bool {
+	if p.Signer == nil {
+		return false
+	}
+	alg, err := cose.AlgForKey(p.Signer.Public())
+	return err == nil && alg != cose.ES256 && alg != cose.EdDSA
 }
 
 // sign is Token, before its size check.
@@ -371,23 +389,22 @@ func (p *Publisher) sign(ctx context.Context, cwt bool) ([]byte, error) {
 		ttl := int64(p.TTL.Seconds())
 		claims.TTL = &ttl
 	}
-	switch key := p.Signer.Public().(type) {
-	case *ecdsa.PublicKey:
-		if key.Curve != elliptic.P256() {
-			return nil, errors.New("statuslist: Publisher.Signer's ECDSA key isn't P-256")
-		}
-		if cwt {
-			return IssueTokenCWTX5Chain(p.Signer, cose.ES256, claims, p.Chain)
-		}
-		token, err := IssueTokenX5C(p.Signer, jose.ES256, claims, p.Chain)
-		return []byte(token), err
-	case ed25519.PublicKey:
-		if cwt {
-			return IssueTokenCWTX5Chain(p.Signer, cose.EdDSA, claims, p.Chain)
-		}
-		token, err := IssueTokenX5C(p.Signer, jose.EdDSA, claims, p.Chain)
-		return []byte(token), err
-	default:
-		return nil, errors.New("statuslist: Publisher.Signer's key type isn't supported")
+	alg, err := cose.AlgForKey(p.Signer.Public())
+	if err != nil {
+		return nil, fmt.Errorf("statuslist: Publisher.Signer: %w", err)
 	}
+	if cwt {
+		return IssueTokenCWTX5Chain(p.Signer, alg, claims, p.Chain)
+	}
+	var joseAlg jose.Alg
+	switch alg {
+	case cose.ES256:
+		joseAlg = jose.ES256
+	case cose.EdDSA:
+		joseAlg = jose.EdDSA
+	default:
+		return nil, errors.New("statuslist: Publisher.Signer's key signs CWT tokens only (ES384 or ES512), not JWTs")
+	}
+	token, err := IssueTokenX5C(p.Signer, joseAlg, claims, p.Chain)
+	return []byte(token), err
 }

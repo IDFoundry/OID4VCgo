@@ -3,9 +3,6 @@ package identifierlist
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -19,8 +16,8 @@ import (
 
 // Publisher signs an identifier list from the current identifiers:
 // Token signs one now, and ServeHTTP serves one over HTTP at its uri.
-// The signing algorithm follows the signer's key: ES256 for P-256,
-// EdDSA for Ed25519.
+// The signing algorithm follows the signer's key: ES256, ES384 or
+// ES512 for P-256, P-384 or P-521, EdDSA for Ed25519.
 //
 // An issuer that pre-signs the list and serves it as a static file
 // calls Token (or IssueToken) on its own schedule and needs nothing
@@ -131,16 +128,11 @@ func (p *Publisher) validate() (cose.Alg, error) {
 	case p.TTL > p.lifetime():
 		return 0, fmt.Errorf("identifierlist: Publisher.TTL (%s) is longer than its Lifetime (%s)", p.TTL, p.lifetime())
 	}
-	switch key := p.Signer.Public().(type) {
-	case *ecdsa.PublicKey:
-		if key.Curve != elliptic.P256() {
-			return 0, errors.New("identifierlist: Publisher.Signer's ECDSA key isn't P-256")
-		}
-		return cose.ES256, nil
-	case ed25519.PublicKey:
-		return cose.EdDSA, nil
+	alg, err := cose.AlgForKey(p.Signer.Public())
+	if err != nil {
+		return 0, fmt.Errorf("identifierlist: Publisher.Signer: %w", err)
 	}
-	return 0, errors.New("identifierlist: Publisher.Signer's key type isn't supported")
+	return alg, nil
 }
 
 // ServeHTTP implements http.Handler: a GET or HEAD is answered with a
