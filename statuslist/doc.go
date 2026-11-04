@@ -30,6 +30,26 @@
 // CacheFor), JWT or CWT by the Accept header (its DefaultForm when it
 // names neither), with the signer's certificate chain.
 //
+// # Allocating indices
+//
+// Allocator hands each Referenced Token its index: drawn uniformly at
+// random from a list, never handed out twice, moving to the next list
+// once FillLimit of one is taken, and failing with ErrListsFull when
+// every list is, so the issuer can provision another. draft-14 has
+// the Status Issuer prevent double allocation (§13.3), since tokens
+// sharing an index share a status, and recommends random indices over
+// sequential ones (§12.4, §12.5.1), which reveal the order and number
+// of tokens issued. Allocate one index per credential copy in batch
+// issuance (§13.2), and never derive one from anything about the
+// holder.
+//
+// The Allocator keeps its reservations and statuses in an IndexStore,
+// which must be durable and reserve atomically; MemoryIndexStore is
+// for tests and single processes. Allocator.Statuses is the
+// Publisher.Statuses for each list, and Allocator.SetStatus changes a
+// token's status, refusing an index never handed out. See Allocator's
+// example.
+//
 // # Lists both formats reference
 //
 // A Relying Party may send no Accept header when it knows which form
