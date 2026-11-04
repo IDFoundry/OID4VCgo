@@ -44,8 +44,8 @@ type Claims struct {
 
 	// DeviceKey is the mdoc holder authentication public key
 	// (DeviceKeyInfo.DeviceKey, the analog of SD-JWT VC's cnf.jwk).
-	// REQUIRED — must be a type CoseKey's NewCoseKey supports (a P-256
-	// *ecdsa.PublicKey or an ed25519.PublicKey).
+	// REQUIRED — must be a type CoseKey's NewCoseKey supports (a P-256,
+	// P-384 or P-521 *ecdsa.PublicKey or an ed25519.PublicKey).
 	DeviceKey crypto.PublicKey
 
 	// KeyAuthorizations optionally scopes DeviceKey (§12.3.4).

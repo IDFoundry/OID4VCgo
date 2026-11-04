@@ -3,7 +3,6 @@ package mdoc
 import (
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"fmt"
 
@@ -260,7 +259,8 @@ func VerifyDeviceSignature(
 // authentication (§12.4.5): it derives EMacKey from devicePriv
 // (SDeviceKey.Priv) and readerPub (EReaderKey.Pub) via ECKA-DH and
 // HKDF, then computes a detached COSE_Mac0 over DeviceAuthenticationBytes.
-// Only P-256 is supported (see deriveEMacKey).
+// Both keys must be on one curve: P-256, P-384 or P-521 (see
+// deriveEMacKey).
 func ComputeDeviceMAC(
 	devicePriv *ecdsa.PrivateKey, readerPub *ecdsa.PublicKey,
 	sessionTranscriptBytes []byte, docType string,
@@ -282,7 +282,8 @@ func ComputeDeviceMAC(
 // whose private half can't be handed over — one in the Secure Enclave
 // or Android Keystore: sharedSecret is the ECKA-DH shared secret Z
 // between the device key and readerPub (EReaderKey.Pub), the SEC1
-// x-coordinate (32 octets for P-256), as the key's own key agreement
+// x-coordinate (32 octets for P-256, 48 for P-384, 66 for P-521), as
+// the key's own key agreement
 // (Keystore ECDH, SecKeyCopyKeyExchangeResult) returns it. The result
 // is byte for byte ComputeDeviceMAC's for the same inputs.
 func ComputeDeviceMACFromSharedSecret(
@@ -290,8 +291,10 @@ func ComputeDeviceMACFromSharedSecret(
 	sessionTranscriptBytes []byte, docType string,
 	nameSpaces map[string]map[string]interface{},
 ) (DeviceSigned, error) {
-	if len(sharedSecret) != 32 {
-		return DeviceSigned{}, fmt.Errorf("mdoc: DeviceMac shared secret is %d bytes, want 32 (P-256)", len(sharedSecret))
+	switch len(sharedSecret) {
+	case 32, 48, 66: // P-256, P-384, P-521
+	default:
+		return DeviceSigned{}, fmt.Errorf("mdoc: DeviceMac shared secret is %d bytes, want 32 (P-256), 48 (P-384) or 66 (P-521)", len(sharedSecret))
 	}
 	nameSpacesBytes, authBytes, err := deviceSignedInput(sessionTranscriptBytes, docType, nameSpaces)
 	if err != nil {
@@ -346,19 +349,19 @@ func VerifyDeviceMAC(
 }
 
 // deriveEMacKey computes §12.4.5's EMacKey: ECKA-DH (BSI TR-03111) —
-// which, for the P-256 curve this package supports, is exactly Go's
+// which, for the NIST curves this package supports, is exactly Go's
 // crypto/ecdh Unified Model shared secret (the SEC1 x-coordinate) —
 // between priv and peerPub, then HKDF-SHA256 (RFC 5869, internal/hkdf)
 // with salt=SHA-256(sessionTranscriptBytes), info="EMacKey", L=32
-// octets. Only P-256 is supported: §12.4.5's own NOTE says MAC
-// authentication "can only be used when the mdoc authentication key
-// and the mdoc reader ephemeral key use the same curve," and this
-// package's DeviceKey/COSE support (see CoseKey) is limited to P-256
-// (EC2) and Ed25519 (OKP) — Ed25519 keys have no standard ECDH
-// counterpart, so MAC authentication isn't available for them here.
+// octets, whatever the curve. The two keys must be on one curve,
+// P-256, P-384 or P-521: §12.4.5's own NOTE says MAC authentication
+// "can only be used when the mdoc authentication key and the mdoc
+// reader ephemeral key use the same curve." Ed25519 keys have no
+// standard ECDH counterpart, so MAC authentication isn't available for
+// them here.
 func deriveEMacKey(priv *ecdsa.PrivateKey, peerPub *ecdsa.PublicKey, sessionTranscriptBytes []byte) ([]byte, error) {
-	if priv.Curve != elliptic.P256() || peerPub.Curve != elliptic.P256() {
-		return nil, fmt.Errorf("mdoc: DeviceMac requires P-256 keys (got %s and %s)", priv.Curve.Params().Name, peerPub.Curve.Params().Name)
+	if _, ok := coseCurveID(priv.Curve); !ok || priv.Curve != peerPub.Curve {
+		return nil, fmt.Errorf("mdoc: DeviceMac requires two keys on one of P-256, P-384 and P-521 (got %s and %s)", curveName(priv.Curve), curveName(peerPub.Curve))
 	}
 	ecdhPriv, err := priv.ECDH()
 	if err != nil {

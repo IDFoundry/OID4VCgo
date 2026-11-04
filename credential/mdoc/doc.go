@@ -42,15 +42,16 @@
 //
 // # Algorithm and curve support
 //
-// Matches internal/cose's curated set exactly: ES256 (P-256) and EdDSA
-// (Ed25519) for IssuerAuth's and DeviceSignature's signatures, and the
-// corresponding COSE_Key types for DeviceKeyInfo.DeviceKey (CoseKey).
-// DeviceMac is narrower still — P-256 only, since MAC authentication
+// Matches internal/cose's set exactly: ES256 (P-256), ES384 (P-384),
+// ES512 (P-521) and EdDSA (Ed25519) for IssuerAuth's and
+// DeviceSignature's signatures, and the corresponding COSE_Key types
+// for DeviceKeyInfo.DeviceKey (CoseKey: EC2 crv 1, 2 and 3, OKP crv
+// 6). DeviceMac takes the three NIST curves, with the device key and
+// the reader's ephemeral key on the same one, since MAC authentication
 // requires ECDH, which Ed25519 keys don't support (see deriveEMacKey).
-// ISO/IEC 18013-5 also permits ES384/ES512 and additional
-// brainpool/Ed448 curves (§12.3.4); extend here only once internal/cose
-// itself grows that support, to keep the two packages' capabilities
-// from silently diverging.
+// ISO/IEC 18013-5 also lists the brainpool curves and Ed448 (§9.1.2.4,
+// §9.1.5.2), which Go's standard library doesn't implement: a key on
+// one is refused.
 //
 // # Building a namespace/data-element tree
 //

@@ -482,6 +482,12 @@ func (s *MdocSigner) validate(assurance AssuranceLevel) error {
 	if !cose.IsSupportedSigningAlg(s.Alg) {
 		return fmt.Errorf("mdoc_signer.alg %d is not supported", s.Alg)
 	}
+	// Each algorithm signs with one curve: ES384 needs a P-384 key.
+	if keyAlg, err := cose.AlgForKey(s.Signer.Public()); err != nil {
+		return fmt.Errorf("mdoc_signer.signer: %w", err)
+	} else if keyAlg != s.Alg {
+		return fmt.Errorf("mdoc_signer.alg %d doesn't match the signer's key, which signs with %d", s.Alg, keyAlg)
+	}
 	if err := s.Decoys.validate("mdoc_signer.decoys", mdoc.MaxDecoys); err != nil {
 		return err
 	}
