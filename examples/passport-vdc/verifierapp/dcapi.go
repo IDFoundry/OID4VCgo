@@ -1,13 +1,11 @@
 package verifierapp
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
@@ -31,9 +29,10 @@ const errBuildRequest = "couldn't build the request"
 //     the scenario's own query, signed by its relying party.
 //
 // Either answer is verified into the same Outcome as the OpenID4VP
-// requests. The OpenID4VP one is a verifier.Transactions request, like
-// the page's others: its answer runs the scenario's Accept, and only the
-// page's browser can post it.
+// requests. Both are verifier.Transactions requests, like the page's
+// others (BeginMdocDCAPI, BeginDCAPI): an answer runs the scenario's
+// Accept, only the page's browser can post it, a refused one leaves its
+// request open, and the first to complete closes the rest.
 
 // maxDCAPIResponseBody bounds the page's POST of a response.
 const maxDCAPIResponseBody = mdocdcapi.MaxResponseBytes + 1024
@@ -102,47 +101,53 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
-	req, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
-		Origin: a.origin, Origins: []string{a.origin}, DocType: credential.DocType, Elements: elements,
-		Readers: []mdocdcapi.ReaderKey{a.readers[s.scenario]},
-	})
-	if err != nil {
-		http.Error(w, errBuildRequest, http.StatusInternalServerError)
-		return
-	}
 	query, err := buildQuery(s.scenario, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
 		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
 	txs := a.txs[s.scenario]
-	begun, err := txs.BeginDCAPI(r.Context(), query, s.binding, a.origin)
+	// The mdoc is reported under the query's own mdoc ID, so the
+	// scenario's Accept reads it as it reads an OpenID4VP answer's.
+	mdocBegun, err := txs.BeginMdocDCAPI(r.Context(), verifier.MdocDCAPIRequest{
+		DocType: credential.DocType, Elements: elements, CredentialQueryID: mdocQueryID,
+	}, s.binding, a.origin)
 	if err != nil {
 		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
 	}
+	begun, err := txs.BeginDCAPI(r.Context(), query, s.binding, a.origin)
+	if err != nil {
+		_ = txs.Close(r.Context(), mdocBegun.ID)
+		http.Error(w, errBuildRequest, http.StatusInternalServerError)
+		return
+	}
 	a.mu.Lock()
-	previous := s.dcapiOpenID
-	s.dcapi, s.dcapiOpenID = &req.Pending, begun.ID
-	a.byTx[begun.ID] = pageID
+	previous := []string{s.dcapiMdoc, s.dcapiOpenID}
+	s.dcapiMdoc, s.dcapiOpenID = mdocBegun.ID, begun.ID
+	a.byTx[mdocBegun.ID], a.byTx[begun.ID] = pageID, pageID
 	a.mu.Unlock()
-	if previous != "" {
-		_ = txs.Close(r.Context(), previous)
+	for _, id := range previous {
+		if id != "" {
+			_ = txs.Close(r.Context(), id)
+		}
 	}
 	w.Header().Set(headerCacheControl, noStore)
 	w.Header().Set(headerContentType, "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
 		Requests []dcapiRequest `json:"requests"`
 	}{[]dcapiRequest{
-		{Protocol: mdocdcapi.Protocol, Data: req.Data},
+		{Protocol: mdocBegun.Request.Protocol, Data: mdocBegun.Request.Data},
 		{Protocol: begun.Request.Protocol, Data: begun.Request.Data},
 	}})
 }
 
-// handleDCAPIResponse verifies the page's Digital Credentials API
-// answer. An org-iso-mdoc answer spends its request whatever the
-// outcome; an OpenID4VP one is verifier.Transactions', which leaves its
-// request open when it's refused, until the page asks again.
+// handleDCAPIResponse passes the page's Digital Credentials API answer
+// to its verifier.Transactions request — the org-iso-mdoc one, or the
+// OpenID4VP one — which verifies it bound to the page's origin and runs
+// the scenario's Accept; the page then reads the outcome as for its
+// other requests. A refused answer leaves its request open, until the
+// page asks again.
 func (a *App) handleDCAPIResponse(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.session(r.PathValue("id"))
 	if !ok || !sameBrowser(r, s) {
@@ -157,103 +162,36 @@ func (a *App) handleDCAPIResponse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "malformed response", http.StatusBadRequest)
 		return
 	}
+	txs := a.txs[s.scenario]
+	a.mu.Lock()
+	id, handle := s.dcapiMdoc, txs.HandleMdocDCAPIResponse
 	if body.Protocol == verifier.DCAPIProtocolSigned {
-		a.handleOpenID4VPAnswer(w, r, s, body.Response)
-		return
+		// The encrypted dc_api.jwt response.
+		id, handle = s.dcapiOpenID, txs.HandleDCAPIResponse
 	}
-	a.mu.Lock()
-	pending := s.dcapi
-	s.dcapi = nil
-	a.mu.Unlock()
-	if pending == nil {
-		http.Error(w, noRequestWaiting, http.StatusConflict)
-		return
-	}
-	out, err := a.verifyDCAPI(r, s, *pending, body.Response)
-	if err != nil {
-		http.Error(w, "not verified: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.mu.Lock()
-	s.dcapiOutcome = out
-	a.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// noRequestWaiting answers an answer to no request.
-const noRequestWaiting = "no request is waiting for an answer: start again"
-
-// handleOpenID4VPAnswer passes the page's OpenID4VP answer, response
-// (the encrypted dc_api.jwt response), to its verifier.Transactions
-// request, which verifies it bound to the page's origin and runs the
-// scenario's Accept; the page then reads the outcome as for its other
-// requests.
-func (a *App) handleOpenID4VPAnswer(w http.ResponseWriter, r *http.Request, s *session, response string) {
-	a.mu.Lock()
-	id := s.dcapiOpenID
 	a.mu.Unlock()
 	if id == "" {
 		http.Error(w, noRequestWaiting, http.StatusConflict)
 		return
 	}
-	data, err := json.Marshal(map[string]string{"response": response})
+	data, err := json.Marshal(map[string]string{"response": body.Response})
 	if err != nil {
 		http.Error(w, "malformed response", http.StatusBadRequest)
 		return
 	}
-	if _, err := a.txs[s.scenario].HandleDCAPIResponse(r.Context(), id, s.binding, data); err != nil {
+	_, err = handle(r.Context(), id, s.binding, data)
+	switch {
+	case errors.Is(err, verifier.ErrTransactionAnswered), errors.Is(err, verifier.ErrTransactionClosed), errors.Is(err, verifier.ErrTransactionExpired):
+		http.Error(w, noRequestWaiting, http.StatusConflict)
+	case err != nil:
 		http.Error(w, "not verified: "+err.Error(), http.StatusBadRequest)
-		return
+	default:
+		w.WriteHeader(http.StatusNoContent)
 	}
-	a.mu.Lock()
-	s.dcapi = nil // the org-iso-mdoc request offered with it
-	a.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
 }
 
-// verifyDCAPI verifies response to pending and decides s's scenario
-// from it, as accept does for an OpenID4VP answer.
-func (a *App) verifyDCAPI(r *http.Request, s *session, pending mdocdcapi.Pending, response string) (*Outcome, error) {
-	if a.answered(r, s) {
-		return nil, errors.New("this request has already been answered")
-	}
-	info, _ := s.scenario.Info()
-	var people []Person
-	_, err := mdocdcapi.VerifyResponse(r.Context(), mdocdcapi.VerifyParams{
-		Pending: pending, Response: response,
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: a.issuerRoots, Revocation: issuerRevocation},
-		Now:        a.now, MaxClockSkew: time.Minute,
-		Assurance: verifier.AssuranceDevelopment,
-		Origins:   []string{a.origin},
-		// The demo's one issuer issues every document it asks for.
-		AnyIssuerForAnyType: true,
-		// Revocation, with the status list bound to the document's
-		// issuer chain, then the scenario's checks.
-		Status: a.statusPolicy(),
-		Accept: func(ctx context.Context, _ string, result verifier.VerifyResponseResult) error {
-			vcs := result.Credentials
-			for i := range vcs {
-				vcs[i].CredentialQueryID = mdocQueryID
-			}
-			var err error
-			people, err = a.people(ctx, info, vcs)
-			return err
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	p := people[0]
-	out := &Outcome{Scenario: s.scenario, Format: p.Format, Claims: p.Claims, Status: p.Status, ICAO: p.ICAO}
-	out.Decision = decide(s.scenario, out)
-	return out, nil
-}
-
-// answered reports whether s already has an outcome, from either
-// OpenID4VP request or the Digital Credentials API.
-func (a *App) answered(r *http.Request, s *session) bool {
-	return a.state(r.Context(), s).outcome != nil
-}
+// noRequestWaiting answers an answer to no request.
+const noRequestWaiting = "no request is waiting for an answer: start again"
 
 // mdocPath splits an mdoc claims path: a namespace, then an element.
 func mdocPath(p dcql.Path) (ns, el string, ok bool) {

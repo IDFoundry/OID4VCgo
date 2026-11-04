@@ -57,18 +57,28 @@ const (
 // response decryption key, nonce and state) and its progress. A
 // TransactionStore persists it; only Transactions interprets it.
 type Transaction struct {
-	ID                    string
-	KeyID                 string // the response encryption key's kid, which routes an answer here
-	State                 string
-	Nonce                 string
-	Query                 dcql.Query
+	ID    string
+	KeyID string // the response encryption key's kid, which routes an answer here
+	State string
+	Nonce string
+	Query dcql.Query
+	// ResponseDecryptionKey decrypts the request's answer: for an
+	// org-iso-mdoc request (BeginMdocDCAPI), the P-256 HPKE recipient
+	// key, as the ECDSA key of the same scalar.
 	ResponseDecryptionKey *ecdsa.PrivateKey
 	RequestObject         string
 
-	// Origin is set for a Digital Credentials API request (BeginDCAPI):
-	// the origin of the page that makes it, and the request's only
-	// expected_origins entry. "" for a redirect-flow request.
+	// Origin is set for a Digital Credentials API request (BeginDCAPI,
+	// BeginMdocDCAPI): the origin of the page that makes it, and an
+	// OpenID4VP request's only expected_origins entry. "" for a
+	// redirect-flow request.
 	Origin string
+
+	// MdocEncryptionInfo is set for an org-iso-mdoc request
+	// (BeginMdocDCAPI) alone: its base64url EncryptionInfo (ISO/IEC TS
+	// 18013-7 Annex C.2), which the response's session transcript binds.
+	// It says the request is one: "" for any other.
+	MdocEncryptionInfo string
 
 	// Owner identifies the Transactions that created the transaction
 	// (TransactionsConfig.Scope): only a Transactions with the same
@@ -240,8 +250,17 @@ type TransactionsConfig struct {
 	// MdocIssuerKeys, TrustedAuthorities, MaxKeyBindingAge and Now.
 	// Query, Response, ExpectedNonce and ResponseEncryptionKey are set
 	// per request, and Origin and ExpectedOrigins per Digital
-	// Credentials API request (BeginDCAPI); leave them zero.
+	// Credentials API request (BeginDCAPI); leave them zero. An
+	// org-iso-mdoc answer (HandleMdocDCAPIResponse) is verified with its
+	// MdocIssuerKeys, Now, MaxClockSkew, IssuerAuthorized and
+	// AnyIssuerForAnyType.
 	Verify VerifyResponseRequest
+
+	// MdocDCAPI carries out the org-iso-mdoc protocol (ISO/IEC TS
+	// 18013-7 Annex C) for BeginMdocDCAPI and HandleMdocDCAPIResponse:
+	// mdocdcapi.ForTransactions, with the Verifier's reader keys.
+	// REQUIRED for BeginMdocDCAPI.
+	MdocDCAPI MdocDCAPIProtocol
 
 	// Status, if set, checks every credential's revocation status (see
 	// StatusPolicy) once an answer verifies, before Accept. Its error
@@ -287,7 +306,7 @@ type TransactionsConfig struct {
 	RedirectURI string
 
 	// Origins are the serialized origins of the pages that may make a
-	// Digital Credentials API request (BeginDCAPI): each https, or
+	// Digital Credentials API request (BeginDCAPI, BeginMdocDCAPI): each https, or
 	// loopback http under AssuranceDevelopment, with no path, query or
 	// fragment; each is normalized as a browser serializes an origin
 	// (scheme and host lowercased, no trailing "/" or default port).
@@ -333,8 +352,9 @@ type TransactionsConfig struct {
 	Scope string
 
 	// ForgetResultOnRead releases each request's result once: the
-	// Lookup that first reports it completed, Redeem or
-	// HandleDCAPIResponse returns the result and, in the same Update,
+	// Lookup that first reports it completed, Redeem,
+	// HandleDCAPIResponse or HandleMdocDCAPIResponse returns the result
+	// and, in the same Update,
 	// drops it from the store and closes the request, as Forget does —
 	// so the store holds the claims the holder disclosed only until the
 	// Verifier has them. A later Lookup reports TransactionClosed. Set
@@ -359,8 +379,10 @@ type TransactionsConfig struct {
 // leave the request open, so they can't be used to cancel it.
 //
 // It covers the redirect flows (cross-device and same-device) with
-// request_uri fetched by GET, and signed OpenID4VP requests over the
-// Digital Credentials API (BeginDCAPI, HandleDCAPIResponse). Use the
+// request_uri fetched by GET, and over the Digital Credentials API both
+// signed OpenID4VP requests (BeginDCAPI, HandleDCAPIResponse) and ISO/IEC
+// TS 18013-7 Annex C org-iso-mdoc ones (BeginMdocDCAPI,
+// HandleMdocDCAPIResponse). Use the
 // lower-level BuildAuthorizationRequest, ParseDirectPostJWTResponse and
 // VerifyResponse directly for anything else.
 type Transactions struct {
@@ -484,6 +506,8 @@ func (t *Transactions) create(ctx context.Context, tx Transaction) error {
 // flowOf is the kind of request tx is, as a bit of Transactions.kept.
 func flowOf(tx Transaction) uint32 {
 	switch {
+	case tx.MdocEncryptionInfo != "":
+		return 1 << 3
 	case tx.Origin != "":
 		return 1 << 2
 	case tx.SameDevice:
@@ -515,6 +539,7 @@ func lostFields(tx, saved Transaction) []string {
 	check("ResponseDecryptionKey", sameKey(tx.ResponseDecryptionKey, saved.ResponseDecryptionKey))
 	check("RequestObject", saved.RequestObject == tx.RequestObject)
 	check("Origin", saved.Origin == tx.Origin)
+	check("MdocEncryptionInfo", saved.MdocEncryptionInfo == tx.MdocEncryptionInfo)
 	check("Owner", saved.Owner == tx.Owner)
 	check("BrowserBindingHash", bytes.Equal(saved.BrowserBindingHash, tx.BrowserBindingHash))
 	check("SameDevice", saved.SameDevice == tx.SameDevice)
@@ -883,6 +908,12 @@ func (t *Transactions) verifyParsed(ctx context.Context, tx Transaction, parsed 
 	if err != nil {
 		return VerifyResponseResult{}, err
 	}
+	return t.acceptVerified(ctx, tx, result)
+}
+
+// acceptVerified runs TransactionsConfig.Status and Accept on result,
+// an answer to tx that verified.
+func (t *Transactions) acceptVerified(ctx context.Context, tx Transaction, result VerifyResponseResult) (VerifyResponseResult, error) {
 	if t.cfg.Status != nil {
 		if err := t.cfg.Status.Check(ctx, result.Credentials...); err != nil {
 			return VerifyResponseResult{}, &acceptError{err}

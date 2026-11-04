@@ -14,11 +14,14 @@ import (
 	"math/big"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
+
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -104,6 +107,68 @@ func ExampleBuildRequest() {
 	// Output:
 	// reader: Example Shop
 	// docType: org.iso.18013.5.1.mDL
+	// age_over_18: true
+}
+
+// The same exchange with verifier.Transactions keeping the request: its
+// response decryption key stays in the Verifier's TransactionStore,
+// bound to the browser that asked and the page's origin, and the
+// request completes once.
+func ExampleForTransactions() {
+	const (
+		origin  = "https://shop.example"
+		docType = "org.iso.18013.5.1.mDL"
+		ns      = "org.iso.18013.5.1"
+		// The browser's session cookie: an unguessable random token.
+		session = "a-random-session-cookie-value"
+	)
+	iaca, iacaKey := newCA("Example IACA")
+	ds, dsKey := newLeaf("Example Document Signer", iaca, iacaKey, mdoc.MDLDocumentSignerEKU)
+	deviceKey := must(ecdsa.GenerateKey(elliptic.P256(), rand.Reader))
+	now := time.Now()
+	issuerSigned := must(mdoc.Issue(dsKey, oid4vci.COSEES256, mdoc.Claims{
+		DocType:    docType,
+		NameSpaces: map[string]map[string]any{ns: {"given_name": "Alice", "age_over_18": true}},
+		DeviceKey:  &deviceKey.PublicKey,
+		Signed:     now, ValidFrom: now, ValidUntil: now.Add(time.Hour),
+	}, mdoc.IssueOptions{X5Chain: [][]byte{ds.Raw}}))
+	readerCA, readerCAKey := newCA("Example Reader CA")
+	readerCert, readerKey := newLeaf("Example Shop", readerCA, readerCAKey, mdocdcapi.ReaderAuthenticationEKU)
+
+	// The Verifier, and its Transactions for the shop's pages.
+	clientCert, clientKey := newLeaf("Example Shop RP", readerCA, readerCAKey)
+	responseURI := must(fapi.ParseEndpointURL("https://shop.example/response"))
+	v := must(verifier.New(verifier.Config{
+		Assurance: verifier.AssuranceDevelopment, ClientCertificate: clientCert, ResponseURI: responseURI,
+		SigningAlg: oid4vci.ES256, EncValuesSupported: []oid4vci.JWEEnc{oid4vci.A128GCM},
+		VPFormatsSupported: map[string]any{"mso_mdoc": map[string]any{}},
+	}, verifier.Dependencies{Signer: clientKey, Random: rand.Reader}))
+	protocol := must(mdocdcapi.ForTransactions(mdocdcapi.ReaderKey{Signer: readerKey, Chain: []*x509.Certificate{readerCert, readerCA}}))
+	iacaRoots := x509.NewCertPool()
+	iacaRoots.AddCert(iaca)
+	txs := must(verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
+		Origins: []string{origin}, MdocDCAPI: protocol,
+		Verify: verifier.VerifyResponseRequest{
+			MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots, Revocation: certrevocation.NoCheck{}},
+		},
+	}))
+	ctx := context.Background()
+
+	// Page (server side): begin the request; send begun.ID and
+	// begun.Request, as JSON, to the page.
+	begun := must(txs.BeginMdocDCAPI(ctx, verifier.MdocDCAPIRequest{
+		DocType: docType, Elements: map[string]map[string]bool{ns: {"age_over_18": false}},
+	}, session, origin))
+
+	// Wallet, through navigator.credentials.get: answer the request.
+	in := must(mdocdcapi.ParseRequest(must(json.Marshal(begun.Request.Data)), origin))
+	encrypted := must(in.Respond(0, issuerSigned, deviceKey, [][2]string{{ns, "age_over_18"}}))
+
+	// Page (server side): the page posts the credential's data back,
+	// with begun.ID, from the browser holding the session.
+	view := must(txs.HandleMdocDCAPIResponse(ctx, begun.ID, session, mdocdcapi.ResponseData(encrypted)))
+	fmt.Println("age_over_18:", view.Result.Credentials[0].Claims[ns].(map[string]any)["age_over_18"])
+	// Output:
 	// age_over_18: true
 }
 

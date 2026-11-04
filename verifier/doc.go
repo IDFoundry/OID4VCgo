@@ -22,7 +22,9 @@
 // Lookup (cross-device) or Redeem (same-device). For the Digital
 // Credentials API, BeginDCAPI a request, hand its Request to the page
 // for navigator.credentials.get, and pass the answer the page posts
-// back to HandleDCAPIResponse. It keeps each request's
+// back to HandleDCAPIResponse — or, for an ISO mdoc over the
+// "org-iso-mdoc" protocol, BeginMdocDCAPI and HandleMdocDCAPIResponse
+// (see below). It keeps each request's
 // secrets, routes each answer to its request, verifies it, and binds
 // the result to the browser that asked — the state handling OpenID4VP
 // §8.2 and §13.3 require, which the lower-level functions below leave
@@ -119,12 +121,42 @@
 // which types it may issue: where trusted issuers aren't all authorized
 // for every requested type, VerifyResponseRequest.IssuerAuthorized
 // decides that per presentation (SD-JWT VC draft-19 §7.7).
-// An mdoc requested over the DC API with the "org-iso-mdoc" protocol,
-// as Safari does, isn't OpenID4VP: package mdocdcapi builds and verifies
-// that.
 // Transactions hosts each request's Request Object at its request_uri
 // (RequestObjectHandler). Invoking the Digital Credentials API itself,
-// in the page, is the caller's: BeginDCAPI gives the request to hand
-// it, and HandleDCAPIResponse takes its answer. See ARCHITECTURE.md for
+// in the page, is the caller's: BeginDCAPI and BeginMdocDCAPI give the
+// request to hand it, and HandleDCAPIResponse and
+// HandleMdocDCAPIResponse take its answer. See ARCHITECTURE.md for
 // the full roadmap.
+//
+// # ISO mdoc over the Digital Credentials API
+//
+// An mdoc requested over the Digital Credentials API with the
+// "org-iso-mdoc" protocol (ISO/IEC TS 18013-7 Annex C) — Safari's only
+// one, answered by Apple Wallet or an iOS document provider app, and
+// Chrome's too — isn't OpenID4VP. Transactions manages it as it does an
+// OpenID4VP one: set TransactionsConfig.MdocDCAPI to
+// mdocdcapi.ForTransactions with the Verifier's reader keys, and
+// TransactionsConfig.Origins to its pages' origins. BeginMdocDCAPI
+// builds the request — one document type and its data elements, an
+// MdocDCAPIRequest — and keeps the response decryption key in the
+// transaction, sealed as an OpenID4VP request's is, bound to the
+// browser and the page's origin:
+//
+//	begun, err := txs.BeginMdocDCAPI(ctx, verifier.MdocDCAPIRequest{
+//		DocType:  "org.iso.18013.5.1.mDL",
+//		Elements: map[string]map[string]bool{"org.iso.18013.5.1": {"age_over_18": false}},
+//	}, sessionCookie, "https://verifier.example")
+//	// Send begun.ID and begun.Request (JSON) to the page, which calls
+//	//   const credential = await navigator.credentials.get({mediation: "required",
+//	//       digital: {requests: [request]}});
+//	// and POSTs credential.data back with begun.ID.
+//	view, err := txs.HandleMdocDCAPIResponse(ctx, id, sessionCookie, posted)
+//	// view.Result.Credentials[0].Claims["org.iso.18013.5.1"]["age_over_18"]
+//
+// HandleMdocDCAPIResponse decrypts and verifies the answer against the
+// request's own origin and key, checks its status
+// (TransactionsConfig.Status), runs Accept, and completes the request
+// at most once; Lookup, Close and Forget work as for any request. Package
+// mdocdcapi's BuildRequest and VerifyResponse are the lower-level
+// functions, which leave keeping the request to the caller.
 package verifier

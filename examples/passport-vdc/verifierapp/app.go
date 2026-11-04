@@ -115,7 +115,8 @@ type App struct {
 // request offered two ways — cross-device (a QR code) and, for a request
 // created in a browser, same-device (a link to the web wallet) — each a
 // verifier.Transactions request, and, once the page asks in the browser,
-// a third over the Digital Credentials API. The first to complete
+// two more over the Digital Credentials API, org-iso-mdoc and OpenID4VP,
+// each a verifier.Transactions request too. The first to complete
 // answers the page; the others are then closed. The page's own ID is unrelated to either
 // request's (OpenID4VP §14.3.3): only the page that created it knows it.
 type session struct {
@@ -125,13 +126,11 @@ type session struct {
 	expiresAt    time.Time
 	cross, same  channel // same.id is "" without a browser
 
-	// dcapi is the page's org-iso-mdoc Digital Credentials API request
-	// waiting for its answer, and dcapiOutcome what its answer
-	// established; dcapiOpenID is the verifier.Transactions ID of the
-	// OpenID4VP request offered with it. All under App.mu.
-	dcapi        *mdocdcapi.Pending
-	dcapiOpenID  string
-	dcapiOutcome *Outcome
+	// dcapiMdoc and dcapiOpenID are the verifier.Transactions IDs of the
+	// page's Digital Credentials API requests, offered together: the
+	// org-iso-mdoc one and the OpenID4VP one. Both under App.mu.
+	dcapiMdoc   string
+	dcapiOpenID string
 }
 
 // channel is one of a session's two requests.
@@ -246,10 +245,10 @@ func New(cfg Config) (*App, error) {
 	}
 	a.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: func() time.Time { return a.now() }})
 	for _, sc := range Scenarios {
+		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.readers[sc].key, Chain: []*x509.Certificate{ids.readers[sc].cert}}
 		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
 			return nil, err
 		}
-		a.readers[sc] = mdocdcapi.ReaderKey{Signer: ids.readers[sc].key, Chain: []*x509.Certificate{ids.readers[sc].cert}}
 	}
 	a.handler = a.routes()
 	return a, nil
@@ -303,14 +302,21 @@ func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifi
 		MaxClockSkew: time.Minute,
 		Now:          func() time.Time { return a.now() },
 	}
+	// Its org-iso-mdoc requests are signed with its own mdoc reader
+	// certificate.
+	mdocProtocol, err := mdocdcapi.ForTransactions(a.readers[sc])
+	if err != nil {
+		return nil, fmt.Errorf("verifierapp: %w", err)
+	}
 	txs, err := verifier.NewTransactions(v, storage.NewVerifierTransactionStore(), verifier.TransactionsConfig{
 		RequestURIBase: base + "/request-objects",
 		RedirectURI:    base + "/continue",
 		// The request page's own origin: the only one its Digital
 		// Credentials API requests are bound to.
-		Origins:  []string{a.origin},
-		Lifetime: a.cfg.RequestLifetime,
-		Verify:   verify,
+		Origins:   []string{a.origin},
+		MdocDCAPI: mdocProtocol,
+		Lifetime:  a.cfg.RequestLifetime,
+		Verify:    verify,
 		// Revocation first, then the scenario's own checks.
 		Status: a.statusPolicy(),
 		Accept: func(ctx context.Context, id string, result verifier.VerifyResponseResult) error {
@@ -527,11 +533,6 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 			a.note(&st, id, view)
 		}
 	}
-	a.mu.Lock()
-	if s.dcapiOutcome != nil {
-		st.outcome = s.dcapiOutcome
-	}
-	a.mu.Unlock()
 	if st.outcome != nil {
 		st.awaiting, st.closed = false, false
 		for _, id := range a.requestIDs(s) {
@@ -542,8 +543,8 @@ func (a *App) state(ctx context.Context, s *session) pageState {
 }
 
 // requestIDs are s's verifier.Transactions requests: cross-device,
-// same-device if it has one, and the Digital Credentials API's OpenID4VP
-// request once the page has asked in the browser.
+// same-device if it has one, and the Digital Credentials API's two
+// once the page has asked in the browser.
 func (a *App) requestIDs(s *session) []string {
 	var ids []string
 	for _, ch := range []channel{s.cross, s.same} {
@@ -553,8 +554,10 @@ func (a *App) requestIDs(s *session) []string {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if s.dcapiOpenID != "" {
-		ids = append(ids, s.dcapiOpenID)
+	for _, id := range []string{s.dcapiMdoc, s.dcapiOpenID} {
+		if id != "" {
+			ids = append(ids, id)
+		}
 	}
 	return ids
 }
@@ -657,12 +660,6 @@ func (a *App) outcomeOf(ctx context.Context, sc Scenario, result verifier.Verify
 // otherAnswered reports whether s's other request, not txID, has
 // already been answered.
 func (a *App) otherAnswered(ctx context.Context, s *session, txID string) bool {
-	a.mu.Lock()
-	mdocAnswered := s.dcapiOutcome != nil
-	a.mu.Unlock()
-	if mdocAnswered {
-		return true
-	}
 	for _, id := range a.requestIDs(s) {
 		if id == txID {
 			continue

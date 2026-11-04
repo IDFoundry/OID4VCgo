@@ -52,6 +52,12 @@ const (
 	// Credential Query didn't ask for (see
 	// VerifyResponseRequest.AllowUnrequestedClaims).
 	ReasonUnrequestedClaims Reason = "unrequested_claims"
+	// ReasonMdocDCAPIResponse: an org-iso-mdoc response
+	// (Transactions.HandleMdocDCAPIResponse) that didn't decrypt or
+	// verify — its encryption, its document's issuer or device
+	// signature, its validity, or what it disclosed — when the cause
+	// carries no Reason of its own.
+	ReasonMdocDCAPIResponse Reason = "mdoc_dcapi_response"
 )
 
 // description is a fixed description of r, for a display that mustn't
@@ -72,6 +78,8 @@ func (r Reason) description() string {
 		return "a credential's holder binding failed (holder_binding)"
 	case ReasonUnrequestedClaims:
 		return "a credential discloses claims the request didn't ask for (unrequested_claims)"
+	case ReasonMdocDCAPIResponse:
+		return "the org-iso-mdoc response didn't decrypt or verify (mdoc_dcapi_response)"
 	}
 	return "it failed verification"
 }

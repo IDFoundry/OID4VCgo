@@ -90,7 +90,8 @@ func populatedTransaction(t *testing.T, id string) verifier.Transaction {
 			CredentialSets: []dcql.CredentialSetQuery{{Options: [][]string{{"pid"}, {"mdl"}}, Required: &required}},
 		},
 		ResponseDecryptionKey: key, RequestObject: "request-object-" + id, Origin: "https://verifier.example.com",
-		Owner: "owner-" + id, BrowserBindingHash: []byte("binding-hash-" + id), SameDevice: true,
+		MdocEncryptionInfo: "encryption-info-" + id,
+		Owner:              "owner-" + id, BrowserBindingHash: []byte("binding-hash-" + id), SameDevice: true,
 		ExpiresAt: expires, RetainUntil: expires.Add(time.Hour), Status: verifier.TransactionAwaitingRedirect,
 		ResponseCodeHash: "code-hash-" + id, LastError: "the answer was refused",
 		Result: &verifier.VerifyResponseResult{

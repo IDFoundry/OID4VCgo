@@ -338,8 +338,8 @@ func TestDCAPI_OpenID4VPRequestStaysOpenUntilAnswered(t *testing.T) {
 	if status, body := c.postResponseAs(page, wallet.DCAPIProtocolSigned, valid); status != http.StatusNoContent {
 		t.Fatalf("the valid answer after a refused one: status %d: %s", status, body)
 	}
-	if status, _ := c.postResponseAs(page, wallet.DCAPIProtocolSigned, valid); status != http.StatusBadRequest {
-		t.Errorf("a second answer: status %d, want 400", status)
+	if status, _ := c.postResponseAs(page, wallet.DCAPIProtocolSigned, valid); status != http.StatusConflict {
+		t.Errorf("a second answer: status %d, want 409", status)
 	}
 	if _, ok := c.app.Outcome(strings.TrimPrefix(page, "/demo/requests/")); !ok {
 		t.Error("no outcome after the answer")
@@ -350,9 +350,10 @@ func TestDCAPI_OpenID4VPRequestStaysOpenUntilAnswered(t *testing.T) {
 	}
 }
 
-// An answer bound to another origin doesn't verify, and spends the
-// request: a second answer needs a new one.
-func TestDCAPI_RefusesAnotherOriginAndSpendsTheRequest(t *testing.T) {
+// An org-iso-mdoc answer bound to another origin doesn't verify, and
+// leaves the request open, as an OpenID4VP one does; once answered, it's
+// spent.
+func TestDCAPI_RefusesAnotherOriginThenAnswersOnce(t *testing.T) {
 	iss := newDCAPIIssuer(t)
 	c := newDCAPIApp(t, iss)
 	page := c.startPage(verifierapp.ScenarioAge)
@@ -361,8 +362,12 @@ func TestDCAPI_RefusesAnotherOriginAndSpendsTheRequest(t *testing.T) {
 	if status, _ := c.postResponse(page, answerDCAPI(t, data, "https://attacker.example", issuerSigned, device)); status != http.StatusBadRequest {
 		t.Errorf("an answer for another origin: status %d, want 400", status)
 	}
-	if status, _ := c.postResponse(page, answerDCAPI(t, data, dcapiOrigin, issuerSigned, device)); status != http.StatusConflict {
-		t.Errorf("a second answer to a spent request: status %d, want 409", status)
+	valid := answerDCAPI(t, data, dcapiOrigin, issuerSigned, device)
+	if status, body := c.postResponse(page, valid); status != http.StatusNoContent {
+		t.Fatalf("the valid answer after a refused one: status %d: %s", status, body)
+	}
+	if status, _ := c.postResponse(page, valid); status != http.StatusConflict {
+		t.Errorf("the answer again: status %d, want 409", status)
 	}
 }
 

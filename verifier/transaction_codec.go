@@ -55,7 +55,8 @@ const TransactionCodecVersion = 1
 // Each sealed field is bound to its transaction's ID and to the fields,
 // fixed when the request began, that say who may read its result and
 // what it asked for: its owner, browser binding hash, same_device,
-// origin and query. Someone who can write to the store but hasn't the
+// origin and query, and an org-iso-mdoc request's EncryptionInfo
+// (BeginMdocDCAPI). Someone who can write to the store but hasn't the
 // key can't read or forge a sealed field, nor change any of those
 // fields to have the Verifier hand the result to someone else: the
 // record no longer opens. They can still change its status,
@@ -155,6 +156,7 @@ type wireTransaction struct {
 	DecryptionKey      []byte            `json:"response_decryption_key,omitempty"`
 	RequestObject      string            `json:"request_object,omitempty"`
 	Origin             string            `json:"origin,omitempty"`
+	MdocEncryptionInfo string            `json:"mdoc_encryption_info,omitempty"`
 	Owner              string            `json:"owner,omitempty"`
 	BrowserBindingHash []byte            `json:"browser_binding_hash,omitempty"`
 	SameDevice         bool              `json:"same_device,omitempty"`
@@ -188,7 +190,7 @@ type wireCredential struct {
 func (c TransactionCodec) Marshal(tx Transaction) ([]byte, error) {
 	w := wireTransaction{
 		Version: TransactionCodecVersion, ID: tx.ID, KeyID: tx.KeyID, State: tx.State, Nonce: tx.Nonce, Query: tx.Query,
-		Sealed: c.Sealer != nil, RequestObject: tx.RequestObject, Origin: tx.Origin, Owner: tx.Owner,
+		Sealed: c.Sealer != nil, RequestObject: tx.RequestObject, Origin: tx.Origin, MdocEncryptionInfo: tx.MdocEncryptionInfo, Owner: tx.Owner,
 		BrowserBindingHash: tx.BrowserBindingHash, SameDevice: tx.SameDevice, ExpiresAt: tx.ExpiresAt, RetainUntil: tx.RetainUntil,
 		Status: tx.Status, ResponseCodeHash: tx.ResponseCodeHash, LastError: tx.LastError,
 	}
@@ -255,7 +257,7 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	}
 	tx := Transaction{
 		ID: w.ID, KeyID: w.KeyID, State: w.State, Nonce: w.Nonce, Query: w.Query, RequestObject: w.RequestObject,
-		Origin: w.Origin, Owner: w.Owner, BrowserBindingHash: w.BrowserBindingHash, SameDevice: w.SameDevice,
+		Origin: w.Origin, MdocEncryptionInfo: w.MdocEncryptionInfo, Owner: w.Owner, BrowserBindingHash: w.BrowserBindingHash, SameDevice: w.SameDevice,
 		ExpiresAt: w.ExpiresAt, RetainUntil: w.RetainUntil, Status: w.Status, ResponseCodeHash: w.ResponseCodeHash, LastError: w.LastError,
 	}
 	var bound []byte
@@ -314,6 +316,14 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // numbers kept as written, and encoded again with its object members
 // sorted — so a store that keeps the record as JSON it reformats still
 // reads it.
+//
+// An org-iso-mdoc request's binding also holds its MdocEncryptionInfo,
+// as a seventh element: its Query is what it asked for, and the
+// EncryptionInfo the key it's answered under. Every other request's
+// binding is the six elements it always was, so the records sealed
+// before org-iso-mdoc requests existed open as they did; and an
+// org-iso-mdoc record whose MdocEncryptionInfo is removed, to pass it
+// off as another kind, no longer opens.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(query))
 	dec.UseNumber()
@@ -326,7 +336,11 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 		return nil, fmt.Errorf("query: %w", err)
 	}
 	queryHash := sha256.Sum256(canonical)
-	return json.Marshal([]any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]})
+	bound := []any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]}
+	if w.MdocEncryptionInfo != "" {
+		bound = append(bound, w.MdocEncryptionInfo)
+	}
+	return json.Marshal(bound)
 }
 
 // sealAD binds a sealed field to its name and to bound (sealBinding).
