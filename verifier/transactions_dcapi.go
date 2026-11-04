@@ -132,39 +132,12 @@ func (t *Transactions) checkDCAPIOrigin(origin string) error {
 // within the request's lifetime. A Wallet's error is a *ResponseError.
 // Close the request to end it. An answer arriving with another browser
 // binding is refused with ErrWrongBrowser and leaves the request as it
-// was.
+// was. An org-iso-mdoc request's ID (BeginMdocDCAPI) is
+// ErrTransactionUnknown here: its answer goes to HandleMdocDCAPIResponse.
 func (t *Transactions) HandleDCAPIResponse(ctx context.Context, id, browserBinding string, data []byte) (TransactionView, error) {
-	tx, err := t.get(ctx, id)
-	if err != nil {
-		return TransactionView{}, storeFault(err)
-	}
-	if tx.Origin == "" {
-		return TransactionView{}, ErrTransactionUnknown
-	}
-	if !bindingMatches(tx.BrowserBindingHash, browserBinding) {
-		return TransactionView{}, ErrWrongBrowser
-	}
-	if err := t.checkPending(tx); err != nil {
-		return TransactionView{}, err
-	}
-	result, err := t.verifyDCAPI(ctx, tx, data)
-	if err != nil {
-		t.recordFailure(ctx, id, err)
-		return TransactionView{}, err
-	}
-	var view TransactionView
-	err = t.update(ctx, id, func(cur *Transaction) error {
-		if err := t.checkPending(*cur); err != nil {
-			return err
-		}
-		cur.Result, cur.LastError, cur.Status = &result, "", TransactionDone
-		view = t.release(cur)
-		return nil
+	return t.handlePageAnswer(ctx, id, browserBinding, false, func(tx Transaction) (VerifyResponseResult, error) {
+		return t.verifyDCAPI(ctx, tx, data)
 	})
-	if err != nil {
-		return TransactionView{}, storeFault(err)
-	}
-	return view, nil
 }
 
 // verifyDCAPI decrypts, verifies and accepts one Digital Credentials

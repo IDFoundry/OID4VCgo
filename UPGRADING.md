@@ -6,7 +6,25 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.63.0 → next
+## v0.64.0 → next
+
+### Verifier (`verifier`)
+
+- **A `TransactionStore` keeps `Transaction.MdocEncryptionInfo`**, set
+  for the new org-iso-mdoc requests (`Transactions.BeginMdocDCAPI`). A
+  store built on `TransactionCodec`, sqlstore's among them, already
+  does; a store of your own must persist the field too.
+  `verifiertest.TestTransactionStoreContract` checks it, and
+  `BeginMdocDCAPI` refuses a store that drops it. `TransactionCodec`'s
+  records keep their version and seal: those written before still
+  open. An earlier release can't read an org-iso-mdoc request's record
+  (an unknown field), so finish upgrading every instance sharing a
+  store before beginning one.
+- **`verifier.Reason` has a new value**, `ReasonMdocDCAPIResponse`, for
+  an org-iso-mdoc response that didn't decrypt or verify: a `switch`
+  over the reasons handles it.
+
+## v0.63.0 → v0.64.0
 
 ### Status lists (`statuslist`, `identifierlist`, `walletflow`)
 

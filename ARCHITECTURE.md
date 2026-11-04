@@ -1000,7 +1000,10 @@ changes whether *every* bullet below is `(done)`.
   origin])]]`, and that only requested elements were disclosed. It
   reuses `oid4vpmdoc`'s DeviceResponse codec and `verifier`'s issuer
   key resolvers. A separate package rather than part of `verifier`:
-  it's an ISO protocol, not OpenID4VP. The wallet side, for an iOS
+  it's an ISO protocol, not OpenID4VP. `ForTransactions` hands the
+  Verifier side to `verifier.Transactions` (`BeginMdocDCAPI`,
+  `HandleMdocDCAPIResponse`), which keeps each request's `Pending` for
+  the caller. The wallet side, for an iOS
   document provider: `ParseRequest` decodes the request for the origin
   the platform reports; `VerifyReader` checks its `ReaderAuthAll` (or,
   from a first-edition reader, every `DocRequest`'s `ReaderAuth`)
@@ -1329,7 +1332,24 @@ changes whether *every* bullet below is `(done)`.
   Digital Credentials API: the request is bound to the one page origin
   it's made from (its only `expected_origins` entry, and the answer's
   audience), and the answer comes back through the page with the
-  browser binding, never to the response endpoint. Every request needs a
+  browser binding, never to the response endpoint. `BeginMdocDCAPI` and
+  `HandleMdocDCAPIResponse` manage an `org-iso-mdoc` request (ISO/IEC
+  TS 18013-7 Annex C) the same way: `TransactionsConfig.MdocDCAPI`
+  (`mdocdcapi.ForTransactions`, with the Verifier's reader keys) builds
+  and verifies it — `verifier` can't import `mdocdcapi`, which imports
+  `verifier`'s issuer key resolvers and `StatusPolicy`, so the protocol
+  is handed in as an interface — while `Transactions` keeps the HPKE
+  recipient key as the transaction's `ResponseDecryptionKey`, sealed
+  as an OpenID4VP request's is, the request's `EncryptionInfo` as
+  `MdocEncryptionInfo` (bound into the seal, so neither it nor the
+  query can be changed in the store), and what it asked for, one
+  doctype and its elements (`MdocDCAPIRequest`, not a `dcql.Query`:
+  an Annex C `DeviceRequest` has no values, claim sets or credential
+  sets), as a single `mso_mdoc` Credential Query. The answer is
+  verified against the transaction's own origin, never the page's
+  word for it, then `Status` and `Accept` run as for any answer; each
+  kind of request is `ErrTransactionUnknown` to the other kinds'
+  handlers. Every request needs a
   browser binding — a secret the caller keeps, as a cookie or
   server-side — since its ID is public in the `request_uri`, and a
   refused answer's `LastError` is kept short and printable, with a
@@ -1342,7 +1362,7 @@ changes whether *every* bullet below is `(done)`.
   to its transaction (the other fields — status, owner, browser
   binding, query — aren't integrity-protected: the store is trusted
   for them); `ForgetResultOnRead` drops a result once it's been read.
-  `Begin` and `BeginDCAPI` read a created transaction back and refuse a
+  `Begin`, `BeginDCAPI` and `BeginMdocDCAPI` read a created transaction back and refuse a
   store that lost a field, since losing `SameDevice` or `Owner` fails
   open. `verifiertest` holds contract tests for a caller's own
   certificate-chain issuer key resolver and `TransactionStore`, which
