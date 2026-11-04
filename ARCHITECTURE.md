@@ -349,7 +349,13 @@ changes whether *every* bullet below is `(done)`.
   `http.Handler` serving a signed token in either encoding by
   `Accept`, cached for `CacheFor` so unauthenticated requests don't
   each cost a signature (`Invalidate` drops the cache when a status
-  changes). The CWT profile's ttl/
+  changes). `Allocator` hands out a Referenced Token's index: uniformly
+  random and never reused (draft-14 §12.4, §12.5.1, §13.3), reserved
+  atomically in an `IndexStore` (`MemoryIndexStore` for tests; a
+  durable store in production), moving to the next list at its
+  `FillLimit` and returning `ErrListsFull` when none has room; its
+  `Statuses` feeds a `Publisher` and its `SetStatus` refuses an index
+  never handed out. The CWT profile's ttl/
   status_list/status claim keys (65534/65533/65535) are still "TBD
   (requested assignment)" in the IANA CWT Claims Registry as of the
   draft version this targets — see `cwt.go`'s own comment, and update if
