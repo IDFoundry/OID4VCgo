@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
 	"math"
@@ -28,6 +29,12 @@ const (
 	// ES256 is ECDSA using P-256 and SHA-256 (RFC 9053 §2.1).
 	ES256 Alg = -7
 
+	// ES384 is ECDSA using P-384 and SHA-384 (RFC 9053 §2.1).
+	ES384 Alg = -35
+
+	// ES512 is ECDSA using P-521 and SHA-512 (RFC 9053 §2.1).
+	ES512 Alg = -36
+
 	// EdDSA is pure EdDSA over Ed25519 (RFC 9053 §2.2) — the digest
 	// parameter Sign/Verify take is the raw signing input, not a
 	// pre-hash, since Ed25519 signs the message itself.
@@ -46,7 +53,7 @@ const (
 // Sign1/Verify's own switch to catch an unsupported value.
 func IsSupportedSigningAlg(alg Alg) bool {
 	switch alg {
-	case ES256, EdDSA:
+	case ES256, ES384, ES512, EdDSA:
 		return true
 	default:
 		return false
@@ -550,71 +557,146 @@ func nonNil(b []byte) []byte {
 }
 
 func signBytes(alg Alg, signer crypto.Signer, toSign []byte) ([]byte, error) {
-	switch alg {
-	case ES256:
+	if p, ok := ecdsaParamsFor(alg); ok {
 		pub, ok := signer.Public().(*ecdsa.PublicKey)
-		if !ok || pub.Curve != elliptic.P256() {
-			return nil, errors.New("cose: ES256 requires a P-256 signer")
+		if !ok || pub.Curve != p.curve {
+			return nil, fmt.Errorf("cose: %s requires a %s signer", p.name, p.curve.Params().Name)
 		}
-		digest := sha256.Sum256(toSign)
-		der, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+		der, err := signer.Sign(rand.Reader, p.digest(toSign), p.hash)
 		if err != nil {
 			return nil, fmt.Errorf("cose: sign: %w", err)
 		}
-		return ecdsafixed.ToFixed(der, 32)
-	case EdDSA:
-		if _, ok := signer.Public().(ed25519.PublicKey); !ok {
-			return nil, errors.New("cose: EdDSA requires an Ed25519 signer")
-		}
-		// crypto.Hash(0) signals "sign the message itself" — the only
-		// contract ed25519.PrivateKey.Sign accepts (RFC 8032 pure
-		// EdDSA has no pre-hash step).
-		sig, err := signer.Sign(rand.Reader, toSign, crypto.Hash(0))
-		if err != nil {
-			return nil, fmt.Errorf("cose: sign: %w", err)
-		}
-		return sig, nil
-	default:
+		return ecdsafixed.ToFixed(der, p.size())
+	}
+	if alg != EdDSA {
 		return nil, fmt.Errorf("cose: unsupported algorithm %d", alg)
 	}
+	if _, ok := signer.Public().(ed25519.PublicKey); !ok {
+		return nil, errors.New("cose: EdDSA requires an Ed25519 signer")
+	}
+	// crypto.Hash(0) signals "sign the message itself" — the only
+	// contract ed25519.PrivateKey.Sign accepts (RFC 8032 pure EdDSA has
+	// no pre-hash step).
+	sig, err := signer.Sign(rand.Reader, toSign, crypto.Hash(0))
+	if err != nil {
+		return nil, fmt.Errorf("cose: sign: %w", err)
+	}
+	return sig, nil
 }
 
 func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
-	switch alg {
-	case ES256:
+	if p, ok := ecdsaParamsFor(alg); ok {
 		ecPub, ok := pub.(*ecdsa.PublicKey)
-		if !ok || ecPub.Curve != elliptic.P256() {
-			return errors.New("cose: ES256 requires a P-256 public key")
+		if !ok || ecPub.Curve != p.curve {
+			return fmt.Errorf("cose: %s requires a %s public key", p.name, p.curve.Params().Name)
 		}
-		der, err := ecdsafixed.ToDER(sig, 32)
+		der, err := ecdsafixed.ToDER(sig, p.size())
 		if err != nil {
 			return err
 		}
-		digest := sha256.Sum256(toVerify)
-		if !ecdsa.VerifyASN1(ecPub, digest[:], der) {
-			return errors.New("cose: ES256 signature verification failed")
+		if !ecdsa.VerifyASN1(ecPub, p.digest(toVerify), der) {
+			return fmt.Errorf("cose: %s signature verification failed", p.name)
 		}
 		return nil
-	case EdDSA:
-		edPub, ok := pub.(ed25519.PublicKey)
-		// ed25519.Verify panics on a key of another length, which a
-		// caller's own key resolver could return.
-		if !ok || len(edPub) != ed25519.PublicKeySize {
-			return fmt.Errorf("cose: EdDSA requires a %d-byte Ed25519 public key", ed25519.PublicKeySize)
-		}
-		// A small-order key verifies a forged signature over any message:
-		// COSE_Key parsing refuses one, and so must a key a caller's own
-		// resolver returns.
-		if jwk.IsSmallOrderEd25519(edPub) {
-			return errors.New("cose: EdDSA public key is a point of small order")
-		}
-		if !ed25519.Verify(edPub, toVerify, sig) {
-			return errors.New("cose: EdDSA signature verification failed")
-		}
-		return nil
-	default:
+	}
+	if alg != EdDSA {
 		return fmt.Errorf("cose: unsupported algorithm %d", alg)
 	}
+	edPub, ok := pub.(ed25519.PublicKey)
+	// ed25519.Verify panics on a key of another length, which a
+	// caller's own key resolver could return.
+	if !ok || len(edPub) != ed25519.PublicKeySize {
+		return fmt.Errorf("cose: EdDSA requires a %d-byte Ed25519 public key", ed25519.PublicKeySize)
+	}
+	// A small-order key verifies a forged signature over any message:
+	// COSE_Key parsing refuses one, and so must a key a caller's own
+	// resolver returns.
+	if jwk.IsSmallOrderEd25519(edPub) {
+		return errors.New("cose: EdDSA public key is a point of small order")
+	}
+	if !ed25519.Verify(edPub, toVerify, sig) {
+		return errors.New("cose: EdDSA signature verification failed")
+	}
+	return nil
+}
+
+// ecdsaParams is one ECDSA algorithm's curve and hash (RFC 9053 §2.1).
+// Each algorithm is used with its one curve only: a key on another is
+// refused, not verified under a hash its curve isn't paired with.
+type ecdsaParams struct {
+	name  string
+	curve elliptic.Curve
+	hash  crypto.Hash
+}
+
+// size is the length in octets of each of r and s in the signature's
+// fixed-width encoding (RFC 9053 §2.1): the curve's order rounded up
+// to whole octets — 32, 48 or 66.
+func (p ecdsaParams) size() int { return (p.curve.Params().BitSize + 7) / 8 }
+
+// digest is b hashed with p's hash.
+func (p ecdsaParams) digest(b []byte) []byte {
+	switch p.hash {
+	case crypto.SHA384:
+		d := sha512.Sum384(b)
+		return d[:]
+	case crypto.SHA512:
+		d := sha512.Sum512(b)
+		return d[:]
+	default:
+		d := sha256.Sum256(b)
+		return d[:]
+	}
+}
+
+// ecdsaParamsFor is alg's curve and hash, if alg is one of the ECDSA
+// algorithms this package implements.
+func ecdsaParamsFor(alg Alg) (ecdsaParams, bool) {
+	switch alg {
+	case ES256:
+		return ecdsaParams{"ES256", elliptic.P256(), crypto.SHA256}, true
+	case ES384:
+		return ecdsaParams{"ES384", elliptic.P384(), crypto.SHA384}, true
+	case ES512:
+		return ecdsaParams{"ES512", elliptic.P521(), crypto.SHA512}, true
+	default:
+		return ecdsaParams{}, false
+	}
+}
+
+// supportedKeys names the keys AlgForKey accepts, for its errors.
+const supportedKeys = "only P-256 (ES256), P-384 (ES384), P-521 (ES512) and Ed25519 (EdDSA) are supported"
+
+// AlgForKey is the signature algorithm pub verifies with, from its own
+// type and curve — never from a header the signature carries: ES256
+// for P-256, ES384 for P-384, ES512 for P-521 and EdDSA for Ed25519.
+// Any other key is an error naming its curve or type, with no package
+// prefix: the caller says whose key it is. ISO/IEC 18013-5's brainpool
+// curves and Ed448 aren't in Go's standard library, and aren't
+// supported.
+func AlgForKey(pub crypto.PublicKey) (Alg, error) {
+	switch k := pub.(type) {
+	case *ecdsa.PublicKey:
+		for _, alg := range []Alg{ES256, ES384, ES512} {
+			if p, _ := ecdsaParamsFor(alg); k.Curve == p.curve {
+				return alg, nil
+			}
+		}
+		return 0, fmt.Errorf("an ECDSA key on %s, but %s", curveName(k.Curve), supportedKeys)
+	case ed25519.PublicKey:
+		return EdDSA, nil
+	default:
+		return 0, fmt.Errorf("unsupported key type %T: %s", pub, supportedKeys)
+	}
+}
+
+// curveName is c's name, for an error: a key built by hand may have
+// no curve at all.
+func curveName(c elliptic.Curve) string {
+	if c == nil || c.Params() == nil {
+		return "an unknown curve"
+	}
+	return c.Params().Name
 }
 
 // decMode decodes the COSE structures this package parses, before any
@@ -648,13 +730,31 @@ func X5ChainOf(protected, unprotected Headers) [][]byte {
 	return unprotected.X5Chain
 }
 
-// esp256 is COSE's fully-specified identifier for ECDSA with P-256 and
-// SHA-256 (RFC 9864), the same signature ES256 (-7) names: HAIP 1.0 §7
-// has a Verifier accept either ("-7 or -9, as applicable").
-const esp256 Alg = -9
+// esp256, esp384 and esp512 are COSE's fully-specified identifiers
+// for ECDSA with P-256 and SHA-256, P-384 and SHA-384, and P-521 and
+// SHA-512 (RFC 9864): the signatures ES256, ES384 and ES512 name. HAIP
+// 1.0 §7 has a Verifier accept either ("-7 or -9, as applicable").
+const (
+	esp256 Alg = -9
+	esp384 Alg = -51
+	esp512 Alg = -52
+)
 
 // sameAlg reports whether a header's alg names the signature algorithm
-// alg verifies with: the same identifier, or ESP256 for ES256.
+// alg verifies with: the same identifier, or its fully-specified ESP
+// alias.
 func sameAlg(header, alg Alg) bool {
-	return header == alg || (alg == ES256 && header == esp256)
+	if header == alg {
+		return true
+	}
+	switch alg {
+	case ES256:
+		return header == esp256
+	case ES384:
+		return header == esp384
+	case ES512:
+		return header == esp512
+	default:
+		return false
+	}
 }

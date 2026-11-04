@@ -82,13 +82,25 @@ func FuzzVerifyDetached(f *testing.F) {
 		f.Fatalf("sign detached: %v", err)
 	}
 
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		f.Fatalf("generate P-384 key: %v", err)
+	}
+	valid384, err := SignDetached(ES384, p384, Headers{}, Headers{}, []byte("detached-payload"), nil)
+	if err != nil {
+		f.Fatalf("sign detached ES384: %v", err)
+	}
+
 	f.Add(valid)
+	f.Add(valid384)
 	f.Add([]byte{})
 	f.Add([]byte{0x84})
 	f.Add(valid[:len(valid)-1])
+	f.Add(valid384[:len(valid384)-1])
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		_, _, _ = VerifyDetached(ES256, &key.PublicKey, data, []byte("detached-payload"), nil)
+		_, _, _ = VerifyDetached(ES384, &p384.PublicKey, data, []byte("detached-payload"), nil)
 	})
 }
 

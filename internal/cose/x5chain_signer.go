@@ -45,12 +45,9 @@ func X5ChainSigner(ctx context.Context, sign1 []byte, trust X5ChainTrust) (*x509
 	if err != nil {
 		return nil, 0, fmt.Errorf("token signer: %w", err)
 	}
-	eddsa, err := certchain.SignerKeyIsEdDSA(leaf.PublicKey)
+	alg, err := AlgForKey(leaf.PublicKey)
 	if err != nil {
 		return nil, 0, fmt.Errorf("token signer: %w", err)
 	}
-	if eddsa {
-		return leaf, EdDSA, nil
-	}
-	return leaf, ES256, nil
+	return leaf, alg, nil
 }

@@ -20,11 +20,19 @@ type (
 
 // COSE signature algorithm identifiers (RFC 9053) accepted by every
 // cose.Alg-typed parameter and field — mdoc.Issue, mdoc.Verify,
-// statuslist.IssueTokenCWTX5Chain, issuer.MdocSigner.Alg — the COSE
-// counterparts of ES256 and EdDSA below.
+// statuslist.IssueTokenCWTX5Chain, issuer.MdocSigner.Alg. COSEES256
+// and COSEEdDSA are the COSE counterparts of ES256 and EdDSA below;
+// COSEES384 and COSEES512 have no JOSE counterpart here, since only
+// mdoc and CWT tokens sign with them.
 const (
 	// COSEES256 is ECDSA using P-256 and SHA-256 (COSE algorithm -7).
 	COSEES256 COSEAlg = cose.ES256
+
+	// COSEES384 is ECDSA using P-384 and SHA-384 (COSE algorithm -35).
+	COSEES384 COSEAlg = cose.ES384
+
+	// COSEES512 is ECDSA using P-521 and SHA-512 (COSE algorithm -36).
+	COSEES512 COSEAlg = cose.ES512
 
 	// COSEEdDSA is EdDSA (COSE algorithm -8).
 	COSEEdDSA COSEAlg = cose.EdDSA
