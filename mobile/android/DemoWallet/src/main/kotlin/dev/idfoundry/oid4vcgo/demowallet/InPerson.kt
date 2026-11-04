@@ -456,6 +456,11 @@ fun ReaderScreen(model: WalletModel, bottomBar: @Composable () -> Unit, onLeave:
                         Column(Modifier.padding(16.dp)) {
                             Text(p.title)
                             Text(p.elements.values.flatten().joinToString { elementLabel(it) }, style = MaterialTheme.typography.bodySmall)
+                            // The card scans too; the button says so.
+                            Button({ preset = p; startScan() }, Modifier.padding(top = 8.dp).testTag("reader-qr")) {
+                                Text(if (model.engagementToRead != null) "Read the holder's phone" else "Scan QR code")
+                            }
+                            Text("Or tap the holder's phone by NFC:", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
                             val startNfc = rememberBluetoothPermissions(ProximityPermissions.reader,
                                 then = { preset = p; model.armNfcReader(p) }, denied = { denied = true })
                             OutlinedButton(startNfc, Modifier.testTag("reader-nfc")) { Text("Tap with Bluetooth allowed") }

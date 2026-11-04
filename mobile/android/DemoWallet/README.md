@@ -131,7 +131,8 @@ chosen below them in the same menu, which stays open for both choices. The
 two transfer modes keep the phones together for the whole exchange and
 require no Bluetooth permissions, so the menu greys out the Bluetooth modes.
 The choice is kept across launches.
-Reader presets offer **Tap with Bluetooth allowed**, which requests
+Reader presets offer **Scan QR code**, which scans the holder's QR code
+and connects over Bluetooth, and two NFC taps: **Tap with Bluetooth allowed**, which requests
 Bluetooth permissions, and **Tap without asking for Bluetooth**, which
 skips that request. Both detect the holder's selected carrier; the second
 action does not force NFC-only if Bluetooth permissions were granted
