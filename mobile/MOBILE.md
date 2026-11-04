@@ -1623,6 +1623,54 @@ twice, or redeem one refresh token twice.
   or the holder — so the window is milliseconds, not the whole
   presentation.
 
+## Several documents in one response (ABI 14)
+
+A reader's DeviceRequest can ask for several documents, and ISO/IEC
+18013-5 lets the holder answer any subset in one DeviceResponse. The
+holder now does, in person and over the Digital Credentials API
+(`RespondDocuments`; Kotlin and Swift `respond(answers)`), and the
+reader asks for several (`RequestDocuments`). Findings:
+
+- **Where the encoding lives.** `oid4vpmdoc` stays HAIP's
+  one-document form (HAIP §5.3.1 returns each mdoc in its own
+  DeviceResponse, which OpenID4VP's verifier relies on).
+  `internal/mdocresponse` carries several, for `proximity` and
+  `mdocdcapi`; with one document its bytes are `oid4vpmdoc`'s.
+- **All or nothing.** Every answer is checked and every copy reserved
+  before any key signs; the keys sign in the request's order, each
+  document choosing MAC or signature on its own. A failure or a
+  cancelled prompt releases every copy and sends nothing; Terminate or a
+  cancelled operation between keys stops before the next prompt.
+- **No `documentErrors`.** A document the holder leaves out is absent,
+  as a declined request sends a termination rather than errors: listing
+  it would tell the reader the holder declined it.
+- **One credential, one document.** A credential answering two
+  DocRequests is refused: the reader would see one holder key and
+  status entry twice and learn nothing new.
+- **Linkability** is reported per credential (`linkable_credentials`),
+  as OpenID4VP's `Presented.Linkable` is; `linkable` is whether any.
+- **Holder prompts.** Android ties a per-use key's authentication to
+  one `Signature` (one `BiometricPrompt.CryptoObject`), so per-use
+  holder keys prompt once per document. `holderAuthenticationTimeout`
+  (off by default) makes new holder keys time-bound, as MATTR's
+  20-second and the EUDI reference wallet's 30-second windows are: one
+  prompt then covers the response, unlocking the device counts, and any
+  code in the app can use the keys during the window. Time-bound keys
+  also agree keys, so they can answer with DeviceMac. On iOS an
+  authentication belongs to an `LAContext`: `KeychainKeyStore` shares
+  one across a `respond(answers:)` call's holder keys and invalidates it
+  after, so the keys don't change and the holder is asked once. The
+  context is the calling thread's, not the process's: a C call into Go
+  keeps its thread until it returns, and Go signs synchronously, so the
+  key store is called back on that thread. A holder key any other call
+  uses at the same time (another presentation, on another thread) asks
+  for itself.
+  Developers report the reuse failing in some iOS releases; check it on
+  a device.
+- **Not yet:** the second edition's `DeviceRequestInfo` (`useCases`,
+  `documentSets`) isn't decoded, so a reader's alternative sets aren't
+  shown or enforced; an answer list is already their shape. The demo
+  apps still answer and ask for one document.
 ## Key Attestations name the issuance's instance key (ABI 15)
 
 The Wallet Provider protocol ([WALLET_PROVIDER.md](WALLET_PROVIDER.md))

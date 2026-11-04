@@ -109,8 +109,13 @@
 //     constructors encode and parse static and negotiated Hs/Hr messages;
 //     package proximity/nfcapdu carries them, and NFC data retrieval, over
 //     APDUs (the Type 4 Tag, TNEP, DO53 chaining) without doing any I/O.
-//   - More than one request per session, and more than one document per
-//     response.
+//   - More than one request per session. (One request may ask for several
+//     documents, and one response answer any of them: BuildDocument and
+//     MarshalDeviceResponse for the holder, EstablishmentDocuments and
+//     VerifyDocuments for the reader.)
+//   - The second edition's DeviceRequestInfo (useCases, documentSets):
+//     ParseDeviceRequest doesn't decode it, so a reader's alternative
+//     sets of documents aren't shown or enforced.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
 //     Credentials API, and transaction data.
 //
