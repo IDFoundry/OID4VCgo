@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"weak"
 )
 
 // Fetcher fetches Status List Tokens (draft-14 §8.1): an HTTPS GET of a
@@ -43,8 +46,11 @@ type Fetcher struct {
 	// overridden as described above, and its Transport must be nil or
 	// an *http.Transport: a copy of it is used whose connections are
 	// checked against the address policy above, with its proxy and
-	// custom dial hooks removed. Any other RoundTripper is refused
-	// unless UncheckedTransport is set.
+	// custom dial hooks removed. That copy is made the first time the
+	// Transport is used under each address policy and reused after, so
+	// fetches keep connections and TLS sessions alive between them:
+	// don't change the Transport once it's in use. Any other
+	// RoundTripper is refused unless UncheckedTransport is set.
 	HTTP *http.Client
 
 	// MaxBytes bounds a token's size; zero means DefaultMaxTokenBytes
@@ -172,6 +178,14 @@ type Checker struct {
 	Roots *x509.CertPool
 
 	Options VerifyOptions
+
+	// Cache, if set, keeps the Status List Tokens this Checker and
+	// others sharing it fetched and verified, for as long as each
+	// token's exp and ttl and the Cache's MaxAge allow. Each check
+	// verifies a cached token again with this Checker's own Roots and
+	// Options, so the Checkers sharing a Cache needn't trust the same
+	// signers. Nil fetches every token afresh.
+	Cache *Cache
 }
 
 // Check fetches and checks the Status List Token ref names: the CWT
@@ -208,17 +222,24 @@ func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 	mediaType := TokenMediaType
 	if cwt {
 		mediaType = CWTTokenMediaType
+		opts.RequireExp, opts.X5ChainProtectedOnly = true, true
+	}
+	// check's result is failClosed by Check.
+	verify := func(token []byte, memo *tokenMemo) (StatusType, parsedClaims, error) {
+		if cwt {
+			return checkCWTX5Chain(ctx, token, c.Roots, ref, opts, memo)
+		}
+		return checkX5C(ctx, string(token), c.Roots, ref, opts, memo)
+	}
+	if c.Cache != nil {
+		return c.Cache.check(ctx, fetcher, ref.URI, mediaType, verify)
 	}
 	token, err := fetcher.Fetch(ctx, ref.URI, mediaType)
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
-	// check's result is failClosed by Check.
-	if cwt {
-		opts.RequireExp, opts.X5ChainProtectedOnly = true, true
-		return checkCWTX5Chain(ctx, token, c.Roots, ref, opts)
-	}
-	return checkX5C(ctx, string(token), c.Roots, ref, opts)
+	status, parsed, err := verify(token, nil)
+	return status, parsed.claims, err
 }
 
 // NotValidError is RequireValid's error for a Referenced Token whose
@@ -255,30 +276,116 @@ func (c Checker) RequireValid(ctx context.Context, ref StatusListRef, cwt bool) 
 }
 
 // transport returns rt with f's address policy applied to its
-// connections, when rt is an *http.Transport or nil.
+// connections, when rt is an *http.Transport or nil. The transport is
+// built once per policy and base, and reused, so fetches keep their
+// connections and TLS sessions alive between them.
 func (f Fetcher) transport(rt http.RoundTripper) (http.RoundTripper, error) {
-	var base *http.Transport
 	switch t := rt.(type) {
 	case nil:
-		base = http.DefaultTransport.(*http.Transport).Clone()
+		return f.policy().defaultTransport(), nil
 	case *http.Transport:
-		base = t.Clone()
+		return f.policy().derivedTransport(t), nil
 	default:
 		if !f.UncheckedTransport {
 			return nil, fmt.Errorf("statuslist: fetch: HTTP.Transport is a %T, which the address policy can't be applied to; set UncheckedTransport to use it anyway", rt)
 		}
 		return rt, nil
 	}
-	if !f.AllowProxy {
-		base.Proxy = nil
+}
+
+// addressPolicy is the part of a Fetcher its transport depends on.
+type addressPolicy struct{ loopback, private, proxy bool }
+
+func (f Fetcher) policy() addressPolicy {
+	return addressPolicy{f.AllowLoopback, f.AllowPrivate, f.AllowProxy}
+}
+
+// index is p's slot in defaultTransports.
+func (p addressPolicy) index() int {
+	i := 0
+	for bit, set := range [3]bool{p.loopback, p.private, p.proxy} {
+		if set {
+			i |= 1 << bit
+		}
 	}
-	dialer := &net.Dialer{Timeout: 30 * time.Second, Control: f.checkDial}
-	base.DialContext = dialer.DialContext
-	base.DialTLSContext = nil
+	return i
+}
+
+// apply returns a copy of base whose connections are checked against
+// p, with its proxy (unless p keeps it) and custom dial hooks removed.
+func (p addressPolicy) apply(base *http.Transport) *http.Transport {
+	t := base.Clone()
+	if !p.proxy {
+		t.Proxy = nil
+	}
+	checked := Fetcher{AllowLoopback: p.loopback, AllowPrivate: p.private}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, Control: checked.checkDial}
+	t.DialContext = dialer.DialContext
+	t.DialTLSContext = nil
 	// The deprecated hooks would bypass the checked dialer: DialTLS is
 	// used for https whenever it's set.
-	base.Dial, base.DialTLS = nil, nil //nolint:staticcheck // clearing them, not using them
-	return base, nil
+	t.Dial, t.DialTLS = nil, nil //nolint:staticcheck // clearing them, not using them
+	return t
+}
+
+// defaultTransports are the transports for a Fetcher whose HTTP client
+// has no Transport, one per policy, each built from
+// http.DefaultTransport on first use and shared by every such Fetcher.
+var defaultTransports [8]struct {
+	once sync.Once
+	t    *http.Transport
+}
+
+func (p addressPolicy) defaultTransport() *http.Transport {
+	slot := &defaultTransports[p.index()]
+	slot.once.Do(func() { slot.t = p.apply(http.DefaultTransport.(*http.Transport)) })
+	return slot.t
+}
+
+// derivedKey names the transport derived from a caller's
+// *http.Transport under a policy.
+type derivedKey struct {
+	base   weak.Pointer[http.Transport]
+	policy addressPolicy
+}
+
+// derived are the transports derived from callers' *http.Transports.
+// The map holds each caller's transport weakly, and a cleanup removes
+// its entries (closing their idle connections) once it's collected, so
+// a caller that builds a client per request doesn't grow it for good:
+// it holds an entry per live transport and policy, no more. A derived
+// transport is a copy, so it doesn't keep its base alive unless one of
+// the base's own hooks refers back to it.
+var (
+	derivedMu sync.Mutex
+	derived   = map[derivedKey]*http.Transport{}
+)
+
+// derivedTransport is base with p applied, built on first use. Later
+// changes to base aren't seen: like http.Transport's own fields, it
+// shouldn't be modified once in use.
+func (p addressPolicy) derivedTransport(base *http.Transport) *http.Transport {
+	k := derivedKey{weak.Make(base), p}
+	derivedMu.Lock()
+	defer derivedMu.Unlock()
+	if t, ok := derived[k]; ok {
+		return t
+	}
+	t := p.apply(base)
+	derived[k] = t
+	runtime.AddCleanup(base, dropDerived, k)
+	return t
+}
+
+// dropDerived removes k's transport once its base is collected.
+func dropDerived(k derivedKey) {
+	derivedMu.Lock()
+	t := derived[k]
+	delete(derived, k)
+	derivedMu.Unlock()
+	if t != nil {
+		t.CloseIdleConnections()
+	}
 }
 
 // checkDial refuses a connection to an address f's policy excludes.

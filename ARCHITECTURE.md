@@ -344,8 +344,18 @@ changes whether *every* bullet below is `(done)`.
   fetches a Status List Token over https (at most three https redirects, content type
   checked, size capped, and only from public addresses unless
   `AllowLoopback`/`AllowPrivate` is set, checked when the connection
-  is dialled), `Checker` fetches and checks a Referenced Token's status
-  against a trust anchor pool in one call, and `Publisher` is an
+  is dialled, through a transport built once per address policy and
+  reused, so connections and TLS sessions are kept alive), `Checker`
+  fetches and checks a Referenced Token's status against a trust anchor
+  pool in one call, and `Cache` keeps the tokens Checkers verified, by
+  uri and media type, until the earliest of the token's exp, its iat
+  plus ttl, and its `MaxAge` (5 minutes by default), bounded in entries
+  and bytes, with one fetch for concurrent misses. A failure is never
+  cached, and a kept token is never trusted for being kept: every hit is
+  verified again with the calling Checker's own roots, binding, policy,
+  revocation and clock, and only the token's parsed claims and
+  decompressed list (which depend on its bytes alone) are reused. An
+  `identifierlist.Checker` takes the same `Cache`. `Publisher` is an
   `http.Handler` serving a signed token in either encoding by
   `Accept`, cached for `CacheFor` so unauthenticated requests don't
   each cost a signature (`Invalidate` drops the cache when a status

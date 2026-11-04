@@ -229,21 +229,64 @@ func (o VerifyOptions) maxTokenBytes() (int, error) {
 // It does not check sub against a specific Referenced Token — that's
 // Check's job, since it needs the StatusListRef to compare against.
 func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (TokenClaims, error) {
-	limit, err := opts.maxTokenBytes()
+	parsed, err := verifyToken(token, pub, alg, opts, nil)
 	if err != nil {
 		return TokenClaims{}, err
 	}
+	return parsed.claims, nil
+}
+
+// parsedClaims are a Status List Token's claims as read from its
+// payload, before they're checked against VerifyOptions: they depend on
+// the token's bytes alone, so a Cache can keep them (tokenMemo).
+type parsedClaims struct {
+	claims TokenClaims
+	iss    string
+	nbf    *int64
+}
+
+// verifyToken is VerifyToken, given the claims parsed from the same
+// token's bytes before when memo isn't nil: the signature and typ are
+// verified again, and the claims checked again against opts, but not
+// parsed again.
+func verifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
+	limit, err := opts.maxTokenBytes()
+	if err != nil {
+		return parsedClaims{}, err
+	}
 	header, raw, err := jose.VerifyMax(alg, pub, token, limit)
 	if err != nil {
-		return TokenClaims{}, fmt.Errorf("statuslist: verify token signature: %w", err)
+		return parsedClaims{}, fmt.Errorf("statuslist: verify token signature: %w", err)
 	}
 	// typ is a media type (RFC 7515 §4.1.9): matched case-insensitively,
 	// with "application/" implied when it has no "/".
 	typ, _ := header["typ"].(string)
 	if !jose.TypeIs(typ, TokenMediaType) {
-		return TokenClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
+		return parsedClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
+	return parsedOrMemo(raw, memo, parseJWTClaims, opts)
+}
 
+// parsedOrMemo is memo, or raw parsed when memo is nil, once checked
+// against opts.
+func parsedOrMemo(raw []byte, memo *parsedClaims, parse func([]byte) (parsedClaims, error), opts VerifyOptions) (parsedClaims, error) {
+	var parsed parsedClaims
+	if memo != nil {
+		parsed = *memo
+	} else {
+		var err error
+		if parsed, err = parse(raw); err != nil {
+			return parsedClaims{}, err
+		}
+	}
+	if err := parsed.check(opts); err != nil {
+		return parsedClaims{}, err
+	}
+	return parsed, nil
+}
+
+// parseJWTClaims reads a JWT Status List Token's verified payload.
+func parseJWTClaims(raw []byte) (parsedClaims, error) {
 	// NumericDates may be fractional (RFC 7519 §2), so they're read as
 	// numbers; member names must match exactly (strictjson).
 	var decoded struct {
@@ -256,7 +299,7 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		StatusList StatusList `json:"status_list"`
 	}
 	if err := strictjson.Unmarshal(raw, &decoded); err != nil {
-		return TokenClaims{}, fmt.Errorf("statuslist: unmarshal token claims: %w", err)
+		return parsedClaims{}, fmt.Errorf("statuslist: unmarshal token claims: %w", err)
 	}
 	var times [3]*int64
 	for i, v := range []*float64{decoded.Iat, decoded.Exp, decoded.Nbf} {
@@ -265,7 +308,7 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		}
 		at, err := jwtdate.FromFloat(*v)
 		if err != nil {
-			return TokenClaims{}, fmt.Errorf("statuslist: token %s: %w", [3]string{"iat", "exp", "nbf"}[i], err)
+			return parsedClaims{}, fmt.Errorf("statuslist: token %s: %w", [3]string{"iat", "exp", "nbf"}[i], err)
 		}
 		unix := at.Unix()
 		times[i] = &unix
@@ -275,29 +318,34 @@ func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 		iat = *times[0]
 	}
 	if decoded.Sub == "" {
-		return TokenClaims{}, fmt.Errorf("statuslist: token is missing the required sub claim")
-	}
-	if decoded.Iss != "" && opts.Issuer != "" && decoded.Iss != opts.Issuer {
-		return TokenClaims{}, fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", decoded.Iss, opts.Issuer)
+		return parsedClaims{}, fmt.Errorf("statuslist: token is missing the required sub claim")
 	}
 	if decoded.TTL != nil && *decoded.TTL <= 0 {
-		return TokenClaims{}, fmt.Errorf("statuslist: token ttl must be positive")
+		return parsedClaims{}, fmt.Errorf("statuslist: token ttl must be positive")
 	}
 	if !decoded.StatusList.Bits.valid() {
-		return TokenClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
+		return parsedClaims{}, fmt.Errorf("statuslist: token's status_list.bits is invalid")
 	}
-
-	if err := checkTokenTimes(iat, times[1], times[2], opts); err != nil {
-		return TokenClaims{}, err
-	}
-
-	return TokenClaims{
-		Sub:        decoded.Sub,
-		Iat:        iat,
-		Exp:        times[1],
-		TTL:        decoded.TTL,
-		StatusList: decoded.StatusList,
+	return parsedClaims{
+		claims: TokenClaims{
+			Sub:        decoded.Sub,
+			Iat:        iat,
+			Exp:        times[1],
+			TTL:        decoded.TTL,
+			StatusList: decoded.StatusList,
+		},
+		iss: decoded.Iss,
+		nbf: times[2],
 	}, nil
+}
+
+// check checks p against opts: a token naming another issuer isn't
+// this one's, and its times must hold at opts's Now.
+func (p parsedClaims) check(opts VerifyOptions) error {
+	if p.iss != "" && opts.Issuer != "" && p.iss != opts.Issuer {
+		return fmt.Errorf("statuslist: token iss %q isn't the referenced token's issuer %q", p.iss, opts.Issuer)
+	}
+	return checkTokenTimes(p.claims.Iat, p.claims.Exp, p.nbf, opts)
 }
 
 // DefaultMaxAgeWithoutExp bounds how long ago a Status List Token with

@@ -7,13 +7,17 @@ import (
 
 // statusPolicy is how a presented credential's revocation status is
 // checked, before the scenario's own checks (Accept) see it: against
-// the Token Status List it references, fetched from the issuer on every
-// check so a revocation applies at once, and signed by the credential's
+// the Token Status List it references, and signed by the credential's
 // own issuer (a verifier.StatusPolicy binds the list's signer to the
-// credential's issuer key or chain, not just to the roots). A revoked
-// or suspended credential, or one whose status can't be established,
-// is refused — the presentation isn't accepted. A credential without a
-// status reference passes, and is reported as such (statusOf).
+// credential's issuer key or chain, not just to the roots). Every
+// scenario shares one statuslist.Cache, so a list is fetched once per
+// its ttl (a minute, the demo issuer's), not once per presentation: a
+// revocation applies within that minute, or at once when the issuer
+// tells this verifier (DropKeptStatusLists). Each check still verifies
+// the kept list for its own credential. A revoked or suspended credential,
+// or one whose status can't be established, is refused — the
+// presentation isn't accepted. A credential without a status reference
+// passes, and is reported as such (statusOf).
 func (a *App) statusPolicy() *verifier.StatusPolicy {
 	return &verifier.StatusPolicy{Checker: statuslist.Checker{
 		// The demo serves its status list on 127.0.0.1; a real Verifier
@@ -22,8 +26,15 @@ func (a *App) statusPolicy() *verifier.StatusPolicy {
 		Fetcher: statuslist.Fetcher{HTTP: a.cfg.HTTP, AllowLoopback: true},
 		Roots:   a.issuerRoots,
 		Options: statuslist.VerifyOptions{Now: a.now},
+		Cache:   a.statusCache,
 	}}
 }
+
+// DropKeptStatusLists drops the status lists the verifier kept, so its
+// next check of each fetches it afresh: for the demo issuer running
+// beside it to call when it revokes a credential
+// (issuerapp.Config.OnRevoke).
+func (a *App) DropKeptStatusLists() { a.statusCache.Purge() }
 
 // statusOf is what a credential's status was found to be, once the
 // status policy passed it: "valid", or "no status reference" for one

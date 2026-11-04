@@ -628,6 +628,7 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 			Fetcher: statusFetcher(),
 			Roots:   anchor,
 			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation},
+			Cache:   statusCache,
 		}
 		revoked, _, err := checker.Check(ctx, identifierlist.Ref(*ref), v.IssuerChain)
 		if err != nil {
@@ -661,10 +662,18 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 			Now: r.clock, UnboundSigner: signer, Revocation: r.statusRevocation,
 			RequireExp: true, X5ChainProtectedOnly: true,
 		},
+		Cache: statusCache,
 	}
 	status, _, err := checker.Check(ctx, statuslist.StatusListRef{Idx: ref.Idx, URI: ref.URI}, true)
 	return status, err
 }
+
+// statusCache keeps the status and identifier lists every reader and
+// Wallet in the process fetched: a reader checking one issuer's
+// documents in a queue fetches its list once, not per document. Each
+// check verifies a kept list again with its own reader's or Wallet's
+// trust and clock.
+var statusCache = statuslist.NewCache(statuslist.CacheOptions{})
 
 // statusFetcher is the reader's status list fetcher: public addresses
 // only, or with the mobiletest build's test client, its in-process

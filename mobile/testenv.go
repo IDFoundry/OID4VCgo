@@ -137,8 +137,12 @@ func (e *TestEnv) Approve(authorizationURL string) (string, error) {
 func (e *TestEnv) Decide(approve bool) { e.env.Decide(approve) }
 
 // Revoke revokes every credential the issuer has issued: its status
-// list then says so.
-func (e *TestEnv) Revoke() { e.env.Revoke() }
+// list then says so, and the lists Wallets and readers kept are
+// dropped, so their next check sees it.
+func (e *TestEnv) Revoke() {
+	e.env.Revoke()
+	statusCache.Purge()
+}
 
 // RevokeGrants revokes every authorization code grant so far: their
 // refresh tokens are refused, and RefreshCredential is then

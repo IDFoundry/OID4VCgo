@@ -70,6 +70,12 @@ type Config struct {
 	// never on a deployment anyone else relies on.
 	AllowSampleDocument bool
 
+	// OnRevoke, if set, is called once a credential is revoked: the
+	// demo's own verifier drops the status lists it kept
+	// (verifierapp.App.DropKeptStatusLists), so the revocation shows at
+	// once rather than within the list's ttl.
+	OnRevoke func()
+
 	// StateDir, if set, is an existing directory this issuer keeps its
 	// CA and signing keys and its status list in, so credentials it
 	// issued keep verifying, and revocations hold, across restarts.

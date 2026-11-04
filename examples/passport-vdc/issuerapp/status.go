@@ -277,6 +277,9 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	for _, p := range a.publishers {
 		p.Invalidate() // serve the revocation at once
 	}
+	if a.cfg.OnRevoke != nil {
+		a.cfg.OnRevoke()
+	}
 	http.Redirect(w, r, "/demo/status", http.StatusSeeOther)
 }
 

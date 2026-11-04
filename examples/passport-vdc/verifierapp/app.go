@@ -25,6 +25,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/registration"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -96,6 +97,9 @@ type App struct {
 	readers map[Scenario]mdocdcapi.ReaderKey
 	now     func() time.Time
 	handler http.Handler
+	// statusCache keeps the Token Status Lists every scenario's status
+	// policy fetched (statusPolicy).
+	statusCache *statuslist.Cache
 
 	mu       sync.Mutex
 	sessions map[string]*session // by page ID, known only to whoever created the request
@@ -240,6 +244,7 @@ func New(cfg Config) (*App, error) {
 		origin: origin, readers: map[Scenario]mdocdcapi.ReaderKey{},
 		sessions: map[string]*session{}, byTx: map[string]string{}, outcomes: map[string]map[string]*Outcome{},
 	}
+	a.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: func() time.Time { return a.now() }})
 	for _, sc := range Scenarios {
 		if a.txs[sc], err = a.newTransactions(sc, ids.signers[sc], ids.registrar); err != nil {
 			return nil, err
