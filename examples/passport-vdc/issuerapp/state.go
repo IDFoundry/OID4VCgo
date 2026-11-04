@@ -1,6 +1,7 @@
 package issuerapp
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // Files an issuer keeps in Config.StateDir.
@@ -184,10 +186,29 @@ func writeFileAtomic(path string, data []byte) error {
 	return nil
 }
 
-// loadStatusList returns the status list saved in dir (new when there
-// is none), saving it back there on every change.
-func loadStatusList(dir string) (*statusList, error) {
-	s := newStatusList()
+// loadStatusList returns the status list at uri, its indices and
+// statuses in store, with the entries saved in dir — saving them back
+// there on every change — or none, kept in memory, when dir is "".
+//
+// Every saved entry's index is then reserved in store, and a revoked
+// entry's set INVALID: entries saved before the store held the
+// reservations, when status-list.json was the whole list, keep their
+// statuses, and their indices are never handed out again. Doing so on
+// every load changes nothing that's already there, so it needs no
+// record of having been done. Last, an entry store has as anything
+// but VALID is taken to be revoked: the store's status is written
+// before the entry, so a revocation the entry missed is the store's.
+func loadStatusList(ctx context.Context, store statuslist.IndexStore, uri, dir string) (*statusList, error) {
+	s := newStatusList(store, uri)
+	// Read before any reservation below, and a check of the
+	// Allocator's settings at start.
+	statuses, err := s.statuses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("issuerapp: status list: %w", err)
+	}
+	if dir == "" {
+		return s, nil
+	}
 	s.path = filepath.Join(dir, statusListFile)
 	data, err := os.ReadFile(s.path) // #nosec G304 -- operator-supplied state directory
 	switch {
@@ -204,15 +225,25 @@ func loadStatusList(dir string) (*statusList, error) {
 		if e.Idx < 0 || e.Idx >= statusListSize {
 			return nil, fmt.Errorf("issuerapp: %s: index %d is out of range", s.path, e.Idx)
 		}
-		e := e
 		if e.Handle == "" { // saved before handles existed
 			if e.Handle, err = newHandle(); err != nil {
 				return nil, err
 			}
 		}
 		s.entries[e.Idx] = &e
-		if e.Revoked {
-			s.revoked[e.Idx] = 1
+	}
+	for idx, e := range s.entries {
+		ref := s.ref(idx)
+		if err := store.Reserve(ctx, ref.URI, ref.Idx); err != nil && !errors.Is(err, statuslist.ErrIndexTaken) {
+			return nil, fmt.Errorf("issuerapp: %s: reserving index %d: %w", s.path, idx, err)
+		}
+		switch {
+		case e.Revoked:
+			if err := s.allocator.SetStatus(ctx, ref, statuslist.StatusInvalid); err != nil {
+				return nil, fmt.Errorf("issuerapp: %s: %w", s.path, err)
+			}
+		case statuses[idx] != uint8(statuslist.StatusValid):
+			e.Revoked = true
 		}
 	}
 	return s, nil

@@ -1,6 +1,7 @@
 package issuerapp
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"log"
@@ -49,7 +50,7 @@ func (a *App) RevokeDocumentSigner() error {
 	// Its credentials first, saved before anything else changes: should
 	// the rest fail, they stay revoked under the signer still in use,
 	// and revoking it again revokes no more.
-	if _, err := a.statusList.revokeSigner(signerID(old.cert)); err != nil {
+	if _, err := a.statusList.revokeSigner(context.Background(), signerID(old.cert)); err != nil {
 		return fmt.Errorf("issuerapp: revoke the document signer's credentials: %w", err)
 	}
 	for _, p := range []*statuslist.Publisher{old.jwtList, old.cwtList} {
