@@ -122,7 +122,8 @@ type config struct {
 	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
 	// trust besides the system's: a development service's own CA, where
 	// the platform's trust store can't be given it (Go on Android reads
-	// only the system's CA files). Only with Development.
+	// only the system's CA files). RefreshCRLs's fetches trust them too.
+	// Only with Development.
 	DevelopmentRoots string `json:"development_roots,omitempty"`
 	// TLSPins pins hosts' certificates for the wallet's HTTPS requests:
 	// host (a name, or "*." and one, matching a label below it) → base64
@@ -320,9 +321,14 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	client, err := crlHTTP(cfg.Development, cfg.DevelopmentRoots)
+	if err != nil {
+		return nil, err
+	}
 	if err := crls.configureRefresh(crlRefreshConfig{
 		points: cfg.CRLDistributionPoints, fromRoots: cfg.CRLDistributionPointsFromRoots,
 		roots: walletRevocationRoots(cfg, named), requireHTTPS: cfg.CRLRequireHTTPS, development: cfg.Development,
+		http: client,
 	}); err != nil {
 		return nil, err
 	}
@@ -720,15 +726,22 @@ func (w *Wallet) HolderKeyIDs() (string, error) {
 	}{result{ABIVersion}, ids})
 }
 
-// CheckStatus fetches the issuer's status list for the credential
-// credentialID names, checks its signature, records the credential's revocation
-// status, and returns the credential's summary with it ("status":
-// {"value": "valid" | "invalid" | "suspended" | "0x…" | "unknown",
-// "checked_at"}). A credential without a status or identifier list is
+// CheckStatus checks the credential credentialID names, records its
+// revocation status, and returns the credential's summary with it
+// ("status": {"value": "valid" | "invalid" | "suspended" | "0x…" |
+// "unknown", "reason", "checked_at"}). It verifies each live copy's
+// issuer certificate chain again under the roots configured now and,
+// with "issuer" in "revocation", the CRLs held now: a signer revoked
+// since makes the credential "invalid" ("reason":
+// "issuer_certificate_revoked") until a CRL no longer names it, and no
+// current CRL "unknown" ("no_current_crl"), not an error
+// (walletflow.Wallet.CheckStatus). It fetches the issuer's status list
+// for the credential and checks its signature. A credential with
+// neither a status or identifier list nor an issuer chain to check is
 // returned as it is, as is an expired one, whose lists aren't fetched.
 // An mdoc's identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked
 // too, under the certificate its MSO names, if any, and otherwise the
-// configured mdoc roots: on it, the mdoc is "invalid". Revocation is
+// configured mdoc roots: on it, the mdoc is "invalid". A list's revocation is
 // final: a copy found revoked keeps the credential "invalid" until it
 // expires, its lists not fetched again. A status naming no mechanism
 // the wallet knows is "unknown" unless a list it names too says

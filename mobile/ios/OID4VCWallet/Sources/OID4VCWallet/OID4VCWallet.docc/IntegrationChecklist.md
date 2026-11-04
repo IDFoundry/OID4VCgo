@@ -89,7 +89,9 @@ is a complete, working app on this package to compare against.
   interval the issuer asks for, after relaunches too
   (``Wallet/deferredCredentials()``).
 - ``Wallet/checkStatus(id:)`` before relying on a held credential; show
-  ``CredentialStatus/Value/unknown`` as not checked, not as valid.
+  ``CredentialStatus/Value/unknown`` as not checked, not as valid, and
+  ``CredentialStatus/reason`` to say why (an issuer certificate revoked
+  since receipt, revocation lists out of date).
 - *Check:* both grants against your issuer, including the app being
   terminated during sign-in; an offer from an issuer outside
   ``WalletConfiguration/issuerRoots`` is refused.

@@ -147,8 +147,14 @@ object Credentials {
     fun problem(c: CredentialSummary): String? = when {
         c.holderKeyPresent == false -> "Its key isn't on this device: it can't be presented"
         c.isExpired() -> "Expired"
+        c.status?.value == CredentialStatus.Value.Revoked && c.status?.reason == CredentialStatus.Reason.IssuerCertificateRevoked ->
+            "Its issuer's certificate has been revoked"
+        c.status?.value == CredentialStatus.Value.Revoked && c.status?.reason == CredentialStatus.Reason.IssuerUntrusted ->
+            "Its issuer is no longer trusted"
         c.status?.value == CredentialStatus.Value.Revoked -> "Revoked by the issuer"
         c.status?.value == CredentialStatus.Value.Suspended -> "Suspended by the issuer"
+        c.status?.value == CredentialStatus.Value.Unknown && c.status?.reason == CredentialStatus.Reason.NoCurrentCRL ->
+            "Revocation lists out of date: refresh them in Settings"
         else -> null
     }
 

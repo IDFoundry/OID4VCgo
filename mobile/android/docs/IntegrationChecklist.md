@@ -83,7 +83,9 @@ is a complete, working app on this library to compare against.
   interval the issuer asks for, after relaunches too
   (`Wallet.deferredCredentials()`).
 - [ ] `Wallet.checkStatus(id)` before relying on a held credential;
-  show `CredentialStatus.Value.Unknown` as not checked, not as valid.
+  show `CredentialStatus.Value.Unknown` as not checked, not as valid,
+  and `CredentialStatus.reason` to say why (an issuer certificate
+  revoked since receipt, revocation lists out of date).
 - [ ] *Check:* both grants against your issuer, including a killed
   process during sign-in; an offer from an issuer outside `issuerRoots`
   is refused. ([Receiving credentials](ReceivingCredentials.md))

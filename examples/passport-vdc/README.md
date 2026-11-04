@@ -682,12 +682,10 @@ fetched, served unchanged until half that has passed or a certificate
 is revoked, then signed again under the next CRL number. The number is
 saved before a list is served (`issuer/issuer-crl.json`,
 `verifier/*-crl.json`), so it never goes backwards across restarts,
-and a relying party holding a list refuses an older one. `cmd/demo`
-also serves the same lists over plain http on loopback, at
-`http://127.0.0.1:8580/ca.crl`, `/verifier-ca.crl`, `/reader-ca.crl`
-and `/registrar-ca.crl`, for an Android phone, whose Go code can't
-trust the demo's self-signed TLS certificate (a CRL is signed, so http
-is the usual way to serve one).
+and a relying party holding a list refuses an older one. The phones
+fetch them over https like everything else, trusting the demo's
+self-signed TLS certificate (on Android, through the app's
+`development_roots`).
 
 The verifier fetches the issuer CA's CRL with a
 `certrevocation.Refresher` (`verifierapp.App.RunIssuerCRLRefresh`, at
@@ -714,6 +712,10 @@ entry saved before entries did is taken to be the signer's in use when
 the issuer starts. Every credential the revoked signer signed is then
 refused by each relying party that checks its status, or has fetched
 the CRL since, and a wallet that checks its status shows it revoked.
+The phones' wallets also check a held credential's signer against the
+CRLs they hold (walletflow's `CheckStatus`), so once they've fetched
+the CRL they show it invalid, its issuer certificate revoked, even
+before its status list says so.
 `cmd/demo`'s issuer has its verifier drop its kept status lists, and
 fetch the CRL, at once. Receive it again for a new one.
 

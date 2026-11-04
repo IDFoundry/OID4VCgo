@@ -17,10 +17,6 @@ import (
 // parties fetch it.
 const CRLPath = "/ca.crl"
 
-// CRLHandler serves the CA's CRL, as GET CRLPath does: for the demo to
-// serve it at a second address (cmd/demo's plain-http one).
-func (a *App) CRLHandler() http.Handler { return a.crl }
-
 // RevokedSigners are the document signers this issuer's CA has revoked
 // (RevokeDocumentSigner), oldest first.
 func (a *App) RevokedSigners() []democrl.Revoked { return a.crl.Revoked() }

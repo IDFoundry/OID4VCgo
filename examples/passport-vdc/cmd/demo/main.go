@@ -14,8 +14,7 @@
 // demo apps, configured once) still do; and the wallet's credential
 // store.
 //
-// The issuer's and verifier's CAs serve their CRLs at their URLs, and
-// again over plain http on loopback (crlAddr), for an Android phone.
+// The issuer's and verifier's CAs serve their CRLs at their URLs.
 //
 // With -db the issuer keeps its Authorization Server's and Credential
 // Issuer's stores in a SQLite database in the state directory
@@ -68,17 +67,10 @@ const (
 	verifierAddr, localVerifierURL = "127.0.0.1:9443", "https://127.0.0.1:9443"
 	walletAddr, walletURL          = "127.0.0.1:7443", "https://127.0.0.1:7443"
 	providerAddr, localProviderURL = "127.0.0.1:6443", "https://127.0.0.1:6443"
-	// crlAddr serves the issuer's and verifier's CRLs, the same ones
-	// their https URLs serve, over plain http on loopback: for a phone
-	// whose Go code can't trust the demo's self-signed TLS certificate
-	// (Android's reads only the system's CA files, not the app's
-	// development_roots), forwarded to it with adb reverse. A CRL is
-	// signed, so http is how distribution points are usually served.
-	crlAddr        = "127.0.0.1:8580"
-	cliRedirectURI = "http://127.0.0.1/callback"
-	iosRedirectURI = "dev.idfoundry.oid4vcgo.demowallet:/callback"
-	providerIssuer = "https://wallet-provider.passport-vdc.demo"
-	walletClientID = "passport-vdc-wallet"
+	cliRedirectURI                 = "http://127.0.0.1/callback"
+	iosRedirectURI                 = "dev.idfoundry.oid4vcgo.demowallet:/callback"
+	providerIssuer                 = "https://wallet-provider.passport-vdc.demo"
+	walletClientID                 = "passport-vdc-wallet"
 )
 
 func main() {
@@ -295,26 +287,13 @@ func run(ctx context.Context, opts options) error {
 		// credential requests.
 		demotls.Server(walletAddr, webWallet, cert, 2*time.Minute),
 	}
-	return serve(ctx, servers, crlServer(issuer, verifier), opts, leaf)
+	return serve(ctx, servers, opts, leaf)
 }
 
-// crlServer serves the issuer's and verifier's CRLs over plain http at
-// crlAddr, at the paths their https URLs serve them at
-// (issuerapp.CRLPath, verifierapp.VerifierCRLPath and the others).
-func crlServer(issuer *issuerapp.App, verifier *verifierapp.App) *http.Server {
-	mux := http.NewServeMux()
-	mux.Handle("GET "+issuerapp.CRLPath, issuer.CRLHandler())
-	mux.Handle("/", verifier.CRLHandler())
-	return &http.Server{Addr: crlAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
-}
-
-// serve runs servers, over TLS, and plain, over http, until ctx is
-// done or one of them fails. Each listens before anything else happens,
-// so a port in use fails at once and a browser opened with -open never
-// races the servers.
-func serve(ctx context.Context, servers []*http.Server, plain *http.Server, opts options, cert *x509.Certificate) error {
-	tlsServers := len(servers)
-	servers = append(servers, plain)
+// serve runs servers until ctx is done or one of them fails. Each
+// listens before anything else happens, so a port in use fails at once
+// and a browser opened with -open never races the servers.
+func serve(ctx context.Context, servers []*http.Server, opts options, cert *x509.Certificate) error {
 	listeners := make([]net.Listener, 0, len(servers))
 	for _, srv := range servers {
 		ln, err := net.Listen("tcp", srv.Addr)
@@ -329,11 +308,7 @@ func serve(ctx context.Context, servers []*http.Server, plain *http.Server, opts
 	failed := make(chan error, len(servers))
 	for i, srv := range servers {
 		go func() {
-			serve := func() error { return srv.ServeTLS(listeners[i], "", "") }
-			if i >= tlsServers {
-				serve = func() error { return srv.Serve(listeners[i]) }
-			}
-			if err := serve(); !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.ServeTLS(listeners[i], "", ""); !errors.Is(err, http.ErrServerClosed) {
 				failed <- fmt.Errorf("%s: %w", srv.Addr, err)
 			}
 		}()

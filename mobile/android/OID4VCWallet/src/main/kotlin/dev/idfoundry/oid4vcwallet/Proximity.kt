@@ -166,6 +166,12 @@ public data class ProximityReaderIdentity(
      * the reader is trusted or didn't sign.
      */
     public val claimedName: String = "",
+    /**
+     * `certificate_revoked` or `no_current_crl` (`Mobile.DetailCertificateRevoked`,
+     * `Mobile.DetailNoCurrentCRL`) when [error] is the reader certificate's revocation check,
+     * null otherwise. From OID4VCWallet 0.27.0.
+     */
+    public val errorDetail: String? = null,
 ) {
     /** How far a request's reader authentication goes. */
     public enum class Status {
@@ -499,6 +505,7 @@ internal data class ReaderJSON(
     @SerialName("claimed_name") val claimedName: String = "",
     val chain: List<String> = emptyList(),
     val error: String? = null,
+    @SerialName("error_detail") val errorDetail: String? = null,
 ) {
     fun toIdentity(): ProximityReaderIdentity {
         val factory = CertificateFactory.getInstance("X.509")
@@ -511,7 +518,7 @@ internal data class ReaderJSON(
             "invalid" -> ProximityReaderIdentity.Status.Invalid
             else -> ProximityReaderIdentity.Status.Unauthenticated
         }
-        return ProximityReaderIdentity(identityStatus, name, certs, error, claimedName)
+        return ProximityReaderIdentity(identityStatus, name, certs, error, claimedName, errorDetail)
     }
 }
 
@@ -621,6 +628,13 @@ public data class ProximityReaderConfiguration(
      * (`invalid_input`) unless the app called [OID4VC.allowDevelopment].
      */
     @SerialName("development") val development: Boolean = false,
+    /**
+     * PEM certificates [ProximityReader.refreshCRLs]'s `https` fetches trust besides the
+     * system's, as [WalletConfiguration.developmentRoots]: a development CA's distribution
+     * points served under its own TLS certificate, which Go on Android can't otherwise be
+     * given. Only with [development] (`invalid_input` otherwise). From OID4VCWallet 0.27.0.
+     */
+    @SerialName("development_roots") val developmentRoots: String = "",
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

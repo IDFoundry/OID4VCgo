@@ -97,7 +97,8 @@ public data class WalletConfiguration(
      * PEM certificates the wallet's HTTPS requests trust besides the
      * system's: a development service's own CA (Go reads only Android's
      * system CA files, so a CA installed on the device doesn't reach it).
-     * Only with [development].
+     * [Wallet.refreshCRLs]'s fetches trust them too, from OID4VCWallet
+     * 0.27.0. Only with [development].
      */
     @SerialName("development_roots") val developmentRoots: String = "",
     /**
@@ -408,8 +409,9 @@ public data class CredentialDisplay(
 )
 
 /**
- * A credential's revocation status in the issuer's status list, as last
- * checked ([Wallet.checkStatus]).
+ * A credential's revocation status, as last checked ([Wallet.checkStatus]):
+ * in the issuer's status list, and, from OID4VCWallet 0.27.0, its issuer's
+ * certificate chain against the revocation lists held then.
  */
 @Serializable
 public data class CredentialStatus(
@@ -421,7 +423,61 @@ public data class CredentialStatus(
     @SerialName("value") val rawValue: String,
     /** When it was checked. */
     @SerialName("checked_at") @Serializable(InstantSerializer::class) val checkedAt: Instant,
+    /**
+     * Why the status is what it is, as the Go side names it, such as
+     * `issuer_certificate_revoked`; null for `valid`, and for a status
+     * recorded before OID4VCWallet 0.27.0. [reason] reads it.
+     */
+    @SerialName("reason") val rawReason: String? = null,
 ) {
+    /** Why a status is what it is. */
+    public sealed interface Reason {
+        /** The issuer's Token Status List gives it: [Value.Revoked] (final), [Value.Suspended] or [Value.Other]. */
+        public data object StatusList : Reason
+
+        /** The mdoc is on its issuer's identifier list: [Value.Revoked], final. */
+        public data object IdentifierList : Reason
+
+        /**
+         * [Value.Revoked]: the issuer's signing certificate, or a CA above it, is on its CA's
+         * revocation list. Not final: a later check with a list that no longer names it makes
+         * it valid again.
+         */
+        public data object IssuerCertificateRevoked : Reason
+
+        /** [Value.Revoked]: the issuer's certificate chain no longer verifies under the configured roots, or has expired. */
+        public data object IssuerUntrusted : Reason
+
+        /**
+         * [Value.Unknown]: there's no current revocation list to check the issuer's chain, or
+         * its status list's signer's, against. Refresh them ([Wallet.refreshCRLs]) and check again.
+         */
+        public data object NoCurrentCRL : Reason
+
+        /** [Value.Unknown]: a status naming no mechanism the wallet knows. */
+        public data object UnrecognizedStatus : Reason
+
+        /**
+         * A reason this version doesn't know.
+         *
+         * @property value The reason, as the Go side names it.
+         */
+        public data class Other(val value: String) : Reason
+    }
+
+    /** [rawReason], read: null when there's none. */
+    val reason: Reason?
+        get() = when (rawReason) {
+            null -> null
+            "status_list" -> Reason.StatusList
+            "identifier_list" -> Reason.IdentifierList
+            "issuer_certificate_revoked" -> Reason.IssuerCertificateRevoked
+            "issuer_untrusted" -> Reason.IssuerUntrusted
+            "no_current_crl" -> Reason.NoCurrentCRL
+            "unrecognized_status" -> Reason.UnrecognizedStatus
+            else -> Reason.Other(rawReason)
+        }
+
     /** A status in the issuer's list. */
     public sealed interface Value {
         /** Not revoked or suspended. */

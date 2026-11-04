@@ -42,8 +42,8 @@ func TestSessions_IssuerRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := h.receivePreAuthorized(t); err == nil {
-		t.Error("received a credential with no CRL for its issuer's CA")
+	if err := h.receivePreAuthorized(t); detail(err) != DetailNoCurrentCRL {
+		t.Errorf("with no CRL for its issuer's CA: %v, want %s", err, DetailNoCurrentCRL)
 	}
 	if err := h.w.SetCRLs(clean); err != nil {
 		t.Fatal(err)
@@ -54,8 +54,8 @@ func TestSessions_IssuerRevocation(t *testing.T) {
 	if err := h.w.SetCRLs(revoked); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.receivePreAuthorized(t); code(err) != CodeProtocol {
-		t.Errorf("with the signer revoked: %v, want protocol", err)
+	if err := h.receivePreAuthorized(t); code(err) != CodeProtocol || detail(err) != DetailCertificateRevoked {
+		t.Errorf("with the signer revoked: %v, want protocol:%s", err, DetailCertificateRevoked)
 	}
 	if err := h.w.SetCRLs(env.ConfigJSON()); code(err) != CodeInvalidInput {
 		t.Errorf("SetCRLs(not PEM): %v, want invalid_input", err)

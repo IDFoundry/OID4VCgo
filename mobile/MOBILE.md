@@ -1139,7 +1139,13 @@ Verifier received `family_name`.
   configuration's `development_roots`, only with `development`, are CAs
   its HTTPS requests trust besides the system's: the test services' own.
   The app's own requests (the Wallet Provider's) trust it through a
-  trust manager of its own.
+  trust manager of its own. `RefreshCRLs` didn't use them until
+  OID4VCWallet 0.27.0, so the passport-vdc demo's `https` CRL
+  distribution points, under its self-signed certificate, failed on
+  Android, and the demo served copies over plain http on a loopback
+  port instead; its fetches now trust them as the wallet's other
+  requests do (and a ProximityReader takes `development_roots` for its
+  own), and the plain-http copies are gone.
 - **The services' ports** reach the device through `adb reverse`, so
   their loopback certificate holds there.
 - **The authorization page** opens in an Auth Tab, else an ephemeral

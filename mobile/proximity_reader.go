@@ -94,6 +94,12 @@ type proximityReaderConfig struct {
 	CRLDistributionPoints          []crlDistributionPoint `json:"crl_distribution_points,omitempty"`
 	CRLDistributionPointsFromRoots bool                   `json:"crl_distribution_points_from_roots,omitempty"`
 	CRLRequireHTTPS                bool                   `json:"crl_require_https,omitempty"`
+	// DevelopmentRoots are PEM certificates RefreshCRLs's HTTPS fetches
+	// trust besides the system's, as a Wallet's development_roots: a
+	// development CA's distribution points served under its own TLS
+	// certificate, which Go on Android can't otherwise be given. Only
+	// with Development.
+	DevelopmentRoots string `json:"development_roots,omitempty"`
 	// NoRevocationCheck names the roles, of Revocation's, that decline
 	// checking revocation (certrevocation.NoCheck). Outside Development,
 	// each role must be named in one of the two; a role can't be in
@@ -284,9 +290,14 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 			roots = append(roots, cfg.IssuerRootsByDocType[docType])
 		}
 	}
+	client, err := crlHTTP(cfg.Development, cfg.DevelopmentRoots)
+	if err != nil {
+		return err
+	}
 	if err := r.crls.configureRefresh(crlRefreshConfig{
 		points: cfg.CRLDistributionPoints, fromRoots: cfg.CRLDistributionPointsFromRoots,
 		roots: roots, requireHTTPS: cfg.CRLRequireHTTPS, development: cfg.Development,
+		http: client,
 	}); err != nil {
 		return err
 	}
@@ -559,7 +570,7 @@ func (p *ProximityReaderSession) HandleMessage(message []byte) string {
 	case errors.Is(err, proximity.ErrDeclined):
 		out.Reason = "declined"
 	default:
-		out.Reason, out.Error = "error", newError(CodeProtocol, err).Error()
+		out.Reason, out.Error = "error", revocationDetail(newError(CodeProtocol, err), err).Error()
 		if status, ok := proximity.StatusFor(err); ok {
 			out.Send = base64.StdEncoding.EncodeToString(proximity.StatusMessage(status))
 		}

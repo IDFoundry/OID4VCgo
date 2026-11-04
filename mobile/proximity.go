@@ -186,6 +186,10 @@ type proximityReaderJSON struct {
 	Chain        []string          `json:"chain"`
 	Certificates []certificateJSON `json:"certificates"`
 	Error        string            `json:"error,omitempty"`
+	// ErrorDetail is DetailCertificateRevoked or DetailNoCurrentCRL when
+	// Error comes from checking the reader's certificate chain for
+	// revocation (mdoc_reader in "revocation").
+	ErrorDetail string `json:"error_detail,omitempty"`
 }
 
 // certificateJSON is a certificate's fields, for an app to show where
@@ -267,7 +271,10 @@ var extKeyUsageNames = map[x509.ExtKeyUsage]string{
 // request's order. reader.status is "trusted" (its certificate chains
 // to mdoc_reader_roots), "untrusted" (signed, by a certificate that
 // doesn't), "unauthenticated" (not signed) or "invalid" (a signature
-// that doesn't verify for this session); name is the certificate's
+// that doesn't verify for this session), with error why it isn't
+// trusted, and error_detail "certificate_revoked" or "no_current_crl"
+// (DetailCertificateRevoked, DetailNoCurrentCRL) when that's its
+// certificate's revocation check; name is the certificate's
 // subject common name — the reader's verified name only when
 // "trusted" — and chain its certificates, leaf first, base64 DER, with
 // certificates their fields, for an app that can't parse them: {"subject",
@@ -295,7 +302,7 @@ func (p *ProximityPresentation) Request() string {
 		}
 	}
 	if r.Err != nil {
-		reader.Error = cleanText(r.Err.Error())
+		reader.Error, reader.ErrorDetail = cleanText(r.Err.Error()), revocationCause(r.Err)
 	}
 	out := struct {
 		result

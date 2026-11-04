@@ -61,18 +61,6 @@ func openCRLs(dir string, ids identities, now func() time.Time) (map[string]*dem
 	return out, nil
 }
 
-// CRLHandler serves the verifier CAs' CRLs at their paths
-// (VerifierCRLPath, ReaderCRLPath, RegistrarCRLPath), as this App does
-// under VerifierURL: for the demo to serve them at a second address
-// (cmd/demo's plain-http one).
-func (a *App) CRLHandler() http.Handler {
-	mux := http.NewServeMux()
-	for path, list := range a.crls {
-		mux.Handle("GET "+path, list)
-	}
-	return mux
-}
-
 // issuerCRLs is the revocation check on the demo issuer's
 // certificates: each chain ending at one of the IssuerCAs that names a
 // CRL distribution point is checked against the CRL served there,

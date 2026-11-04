@@ -93,6 +93,10 @@ public struct ProximityReaderIdentity: Sendable {
     public let certificates: [CertificateDetails]
     /// Why `status` isn't `.trusted`, for logs.
     public let error: String?
+    /// `certificate_revoked` or `no_current_crl` (`MobileDetailCertificateRevoked`,
+    /// `MobileDetailNoCurrentCRL`) when `error` is the reader certificate's
+    /// revocation check, nil otherwise. From OID4VCWallet 0.27.0.
+    public var errorDetail: String? = nil
     /// The name an untrusted or invalid request's certificate gives
     /// itself: anyone can claim any name, so never show it as the
     /// reader's. "" when the reader is trusted or didn't sign.
@@ -439,8 +443,9 @@ struct ReaderJSON: Decodable {
     let chain: [Data]
     let certificates: [ProximityReaderIdentity.CertificateDetails]?
     let error: String?
+    let errorDetail: String?
 
-    enum CodingKeys: String, CodingKey { case status, name, claimedName = "claimed_name", chain, certificates, error }
+    enum CodingKeys: String, CodingKey { case status, name, claimedName = "claimed_name", chain, certificates, error, errorDetail = "error_detail" }
 
     var identity: ProximityReaderIdentity {
         ProximityReaderIdentity(
@@ -449,6 +454,7 @@ struct ReaderJSON: Decodable {
             chain: chain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) },
             certificates: certificates ?? [],
             error: error,
+            errorDetail: errorDetail,
             claimedName: claimedName ?? "")
     }
 }

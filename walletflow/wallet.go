@@ -97,7 +97,11 @@ type Config struct {
 	// roots alike (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
 	// a credential whose signer, or a CA above it, is revoked is refused
 	// on receipt, deferred or refreshed alike, with an error wrapping
-	// certrevocation.ErrRevoked. A certrevocation.CRLs fails closed for
+	// certrevocation.ErrRevoked. CheckStatus checks a held credential's
+	// chain against it again, with the lists held then: one revoked
+	// since is StatusInvalid, ReasonIssuerCertificateRevoked, until a
+	// list no longer names it, and one with no current CRL
+	// StatusUnknown, ReasonNoCurrentCRL. A certrevocation.CRLs fails closed for
 	// a CA it has no current list from, so use one only where the
 	// issuers' CAs publish CRLs; each role has its own field for that
 	// reason. Outside Development, New requires it, and StatusRevocation,

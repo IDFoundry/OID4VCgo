@@ -84,8 +84,19 @@ that signer signed on its status list too, as it would were the key
 compromised. The wallet shows them revoked once it next checks their
 status (at launch, or on demand), within the status list's one-minute
 ttl, and the demo's verifier refuses a presentation of them. Refresh
-the lists here too, and the Verify tab refuses an mdoc that signer
-signed. Receive it again for one the new signer signs.
+the lists here too: the Verify tab refuses an mdoc that signer signed,
+saying its document signer was revoked (the library's
+`WalletError.isCertificateRevoked`), and the wallet checks each credential's
+status again once a list changes. `checkStatus` also verifies the
+issuer's certificate against the lists held, so a credential that signer
+signed shows **Invalid: issuer certificate revoked** if the lists show
+it before its status list does, and isn't offered ahead of others to a
+verifier; once its status list revokes it, it shows **Revoked by the
+issuer**, which is final. The certificate check isn't: a later list
+that no longer names the certificate makes it valid again, unless its
+status list has revoked it. Without a current list from its CA, a
+credential shows **Unknown: revocation lists out of date** until the
+lists are refreshed. Receive it again for one the new signer signs.
 
 ## In person (ISO/IEC 18013-5 over BLE)
 

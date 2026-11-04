@@ -47,7 +47,7 @@ func fullCredential(id string, v int) walletflow.StoredCredential {
 		return walletflow.CredentialCopy{
 			Credential: text(fmt.Sprintf("copy%d", n)), HolderKeyID: text(fmt.Sprintf("key%d", n)), Presented: true,
 			ShownTo:    []string{walletflow.VerifierHash(text("verifier-a")), walletflow.VerifierHash(text("verifier-b"))},
-			StatusList: statusList(n), ValidUntil: at(60+n, v), Revoked: true, Reservation: text(fmt.Sprintf("reservation%d", n)),
+			StatusList: statusList(n), ValidUntil: at(60+n, v), Revoked: true, IssuerUntrusted: true, Reservation: text(fmt.Sprintf("reservation%d", n)),
 		}
 	}
 	logo := func(field string) *walletflow.Logo {
@@ -68,7 +68,7 @@ func fullCredential(id string, v int) walletflow.StoredCredential {
 			Logo: logo("logo"), BackgroundColor: "#12345" + fmt.Sprint(v%10), TextColor: "#fedcb" + fmt.Sprint(v%10),
 		},
 		ValidUntil: at(60, v), StatusList: statusList(9), StatusListCWT: true,
-		Status:  walletflow.CredentialStatus{Value: walletflow.StatusValid, CheckedAt: at(2, v)},
+		Status:  walletflow.CredentialStatus{Value: walletflow.StatusInvalid, Reason: walletflow.ReasonIssuerCertificateRevoked, CheckedAt: at(2, v)},
 		GrantID: text("grant"), CopiesCorrelated: true,
 	}
 }

@@ -25,6 +25,20 @@ Certificate Revocation Lists the new `crl_distribution_points` (and
 `crl_distribution_points_from_roots`, `crl_require_https`) configure
 (see Refreshing CRLs); check a library's release notes for it.
 
+Also within version 14, in OID4VCWallet 0.27.0, without bumping it
+(optional JSON fields and details, so an older wrapper is unaffected):
+`CheckStatus` checks a held credential's issuer certificate chain again,
+against the CRLs held then, and a credential's `status` gains a
+`reason` (see the summary below), its record's copies an
+`issuer_untrusted`; an error caused by a certificate revocation check
+carries the detail `certificate_revoked` or `no_current_crl` (see Error
+details), as does a proximity presentation's `reader.error_detail`;
+`RefreshCRLs` trusts `development_roots` in development, and a
+ProximityReader takes `development_roots` for it. A credential with no
+status list used to be returned by `CheckStatus` unchecked, with no
+`status`; one whose issuer's CA has no current CRL used to fail it
+with `protocol`.
+
 Version 13 adds `CompareAndSwap` to the `CredentialStore` the app
 implements (see CredentialStore), which the wallet now changes every
 record through, so that processes sharing one store (an app and its
@@ -91,7 +105,9 @@ format or error code below changes incompatibly.
   Verifier answered with an OAuth error code of its own (`detail`: for
   example `invalid_grant`, which a wrong PIN gets), or with one of the
   wallet's own (`request_refused`'s, and `invalid_input`'s
-  `not_configured`). The code and detail are stable; the message is for
+  `not_configured`, and `certificate_revoked` or `no_current_crl` on
+  any code: see Error details). The code and detail are stable; the
+  message is for
   logs. A callback's error comes back to the app as `platform`,
   carrying its message. (Version 1 had no detail.)
 - **Threads:** every call blocks. Call from a background thread, never
@@ -127,6 +143,20 @@ format or error code below changes incompatibly.
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `document_not_valid` | a reader configured with `"status": "check"` verified a document whose revocation status isn't valid; the detail is the status (`invalid`, `suspended`, `unknown` or `0x…`). The Swift and Kotlin reader sessions end with it; the Go side doesn't return it (ABI 14) |
 | `internal` | a bug |
+
+### Error details
+
+Besides a remote party's OAuth error code, a failing call's detail is
+the wallet's own:
+
+| Detail | On | Meaning |
+|---|---|---|
+| `not_configured` | `invalid_input` | the configuration lacks what the call needs |
+| `refresh_in_progress` | `unavailable` | another process is refreshing with the same grant (ABI 13) |
+| `certificate_revoked` | any code without a detail of its own, such as `protocol` or `untrusted_verifier` | a certificate in a chain checked under `revocation` is revoked (its CA's CRL names it): a credential's issuer on receipt, a Verifier's or mdoc reader's request signer, a status list's signer, or, from a ProximityReader's `HandleMessage`, the document's signer. The message names the certificate. Added within ABI 14 (OID4VCWallet 0.27.0) |
+| `no_current_crl` | likewise | a role named in `revocation` holds no current CRL from the certificate's CA, so its revocation can't be decided and the chain is refused: `RefreshCRLs` (or `SetCRLs`) and try again. Added within ABI 14 (OID4VCWallet 0.27.0) |
+
+An older library gives the last two errors no detail.
 
 An error's message is fit for an app's logs. It never carries a remote
 party's own description (`error_description`, an error body), a URL's
@@ -230,7 +260,9 @@ A record is JSON the app needn't read: `id`, `credential_issuer`,
 status list or identifier list entry, disclosure digest, or validity timestamp not rounded
 to the day; absent when not), and `copies` (each copy's `credential`, `holder_key_id`, `presented`,
 `shown_to`, its own `status_list` and `valid_until`, `revoked` (found
-revoked by `CheckStatus`; absent when not), and `reservation`,
+revoked by `CheckStatus`; absent when not), `issuer_untrusted` (its
+issuer certificate chain refused when `CheckStatus` last checked it;
+absent when not; from OID4VCWallet 0.27.0), and `reservation`,
 the latest presentation that reserved it and may still undo that). A
 record written before a field was kept lacks it.
 
@@ -458,7 +490,8 @@ private-use or loopback `redirect_uri` rule, and FAPIgo's own client
 checks. `development_roots`, only with
 `development`, are CAs the wallet's HTTPS requests trust besides the
 system's: a development service's own, where the platform's trust store
-can't be given it — Go on Android reads only the system's CA files. `locales` are the holder's
+can't be given it — Go on Android reads only the system's CA files.
+`RefreshCRLs`'s fetches trust them too, from OID4VCWallet 0.27.0. `locales` are the holder's
 preferred languages (BCP 47, most preferred first) for issuers' display
 metadata. Without them, the issuer's entry without a locale is used,
 else its first. `batch_size` is how many copies of each credential to
@@ -594,8 +627,13 @@ are the floor. Fetches are a GET, over `http` or `https` (a CRL is
 signed, so distribution points are usually plain `http`), at most
 8 MiB, DER or one PEM block, following at most three redirects on the
 same host only, from public addresses only outside `development`
-(the hardened client of `certrevocation.Refresher`); `tls_pins` and
-`development_roots` don't apply. Distribution points are only ever the
+(the hardened client of `certrevocation.Refresher`). In `development`,
+`development_roots` are trusted as for the configuration's other
+requests, through the same ordinary development client (from
+OID4VCWallet 0.27.0; before, they didn't apply), so a development CA's
+`https` points served under its own TLS certificate can be fetched
+where the platform's trust store can't be given it (Go on Android).
+`tls_pins` don't apply. Distribution points are only ever the
 configured ones, never read from a presented certificate.
 
 - `crl_distribution_points` lists `{"url", "issuer"}`: an `http` or
@@ -630,7 +668,7 @@ run. Added within ABI 14.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which replaces it under the same ID once issued (don't delete it meanwhile: the refreshed copies would be discarded). One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 or EdDSA (Ed25519) — or, for an mdoc's CWT lists, ES384 (P-384) or ES512 (P-521) — is a `protocol` error. Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A credential without a status or identifier list is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It verifies each live copy's issuer certificate chain again (an SD-JWT VC's `x5c`, an mdoc's `x5chain`) under the issuer roots configured now and, with `issuer` in `revocation`, against the CRLs held now: a copy whose signer, or a CA above it, has been revoked since, or whose chain no longer verifies, isn't presented ahead of one that passes, and once none is left the credential is `invalid` (`reason` `issuer_certificate_revoked` or `issuer_untrusted`). That isn't final: a later check with a CRL that no longer names the certificate makes it valid again. With no current CRL for a CA on the chain it's `unknown` (`reason` `no_current_crl`), not an error; refresh the lists and check again. A credential with no status or identifier list is checked so too, when it carries a chain and the wallet has roots for it (from OID4VCWallet 0.27.0; before, it was returned unchecked). It also fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 or EdDSA (Ed25519) — or, for an mdoc's CWT lists, ES384 (P-384) or ES512 (P-521) — is a `protocol` error. Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A list whose signer's CA has no current CRL under `status` in `revocation` is `unknown` (`no_current_crl`) too (before OID4VCWallet 0.27.0, `protocol`). A credential with neither a list nor a chain to check is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
@@ -646,7 +684,8 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
 
 - `presentable` is whether a Verifier could accept the credential now,
   as far as the wallet knows: a copy is neither expired nor found
-  revoked by `CheckStatus`, and its `status` isn't `invalid` or
+  revoked by `CheckStatus`, nor signed under an issuer certificate its
+  latest check refused, and its `status` isn't `invalid` or
   `suspended`. A presentation lists the others after it, and
   `DefaultSelection` never picks them; a presentation never uses a
   revoked copy while a valid one is left. Added in ABI 14
@@ -681,7 +720,18 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   (`request_refresh`), so `RefreshCredential` can replace its copies.
   The Authorization Server may still refuse it (`reissue_required`).
 - `status` is its revocation status as last checked: `{"value": "valid"
-  | "invalid" | "suspended" | "0x…" | "unknown", "checked_at"}`.
+  | "invalid" | "suspended" | "0x…" | "unknown", "reason",
+  "checked_at"}`. `reason` says why, absent for `valid` and for a
+  status recorded before it was kept: `status_list` (its Token Status
+  List gives `invalid`, `suspended` or `0x…`), `identifier_list` (an
+  mdoc on its identifier list: `invalid`), `issuer_certificate_revoked`
+  (`invalid`: its issuer's signing certificate, or a CA above it, is
+  on a CRL), `issuer_untrusted` (`invalid`: its issuer's chain no
+  longer verifies under the roots configured now, or has expired),
+  `no_current_crl` (`unknown`: no current CRL to check its issuer's
+  chain, or a status list signer's, against: refresh the lists) or
+  `unrecognized_status` (`unknown`, below). An app shows another value
+  as it is. Added within ABI 14 (OID4VCWallet 0.27.0).
   An mdoc's identifier list (ISO/IEC 18013-5 §12.3.6.4) is checked as
   its status list is: on it, the mdoc is `invalid`. `unknown` is a
   status naming no mechanism the wallet knows, and no list on which
@@ -914,7 +964,7 @@ request per session. Every method is safe to call from any thread.
 |---|---|
 | `Engagement()` | `{"qr_code", "service_uuid", "ble_mode", "ble_modes", "ident"}`: the QR code's text (`mdoc:` and the DeviceEngagement), and in `ble_modes` each mode offered, `{"mode", "service_uuid"}`, each with its own UUID. In `peripheral_server` mode, advertise `service_uuid` and be the GATT server. In `central_client` mode, scan for `service_uuid`, connect as GATT client, and disconnect from a reader whose Ident characteristic isn't `ident` (base64, present only with that mode). `service_uuid` and `ble_mode` are `ble_modes`' first: peripheral server mode's, when offered |
 | `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
-| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`. Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
+| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error", "error_detail"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`, and `error_detail` is `certificate_revoked` or `no_current_crl` when that's its certificate's revocation check under `mdoc_reader` in `revocation` (added within ABI 14, OID4VCWallet 0.27.0). Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
 | `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed: a `Respond` still running (its holder key prompting) fails with `cancelled` and gives nothing to send. Once `Respond` has returned, don't send its `send` after calling `Terminate` |
 
@@ -964,8 +1014,8 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
 "crl_distribution_points", "crl_distribution_points_from_roots",
-"crl_require_https", "any_issuer_for_any_type", "status",
-"development"}`:
+"crl_require_https", "development_roots", "any_issuer_for_any_type",
+"status", "development"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -1004,6 +1054,12 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   JSON; `crl_distribution_points_from_roots` reads `issuer_roots` and
   `issuer_roots_by_doctype` when `issuer` or `status` is in
   `revocation`. Added within ABI 14.
+- `development_roots` (PEM), only with `development` (`invalid_input`
+  otherwise), are trusted by `RefreshCRLs`'s `https` fetches beside the
+  system's, as a Wallet's: a development CA's distribution points under
+  its own TLS certificate, which Go on Android can't otherwise be given.
+  Nothing else the reader fetches uses them. Added within ABI 14
+  (OID4VCWallet 0.27.0).
 - `no_revocation_check` (roles, as `revocation`'s) declines checking a
   role's revocation explicitly, for where something else stands in for
   it; a role can't be in both (`invalid_input`).
@@ -1044,7 +1100,7 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 |---|---|
 | `Engagement()` | `{"service_uuid", "ble_mode", "ident", "signed", "check_status"}`. `ble_mode` is the BLE mode the reader uses, from those the holder offers, preferring `central_client` (§8.3.3.1.1). In `peripheral_server` mode the holder advertises `service_uuid`, and the reader scans, connects and is the GATT client. In `central_client` mode the reader advertises `service_uuid` and is the GATT server, serving `ident` (base64) on the Ident characteristic. `signed` is whether the request will carry reader authentication. `check_status` is the configuration's `"status": "check"`: call `CheckStatus` once `HandleMessage` verifies, and rely on the document only on `valid` or `none` (ABI 14) |
 | `Request(docType, elementsJSON)` | `{"send"}`: send the base64 SessionEstablishment once connected. `elementsJSON` is `{namespace: [identifiers]}`. A reader key requiring user presence prompts now. Once per session (`wrong_step` otherwise) |
-| `HandleMessage(message)` | `{"event", "verified", "send", "reason", "error"}` for the holder's answer. The session is then over: send `send` if present, write `0x02` to State, and disconnect. `event` is `verified` or `ended`. `reason`, for `ended`, is `declined` (status 20, which isn't authenticated) or `error`, with `error` the failing call's text (`protocol` for a response that doesn't verify) |
+| `HandleMessage(message)` | `{"event", "verified", "send", "reason", "error"}` for the holder's answer. The session is then over: send `send` if present, write `0x02` to State, and disconnect. `event` is `verified` or `ended`. `reason`, for `ended`, is `declined` (status 20, which isn't authenticated) or `error`, with `error` the failing call's text (`protocol` for a response that doesn't verify; with `issuer` in `revocation`, `[protocol:certificate_revoked]` for a document whose signer, or an IACA intermediate, its CA's CRL names, and `[protocol:no_current_crl]` without a current CRL from its CA: see Error details) |
 | `Terminate()` | `{"send"}`: the reader cancelled or timed out. Send `send` (status 20) if connected, then disconnect |
 | `CheckStatus(op)` | `{"status"}`: the revocation status of the mdoc `HandleMessage` verified, fetched from the network (see below). `wrong_step` before a verified mdoc |
 
