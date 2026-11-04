@@ -3,6 +3,8 @@ package statuslist
 import (
 	"fmt"
 	"math"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // statusListInfo is draft-14 §6.3's StatusListInfo CBOR structure — the
@@ -64,6 +66,22 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 	}
 
 	return StatusListRef{Idx: uint64(idxFloat), URI: uri}, nil
+}
+
+// ParseStatusClaimJSON is ParseStatusClaim for a "status" claim still
+// in JSON, such as a Wallet Attestation's as fapigo/server's
+// VerifiedClientAttestation.Claims carries it. It decodes the claim
+// strictly, refusing one whose members are duplicated (which parsers
+// read differently), and one that isn't an object.
+func ParseStatusClaimJSON(status []byte) (StatusListRef, error) {
+	var claim map[string]any
+	if err := strictjson.Unmarshal(status, &claim); err != nil {
+		return StatusListRef{}, fmt.Errorf("statuslist: status claim: %w", err)
+	}
+	if claim == nil {
+		return StatusListRef{}, fmt.Errorf("statuslist: status claim is null, not an object")
+	}
+	return ParseStatusClaim(claim)
 }
 
 // CWTStatusClaim builds the value of the CWT "status" claim (key
