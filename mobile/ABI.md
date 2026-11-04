@@ -18,6 +18,13 @@ verified, and end a session whose document isn't valid with the new
 version-13 reader configuration adds `"status"`; the wrappers refuse a
 framework of another version, as before.
 
+Within version 14, without bumping it (an added call and optional
+configuration keys, so an older wrapper is unaffected),
+`RefreshCRLs(op)` on a Wallet and a ProximityReader fetches the
+Certificate Revocation Lists the new `crl_distribution_points` (and
+`crl_distribution_points_from_roots`, `crl_require_https`) configure
+(see Refreshing CRLs); check a library's release notes for it.
+
 Version 13 adds `CompareAndSwap` to the `CredentialStore` the app
 implements (see CredentialStore), which the wallet now changes every
 record through, so that processes sharing one store (an app and its
@@ -299,7 +306,9 @@ library's an `IOException`.
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
  "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>",
- "no_revocation_check": ["status", "issuer_metadata", "registrar", "mdoc_reader"]}
+ "no_revocation_check": ["status", "issuer_metadata", "registrar", "mdoc_reader"],
+ "crl_distribution_points": [{"url": "http://ca.example/ca.crl", "issuer": "<PEM CA certificate>"}],
+ "crl_distribution_points_from_roots": false, "crl_require_https": false}
 ```
 
 `issuer_roots` is needed to receive credentials, and `verifier_roots` to
@@ -544,7 +553,72 @@ or repeated role, or `crls` holding anything but CRLs (a certificate,
 text outside the PEM blocks, a list that doesn't parse, more than 64),
 is `invalid_input`. Lists expire at their nextUpdate: fetch fresh ones
 from the CAs' distribution points and pass them to `SetCRLs` before
-then. Added within ABI version 12.
+then, or have `RefreshCRLs` fetch them. Added within ABI version 12.
+
+### Refreshing CRLs
+
+`RefreshCRLs(op)` fetches each configured CRL distribution point once
+and returns `{"abi", "results", "crls", "next_refresh"}`:
+
+- `results` has one `{"url", "outcome", "error"}` per distribution
+  point, in configuration order. `outcome` is `updated` (a new list now
+  replaces the one held for its CA, for every check from then on, for
+  sessions and presentations already running too), `unchanged` (the
+  list served is the one held) or `failed`, with `error` the failure as
+  `[code] message`: `network` when the point couldn't be reached
+  (outside `development`, a host on a loopback, private or other
+  non-public address is unreachable), `protocol` for an HTTP error
+  status or a list refused, `cancelled`. A failure never evicts the list
+  held.
+- `crls` is every list now held, whether fetched or given in `crls` or
+  to `SetCRLs`, as PEM `X509 CRL` blocks: persist it and pass it back as
+  `crls` (or to `SetCRLs`) at the next launch, so checks work before the
+  first refresh and an older list is still refused after a restart.
+  Persisting is the app's.
+- `next_refresh` (RFC 3339) is when to call it again: for each point
+  whose list was just kept, halfway from now to its nextUpdate, no
+  sooner than a minute and no later than an hour from now; for one that
+  failed, five minutes from now; the earliest of these. It's a hint for
+  the platform's scheduler (BGTaskScheduler, WorkManager), which may run
+  later: the lists in hand stay in force until their nextUpdate, and a
+  role named in `revocation` refuses a CA's certificates once its list
+  has passed it.
+
+A list is kept only when it was signed by the CA its distribution point
+is bound to, is complete and direct (not a delta CRL, no issuing
+distribution point, no critical extension it doesn't process), has a
+nextUpdate, is current now, and isn't older than the one held for its
+CA (a lower CRL number, or an earlier thisUpdate), as `SetCRLs`
+refuses; the lists held, from `crls`, `SetCRLs` or an earlier refresh,
+are the floor. Fetches are a GET, over `http` or `https` (a CRL is
+signed, so distribution points are usually plain `http`), at most
+8 MiB, DER or one PEM block, following at most three redirects on the
+same host only, from public addresses only outside `development`
+(the hardened client of `certrevocation.Refresher`); `tls_pins` and
+`development_roots` don't apply. Distribution points are only ever the
+configured ones, never read from a presented certificate.
+
+- `crl_distribution_points` lists `{"url", "issuer"}`: an `http` or
+  `https` URL and the PEM certificate of the one CA whose list it
+  serves. A URL that isn't one, an `issuer` that isn't exactly one CA
+  certificate, or a repeated URL is `invalid_input`; at most 64.
+- `crl_distribution_points_from_roots` adds the `http` and `https`
+  CRL distribution points named by each self-signed CA certificate in
+  `crl_issuers` and in the roots of the roles `revocation` names, each
+  bound to that CA: a self-signed CA's own distribution point is where
+  it publishes the list covering what it issued, as an IACA does
+  (ISO/IEC 18013-5 Annex B). Intermediates' and leaves' points are
+  their issuers' lists, so name those explicitly. An explicit entry for
+  the same URL wins; two roots naming one URL is `invalid_input`.
+- `crl_require_https` refuses `http` URLs (`invalid_input`), and
+  leaves `http` points out of `crl_distribution_points_from_roots`:
+  over `http`, an attacker on the path picks which still-current list
+  of a CA's a fetch gets, though never an older one than held.
+
+With no distribution points configured, `RefreshCRLs` is
+`invalid_input` with the detail `not_configured`; a cancelled `op` is
+`cancelled`. It's safe to call while presentations and reader sessions
+run. Added within ABI 14.
 
 | Method | Result |
 |---|---|
@@ -561,6 +635,7 @@ then. Added within ABI version 12.
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
+| `RefreshCRLs(op)` | `{"abi", "results", "crls", "next_refresh"}`: fetches the configured CRL distribution points and keeps each current list its CA signed that isn't older than the one held (see Refreshing CRLs). Network requests. Added within ABI 14 |
 | `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. No network calls. Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
@@ -888,7 +963,9 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
 "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
-"any_issuer_for_any_type", "status", "development"}`:
+"crl_distribution_points", "crl_distribution_points_from_roots",
+"crl_require_https", "any_issuer_for_any_type", "status",
+"development"}`:
 - `issuer_roots` (PEM) are the IACAs whose mdocs are accepted, of any
   document type `issuer_roots_by_doctype` doesn't name.
 - `issuer_roots_by_doctype` (an object of document type to PEM) are each
@@ -921,6 +998,12 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   status names needs that certificate's list too. `crl_issuers` are
   the CAs of certificates pinned in the roots, as a Wallet's. Additive
   within ABI 12.
+- `crl_distribution_points`, `crl_distribution_points_from_roots` and
+  `crl_require_https` configure `RefreshCRLs(op)`, the reader's own,
+  which works as a Wallet's (see Refreshing CRLs) and returns the same
+  JSON; `crl_distribution_points_from_roots` reads `issuer_roots` and
+  `issuer_roots_by_doctype` when `issuer` or `status` is in
+  `revocation`. Added within ABI 14.
 - `no_revocation_check` (roles, as `revocation`'s) declines checking a
   role's revocation explicitly, for where something else stands in for
   it; a role can't be in both (`invalid_input`).

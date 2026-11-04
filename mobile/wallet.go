@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -174,6 +176,15 @@ type config struct {
 	// its CA here, a pinned certificate that isn't self-signed is
 	// refused, failing closed.
 	CRLIssuers string `json:"crl_issuers,omitempty"`
+	// CRLDistributionPoints are where RefreshCRLs fetches lists from,
+	// each bound to the CA certificate whose list it serves, and
+	// CRLDistributionPointsFromRoots adds the distribution points each
+	// self-signed CA certificate among the roots of the roles Revocation
+	// names, and CRLIssuers, names for its own list. CRLRequireHTTPS
+	// refuses plain http ones.
+	CRLDistributionPoints          []crlDistributionPoint `json:"crl_distribution_points,omitempty"`
+	CRLDistributionPointsFromRoots bool                   `json:"crl_distribution_points_from_roots,omitempty"`
+	CRLRequireHTTPS                bool                   `json:"crl_require_https,omitempty"`
 }
 
 // proximityDeviceAuth is the walletflow.ProximityDeviceAuth name names.
@@ -309,6 +320,12 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := crls.configureRefresh(crlRefreshConfig{
+		points: cfg.CRLDistributionPoints, fromRoots: cfg.CRLDistributionPointsFromRoots,
+		roots: walletRevocationRoots(cfg, named), requireHTTPS: cfg.CRLRequireHTTPS, development: cfg.Development,
+	}); err != nil {
+		return nil, err
+	}
 	vt, isX5C := wcfg.VerifierTrust.(wallet.X5CVerifierRoots)
 	issuerKeys := "issuer_roots, mdoc_issuer_roots or mdoc_issuer_roots_by_doctype"
 	receives := wcfg.IssuerRoots != nil || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
@@ -341,6 +358,52 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 		wcfg.VerifierTrust = vt
 	}
 	return crls, nil
+}
+
+// walletRevocationRoots is the PEM roots of the roles named, and cfg's
+// "crl_issuers", whose CAs' own distribution points
+// "crl_distribution_points_from_roots" fetches.
+func walletRevocationRoots(cfg config, named map[string]bool) []string {
+	roots := []string{cfg.CRLIssuers}
+	if named[revocationIssuer] || named[revocationStatus] {
+		roots = append(roots, cfg.IssuerRoots, cfg.MdocIssuerRoots)
+		for _, docType := range slices.Sorted(maps.Keys(cfg.MdocIssuerRootsByDocType)) {
+			roots = append(roots, cfg.MdocIssuerRootsByDocType[docType])
+		}
+	}
+	for role, pemText := range map[string]string{
+		revocationIssuerMetadata: cfg.IssuerMetadataRoots, revocationRegistrar: cfg.RegistrarRoots,
+		revocationMdocReader: cfg.MdocReaderRoots, revocationVerifier: cfg.VerifierRoots,
+	} {
+		if named[role] {
+			roots = append(roots, pemText)
+		}
+	}
+	return roots
+}
+
+// RefreshCRLs fetches the Certificate Revocation Lists of the
+// configuration's "crl_distribution_points", and with
+// "crl_distribution_points_from_roots" those its roots name, and
+// returns {"abi", "results": [{"url", "outcome", "error"}], "crls",
+// "next_refresh"}. Each list replaces the one held for its CA, for
+// every check from then on, only when the CA its distribution point is
+// bound to signed it, it's current, complete and not older than the one
+// held (as SetCRLs refuses); outcome is "updated", "unchanged" (the
+// list held already) or "failed", with error, a "[code] message" text.
+// A failure keeps the list held. crls is every list now held, as PEM,
+// for the app to persist and pass back as "crls" or to SetCRLs at its
+// next launch; next_refresh, RFC 3339, is when to call it again: halfway
+// from now to the earliest nextUpdate, at most an hour away, or within
+// minutes after a failure. Fetches go over http or https (https only
+// with "crl_require_https": the lists are signed) to public addresses
+// only, outside development, at most 8 MiB each, following redirects
+// only on the same host (certrevocation.Refresher). With no
+// distribution points configured it's invalid_input with detail
+// not_configured; cancelling op is cancelled. Safe to call while
+// presentations run.
+func (w *Wallet) RefreshCRLs(op *Operation) (string, error) {
+	return w.crls.refresh(op.context())
 }
 
 // SetCRLs replaces the Certificate Revocation Lists the configuration's

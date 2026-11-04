@@ -268,6 +268,19 @@ public data class WalletConfiguration(
      * [issuerRequireEKU] unless [mdocIssuerRoots] is set.
      */
     @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
+    /**
+     * Where [Wallet.refreshCRLs] fetches the lists from, each bound to the
+     * CA whose list it serves.
+     */
+    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
+    /**
+     * Also fetches, in [Wallet.refreshCRLs], the distribution point each
+     * self-signed CA certificate names for its own list (as an IACA does),
+     * among [crlIssuers] and the roots of the roles in [revocation].
+     */
+    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
+    /** Refuses plain `http` distribution points, and leaves them out of [crlDistributionPointsFromRoots]. */
+    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable
@@ -708,6 +721,23 @@ public class Wallet(
     public suspend fun setCRLs(pem: String) {
         OID4VC.offMain { handle.setCRLs(pem) }
     }
+
+    /**
+     * Fetches the Certificate Revocation Lists of the configuration's
+     * [WalletConfiguration.crlDistributionPoints] (and, with
+     * [WalletConfiguration.crlDistributionPointsFromRoots], those its
+     * roots name) and keeps each one its CA signed that is current and not
+     * older than the one held, for every check from now on, presentations
+     * already running included. A failed point keeps its list. Fetches go
+     * to public addresses only outside development, over `http` or
+     * `https` (the lists are signed). Persist the result's
+     * [CRLRefreshResult.crls] for the next launch and schedule the next
+     * refresh at its [CRLRefreshResult.nextRefresh] (see
+     * GoingToProduction). Throws `invalidInput` (`not_configured`) with no
+     * distribution points configured; cancelled with its coroutine.
+     */
+    public suspend fun refreshCRLs(): CRLRefreshResult =
+        CRLRefreshResult.of(OID4VC.cancellable { op -> handle.refreshCRLs(op) })
 
     /**
      * Deletes a credential and its holder keys, and its refresh grant

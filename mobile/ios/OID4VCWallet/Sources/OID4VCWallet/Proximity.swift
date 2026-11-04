@@ -563,6 +563,15 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// roots, for a role in `revocation`, as
     /// `WalletConfiguration.crlIssuers`.
     public var crlIssuers: String
+    /// Where `ProximityReader.refreshCRLs()` fetches the lists from, as
+    /// `WalletConfiguration.crlDistributionPoints`.
+    public var crlDistributionPoints: [CRLDistributionPoint]
+    /// Also fetches the distribution point each self-signed IACA in
+    /// `issuerRoots`, `issuerRootsByDocType` (with `.issuer` or `.status`
+    /// in `revocation`) and `crlIssuers` names for its own list.
+    public var crlDistributionPointsFromRoots: Bool
+    /// Refuses plain `http` distribution points.
+    public var crlRequireHTTPS: Bool
     /// The roles that decline checking revocation, for where something
     /// else stands in for it. Outside `development`, each role must be in
     /// `revocation` or here; a role can't be in both.
@@ -617,7 +626,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
                 issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
                 crlIssuers: String = "", noRevocationCheck: [RevocationRole] = [], anyIssuerForAnyType: Bool = false,
-                statusCheck: StatusCheck? = nil, development: Bool = false) {
+                statusCheck: StatusCheck? = nil, development: Bool = false,
+                crlDistributionPoints: [CRLDistributionPoint] = [], crlDistributionPointsFromRoots: Bool = false,
+                crlRequireHTTPS: Bool = false) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -632,6 +643,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.anyIssuerForAnyType = anyIssuerForAnyType
         self.statusCheck = statusCheck
         self.development = development
+        self.crlDistributionPoints = crlDistributionPoints
+        self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
+        self.crlRequireHTTPS = crlRequireHTTPS
     }
 
     enum CodingKeys: String, CodingKey {
@@ -642,6 +656,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case crls, revocation, crlIssuers = "crl_issuers"
         case noRevocationCheck = "no_revocation_check", anyIssuerForAnyType = "any_issuer_for_any_type", development
         case statusCheck = "status"
+        case crlDistributionPoints = "crl_distribution_points"
+        case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -660,6 +676,9 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         anyIssuerForAnyType = try c.decodeIfPresent(Bool.self, forKey: .anyIssuerForAnyType) ?? false
         statusCheck = try c.decodeIfPresent(StatusCheck.self, forKey: .statusCheck)
         development = try c.decodeIfPresent(Bool.self, forKey: .development) ?? false
+        crlDistributionPoints = try c.decodeIfPresent([CRLDistributionPoint].self, forKey: .crlDistributionPoints) ?? []
+        crlDistributionPointsFromRoots = try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false
+        crlRequireHTTPS = try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false
     }
 }
 
@@ -709,6 +728,15 @@ public final class ProximityReader: @unchecked Sendable {
     public func setCRLs(_ pem: String) throws {
         let reader = handle
         try OID4VC.wrap { try reader.setCRLs(pem) }
+    }
+
+    /// Fetches the configuration's CRL distribution points and keeps each
+    /// current list its CA signed that isn't older than the one held, for
+    /// sessions already started too, as `Wallet.refreshCRLs()`.
+    public func refreshCRLs() async throws -> CRLRefreshResult {
+        let reader = handle
+        let json = try await OID4VC.cancellable { op in try OID4VC.call { reader.refreshCRLs(op, error: $0) } }
+        return try CRLRefreshResult.from(json: json)
     }
 
     func start(qrCode: String, docType: String, elements: [String: [String]], timeouts: ProximityTimeouts,

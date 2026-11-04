@@ -339,11 +339,45 @@ Wallet and a ProximityReader): the trust roles an app names (`issuer`,
 reader's `issuer` and `status`) check certificate chains against the
 CRLs it holds, through `certrevocation.CRLs`.
 
-- **Go never fetches a CRL.** A check runs on every credential, request
+- **No check fetches a CRL.** A check runs on every credential, request
   and status list, and a slow or unreachable distribution point would
-  hold each one up; the app fetches lists (its own client, its own
-  schedule), and hands them to `SetCRLs`, which swaps them in
-  atomically for the checks that follow.
+  hold each one up; lists are fetched apart from checks and swapped in
+  atomically for the checks that follow, by `SetCRLs` (lists the app
+  fetched itself) or `RefreshCRLs`.
+- **`RefreshCRLs` fetches; the platform schedules.** Every app needed
+  the same code: download each CA's list, keep it current before its
+  nextUpdate, refuse a replayed older one. `RefreshCRLs` (on a Wallet
+  and a ProximityReader, over one `crlSet` helper) does one pass over
+  the configured distribution points with a `certrevocation.Refresher`
+  per point, so the hardening is the server side's (public addresses
+  only outside development, 8 MiB cap, same-host redirects, signature
+  and currency checks, the never-older floor taken from the lists held
+  now), and merges what it accepted into the set under the existing
+  rule. It runs no loop and starts no goroutine: an app's process is
+  suspended in the background, so the Swift and Kotlin libraries leave
+  the schedule to BGTaskScheduler and WorkManager, at the result's
+  `next_refresh` (Refresher's own rule: halfway to the nextUpdate,
+  capped at an hour). The refresher is rebuilt per call with the held
+  lists as its floor, so the `crlSet` stays the one source of truth,
+  whatever `SetCRLs` did in between.
+- **Distribution points are explicit, derivation opt-in.**
+  `crl_distribution_points` binds each URL to the CA certificate whose
+  list it serves (Refresher's `URLIssuers`): a URL never serves another
+  CA's list. `crl_distribution_points_from_roots` derives points only
+  from self-signed CA certificates in the roots of roles `revocation`
+  names (and `crl_issuers`), each bound to itself: such a CA's own
+  CRLDistributionPoints is where it publishes the list covering what it
+  issued (an IACA's, ISO/IEC 18013-5 Annex B). An intermediate's point
+  names its parent's list, which needs the parent bound, and a point is
+  never read from a presented certificate, which would let whoever
+  presents one choose where the device connects.
+- **Persistence stays the app's.** The result carries every list held
+  as PEM; the app stores it and passes it back as `crls` at launch,
+  which also restores the rollback floor. There's no library storage
+  hook for it: the CredentialStore holds per-credential records, not
+  configuration.
+- **Additive within ABI 14:** a new call and optional configuration
+  keys, so `ABIVersion` doesn't change.
 - **Per role:** a CRL check fails closed for a CA without a current
   list, so a role is named only where its CAs publish lists the app
   fetches. An ecosystem with CRLs for issuers but not Verifiers names

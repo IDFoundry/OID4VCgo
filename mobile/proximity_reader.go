@@ -8,6 +8,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -87,6 +89,11 @@ type proximityReaderConfig struct {
 	// CRLIssuers are PEM certificates of the CAs that issued
 	// certificates pinned in the roots, as a Wallet's crl_issuers.
 	CRLIssuers string `json:"crl_issuers,omitempty"`
+	// CRLDistributionPoints, CRLDistributionPointsFromRoots and
+	// CRLRequireHTTPS configure RefreshCRLs, as a Wallet's.
+	CRLDistributionPoints          []crlDistributionPoint `json:"crl_distribution_points,omitempty"`
+	CRLDistributionPointsFromRoots bool                   `json:"crl_distribution_points_from_roots,omitempty"`
+	CRLRequireHTTPS                bool                   `json:"crl_require_https,omitempty"`
 	// NoRevocationCheck names the roles, of Revocation's, that decline
 	// checking revocation (certrevocation.NoCheck). Outside Development,
 	// each role must be named in one of the two; a role can't be in
@@ -136,7 +143,9 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
-// "accept_mdl_signer_without_eku", "crls", "crl_issuers", "revocation",
+// "accept_mdl_signer_without_eku", "crls", "crl_issuers",
+// "crl_distribution_points", "crl_distribution_points_from_roots",
+// "crl_require_https", "revocation",
 // "no_revocation_check", "any_issuer_for_any_type", "development"},
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. Outside "development", it refuses a configuration
@@ -268,12 +277,25 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 	if r.crls, err = newCRLSet(cfg.CRLs, cfg.CRLIssuers); err != nil {
 		return err
 	}
-	const roots = "issuer_roots or issuer_roots_by_doctype"
+	roots := []string{cfg.CRLIssuers}
+	if named[revocationIssuer] || named[revocationStatus] {
+		roots = append(roots, cfg.IssuerRoots)
+		for _, docType := range slices.Sorted(maps.Keys(cfg.IssuerRootsByDocType)) {
+			roots = append(roots, cfg.IssuerRootsByDocType[docType])
+		}
+	}
+	if err := r.crls.configureRefresh(crlRefreshConfig{
+		points: cfg.CRLDistributionPoints, fromRoots: cfg.CRLDistributionPointsFromRoots,
+		roots: roots, requireHTTPS: cfg.CRLRequireHTTPS, development: cfg.Development,
+	}); err != nil {
+		return err
+	}
+	const rootKeys = "issuer_roots or issuer_roots_by_doctype"
 	when := "outside development"
 	if cfg.Development {
 		when = ""
 	}
-	issuer, err := revocationChoice(revocationIssuer, roots, true, named, declined, when, r.crls)
+	issuer, err := revocationChoice(revocationIssuer, rootKeys, true, named, declined, when, r.crls)
 	if err != nil {
 		return err
 	}
@@ -282,8 +304,16 @@ func (r *ProximityReader) configureRevocation(cfg proximityReaderConfig) error {
 		issuer = certrevocation.NoCheck{}
 	}
 	r.opts = append(r.opts, proximity.WithIssuerRevocation(issuer))
-	r.statusRevocation, err = revocationChoice(revocationStatus, roots, true, named, declined, when, r.crls)
+	r.statusRevocation, err = revocationChoice(revocationStatus, rootKeys, true, named, declined, when, r.crls)
 	return err
+}
+
+// RefreshCRLs fetches the configuration's CRL distribution points and
+// keeps each current list its CA signed that isn't older than the one
+// held, for sessions started before as well as after, as
+// Wallet.RefreshCRLs, returning the same JSON.
+func (r *ProximityReader) RefreshCRLs(op *Operation) (string, error) {
+	return r.crls.refresh(op.context())
 }
 
 // SetCRLs replaces the Certificate Revocation Lists the configuration's

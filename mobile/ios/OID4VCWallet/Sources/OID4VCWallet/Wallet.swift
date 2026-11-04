@@ -174,6 +174,17 @@ public struct WalletConfiguration: Codable, Sendable {
     /// anchors. Without its CA here, a pinned certificate that isn't
     /// self-signed is refused.
     public var crlIssuers: String
+    /// Where `Wallet.refreshCRLs()` fetches the lists from, each bound to
+    /// the CA whose list it serves.
+    public var crlDistributionPoints: [CRLDistributionPoint]
+    /// Also fetches, in `Wallet.refreshCRLs()`, the distribution point
+    /// each self-signed CA certificate names for its own list (as an IACA
+    /// does), among `crlIssuers` and the roots of the roles in
+    /// `revocation`.
+    public var crlDistributionPointsFromRoots: Bool
+    /// Refuses plain `http` distribution points, and leaves them out of
+    /// `crlDistributionPointsFromRoots`.
+    public var crlRequireHTTPS: Bool
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -247,7 +258,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
                 acceptMDLSignerWithoutEKU: Bool = false,
                 crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
-                noRevocationCheck: [RevocationRole] = []) {
+                noRevocationCheck: [RevocationRole] = [], crlDistributionPoints: [CRLDistributionPoint] = [],
+                crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -283,6 +295,9 @@ public struct WalletConfiguration: Codable, Sendable {
         self.revocation = revocation
         self.crlIssuers = crlIssuers
         self.noRevocationCheck = noRevocationCheck
+        self.crlDistributionPoints = crlDistributionPoints
+        self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
+        self.crlRequireHTTPS = crlRequireHTTPS
     }
 
     enum CodingKeys: String, CodingKey {
@@ -301,6 +316,8 @@ public struct WalletConfiguration: Codable, Sendable {
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
         case mdocIssuerRequireEKU = "mdoc_issuer_require_eku", acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case crls, revocation, crlIssuers = "crl_issuers", noRevocationCheck = "no_revocation_check"
+        case crlDistributionPoints = "crl_distribution_points"
+        case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -346,7 +363,10 @@ public struct WalletConfiguration: Codable, Sendable {
                   crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
                   revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [],
                   crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "",
-                  noRevocationCheck: try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? [])
+                  noRevocationCheck: try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? [],
+                  crlDistributionPoints: try c.decodeIfPresent([CRLDistributionPoint].self, forKey: .crlDistributionPoints) ?? [],
+                  crlDistributionPointsFromRoots: try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false,
+                  crlRequireHTTPS: try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -688,6 +708,23 @@ public final class Wallet: @unchecked Sendable {
     public func setCRLs(_ pem: String) async throws {
         let wallet = handle
         try await OID4VC.offMain { try OID4VC.wrap { try wallet.setCRLs(pem) } }
+    }
+
+    /// Fetches the Certificate Revocation Lists of the configuration's
+    /// `crlDistributionPoints` (and, with `crlDistributionPointsFromRoots`,
+    /// those its roots name) and keeps each one its CA signed that is
+    /// current and not older than the one held, for every check from now
+    /// on, presentations already running included. A failed point keeps
+    /// its list. Fetches go to public addresses only outside
+    /// `development`, over `http` or `https` (the lists are signed).
+    /// Persist the result's `crls` for the next launch and schedule the
+    /// next refresh at its `nextRefresh` (see <doc:GoingToProduction>).
+    /// Throws `invalidInput` (`not_configured`) with no distribution
+    /// points configured, and `cancelled` when its task is cancelled.
+    public func refreshCRLs() async throws -> CRLRefreshResult {
+        let wallet = handle
+        let json = try await OID4VC.cancellable { op in try OID4VC.call { wallet.refreshCRLs(op, error: $0) } }
+        return try CRLRefreshResult.from(json: json)
     }
 
     /// Deletes a credential and its holder keys, and its refresh grant
