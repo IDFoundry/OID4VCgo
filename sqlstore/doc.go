@@ -1,5 +1,5 @@
-// Package sqlstore holds durable stores for the issuer, verifier and
-// walletflow packages, in a PostgreSQL or SQLite database reached
+// Package sqlstore holds durable stores for the issuer, verifier,
+// walletflow and statuslist packages, in a PostgreSQL or SQLite database reached
 // through database/sql. It is a module of its own, so the library takes
 // no database driver: bring the driver you use.
 //
@@ -26,6 +26,11 @@
 //   - walletflow.Dependencies: Credentials, Authorizations, Grants,
 //     Deferred and, with a Sealer, Keys. Authorizations and Grants
 //     report Durable, Keys declares durable custody.
+//   - statuslist.Allocator's Store: StatusIndices, which records the
+//     Status List indices handed out to Referenced Tokens, and each
+//     one's status, durably and shared between every process using
+//     the database, so no index is handed out twice. Its Reserve is one
+//     INSERT on the (uri, idx) primary key.
 //
 // The Authorization Server's stores, and the Credential Endpoint's DPoP
 // replay and nonce stores, are FAPIgo's: see A whole issuer deployment.
@@ -85,6 +90,7 @@
 //		CredentialOffers: issuerDB.CredentialOffers(),
 //		// ...
 //	}
+//	statuses := &statuslist.Allocator{Lists: lists, Store: issuerDB.StatusIndices()}
 //
 // A Credential Endpoint that runs apart from the Authorization Server
 // can't use the server's Dependencies: it takes its stores from
@@ -155,6 +161,9 @@
 // nothing, as for any unknown ID, and a write refuses it. A Wallet's
 // JWE kid, request_uri or c_nonce is the Wallet's to choose, so this
 // keeps such a value an unknown one rather than the store's failure.
+// StatusIndices treats a Status List uri the same way, and an index
+// above math.MaxInt64, which a BIGINT can't hold, too: Reserve refuses
+// it, and SetStatus and Status report it not reserved.
 //
 // # Secrets at rest
 //
@@ -175,7 +184,9 @@
 // changing one leaves the record unreadable. Its status, expiry and
 // response_code hash are unprotected, so the database must be trusted
 // for their integrity.
-// KeyStore refuses to work without a Sealer.
+// KeyStore refuses to work without a Sealer. StatusIndices' rows aren't
+// sealed: a Status List publishes every status, and the indices, which
+// Referenced Tokens carry, aren't secret either.
 //
 // Sealing keeps a record's contents from whoever can read the
 // database, and makes one altered, or moved to another row or table,
@@ -210,6 +221,12 @@
 // when Wallet.KeysInUse lists the authorizations, or ResumeIssuance is
 // called for that one. A wallet should call KeysInUse periodically, or
 // the authorizations it abandoned, and their keys, stay.
+//
+// Sweep leaves StatusIndices' table alone, and nothing else deletes from
+// it: an index once handed out is never handed out again, since a
+// Referenced Token naming it may still be presented, so its row is kept
+// for as long as its list is. The table grows by one row per token
+// issued, bounded by the lists' sizes and fill limit.
 //
 // # Production
 //
