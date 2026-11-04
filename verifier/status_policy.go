@@ -15,10 +15,18 @@ import (
 // mdocdcapi.VerifyParams.Status take one; under AssuranceProduction each
 // requires it or an explicit NoStatusCheck.
 //
+//	statusCache := statuslist.NewCache(statuslist.CacheOptions{}) // one for the process
+//	...
 //	Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
 //		Roots:   issuerRoots,
 //		Options: statuslist.VerifyOptions{Revocation: certrevocation.CRLs{...}},
+//		Cache:   statusCache,
 //	}},
+//
+// Share one statuslist.Cache across every StatusPolicy and request, so
+// a list many credentials reference is fetched once per its ttl rather
+// than once per answer; each check still verifies the kept list with
+// its own Checker's Roots and Options.
 //
 // Each credential's status is checked as RequireValidStatus checks it
 // (RequireValidStatusFrom, with StatusIssuers): an answer is refused
@@ -28,7 +36,7 @@ import (
 // unless RequireReference is set.
 type StatusPolicy struct {
 	// Checker fetches and verifies each status list, and an mdoc's
-	// identifier list with its Fetcher, Roots and Options (see
+	// identifier list with its Fetcher, Roots, Options and Cache (see
 	// RequireValidStatus). Its Roots are REQUIRED. Under
 	// AssuranceProduction, its Fetcher must be HardenedForProduction
 	// and its Options.Revocation set — certrevocation.CRLs, a

@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/x509"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
@@ -53,9 +55,13 @@ func TestDisplay(t *testing.T) {
 }
 
 // A received credential keeps its expiry and status reference;
-// CheckStatus reads the issuer's status list, and sees a revocation.
+// CheckStatus reads the issuer's status list, and sees a revocation
+// once the list it kept has expired.
 func TestCheckStatus(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})
+	var mu sync.Mutex
+	now := time.Now()
+	f.w = f.newWalletAuthorizing(t, nil, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
 	held := receive(t, f, f.w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID)
 	ctx := context.Background()
 	for _, c := range held {
@@ -68,6 +74,15 @@ func TestCheckStatus(t *testing.T) {
 		}
 	}
 	f.env.Revoke()
+	for _, c := range held {
+		checked, err := f.w.CheckStatus(ctx, c.ID)
+		if err != nil || checked.Status.Value != walletflow.StatusValid {
+			t.Errorf("%s after Revoke, the list kept: %+v, %v", c.Format, checked.Status, err)
+		}
+	}
+	mu.Lock()
+	now = now.Add(statuslist.DefaultCacheMaxAge)
+	mu.Unlock()
 	for _, c := range held {
 		checked, err := f.w.CheckStatus(ctx, c.ID)
 		if err != nil || checked.Status.Value != walletflow.StatusInvalid {

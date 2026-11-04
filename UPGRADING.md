@@ -6,7 +6,29 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.62.0 → next
+## v0.63.0 → next
+
+### Status lists (`statuslist`, `identifierlist`, `walletflow`)
+
+- **A wallet keeps the status lists it fetched.** `walletflow`'s
+  `CheckStatus` now checks through a `statuslist.Cache`
+  (`Dependencies.StatusCache`, or one of the Wallet's own), so a status
+  changed at its issuer is seen once the kept list expires: at the
+  earliest of its exp, its iat plus ttl, and 5 minutes
+  (`statuslist.DefaultCacheMaxAge`) after it was fetched. Each check
+  still verifies the kept list for its own credential. To see a change
+  sooner, pass a Cache with a shorter `MaxAge`, or call its `Purge`.
+  The mobile Wallet and proximity reader share one Cache per process.
+  `statuslist.Checker` and `identifierlist.Checker` cache nothing
+  unless given a `Cache`.
+- **A Fetcher reuses its transport.** A `statuslist.Fetcher` copies
+  its `HTTP.Transport` (or `http.DefaultTransport`) once per address
+  policy and reuses the copy, keeping connections alive between
+  fetches, where it copied it on every fetch. Changes made to that
+  Transport after its first fetch are no longer seen: configure it
+  before use, as `http.Transport` asks.
+
+## v0.62.0 → v0.63.0
 
 ### Issuer (`issuer`)
 

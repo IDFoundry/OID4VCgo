@@ -24,6 +24,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -350,6 +351,12 @@ type Dependencies struct {
 	// Random is the source of identifiers and protocol randomness. nil
 	// means crypto/rand.
 	Random io.Reader
+	// StatusCache keeps the status and identifier lists CheckStatus
+	// fetches (statuslist.Cache), and may be shared with other Wallets
+	// and with readers: each check verifies a kept list again with its
+	// own trust. nil means a Cache of the Wallet's own, with
+	// statuslist's defaults, expiring entries by Clock.
+	StatusCache *statuslist.Cache
 }
 
 // Wallet is a holder's wallet. Its methods are safe for concurrent use;
@@ -389,6 +396,8 @@ type Wallet struct {
 	// read-modify-write safe across Wallets.
 	grantMu    sync.Mutex
 	grantLocks map[string]*sync.Mutex
+	// statusCache is deps.StatusCache, or the Wallet's own.
+	statusCache *statuslist.Cache
 }
 
 // CopyPolicy is which copy of a credential a presentation uses.
@@ -473,6 +482,10 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	w := &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, settled: map[string]bool{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{}, systemClock: systemClock,
+		statusCache: deps.StatusCache,
+	}
+	if w.statusCache == nil {
+		w.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: deps.Clock})
 	}
 	if err := w.checkReceivingAtNew(); err != nil {
 		return nil, err

@@ -78,8 +78,8 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // list (identifierlist.ErrRevoked), when a status can't be read, when a
 // reference is malformed, or when a credential's status names no
 // mechanism this package knows. An mdoc's identifier list is checked
-// with an identifierlist.Checker that has checker's Fetcher, Roots and
-// Options, so checker.Fetcher.MaxBytes caps an identifier list's size
+// with an identifierlist.Checker that has checker's Fetcher, Roots,
+// Options and Cache, so checker.Fetcher.MaxBytes caps an identifier list's size
 // too (zero there means identifierlist's own 4 MiB, not 1 MiB: a list
 // grows with the MSOs it revokes). A credential with no status
 // reference passes: it has no status to check, and nothing here can
@@ -221,7 +221,7 @@ func requireNotOnIdentifierList(ctx context.Context, checker statuslist.Checker,
 	o := checker.Options
 	c := identifierlist.Checker{Fetcher: checker.Fetcher, Roots: checker.Roots, Options: identifierlist.VerifyOptions{
 		Now: o.Now, MaxAge: o.MaxAge, MaxClockSkew: o.MaxClockSkew, LeafPolicy: o.LeafPolicy, Revocation: o.Revocation,
-	}}
+	}, Cache: checker.Cache}
 	if len(path) == 0 && len(ref.Certificate) == 0 {
 		// Nothing ties the list's signer to the document's issuer but
 		// statusIssuers.

@@ -209,7 +209,12 @@ type CredentialStatus struct {
 // names, checks it's signed by a certificate chaining to the issuer
 // roots configured for it now (IssuerRoots, or the mdoc roots for its
 // doctype), and records the credential's status in it: the stored
-// credential is returned with its Status. A credential without a
+// credential is returned with its Status. The Wallet keeps the lists it
+// fetched (Dependencies.StatusCache), for no longer than each list's
+// ttl and exp allow and statuslist.DefaultCacheMaxAge at most (unless
+// that Cache says otherwise), so a status changed at its issuer may be
+// seen that much later; each check still verifies the kept list for its
+// own credential. A credential without a
 // status or identifier list has nothing to check, and is returned as
 // it is, as is an expired one: it isn't valid whatever its status, so
 // its status list isn't fetched (draft-ietf-oauth-status-list §8.3).
@@ -362,6 +367,7 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+		Cache:   w.statusCache,
 	}
 	// Its status is its issuer's to sign, or one of its Status Issuers',
 	// not another issuer's under IssuerRoots.

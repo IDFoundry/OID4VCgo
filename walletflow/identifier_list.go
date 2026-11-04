@@ -113,6 +113,7 @@ func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, e
 		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development},
 		Roots:   roots,
 		Options: identifierlist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+		Cache:   w.statusCache,
 	}
 	var listed []identifierListEntry
 	lists := map[string]identifierlist.TokenClaims{}

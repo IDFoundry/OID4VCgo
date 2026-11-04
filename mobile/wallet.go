@@ -272,6 +272,8 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		// refresh grants, kept beside the credentials.
 		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
+		// The process's, which readers share too.
+		StatusCache: statusCache,
 	}
 	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {
 		return nil, err
