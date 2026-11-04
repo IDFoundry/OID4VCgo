@@ -65,6 +65,11 @@ type RequestParams struct {
 	// with whether the Verifier intends to retain it (IntentToRetain).
 	// At least one. REQUIRED.
 	Elements map[string]map[string]bool
+	// Documents, instead of DocType and Elements, asks for several
+	// documents in one request: a DocRequest each, in order, at most
+	// MaxDocRequests, each of a different type. The holder may answer
+	// any of them; VerifyResponseDocuments verifies the response.
+	Documents []DocumentRequest
 	// Readers sign the request, each with a ReaderAuthAll; the first
 	// also signs the DocRequest's ReaderAuth, for an mdoc that only
 	// checks that. A document provider app may refuse, or not even be
@@ -79,6 +84,22 @@ type RequestParams struct {
 	Lifetime time.Duration
 	// Now is the time the request is built at. nil means time.Now.
 	Now func() time.Time
+}
+
+// DocumentRequest is one document a request asks for: its type and
+// its data elements, by namespace, each with whether the Verifier
+// intends to retain it.
+type DocumentRequest struct {
+	DocType  string
+	Elements map[string]map[string]bool
+}
+
+// documents are the documents p asks for.
+func (p RequestParams) documents() []DocumentRequest {
+	if len(p.Documents) > 0 {
+		return p.Documents
+	}
+	return []DocumentRequest{{DocType: p.DocType, Elements: p.Elements}}
 }
 
 // DefaultLifetime is RequestParams.Lifetime's default, and MaxLifetime
@@ -120,6 +141,12 @@ type Pending struct {
 	// refuses a document of another type, or an element not asked for.
 	DocType  string
 	Elements map[string]map[string]bool
+	// Documents, for a request of several documents
+	// (RequestParams.Documents), are what it asked for, in order:
+	// DocType and Elements are then empty. VerifyResponseDocuments
+	// refuses a document of a type not among them, or an element its
+	// type's request didn't ask for.
+	Documents []DocumentRequest
 	// EncryptionInfo is the request's, as sent.
 	EncryptionInfo string
 	// RecipientKey is the private key the response is sealed to.
@@ -128,6 +155,14 @@ type Pending struct {
 	// VerifyResponse refuses a response after it, or a Pending without
 	// one.
 	ExpiresAt time.Time
+}
+
+// documents are the documents p's request asked for.
+func (p Pending) documents() []DocumentRequest {
+	if len(p.Documents) > 0 {
+		return p.Documents
+	}
+	return []DocumentRequest{{DocType: p.DocType, Elements: p.Elements}}
 }
 
 // Request is BuildRequest's result.
@@ -151,8 +186,9 @@ type encryptionParameters struct {
 	RecipientPublicKey mdoc.CoseKey `cbor:"recipientPublicKey"`
 }
 
-// BuildRequest builds an org-iso-mdoc request for one document, with a
-// fresh nonce and response encryption key.
+// BuildRequest builds an org-iso-mdoc request for one document, or for
+// RequestParams.Documents, with a fresh nonce and response encryption
+// key.
 func BuildRequest(p RequestParams) (Request, error) {
 	p.Origin = weborigin.Normalize(p.Origin)
 	if err := checkRequestParams(p); err != nil {
@@ -187,12 +223,17 @@ func BuildRequest(p RequestParams) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
+	pending := Pending{Origin: p.Origin, EncryptionInfo: encryptionInfo, RecipientKey: recipient, ExpiresAt: now().Add(lifetime)}
+	if len(p.Documents) > 0 {
+		for _, d := range p.Documents {
+			pending.Documents = append(pending.Documents, DocumentRequest{DocType: d.DocType, Elements: cloneElements(d.Elements)})
+		}
+	} else {
+		pending.DocType, pending.Elements = p.DocType, cloneElements(p.Elements)
+	}
 	return Request{
-		Data: RequestData{DeviceRequest: deviceRequest, EncryptionInfo: encryptionInfo},
-		Pending: Pending{
-			Origin: p.Origin, DocType: p.DocType, Elements: cloneElements(p.Elements),
-			EncryptionInfo: encryptionInfo, RecipientKey: recipient, ExpiresAt: now().Add(lifetime),
-		},
+		Data:    RequestData{DeviceRequest: deviceRequest, EncryptionInfo: encryptionInfo},
+		Pending: pending,
 	}, nil
 }
 
@@ -206,13 +247,41 @@ func checkRequestParams(p RequestParams) error {
 	if p.Lifetime < 0 || p.Lifetime > MaxLifetime {
 		return fmt.Errorf("mdocdcapi: Lifetime %s is outside 0..%s", p.Lifetime, MaxLifetime)
 	}
-	if p.DocType == "" {
+	if len(p.Documents) > 0 && (p.DocType != "" || len(p.Elements) > 0) {
+		return errors.New("mdocdcapi: set DocType and Elements, or Documents, not both")
+	}
+	if len(p.Documents) > MaxDocRequests {
+		return fmt.Errorf("mdocdcapi: %d documents requested, over %d", len(p.Documents), MaxDocRequests)
+	}
+	docs := p.documents()
+	for i, d := range docs {
+		if err := checkDocumentRequest(d); err != nil {
+			return err
+		}
+		for _, prev := range docs[:i] {
+			if prev.DocType == d.DocType {
+				return fmt.Errorf("mdocdcapi: %q requested twice", d.DocType)
+			}
+		}
+	}
+	for i, r := range p.Readers {
+		if _, err := readerauth.CheckKey(r.Signer, r.Chain); err != nil {
+			return fmt.Errorf("mdocdcapi: reader %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// checkDocumentRequest refuses a document request without a type or an
+// element, or with an unnamed namespace or element.
+func checkDocumentRequest(d DocumentRequest) error {
+	if d.DocType == "" {
 		return errors.New("mdocdcapi: DocType is required")
 	}
-	if len(p.Elements) == 0 {
+	if len(d.Elements) == 0 {
 		return errors.New("mdocdcapi: at least one data element must be requested")
 	}
-	for ns, elements := range p.Elements {
+	for ns, elements := range d.Elements {
 		if ns == "" || len(elements) == 0 {
 			return fmt.Errorf("mdocdcapi: namespace %q must be named and request at least one element", ns)
 		}
@@ -220,11 +289,6 @@ func checkRequestParams(p RequestParams) error {
 			if el == "" {
 				return fmt.Errorf("mdocdcapi: namespace %q requests an unnamed element", ns)
 			}
-		}
-	}
-	for i, r := range p.Readers {
-		if _, err := readerauth.CheckKey(r.Signer, r.Chain); err != nil {
-			return fmt.Errorf("mdocdcapi: reader %d: %w", i, err)
 		}
 	}
 	return nil
@@ -245,24 +309,34 @@ func buildEncryptionInfo(random io.Reader, recipient *ecdh.PublicKey) (string, e
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// buildDeviceRequest is Base64DeviceRequest: one DocRequest, signed by
-// each reader.
+// buildDeviceRequest is Base64DeviceRequest: a DocRequest for each
+// requested document, each signed by the first reader, and the whole
+// signed by each reader.
 func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
-	itemsRequestBytes, err := wrapTag24(itemsRequest{DocType: p.DocType, NameSpaces: p.Elements})
-	if err != nil {
-		return "", fmt.Errorf("mdocdcapi: encode ItemsRequest: %w", err)
-	}
-	docRequest := map[string]any{"itemsRequest": cbor.RawMessage(itemsRequestBytes)}
-	deviceRequest := map[string]any{"version": "1.0", "docRequests": []any{docRequest}}
-	if len(p.Readers) > 0 {
-		readerAuth, err := signReaderAuth(p.Readers[0], readerAuthentication(transcript, itemsRequestBytes))
+	docs := p.documents()
+	docRequests := make([]any, 0, len(docs))
+	items := make([][]byte, 0, len(docs))
+	for _, d := range docs {
+		itemsRequestBytes, err := wrapTag24(itemsRequest{DocType: d.DocType, NameSpaces: d.Elements})
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("mdocdcapi: encode ItemsRequest: %w", err)
 		}
-		docRequest["readerAuth"] = cbor.RawMessage(readerAuth)
+		docRequest := map[string]any{"itemsRequest": cbor.RawMessage(itemsRequestBytes)}
+		if len(p.Readers) > 0 {
+			readerAuth, err := signReaderAuth(p.Readers[0], readerAuthentication(transcript, itemsRequestBytes))
+			if err != nil {
+				return "", err
+			}
+			docRequest["readerAuth"] = cbor.RawMessage(readerAuth)
+		}
+		docRequests = append(docRequests, docRequest)
+		items = append(items, itemsRequestBytes)
+	}
+	deviceRequest := map[string]any{"version": "1.0", "docRequests": docRequests}
+	if len(p.Readers) > 0 {
 		all := make([]any, 0, len(p.Readers))
 		for _, r := range p.Readers {
-			sig, err := signReaderAuth(r, readerAuthenticationAll(transcript, [][]byte{itemsRequestBytes}, nil))
+			sig, err := signReaderAuth(r, readerAuthenticationAll(transcript, items, nil))
 			if err != nil {
 				return "", err
 			}

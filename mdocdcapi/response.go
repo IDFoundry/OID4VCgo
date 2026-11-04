@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/mdocresponse"
 	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -146,36 +147,10 @@ type encryptedResponseData struct {
 // Pending. Remove the Pending atomically before calling it, so each
 // request is answered at most once (see Pending).
 func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
-	if p.IssuerKeys == nil {
-		return Verified{}, errors.New("mdocdcapi: IssuerKeys is required")
+	if len(p.Pending.Documents) > 1 {
+		return Verified{}, fmt.Errorf("mdocdcapi: %d documents requested: use VerifyResponseDocuments", len(p.Pending.Documents))
 	}
-	if err := validIssuerKeys(p.IssuerKeys); err != nil {
-		return Verified{}, fmt.Errorf("mdocdcapi: IssuerKeys: %w", err)
-	}
-	if err := checkAssurance(p); err != nil {
-		return Verified{}, err
-	}
-	if err := checkPendingOrigin(p); err != nil {
-		return Verified{}, err
-	}
-	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
-		return Verified{}, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
-	}
-	if p.Pending.RecipientKey == nil || p.Pending.EncryptionInfo == "" || p.Pending.ExpiresAt.IsZero() {
-		return Verified{}, errors.New("mdocdcapi: Pending is incomplete")
-	}
-	now := time.Now
-	if p.Now != nil {
-		now = p.Now
-	}
-	if !now().Before(p.Pending.ExpiresAt) {
-		return Verified{}, ErrRequestExpired
-	}
-	transcript, err := sessionTranscript(p.Pending.EncryptionInfo, p.Pending.Origin)
-	if err != nil {
-		return Verified{}, err
-	}
-	deviceResponse, err := decrypt(p.Response, p.Pending.RecipientKey, transcript)
+	transcript, deviceResponse, err := openResponse(p)
 	if err != nil {
 		return Verified{}, err
 	}
@@ -183,10 +158,11 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	if doc.DocType != p.Pending.DocType {
-		return Verified{}, fmt.Errorf("mdocdcapi: the document is a %q, not the requested %q", doc.DocType, p.Pending.DocType)
+	req := p.Pending.documents()[0]
+	if doc.DocType != req.DocType {
+		return Verified{}, fmt.Errorf("mdocdcapi: the document is a %q, not the requested %q", doc.DocType, req.DocType)
 	}
-	verified, err := verifyDocument(ctx, p, doc, transcript)
+	verified, err := verifyDocument(ctx, p, doc, req, transcript)
 	if err != nil {
 		return Verified{}, err
 	}
@@ -202,6 +178,92 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 		}
 	}
 	return verified, nil
+}
+
+// VerifyResponseDocuments is VerifyResponse for a request of several
+// documents (RequestParams.Documents): it verifies each document of
+// the response as VerifyResponse does, against the request for its
+// type, checks each one's Status, then runs Accept once with them all,
+// and returns them in the response's order. The holder may answer any
+// of the requested documents and leave the others out, so check each
+// one you need came back. A document of a type not requested, or one
+// that doesn't verify, refuses the response. It verifies a
+// one-document request's response too.
+func VerifyResponseDocuments(ctx context.Context, p VerifyParams) ([]Verified, error) {
+	transcript, deviceResponse, err := openResponse(p)
+	if err != nil {
+		return nil, err
+	}
+	reqs := p.Pending.documents()
+	docs, err := mdocresponse.Unmarshal(deviceResponse, MaxResponseBytes, len(reqs))
+	if err != nil {
+		return nil, fmt.Errorf("mdocdcapi: %w", err)
+	}
+	out := make([]Verified, 0, len(docs))
+	credentials := make([]verifier.VerifiedCredential, 0, len(docs))
+	for _, doc := range docs {
+		i := slices.IndexFunc(reqs, func(r DocumentRequest) bool { return r.DocType == doc.DocType })
+		if i < 0 {
+			return nil, fmt.Errorf("mdocdcapi: the response has a %q document, which wasn't requested", doc.DocType)
+		}
+		verified, err := verifyDocument(ctx, p, doc, reqs[i], transcript)
+		if err != nil {
+			return nil, err
+		}
+		credential := verified.Credential()
+		if p.Status != nil {
+			if err := p.Status.Check(ctx, credential); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, verified)
+		credentials = append(credentials, credential)
+	}
+	if p.Accept != nil {
+		if err := p.Accept(ctx, "", verifier.VerifyResponseResult{Credentials: credentials}); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// openResponse checks p and decrypts its response, returning the
+// session transcript and the DeviceResponse.
+func openResponse(p VerifyParams) (transcript, deviceResponse []byte, err error) {
+	if p.IssuerKeys == nil {
+		return nil, nil, errors.New("mdocdcapi: IssuerKeys is required")
+	}
+	if err := validIssuerKeys(p.IssuerKeys); err != nil {
+		return nil, nil, fmt.Errorf("mdocdcapi: IssuerKeys: %w", err)
+	}
+	if err := checkAssurance(p); err != nil {
+		return nil, nil, err
+	}
+	if err := checkPendingOrigin(p); err != nil {
+		return nil, nil, err
+	}
+	if p.MaxClockSkew < 0 || p.MaxClockSkew > verifier.MaxAllowedClockSkew {
+		return nil, nil, fmt.Errorf("mdocdcapi: MaxClockSkew %s is outside 0..%s", p.MaxClockSkew, verifier.MaxAllowedClockSkew)
+	}
+	if p.Pending.RecipientKey == nil || p.Pending.EncryptionInfo == "" || p.Pending.ExpiresAt.IsZero() {
+		return nil, nil, errors.New("mdocdcapi: Pending is incomplete")
+	}
+	now := time.Now
+	if p.Now != nil {
+		now = p.Now
+	}
+	if !now().Before(p.Pending.ExpiresAt) {
+		return nil, nil, ErrRequestExpired
+	}
+	transcript, err = sessionTranscript(p.Pending.EncryptionInfo, p.Pending.Origin)
+	if err != nil {
+		return nil, nil, err
+	}
+	deviceResponse, err = decrypt(p.Response, p.Pending.RecipientKey, transcript)
+	if err != nil {
+		return nil, nil, err
+	}
+	return transcript, deviceResponse, nil
 }
 
 // checkAssurance refuses an Assurance that isn't a level, and under
@@ -381,7 +443,7 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 // verifyDocument checks doc's issuer signature and digests, its device
 // signature over transcript, and that it disclosed only requested
 // elements.
-func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document, transcript []byte) (Verified, error) {
+func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document, req DocumentRequest, transcript []byte) (Verified, error) {
 	protected, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: decode IssuerAuth: %w", err)
@@ -422,19 +484,19 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, mso.KeyAuthorizations); err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	if err := checkRequested(mso.NameSpaces, p.Pending.Elements); err != nil {
+	if err := checkRequested(mso.NameSpaces, req.Elements); err != nil {
 		return Verified{}, err
 	}
 	if p.IssuerAuthorized != nil {
 		if err := p.IssuerAuthorized(ctx, verifier.IssuerAuthorization{
-			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{p.Pending.DocType}, MatchedTypes: []string{mso.DocType},
+			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{req.DocType}, MatchedTypes: []string{mso.DocType},
 			IssuerChain: issuerChain,
 		}); err != nil {
 			return Verified{}, fmt.Errorf("mdocdcapi: issuer authorization: %w", err)
 		}
 	}
 	return Verified{
-		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, p.Pending.Elements), ValidityInfo: mso.ValidityInfo,
+		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, req.Elements), ValidityInfo: mso.ValidityInfo,
 		IssuerChain: issuerChain, Status: mso.Status,
 	}, nil
 }

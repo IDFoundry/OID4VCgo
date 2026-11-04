@@ -41,10 +41,11 @@ type ReaderSession struct {
 	issuerAuthorized       func(ctx context.Context, a verifier.IssuerAuthorization) error
 	status                 *verifier.StatusPolicy
 
-	docType   string
-	requested requestedSet
-	sent      bool
-	closed    bool
+	// requests are what the DeviceRequest asked for, one per document
+	// type, in its order.
+	requests []readerRequest
+	sent     bool
+	closed   bool
 }
 
 type readerConfig struct {
@@ -352,22 +353,60 @@ func (r *ReaderSession) BLEIdent() []byte { return bleIdent(r.engagement.eDevice
 // the mdoc's device authentication covers.
 func (r *ReaderSession) SessionTranscriptBytes() []byte { return r.sessionTranscriptBytes }
 
+// DocumentRequest is one document a reader asks for: its type, and its
+// elements by namespace.
+type DocumentRequest struct {
+	DocType  string
+	Elements map[string][]string
+}
+
+// readerRequest is a DocumentRequest as the reader checks the answer
+// against it.
+type readerRequest struct {
+	docType   string
+	requested requestedSet
+}
+
 // Establishment builds the reader's first message (§9.1.1.4): a
 // SessionEstablishment carrying EReaderKey and the encrypted
 // DeviceRequest for docType and elements (namespace → element
-// identifiers). Verify then accepts only these elements back.
+// identifiers). Verify then accepts only these elements back. It is
+// EstablishmentDocuments with one document.
 func (r *ReaderSession) Establishment(docType string, elements map[string][]string) ([]byte, error) {
+	return r.EstablishmentDocuments([]DocumentRequest{{DocType: docType, Elements: elements}})
+}
+
+// EstablishmentDocuments is Establishment asking for several documents
+// at once, a DocRequest each, in order: at most MaxDocRequests, each of
+// a different type. VerifyDocuments then accepts any of them back, each
+// with only its own elements.
+func (r *ReaderSession) EstablishmentDocuments(docs []DocumentRequest) ([]byte, error) {
 	if r.closed {
 		return nil, ErrSessionClosed
 	}
 	if r.sent {
 		return nil, fmt.Errorf("proximity: SessionEstablishment already sent")
 	}
+	if len(docs) == 0 {
+		return nil, fmt.Errorf("proximity: request at least one document")
+	}
+	if len(docs) > MaxDocRequests {
+		return nil, fmt.Errorf("proximity: %d documents requested, over %d", len(docs), MaxDocRequests)
+	}
+	requests := make([]readerRequest, 0, len(docs))
+	for i, d := range docs {
+		for _, prev := range docs[:i] {
+			if prev.DocType == d.DocType {
+				return nil, fmt.Errorf("proximity: %q requested twice", d.DocType)
+			}
+		}
+		requests = append(requests, readerRequest{docType: d.DocType, requested: newRequestedSet(d.Elements)})
+	}
 	var sign func([]byte) ([]byte, error)
 	if r.readerAuth != nil {
 		sign = func(items []byte) ([]byte, error) { return r.readerAuth.sign(r.sessionTranscriptBytes, items) }
 	}
-	req, err := encodeDeviceRequest(docType, elements, sign)
+	req, err := encodeDeviceRequestDocuments(docs, sign)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +414,7 @@ func (r *ReaderSession) Establishment(docType string, elements map[string][]stri
 	if err != nil {
 		return nil, err
 	}
-	r.docType, r.requested = docType, newRequestedSet(elements)
+	r.requests = requests
 	return msg, nil
 }
 
@@ -487,13 +526,33 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 // A reply carrying only status 20 is ErrDeclined; a DeviceResponse with
 // no documents is ErrNoDocument. Errors that wrap ErrSessionEncryption
 // or ErrCBORDecoding have a status reply (StatusFor). Any reply ends
-// the session, since this reader sends one request.
+// the session, since this reader sends one request. After
+// EstablishmentDocuments asked for more than one document, use
+// VerifyDocuments.
 func (r *ReaderSession) Verify(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) (Verified, error) {
+	if len(r.requests) > 1 {
+		return Verified{}, fmt.Errorf("proximity: %d documents requested: use VerifyDocuments", len(r.requests))
+	}
+	vs, err := r.VerifyDocuments(ctx, msg, roots, now)
+	if err != nil {
+		return Verified{}, err
+	}
+	return vs[0], nil
+}
+
+// VerifyDocuments is Verify for a request of several documents
+// (EstablishmentDocuments): it verifies each Document of the
+// DeviceResponse as Verify does, against the request for its type, and
+// returns them in the response's order. The holder may answer any of
+// the requested documents and leave the others out, so check each one
+// you need came back. A document of a type not requested, or a
+// document that doesn't verify, fails them all.
+func (r *ReaderSession) VerifyDocuments(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) ([]Verified, error) {
 	if r.closed {
-		return Verified{}, ErrSessionClosed
+		return nil, ErrSessionClosed
 	}
 	if !r.sent {
-		return Verified{}, fmt.Errorf("proximity: no request sent")
+		return nil, fmt.Errorf("proximity: no request sent")
 	}
 	r.closed = true
 	defer r.close()
@@ -501,40 +560,61 @@ func (r *ReaderSession) Verify(ctx context.Context, msg []byte, roots *x509.Cert
 		now = time.Now()
 	}
 	if r.assurance == verifier.AssuranceProduction && certchain.IsSystemPool(roots) {
-		return Verified{}, errors.New("proximity: under AssuranceProduction, roots is the system root pool: it anchors every public CA's certificates; trust the IACAs")
+		return nil, errors.New("proximity: under AssuranceProduction, roots is the system root pool: it anchors every public CA's certificates; trust the IACAs")
 	}
 
 	data, status, err := receive(r.cipher, msg)
 	if err != nil {
-		return Verified{}, err
+		return nil, err
 	}
 	if data == nil {
 		if *status == StatusSessionTermination {
-			return Verified{}, ErrDeclined
+			return nil, ErrDeclined
 		}
-		return Verified{}, fmt.Errorf("proximity: mdoc ended the session with status %d", *status)
+		return nil, fmt.Errorf("proximity: mdoc ended the session with status %d", *status)
 	}
-	doc, err := parseDeviceResponse(data)
+	docs, err := parseDeviceResponseDocuments(data, len(r.requests))
 	if err != nil {
-		return Verified{}, err
+		return nil, err
 	}
-	v, err := r.verifyDocument(ctx, doc, roots, now)
-	if err != nil {
-		return Verified{}, err
+	out := make([]Verified, 0, len(docs))
+	for _, doc := range docs {
+		req, err := r.requestFor(doc.docType)
+		if err != nil {
+			return nil, err
+		}
+		v, err := r.verifyDocument(ctx, doc, req, roots, now)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.authorize(ctx, v, req); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
 	}
-	if err := r.authorize(ctx, v); err != nil {
-		return Verified{}, err
+	return out, nil
+}
+
+// requestFor is the request for documents of docType.
+func (r *ReaderSession) requestFor(docType string) (readerRequest, error) {
+	for _, req := range r.requests {
+		if req.docType == docType {
+			return req, nil
+		}
 	}
-	return v, nil
+	if len(r.requests) == 1 {
+		return readerRequest{}, fmt.Errorf("proximity: document docType %q, requested %q", docType, r.requests[0].docType)
+	}
+	return readerRequest{}, fmt.Errorf("proximity: document docType %q wasn't requested", docType)
 }
 
 // authorize runs the reader's issuer authorization and status check on
-// v, a verified document.
-func (r *ReaderSession) authorize(ctx context.Context, v Verified) error {
+// v, a verified document answering req.
+func (r *ReaderSession) authorize(ctx context.Context, v Verified, req readerRequest) error {
 	credential := v.Credential()
 	if r.issuerAuthorized != nil {
 		if err := r.issuerAuthorized(ctx, verifier.IssuerAuthorization{
-			Format: mdoc.CredentialFormat, Type: v.DocType, RequestedTypes: []string{r.docType}, MatchedTypes: []string{v.DocType},
+			Format: mdoc.CredentialFormat, Type: v.DocType, RequestedTypes: []string{req.docType}, MatchedTypes: []string{v.DocType},
 			IssuerChain: credential.IssuerChain, Claims: credential.Claims,
 		}); err != nil {
 			return fmt.Errorf("proximity: issuer authorization: %w", err)
@@ -548,9 +628,9 @@ func (r *ReaderSession) authorize(ctx context.Context, v Verified) error {
 	return nil
 }
 
-func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument, roots *x509.CertPool, now time.Time) (Verified, error) {
-	if doc.docType != r.docType {
-		return Verified{}, fmt.Errorf("proximity: document docType %q, requested %q", doc.docType, r.docType)
+func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument, req readerRequest, roots *x509.CertPool, now time.Time) (Verified, error) {
+	if doc.docType != req.docType {
+		return Verified{}, fmt.Errorf("proximity: document docType %q, requested %q", doc.docType, req.docType)
 	}
 
 	// The size credential/mdoc verifies IssuerAuth up to.
@@ -590,7 +670,7 @@ func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument
 	if err != nil {
 		return Verified{}, fmt.Errorf("proximity: document signer key: %w", err)
 	}
-	verified, err := mdoc.Verify(doc.issuerSigned, r.docType, leaf.PublicKey, issuerAlg, mdoc.VerifyOptions{
+	verified, err := mdoc.Verify(doc.issuerSigned, req.docType, leaf.PublicKey, issuerAlg, mdoc.VerifyOptions{
 		Now: func() time.Time { return now }, MaxClockSkew: r.maxClockSkew,
 	})
 	if err != nil {
@@ -609,7 +689,7 @@ func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument
 		if err != nil {
 			return Verified{}, fmt.Errorf("proximity: MSO device key: %w", err)
 		}
-		if err := mdoc.VerifyDeviceSignature(doc.deviceSigned, verified.DeviceKey, alg, r.sessionTranscriptBytes, r.docType); err != nil {
+		if err := mdoc.VerifyDeviceSignature(doc.deviceSigned, verified.DeviceKey, alg, r.sessionTranscriptBytes, req.docType); err != nil {
 			return Verified{}, fmt.Errorf("proximity: %w", err)
 		}
 	case mdoc.DeviceAuthMAC:
@@ -617,7 +697,7 @@ func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument
 		if !ok {
 			return Verified{}, fmt.Errorf("proximity: DeviceMAC needs an EC device key, the MSO has %T", verified.DeviceKey)
 		}
-		if err := mdoc.VerifyDeviceMAC(doc.deviceSigned, deviceKey, r.eReaderKey, r.sessionTranscriptBytes, r.docType); err != nil {
+		if err := mdoc.VerifyDeviceMAC(doc.deviceSigned, deviceKey, r.eReaderKey, r.sessionTranscriptBytes, req.docType); err != nil {
 			return Verified{}, fmt.Errorf("proximity: %w", err)
 		}
 	default:
@@ -627,10 +707,10 @@ func (r *ReaderSession) verifyDocument(ctx context.Context, doc responseDocument
 		return Verified{}, fmt.Errorf("proximity: %w", err)
 	}
 
-	if extra := r.requested.unrequested(verified.NameSpaces); len(extra) > 0 {
+	if extra := req.requested.unrequested(verified.NameSpaces); len(extra) > 0 {
 		return Verified{}, fmt.Errorf("proximity: response carries unrequested elements %v", extra)
 	}
-	if extra := r.requested.unrequested(doc.deviceSigned.NameSpaces); len(extra) > 0 {
+	if extra := req.requested.unrequested(doc.deviceSigned.NameSpaces); len(extra) > 0 {
 		return Verified{}, fmt.Errorf("proximity: response carries unrequested device-signed elements %v", extra)
 	}
 

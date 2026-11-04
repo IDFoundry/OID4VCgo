@@ -68,7 +68,22 @@ const (
 	MdocConfigurationID  = "test_mdoc"
 	DocType              = "org.example.test.1"
 	NameSpace            = "org.example.test.1"
+	// MdocConfigurationID2 and MdocConfigurationID3 issue mdocs of two
+	// more document types, each with the same elements in its own
+	// namespace, for a request asking for several documents at once.
+	MdocConfigurationID2 = "test_mdoc_2"
+	DocType2             = "org.example.test.2"
+	NameSpace2           = "org.example.test.2"
+	MdocConfigurationID3 = "test_mdoc_3"
+	DocType3             = "org.example.test.3"
+	NameSpace3           = "org.example.test.3"
 )
+
+// mdocDocTypes are the mdoc configurations' document types, which are
+// their namespaces too.
+var mdocDocTypes = map[string]string{
+	MdocConfigurationID: DocType, MdocConfigurationID2: DocType2, MdocConfigurationID3: DocType3,
+}
 
 // The wallet's registration with the Authorization Server.
 const (
@@ -281,7 +296,7 @@ func New(opts Options) (env *Env, err error) {
 	for _, u := range opts.RedirectURIs {
 		clientCfg.RedirectURIs = append(clientCfg.RedirectURIs, fapi.RegisteredRedirectURI(u))
 	}
-	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, "offline_access"}
+	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, MdocConfigurationID2, MdocConfigurationID3, "offline_access"}
 	if opts.CredentialAuthorizationDetails {
 		asCfg.RAR, err = extension.NewRARRegistry(credentialAuthorizationDetailsBytes, credentialAuthorizationDetailsDepth,
 			credentialAuthorizationDetail)
@@ -398,6 +413,16 @@ func New(opts Options) (env *Env, err error) {
 				CryptographicBindingMethodsSupported: []string{"cose_key"}, ProofTypesSupported: proofTypes,
 				CredentialMetadata: credentialDisplay(MdocName),
 			},
+			MdocConfigurationID2: {
+				Format: mdoc.CredentialFormat, DocType: DocType2, Scope: MdocConfigurationID2,
+				CryptographicBindingMethodsSupported: []string{"cose_key"}, ProofTypesSupported: proofTypes,
+				CredentialMetadata: credentialDisplay(MdocName + " 2"),
+			},
+			MdocConfigurationID3: {
+				Format: mdoc.CredentialFormat, DocType: DocType3, Scope: MdocConfigurationID3,
+				CryptographicBindingMethodsSupported: []string{"cose_key"}, ProofTypesSupported: proofTypes,
+				CredentialMetadata: credentialDisplay(MdocName + " 3"),
+			},
 		},
 	}, issuer.Dependencies{
 		Nonces: oid4vcgostorage.NewNonceStore(), DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
@@ -429,7 +454,7 @@ func New(opts Options) (env *Env, err error) {
 				req.Defer = &issuer.Deferral{}
 				return nil, nil
 			}
-			req.SDJWTClaims, req.MdocClaims = e.claims()
+			req.SDJWTClaims, req.MdocClaims = e.claims(req.ResolvedConfigurationID)
 			req.PerCredential = e.withStatus
 			return nil, nil
 		},
@@ -731,7 +756,13 @@ func (e *Env) Notifications() []oid4vci.NotificationEvent {
 	return append([]oid4vci.NotificationEvent(nil), e.notifications...)
 }
 
-func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
+// claims are the SD-JWT VC's claims, and the mdoc's for the mdoc
+// configuration configurationID: DocType's for any other.
+func (e *Env) claims(configurationID string) (*sdjwtvc.Claims, *mdoc.Claims) {
+	docType, ok := mdocDocTypes[configurationID]
+	if !ok {
+		docType = DocType
+	}
 	// Rounded to the start of the day, so 48 hours: with 24, one issued
 	// just before midnight UTC expires minutes later.
 	exp := sdjwtvc.RoundedExp(time.Now(), 48*time.Hour)
@@ -747,8 +778,8 @@ func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
 	// validity (newLeaf: a day and an hour back, three days ahead).
 	signed, validFrom, validUntil := mdoc.RoundedValidity(time.Now(), 48*time.Hour)
 	mdocClaims := &mdoc.Claims{
-		DocType: DocType, Signed: signed, ValidFrom: validFrom, ValidUntil: validUntil,
-		NameSpaces: map[string]map[string]any{NameSpace: {"family_name": FamilyName, "given_name": GivenName, "portrait": Portrait}},
+		DocType: docType, Signed: signed, ValidFrom: validFrom, ValidUntil: validUntil,
+		NameSpaces: map[string]map[string]any{docType: {"family_name": FamilyName, "given_name": GivenName, "portrait": Portrait}},
 	}
 	return sdjwtClaims, mdocClaims
 }
@@ -763,7 +794,7 @@ func (e *Env) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	case !*decision:
 		return e.iss.DenyDeferredCredential(ctx, transactionID)
 	}
-	sdjwtClaims, mdocClaims := e.claims()
+	sdjwtClaims, mdocClaims := e.claims(MdocConfigurationID)
 	return e.iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims, PerCredential: e.withStatus,
 	})
