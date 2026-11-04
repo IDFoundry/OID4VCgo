@@ -115,7 +115,7 @@ func (a *App) CreateOffer(ctx context.Context, e passport.Evidence, opts OfferOp
 		}
 		return Offer{URI: uri, IssuerState: txID, ConfirmationCode: code, PreAuthorized: true, KeptForRefresh: opts.KeepForRefresh}, nil
 	}
-	result, err := a.issuer.CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
+	result, err := a.iss().CreateCredentialOffer(ctx, issuer.CreateCredentialOfferRequest{
 		CredentialConfigurationIDs: configIDs,
 		Grants: &oid4vci.Grants{
 			AuthorizationCode: &oid4vci.GrantAuthorizationCode{IssuerState: txID},
@@ -127,7 +127,7 @@ func (a *App) CreateOffer(ctx context.Context, e passport.Evidence, opts OfferOp
 	return Offer{URI: result.URI, IssuerState: txID, ConfirmationCode: code, KeptForRefresh: opts.KeepForRefresh}, nil
 }
 
-func (a *App) routes(credentialHandler, deferredHandler, notificationHandler http.Handler) http.Handler {
+func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	// The pages people use — uploading a passport, and the operator's
 	// review, status and kept-passport pages — are all under /demo/, so
@@ -150,6 +150,7 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("GET /demo/review/decision", redirectTo("/demo/review"))
 	mux.HandleFunc("GET /demo/kept/forget", redirectTo("/demo/kept"))
 	mux.HandleFunc("GET /demo/status/revoke", redirectTo("/demo/status"))
+	mux.HandleFunc("GET /demo/signer/revoke", redirectTo("/demo/status"))
 
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", a.handleASMetadata)
 	mux.HandleFunc("GET /.well-known/openid-configuration", a.handleASMetadata)
@@ -160,23 +161,29 @@ func (a *App) routes(credentialHandler, deferredHandler, notificationHandler htt
 	mux.HandleFunc("POST /token", a.handleToken)
 	mux.HandleFunc("POST /revoke", a.handleTokenRevocation)
 
-	mux.Handle("GET /.well-known/openid-credential-issuer", a.metadataHandler)
+	// These are the current document signer's: a new one replaces them
+	// (RevokeDocumentSigner).
+	signed := func(h func(*signing) http.Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { h(a.current()).ServeHTTP(w, r) }
+	}
+	mux.Handle("GET /.well-known/openid-credential-issuer", signed(func(s *signing) http.Handler { return s.metadata }))
 	mux.HandleFunc("GET "+VCTPath, a.handleVCTMetadata)
 	mux.HandleFunc("POST /nonce", a.handleNonce)
-	mux.Handle("POST /credential", credentialHandler)
-	mux.Handle("POST /deferred_credential", deferredHandler)
-	mux.Handle("POST /notification", notificationHandler)
+	mux.Handle("POST /credential", signed(func(s *signing) http.Handler { return s.credential }))
+	mux.Handle("POST /deferred_credential", signed(func(s *signing) http.Handler { return s.deferred }))
+	mux.Handle("POST /notification", signed(func(s *signing) http.Handler { return s.notification }))
 	mux.HandleFunc("GET /demo/review", a.handleReviewPage)
 	mux.HandleFunc("GET /demo/review/status", a.handleReviewStatus)
 	mux.HandleFunc("POST /demo/review/decision", a.handleReviewDecision)
 	mux.HandleFunc("GET /demo/kept", a.handleKeptPage)
 	mux.HandleFunc("POST /demo/kept/forget", a.handleForget)
 
-	jwtList, cwtList := a.statusPublishers()
-	mux.Handle("GET "+StatusListPath, jwtList)
-	mux.Handle("GET "+MdocStatusListPath, cwtList)
+	mux.Handle("GET "+StatusListPath, signed(func(s *signing) http.Handler { return s.jwtList }))
+	mux.Handle("GET "+MdocStatusListPath, signed(func(s *signing) http.Handler { return s.cwtList }))
 	mux.HandleFunc("GET /demo/status", a.handleStatusPage)
 	mux.HandleFunc("POST /demo/status/revoke", a.handleRevoke)
+	mux.HandleFunc("POST /demo/signer/revoke", a.handleRevokeSigner)
+	mux.Handle("GET "+CRLPath, a.crl)
 	return mux
 }
 

@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"flag"
@@ -69,6 +70,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Keeps the issuer CA's CRL current, so a revoked document signer's
+	// credentials are refused.
+	go app.RunIssuerCRLRefresh(context.Background())
 	writeCertificate(*caOut, app.VerifierCACertificate())
 	log.Printf("wrote the demo verifier CA certificate to %s for wallets to trust", *caOut)
 	writeCertificate(*registrarOut, app.RegistrarCACertificate())

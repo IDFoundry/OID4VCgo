@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -25,24 +26,29 @@ import (
 // identities are the verifier's request-signing identities: one per
 // scenario, each a key and a certificate naming the scenario's relying
 // party, issued by the verifier CA wallets trust, or for an untrusted
-// scenario by a CA they don't. The CA keys are discarded once the
-// certificates are made (HAIP 1.0 §5: the certificate signing a request
-// must not be self-signed); a certificate's hash is its scenario's
-// x509_hash client identifier.
+// scenario by a CA they don't (HAIP 1.0 §5: the certificate signing a
+// request must not be self-signed); a certificate's hash is its
+// scenario's x509_hash client identifier. The CAs wallets trust — the
+// verifier, registrar and mdoc reader CAs — keep their keys, to sign
+// the CRLs their certificates name (crl.go); the untrusted CA's key is
+// discarded once its certificates are made.
 type identities struct {
 	ca, untrustedCA *x509.Certificate
+	caKey           *ecdsa.PrivateKey
 	signers         map[Scenario]signer
 	// registrar registers the trusted scenarios' relying parties
 	// (registrations), under registrarCA, which wallets trust for that.
-	registrarCA *x509.Certificate
-	registrar   signer
+	registrarCA    *x509.Certificate
+	registrarCAKey *ecdsa.PrivateKey
+	registrar      signer
 	// readerCA issues the trusted scenarios' mdoc reader authentication
 	// certificates, which sign their org-iso-mdoc requests; an untrusted
 	// scenario's is the untrusted CA's. Each has the ISO/IEC 18013-5
 	// reader authentication extended key usage, and none is an OpenID4VP
 	// request signer's.
-	readerCA *x509.Certificate
-	readers  map[Scenario]signer
+	readerCA    *x509.Certificate
+	readerCAKey *ecdsa.PrivateKey
+	readers     map[Scenario]signer
 }
 
 // readerAuthenticationEKU is ISO/IEC 18013-5 Annex B's mdoc reader
@@ -77,14 +83,18 @@ const (
 // identities are replaced with new ones.
 const renewBefore = 30 * 24 * time.Hour
 
-// loadIdentities returns the verifier's identities: kept in dir when
-// set, so wallets that trust its CA still do after a restart; generated
-// afresh otherwise. Saved ones are replaced, all together, when any
-// scenario's is missing or names another relying party, or a
-// certificate expires within renewBefore.
-func loadIdentities(dir string, now time.Time) (identities, error) {
+// loadIdentities returns the verifier's identities, their trusted CAs'
+// certificates naming CRL distribution points under base (the
+// VerifierURL): kept in dir when set, so wallets that trust its CA
+// still do after a restart; generated afresh otherwise. Saved ones are
+// replaced, all together, when any scenario's is missing or names
+// another relying party, a certificate expires within renewBefore, or
+// a trusted CA has no key or names no distribution point under base —
+// for identities from before the CAs published CRLs, a one-time
+// migration, logged.
+func loadIdentities(dir string, now time.Time, base string) (identities, error) {
 	if dir == "" {
-		return newIdentities(now)
+		return newIdentities(now, base)
 	}
 	path := filepath.Join(dir, identityFile)
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied state directory
@@ -94,13 +104,17 @@ func loadIdentities(dir string, now time.Time) (identities, error) {
 		if err != nil {
 			return identities{}, fmt.Errorf("verifierapp: %s: %w", path, err)
 		}
-		if ids.current(now) {
+		if !ids.current(now) {
+			break
+		}
+		if ids.publishesCRLs(base) {
 			return ids, nil
 		}
+		log.Printf("verifierapp: %s: its CAs have no keys or don't name CRL distribution points under %s (from before the demo verifier published CRLs); replacing them with new CAs: wallets that trust the old ones need the new verifier-ca.pem, mdoc-reader-ca.pem and registrar-ca.pem", path, base)
 	case !errors.Is(err, fs.ErrNotExist):
 		return identities{}, fmt.Errorf("verifierapp: read %s: %w", path, err)
 	}
-	ids, err := newIdentities(now)
+	ids, err := newIdentities(now, base)
 	if err != nil {
 		return identities{}, err
 	}
@@ -142,32 +156,48 @@ func (ids identities) current(now time.Time) bool {
 	return true
 }
 
+// publishesCRLs reports whether each of ids' trusted CAs has its key,
+// to sign its CRL with, and names its distribution point under base.
+func (ids identities) publishesCRLs(base string) bool {
+	for path, ca := range map[string]signer{
+		VerifierCRLPath:  {cert: ids.ca, key: ids.caKey},
+		ReaderCRLPath:    {cert: ids.readerCA, key: ids.readerCAKey},
+		RegistrarCRLPath: {cert: ids.registrarCA, key: ids.registrarCAKey},
+	} {
+		if ca.key == nil || ca.cert.KeyUsage&x509.KeyUsageCRLSign == 0 || !slices.Equal(ca.cert.CRLDistributionPoints, []string{base + path}) {
+			return false
+		}
+	}
+	return true
+}
+
 // newIdentities generates a trusted and an untrusted CA, and an identity
-// for each scenario under the one its trust calls for.
-func newIdentities(now time.Time) (identities, error) {
+// for each scenario under the one its trust calls for. The trusted CAs
+// name distribution points under base for their CRLs.
+func newIdentities(now time.Time, base string) (identities, error) {
 	ids := identities{signers: map[Scenario]signer{}, readers: map[Scenario]signer{}}
-	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA")
+	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA", base+VerifierCRLPath)
 	if err != nil {
 		return identities{}, err
 	}
-	untrustedCA, untrustedKey, err := newCA(now, "passport-vdc demo untrusted verifier CA")
+	untrustedCA, untrustedKey, err := newCA(now, "passport-vdc demo untrusted verifier CA", "")
 	if err != nil {
 		return identities{}, err
 	}
-	ids.ca, ids.untrustedCA = ca, untrustedCA
-	registrarCA, registrarCAKey, err := newCA(now, "passport-vdc demo registrar CA")
+	ids.ca, ids.caKey, ids.untrustedCA = ca, caKey, untrustedCA
+	registrarCA, registrarCAKey, err := newCA(now, "passport-vdc demo registrar CA", base+RegistrarCRLPath)
 	if err != nil {
 		return identities{}, err
 	}
-	ids.registrarCA = registrarCA
+	ids.registrarCA, ids.registrarCAKey = registrarCA, registrarCAKey
 	if ids.registrar, err = newSigner(now, "passport-vdc demo registrar", registrarCA, registrarCAKey, registrarID); err != nil {
 		return identities{}, err
 	}
-	readerCA, readerCAKey, err := newCA(now, "passport-vdc demo mdoc reader CA")
+	readerCA, readerCAKey, err := newCA(now, "passport-vdc demo mdoc reader CA", base+ReaderCRLPath)
 	if err != nil {
 		return identities{}, err
 	}
-	ids.readerCA = readerCA
+	ids.readerCA, ids.readerCAKey = readerCA, readerCAKey
 	for _, s := range Scenarios {
 		info, _ := s.Info()
 		parent, parentKey := ca, caKey
@@ -190,7 +220,8 @@ func newIdentities(now time.Time) (identities, error) {
 
 // newReader generates an mdoc reader authentication key and certificate
 // naming name, issued by parent, with the reader authentication
-// extended key usage.
+// extended key usage, and parent's CRL distribution points (those of
+// its CRL), if any.
 func newReader(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (signer, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -200,6 +231,7 @@ func newReader(now time.Time, name string, parent *x509.Certificate, parentKey *
 		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{readerAuthenticationEKU},
+		CRLDistributionPoints: parent.CRLDistributionPoints,
 	}, parent, &key.PublicKey, parentKey)
 	if err != nil {
 		return signer{}, fmt.Errorf("verifierapp: %w", err)
@@ -210,7 +242,7 @@ func newReader(now time.Time, name string, parent *x509.Certificate, parentKey *
 // newSigner generates a signing key and a certificate naming name,
 // issued by parent, with uri as its URI subject alternative name when
 // set (a registrar's identifier, which its registrations' iss must
-// match).
+// match), and parent's CRL distribution points, if any.
 func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, uri string) (signer, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -219,7 +251,8 @@ func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *
 	tmpl := &x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
-		KeyUsage: x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		CRLDistributionPoints: parent.CRLDistributionPoints,
 	}
 	if uri != "" {
 		u, err := url.Parse(uri)
@@ -235,16 +268,24 @@ func newSigner(now time.Time, name string, parent *x509.Certificate, parentKey *
 	return signer{key: key, cert: cert}, nil
 }
 
-func newCA(now time.Time, name string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+// newCA generates a self-signed CA certificate naming name and its key.
+// With crlURL set, the CA signs a CRL served there, which its
+// certificate names as its distribution point.
+func newCA(now time.Time, name, crlURL string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("verifierapp: CA key: %w", err)
 	}
-	cert, err := democert.Create(&x509.Certificate{
+	tmpl := &x509.Certificate{
 		Subject:   pkix.Name{CommonName: name, Organization: []string{demoOrganization}},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0),
 		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true,
-	}, nil, &key.PublicKey, key)
+	}
+	if crlURL != "" {
+		tmpl.KeyUsage |= x509.KeyUsageCRLSign
+		tmpl.CRLDistributionPoints = []string{crlURL}
+	}
+	cert, err := democert.Create(tmpl, nil, &key.PublicKey, key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("verifierapp: %w", err)
 	}
@@ -253,6 +294,16 @@ func newCA(now time.Time, name string) (*x509.Certificate, *ecdsa.PrivateKey, er
 
 func (ids identities) encode() ([]byte, error) {
 	var out []byte
+	for _, ca := range []struct {
+		role string
+		key  *ecdsa.PrivateKey
+	}{{roleCA, ids.caKey}, {roleRegistrarCA, ids.registrarCAKey}, {roleReaderCA, ids.readerCAKey}} {
+		der, err := x509.MarshalECPrivateKey(ca.key)
+		if err != nil {
+			return nil, fmt.Errorf("verifierapp: encode %s key: %w", ca.role, err)
+		}
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: map[string]string{roleHeader: ca.role}, Bytes: der})...)
+	}
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleCA}, Bytes: ids.ca.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleUntrustedCA}, Bytes: ids.untrustedCA.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleRegistrarCA}, Bytes: ids.registrarCA.Raw})...)
@@ -282,10 +333,12 @@ func (ids identities) encode() ([]byte, error) {
 	return out, nil
 }
 
-// parseIdentities reads an identityFile: the two CA certificates, and
-// for each scenario a key with its certificate, which must be for that
-// key and issued by the CA the scenario's trust calls for. A scenario
-// with no identity in it is left out, for current to catch.
+// parseIdentities reads an identityFile: the CA certificates, with the
+// trusted CAs' keys (missing in a file from before they kept them, for
+// publishesCRLs to catch, but each there must be its CA's), and for
+// each scenario a key with its certificate, which must be for that key
+// and issued by the CA the scenario's trust calls for. A scenario with
+// no identity in it is left out, for current to catch.
 func parseIdentities(data []byte) (identities, error) {
 	certs, keys, err := decodeBlocks(data)
 	if err != nil {
@@ -294,11 +347,17 @@ func parseIdentities(data []byte) (identities, error) {
 	ids := identities{
 		signers: map[Scenario]signer{}, readers: map[Scenario]signer{},
 		ca: certs[roleCA], untrustedCA: certs[roleUntrustedCA], registrarCA: certs[roleRegistrarCA], readerCA: certs[roleReaderCA],
+		caKey: keys[roleCA], registrarCAKey: keys[roleRegistrarCA], readerCAKey: keys[roleReaderCA],
 	}
 	if ids.ca == nil || ids.untrustedCA == nil {
 		// An older layout (one CA, one request signer): not current, so
 		// replaced, rather than an error.
 		return identities{signers: map[Scenario]signer{}}, nil
+	}
+	for _, ca := range []signer{{cert: ids.ca, key: ids.caKey}, {cert: ids.registrarCA, key: ids.registrarCAKey}, {cert: ids.readerCA, key: ids.readerCAKey}} {
+		if ca.key != nil && (ca.cert == nil || !ca.key.PublicKey.Equal(ca.cert.PublicKey)) {
+			return identities{}, errors.New("a CA key isn't its CA certificate's")
+		}
 	}
 	if ids.registrarCA != nil || certs[roleRegistrar] != nil {
 		r := signer{key: keys[roleRegistrar], cert: certs[roleRegistrar]}

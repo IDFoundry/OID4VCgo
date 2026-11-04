@@ -25,7 +25,9 @@ func (a *App) statusPolicy() *verifier.StatusPolicy {
 		// its own machine, and production assurance refuses it.
 		Fetcher: statuslist.Fetcher{HTTP: a.cfg.HTTP, AllowLoopback: true},
 		Roots:   a.issuerRoots,
-		Options: statuslist.VerifyOptions{Now: a.now},
+		// The list's signer, the issuer's document signer, is checked
+		// against its CA's CRL as the credential's is.
+		Options: statuslist.VerifyOptions{Now: a.now, Revocation: a.issuerCRLs},
 		Cache:   a.statusCache,
 	}}
 }

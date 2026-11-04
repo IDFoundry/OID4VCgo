@@ -2,7 +2,9 @@ package issuerapp
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"log"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -186,15 +189,15 @@ func (a *App) withStatus(c *issuer.CredentialInstance, idx int) {
 }
 
 // statusPublishers serve the Status List Token at uri and mdocURI,
-// signed by the document signer with its certificate in the token's
-// x5c/x5chain (HAIP 1.0), in the form the Accept header asks for. When
-// it names neither, the first serves a JWT (SD-JWT VC requires a JWT
-// Status List Token) and the second a CWT (an mdoc's). A token's sub is
-// its URI, so each URI has its own Publisher.
-func (a *App) statusPublishers() (jwt, cwt *statuslist.Publisher) {
+// signed by the document signer key with its certificate cert in the
+// token's x5c/x5chain (HAIP 1.0), in the form the Accept header asks
+// for. When it names neither, the first serves a JWT (SD-JWT VC
+// requires a JWT Status List Token) and the second a CWT (an mdoc's). A
+// token's sub is its URI, so each URI has its own Publisher.
+func (a *App) statusPublishers(key *ecdsa.PrivateKey, cert *x509.Certificate) (jwt, cwt *statuslist.Publisher) {
 	publisher := func(uri string, form statuslist.Form) *statuslist.Publisher {
 		return &statuslist.Publisher{
-			URI: uri, Signer: a.documentSigner, Chain: a.documentChain(),
+			URI: uri, Signer: key, Chain: documentChain(cert),
 			Statuses: func(context.Context) ([]uint8, error) {
 				revoked, _ := a.statusList.snapshot()
 				return revoked, nil
@@ -203,11 +206,7 @@ func (a *App) statusPublishers() (jwt, cwt *statuslist.Publisher) {
 			Lifetime:    statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
 		}
 	}
-	a.publishers = []*statuslist.Publisher{
-		publisher(a.statusListURI, statuslist.FormJWT),
-		publisher(a.mdocStatusListURI, statuslist.FormCWT),
-	}
-	return a.publishers[0], a.publishers[1]
+	return publisher(a.statusListURI, statuslist.FormJWT), publisher(a.mdocStatusListURI, statuslist.FormCWT)
 }
 
 type statusPage struct {
@@ -215,6 +214,11 @@ type statusPage struct {
 	URI           string
 	Entries       []IssuedStatus
 	Notifications []NotificationEvent
+	// Signer is the current document signer, CRLURL where its CA
+	// serves its CRL, and RevokedSigners the signers it has revoked.
+	Signer         signerInfo
+	CRLURL         string
+	RevokedSigners []democrl.Revoked
 }
 
 var statusTemplate = parsePage("status", pageHead+`</head><body>
@@ -246,6 +250,23 @@ var statusTemplate = parsePage("status", pageHead+`</head><body>
 {{else}}
 <p class="card empty">None yet.</p>
 {{end}}
+<h2 id="signer">Document signer</h2>
+<p>Every credential, and the status list, is signed by the issuer's document signer, which the demo CA certified. The CA publishes a Certificate Revocation List at <code>{{.CRLURL}}</code>, the distribution point its certificates name. Revoking the document signer adds it to that list and has the CA certify a new one: credentials issued from then on verify as before, while every credential the revoked signer signed is refused by each verifier, or phone, that has fetched the list since.</p>
+<div class="card">
+<dl class="facts"><dt>Serial number</dt><dd><code>{{.Signer.Serial}}</code></dd><dt>Valid until</dt><dd>{{.Signer.NotAfter}}</dd></dl>
+<details class="confirm"><summary class="btn secondary danger"><span class="when-closed">Revoke document signer…</span><span class="when-open">Cancel</span></summary>
+<form method="post" action="/demo/signer/revoke">
+<p class="note">Revoking can't be undone: every credential this signer signed is refused from then on, and its holders have to receive them again.</p>
+<button class="btn danger">Confirm revoke</button></form>
+</details>
+</div>
+{{if .RevokedSigners}}
+<h3>Revoked document signers</h3>
+<ul class="entries">
+{{range .RevokedSigners}}<li class="card entry"><p class="badges"><span class="badge bad">✗ Revoked</span></p>
+<dl class="facts"><dt>Serial number</dt><dd><code>{{.Serial}}</code></dd><dt>Revoked</dt><dd><time datetime="{{.RevokedAt.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.RevokedAt.UTC.Format "2006-01-02 15:04"}} UTC</time></dd></dl></li>
+{{end}}</ul>
+{{end}}
 <p class="note">Demo only: anyone who can reach this page can revoke. Entries record no passport data, and don't show the credentials' status list indices. They're kept across restarts only under <code>cmd/demo</code>.</p>
 </main>
 `+pageFoot)
@@ -260,6 +281,7 @@ func (a *App) IssuedStatuses() []IssuedStatus {
 func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
 	renderPage(w, http.StatusOK, statusTemplate, statusPage{
 		Header: a.header(pathStatus), URI: a.statusListURI, Entries: a.IssuedStatuses(), Notifications: a.Notifications(),
+		Signer: a.signerInfo(), CRLURL: a.crlURL, RevokedSigners: a.RevokedSigners(),
 	}, true)
 }
 
@@ -274,7 +296,8 @@ func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		a.writeHTMLError(w, http.StatusBadRequest, "unknown credential")
 		return
 	}
-	for _, p := range a.publishers {
+	s := a.current()
+	for _, p := range []*statuslist.Publisher{s.jwtList, s.cwtList} {
 		p.Invalidate() // serve the revocation at once
 	}
 	if a.cfg.OnRevoke != nil {

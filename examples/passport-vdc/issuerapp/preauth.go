@@ -66,7 +66,7 @@ func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
 // CreatePreAuthorizedOffer generates the code and derives the offer's
 // tx_code from the PIN it stores, so the two can't disagree.
 func (a *App) preAuthorizedOffer(ctx context.Context, txID, pin string, configIDs []string) (string, error) {
-	result, err := a.issuer.CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
+	result, err := a.iss().CreatePreAuthorizedOffer(ctx, issuer.CreatePreAuthorizedOfferRequest{
 		CredentialConfigurationIDs: configIDs, Scopes: []string{MdocScope, SDJWTScope}, Subject: txID,
 		TxCode: pin, TxCodeDescription: preAuthorizedCodeTxCodeDescription, Lifetime: a.cfg.transactionLifetime(),
 	})
@@ -147,7 +147,7 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 		issuerError(w, err)
 		return
 	}
-	redeemed, err := a.issuer.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
+	redeemed, err := a.iss().RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
 		Verified: &issuer.VerifiedTokenRequest{ClientID: clientID, DPoPThumbprint: binding.Thumbprint},
 	})

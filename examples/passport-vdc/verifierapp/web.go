@@ -30,10 +30,14 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	// The pages people use are all under /demo/, so one access rule
 	// (Cloudflare Access on the path, say) can guard them; /s/ is the
-	// OpenID4VP surface wallets call, which must stay reachable.
+	// OpenID4VP surface wallets call, which must stay reachable, as must
+	// the CAs' CRLs.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/demo/", http.StatusSeeOther)
 	})
+	for path, list := range a.crls {
+		mux.Handle("GET "+path, list)
+	}
 	mux.HandleFunc("GET /demo/{$}", a.handleHome)
 	mux.HandleFunc("POST /demo/requests", a.handleCreateRequest)
 	mux.HandleFunc("GET /demo/requests/{id}", a.handleRequestPage)

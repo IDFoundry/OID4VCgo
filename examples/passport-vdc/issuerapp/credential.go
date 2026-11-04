@@ -15,7 +15,7 @@ import (
 )
 
 func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
-	result, err := a.issuer.RequestNonce(r.Context())
+	result, err := a.iss().RequestNonce(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -26,12 +26,12 @@ func (a *App) handleNonce(w http.ResponseWriter, r *http.Request) {
 // credentialHandler serves the Credential Endpoint: issuer.CredentialHandler
 // checks the DPoP-bound access token, and prepareCredential decides
 // what to issue.
-func (a *App) credentialHandler() (http.Handler, error) {
+func (a *App) credentialHandler(iss *issuer.Issuer) (http.Handler, error) {
 	tokens, err := fapiresource.New(a.resourceVerifier)
 	if err != nil {
 		return nil, fmt.Errorf("issuerapp: access token verifier: %w", err)
 	}
-	h, err := a.issuer.CredentialHandler(issuer.CredentialHandlerConfig{
+	h, err := iss.CredentialHandler(issuer.CredentialHandlerConfig{
 		URL: &a.credentialURL, Tokens: tokens, Prepare: a.prepareCredential,
 	})
 	if err != nil {
@@ -44,19 +44,19 @@ func (a *App) credentialHandler() (http.Handler, error) {
 // polls resolveDeferred answers, and the Notification Endpoint, whose
 // events the /status page shows. Both check the access token as the
 // Credential Endpoint does.
-func (a *App) protectedHandlers() (deferred, notification http.Handler, err error) {
+func (a *App) protectedHandlers(iss *issuer.Issuer) (deferred, notification http.Handler, err error) {
 	tokens, err := fapiresource.New(a.resourceVerifier)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: access token verifier: %w", err)
 	}
-	deferred, err = a.issuer.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+	deferred, err = iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
 		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: &a.deferredURL, Tokens: tokens},
 		Resolve:                 a.resolveDeferred,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: deferred credential handler: %w", err)
 	}
-	notification, err = a.issuer.NotificationEndpointHandler(issuer.ProtectedEndpointConfig{URL: &a.notificationURL, Tokens: tokens})
+	notification, err = iss.NotificationEndpointHandler(issuer.ProtectedEndpointConfig{URL: &a.notificationURL, Tokens: tokens})
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: notification handler: %w", err)
 	}

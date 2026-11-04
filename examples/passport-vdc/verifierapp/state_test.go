@@ -17,7 +17,7 @@ import (
 func TestIdentities_Persist(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	ids, err := loadIdentities(dir, now)
+	ids, err := loadIdentities(dir, now, testVerifierURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestIdentities_Persist(t *testing.T) {
 		}
 	}
 
-	again, err := loadIdentities(dir, now.Add(time.Hour))
+	again, err := loadIdentities(dir, now.Add(time.Hour), testVerifierURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestIdentities_Persist(t *testing.T) {
 		t.Error("a restart made new verifier identities")
 	}
 
-	renewed, err := loadIdentities(dir, ids.signers[ScenarioAge].cert.NotAfter.Add(-renewBefore))
+	renewed, err := loadIdentities(dir, ids.signers[ScenarioAge].cert.NotAfter.Add(-renewBefore), testVerifierURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,14 +73,14 @@ func TestIdentities_Persist(t *testing.T) {
 		t.Error("identities about to expire weren't renewed")
 	}
 
-	if fresh, _ := loadIdentities("", now); fresh.ca.Equal(renewed.ca) {
+	if fresh, _ := loadIdentities("", now, testVerifierURL); fresh.ca.Equal(renewed.ca) {
 		t.Error("without a state directory the identities were reused")
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, identityFile), []byte("-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadIdentities(dir, now); err == nil {
+	if _, err := loadIdentities(dir, now, testVerifierURL); err == nil {
 		t.Error("a damaged identity file was accepted")
 	}
 }
@@ -91,7 +91,7 @@ func TestIdentities_Persist(t *testing.T) {
 func TestIdentities_ReplacesAnOlderLayout(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA")
+	ca, caKey, err := newCA(now, "passport-vdc demo verifier CA", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,14 +110,14 @@ func TestIdentities_ReplacesAnOlderLayout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, identityFile), old, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := loadIdentities(dir, now)
+	ids, err := loadIdentities(dir, now, testVerifierURL)
 	if err != nil {
 		t.Fatalf("loading an older layout: %v", err)
 	}
 	if ids.ca.Equal(ca) || ids.untrustedCA == nil || ids.registrarCA == nil || len(ids.signers) != len(Scenarios) {
 		t.Error("the older layout wasn't replaced with a full set of identities")
 	}
-	again, err := loadIdentities(dir, now)
+	again, err := loadIdentities(dir, now, testVerifierURL)
 	if err != nil || !again.ca.Equal(ids.ca) {
 		t.Errorf("the replacement wasn't saved: %v", err)
 	}

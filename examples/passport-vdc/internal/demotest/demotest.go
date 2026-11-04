@@ -5,6 +5,7 @@ package demotest
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"image"
@@ -98,6 +99,12 @@ func New(t *testing.T, cscaPool cms.CertPool, opts ...func(*issuerapp.Config)) *
 		OnRevoke: func() {
 			if v := e.verifier.Load(); v != nil {
 				v.DropKeptStatusLists()
+			}
+		},
+		// And fetches the CA's CRL once the document signer is revoked.
+		OnSignerRevoked: func() {
+			if v := e.verifier.Load(); v != nil {
+				_ = v.RefreshIssuerCRLs(context.Background()) // a failure shows when a check fetches again
 			}
 		},
 	}

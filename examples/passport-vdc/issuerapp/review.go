@@ -219,7 +219,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 		if ok {
 			a.progress.setCredential(rv.txID, credentialFormat(rv.configID), credentialRefused)
 		}
-		return a.issuer.DenyDeferredCredential(ctx, transactionID)
+		return a.iss().DenyDeferredCredential(ctx, transactionID)
 	case rv.decision == reviewPending:
 		return nil
 	}
@@ -233,7 +233,7 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 		return err
 	}
 	var statusIdxs []int
-	err = a.issuer.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
+	err = a.iss().IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		MdocClaims: mdocClaims, SDJWTClaims: sdjwtClaims,
 		PerCredential: func(_ context.Context, c *issuer.CredentialInstance) error {
 			idx, err := a.statusList.allocate(credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, a.now())
