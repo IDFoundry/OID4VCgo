@@ -111,6 +111,15 @@ func (e *TestEnv) AuthorizationCodeOffer() (string, error) {
 	return uri, wrapTest(err)
 }
 
+// MultiDocumentOffer returns an offer, through the authorization code
+// grant, of mdocs of two document types, "org.example.test.1" and
+// "org.example.test.2", each with its elements in the namespace of its
+// type's name: for a request of several documents.
+func (e *TestEnv) MultiDocumentOffer() (string, error) {
+	uri, err := e.env.AuthorizationCodeOffer(walletflowtest.MdocConfigurationID, walletflowtest.MdocConfigurationID2)
+	return uri, wrapTest(err)
+}
+
 // PreAuthorizedOffer returns an offer of the SD-JWT VC through the
 // pre-authorized code grant, redeemed with pin.
 func (e *TestEnv) PreAuthorizedOffer(pin string) (string, error) {

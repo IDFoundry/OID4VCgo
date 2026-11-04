@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -133,9 +135,75 @@ func (p *MdocPresentation) Respond(op *Operation, document int, credentialID, el
 	if err != nil {
 		return "", classify(err)
 	}
+	return mdocPresentedJSON(presented)
+}
+
+// RespondDocuments presents several of the request's documents in one
+// EncryptedResponse (walletflow.MdocPresentation.RespondDocuments):
+// answersJSON is a JSON array of {"document", "credential_id",
+// "elements"}, each as Respond's arguments, at least one, no document
+// twice and no credential twice (invalid_selection otherwise). It
+// returns Respond's {"abi", "response", "linkable",
+// "linkable_credentials"}: linkable whether any copy presented had been
+// seen by another Verifier, linkable_credentials which, by credential
+// ID. Each holder key signs here, in the request's order, so each
+// KeyStore requiring user presence prompts in turn; if one fails or the
+// holder cancels, nothing is returned and the request can be answered
+// again. Answered once.
+func (p *MdocPresentation) RespondDocuments(op *Operation, answersJSON string) (string, error) {
+	answers, err := mdocAnswers(answersJSON)
+	if err != nil {
+		return "", err
+	}
+	presented, err := p.p.RespondDocuments(op.context(), answers)
+	if err != nil {
+		return "", classify(err)
+	}
+	return mdocPresentedJSON(presented)
+}
+
+func mdocPresentedJSON(presented walletflow.MdocPresented) (string, error) {
 	return marshal(struct {
 		result
-		Response string `json:"response"`
-		Linkable bool   `json:"linkable"`
-	}{result{ABIVersion}, base64.StdEncoding.EncodeToString(presented.EncryptedResponse), presented.Linkable})
+		Response            string   `json:"response"`
+		Linkable            bool     `json:"linkable"`
+		LinkableCredentials []string `json:"linkable_credentials"`
+	}{result{ABIVersion}, base64.StdEncoding.EncodeToString(presented.EncryptedResponse), presented.Linkable, nonNil(presented.LinkableCredentials)})
+}
+
+// mdocAnswer is one of RespondDocuments' answers, as JSON.
+type mdocAnswer struct {
+	Document     *int        `json:"document"`
+	CredentialID string      `json:"credential_id"`
+	Elements     [][2]string `json:"elements"`
+}
+
+// mdocAnswers parses answersJSON, refusing unknown members, an answer
+// without a document number, and anything after the array.
+func mdocAnswers(answersJSON string) ([]walletflow.MdocAnswer, error) {
+	dec := json.NewDecoder(strings.NewReader(answersJSON))
+	dec.DisallowUnknownFields()
+	var in []mdocAnswer
+	if err := dec.Decode(&in); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("answers: %w", err))
+	}
+	if dec.More() {
+		return nil, newError(CodeInvalidInput, errors.New("answers: text after the array"))
+	}
+	out := make([]walletflow.MdocAnswer, 0, len(in))
+	for i, a := range in {
+		if a.Document == nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("answers[%d]: no document", i))
+		}
+		out = append(out, walletflow.MdocAnswer{Request: *a.Document, CredentialID: a.CredentialID, Elements: a.Elements})
+	}
+	return out, nil
+}
+
+// nonNil is s, or an empty slice for nil: a JSON array either way.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

@@ -61,6 +61,13 @@ func (h harness) receive(t *testing.T) []summary {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return h.receiveOffer(t, offer)
+}
+
+// receiveOffer receives the two credentials offer, an authorization
+// code offer, offers.
+func (h harness) receiveOffer(t *testing.T, offer string) []summary {
+	t.Helper()
 	s, err := h.w.StartIssuance(NewOperation(0), offer)
 	if err != nil {
 		t.Fatal(err)

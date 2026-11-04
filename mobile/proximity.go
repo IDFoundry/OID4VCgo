@@ -343,11 +343,41 @@ func (p *ProximityPresentation) Respond(op *Operation, document int, credentialI
 	if err != nil {
 		return "", classify(err)
 	}
+	return proximityPresentedJSON(presented)
+}
+
+// RespondDocuments presents several of the request's documents in one
+// DeviceResponse (walletflow.ProximityPresentation.RespondDocuments):
+// answersJSON is a JSON array of {"document", "credential_id",
+// "elements"}, each as Respond's arguments, at least one, no document
+// twice and no credential twice (invalid_selection otherwise). A
+// document left out isn't in the response. It returns Respond's {"abi",
+// "send", "linkable", "linkable_credentials"}: linkable whether any
+// copy presented had been seen by another Verifier,
+// linkable_credentials which, by credential ID. Each holder key signs
+// here, in the request's order, so each KeyStore requiring user
+// presence prompts in turn. On an error — one prompt cancelled, say —
+// nothing is sent, the keys after it aren't asked, and the session
+// goes on: try again, or Terminate.
+func (p *ProximityPresentation) RespondDocuments(op *Operation, answersJSON string) (string, error) {
+	answers, err := mdocAnswers(answersJSON)
+	if err != nil {
+		return "", err
+	}
+	presented, err := p.p.RespondDocuments(op.context(), answers)
+	if err != nil {
+		return "", classify(err)
+	}
+	return proximityPresentedJSON(presented)
+}
+
+func proximityPresentedJSON(presented walletflow.ProximityPresented) (string, error) {
 	return marshal(struct {
 		result
-		Send     string `json:"send"`
-		Linkable bool   `json:"linkable"`
-	}{result{ABIVersion}, base64.StdEncoding.EncodeToString(presented.Send), presented.Linkable})
+		Send                string   `json:"send"`
+		Linkable            bool     `json:"linkable"`
+		LinkableCredentials []string `json:"linkable_credentials"`
+	}{result{ABIVersion}, base64.StdEncoding.EncodeToString(presented.Send), presented.Linkable, nonNil(presented.LinkableCredentials)})
 }
 
 // Terminate ends the session — the holder declined, cancelled, or a

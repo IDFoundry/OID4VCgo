@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -400,8 +401,8 @@ type ProximityReaderSession struct {
 	s       *proximity.ReaderSession
 	asked   bool
 	stopped bool
-	// verified is the mdoc HandleMessage verified, for CheckStatus.
-	verified *proximity.Verified
+	// verified are the mdocs HandleMessage verified, for CheckStatus.
+	verified []proximity.Verified
 }
 
 // Start reads qrCode, the holder's QR code ("mdoc:…"), and derives the
@@ -468,12 +469,37 @@ func (p *ProximityReaderSession) Request(docType, elementsJSON string) (string, 
 	if err := json.Unmarshal([]byte(elementsJSON), &elements); err != nil {
 		return "", newError(CodeInvalidInput, fmt.Errorf("elements: %w", err))
 	}
+	return p.request([]proximity.DocumentRequest{{DocType: docType, Elements: elements}})
+}
+
+// RequestDocuments is Request asking for several documents at once:
+// requestsJSON is a JSON array of {"doctype", "elements"}, elements as
+// Request's, each document type once, at most eight. HandleMessage
+// then reports each document the holder answers in "documents".
+func (p *ProximityReaderSession) RequestDocuments(requestsJSON string) (string, error) {
+	dec := json.NewDecoder(strings.NewReader(requestsJSON))
+	dec.DisallowUnknownFields()
+	var in []struct {
+		DocType  string              `json:"doctype"`
+		Elements map[string][]string `json:"elements"`
+	}
+	if err := dec.Decode(&in); err != nil {
+		return "", newError(CodeInvalidInput, fmt.Errorf("requests: %w", err))
+	}
+	docs := make([]proximity.DocumentRequest, 0, len(in))
+	for _, d := range in {
+		docs = append(docs, proximity.DocumentRequest{DocType: d.DocType, Elements: d.Elements})
+	}
+	return p.request(docs)
+}
+
+func (p *ProximityReaderSession) request(docs []proximity.DocumentRequest) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asked || p.stopped {
 		return "", newError(CodeWrongStep, errors.New("the request was already sent"))
 	}
-	msg, err := p.s.Establishment(docType, elements)
+	msg, err := p.s.EstablishmentDocuments(docs)
 	if err != nil {
 		var mobileErr *Error
 		if errors.As(err, &mobileErr) {
@@ -570,7 +596,10 @@ func statusRefOf(status *mdoc.Status) *statusRefJSON {
 //     which isn't checked here: call CheckStatus before relying on the
 //     document. issuer_chain is the document signer's verified path,
 //     leaf first, ending at the trusted root, as base64 DER; issuer and
-//     trust_anchor are its common names, for display only.
+//     trust_anchor are its common names, for display only. documents
+//     are every verified document, in the response's order, each as
+//     verified: for RequestDocuments, the ones the holder answered,
+//     any subset of those asked for; verified is the first.
 //   - "ended": no verified mdoc. reason is "declined" (the holder ended
 //     the session without answering — not authenticated: anyone in
 //     radio range can send that) or "error", with error, a failing
@@ -580,20 +609,24 @@ func (p *ProximityReaderSession) HandleMessage(message []byte) string {
 	defer p.mu.Unlock()
 	out := struct {
 		result
-		Event    string        `json:"event"`
-		Verified *verifiedJSON `json:"verified,omitempty"`
-		Send     string        `json:"send,omitempty"`
-		Reason   string        `json:"reason,omitempty"`
-		Error    string        `json:"error,omitempty"`
+		Event     string          `json:"event"`
+		Verified  *verifiedJSON   `json:"verified,omitempty"`
+		Documents []*verifiedJSON `json:"documents,omitempty"`
+		Send      string          `json:"send,omitempty"`
+		Reason    string          `json:"reason,omitempty"`
+		Error     string          `json:"error,omitempty"`
 	}{result: result{ABIVersion}, Event: "ended"}
 	p.stopped = true
 	// No network request: the CRLs are in memory, and the status is
 	// CheckStatus's.
-	v, err := p.s.Verify(context.Background(), message, p.r.roots, p.r.clock())
+	vs, err := p.s.VerifyDocuments(context.Background(), message, p.r.roots, p.r.clock())
 	switch {
 	case err == nil:
-		out.Event, out.Verified = "verified", verifiedOf(v)
-		p.verified = &v
+		for _, v := range vs {
+			out.Documents = append(out.Documents, verifiedOf(v))
+		}
+		out.Event, out.Verified = "verified", out.Documents[0]
+		p.verified = vs
 	case errors.Is(err, proximity.ErrDeclined):
 		out.Reason = "declined"
 	default:
@@ -649,21 +682,47 @@ func verifiedOf(v proximity.Verified) *verifiedJSON {
 // https from public addresses only. A failed fetch is network, a list
 // that doesn't verify protocol, and before a verified mdoc it's
 // wrong_step. Cancelling op cancels it.
+//
+// With several verified documents, it checks each, and statuses are
+// theirs in HandleMessage's documents order; status is then the first
+// that is neither "valid" nor "none", or else "valid" if any is.
 func (p *ProximityReaderSession) CheckStatus(op *Operation) (string, error) {
 	p.mu.Lock()
-	v := p.verified
+	vs := p.verified
 	p.mu.Unlock()
-	if v == nil {
+	if len(vs) == 0 {
 		return "", newError(CodeWrongStep, errors.New("no verified mdoc to check"))
 	}
-	status, err := p.r.checkStatus(op.context(), *v)
-	if err != nil {
-		return "", classify(err)
+	statuses := make([]string, 0, len(vs))
+	for _, v := range vs {
+		status, err := p.r.checkStatus(op.context(), v)
+		if err != nil {
+			return "", classify(err)
+		}
+		statuses = append(statuses, status)
 	}
 	return marshal(struct {
 		result
-		Status string `json:"status"`
-	}{result{ABIVersion}, status})
+		Status   string   `json:"status"`
+		Statuses []string `json:"statuses"`
+	}{result{ABIVersion}, combinedStatus(statuses), statuses})
+}
+
+// combinedStatus is the first of statuses that is neither "valid" nor
+// "none": one document not to rely on fails them all. Otherwise it's
+// "valid" when any is, else "none".
+func combinedStatus(statuses []string) string {
+	out := "none"
+	for _, s := range statuses {
+		switch s {
+		case "valid":
+			out = "valid"
+		case "none":
+		default:
+			return s
+		}
+	}
+	return out
 }
 
 // checkStatus is v's revocation status, as CheckStatus reports it.
