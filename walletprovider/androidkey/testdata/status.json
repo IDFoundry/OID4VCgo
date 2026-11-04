@@ -1,0 +1,23 @@
+{
+  "entries": {
+    "f00d" : {
+      "status": "REVOKED",
+      "reason": "KEY_COMPROMISE"
+    },
+    "beef" : {
+      "status": "SUSPENDED",
+      "reason": "SOFTWARE_FLAW",
+      "comment": "Suspended until the fix ships"
+    },
+    "2c8cdddfd5e03bfc" : {
+      "status": "REVOKED",
+      "expires": "2020-11-13",
+      "reason": "KEY_COMPROMISE",
+      "comment": "Key stored on unsecure system"
+    },
+    "c35747a084470c3135aeefe2b8d40cd6" : {
+      "status": "REVOKED",
+      "reason": "KEY_COMPROMISE"
+    }
+  }
+}
