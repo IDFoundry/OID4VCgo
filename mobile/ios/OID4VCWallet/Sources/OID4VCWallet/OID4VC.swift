@@ -151,7 +151,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         if isNoCurrentCRL {
             return "The wallet's revocation lists are out of date. Refresh them and try again."
         }
-        switch code {
+        return switch code {
         case .network: "The service couldn't be reached. Check your connection and try again."
         case .unavailable: "The service is unavailable just now. Try again later."
         case .cancelled: "Cancelled."
