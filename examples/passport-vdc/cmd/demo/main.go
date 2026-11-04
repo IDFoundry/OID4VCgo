@@ -41,6 +41,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -200,7 +201,15 @@ func run(ctx context.Context, opts options) error {
 	}
 	httpClient := demotls.ClientTrusting(leaf)
 
+	// The verifier, started below, sees a revocation at once rather
+	// than within the status list's ttl.
+	var verifierStarted atomic.Pointer[verifierapp.App]
 	issuerCfg := issuerapp.Config{
+		OnRevoke: func() {
+			if v := verifierStarted.Load(); v != nil {
+				v.DropKeptStatusLists()
+			}
+		},
 		IssuerURL: issuerURL, CSCAPool: csca, StateDir: issuerState, WebWalletURL: walletURL,
 		AllowSampleDocument: true, // run the demo without a passport, and show the trust paths' difference
 		Wallet: issuerapp.WalletClient{
@@ -227,6 +236,7 @@ func run(ctx context.Context, opts options) error {
 	if err != nil {
 		return err
 	}
+	verifierStarted.Store(verifier)
 	webWallet, err := webwallet.New(webwallet.Config{
 		WalletURL: walletURL,
 		Wallet: walletapp.Config{

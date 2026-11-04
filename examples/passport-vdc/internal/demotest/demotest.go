@@ -12,6 +12,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,6 +56,9 @@ type Env struct {
 	roots       *x509.CertPool
 	verifierCAs *x509.CertPool // the wallets' trusted verifier CAs; StartVerifier adds its own
 	webSrv      *httptest.Server
+	// verifier is Verifier, for the issuer's OnRevoke, which runs on
+	// its server's goroutines.
+	verifier atomic.Pointer[verifierapp.App]
 }
 
 // New starts an issuer (trusting cscaPool for uploads; nil means an
@@ -88,6 +92,13 @@ func New(t *testing.T, cscaPool cms.CertPool, opts ...func(*issuerapp.Config)) *
 		Wallet: issuerapp.WalletClient{
 			ClientID: WalletClientID, RedirectURIs: []string{RedirectURI, e.WebWalletURL + "/callback"},
 			ProviderIssuer: ProviderIssuer, ProviderCA: provider.CACertificatePEM(),
+		},
+		// As cmd/demo does: the verifier, once started, sees a
+		// revocation at once.
+		OnRevoke: func() {
+			if v := e.verifier.Load(); v != nil {
+				v.DropKeptStatusLists()
+			}
 		},
 	}
 	for _, opt := range opts {
@@ -125,6 +136,7 @@ func (e *Env) StartVerifier(t *testing.T, cscaPool cms.CertPool, opts ...func(*v
 	if err != nil {
 		t.Fatalf("verifierapp.New: %v", err)
 	}
+	e.verifier.Store(e.Verifier)
 	e.verifierCAs.AddCert(e.Verifier.VerifierCACertificate())
 	e.start(t, srv, e.Verifier)
 }
