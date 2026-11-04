@@ -91,6 +91,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// random source. A release build refuses it (`invalidInput`) unless
     /// the app called `OID4VC.allowDevelopmentInRelease()`.
     public var development: Bool
+    /// PEM certificates the wallet's HTTPS requests, and
+    /// ``Wallet/refreshCRLs()``'s fetches, trust besides the system's: a
+    /// development service's own CA, without installing and trusting a
+    /// profile on the device. Only with `development` (`invalidInput`
+    /// otherwise). From OID4VCWallet 0.27.0.
+    public var developmentRoots: String
     /// The holder's preferred languages (BCP 47, most preferred first),
     /// for issuers' display metadata. `Locale.preferredLanguages` is the
     /// usual choice.
@@ -247,7 +253,7 @@ public struct WalletConfiguration: Codable, Sendable {
     /// and the redirect URI empty.
     public init(clientID: String = "", redirectURI: String = "", issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
-                development: Bool = false, locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+                development: Bool = false, developmentRoots: String = "", locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
                 tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
@@ -269,6 +275,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.mdocReaderRequireEKU = mdocReaderRequireEKU
         self.requireTrustedMdocReader = requireTrustedMdocReader
         self.development = development
+        self.developmentRoots = developmentRoots
         self.locales = locales
         self.batchSize = batchSize
         self.requestRefresh = requestRefresh
@@ -304,7 +311,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
-        case development, locales, batchSize = "batch_size"
+        case development, developmentRoots = "development_roots", locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
@@ -338,6 +345,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   mdocReaderRequireEKU: try c.decodeIfPresent(Bool.self, forKey: .mdocReaderRequireEKU) ?? false,
                   requireTrustedMdocReader: try c.decodeIfPresent(Bool.self, forKey: .requireTrustedMdocReader) ?? false,
                   development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
+                  developmentRoots: try c.decodeIfPresent(String.self, forKey: .developmentRoots) ?? "",
                   locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
                   batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
                   requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
