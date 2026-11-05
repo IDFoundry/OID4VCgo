@@ -137,42 +137,51 @@ func TestCache_InvalidateDuringSigning(t *testing.T) {
 	}
 }
 
-// TestWrite: a response's Cache-Control max-age counts down the ttl
-// left, to the nearest second, and no later than the token's exp; and
-// a gzip-compressed body decodes to the token.
+// TestWrite: a response carries a strong ETag of the bytes it sends,
+// and a public Cache-Control whose max-age counts down the ttl left,
+// to the nearest second; an If-None-Match naming the ETag, weakly or
+// among others, or "*", is answered 304 without a body.
 func TestWrite(t *testing.T) {
 	signedAt := time.Now()
-	token := &Token{Bytes: []byte("token"), SignedAt: signedAt, Exp: signedAt.Add(90 * time.Second)}
-	write := func(token *Token, at time.Duration, gz bool) *httptest.ResponseRecorder {
+	token := &Token{Bytes: []byte("token"), SignedAt: signedAt, Exp: signedAt.Add(90 * time.Second), etag: etag([]byte("token"))}
+	write := func(at time.Duration, gz bool, ifNoneMatch ...string) *httptest.ResponseRecorder {
 		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/l", nil)
+		for _, v := range ifNoneMatch {
+			r.Header.Add("If-None-Match", v)
+		}
 		rec := httptest.NewRecorder()
-		if err := Write(rec, httptest.NewRequest(http.MethodGet, "/l", nil), Served{Token: token, Now: signedAt.Add(at)}, "application/x", time.Minute, gz); err != nil {
+		if err := Write(rec, r, Served{Token: token, Now: signedAt.Add(at)}, "application/x", time.Minute, gz); err != nil {
 			t.Fatal(err)
 		}
 		return rec
 	}
 	for at, want := range map[time.Duration]string{
-		0:                      "max-age=60",
-		20 * time.Second:       "max-age=40",
-		40*time.Second + 400e6: "max-age=20",
-		59*time.Second + 999e6: "max-age=0",
-		70 * time.Second:       "max-age=0", // past the ttl, before exp
-		100 * time.Second:      "max-age=0", // past exp
+		0:                      "public, max-age=60",
+		20 * time.Second:       "public, max-age=40",
+		40*time.Second + 400e6: "public, max-age=20",
+		59*time.Second + 999e6: "public, max-age=0",
+		70 * time.Second:       "public, max-age=0", // past the ttl, before exp
+		100 * time.Second:      "public, max-age=0", // past exp
 	} {
-		if got := write(token, at, false).Header().Get("Cache-Control"); got != want {
+		if got := write(at, false).Header().Get("Cache-Control"); got != want {
 			t.Errorf("served %v after signing: Cache-Control %q, want %q", at, got, want)
 		}
 	}
-	shortLived := &Token{Bytes: token.Bytes, SignedAt: signedAt, Exp: signedAt.Add(30 * time.Second)}
-	if got := write(shortLived, 0, false).Header().Get("Cache-Control"); got != "max-age=30" {
-		t.Errorf("exp before the ttl ends: Cache-Control %q, want max-age=30", got)
+
+	shortLived := &Token{Bytes: token.Bytes, SignedAt: signedAt, Exp: signedAt.Add(30 * time.Second), etag: token.etag}
+	rec := httptest.NewRecorder()
+	if err := Write(rec, httptest.NewRequest(http.MethodGet, "/l", nil), Served{Token: shortLived, Now: signedAt}, "application/x", time.Minute, false); err != nil || rec.Header().Get("Cache-Control") != "public, max-age=30" {
+		t.Errorf("exp before the ttl ends: Cache-Control %q, %v; want max-age=30", rec.Header().Get("Cache-Control"), err)
 	}
 
-	plain := write(token, 0, false)
-	if plain.Code != http.StatusOK || plain.Body.String() != "token" || plain.Header().Get("Content-Type") != "application/x" {
+	plain := write(0, false)
+	tag := plain.Header().Get("ETag")
+	if plain.Code != http.StatusOK || plain.Body.String() != "token" || plain.Header().Get("Content-Type") != "application/x" ||
+		len(tag) < 3 || tag[0] != '"' || tag[len(tag)-1] != '"' {
 		t.Fatalf("200: %d %q, headers %v", plain.Code, plain.Body, plain.Header())
 	}
-	zipped := write(token, 0, true)
+	zipped := write(0, true)
 	zr, err := gzip.NewReader(zipped.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -180,8 +189,35 @@ func TestWrite(t *testing.T) {
 	if body, err := io.ReadAll(zr); err != nil || !bytes.Equal(body, token.Bytes) || zipped.Header().Get("Content-Encoding") != "gzip" {
 		t.Errorf("gzip: %q, %v, headers %v", body, err, zipped.Header())
 	}
+	zipTag := zipped.Header().Get("ETag")
+	if zipTag == tag || zipTag == "" {
+		t.Errorf("gzip ETag %q, want one of its own, not %q", zipTag, tag)
+	}
 
-	rec := httptest.NewRecorder()
+	for name, tc := range map[string]struct {
+		gz          bool
+		ifNoneMatch []string
+		want        int
+	}{
+		"its ETag":             {false, []string{tag}, http.StatusNotModified},
+		"weak":                 {false, []string{"W/" + tag}, http.StatusNotModified},
+		"among others":         {false, []string{`"a", ` + tag}, http.StatusNotModified},
+		"on a second line":     {false, []string{`"a"`, tag}, http.StatusNotModified},
+		"any":                  {false, []string{"*"}, http.StatusNotModified},
+		"the gzip ETag":        {true, []string{zipTag}, http.StatusNotModified},
+		"another":              {false, []string{`"a"`}, http.StatusOK},
+		"the other encoding's": {true, []string{tag}, http.StatusOK},
+	} {
+		rec := write(0, tc.gz, tc.ifNoneMatch...)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d", name, rec.Code, tc.want)
+		}
+		if rec.Code == http.StatusNotModified && (rec.Body.Len() != 0 || rec.Header().Get("ETag") == "" || rec.Header().Get("Cache-Control") == "" || rec.Header().Get("Content-Type") != "") {
+			t.Errorf("%s: 304 with body %q, headers %v", name, rec.Body, rec.Header())
+		}
+	}
+
+	rec = httptest.NewRecorder()
 	if err := Write(rec, httptest.NewRequest(http.MethodGet, "/l", nil), Served{Token: token, Now: signedAt}, "application/x", 0, false); err != nil || rec.Header().Get("Cache-Control") != "" {
 		t.Errorf("no ttl: Cache-Control %q, %v; want none", rec.Header().Get("Cache-Control"), err)
 	}

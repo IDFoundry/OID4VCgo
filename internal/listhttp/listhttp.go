@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,8 +29,10 @@ type Token struct {
 	Bytes         []byte
 	SignedAt, Exp time.Time
 
+	etag     string
 	gzipOnce sync.Once
 	gzipped  []byte // Bytes, gzip-compressed once first asked for
+	gzipETag string
 	gzipErr  error
 }
 
@@ -118,7 +123,7 @@ func signToken(ctx context.Context, now time.Time, sign SignFunc) (*Token, error
 	if err != nil {
 		return nil, err
 	}
-	return &Token{Bytes: token, SignedAt: now, Exp: exp}, nil
+	return &Token{Bytes: token, SignedAt: now, Exp: exp, etag: etag(token)}, nil
 }
 
 // Invalidate drops the cached token, and any signature under way, so
@@ -131,26 +136,34 @@ func (c *Cache) Invalidate() {
 }
 
 // Write answers r with served's token, as contentType, gzip-compressed
-// when gz is set. When ttl is positive, Cache-Control's max-age is the
-// ttl left since the token was signed, no later than its exp, in whole
-// seconds. It writes nothing when it fails.
+// when gz is set. It carries a strong ETag, a hash of the bytes sent,
+// and answers 304 Not Modified to an If-None-Match that names it. When
+// ttl is positive, Cache-Control's max-age is the ttl left since the
+// token was signed, no later than its exp, in whole seconds. It writes
+// nothing when it fails.
 func Write(w http.ResponseWriter, r *http.Request, served Served, contentType string, ttl time.Duration, gz bool) error {
-	body := served.Bytes
+	body, tag := served.Bytes, served.etag
 	if gz {
 		served.gzipOnce.Do(func() {
 			served.gzipped, served.gzipErr = gzipBytes(served.Bytes)
+			served.gzipETag = etag(served.gzipped)
 		})
 		if served.gzipErr != nil {
 			return served.gzipErr
 		}
-		body = served.gzipped
+		body, tag = served.gzipped, served.gzipETag
 	}
 	h := w.Header()
+	h.Set("ETag", tag)
 	if ttl > 0 {
 		// To the nearest second: a token signed for this request has
 		// all its ttl left, not a second less.
 		maxAge := max(min(ttl-served.Now.Sub(served.SignedAt), served.Exp.Sub(served.Now)), 0).Round(time.Second)
-		h.Set("Cache-Control", "max-age="+strconv.FormatInt(int64(maxAge/time.Second), 10))
+		h.Set("Cache-Control", "public, max-age="+strconv.FormatInt(int64(maxAge/time.Second), 10))
+	}
+	if matches(r.Header.Values("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+		return nil
 	}
 	if gz {
 		h.Set("Content-Encoding", "gzip")
@@ -161,6 +174,26 @@ func Write(w http.ResponseWriter, r *http.Request, served Served, contentType st
 	// media type with nosniff, never HTML.
 	_, _ = w.Write(body)
 	return nil
+}
+
+// etag is a strong entity tag for b: its SHA-256, base64url-encoded.
+func etag(b []byte) string {
+	sum := sha256.Sum256(b)
+	return `"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`
+}
+
+// matches reports whether If-None-Match header lines name tag, or are
+// "*", by weak comparison (RFC 9110 §13.1.2).
+func matches(ifNoneMatch []string, tag string) bool {
+	for _, line := range ifNoneMatch {
+		for _, candidate := range strings.Split(line, ",") {
+			candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+			if candidate == "*" || candidate == tag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func gzipBytes(b []byte) ([]byte, error) {

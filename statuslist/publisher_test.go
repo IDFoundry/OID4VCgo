@@ -80,7 +80,7 @@ func TestPublisher_CheckerRoundTrip(t *testing.T) {
 				}
 			}
 			resp, err := srv.Client().Get(uri)
-			if err != nil || resp.Header.Get("Cache-Control") != "max-age=60" {
+			if err != nil || resp.Header.Get("Cache-Control") != "public, max-age=60" {
 				t.Errorf("Cache-Control = %q, %v", resp.Header.Get("Cache-Control"), err)
 			}
 		})
@@ -199,11 +199,11 @@ func TestPublisher_ServesStaleOnError(t *testing.T) {
 		return rec
 	}
 	first := get()
-	if first.Code != http.StatusOK || first.Header().Get("Cache-Control") != "max-age=60" {
+	if first.Code != http.StatusOK || first.Header().Get("Cache-Control") != "public, max-age=60" {
 		t.Fatalf("first: %d, Cache-Control %q", first.Code, first.Header().Get("Cache-Control"))
 	}
 	now = now.Add(15 * time.Second)
-	if rec := get(); rec.Header().Get("Cache-Control") != "max-age=45" {
+	if rec := get(); rec.Header().Get("Cache-Control") != "public, max-age=45" {
 		t.Errorf("cached: Cache-Control %q, want max-age=45", rec.Header().Get("Cache-Control"))
 	}
 
@@ -211,7 +211,7 @@ func TestPublisher_ServesStaleOnError(t *testing.T) {
 	failWith = dbDown
 	now = now.Add(time.Minute)
 	rec := get()
-	if rec.Code != http.StatusOK || rec.Body.String() != first.Body.String() || rec.Header().Get("Cache-Control") != "max-age=0" {
+	if rec.Code != http.StatusOK || rec.Body.String() != first.Body.String() || rec.Header().Get("Cache-Control") != "public, max-age=0" {
 		t.Errorf("stale: %d, Cache-Control %q; want the cached token", rec.Code, rec.Header().Get("Cache-Control"))
 	}
 	if !errors.Is(reported, dbDown) {
@@ -267,6 +267,39 @@ func TestPublisher_SharesOneSignature(t *testing.T) {
 	}
 	if n := calls.Load(); n != 2 {
 		t.Errorf("%d signatures, want 2: one per form", n)
+	}
+}
+
+// TestPublisher_ETag: each form and encoding has its own strong ETag,
+// and a request naming it in If-None-Match is answered 304.
+func TestPublisher_ETag(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	p := &Publisher{
+		URI: "https://issuer.example/statuslists/1", Signer: key, Chain: []*x509.Certificate{cert}, TTL: time.Minute,
+		Statuses: func(context.Context) ([]uint8, error) { return []uint8{0, 1}, nil },
+	}
+	get := func(accept, acceptEncoding, ifNoneMatch string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/s", nil)
+		r.Header.Set("Accept", accept)
+		r.Header.Set("Accept-Encoding", acceptEncoding)
+		r.Header.Set("If-None-Match", ifNoneMatch)
+		p.ServeHTTP(rec, r)
+		return rec
+	}
+	tags := map[string]bool{}
+	for _, accept := range []string{TokenMediaType, CWTTokenMediaType} {
+		for _, ae := range []string{"identity", "gzip"} {
+			tag := get(accept, ae, "").Header().Get("ETag")
+			if tag == "" || tags[tag] {
+				t.Errorf("%s, %s: ETag %q, want one of its own", accept, ae, tag)
+			}
+			tags[tag] = true
+			if rec := get(accept, ae, tag); rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("Vary") == "" {
+				t.Errorf("%s, %s: If-None-Match its ETag: %d, headers %v; want 304", accept, ae, rec.Code, rec.Header())
+			}
+		}
 	}
 }
 

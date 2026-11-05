@@ -36,8 +36,10 @@ import (
 // change reaches Relying Parties within CacheFor, unless the issuer
 // calls Invalidate when it makes one, plus however long they cache the
 // token themselves (TTL); while signing a new token fails, the form's
-// cached one is served until its exp, and OnError told. A Publisher
-// must not be copied after first use; use it by pointer.
+// cached one is served until its exp, and OnError told. A response
+// carries a strong ETag, and a request whose If-None-Match names it is
+// answered 304 Not Modified. A Publisher must not be copied after
+// first use; use it by pointer.
 //
 // Checker (with Fetcher) is the Relying Party side of the same exchange.
 type Publisher struct {

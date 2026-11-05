@@ -24,8 +24,9 @@ import (
 // ServeHTTP signs a token once and serves it for CacheFor, so requests
 // — which anyone can make — don't each cost a signature, and
 // concurrent requests wait on one signature; Invalidate drops it after
-// a revocation. A Publisher must not be copied after first use; use it
-// by pointer.
+// a revocation. A response carries a strong ETag, and a request whose
+// If-None-Match names it is answered 304 Not Modified. A Publisher
+// must not be copied after first use; use it by pointer.
 type Publisher struct {
 	// URI is the list's uri: every token's sub, and the uri MSOs name.
 	// REQUIRED.
