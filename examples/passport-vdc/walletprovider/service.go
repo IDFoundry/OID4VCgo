@@ -119,8 +119,8 @@ type ServiceConfig struct {
 	// means Google's hardware attestation roots.
 	AttestationRoots []*x509.Certificate
 	// URL is the service's public https URL: the library's protocol is
-	// served under it at /v1/, and the provider's status list, which
-	// every attestation names, at /v1/status. Empty means DefaultURL.
+	// served under it at /v1/, and the provider's status lists, which
+	// every attestation names, under /v1/status/. Empty means DefaultURL.
 	URL string
 	// InstancesPath is the file that keeps the library instances the
 	// service registers and their instance keys, and StatusIndicesPath
@@ -159,8 +159,8 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // Wallet Provider (oid4vcgo/walletprovider), signed with p's key and
 // certificate: each instance key is recorded for an instance of its
 // own, every attestation names its instance key's entry in the
-// provider's status list, served at /v1/status, and the library's own
-// protocol is served under /v1/ for a wallet that speaks it (see
+// provider's status lists, served under /v1/status/, and the library's
+// own protocol is served under /v1/ for a wallet that speaks it (see
 // ServiceConfig.AndroidApps).
 //
 // The demo wallets speak this package's older, stateless protocol:
@@ -300,8 +300,8 @@ func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileIns
 	}
 	lib, err := wp.New(wp.Config{
 		Identifier: p.Issuer, ClientIDs: []string{cfg.ClientID}, WalletName: WalletName,
-		StatusListURI: strings.TrimSuffix(cfg.URL, "/") + wp.StatusPath,
-		Policy:        wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
+		StatusListBaseURI: strings.TrimSuffix(cfg.URL, "/") + wp.StatusPath,
+		Policy:            wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
 	}, wp.Dependencies{
 		Signer: p.Key, Chain: []*x509.Certificate{p.Certificate},
 		Instances: store, InstanceKeys: store.keys(), Challenges: &wp.MemoryChallengeStore{},
