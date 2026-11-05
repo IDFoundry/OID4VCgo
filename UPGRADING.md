@@ -6,7 +6,20 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.66.0 → next
+## v0.67.0 → next
+
+### sqlstore (next after v0.7.0)
+
+- **Run `Migrate`.** Migration 0007 keeps a count of each status
+  list's reserved indices and adds a partial index over the indices
+  with a status, so `StatusIndices().Reserved` and `Statuses` no longer
+  read every row of a list. `CheckSchema` fails until it has run. A
+  release before it still runs against the migrated schema, so migrate
+  first, then roll out. On PostgreSQL the index build blocks writes to
+  `oid4vc_status_indices` while it runs: about two seconds for a list
+  of eight million indices.
+
+## v0.66.0 → v0.67.0
 
 ### Wallet (`walletflow`)
 

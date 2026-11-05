@@ -312,6 +312,57 @@ func TestMigrateAddsStatusIndices(t *testing.T) {
 	})
 }
 
+// Migration 0007 counts the indices reserved before it, and every
+// reservation after it, but not a Reserve that finds its index taken.
+func TestMigrateCountsReservedIndices(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, err := sqlstore.New(e.location()(), e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 6); err != nil {
+			t.Fatal(err)
+		}
+		s := d.StatusIndices()
+		for _, idx := range []uint64{1, 5, 9} {
+			if err := s.Reserve(ctx, statusListA, idx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Reserve(ctx, statusListB, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetStatus(ctx, statusListA, 5, statuslist.StatusInvalid); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		reserved := func(uri string, want int) {
+			t.Helper()
+			if n, err := s.Reserved(ctx, uri); err != nil || n != want {
+				t.Errorf("Reserved(%s) = %d, %v, want %d", uri, n, err, want)
+			}
+		}
+		reserved(statusListA, 3)
+		reserved(statusListB, 1)
+		if err := s.Reserve(ctx, statusListA, 7); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Reserve(ctx, statusListA, 9); !errors.Is(err, statuslist.ErrIndexTaken) {
+			t.Fatalf("Reserve of a taken index = %v", err)
+		}
+		reserved(statusListA, 4)
+		reserved(statusListB, 1)
+		reserved("https://issuer.example/statuslists/3", 0)
+		if got, err := s.Statuses(ctx, statusListA, 10); err != nil || string(got) != string([]uint8{0, 0, 0, 0, 0, 1, 0, 0, 0, 0}) {
+			t.Errorf("Statuses after migration = %v, %v", got, err)
+		}
+	})
+}
+
 // statusListSigner is a Status List signing key and its certificate
 // chain, under a CA of its own.
 func statusListSigner(t *testing.T) (*ecdsa.PrivateKey, []*x509.Certificate) {

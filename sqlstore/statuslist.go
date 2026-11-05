@@ -67,7 +67,9 @@ func (s *StatusIndexStore) Reserve(ctx context.Context, uri string, idx uint64) 
 	return nil
 }
 
-// Reserved implements statuslist.IndexStore.
+// Reserved implements statuslist.IndexStore. It reads the list's
+// count, which a trigger keeps as each reservation is inserted, rather
+// than counting rows: statuslist.Allocator calls it on every Allocate.
 func (s *StatusIndexStore) Reserved(ctx context.Context, uri string) (int, error) {
 	if !storableKeys(uri) {
 		return 0, nil
@@ -121,8 +123,9 @@ func (s *StatusIndexStore) Status(ctx context.Context, uri string, idx uint64) (
 }
 
 // Statuses implements statuslist.IndexStore. It reads only the rows
-// it needs to: those with a status other than StatusValid, and any
-// outside the list, which it refuses.
+// it needs to: those with a status other than StatusValid, through an
+// index that holds only those, and any outside the list, which it
+// refuses.
 func (s *StatusIndexStore) Statuses(ctx context.Context, uri string, size int) ([]uint8, error) {
 	if size < 0 {
 		return nil, fmt.Errorf("sqlstore: list size %d is negative", size)
@@ -131,7 +134,7 @@ func (s *StatusIndexStore) Statuses(ctx context.Context, uri string, size int) (
 	if !storableKeys(uri) {
 		return statuses, nil
 	}
-	rows, err := s.d.db.QueryContext(ctx, s.d.sql.statusIndexList, uri, int64(size))
+	rows, err := s.d.db.QueryContext(ctx, s.d.sql.statusIndexList, uri, uri, int64(size))
 	if err != nil {
 		return nil, fmt.Errorf("sqlstore: read the statuses of %s: %w", uri, err)
 	}
