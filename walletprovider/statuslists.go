@@ -179,14 +179,21 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 		if start, _, ok := p.parseList(ik.Status.URI); ok && start == cur-p.period() {
 			moved.PreviousStatus = ik.Status
 		}
+		// A record swept meanwhile (InstanceKeyRetention) is refused as
+		// a key never recorded is.
 		switch err := p.deps.InstanceKeys.Update(ctx, moved); {
 		case err == nil:
 			moved.Revision++
 			return moved, nil
+		case errors.Is(err, ErrNotFound):
+			return InstanceKey{}, ErrUnknownInstanceKey
 		case !errors.Is(err, ErrConflict):
 			return InstanceKey{}, fmt.Errorf("walletprovider: moving an instance key to the current status lists: %w", err)
 		}
-		if ik, err = p.deps.InstanceKeys.Get(ctx, ik.Thumbprint); err != nil {
+		switch ik, err = p.deps.InstanceKeys.Get(ctx, ik.Thumbprint); {
+		case errors.Is(err, ErrNotFound):
+			return InstanceKey{}, ErrUnknownInstanceKey
+		case err != nil:
 			return InstanceKey{}, fmt.Errorf("walletprovider: reading instance key: %w", err)
 		}
 		if current(ik.Status) {

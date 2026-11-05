@@ -261,3 +261,36 @@ func TestSweepStatusListsResumes(t *testing.T) {
 	h.expectReserved(start, 0, 0)
 	h.expectReserved(start, 1, 0)
 }
+
+// sweptOnUpdate is an InstanceKeyStore whose records are swept once
+// sweep is set, between a request's read of one and its update.
+type sweptOnUpdate struct {
+	walletprovider.InstanceKeyStore
+	sweep bool
+}
+
+func (s *sweptOnUpdate) Update(ctx context.Context, k walletprovider.InstanceKey) error {
+	if s.sweep {
+		return walletprovider.ErrNotFound
+	}
+	return s.InstanceKeyStore.Update(ctx, k)
+}
+
+// TestInstanceKeySweptWhileMoved: a key swept while a request moves it
+// to a later period's lists is refused as a key never recorded is, not
+// as the provider's own failure.
+func TestInstanceKeySweptWhileMoved(t *testing.T) {
+	store := &sweptOnUpdate{}
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		withRetention(c, d)
+		store.InstanceKeyStore = d.InstanceKeys
+		d.InstanceKeys = store
+	})
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	h.toNextPeriod()
+	store.sweep = true
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, walletprovider.ErrUnknownInstanceKey) {
+		t.Fatalf("a Wallet Attestation for a key swept while moved = %v, want ErrUnknownInstanceKey", err)
+	}
+}
