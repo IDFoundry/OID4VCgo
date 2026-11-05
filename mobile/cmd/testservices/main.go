@@ -261,10 +261,16 @@ func providerHandler(p *walletflowtest.Provider) http.Handler {
 	})
 	mux.HandleFunc("POST /key-attestation", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Keys  json.RawMessage `json:"keys"`
-			Nonce string          `json:"nonce"`
+			InstanceKey json.RawMessage `json:"instance_key"`
+			Keys        json.RawMessage `json:"keys"`
+			Nonce       string          `json:"nonce"`
 		}
 		if !decode(w, r, &req) {
+			return
+		}
+		instanceKey, err := devjwk.ParseP256(req.InstanceKey)
+		if err != nil {
+			http.Error(w, "instance_key: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		keys, err := devjwk.ParseP256Set(req.Keys)
@@ -272,7 +278,7 @@ func providerHandler(p *walletflowtest.Provider) http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		jwt, err := p.KeyAttestation(r.Context(), keys, req.Nonce)
+		jwt, err := p.KeyAttestation(r.Context(), instanceKey, keys, req.Nonce)
 		writeAttestation(w, jwt, err)
 	})
 	return mux

@@ -65,6 +65,10 @@
 //     offer's (Config.AllowForeignIss), but an SD-JWT VC needn't name
 //     one and an mdoc names none: for those, nothing on the wallet's
 //     side stops the relay but the issuers it trusts (see SECURITY.md).
+//     A key attestation is for the issuance's instance key, whose
+//     status it carries (WalletProvider.KeyAttestation): an issuance
+//     with none, authenticating no client, makes one and has the
+//     WalletProvider attest it first, which needs Config.ClientID.
 //     A credential bound to no key isn't received (ErrProofUnsupported);
 //   - a c_nonce where the issuer has a nonce endpoint (§7), and none
 //     where it hasn't;
@@ -200,8 +204,9 @@
 // (ErrReissueRequired), receive the credential again from a new offer.
 //
 // Every key walletflow creates is P-256 (ES256). Each issuance uses a
-// fresh DPoP key and, where it authenticates with one, a fresh wallet
-// instance key (with a fresh Wallet Attestation), deleted by
+// fresh DPoP key and, where it authenticates with one or asks for a key
+// attestation, a fresh wallet instance key (with a fresh Wallet
+// Attestation), deleted by
 // Issuance.Close (the DPoP key once no pending deferred credential polls
 // with it), so issuers can't link two issuances by them; each credential
 // is bound to its own holder key, deleted with it. An issuance that kept

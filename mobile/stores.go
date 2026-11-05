@@ -63,8 +63,10 @@ type WalletProvider interface {
 	// instance key instanceKeyJWK to clientID.
 	WalletAttestation(clientID string, instanceKeyJWK []byte) ([]byte, error)
 	// KeyAttestation returns a Key Attestation over keysJWK, a JSON
-	// array of JWKs, carrying the issuer's nonce.
-	KeyAttestation(keysJWK []byte, nonce string) ([]byte, error)
+	// array of JWKs, carrying the issuer's nonce, for the issuance whose
+	// instance key is instanceKeyJWK: one WalletAttestation was asked to
+	// attest first, whose status the Key Attestation carries.
+	KeyAttestation(instanceKeyJWK, keysJWK []byte, nonce string) ([]byte, error)
 }
 
 // credentialRecord is a stored credential, as the CredentialStore keeps
@@ -791,7 +793,11 @@ func (w walletProvider) WalletAttestation(ctx context.Context, clientID string, 
 	return string(jwt), nil
 }
 
-func (w walletProvider) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+func (w walletProvider) KeyAttestation(ctx context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	instanceJWK, err := attestation.AttestedKey(instanceKey)
+	if err != nil {
+		return "", newError(CodeInternal, err)
+	}
 	jwks := make([]json.RawMessage, 0, len(keys))
 	for _, k := range keys {
 		jwk, err := attestation.AttestedKey(k)
@@ -804,7 +810,7 @@ func (w walletProvider) KeyAttestation(ctx context.Context, keys []*ecdsa.Public
 	if err != nil {
 		return "", newError(CodeInternal, err)
 	}
-	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.KeyAttestation(raw, nonce) })
+	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.KeyAttestation(instanceJWK, raw, nonce) })
 	if err != nil {
 		return "", providerError("key attestation", err)
 	}

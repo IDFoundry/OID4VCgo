@@ -1582,6 +1582,35 @@ twice, or redeem one refresh token twice.
   or the holder — so the window is milliseconds, not the whole
   presentation.
 
+## Key Attestations name the issuance's instance key (ABI 15)
+
+The Wallet Provider protocol ([WALLET_PROVIDER.md](WALLET_PROVIDER.md))
+records each issuance's instance key with its first Wallet
+Attestation and gives it a status list entry of its own; a Key
+Attestation carries that entry, so `POST /v1/key-attestation`
+requires the issuance's `instance_key`.
+
+- **Through every layer:** walletflow's `WalletProvider.KeyAttestation`
+  takes the instance key, and so does the gomobile `KeyAttestation`
+  (`instanceKeyJWK`), the Kotlin `KeyAttestationRequest.instanceKey`
+  (as `KeyEvidence`, which the adapter finds by key, as it does the
+  holder keys; its chain went with the Wallet Attestation) and the
+  Swift `keyAttestation(instanceKey:keys:nonce:)`. The JWK-only Kotlin
+  `keyAttestation` gains it too, so a provider implementing only that
+  can still send it.
+- **The issuance that has none:** one that redeems a pre-authorized
+  code without client authentication, or refreshes a grant with none,
+  never makes an instance key to authenticate with. For a Key
+  Attestation it makes one and has `WalletAttestation` attest it,
+  sending that Wallet Attestation nowhere, and deletes the key when
+  the issuance ends. That needs `client_id`; without one, the request
+  fails with `proof_unsupported`.
+- **The demo provider:** the passport-vdc service's `/key-attestation`
+  takes an optional `instance_key` and issues under that key's
+  instance (`400` for one no Wallet Attestation recorded); without one,
+  as an older demo app sends, it issues under its shared holder
+  instance, as before.
+
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in

@@ -109,6 +109,14 @@ key attested again later — the instance key, when a refresh needs a new
 Wallet Attestation — brings the same chain: recognise a key you verified
 before (by its JWK thumbprint) rather than asking for a fresh challenge.
 
+Each issuance has an instance key of its own, and a Key Attestation
+names it: `KeyAttestationRequest.instanceKey`, the key that issuance's
+`walletAttestation` asked for first. Refuse one you didn't attest for
+this installation, and give the Key Attestation that instance key's
+status list entry, so suspending or revoking the installation withdraws
+its Key Attestations along with its Wallet Attestations (the Wallet
+Provider protocol's `instance_key`).
+
 A custom `KeyStore` gives the provider no evidence unless it implements
 `createKey(purpose, attestationChallenge)` and `attestationChain(id)`:
 keep `AndroidKeystoreKeyStore`. The demo wallet's provider (the

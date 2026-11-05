@@ -6,7 +6,7 @@ import XCTest
 
 final class OID4VCWalletTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 14)
+        XCTAssertEqual(OID4VC.abiVersion, 15)
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 
@@ -191,21 +191,22 @@ final class OID4VCWalletTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(50))
                 return "wa-\(clientID)-\(instanceKey.count)"
             }
-            func keyAttestation(keys: [Data], nonce: String) async throws -> String {
+            func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
                 if nonce == "fail" { throw StoreError("provider down") }
-                return "ka-\(keys.count)-\(nonce)"
+                return "ka-\(instanceKey.count)-\(keys.count)-\(nonce)"
             }
         }
         let adapter = WalletProviderAdapter(Slow())
-        XCTAssertEqual(String(decoding: try adapter.walletAttestation("c", instanceKeyJWK: Data("{\"kty\":\"EC\"}".utf8)), as: UTF8.self), "wa-c-12")
-        XCTAssertEqual(String(decoding: try adapter.keyAttestation(Data("[{\"a\":1},{\"b\":2}]".utf8), nonce: "n"), as: UTF8.self), "ka-2-n")
-        XCTAssertThrowsError(try adapter.keyAttestation(Data("[]".utf8), nonce: "fail"))
-        XCTAssertThrowsError(try adapter.keyAttestation(Data("{}".utf8), nonce: "n"), "keys that aren't an array")
+        let instance = Data("{\"kty\":\"EC\"}".utf8)
+        XCTAssertEqual(String(decoding: try adapter.walletAttestation("c", instanceKeyJWK: instance), as: UTF8.self), "wa-c-12")
+        XCTAssertEqual(String(decoding: try adapter.keyAttestation(instance, keysJWK: Data("[{\"a\":1},{\"b\":2}]".utf8), nonce: "n"), as: UTF8.self), "ka-12-2-n")
+        XCTAssertThrowsError(try adapter.keyAttestation(instance, keysJWK: Data("[]".utf8), nonce: "fail"))
+        XCTAssertThrowsError(try adapter.keyAttestation(instance, keysJWK: Data("{}".utf8), nonce: "n"), "keys that aren't an array")
 
         // A provider's URLError reaches Go marked as a network failure.
         struct Offline: WalletProvider {
             func walletAttestation(clientID _: String, instanceKey _: Data) async throws -> String { throw URLError(.notConnectedToInternet) }
-            func keyAttestation(keys _: [Data], nonce _: String) async throws -> String { "" }
+            func keyAttestation(instanceKey _: Data, keys _: [Data], nonce _: String) async throws -> String { "" }
         }
         XCTAssertThrowsError(try WalletProviderAdapter(Offline()).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertTrue(error.localizedDescription.hasPrefix("[network] "), error.localizedDescription)

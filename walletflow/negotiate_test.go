@@ -68,6 +68,67 @@ func TestIssuance_AnonymousPreAuthorizedCode(t *testing.T) {
 	}
 }
 
+// instanceKeys is a key store recording the instance keys it makes.
+type instanceKeys struct {
+	*walletflow.MemoryKeyStore
+	mu  sync.Mutex
+	ids []string
+}
+
+func (s *instanceKeys) NewKey(ctx context.Context, purpose walletflow.KeyPurpose) (walletflow.Key, error) {
+	k, err := s.MemoryKeyStore.NewKey(ctx, purpose)
+	if err == nil && purpose == walletflow.KeyPurposeInstance {
+		s.mu.Lock()
+		s.ids = append(s.ids, k.ID())
+		s.mu.Unlock()
+	}
+	return k, err
+}
+
+// An issuance redeeming a pre-authorized code anonymously has no
+// instance key of its own, yet a Key Attestation is for one the Wallet
+// Provider attested: it makes one, has the provider attest it, and
+// deletes it once it's done. Without a client_id to attest it for, the
+// issuer's key attestation can't be given.
+func TestIssuance_AnonymousKeyAttestation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, walletflowtest.Options{Anonymous: true, JWTKeyAttestation: true})
+	keys := &instanceKeys{MemoryKeyStore: f.keys}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, IssuerRoots: f.env.IssuerRoots, Development: true, IssuanceProfile: walletflow.ProfileOpenID4VCI,
+	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, HTTP: f.env.HTTP, Provider: f.env.Provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receivePreAuthorized(t, f, w, walletflowtest.SDJWTConfigurationID)
+	if n := f.env.Provider.KeyAttestations(); n != 1 {
+		t.Errorf("Key Attestations = %d, want 1", n)
+	}
+	if len(keys.ids) != 1 {
+		t.Fatalf("instance keys made = %d, want 1", len(keys.ids))
+	}
+	if _, err := keys.Key(ctx, keys.ids[0]); err == nil {
+		t.Error("the Key Attestation's instance key outlived the issuance")
+	}
+
+	noClientID, err := walletflow.New(walletflow.Config{IssuerRoots: f.env.IssuerRoots, Development: true},
+		walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: f.env.HTTP, Provider: f.env.Provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := noClientID.StartIssuance(ctx, f.env.PreAuthorizedOffer(t, "", walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close(ctx) }()
+	if err := s.RedeemPreAuthorizedCode(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RequestCredentials(ctx); !errors.Is(err, walletflow.ErrProofUnsupported) {
+		t.Errorf("no client_id: %v, want ErrProofUnsupported", err)
+	}
+}
+
 // The same issuer is refused under ProfileHAIP, before the holder sees
 // the offer: its Authorization Server takes no Wallet Attestation (HAIP
 // 1.0 §4.4.1). And a wallet with no Wallet Provider can't redeem a HAIP

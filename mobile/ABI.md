@@ -1,12 +1,24 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**14** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**15** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`), and
 the Kotlin library `android/OID4VCWallet` in Kotlin (the same types,
 with suspend functions, `WalletException` and `StateFlow`s); this
 document is the contract underneath, for those wrappers or an app
 calling the framework directly.
+
+Version 15 (OID4VCWallet 0.28.0) gives the `WalletProvider`'s
+`KeyAttestation` the issuance's instance key: it's
+`KeyAttestation(instanceKeyJWK, keysJWK, nonce)`, `instanceKeyJWK`
+the public JWK of the instance key the same issuance's
+`WalletAttestation` was asked to attest first (see WalletProvider). A
+Wallet Provider that records instance keys
+([WALLET_PROVIDER.md](WALLET_PROVIDER.md)'s `POST
+/v1/key-attestation`, which requires `instance_key`) gives the Key
+Attestation that key's status, so suspending or revoking the
+installation withdraws it. A version-14 provider adds the argument;
+the wrappers refuse a framework of another version, as before.
 
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
@@ -311,7 +323,15 @@ out). An issuer asking for one is then refused with
 | Method | |
 |---|---|
 | `WalletAttestation(clientID, instanceKeyJWK) → []byte` | binds the instance key to the wallet's client ID |
-| `KeyAttestation(keysJWK, nonce) → []byte` | `keysJWK` is a JSON array of JWKs; the attestation carries the issuer's nonce |
+| `KeyAttestation(instanceKeyJWK, keysJWK, nonce) → []byte` | `keysJWK` is a JSON array of JWKs; the attestation carries the issuer's nonce. `instanceKeyJWK` is the issuance's instance key, whose status the attestation carries (ABI 15) |
+
+Each issuance has an instance key of its own, and `WalletAttestation`
+is always asked for it before `KeyAttestation` names it. An issuance
+redeeming a pre-authorized code with no client authentication has
+none to authenticate with, so it makes one for its Key Attestations
+and has `WalletAttestation` attest it, sending that Wallet Attestation
+nowhere: such an issuance needs `client_id` for a Key Attestation
+(`proof_unsupported` without one), and deletes the key when it ends.
 
 These may wait on the network. A cancelled call returns without waiting
 for them. An error whose message starts with `[network]` is a network

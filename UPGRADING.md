@@ -6,7 +6,39 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.65.1 → next
+## v0.66.0 → next
+
+### Wallet (`walletflow`)
+
+- **`WalletProvider.KeyAttestation` takes the issuance's instance
+  key:** `KeyAttestation(ctx, instanceKey crypto.PublicKey, keys
+  []*ecdsa.PublicKey, nonce string)`. `instanceKey` is the key
+  `WalletAttestation` was asked to attest first for the same issuance.
+  Pass it to your provider (`walletprovider.KeyAttestationRequest.InstanceKey`,
+  `instance_key` on `POST /v1/key-attestation`), so the Key Attestation
+  carries that key's status.
+- An issuance that redeems a pre-authorized code without client
+  authentication (or refreshes a grant that has none) has no instance
+  key of its own. For a Key Attestation it now makes one, has
+  `WalletAttestation` attest it, and deletes it when the issuance ends.
+  This needs `Config.ClientID`. Without one, the credential request
+  fails with `ErrProofUnsupported`.
+- `walletflowtest.Provider` gives a Key Attestation only for an
+  instance key it gave a Wallet Attestation for.
+
+### Mobile (ABI 15; the Swift and Kotlin libraries)
+
+- **`ABIVersion` is 15.** The Swift and Kotlin libraries refuse a
+  framework built for another version: upgrade them together.
+- **A `WalletProvider` of your own receives the instance key.**
+  Swift: `keyAttestation(instanceKey:keys:nonce:)`. Kotlin:
+  `KeyAttestationRequest.instanceKey` (a `KeyEvidence`), or
+  `keyAttestation(instanceKey, keys, nonce)` for a provider that takes
+  JWKs alone. Gomobile: `KeyAttestation(instanceKeyJWK, keysJWK,
+  nonce)`. Send it to your backend as the Key Attestation's
+  `instance_key`.
+
+## v0.65.1 → v0.66.0
 
 ### Wallet Provider (`walletprovider`)
 

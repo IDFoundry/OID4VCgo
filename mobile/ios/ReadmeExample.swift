@@ -7,7 +7,7 @@ struct MyWalletProvider: WalletProvider {
     func walletAttestation(clientID: String, instanceKey: Data) async throws -> String {
         fatalError("call your Wallet Provider")
     }
-    func keyAttestation(keys: [Data], nonce: String) async throws -> String {
+    func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
         fatalError("call your Wallet Provider")
     }
 }

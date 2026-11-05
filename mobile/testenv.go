@@ -240,12 +240,16 @@ func (t testProvider) WalletAttestation(clientID string, instanceKeyJWK []byte) 
 	return []byte(jwt), err
 }
 
-func (t testProvider) KeyAttestation(keysJWK []byte, nonce string) ([]byte, error) {
+func (t testProvider) KeyAttestation(instanceKeyJWK, keysJWK []byte, nonce string) ([]byte, error) {
+	instanceKey, err := devjwk.ParseP256(instanceKeyJWK)
+	if err != nil {
+		return nil, err
+	}
 	keys, err := devjwk.ParseP256Set(keysJWK)
 	if err != nil {
 		return nil, err
 	}
-	jwt, err := t.p.KeyAttestation(context.Background(), keys, nonce)
+	jwt, err := t.p.KeyAttestation(context.Background(), instanceKey, keys, nonce)
 	return []byte(jwt), err
 }
 

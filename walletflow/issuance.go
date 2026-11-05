@@ -2,6 +2,7 @@ package walletflow
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
@@ -117,8 +118,12 @@ type Issuance struct {
 	step        issuanceStep
 	instanceKey Key
 	dpopKey     Key
-	client      *client.Client
-	session     client.SessionHandle
+	// keyAttestationKey is the instance key an issuance without one has
+	// the Wallet Provider attest for its Key Attestations
+	// (attestationInstanceKey). No grant keeps it.
+	keyAttestationKey Key
+	client            *client.Client
+	session           client.SessionHandle
 	// sessions is the client's SessionStore: it knows the state of the
 	// authorization in progress, to forget it.
 	sessions *sessionStore
@@ -1073,9 +1078,14 @@ func invalidNonce(err error) bool {
 }
 
 // attestedHolders creates one holder key per copy to request, and has
-// the Wallet Provider attest them together for nonce: the issuer issues
+// the Wallet Provider attest them together for nonce, for the
+// issuance's instance key (attestationInstanceKey): the issuer issues
 // one copy bound to each. A key created before a failure is deleted.
 func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, string, error) {
+	instanceKey, err := s.attestationInstanceKey(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	holders := make([]Key, 0, s.batchSize())
 	pubs := make([]*ecdsa.PublicKey, 0, s.batchSize())
 	for range s.batchSize() {
@@ -1088,12 +1098,54 @@ func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, st
 		pub, _ := p256(holder) // newKey checked it
 		pubs = append(pubs, pub)
 	}
-	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, pubs, nonce)
+	keyAttestation, err := s.w.deps.Provider.KeyAttestation(ctx, instanceKey, pubs, nonce)
 	if err != nil {
 		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		return nil, "", fmt.Errorf("walletflow: key attestation: %w", err)
 	}
 	return holders, keyAttestation, nil
+}
+
+// attestationInstanceKey is the instance key the issuance's Key
+// Attestations are for: one the Wallet Provider attested, and so
+// recorded, with a Wallet Attestation (mobile/WALLET_PROVIDER.md). It's
+// the issuance's own where it authenticates with a Wallet Attestation.
+// An issuance that doesn't — one redeeming a pre-authorized code
+// anonymously, or refreshing a GrantAuthNone grant — has none: it makes
+// one, once, and has the Wallet Provider attest it, sending that Wallet
+// Attestation nowhere. That needs Config.ClientID, which a Wallet
+// Attestation binds. Close, or the refresh, deletes the key.
+func (s *Issuance) attestationInstanceKey(ctx context.Context) (crypto.PublicKey, error) {
+	switch {
+	case s.instanceKey != nil:
+		return s.instanceKey.Public(), nil
+	case s.keyAttestationKey != nil:
+		return s.keyAttestationKey.Public(), nil
+	case s.w.cfg.ClientID == "":
+		return nil, fmt.Errorf("walletflow: key attestation: %w: its instance key needs a Wallet Attestation, which needs Config.ClientID", ErrProofUnsupported)
+	}
+	key, err := newKey(ctx, s.w.deps.Keys, KeyPurposeInstance)
+	if err != nil {
+		return nil, err
+	}
+	s.w.holdKey(key.ID())
+	s.keyAttestationKey = key
+	if _, err := s.w.deps.Provider.WalletAttestation(ctx, s.w.cfg.ClientID, key.Public()); err != nil {
+		return nil, fmt.Errorf("walletflow: wallet attestation for a key attestation: %w", err)
+	}
+	return key.Public(), nil
+}
+
+// deleteKeyAttestationKey deletes the instance key
+// attestationInstanceKey made, if it made one.
+func (s *Issuance) deleteKeyAttestationKey(ctx context.Context) error {
+	if s.keyAttestationKey == nil {
+		return nil
+	}
+	id := s.keyAttestationKey.ID()
+	s.keyAttestationKey = nil
+	s.w.unholdKey(id)
+	return s.w.deps.Keys.DeleteKey(ctx, id)
 }
 
 // jwtProofsWithKeyAttestation creates one holder key per copy to
@@ -1369,6 +1421,7 @@ func (s *Issuance) Close(ctx context.Context) error {
 	} else if s.instanceKey != nil {
 		s.w.unholdKey(s.instanceKey.ID())
 	}
+	errs = append(errs, s.deleteKeyAttestationKey(ctx))
 	if s.grantID != "" && s.replace == "" {
 		s.w.holdGrant(s.grantID, false)
 		if s.grantStored && len(s.offer.CredentialConfigurationIDs) > 0 {

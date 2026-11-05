@@ -675,7 +675,7 @@ func (failingProvider) WalletAttestation(context.Context, string, crypto.PublicK
 	return "", errors.New("no")
 }
 
-func (failingProvider) KeyAttestation(context.Context, []*ecdsa.PublicKey, string) (string, error) {
+func (failingProvider) KeyAttestation(context.Context, crypto.PublicKey, []*ecdsa.PublicKey, string) (string, error) {
 	return "", errors.New("no")
 }
 
@@ -777,11 +777,11 @@ type flakyProvider struct {
 	calls  atomic.Int32
 }
 
-func (p *flakyProvider) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+func (p *flakyProvider) KeyAttestation(ctx context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
 	if int(p.calls.Add(1)) == p.failAt {
 		return "", errors.New("the Wallet Provider is unavailable")
 	}
-	return p.WalletProvider.KeyAttestation(ctx, keys, nonce)
+	return p.WalletProvider.KeyAttestation(ctx, instanceKey, keys, nonce)
 }
 
 // TestIssuance_RequestCredentialsRetries: a request failing partway

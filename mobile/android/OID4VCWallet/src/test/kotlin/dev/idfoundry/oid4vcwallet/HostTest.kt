@@ -45,20 +45,21 @@ class HostTest {
                 return "wa-$clientID-${instanceKey.size}"
             }
 
-            override suspend fun keyAttestation(keys: List<ByteArray>, nonce: String): String {
+            override suspend fun keyAttestation(instanceKey: ByteArray, keys: List<ByteArray>, nonce: String): String {
                 if (nonce == "fail") throw StoreException("provider down")
-                return "ka-${keys.size}-$nonce"
+                return "ka-${instanceKey.size}-${keys.size}-$nonce"
             }
         })
-        assertEquals("wa-c-12", slow.walletAttestation("c", """{"kty":"EC"}""".toByteArray()).decodeToString())
-        assertEquals("ka-2-n", slow.keyAttestation("""[{"a":1},{"b":2}]""".toByteArray(), "n").decodeToString())
-        expectFailure { slow.keyAttestation("[]".toByteArray(), "fail") }
-        expectFailure { slow.keyAttestation("{}".toByteArray(), "n") }
+        val instance = """{"kty":"EC"}""".toByteArray()
+        assertEquals("wa-c-12", slow.walletAttestation("c", instance).decodeToString())
+        assertEquals("ka-12-2-n", slow.keyAttestation(instance, """[{"a":1},{"b":2}]""".toByteArray(), "n").decodeToString())
+        expectFailure { slow.keyAttestation(instance, "[]".toByteArray(), "fail") }
+        expectFailure { slow.keyAttestation(instance, "{}".toByteArray(), "n") }
 
         // An IOException reaches Go marked as a network failure.
         val offline = WalletProviderAdapter(object : WalletProvider {
             override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String = throw IOException("offline")
-            override suspend fun keyAttestation(keys: List<ByteArray>, nonce: String): String = ""
+            override suspend fun keyAttestation(instanceKey: ByteArray, keys: List<ByteArray>, nonce: String): String = ""
         })
         try {
             offline.walletAttestation("c", "{}".toByteArray())

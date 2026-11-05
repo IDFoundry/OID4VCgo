@@ -72,6 +72,16 @@ then rests on your app keeping them in the Secure Enclave, as
 by contrast, hands its provider each key's Android Key Attestation
 chain.
 
+Each issuance has an instance key of its own, and a Key Attestation
+names it: the `instanceKey` of
+``WalletProvider/keyAttestation(instanceKey:keys:nonce:)``, the key that
+issuance's ``WalletProvider/walletAttestation(clientID:instanceKey:)``
+asked for first. Refuse one you didn't attest for this installation,
+and give the Key Attestation that instance key's status list entry, so
+suspending or revoking the installation withdraws its Key Attestations
+along with its Wallet Attestations (the Wallet Provider protocol's
+`instance_key`).
+
 ### Trust
 
 - Configure only your ecosystem's roots: ``WalletConfiguration/issuerRoots``

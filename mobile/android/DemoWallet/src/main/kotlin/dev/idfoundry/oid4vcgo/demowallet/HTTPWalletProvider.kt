@@ -50,7 +50,10 @@ class HTTPWalletProvider(private val baseURL: String) : WalletProvider {
     }
 
     override suspend fun keyAttestation(request: KeyAttestationRequest): String {
+        // The issuance's instance key, whose status the Key Attestation
+        // carries: its chain went with its Wallet Attestation.
         val body = mutableMapOf<String, JsonElement>(
+            "instance_key" to parse(request.instanceKey.jwk),
             "keys" to JsonArray(request.keys.map { parse(it.jwk) }),
             "nonce" to JsonPrimitive(request.nonce),
         )

@@ -80,8 +80,14 @@ type WalletAttestationRequest struct {
 // Keys, public JWKs, carrying the Credential Issuer's Nonce. An Android
 // wallet sends each key's Android Key Attestation chain in
 // CertificateChains, in the order of Keys (an empty chain for a key it
-// has none for).
+// has none for). InstanceKey is the instance key of the issuance the
+// keys are for, a public JWK a Wallet Attestation from the service
+// recorded: the Key Attestation carries that key's status, so
+// suspending or revoking its instance withdraws it too. Without one,
+// as an older wallet sends, it's issued under the service's shared
+// holder instance.
 type KeyAttestationRequest struct {
+	InstanceKey       json.RawMessage   `json:"instance_key,omitempty"`
 	Keys              []json.RawMessage `json:"keys"`
 	Nonce             string            `json:"nonce"`
 	CertificateChains [][]string        `json:"certificate_chains,omitempty"`
@@ -183,9 +189,12 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // Attestation is asked for an instance key, the service registers an
 // instance for it, with a registration key of the service's own that
 // signs nothing, and records the instance key for that instance at
-// the security level its chain showed (software without one). Every
-// Key Attestation is issued for one shared instance key of one shared
-// instance the service registers for the purpose. Suspending or
+// the security level its chain showed (software without one). A Key
+// Attestation is issued for the instance key the request names, under
+// that key's instance, so it carries that key's status (an instance key
+// no Wallet Attestation recorded is refused, 400); one naming none, for
+// one shared instance key of one shared instance the service registers
+// for the purpose. Suspending or
 // revoking an instance through the library stops its Wallet
 // Attestations and sets its instance key's status. Without
 // ServiceConfig's paths, instances and status indices are kept in
@@ -535,6 +544,26 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce must be 1 to %d printable ASCII characters", maxNonceLength))
 		return
 	}
+	var instanceKey crypto.PublicKey
+	var instanceID string
+	if len(req.InstanceKey) > 0 {
+		key, thumbprint, err := parseP256Key(req.InstanceKey)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "instance_key: "+err.Error())
+			return
+		}
+		id, err := s.instanceOf(r.Context(), thumbprint)
+		switch {
+		case errors.Is(err, wp.ErrNotFound):
+			writeError(w, http.StatusBadRequest, "instance_key isn't one a Wallet Attestation recorded")
+			return
+		case err != nil:
+			s.cfg.Logf("wallet provider: Key Attestation for instance key %s: %v", thumbprint, err)
+			writeAttestation(w, "", err)
+			return
+		}
+		instanceKey, instanceID = key, id
+	}
 	keys := make([]*ecdsa.PublicKey, len(req.Keys))
 	thumbprints := make([]string, len(req.Keys))
 	for i, raw := range req.Keys {
@@ -558,10 +587,17 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 		}
 		outcomes[i], vouched[i] = outcome, demoKey{key: key, level: level}
 	}
-	jwt, err := s.issueKeyAttestation(r.Context(), vouched, req.Nonce)
-	if err != nil {
+	jwt, err := s.issueKeyAttestation(r.Context(), instanceID, instanceKey, vouched, req.Nonce)
+	switch {
+	case errors.Is(err, wp.ErrInstanceRevoked):
+		writeError(w, http.StatusForbidden, "this wallet instance is revoked")
+		return
+	case errors.Is(err, wp.ErrInstanceNotActive):
+		writeError(w, http.StatusForbidden, "this wallet instance is suspended")
+		return
+	case err != nil:
 		s.cfg.Logf("wallet provider: Key Attestation: %v", err)
-	} else {
+	default:
 		for i, outcome := range outcomes {
 			s.cfg.Logf("wallet provider: Key Attestation for holder key %s: %s", thumbprints[i], outcome)
 		}
@@ -570,11 +606,14 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 }
 
 // issueKeyAttestation has the library issue a Key Attestation over the
-// keys vouched for, carrying nonce, under the shared holder instance.
-func (s *service) issueKeyAttestation(ctx context.Context, vouched []demoKey, nonce string) (string, error) {
-	id, instanceKey, err := s.holderIssuance(ctx)
-	if err != nil {
-		return "", err
+// keys vouched for, carrying nonce, for instanceKey of the instance id,
+// or with no instanceKey under the shared holder instance.
+func (s *service) issueKeyAttestation(ctx context.Context, id string, instanceKey crypto.PublicKey, vouched []demoKey, nonce string) (string, error) {
+	if instanceKey == nil {
+		var err error
+		if id, instanceKey, err = s.holderIssuance(ctx); err != nil {
+			return "", err
+		}
 	}
 	ch, raw, err := s.libChallenge(ctx, wp.PurposeHolder)
 	if err != nil {
