@@ -140,6 +140,11 @@ type config struct {
 	// 4 MiB (walletflow.Config.StatusMaxBytes, IdentifierListMaxBytes).
 	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
 	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
+	// StatusCacheMaxAgeSeconds is how long CheckStatus uses a status or
+	// identifier list it fetched before revalidating it: zero means
+	// statuslist.DefaultCacheMaxAge, at most a day; never past the
+	// list's own ttl or exp.
+	StatusCacheMaxAgeSeconds int64 `json:"status_cache_max_age_seconds,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -289,8 +294,10 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		// refresh grants, kept beside the credentials.
 		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
-		// The process's, which readers share too.
-		StatusCache: statusCache,
+	}
+	// The process's, which readers share too.
+	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds); err != nil {
+		return nil, err
 	}
 	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {
 		return nil, err

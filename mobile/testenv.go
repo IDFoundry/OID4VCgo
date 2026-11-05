@@ -141,7 +141,7 @@ func (e *TestEnv) Decide(approve bool) { e.env.Decide(approve) }
 // dropped, so their next check sees it.
 func (e *TestEnv) Revoke() {
 	e.env.Revoke()
-	statusCache.Purge()
+	purgeStatusCaches()
 }
 
 // RevokeGrants revokes every authorization code grant so far: their

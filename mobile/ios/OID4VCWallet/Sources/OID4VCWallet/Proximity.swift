@@ -584,6 +584,10 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// The largest identifier list `checkStatus` reads, in bytes; 0 means
     /// 4 MiB.
     public var identifierListMaxBytes: Int
+    /// How long `checkStatus` uses a status or identifier list it fetched
+    /// before revalidating it, in seconds, as
+    /// ``WalletConfiguration/statusCacheMaxAgeSeconds``.
+    public var statusCacheMaxAgeSeconds: Int
     /// The roles that decline checking revocation, for where something
     /// else stands in for it. Outside `development`, each role must be in
     /// `revocation` or here; a role can't be in both.
@@ -648,7 +652,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
                 statusCheck: StatusCheck? = nil, development: Bool = false,
                 crlDistributionPoints: [CRLDistributionPoint] = [], crlDistributionPointsFromRoots: Bool = false,
                 crlRequireHTTPS: Bool = false, developmentRoots: String = "",
-                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0) {
+                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -669,6 +673,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.developmentRoots = developmentRoots
         self.statusMaxBytes = statusMaxBytes
         self.identifierListMaxBytes = identifierListMaxBytes
+        self.statusCacheMaxAgeSeconds = statusCacheMaxAgeSeconds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -683,6 +688,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
         case developmentRoots = "development_roots"
         case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
+        case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -707,6 +713,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         developmentRoots = try c.decodeIfPresent(String.self, forKey: .developmentRoots) ?? ""
         statusMaxBytes = try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0
         identifierListMaxBytes = try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0
+        statusCacheMaxAgeSeconds = try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0
     }
 }
 
