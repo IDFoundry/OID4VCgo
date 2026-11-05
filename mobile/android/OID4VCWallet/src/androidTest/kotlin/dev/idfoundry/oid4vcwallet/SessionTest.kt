@@ -102,7 +102,7 @@ class SessionTest {
      * A Wallet Provider giving attestation challenges receives each key
      * it attests with its ID and an Android Key Attestation chain over its
      * challenge: the instance key's for the Wallet Attestation, the holder
-     * keys' for the Key Attestation.
+     * keys' for the Key Attestation, which names the instance key.
      */
     @Test
     fun providerReceivesKeyEvidence(): Unit = runBlocking {
@@ -116,6 +116,12 @@ class SessionTest {
         assertNotNull(instance.keyID)
         assertEquals(keys.attestationChain(instance.keyID!!)!!.map { it.toList() }, instance.certificateChain.map { it.toList() })
         assertTrue(provider.keyRequests.isNotEmpty())
+        // Each Key Attestation is for an instance key a Wallet Attestation
+        // was asked for.
+        val attested = provider.walletRequests.map { it.instanceKey.jwk.decodeToString() }
+        for (r in provider.keyRequests) {
+            assertTrue("a Key Attestation for an unattested instance key", r.instanceKey.jwk.decodeToString() in attested)
+        }
         for (k in provider.keyRequests.flatMap { it.keys }) {
             assertNotNull(k.keyID)
             assertTrue("holder key ${k.keyID} has no attestation chain", k.certificateChain.size > 1)
@@ -483,6 +489,6 @@ internal class ProviderOf(env: TestEnv) : WalletProvider {
     override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String =
         provider.walletAttestation(clientID, instanceKey).decodeToString()
 
-    override suspend fun keyAttestation(keys: List<ByteArray>, nonce: String): String =
-        provider.keyAttestation(("[" + keys.joinToString(",") { it.decodeToString() } + "]").toByteArray(), nonce).decodeToString()
+    override suspend fun keyAttestation(instanceKey: ByteArray, keys: List<ByteArray>, nonce: String): String =
+        provider.keyAttestation(instanceKey, ("[" + keys.joinToString(",") { it.decodeToString() } + "]").toByteArray(), nonce).decodeToString()
 }

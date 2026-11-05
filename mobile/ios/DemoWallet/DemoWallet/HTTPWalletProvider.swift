@@ -12,8 +12,14 @@ struct HTTPWalletProvider: WalletProvider {
         try await post("wallet-attestation", ["client_id": clientID, "instance_key": try JSONSerialization.jsonObject(with: instanceKey)])
     }
 
-    func keyAttestation(keys: [Data], nonce: String) async throws -> String {
-        try await post("key-attestation", ["keys": try keys.map { try JSONSerialization.jsonObject(with: $0) }, "nonce": nonce])
+    // instanceKey is the issuance's, whose status the Key Attestation
+    // carries: walletAttestation sent it first.
+    func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
+        try await post("key-attestation", [
+            "instance_key": try JSONSerialization.jsonObject(with: instanceKey),
+            "keys": try keys.map { try JSONSerialization.jsonObject(with: $0) },
+            "nonce": nonce,
+        ])
     }
 
     private func post(_ path: String, _ body: [String: Any]) async throws -> String {

@@ -81,7 +81,10 @@ app. Before the wallet makes an instance or holder key, it asks
 `attestationChallenge` for a challenge from your backend;
 `AndroidKeystoreKeyStore` makes the key over it, and the key then
 reaches `walletAttestation` or `keyAttestation` as `KeyEvidence`, with
-its attestation certificate chain for your backend to verify.
+its attestation certificate chain for your backend to verify. A Key
+Attestation request also names the issuance's instance key, which
+`walletAttestation` attested first, so your backend can give the Key
+Attestation that key's status.
 [Going to production](GoingToProduction.md) lists what it checks.
 
 ```kotlin
@@ -123,8 +126,10 @@ class BackendWalletProvider(private val backend: String) : WalletProvider {
             .put("client_id", request.clientID)
             .put("instance_key", evidence(request.instanceKey)))
 
+    // instanceKey is the issuance's, which walletAttestation sent first.
     override suspend fun keyAttestation(request: KeyAttestationRequest): String =
         post("key-attestation", JSONObject()
+            .put("instance_key", JSONObject(request.instanceKey.jwk.decodeToString()))
             .put("keys", JSONArray(request.keys.map(::evidence)))
             .put("nonce", request.nonce))
 

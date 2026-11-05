@@ -267,7 +267,7 @@ public object OID4VC {
      * side changed without these sources — rather than misreading its
      * JSON. The Go tests keep it equal to the mobile package's.
      */
-    public const val expectedABIVersion: Int = 14
+    public const val expectedABIVersion: Int = 15
 
     /**
      * Whether the linked Go library is the test build, carrying an

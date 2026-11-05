@@ -61,9 +61,12 @@ lock.
 Issuers following HAIP accept only a wallet its Wallet Provider has
 attested: a Wallet Attestation for the wallet's instance key, and a Key
 Attestation for the keys a credential will be bound to. Your backend
-issues them; the app passes the keys and returns its answers. A real
-Wallet Provider attests only after checking App Attest evidence that
-it's talking to your genuine app.
+issues them; the app passes the keys and returns its answers. A Key
+Attestation request also names the issuance's instance key, which
+`walletAttestation` attested first, so your backend can give the Key
+Attestation that key's status. A real Wallet Provider attests only
+after checking App Attest evidence that it's talking to your genuine
+app.
 
 ```swift
 import Foundation
@@ -81,8 +84,10 @@ struct BackendWalletProvider: WalletProvider {
         ])
     }
 
-    func keyAttestation(keys: [Data], nonce: String) async throws -> String {
+    // instanceKey is the issuance's, which walletAttestation sent first.
+    func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
         try await post("key-attestation", [
+            "instance_key": try JSONSerialization.jsonObject(with: instanceKey),
             "keys": try keys.map { try JSONSerialization.jsonObject(with: $0) },
             "nonce": nonce,
         ])

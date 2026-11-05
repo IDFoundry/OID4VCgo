@@ -105,8 +105,13 @@ public extension CredentialStore {
 public protocol WalletProvider: Sendable {
     /// A Wallet Attestation binding `instanceKey` to `clientID`.
     func walletAttestation(clientID: String, instanceKey: Data) async throws -> String
-    /// A Key Attestation over `keys`, carrying the issuer's `nonce`.
-    func keyAttestation(keys: [Data], nonce: String) async throws -> String
+    /// A Key Attestation over `keys`, carrying the issuer's `nonce`, for
+    /// the issuance whose instance key is `instanceKey`: the wallet always
+    /// asks ``walletAttestation(clientID:instanceKey:)`` for it first. A
+    /// provider that records its instance keys gives the Key Attestation
+    /// that key's status (the Wallet Provider protocol's `instance_key`),
+    /// so suspending or revoking the installation withdraws it too.
+    func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String
 }
 
 // MARK: Adapters to gomobile's protocols
@@ -199,14 +204,15 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
         return Data(try Self.wait { try await provider.walletAttestation(clientID: id, instanceKey: key) }.utf8)
     }
 
-    func keyAttestation(_ keysJWK: Data?, nonce: String?) throws -> Data {
+    func keyAttestation(_ instanceKeyJWK: Data?, keysJWK: Data?, nonce: String?) throws -> Data {
         guard let array = try JSONSerialization.jsonObject(with: keysJWK ?? Data()) as? [Any] else {
             throw StoreError("the keys to attest aren't a JSON array")
         }
         let keys = try array.map { try JSONSerialization.data(withJSONObject: $0) }
         let provider = self.provider
+        let instanceKey = instanceKeyJWK ?? Data()
         let n = nonce ?? ""
-        return Data(try Self.wait { try await provider.keyAttestation(keys: keys, nonce: n) }.utf8)
+        return Data(try Self.wait { try await provider.keyAttestation(instanceKey: instanceKey, keys: keys, nonce: n) }.utf8)
     }
 
     /// Runs `body` and blocks this (Go's) thread until it finishes. A

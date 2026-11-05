@@ -68,6 +68,18 @@ another (HAIP 1.0 §4.4.1).
 - `walletflowtest.Provider` gives a Key Attestation only for an
   instance key it gave a Wallet Attestation for.
 
+### Mobile (ABI 15; the Swift and Kotlin libraries)
+
+- **`ABIVersion` is 15.** The Swift and Kotlin libraries refuse a
+  framework built for another version: upgrade them together.
+- **A `WalletProvider` of your own receives the instance key.**
+  Swift: `keyAttestation(instanceKey:keys:nonce:)`. Kotlin:
+  `KeyAttestationRequest.instanceKey` (a `KeyEvidence`), or
+  `keyAttestation(instanceKey, keys, nonce)` for a provider that takes
+  JWKs alone. Gomobile: `KeyAttestation(instanceKeyJWK, keysJWK,
+  nonce)`. Send it to your backend as the Key Attestation's
+  `instance_key`.
+
 ## v0.64.0 → v0.65.0
 
 ### Credential status (`walletflow`)

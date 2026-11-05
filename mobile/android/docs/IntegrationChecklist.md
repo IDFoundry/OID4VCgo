@@ -28,8 +28,9 @@ is a complete, working app on this library to compare against.
 - [ ] The `WalletProvider` gives a fresh challenge from your backend in
   `attestationChallenge` for instance and holder keys, implements the
   `WalletAttestationRequest` and `KeyAttestationRequest` versions of
-  its attestations, and sends each key's `KeyEvidence.certificateChain`
-  to the backend, which verifies it as
+  its attestations, sends a Key Attestation's
+  `KeyAttestationRequest.instanceKey` with it, and sends each key's
+  `KeyEvidence.certificateChain` to the backend, which verifies it as
   [Going to production](GoingToProduction.md) lists before attesting,
   and refuses a key without one. *Check:* the backend refuses a key
   made without its challenge, a key from an emulator, and a key from a

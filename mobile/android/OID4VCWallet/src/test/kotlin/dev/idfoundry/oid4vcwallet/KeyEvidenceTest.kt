@@ -105,9 +105,12 @@ class KeyEvidenceTest {
         assertArrayEquals("challenge-instance".toByteArray(), instanceEvidence.certificateChain.first())
 
         val batch = "[" + store.jwk(h1).decodeToString() + "," + store.jwk(h2).decodeToString() + "]"
-        assertEquals("ka", wp.keyAttestation(batch.toByteArray(), "n").decodeToString())
+        assertEquals("ka", wp.keyAttestation(store.jwk(instance), batch.toByteArray(), "n").decodeToString())
         val request = provider.keyRequest!!
         assertEquals("n", request.nonce)
+        // The issuance's instance key, as its Wallet Attestation had it.
+        assertEquals(instance, request.instanceKey.keyID)
+        assertEquals(store.jwk(instance).decodeToString(), request.instanceKey.jwk.decodeToString())
         assertEquals(listOf(h1, h2), request.keys.map { it.keyID })
         assertEquals(listOf(2, 2), request.keys.map { it.certificateChain.size })
         // The JWK reaches the provider as Go gave it.
@@ -126,8 +129,8 @@ class KeyEvidenceTest {
         val deletedJWK = store.jwk(deleted)
         keys.deleteKey(deleted)
 
-        wp.keyAttestation("[${other.decodeToString()},${deletedJWK.decodeToString()},{\"kty\":\"EC\"}]".toByteArray(), "n")
-        for (k in provider.keyRequest!!.keys) {
+        wp.keyAttestation(other, "[${other.decodeToString()},${deletedJWK.decodeToString()},{\"kty\":\"EC\"}]".toByteArray(), "n")
+        for (k in provider.keyRequest!!.keys + provider.keyRequest!!.instanceKey) {
             assertNull(k.keyID)
             assertTrue(k.certificateChain.isEmpty())
         }
@@ -140,7 +143,8 @@ class KeyEvidenceTest {
         val provider = object : WalletProvider {
             override suspend fun walletAttestation(clientID: String, instanceKey: ByteArray): String = "wa-$clientID"
 
-            override suspend fun keyAttestation(keys: List<ByteArray>, nonce: String): String = "ka-${keys.size}-$nonce"
+            override suspend fun keyAttestation(instanceKey: ByteArray, keys: List<ByteArray>, nonce: String): String =
+                "ka-${jwkPoint(instanceKey) != null}-${keys.size}-$nonce"
         }
         val created = CreatedKeys()
         val keys = KeyStoreAdapter(store, provider, created)
@@ -148,12 +152,13 @@ class KeyEvidenceTest {
         val h = keys.createKey("holder")
         assertNull("no challenge, no attestation", store.challenges[h])
         assertEquals("wa-c", wp.walletAttestation("c", store.jwk(h)).decodeToString())
-        assertEquals("ka-1-n", wp.keyAttestation("[${store.jwk(h).decodeToString()}]".toByteArray(), "n").decodeToString())
+        val instance = keys.createKey("instance")
+        assertEquals("ka-true-1-n", wp.keyAttestation(store.jwk(instance), "[${store.jwk(h).decodeToString()}]".toByteArray(), "n").decodeToString())
 
         // One that implements neither version fails, not loops.
         val none = WalletProviderAdapter(object : WalletProvider {})
         try {
-            none.keyAttestation("[]".toByteArray(), "n")
+            none.keyAttestation("{}".toByteArray(), "[]".toByteArray(), "n")
             fail("a provider with no keyAttestation answered")
         } catch (e: StoreException) {
             // As expected.
