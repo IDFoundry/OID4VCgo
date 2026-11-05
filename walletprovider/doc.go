@@ -120,6 +120,14 @@
 // them. Size Config.StatusListSize for the instance keys used in a
 // period.
 //
+// Neither store of instance keys and their statuses grows for good. An
+// instance key's record is kept for Config.InstanceKeyRetention after
+// the start of the period it was last used in (InstanceKey.RetainUntil),
+// and then the InstanceKeyStore may delete it, as sqlstore's DB.Sweep
+// does: a key used again after that needs evidence, as a new one does.
+// Provider.SweepStatusLists deletes the lists of the periods no longer
+// served; run it periodically. Instances themselves are kept.
+//
 // # Requests after registration
 //
 // Proving possession of the registration key on each later request is

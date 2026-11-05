@@ -53,7 +53,10 @@ type WalletAttestationRequest struct {
 // requests for the key reuse the record, without evidence, and its
 // index while it's on the current period's lists
 // (Config.StatusListPeriod); in a later period, the key gets an index
-// on that period's lists first.
+// on that period's lists first. A key unused for
+// Config.InstanceKeyRetention, whose record the InstanceKeyStore has
+// deleted, is a new key again: evidence is required, and refused with
+// ErrEvidenceRequired if missing.
 // A key recorded for another instance, or that is the instance's
 // registration key, is refused with ErrInstanceKeyRegistered.
 func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationRequest) (string, error) {
@@ -158,6 +161,7 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 	if ik.Status, err = p.allocateStatus(ctx, ik.CreatedAt); err != nil {
 		return InstanceKey{}, nil, err
 	}
+	ik.RetainUntil = p.retainUntil(p.periodStart(ik.CreatedAt))
 	switch err := p.deps.InstanceKeys.Create(ctx, ik); {
 	case errors.Is(err, ErrExists):
 		// Recorded meanwhile, by a concurrent request: this instance's
@@ -278,7 +282,8 @@ type KeyAttestationResult struct {
 // Appendix D) for holder keys of an active instance whose registration
 // evidence the Policy still accepts, for the issuance of one of its
 // instance keys (ErrUnknownInstanceKey for a key a Wallet Attestation
-// didn't record for the instance). It consumes the challenge and
+// didn't record for the instance, or whose record retention deleted:
+// Config.InstanceKeyRetention). It consumes the challenge and
 // verifies each piece of evidence; evidence must be from the
 // instance's platform and app. attested_keys lists only the keys some
 // evidence that passed vouches for at a security level the Policy

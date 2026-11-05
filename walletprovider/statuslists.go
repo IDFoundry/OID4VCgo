@@ -42,6 +42,12 @@ func (p *Provider) periodStart(t time.Time) int64 {
 	return s - (s%period+period)%period
 }
 
+// retainUntil is the RetainUntil of an instance key on the lists of
+// the period starting at start.
+func (p *Provider) retainUntil(start int64) time.Time {
+	return time.Unix(start, 0).Add(p.cfg.InstanceKeyRetention)
+}
+
 // listURI is the uri of list n of the period starting at start.
 func (p *Provider) listURI(start int64, n int) string {
 	return p.cfg.StatusListBaseURI + "/" + strconv.FormatInt(start, 10) + "/" + strconv.Itoa(n)
@@ -142,7 +148,8 @@ func (l *statusLists) filledBefore(start int64, n int) {
 // moving it there first if it's on an earlier period's list or on no
 // period's (a record from before lists had periods): a fresh index, the
 // old Status kept as PreviousStatus while an attestation naming it may
-// be live, that is, if it's the previous period's. The record changes
+// be live, that is, if it's the previous period's, and a RetainUntil
+// from the current period's start. The record changes
 // with a compare-and-swap (InstanceKeyStore.Update); should another
 // request have moved it meanwhile, its move stands, and the index
 // reserved here stays reserved, as every allocated index does.
@@ -168,7 +175,7 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 	}
 	for range maxUpdateAttempts {
 		moved := ik
-		moved.Status, moved.PreviousStatus = ref, statuslist.StatusListRef{}
+		moved.Status, moved.PreviousStatus, moved.RetainUntil = ref, statuslist.StatusListRef{}, p.retainUntil(cur)
 		if start, _, ok := p.parseList(ik.Status.URI); ok && start == cur-p.period() {
 			moved.PreviousStatus = ik.Status
 		}
@@ -201,6 +208,71 @@ func (p *Provider) setStatus(ctx context.Context, ref statuslist.StatusListRef, 
 	}
 	p.lists.invalidate(ref.URI)
 	return nil
+}
+
+// maxEmptyPeriods is how many periods in a row without a list
+// SweepStatusLists passes before it looks no further back.
+const maxEmptyPeriods = 8
+
+// SweepStatusLists deletes the status lists of the periods before those
+// StatusLists serves (statuslist.IndexStore.Delete) and returns how many
+// it deleted. No live attestation names one of them, and no index is
+// handed out of one again; an instance key whose Status or
+// PreviousStatus names one gets an index on the current period's lists
+// when it's next used, and Suspend, Resume and Revoke pass it by, as
+// they do every list no longer served. Without it, every list of every
+// period stays in the IndexStore for good.
+//
+// It walks back from the period before the oldest one served, and
+// stops after maxEmptyPeriods periods in a row with no list: a
+// period's lists fill one after another, so one whose first list has
+// no index reserved has none. Run it periodically — daily, say — from
+// one process, as sqlstore's DB.Sweep is run; it's safe to run from
+// several at once, or again after a failure, which leaves what it
+// didn't delete for the next run.
+func (p *Provider) SweepStatusLists(ctx context.Context) (int, error) {
+	period := p.period()
+	deleted, empty := 0, 0
+	// The oldest period served starts two periods before the current
+	// one (served).
+	for start := p.periodStart(p.now()) - 3*period; empty < maxEmptyPeriods; start -= period {
+		n, err := p.deleteLists(ctx, start)
+		deleted += n
+		switch {
+		case err != nil:
+			return deleted, err
+		case n == 0:
+			empty++
+		default:
+			empty = 0
+		}
+	}
+	return deleted, nil
+}
+
+// deleteLists deletes the lists of the period starting at start that
+// have an index reserved, and returns how many it deleted. It deletes
+// the last first, so should one fail, those before it, list 0 among
+// them, are still found next time.
+func (p *Provider) deleteLists(ctx context.Context, start int64) (int, error) {
+	n := 0
+	for ; n < MaxStatusListsPerPeriod; n++ {
+		uri := p.listURI(start, n)
+		reserved, err := p.deps.StatusIndices.Reserved(ctx, uri)
+		if err != nil {
+			return 0, fmt.Errorf("walletprovider: counting the reserved indices of %s: %w", uri, err)
+		}
+		if reserved == 0 {
+			break
+		}
+	}
+	for i := n - 1; i >= 0; i-- {
+		uri := p.listURI(start, i)
+		if err := p.deps.StatusIndices.Delete(ctx, uri); err != nil {
+			return n - 1 - i, fmt.Errorf("walletprovider: deleting the status list %s: %w", uri, err)
+		}
+	}
+	return n, nil
 }
 
 // StatusLists serves the provider's status lists: an http.Handler to

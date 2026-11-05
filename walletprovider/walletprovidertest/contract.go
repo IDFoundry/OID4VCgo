@@ -253,15 +253,16 @@ func TestInstanceKeyStoreContract(t *testing.T, newStore func(t *testing.T) wall
 	}
 }
 
-// sampleInstanceKey is a record with every field set, its time in UTC
-// at whole seconds so a store may keep it at that precision.
+// sampleInstanceKey is a record with every field set, its times in UTC
+// at whole seconds so a store may keep them at that precision.
 func sampleInstanceKey(thumbprint, instanceID string) walletprovider.InstanceKey {
+	created := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	return walletprovider.InstanceKey{
 		Thumbprint: thumbprint, Key: []byte(`{"kty":"EC","crv":"P-256","x":"x","y":"y"}`), InstanceID: instanceID,
 		Status:         statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status/1762300800/0"},
 		PreviousStatus: statuslist.StatusListRef{Idx: 77, URI: "https://provider.example/status/1761696000/3"},
 		SecurityLevel:  walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
-		CreatedAt: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+		CreatedAt: created, RetainUntil: created.Add(90 * 24 * time.Hour),
 	}
 }
 
@@ -273,17 +274,17 @@ func mustCreateInstanceKey(t *testing.T, s walletprovider.InstanceKeyStore, k wa
 }
 
 // expectInstanceKey reads the record with want's thumbprint and
-// compares it with want, its time by instant.
+// compares it with want, its times by instant.
 func expectInstanceKey(t *testing.T, s walletprovider.InstanceKeyStore, what string, want walletprovider.InstanceKey) {
 	t.Helper()
 	got, err := s.Get(context.Background(), want.Thumbprint)
 	if err != nil {
 		t.Fatalf("%s: Get(%q): %v", what, want.Thumbprint, err)
 	}
-	if !got.CreatedAt.Equal(want.CreatedAt) {
-		t.Fatalf("%s: CreatedAt is %v, want %v", what, got.CreatedAt, want.CreatedAt)
+	if !got.CreatedAt.Equal(want.CreatedAt) || !got.RetainUntil.Equal(want.RetainUntil) {
+		t.Fatalf("%s: times are %v, %v; want %v, %v", what, got.CreatedAt, got.RetainUntil, want.CreatedAt, want.RetainUntil)
 	}
-	got.CreatedAt = want.CreatedAt
+	got.CreatedAt, got.RetainUntil = want.CreatedAt, want.RetainUntil
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%s:\n got  %+v\n want %+v", what, got, want)
 	}
@@ -363,6 +364,7 @@ func instanceKeyUpdateComparesRevision(t *testing.T, s walletprovider.InstanceKe
 	mustCreateInstanceKey(t, s, sampleInstanceKey("tp-1", "a"))
 	k := mustGetInstanceKey(t, s, "tp-1")
 	k.PreviousStatus, k.Status = k.Status, statuslist.StatusListRef{Idx: 9, URI: "https://provider.example/status/1762905600/1"}
+	k.RetainUntil = k.RetainUntil.Add(7 * 24 * time.Hour)
 	if err := s.Update(context.Background(), k); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
