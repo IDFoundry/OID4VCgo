@@ -580,15 +580,19 @@ Attestations are issued under one shared instance. Every attestation
 then names the provider's Token Status List, served at `/v1/status`
 (`-url` on `cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a
 revoked or suspended instance gets no more Wallet Attestations.
-Instances and status entries are kept in memory, so a restart forgets
-them and a wallet's instance key registers again; the files above are
-read as before. The library's own versioned protocol (challenge,
-instance registration, and requests signed with the instance key) is
-served under `/v1/` too. With `-android-app package:sha256[,...]` on
-`cmd/wallet-provider`, it attests that app's Android Key Attestation
-chains there (`walletprovider/androidkey`: Google's roots and
-revocation list, locked and verified boot, every signing certificate
-allowed). The demo apps don't use it yet.
+Instances are kept in `wallet-provider-instances.json` and their
+status list indices and statuses in
+`wallet-provider-status-indices.json` (`-instances` and
+`-status-indices` on `cmd/wallet-provider`; in `.demo-state/` under
+`cmd/demo`), so a restart keeps each instance, its status index and any
+revocation, and hands no index out twice; the files above are read as
+before. The library's own versioned protocol (challenge, instance
+registration, and requests signed with the instance key) is served
+under `/v1/` too. With `-android-app package:sha256[,...]` (on
+`cmd/wallet-provider` or `cmd/demo`, repeatable), it attests that
+app's Android Key Attestation chains there (`walletprovider/androidkey`:
+Google's roots and revocation list, locked and verified boot, every
+signing certificate allowed). The demo apps don't use it yet.
 
 It attests only the demo wallet's `client_id`, without checking who's
 asking: a real Wallet Provider would check platform evidence (app
