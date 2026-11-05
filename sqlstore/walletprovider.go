@@ -209,6 +209,107 @@ func (s *InstanceStore) List(ctx context.Context, after string, limit int) ([]wa
 	return out, nil
 }
 
+// instanceKeyRecord is an InstanceKey as an InstanceKeyStore encodes
+// it: its Key as the bytes it holds, as instanceRecord keeps an
+// Instance's.
+type instanceKeyRecord struct {
+	walletprovider.InstanceKey
+	Key []byte `json:"Key"`
+}
+
+// InstanceKeyStore is a walletprovider.InstanceKeyStore:
+// walletprovider.Dependencies.InstanceKeys. Each instance key is a row
+// keyed by its thumbprint, its record sealed when the DB has a Sealer,
+// beside the readable instance_id column, indexed with the thumbprint
+// for List. The primary key makes Create's check and store one atomic
+// INSERT, so one key belongs to one instance across every process.
+// The record holds the key, the instance it belongs to, its status
+// list index and its evidence's summary: nothing secret, but which
+// instance keys are one instance's is what the provider keeps from
+// issuers, so the table is as private as the instances'; sealing keeps
+// a database writer from altering a record, or moving it to another
+// instance, unnoticed. Records are never changed once created and
+// never expire: Sweep leaves them alone, and nothing here deletes one.
+type InstanceKeyStore struct {
+	t *table[walletprovider.InstanceKey]
+}
+
+var _ walletprovider.InstanceKeyStore = (*InstanceKeyStore)(nil)
+
+// WalletProviderInstanceKeys returns d's walletprovider.InstanceKeyStore.
+func (d *DB) WalletProviderInstanceKeys() *InstanceKeyStore {
+	t := &table[walletprovider.InstanceKey]{
+		d: d, name: "walletprovider_instance_keys", sql: tableSQL{insert: d.sql.wpInstanceKeyInsert, get: d.sql.wpInstanceKeyGet},
+		rowOf: func(k walletprovider.InstanceKey) row { return row{extra: []any{k.InstanceID}} },
+	}
+	t.encode = func(id string, k walletprovider.InstanceKey) ([]byte, error) {
+		return d.encodeRecord(t.name, id, instanceKeyRecord{InstanceKey: k, Key: k.Key})
+	}
+	t.decode = func(id string, data []byte) (walletprovider.InstanceKey, error) {
+		var r instanceKeyRecord
+		if err := d.decodeRecord(t.name, id, data, &r); err != nil {
+			return walletprovider.InstanceKey{}, err
+		}
+		if r.Thumbprint != id {
+			return walletprovider.InstanceKey{}, fmt.Errorf("%w: instance key %q is stored as %q", ErrRecordFormat, r.Thumbprint, id)
+		}
+		r.InstanceKey.Key = r.Key
+		return r.InstanceKey, nil
+	}
+	return &InstanceKeyStore{t}
+}
+
+// Get implements walletprovider.InstanceKeyStore.
+func (s *InstanceKeyStore) Get(ctx context.Context, thumbprint string) (walletprovider.InstanceKey, error) {
+	k, err := s.t.get(ctx, thumbprint)
+	return k, wpNotFound("instance key", thumbprint, err)
+}
+
+// Create implements walletprovider.InstanceKeyStore: one INSERT … ON
+// CONFLICT DO NOTHING, which inserts nothing, and reports ErrExists, if
+// a row holds the key's thumbprint, whatever its instance.
+func (s *InstanceKeyStore) Create(ctx context.Context, k walletprovider.InstanceKey) error {
+	return wpNotFound("create instance key", k.Thumbprint, insertNew(s.t, ctx, k.Thumbprint, k))
+}
+
+// List implements walletprovider.InstanceKeyStore: one SELECT … WHERE
+// instance_id = ? AND id > ? ORDER BY id LIMIT ?, comparing thumbprints
+// bytewise, on the (instance_id, id) index. A record whose instance
+// isn't its row's instance_id is refused with ErrRecordFormat.
+func (s *InstanceKeyStore) List(ctx context.Context, instanceID, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	out := []walletprovider.InstanceKey{}
+	switch {
+	case limit <= 0:
+		return out, nil
+	case !storableKeys(instanceID, after):
+		return nil, fmt.Errorf("sqlstore: list instance keys: %w", errUnstorableKey)
+	}
+	rows, err := s.t.d.db.QueryContext(ctx, s.t.d.sql.wpInstanceKeyList, instanceID, after, int64(limit))
+	if err != nil {
+		return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		var data []byte
+		if err := rows.Scan(&id, &data); err != nil {
+			return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+		}
+		k, err := s.t.decodeOf(id, data)
+		if err != nil {
+			return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+		}
+		if k.InstanceID != instanceID {
+			return nil, fmt.Errorf("sqlstore: list instance keys: %w: instance key %q of instance %q is stored as instance %q's", ErrRecordFormat, id, k.InstanceID, instanceID)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+	}
+	return out, nil
+}
+
 // ChallengeStore is a walletprovider.ChallengeStore:
 // walletprovider.Dependencies.Challenges. Each challenge is a row keyed
 // by its value, its record sealed when the DB has a Sealer. Consume is

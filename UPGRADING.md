@@ -57,8 +57,9 @@ another (HAIP 1.0 §4.4.1).
   index. Each instance key (`InstanceKey`) gets one when it's recorded.
 - **`Dependencies.InstanceKeys` is required**: an `InstanceKeyStore`
   (`MemoryInstanceKeyStore` for tests;
-  `walletprovidertest.TestInstanceKeyStoreContract` checks your own).
-  sqlstore has none yet.
+  `walletprovidertest.TestInstanceKeyStoreContract` checks your own;
+  sqlstore's is `DB.WalletProviderInstanceKeys`, from its migration
+  0006, so run `Migrate`).
 - **`WalletAttestationRequest` takes `InstanceKey`**, and, the first
   time an instance asks for that key, `Challenge` (`PurposeInstance`)
   and `Evidence` for it. A key already recorded for the instance needs

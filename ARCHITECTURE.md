@@ -514,8 +514,8 @@ changes whether *every* bullet below is `(done)`.
     imports no platform code.
 
   `sqlstore` keeps its durable stores (`DB.WalletProviderInstances`,
-  `DB.WalletProviderChallenges`, with `DB.StatusIndices` for its status
-  list indices); a store for instance keys is still to come there.
+  `DB.WalletProviderInstanceKeys`, `DB.WalletProviderChallenges`, with
+  `DB.StatusIndices` for its status list indices).
 
   Still to come, each its own package or PR: `walletprovider/appattest`
   (Apple App Attest).
@@ -1718,7 +1718,7 @@ changes whether *every* bullet below is `(done)`.
   (`NonceStore`, `PreAuthorizedCodeStore`, `DeferredTransactionStore`,
   `NotificationStore`, `CredentialOfferStore`), the verifier's
   `TransactionStore`, walletflow's five, statuslist's `IndexStore` and
-  walletprovider's `InstanceStore` and `ChallengeStore`, over `database/sql` for
+  walletprovider's `InstanceStore`, `InstanceKeyStore` and `ChallengeStore`, over `database/sql` for
   PostgreSQL and SQLite. A module of its own so the library takes no
   driver; its tests bring `pgx` and `modernc.org/sqlite` (pure Go, so
   no cgo). One `DB` wraps a `*sql.DB` and a `Dialect`, and hands out
@@ -1732,7 +1732,8 @@ changes whether *every* bullet below is `(done)`.
   `sweep_after`, `record` — plus the few a store looks rows up by (a
   pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
   transaction's `key_id` and `response_code_hash`, a wallet instance's
-  `UNIQUE` `key_thumbprint` and the `revision` its `Update` compares); `record` is the
+  `UNIQUE` `key_thumbprint` and the `revision` its `Update` compares, an
+  instance key's `instance_id`, indexed with its thumbprint for `List`); `record` is the
   record as JSON, sealed with an optional `Sealer` (the
   `verifier.TransactionSealer` interface) bound to its table and key,
   or for the verifier `TransactionCodec`'s own encoding. Consumes are

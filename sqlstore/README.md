@@ -54,17 +54,22 @@ alloc := &statuslist.Allocator{
 }
 ```
 
-A `walletprovider.Provider`'s stores are `db.WalletProviderInstances()`
-and `db.WalletProviderChallenges()`, with `db.StatusIndices()` for its
-status list indices. An instance's `Create` is one `INSERT` on the `id`
-primary key and the `UNIQUE` `key_thumbprint` column, so one instance key
-registers one instance across every process; `Update` is one
-`UPDATE … WHERE id = ? AND revision = ?`; a challenge's `Consume` is one
+A `walletprovider.Provider`'s stores are `db.WalletProviderInstances()`,
+`db.WalletProviderInstanceKeys()` and `db.WalletProviderChallenges()`,
+with `db.StatusIndices()` for its status list indices. An instance's
+`Create` is one `INSERT` on the `id` primary key and the `UNIQUE`
+`key_thumbprint` column, so one registration key registers one instance
+across every process; `Update` is one
+`UPDATE … WHERE id = ? AND revision = ?`. An instance key's `Create` is
+one `INSERT` on its thumbprint, the primary key, so one key belongs to
+one instance; `List` walks one instance's keys on an
+`(instance_id, id)` index. A challenge's `Consume` is one
 `DELETE … RETURNING`.
 
 ```go
 deps := walletprovider.Dependencies{
 	Instances:     db.WalletProviderInstances(),
+	InstanceKeys:  db.WalletProviderInstanceKeys(),
 	Challenges:    db.WalletProviderChallenges(),
 	StatusIndices: db.StatusIndices(),
 	// …

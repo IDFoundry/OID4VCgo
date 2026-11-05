@@ -31,13 +31,17 @@
 //     one's status, durably and shared between every process using
 //     the database, so no index is handed out twice. Its Reserve is one
 //     INSERT on the (uri, idx) primary key.
-//   - walletprovider.Dependencies: WalletProviderInstances and
-//     WalletProviderChallenges, with StatusIndices as its
-//     StatusIndices. An instance's Create is one INSERT on the id
-//     primary key and the UNIQUE key_thumbprint column, so one instance
-//     key registers one instance across every process; its Update is
-//     one UPDATE … WHERE id = ? AND revision = ?, a compare-and-swap.
-//     A challenge's Consume is one DELETE … RETURNING.
+//   - walletprovider.Dependencies: WalletProviderInstances,
+//     WalletProviderInstanceKeys and WalletProviderChallenges, with
+//     StatusIndices as its StatusIndices. An instance's Create is one
+//     INSERT on the id primary key and the UNIQUE key_thumbprint
+//     column, so one registration key registers one instance across
+//     every process; its Update is one UPDATE … WHERE id = ? AND
+//     revision = ?, a compare-and-swap. An instance key's Create is one
+//     INSERT on its thumbprint, the primary key, so one key belongs to
+//     one instance; its List walks one instance's keys on an
+//     (instance_id, id) index. A challenge's Consume is one DELETE …
+//     RETURNING.
 //
 // The Authorization Server's stores, and the Credential Endpoint's DPoP
 // replay and nonce stores, are FAPIgo's: see A whole issuer deployment.
@@ -193,13 +197,17 @@
 // changing one leaves the record unreadable. Its status, expiry and
 // response_code hash are unprotected, so the database must be trusted
 // for their integrity.
-// A Wallet Provider's instances and challenges are sealed too, though
-// they hold nothing secret — an instance's public keys, its
-// registration evidence's summary, its App Attest key and counter, and
-// the operator's Reason for suspending or revoking it — so a database
-// writer can't alter one unnoticed; an instance's key thumbprint and
-// revision columns stay readable. Unsealed, a record still names its
-// own ID or challenge value, so one moved to another row is refused.
+// A Wallet Provider's instances, instance keys and challenges are
+// sealed too, though they hold nothing secret — an instance's public
+// keys, its registration evidence's summary, its App Attest key and
+// counter, and the operator's Reason for suspending or revoking it; an
+// instance key's key, status list index and evidence's summary — so a
+// database writer can't alter one unnoticed; an instance's key
+// thumbprint and revision columns, and an instance key's instance_id,
+// stay readable. Unsealed, a record still names its own ID, thumbprint
+// or challenge value, so one moved to another row is refused, and an
+// instance key's record names its instance, so List refuses one moved
+// to another instance.
 // KeyStore refuses to work without a Sealer. StatusIndices' rows aren't
 // sealed: a Status List publishes every status, and the indices, which
 // Referenced Tokens carry, aren't secret either.
@@ -239,8 +247,8 @@
 // the authorizations it abandoned, and their keys, stay.
 //
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
-// and leaves its instances alone: they never expire, and nothing here
-// deletes one.
+// and leaves its instances and instance keys alone: they never expire,
+// and nothing here deletes one.
 //
 // Sweep leaves StatusIndices' table alone, and nothing else deletes from
 // it: an index once handed out is never handed out again, since a

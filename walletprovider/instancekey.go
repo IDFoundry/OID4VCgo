@@ -52,8 +52,10 @@ func (k InstanceKey) clone() InstanceKey {
 }
 
 // InstanceKeyStore keeps instance keys. A production store is durable
-// and shared by every process serving the provider. Records are never
-// changed once created.
+// and shared by every process serving the provider, as the
+// github.com/idfoundry/oid4vcgo/sqlstore module's
+// DB.WalletProviderInstanceKeys is. Records are never changed once
+// created.
 type InstanceKeyStore interface {
 	// Get returns the instance key with thumbprint, or an error wrapping
 	// ErrNotFound.
