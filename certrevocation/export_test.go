@@ -19,5 +19,5 @@ func (r *Refresher) AcceptForTest(u string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	return r.keep(u, list, nil)
+	return r.keep(u, list, validators{}, nil)
 }
