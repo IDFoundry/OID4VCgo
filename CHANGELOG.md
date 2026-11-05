@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.65.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.65.0...v0.65.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **walletprovider:** claim user authentication only for keys with a short androidkey authTimeout ([2ae2bdc](https://github.com/IDFoundry/OID4VCgo/commit/2ae2bdca39bf11f3ab75ec29cd972c20285e8f53))
+
 ## [0.65.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.64.0...v0.65.0) (2026-11-05)
 
 
