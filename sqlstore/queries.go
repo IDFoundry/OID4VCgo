@@ -46,12 +46,14 @@ type queries struct {
 
 	// oid4vc_status_indices: statuslist.IndexStore.
 	statusIndexReserve, statusIndexCount, statusIndexSet, statusIndexGet, statusIndexList string
+	statusIndexDeleteBatch, statusIndexDeleteCount                                        string
 
 	// oid4vc_walletprovider_instances: walletprovider.InstanceStore.
 	wpInstanceInsert, wpInstanceGet, wpInstanceUpdate, wpInstanceRevision, wpInstanceList string
 
 	// oid4vc_walletprovider_instance_keys: walletprovider.InstanceKeyStore.
 	wpInstanceKeyInsert, wpInstanceKeyGet, wpInstanceKeyUpdate, wpInstanceKeyRevision, wpInstanceKeyList string
+	wpInstanceKeySweep                                                                                   string
 
 	// oid4vc_walletprovider_challenges: walletprovider.ChallengeStore.
 	wpChallengeInsert, wpChallengeConsume, wpChallengeSweep string

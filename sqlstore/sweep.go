@@ -20,7 +20,10 @@ import (
 //     deferred credential after it lapses, pass an earlier now;
 //   - a verifier transaction: its RetainUntil, the earliest a store may
 //     delete it, and never when that's zero;
-//   - a Wallet Provider's challenge: its ExpiresAt.
+//   - a Wallet Provider's challenge: its ExpiresAt;
+//   - a Wallet Provider's instance key: its RetainUntil, and never when
+//     that's zero, as in a record written before RetainUntil existed
+//     until the provider next moves it.
 //
 // Sweep leaves the wallet's tables alone. An expired authorization in
 // progress names the instance and DPoP keys it was started with, which
@@ -30,18 +33,21 @@ import (
 // KeyStore, which can't list them. A wallet's credentials, refresh
 // grants, pending deferred credentials and keys have no expiry here
 // either: walletflow deletes them itself. Nor does it touch the Status
-// List indices StatusIndices records, which are never freed, or a
-// Wallet Provider's registered instances, which never expire.
+// List indices StatusIndices records, which only the lists' issuer
+// knows when to delete (walletprovider.Provider.SweepStatusLists does,
+// for a Wallet Provider's lists), or a Wallet Provider's registered
+// instances, which never expire.
 func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	// What each table's records say they're good until.
 	sweeps := []struct{ table, statement string }{
-		{"issuer_nonces", d.sql.nonceSweep},                     // NonceIssuance.ExpiresAt
-		{"issuer_pre_authorized_codes", d.sql.pacSweep},         // PreAuthorizedCodeRecord.ExpiresAt
-		{"issuer_deferred_transactions", d.sql.deferredTxSweep}, // DeferredTransactionRecord.ExpiresAt; never when zero
-		{"issuer_notifications", d.sql.notificationSweep},       // NotificationRecord.ExpiresAt; never when zero
-		{"issuer_credential_offers", d.sql.offerSweep},          // CredentialOfferRecord.ExpiresAt
-		{"verifier_transactions", d.sql.txSweep},                // Transaction.RetainUntil; never when zero
-		{"walletprovider_challenges", d.sql.wpChallengeSweep},   // ChallengeRecord.ExpiresAt
+		{"issuer_nonces", d.sql.nonceSweep},                        // NonceIssuance.ExpiresAt
+		{"issuer_pre_authorized_codes", d.sql.pacSweep},            // PreAuthorizedCodeRecord.ExpiresAt
+		{"issuer_deferred_transactions", d.sql.deferredTxSweep},    // DeferredTransactionRecord.ExpiresAt; never when zero
+		{"issuer_notifications", d.sql.notificationSweep},          // NotificationRecord.ExpiresAt; never when zero
+		{"issuer_credential_offers", d.sql.offerSweep},             // CredentialOfferRecord.ExpiresAt
+		{"verifier_transactions", d.sql.txSweep},                   // Transaction.RetainUntil; never when zero
+		{"walletprovider_challenges", d.sql.wpChallengeSweep},      // ChallengeRecord.ExpiresAt
+		{"walletprovider_instance_keys", d.sql.wpInstanceKeySweep}, // InstanceKey.RetainUntil; never when zero
 	}
 	var total int64
 	for _, sw := range sweeps {

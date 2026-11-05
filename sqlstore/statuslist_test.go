@@ -1,6 +1,7 @@
 package sqlstore_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +21,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/statuslist/statuslisttest"
 )
 
 const (
@@ -107,6 +110,107 @@ func TestStatusIndexStoreContract(t *testing.T) {
 		}
 		if got, err := s.Statuses(ctx, "https://issuer.example/\xff", 8); err != nil || len(got) != 8 {
 			t.Errorf("Statuses of an unstorable uri = %v, %v; want 8 VALID", got, err)
+		}
+	})
+}
+
+func TestStatusIndexStoreSharedContract(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		statuslisttest.TestIndexStoreContract(t, func(*testing.T) statuslist.IndexStore { return e.db().StatusIndices() })
+	})
+}
+
+// bigList is how many indices TestStatusIndexStoreDeleteBigList
+// reserves: more than two of Delete's batches.
+const bigList = 25000
+
+// Delete deletes a list of many rows, over several writes, and a
+// Delete that stopped part-way — after some of the rows, or after all
+// of them but before the count — leaves the list counted, for another
+// to finish. A list deleted is reserved afresh.
+func TestStatusIndexStoreDeleteBigList(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		raw := e.location()()
+		d, err := sqlstore.New(raw, e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s := d.StatusIndices()
+		exec := func(query string, args ...any) {
+			t.Helper()
+			if e.dialect == sqlstore.Postgres {
+				for i := 1; strings.Contains(query, "?"); i++ {
+					query = strings.Replace(query, "?", "$"+strconv.Itoa(i), 1)
+				}
+			}
+			if _, err := raw.ExecContext(ctx, query, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// fill reserves every index of list A below bigList, a thousand
+		// a statement: Postgres's count trigger slows down with each row
+		// of one transaction.
+		fill := func() {
+			t.Helper()
+			for from := 0; from < bigList; from += 1000 {
+				exec("WITH RECURSIVE n(i) AS (SELECT CAST(? AS BIGINT) UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO oid4vc_status_indices (uri, idx) SELECT ?, i FROM n", from, from+999, statusListA)
+			}
+		}
+		reserved := func(uri string, want int) {
+			t.Helper()
+			if n, err := s.Reserved(ctx, uri); err != nil || n != want {
+				t.Fatalf("Reserved(%s) = %d, %v; want %d", uri, n, err, want)
+			}
+		}
+		deleted := func() {
+			t.Helper()
+			if err := s.Delete(ctx, statusListA); err != nil {
+				t.Fatal(err)
+			}
+			reserved(statusListA, 0)
+			if _, err := s.Status(ctx, statusListA, bigList-1); !errors.Is(err, statuslist.ErrIndexNotReserved) {
+				t.Fatalf("Status of a deleted index = %v, want ErrIndexNotReserved", err)
+			}
+		}
+
+		fill()
+		if err := s.Reserve(ctx, statusListB, 3); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetStatus(ctx, statusListA, 7, statuslist.StatusInvalid); err != nil {
+			t.Fatal(err)
+		}
+		reserved(statusListA, bigList)
+		deleted()
+		if got, err := s.Statuses(ctx, statusListA, bigList); err != nil || bytes.Count(got, []byte{0}) != bigList {
+			t.Fatalf("Statuses of a deleted list: %v", err)
+		}
+		reserved(statusListB, 1)
+
+		// Stopped after some of the rows.
+		fill()
+		exec("DELETE FROM oid4vc_status_indices WHERE uri = ? AND idx < ?", statusListA, bigList/2)
+		reserved(statusListA, bigList)
+		deleted()
+		// Stopped after every row, before the count.
+		fill()
+		exec("DELETE FROM oid4vc_status_indices WHERE uri = ?", statusListA)
+		reserved(statusListA, bigList)
+		deleted()
+
+		if err := s.Reserve(ctx, statusListA, 7); err != nil {
+			t.Fatalf("Reserve in a deleted list: %v", err)
+		}
+		reserved(statusListA, 1)
+		if got, err := s.Status(ctx, statusListA, 7); err != nil || got != statuslist.StatusValid {
+			t.Fatalf("Status of an index reserved afresh = %v, %v; want VALID", got, err)
+		}
+		if err := s.Delete(ctx, "https://issuer.example/\xff"); err != nil {
+			t.Fatalf("Delete of an unstorable uri: %v", err)
 		}
 	})
 }

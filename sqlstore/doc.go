@@ -30,7 +30,8 @@
 //     Status List indices handed out to Referenced Tokens, and each
 //     one's status, durably and shared between every process using
 //     the database, so no index is handed out twice. Its Reserve is one
-//     INSERT on the (uri, idx) primary key.
+//     INSERT on the (uri, idx) primary key; its Delete deletes a
+//     retired list's rows in bounded batches, then the list's count.
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices. An instance's Create is one
@@ -40,7 +41,8 @@
 //     revision = ?, a compare-and-swap. An instance key's Create is one
 //     INSERT on its thumbprint, the primary key, so one key belongs to
 //     one instance; its Update is one UPDATE … WHERE id = ? AND
-//     revision = ? AND instance_id = ?; its List walks one instance's
+//     revision = ? AND instance_id = ?, which, as Create does, stores
+//     its RetainUntil as sweep_after; its List walks one instance's
 //     keys on an (instance_id, id) index. A challenge's Consume is one
 //     DELETE … RETURNING.
 //
@@ -248,14 +250,19 @@
 // the authorizations it abandoned, and their keys, stay.
 //
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
-// and leaves its instances and instance keys alone: they never expire,
-// and nothing here deletes one.
+// and its instance keys after their RetainUntil (never one without,
+// written before RetainUntil existed, until its key next moves). It
+// leaves the instances alone: they never expire, and nothing here
+// deletes one.
 //
-// Sweep leaves StatusIndices' table alone, and nothing else deletes from
-// it: an index once handed out is never handed out again, since a
-// Referenced Token naming it may still be presented, so its row is kept
-// for as long as its list is. The table grows by one row per token
-// issued, bounded by the lists' sizes and fill limit.
+// Sweep leaves StatusIndices' table alone: an index once handed out is
+// never handed out again while its list is in use, since a Referenced
+// Token naming it may still be presented. The table grows by one row
+// per token issued, bounded by the lists' sizes and fill limit, until
+// the issuer retires a list for good and deletes it
+// (StatusIndexStore.Delete): a Wallet Provider's
+// Provider.SweepStatusLists does, for the lists of periods it no longer
+// serves.
 //
 // # Production
 //

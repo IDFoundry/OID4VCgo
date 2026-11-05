@@ -45,7 +45,8 @@ walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
 A `statuslist.Allocator`'s `Store` is `db.StatusIndices()`: the Status
 List indices handed out, and their statuses, kept durably and shared
 between processes, so no index is handed out twice. `Reserve` is one
-`INSERT` on the `(uri, idx)` primary key.
+`INSERT` on the `(uri, idx)` primary key; `Delete` deletes a retired
+list's rows in bounded batches, then its count.
 
 ```go
 alloc := &statuslist.Allocator{
@@ -63,7 +64,8 @@ across every process; `Update` is one
 `UPDATE … WHERE id = ? AND revision = ?`. An instance key's `Create` is
 one `INSERT` on its thumbprint, the primary key, so one key belongs to
 one instance; its `Update` is one
-`UPDATE … WHERE id = ? AND revision = ? AND instance_id = ?`; `List`
+`UPDATE … WHERE id = ? AND revision = ? AND instance_id = ?`, and both
+store its `RetainUntil` for `Sweep`; `List`
 walks one instance's keys on an `(instance_id, id)` index. A challenge's `Consume` is one
 `DELETE … RETURNING`.
 
@@ -131,9 +133,13 @@ binding its records to additional data of its own. Sweep each. See
   authorization, with its keys, when `Wallet.KeysInUse` lists the
   authorizations or `ResumeIssuance` is called for it: a wallet should
   call `KeysInUse` periodically, or abandoned authorizations stay.
-  Status List indices are never swept or freed: an index once handed
-  out is never reused. A Wallet Provider's challenges are swept after
-  their `ExpiresAt`; its instances never are.
+  Status List indices are never swept: an index once handed out is
+  never reused while its list is in use, and `StatusIndices().Delete`
+  forgets a list retired for good (a Wallet Provider's
+  `SweepStatusLists` does, daily say). A Wallet Provider's challenges
+  are swept after their `ExpiresAt`, and its instance keys after their
+  `RetainUntil` (a key written before it existed, once it next moves);
+  its instances never are.
 - **Sealing**: with `Options.Sealer` every issuer, walletflow and
   Wallet Provider record is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction

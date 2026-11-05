@@ -264,9 +264,10 @@ func TestWalletProviderStoreOutageIsNotUnknown(t *testing.T) {
 	})
 }
 
-// Sweep deletes the challenges past their ExpiresAt, and never an
-// instance or instance key.
-func TestSweepWalletProviderChallenges(t *testing.T) {
+// Sweep deletes the challenges past their ExpiresAt and the instance
+// keys past their RetainUntil, and never an instance, or an instance
+// key without a RetainUntil until an Update sets one.
+func TestSweepWalletProvider(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		ctx := context.Background()
 		d := e.db()
@@ -282,13 +283,16 @@ func TestSweepWalletProviderChallenges(t *testing.T) {
 		if err := d.WalletProviderInstances().Create(ctx, in); err != nil {
 			t.Fatal(err)
 		}
-		k := testInstanceKey("tp", "a")
-		k.CreatedAt = in.CreatedAt
-		if err := d.WalletProviderInstanceKeys().Create(ctx, k); err != nil {
-			t.Fatal(err)
+		keys := d.WalletProviderInstanceKeys()
+		for tp, retain := range map[string]time.Time{"expired": now.Add(-time.Second), "live": now.Add(time.Second), "unset": {}} {
+			k := testInstanceKey(tp, "a")
+			k.CreatedAt, k.RetainUntil = in.CreatedAt, retain
+			if err := keys.Create(ctx, k); err != nil {
+				t.Fatal(err)
+			}
 		}
-		if n, err := d.Sweep(ctx, now); err != nil || n != 1 {
-			t.Errorf("Sweep = %d, %v; want 1 deleted", n, err)
+		if n, err := d.Sweep(ctx, now); err != nil || n != 2 {
+			t.Errorf("Sweep = %d, %v; want 2 deleted", n, err)
 		}
 		if _, err := challenges.Consume(ctx, "old"); !errors.Is(err, walletprovider.ErrNotFound) {
 			t.Errorf("an expired challenge survived the sweep: %v", err)
@@ -299,8 +303,33 @@ func TestSweepWalletProviderChallenges(t *testing.T) {
 		if _, err := d.WalletProviderInstances().Get(ctx, "a"); err != nil {
 			t.Errorf("an instance was swept: %v", err)
 		}
-		if _, err := d.WalletProviderInstanceKeys().Get(ctx, "tp"); err != nil {
-			t.Errorf("an instance key was swept: %v", err)
+		if _, err := keys.Get(ctx, "expired"); !errors.Is(err, walletprovider.ErrNotFound) {
+			t.Errorf("an instance key past its RetainUntil survived the sweep: %v", err)
+		}
+		for _, tp := range []string{"live", "unset"} {
+			if _, err := keys.Get(ctx, tp); err != nil {
+				t.Errorf("instance key %q was swept: %v", tp, err)
+			}
+		}
+
+		// An Update sets the row's RetainUntil too.
+		k, err := keys.Get(ctx, "unset")
+		if err != nil {
+			t.Fatal(err)
+		}
+		k.RetainUntil = now.Add(-time.Second)
+		if err := keys.Update(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := d.Sweep(ctx, now); err != nil || n != 1 {
+			t.Errorf("Sweep after an Update = %d, %v; want 1 deleted", n, err)
+		}
+		if _, err := keys.Get(ctx, "unset"); !errors.Is(err, walletprovider.ErrNotFound) {
+			t.Errorf("an instance key an Update expired survived the sweep: %v", err)
+		}
+		// Updating a swept key finds it unknown.
+		if err := keys.Update(ctx, k); !errors.Is(err, walletprovider.ErrNotFound) {
+			t.Errorf("Update of a swept key = %v, want ErrNotFound", err)
 		}
 	})
 }
@@ -480,6 +509,52 @@ func TestMigrateAddsWalletProviderInstanceKeyRevisions(t *testing.T) {
 		stale := k // still at Revision 1
 		if err := keys.Update(ctx, stale); !errors.Is(err, walletprovider.ErrConflict) {
 			t.Fatalf("a stale Update = %v, want ErrConflict", err)
+		}
+	})
+}
+
+// A database migrated by an earlier release, to version 8, migrates to
+// the instance keys' sweep index: a row from before, its sweep_after
+// NULL, is never swept until an Update sets its RetainUntil. Until
+// then, CheckSchema fails.
+func TestMigrateAddsWalletProviderInstanceKeySweep(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, err := sqlstore.New(e.location()(), e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 8); err != nil {
+			t.Fatal(err)
+		}
+		keys := d.WalletProviderInstanceKeys()
+		if err := keys.Create(ctx, testInstanceKey("tp", "a")); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0009_walletprovider_instance_key_sweep.sql") {
+			t.Errorf("CheckSchema at version 8 = %v, want migration 0009 missing", err)
+		}
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err != nil {
+			t.Errorf("CheckSchema after Migrate: %v", err)
+		}
+		far := time.Now().Add(100 * 365 * 24 * time.Hour)
+		if n, err := d.Sweep(ctx, far); err != nil || n != 0 {
+			t.Fatalf("Sweep of a row from before = %d, %v; want none deleted", n, err)
+		}
+		k, err := keys.Get(ctx, "tp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		k.RetainUntil = time.Now().UTC().Truncate(time.Second)
+		if err := keys.Update(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := d.Sweep(ctx, far); err != nil || n != 1 {
+			t.Fatalf("Sweep after an Update = %d, %v; want 1 deleted", n, err)
 		}
 	})
 }
