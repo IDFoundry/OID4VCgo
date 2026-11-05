@@ -24,7 +24,7 @@ func TestExpiry(t *testing.T) {
 		"ttl first":       {Verified{Iat: at.Unix() - 30, TTL: ptr(60), Exp: ptr(at.Unix() + 600)}, at.Add(30 * time.Second)},
 		"ttl overflowing": {Verified{Iat: at.Unix(), TTL: ptr(math.MaxInt64)}, at.Add(time.Hour)},
 	} {
-		if got := c.expiry(tc.v, at); !got.Equal(tc.want) {
+		if got := c.expiry(tc.v, at, nil); !got.Equal(tc.want) {
 			t.Errorf("%s: %v, want %v", name, got, tc.want)
 		}
 	}
@@ -37,14 +37,14 @@ func TestCheck_NotStored(t *testing.T) {
 	c := New(Options{Now: func() time.Time { return now }})
 	fetch := func(context.Context) ([]byte, error) { return []byte("token"), nil }
 	expired := func([]byte) (Verified, error) { return Verified{Iat: now.Unix() - 120, TTL: ptr(60)}, nil }
-	if err := c.Check(context.Background(), "u", "m", "", fetch, expired, nil); err != nil {
+	if err := c.Check(context.Background(), "u", "m", "", plain(fetch), expired, nil); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := c.Len(); n != 0 {
 		t.Errorf("an expired token was stored")
 	}
 	refused := errors.New("refused")
-	if err := c.Check(context.Background(), "u", "m", "", fetch, func([]byte) (Verified, error) { return Verified{}, refused }, nil); !errors.Is(err, refused) {
+	if err := c.Check(context.Background(), "u", "m", "", plain(fetch), func([]byte) (Verified, error) { return Verified{}, refused }, nil); !errors.Is(err, refused) {
 		t.Errorf("Check = %v, want the verification's error", err)
 	}
 	if n, _ := c.Len(); n != 0 {
@@ -96,13 +96,13 @@ func TestCheck_HitRechecked(t *testing.T) {
 	var n counter
 	v := Verified{Iat: now.Unix(), Memo: "memo", MemoBytes: 4}
 	for range 3 {
-		if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+		if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(v, nil), n.rechecks(nil)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	n.want(t, 1, 2, "three checks")
 	refused := errors.New("refused")
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(refused)); err != nil {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(v, nil), n.rechecks(refused)); err != nil {
 		t.Errorf("a refused hit, verified afresh: %v", err)
 	}
 	n.want(t, 2, 3, "a refused hit")
@@ -135,7 +135,7 @@ func TestCheck_Stampede(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				joined.Add(1)
-				if err := c.Check(context.Background(), "u", "m", "", fetch, verify, recheck); err != nil {
+				if err := c.Check(context.Background(), "u", "m", "", plain(fetch), verify, recheck); err != nil {
 					failed.Add(1)
 				}
 			}()
@@ -180,7 +180,7 @@ func TestCheck_FetchFailureKept(t *testing.T) {
 	v := Verified{Iat: now.Unix(), Memo: "memo"}
 	ctx := context.Background()
 	for range 2 {
-		if err := c.Check(ctx, "u", "m", "p", fetch, n.verify(v, nil), n.rechecks(nil)); !errors.Is(err, down) {
+		if err := c.Check(ctx, "u", "m", "p", plain(fetch), n.verify(v, nil), n.rechecks(nil)); !errors.Is(err, down) {
 			t.Errorf("Check = %v, want the fetch's error", err)
 		}
 	}
@@ -188,11 +188,11 @@ func TestCheck_FetchFailureKept(t *testing.T) {
 		t.Errorf("%d fetches, want 1", got)
 	}
 	failing = false
-	if err := c.Check(ctx, "u", "m", "other", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+	if err := c.Check(ctx, "u", "m", "other", plain(fetch), n.verify(v, nil), n.rechecks(nil)); err != nil {
 		t.Errorf("another policy: %v", err)
 	}
 	now = now.Add(10 * time.Second)
-	if err := c.Check(ctx, "u", "m", "p", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+	if err := c.Check(ctx, "u", "m", "p", plain(fetch), n.verify(v, nil), n.rechecks(nil)); err != nil {
 		t.Errorf("after MaxFailureAge: %v", err)
 	}
 	if got := fetches.Load(); got != 2 {
@@ -214,12 +214,12 @@ func TestCheck_RefusedTokenKept(t *testing.T) {
 	var n counter
 	v := Verified{Iat: now.Unix(), Memo: "memo", MemoBytes: 4}
 	for range 2 {
-		if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(nil)); !errors.Is(err, refused) {
+		if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(Verified{}, refused), n.rechecks(nil)); !errors.Is(err, refused) {
 			t.Fatalf("Check = %v", err)
 		}
 	}
 	n.want(t, 2, 0, "a refused token, checked twice")
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(v, nil), n.rechecks(nil)); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetches.Load(); got != 1 {
@@ -231,14 +231,14 @@ func TestCheck_RefusedTokenKept(t *testing.T) {
 	// The entry's own bytes, refetched and refused: its recheck stands.
 	now = now.Add(time.Second)
 	c.Purge()
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(v, nil), n.rechecks(nil)); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
 		t.Fatalf("Check = %v", err)
 	}
 	before := fetches.Load()
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
 		t.Errorf("Check = %v, want the recheck's error", err)
 	}
 	if got := fetches.Load(); got != before {
@@ -248,12 +248,12 @@ func TestCheck_RefusedTokenKept(t *testing.T) {
 	// Kept bytes whose ttl has passed are fetched afresh.
 	c.Purge()
 	short := Verified{Iat: now.Unix(), TTL: ptr(5), Memo: "memo"}
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), nil); !errors.Is(err, refused) {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(Verified{}, refused), nil); !errors.Is(err, refused) {
 		t.Fatal(err)
 	}
 	now = now.Add(5 * time.Second)
 	before = fetches.Load()
-	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(short, nil), nil); err != nil {
+	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(short, nil), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := fetches.Load(); got != before+1 {
@@ -272,7 +272,7 @@ func TestCheck_Bounds(t *testing.T) {
 	check := func(uri string, size int) {
 		t.Helper()
 		v := Verified{Iat: now.Unix(), Memo: uri, MemoBytes: size}
-		if err := c.Check(ctx, uri, "m", "", fetch, func([]byte) (Verified, error) { return v, nil }, func(any) error { return nil }); err != nil {
+		if err := c.Check(ctx, uri, "m", "", plain(fetch), func([]byte) (Verified, error) { return v, nil }, func(any) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -291,5 +291,14 @@ func TestCheck_Bounds(t *testing.T) {
 	}
 	if n, size := c.Len(); n != 3 || size != 3 {
 		t.Errorf("%d entries, %d bytes, want MaxEntries", n, size)
+	}
+}
+
+// plain is fetch as a Fetch that never revalidates: what a server
+// without validators answers.
+func plain(fetch func(context.Context) ([]byte, error)) Fetch {
+	return func(ctx context.Context, _ Validators) (Fetched, error) {
+		token, err := fetch(ctx)
+		return Fetched{Token: token}, err
 	}
 }

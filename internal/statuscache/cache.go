@@ -57,8 +57,29 @@ type Verify func(token []byte) (Verified, error)
 // holds.
 type Recheck func(memo any) error
 
-// Fetch fetches a token's bytes.
-type Fetch func(context.Context) ([]byte, error)
+// Validators are what a token was fetched with that a later fetch can
+// revalidate it by (RFC 9110 §8.8): its response's ETag and
+// Last-Modified, each empty when it had none.
+type Validators struct{ ETag, LastModified string }
+
+// Fetched is a fetch's outcome.
+type Fetched struct {
+	// Token is the token's bytes; nil when NotModified.
+	Token []byte
+	// NotModified is a 304 to a conditional fetch: the token held is
+	// still the one served.
+	NotModified bool
+	// Validators are the response's, for the next fetch.
+	Validators Validators
+	// MaxAge is how long the response says it's fresh for (its
+	// Cache-Control max-age less its Age), when it says.
+	MaxAge *time.Duration
+}
+
+// Fetch fetches a token. With held validators that aren't zero it
+// fetches conditionally, and a 304 is Fetched.NotModified; with zero
+// ones a 304 is an error.
+type Fetch func(ctx context.Context, held Validators) (Fetched, error)
 
 type key struct{ uri, mediaType string }
 
@@ -80,11 +101,23 @@ type entry struct {
 	// token is the refused bytes, kept for other checks to verify
 	// without fetching them again; nil when they're the verified
 	// entry's under key, whose Recheck stands.
-	token   []byte
+	token []byte
+	// iat, exp and ttl are the verified token's, which bound how long a
+	// fetch that finds it unchanged keeps it.
+	iat      int64
+	exp, ttl *int64
+	fetchMeta
 	at      time.Time
 	size    int64
 	expires time.Time
 	elem    *list.Element
+}
+
+// fetchMeta is what a fetch's response says about its token beyond its
+// bytes.
+type fetchMeta struct {
+	validators Validators
+	maxAge     *time.Duration
 }
 
 type flight struct {
@@ -93,6 +126,11 @@ type flight struct {
 	digest [sha256.Size]byte
 	at     time.Time
 	err    error
+	fetchMeta
+	// prior is the expired entry the fetch revalidated, and
+	// notModified that the response found it unchanged.
+	prior       *entry
+	notModified bool
 
 	// turn is held by the caller verifying token, so that callers
 	// sharing the fetch verify it once: the first whose Verify passes
@@ -148,6 +186,12 @@ func New(opts Options) *Cache {
 // store a memo no check verified.
 var Unwrap func(cache any) *Cache
 
+// FetchConditional fetches uri as a statuslist.Fetcher, fetcher, would,
+// asking for mediaType, and revalidates by held when they aren't zero.
+// statuslist sets it, so that identifierlist's Checker can fetch
+// conditionally without statuslist exporting it.
+var FetchConditional func(ctx context.Context, fetcher any, uri, mediaType string, held Validators) (Fetched, error)
+
 // errStale has a check fetch afresh bytes a failure kept past what
 // they allow.
 var errStale = errors.New("statuscache: stale")
@@ -176,7 +220,7 @@ func (c *Cache) Check(ctx context.Context, uri, mediaType, policy string, fetch 
 	}
 	k := key{uri, mediaType}
 	fk := flightKey{k, policy}
-	hit, memo := c.lookup(k)
+	hit, memo, stale := c.lookup(k)
 	var hitErr error
 	if hit != nil {
 		if hitErr = recheck(memo); hitErr == nil {
@@ -196,7 +240,7 @@ func (c *Cache) Check(ctx context.Context, uri, mediaType, policy string, fetch 
 			}
 		}
 	}
-	f, err := c.fetch(ctx, fk, fetch)
+	f, err := c.fetch(ctx, fk, fetch, stale)
 	if err != nil {
 		return err
 	}
@@ -204,22 +248,27 @@ func (c *Cache) Check(ctx context.Context, uri, mediaType, policy string, fetch 
 	return c.settle(ctx, k, fk, f, verify, recheck)
 }
 
-// lookup is the unexpired entry under k, and its memo; an expired
-// entry is removed.
-func (c *Cache) lookup(k key) (*entry, any) {
+// lookup is the unexpired entry under k, and its memo, or else the
+// expired one a fetch may revalidate, stale. An expired entry without
+// validators is removed; one with them is kept, unused, until a fetch
+// finds it unchanged or replaces it.
+func (c *Cache) lookup(k key) (hit *entry, memo any, stale *entry) {
 	now := c.opts.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[k]
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !now.Before(e.expires) {
-		c.remove(e)
-		return nil, nil
+		if e.validators == (Validators{}) {
+			c.remove(e)
+			return nil, nil, nil
+		}
+		return nil, nil, e
 	}
 	c.lru.MoveToFront(e.elem)
-	return e, e.memo
+	return e, e.memo, nil
 }
 
 // failure is the unexpired failure under fk; an expired one is
@@ -248,36 +297,53 @@ func (c *Cache) verifyKept(k key, failed *entry, verify Verify) error {
 	if err != nil {
 		return err
 	}
-	if !c.opts.Now().Before(c.expiry(v, failed.at)) {
+	if !c.opts.Now().Before(c.expiry(v, failed.at, failed.maxAge)) {
 		return errStale
 	}
-	c.store(k, failed.digest, v, failed.at)
+	c.store(k, failed.digest, v, failed.at, failed.fetchMeta)
 	return nil
 }
 
 // fetch runs fetch once for every concurrent caller with fk, and
 // returns its flight once the fetch is done; the caller then settles
-// it, and leaves it. The fetch doesn't end with the context of the
+// it, and leaves it. The flight that starts it revalidates stale, when
+// set, by its validators. The fetch doesn't end with the context of the
 // caller that started it, so that caller's cancellation doesn't fail
 // the others: each waits for it or for its own ctx. The fetcher's HTTP
 // timeout bounds it. A failed fetch is kept, as a failure, for
 // MaxFailureAge.
-func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch) (*flight, error) {
+func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *entry) (*flight, error) {
 	c.mu.Lock()
 	f, ok := c.flights[fk]
 	if !ok {
 		f = &flight{done: make(chan struct{}), turn: make(chan struct{}, 1)}
+		var held Validators
+		if stale != nil {
+			// Read under c.mu, which store changes them under.
+			f.prior, held = stale, stale.validators
+		}
 		c.flights[fk] = f
 		detached := context.WithoutCancel(ctx)
 		go func() {
-			token, err := fetch(detached)
+			res, err := fetch(detached, held)
 			at := c.opts.Now()
 			var digest [sha256.Size]byte
-			if err == nil {
-				digest = sha256.Sum256(token)
+			switch {
+			case err != nil:
+			case res.NotModified && f.prior == nil:
+				err = errors.New("statuscache: a 304 to an unconditional fetch")
+			case res.NotModified:
+				digest = f.prior.digest
+				if res.Validators == (Validators{}) {
+					// A 304 needn't repeat them (RFC 9110 §15.4.5).
+					res.Validators = held
+				}
+			default:
+				digest = sha256.Sum256(res.Token)
 			}
 			c.mu.Lock()
-			f.token, f.digest, f.at, f.err, f.fetched = token, digest, at, err, true
+			f.token, f.digest, f.at, f.err, f.fetched = res.Token, digest, at, err, true
+			f.notModified, f.fetchMeta = res.NotModified, fetchMeta{validators: res.Validators, maxAge: res.MaxAge}
 			if err != nil {
 				c.storeFailure(&entry{failure: &fk, err: err, at: at})
 			}
@@ -323,12 +389,40 @@ func (c *Cache) settle(ctx context.Context, k key, fk flightKey, f *flight, veri
 		}
 		return nil
 	}
+	if f.notModified {
+		return c.settleNotModified(k, fk, f, recheck)
+	}
 	v, err := verify(f.token)
 	if err == nil {
 		f.memo, f.ok = v.Memo, true
-		c.store(k, f.digest, v, f.at)
+		c.store(k, f.digest, v, f.at, f.fetchMeta)
 	} else {
 		c.refuse(fk, f)
+	}
+	c.mu.Lock()
+	c.endFlight(fk, f)
+	c.mu.Unlock()
+	<-f.turn
+	return err
+}
+
+// settleNotModified is settle of a flight whose fetch found its prior
+// entry unchanged: the caller holds f.turn. The entry's memo is checked
+// again, as a cached one would be, and kept for as long as the
+// response allows once a check passes it. One no check passes is
+// dropped, so that the next check fetches the token in full.
+func (c *Cache) settleNotModified(k key, fk flightKey, f *flight, recheck Recheck) error {
+	prior := f.prior
+	err := recheck(prior.memo)
+	if err == nil {
+		f.memo, f.ok = prior.memo, true
+		c.store(k, prior.digest, Verified{Iat: prior.iat, Exp: prior.exp, TTL: prior.ttl, Memo: prior.memo, MemoBytes: int(prior.size)}, f.at, f.fetchMeta)
+	} else {
+		c.mu.Lock()
+		if c.entries[k] == prior {
+			c.remove(prior)
+		}
+		c.mu.Unlock()
 	}
 	c.mu.Lock()
 	c.endFlight(fk, f)
@@ -356,10 +450,14 @@ func (c *Cache) endFlight(fk flightKey, f *flight) {
 	}
 }
 
-// expiry is when a token verified as v, fetched at, leaves the cache:
-// the earliest of its exp, its iat plus ttl, and at plus MaxAge.
-func (c *Cache) expiry(v Verified, at time.Time) time.Time {
+// expiry is when a token verified as v, fetched at with a response
+// fresh for maxAge, if it said, leaves the cache: the earliest of its
+// exp, its iat plus ttl, at plus maxAge, and at plus MaxAge.
+func (c *Cache) expiry(v Verified, at time.Time, maxAge *time.Duration) time.Time {
 	expires := at.Add(c.opts.MaxAge)
+	if maxAge != nil {
+		expires = earlier(expires, at.Add(max(*maxAge, 0)))
+	}
 	if v.Exp != nil {
 		expires = earlier(expires, time.Unix(*v.Exp, 0))
 	}
@@ -377,10 +475,10 @@ func earlier(a, b time.Time) time.Time {
 }
 
 // store caches the memo of the token with digest, verified as v and
-// fetched at, under k, unless it has already expired or is larger than
-// the whole cache.
-func (c *Cache) store(k key, digest [sha256.Size]byte, v Verified, at time.Time) {
-	expires := c.expiry(v, at)
+// fetched at with meta, under k, unless it has already expired or is
+// larger than the whole cache.
+func (c *Cache) store(k key, digest [sha256.Size]byte, v Verified, at time.Time, meta fetchMeta) {
+	expires := c.expiry(v, at, meta.maxAge)
 	size := int64(max(v.MemoBytes, 0))
 	if !c.opts.Now().Before(expires) || size > c.opts.MaxBytes {
 		return
@@ -391,13 +489,13 @@ func (c *Cache) store(k key, digest [sha256.Size]byte, v Verified, at time.Time)
 		// The same bytes, fetched again: kept as long as the new fetch
 		// allows.
 		if e.digest == digest {
-			e.expires = expires
+			e.expires, e.fetchMeta = expires, meta
 			c.lru.MoveToFront(e.elem)
 			return
 		}
 		c.remove(e)
 	}
-	c.insert(&entry{key: k, digest: digest, memo: v.Memo, size: size, expires: expires})
+	c.insert(&entry{key: k, digest: digest, memo: v.Memo, iat: v.Iat, exp: v.Exp, ttl: v.TTL, fetchMeta: meta, size: size, expires: expires})
 }
 
 // refuse keeps f's token, which a check refused, as a failure under fk,
@@ -405,7 +503,7 @@ func (c *Cache) store(k key, digest [sha256.Size]byte, v Verified, at time.Time)
 func (c *Cache) refuse(fk flightKey, f *flight) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	failure := &entry{failure: &fk, digest: f.digest, at: f.at}
+	failure := &entry{failure: &fk, digest: f.digest, at: f.at, fetchMeta: f.fetchMeta}
 	if e, ok := c.entries[fk.key]; !ok || e.digest != f.digest {
 		failure.token, failure.size = f.token, int64(len(f.token))
 	}

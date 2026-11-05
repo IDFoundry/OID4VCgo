@@ -117,7 +117,13 @@ func fetch(ctx context.Context, f statuslist.Fetcher, uri string) ([]byte, error
 func (c Checker) checkCached(ctx context.Context, engine *statuscache.Cache, f statuslist.Fetcher, ref Ref, documentSignerPath []*x509.Certificate) (TokenClaims, error) {
 	var used *tokenMemo
 	err := engine.Check(ctx, ref.URI, MediaType, fetcherKey(f),
-		func(ctx context.Context) ([]byte, error) { return fetch(ctx, f, ref.URI) },
+		func(ctx context.Context, held statuscache.Validators) (statuscache.Fetched, error) {
+			res, err := statuscache.FetchConditional(ctx, f, ref.URI, MediaType, held)
+			if err != nil {
+				return statuscache.Fetched{}, fmt.Errorf("identifierlist: %w", err)
+			}
+			return res, nil
+		},
 		func(token []byte) (statuscache.Verified, error) {
 			parsed, chain, err := check(ctx, token, c.Roots, ref, documentSignerPath, c.Options)
 			if err != nil {
