@@ -77,11 +77,33 @@ func Unpack(bits Bits, packed []byte, idx int) (uint8, error) {
 }
 
 // compress DEFLATE-compresses b using the ZLIB data format (draft-14
-// §4.1 step 4), at the highest compression level as the draft
-// recommends.
+// §4.1 step 4), and returns the smaller of two streams: the default
+// level's and Huffman-only's. The draft recommends the highest level,
+// but on a large, sparse list that takes seconds (3 s for a 2^24-entry
+// list with 2.5% set), for a stream little smaller than the better of
+// these two (an eighth at most, with 0.5% set or more), which together
+// take tens of milliseconds:
+// the default level wins on a list of runs, Huffman-only on one of
+// scattered bits. Any DEFLATE stream decodes the same.
 func compress(b []byte) ([]byte, error) {
+	best, err := compressLevel(b, zlib.DefaultCompression)
+	if err != nil {
+		return nil, err
+	}
+	huffman, err := compressLevel(b, zlib.HuffmanOnly)
+	if err != nil {
+		return nil, err
+	}
+	if len(huffman) < len(best) {
+		best = huffman
+	}
+	return best, nil
+}
+
+// compressLevel is compress at one zlib level.
+func compressLevel(b []byte, level int) ([]byte, error) {
 	var buf bytes.Buffer
-	w, err := zlib.NewWriterLevel(&buf, zlib.BestCompression)
+	w, err := zlib.NewWriterLevel(&buf, level)
 	if err != nil {
 		return nil, fmt.Errorf("statuslist: create zlib writer: %w", err)
 	}
