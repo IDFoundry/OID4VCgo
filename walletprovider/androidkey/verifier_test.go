@@ -197,6 +197,7 @@ func TestVerify_Synthetic(t *testing.T) {
 		"version 2 allowed": {
 			spec: func(s *spec) { s.version = 2 }, policy: func(v *androidkey.Verifier) { v.MinAttestationVersion = 1 }},
 		"version 400": {spec: func(s *spec) { s.version = 400 }},
+		"version 500": {spec: func(s *spec) { s.version = 500; s.hw = append(slices.Clone(hw), field{11, derInt(t, 1)}) }},
 		"unlocked bootloader": {
 			spec: func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], false, androidkey.Unverified)) }, want: androidkey.ErrBootState},
 		"locked, unverified": {
@@ -238,6 +239,8 @@ func TestVerify_Synthetic(t *testing.T) {
 		"claims P-384":                 {spec: func(s *spec) { s.hw = replace(hw, 10, derInt(t, int64(androidkey.CurveP384))) }, want: androidkey.ErrKeyProperties},
 		"no curve, as Keymaster 4 may": {spec: func(s *spec) { s.hw = replace(hw, 10, nil) }},
 		"wrong key size":               {spec: func(s *spec) { s.hw = replace(hw, 3, derInt(t, 384)) }, want: androidkey.ErrKeyProperties},
+		"no curve and no key size": {
+			spec: func(s *spec) { s.hw = replace(replace(hw, 10, nil), 3, nil) }, want: androidkey.ErrKeyProperties},
 		"no curve, wrong key size": {
 			spec: func(s *spec) { s.hw = replace(replace(hw, 10, nil), 3, derInt(t, 384)) }, want: androidkey.ErrKeyProperties},
 		"imported":  {spec: func(s *spec) { s.hw = replace(hw, 702, derInt(t, int64(androidkey.OriginImported))) }, want: androidkey.ErrKeyProperties},

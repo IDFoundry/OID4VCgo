@@ -15,7 +15,7 @@ import (
 // with the fields it added, and a future version's unknown tags are
 // skipped.
 func TestParseKeyDescription_Versions(t *testing.T) {
-	versions := append(slices.Clone(androidkey.KnownAttestationVersions), 500)
+	versions := append(slices.Clone(androidkey.KnownAttestationVersions), 600)
 	for _, version := range versions {
 		s := goodSpec(t)
 		s.version = version
@@ -23,6 +23,8 @@ func TestParseKeyDescription_Versions(t *testing.T) {
 			field{303, derNull()}, field{504, derInt(t, 0xffffffff)}, field{505, derInt(t, 300)},
 			field{507, derNull()}, field{508, derNull()}, field{509, derNull()}, field{720, derNull()},
 			field{724, derOctets(t, []byte("module hash"))},
+			// mlDsaVariant, from version 500.
+			field{11, derInt(t, 1)},
 			// Tags this package doesn't read: padding, a device ID, and
 			// ones no version defines yet.
 			field{6, derIntSet(t, 1)}, field{710, derOctets(t, []byte("brand"))}, field{725, derNull()}, field{9999, derInt(t, 7)})

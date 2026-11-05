@@ -358,7 +358,11 @@ func (v *Verifier) checkKey(r *Result) error {
 		return fail(ErrKeyProperties, "not an EC key")
 	case !ok:
 		return fail(ErrKeyProperties, "the leaf's key is a %T, not ECDSA", r.PublicKey)
-	// Keymaster 4 may leave the curve out, attesting only the key size.
+	// Keymaster 4 may leave the curve out, attesting only the key size:
+	// that's accepted when the size is the leaf key's curve's. One of
+	// the two must be attested.
+	case l.ECCurve == nil && l.KeySize == nil:
+		return fail(ErrKeyProperties, "neither the curve nor the key size is attested")
 	case l.ECCurve != nil && *l.ECCurve != curveOf(pub),
 		l.KeySize != nil && *l.KeySize != int64(pub.Curve.Params().BitSize):
 		return fail(ErrKeyProperties, "the attested curve or key size isn't the leaf key's")

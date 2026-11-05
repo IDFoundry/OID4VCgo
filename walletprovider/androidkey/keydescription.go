@@ -12,11 +12,13 @@ var ExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 11129, 2, 1, 17}
 
 // KnownAttestationVersions are the attestation schema versions this
 // package was written against: 1 to 4 for Keymaster 2.0, 3.0, 4.0 and
-// 4.1, then 100, 200, 300 and 400 for KeyMint 1.0 to 4.0. Each version
-// only adds AuthorizationList fields, so a later version parses too:
-// its new fields are skipped. Verifier.MinAttestationVersion sets the
-// oldest one a Verifier takes.
-var KnownAttestationVersions = []int{1, 2, 3, 4, 100, 200, 300, 400}
+// 4.1, then 100, 200, 300, 400 and 500 for KeyMint 1.0 to 5.0. Each
+// version only adds AuthorizationList fields, so a later version parses
+// too: its new fields are skipped. Version 500 adds mlDsaVariant ([11]),
+// for ML-DSA keys, which this package skips: a Verifier accepts EC keys
+// alone. Verifier.MinAttestationVersion sets the oldest one a Verifier
+// takes.
+var KnownAttestationVersions = []int{1, 2, 3, 4, 100, 200, 300, 400, 500}
 
 // MaxExtensionBytes bounds the key description extension's value.
 const MaxExtensionBytes = 8 << 10
