@@ -39,10 +39,13 @@ The protocol has two kinds of wallet key, never the same key:
   later Wallet Attestations for it (when one expires mid-issuance)
   need no evidence.
 
-Each instance key has its own entry in the provider's Token Status
-List, which the provider serves at `/v1/status`: every Wallet
-Attestation for the key, and every Key Attestation issued for the same
-issuance, carries a `status` claim naming it. Issuers see only
+Each instance key has its own entry in one of the provider's Token
+Status Lists, which the provider serves under `/v1/status/`: every
+Wallet Attestation for the key, and every Key Attestation issued for
+the same issuance, carries a `status` claim naming it. The lists
+belong to periods (by default a week): an instance key used in a later
+period than its entry's gets a new entry on that period's lists, so a
+later attestation for the same key may name a different entry. Issuers see only
 per-issuance keys and status entries, and the shared client ID. The
 provider knows which instance keys belong to which instance, so
 suspending or revoking the instance — the installation — sets the
@@ -65,7 +68,7 @@ so on.
   whose name matches only case-insensitively, text that isn't UTF-8,
   or anything after the object is refused (`400 invalid_request`).
 - **Responses** are `application/json` with `Cache-Control: no-store`,
-  but for `/v1/status`.
+  but for the status lists under `/v1/status/`.
 - **Binary values** (evidence data) are base64url without padding.
 - **Times** (`expires_at`) are seconds since the Unix epoch.
 - **Keys** (`registration_key`, `instance_key`, `keys`) are public
@@ -261,7 +264,8 @@ key:
 - Once the key is recorded, `challenge` and `evidence` may be left
   out, and are ignored if sent: not verified, and the challenge not
   used up. The Wallet Attestation carries the same status entry as
-  before.
+  before, unless a new period has started since: then a new entry,
+  which the provider gives the key.
 - An `instance_key` that's another instance's, or this instance's
   registration key, is `409 instance_key_registered`.
 
@@ -294,7 +298,8 @@ Signed. Asks for a Key Attestation over holder keys:
 `instance_key` is the instance key of the issuance the holder keys are
 for: one a Wallet Attestation recorded for this instance (else `400
 unknown_instance_key`). The Key Attestation's `status` is that key's
-entry, so it's withdrawn with the issuance's Wallet Attestations.
+entry (in a new period, its new one, as for a Wallet Attestation), so
+it's withdrawn with the issuance's Wallet Attestations.
 `keys` are the holder keys, each once, at most the provider's limit
 (by default 10). `evidence` vouches for them over `challenge`: one per
 key for `android-key`, at most one per key. `nonce`, optional, is the
@@ -314,12 +319,16 @@ checks each was one it sent, and that `nonce` is the one it sent.
 evidence proved them. It's valid until `expires_at` (the provider's
 Key Attestation TTL, by default two hours, at most 24).
 
-### `GET /v1/status`
+### `GET /v1/status/{start}/{n}`
 
-The provider's Token Status List (draft-ietf-oauth-status-list-14), as
-a JWT (`application/statuslist+jwt`) or a CWT
+One of the provider's Token Status Lists
+(draft-ietf-oauth-status-list-14): list `n` (0 to 63) of the period
+starting at `start` (seconds since the Unix epoch), as a JWT
+(`application/statuslist+jwt`) or a CWT
 (`application/statuslist+cwt`) as the `Accept` header asks, with
-`Cache-Control` from its TTL. Not signed, and not for wallets: the
+`Cache-Control` from its TTL. The provider serves a period's lists
+through the two periods after it, and only those it has handed an
+entry out of: any other is `404`. Not signed, and not for wallets: the
 Credential Issuer fetches it from every attestation's `status` claim.
 
 ## A wallet's sequence
