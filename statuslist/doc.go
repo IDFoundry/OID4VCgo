@@ -45,10 +45,12 @@
 //
 // The Allocator keeps its reservations and statuses in an IndexStore,
 // which must be durable and reserve atomically; MemoryIndexStore is
-// for tests and single processes. Allocator.Statuses is the
-// Publisher.Statuses for each list, and Allocator.SetStatus changes a
-// token's status, refusing an index never handed out. See Allocator's
-// example.
+// for tests and single processes, and statuslisttest.TestIndexStoreContract
+// checks one of your own. Allocator.Statuses is the Publisher.Statuses
+// for each list, and Allocator.SetStatus changes a token's status,
+// refusing an index never handed out. A list retired for good — one
+// no token still in circulation names — can be forgotten with
+// IndexStore.Delete. See Allocator's example.
 //
 // # Lists both formats reference
 //
