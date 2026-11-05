@@ -151,12 +151,19 @@ func TestService_KeepsInstancesAcrossRestart(t *testing.T) {
 	if _, err := c1.WalletAttestation(ctx, "wallet-1", &revoked.PublicKey); err != nil {
 		t.Fatal(err)
 	}
-	ka, err := c1.KeyAttestation(ctx, []*ecdsa.PublicKey{&holder.PublicKey}, "n")
+	ka := sharedKeyAttestation(t, c1, &holder.PublicKey)
+	kaKept, err := c1.KeyAttestation(ctx, &kept.PublicKey, []*ecdsa.PublicKey{&holder.PublicKey}, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if statusIdx(t, kaKept) != statusIdx(t, waKept) {
+		t.Fatal("a Key Attestation for an instance key doesn't carry its status")
+	}
 	if err := s1.lib.Revoke(ctx, instanceOf(t, s1, &revoked.PublicKey), "test"); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := c1.KeyAttestation(ctx, &revoked.PublicKey, []*ecdsa.PublicKey{&holder.PublicKey}, "n"); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("a Key Attestation for a revoked instance's key: %v, want refused as revoked", err)
 	}
 
 	s2, c2 := start()
@@ -173,11 +180,7 @@ func TestService_KeepsInstancesAcrossRestart(t *testing.T) {
 	if _, err := c2.WalletAttestation(ctx, "wallet-1", &revoked.PublicKey); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("a revoked instance after a restart: %v, want refused as revoked", err)
 	}
-	ka2, err := c2.KeyAttestation(ctx, []*ecdsa.PublicKey{&holder.PublicKey}, "n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if statusIdx(t, ka2) != statusIdx(t, ka) {
+	if statusIdx(t, sharedKeyAttestation(t, c2, &holder.PublicKey)) != statusIdx(t, ka) {
 		t.Fatal("Key Attestations moved to another instance across a restart")
 	}
 	fresh, err := c2.WalletAttestation(ctx, "wallet-1", &p256(t).PublicKey)

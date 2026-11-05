@@ -138,8 +138,9 @@ type Options struct {
 	// (pre-authorized_grant_anonymous_access_supported, §12.3; the
 	// token request's DPoP proof checked by the Authorization Server
 	// without a client, VerifyTokenRequestDPoP), and
-	// takes jwt proofs (Appendix F.1) with no key attestation. An
-	// authorization code offer can't be redeemed at it.
+	// takes jwt proofs (Appendix F.1) with no key attestation, or with
+	// JWTKeyAttestation one in each. An authorization code offer can't be
+	// redeemed at it.
 	Anonymous bool
 	// BearerTokens has the Authorization Server issue Bearer access
 	// tokens, not DPoP-bound ones, to the pre-authorized code grant
@@ -345,8 +346,10 @@ func New(opts Options) (env *Env, err error) {
 	}
 	var preAuthClientAuth issuer.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
 	if opts.Anonymous {
-		proofTypes = map[string]oid4vci.ProofTypeConfiguration{
-			oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{oid4vci.ES256}},
+		if !opts.JWTKeyAttestation {
+			proofTypes = map[string]oid4vci.ProofTypeConfiguration{
+				oid4vci.ProofTypeJWT: {ProofSigningAlgValuesSupported: []string{oid4vci.ES256}},
+			}
 		}
 		preAuthClientAuth = issuer.AnonymousPreAuthorizedCode{}
 		opts.PreAuthorizedCodeOnly = true
@@ -1112,6 +1115,10 @@ type Provider struct {
 	mu sync.Mutex
 	// KeyAttestations counts the Key Attestations issued.
 	keyAttestations int
+	// instanceKeys are the instance keys it has given a Wallet
+	// Attestation for, as JWKs: the only ones it gives Key Attestations
+	// for, as a provider recording its instance keys does.
+	instanceKeys map[string]bool
 }
 
 func newProvider() *Provider {
@@ -1138,8 +1145,19 @@ func (p *Provider) header() attestation.Header {
 	return attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(p.cert.Raw)}}
 }
 
-// WalletAttestation attests instanceKey as an instance of clientID.
+// WalletAttestation attests instanceKey as an instance of clientID, and
+// records it for KeyAttestation.
 func (p *Provider) WalletAttestation(_ context.Context, clientID string, instanceKey crypto.PublicKey) (string, error) {
+	jwk, err := attestation.AttestedKey(instanceKey)
+	if err != nil {
+		return "", err
+	}
+	p.mu.Lock()
+	if p.instanceKeys == nil {
+		p.instanceKeys = map[string]bool{}
+	}
+	p.instanceKeys[string(jwk)] = true
+	p.mu.Unlock()
 	now := time.Now()
 	return attestation.IssueWalletAttestation(p.key, oid4vci.ES256, p.header(), attestation.WalletAttestationClaims{
 		Issuer: ProviderIssuer, Subject: clientID, InstanceKey: instanceKey,
@@ -1147,8 +1165,19 @@ func (p *Provider) WalletAttestation(_ context.Context, clientID string, instanc
 	})
 }
 
-// KeyAttestation attests keys, carrying nonce.
-func (p *Provider) KeyAttestation(_ context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+// KeyAttestation attests keys, carrying nonce, for instanceKey, which
+// must be one WalletAttestation attested.
+func (p *Provider) KeyAttestation(_ context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	jwk, err := attestation.AttestedKey(instanceKey)
+	if err != nil {
+		return "", fmt.Errorf("the instance key: %w", err)
+	}
+	p.mu.Lock()
+	known := p.instanceKeys[string(jwk)]
+	p.mu.Unlock()
+	if !known {
+		return "", errors.New("the instance key isn't one a Wallet Attestation attested")
+	}
 	attested := make([]json.RawMessage, 0, len(keys))
 	for _, k := range keys {
 		raw, err := attestation.AttestedKey(k)

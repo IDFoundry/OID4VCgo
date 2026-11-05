@@ -517,8 +517,10 @@ The wallets never hold the provider's key. They ask its service
 - `POST /wallet-attestation` with the wallet's `client_id` and the
   instance key it proves possession of at PAR and the token endpoint,
   for a Wallet Attestation.
-- `POST /key-attestation` with fresh holder keys and the issuer's
-  `c_nonce`, for a Key Attestation over them.
+- `POST /key-attestation` with the issuance's instance key
+  (`instance_key`, one a Wallet Attestation recorded), fresh holder
+  keys and the issuer's `c_nonce`, for a Key Attestation over them
+  carrying that instance key's status.
 - `POST /attestation-challenge` with `{"purpose": "instance"}` or
   `{"purpose": "holder"}`, for `{"challenge": "<base64url>",
   "expires_in": 300}`: 32 random bytes, usable once, for 5 minutes, for
@@ -577,12 +579,14 @@ mints in memory, which no wallet can present itself. The first time
 an instance key is seen, the service registers a library instance for
 it (with a registration key of its own, since the demo wallets have
 none) and records the instance key for that instance, at the security
-level its chain showed (software without one); Key Attestations are
-issued for one shared instance key of one shared instance. Every
-attestation then names its instance key's entry in the provider's
-Token Status List, served at `/v1/status` (`-url` on
-`cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a revoked or
-suspended instance gets no more Wallet Attestations. Instances and
+level its chain showed (software without one); a Key Attestation is
+issued for the instance key its request names, under that key's
+instance (one naming none, as an older wallet's, for one shared
+instance key of one shared instance). Every attestation then names its
+instance key's entry in the provider's Token Status List, served at
+`/v1/status` (`-url` on `cmd/wallet-provider`, `-provider-url` on
+`cmd/demo`), and a revoked or suspended instance gets no more Wallet
+or Key Attestations. Instances and
 their instance keys are kept in `wallet-provider-instances.json` and
 the instance keys' status list indices and statuses in
 `wallet-provider-status-indices.json` (`-instances` and

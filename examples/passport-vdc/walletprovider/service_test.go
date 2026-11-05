@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,33 @@ func p256(t *testing.T) *ecdsa.PrivateKey {
 	return k
 }
 
+// registered is a new instance key c has had a Wallet Attestation
+// recorded for.
+func registered(t *testing.T, c Client) *ecdsa.PublicKey {
+	t.Helper()
+	key := &p256(t).PublicKey
+	if _, err := c.WalletAttestation(context.Background(), "wallet-1", key); err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// sharedKeyAttestation asks c for a Key Attestation over key naming no
+// instance key, as an older wallet does: one issued under the service's
+// shared holder instance.
+func sharedKeyAttestation(t *testing.T, c Client, key *ecdsa.PublicKey) string {
+	t.Helper()
+	jwk, err := attestation.AttestedKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt, err := c.post(context.Background(), KeyAttestationPath, KeyAttestationRequest{Keys: []json.RawMessage{jwk}, Nonce: "n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jwt
+}
+
 // jwtClaims decodes a JWT's payload without verifying it.
 func jwtClaims(t *testing.T, jwt string) map[string]any {
 	t.Helper()
@@ -55,26 +83,32 @@ func jwtClaims(t *testing.T, jwt string) map[string]any {
 
 // TestService_Attests: the Client gets a Wallet Attestation for the
 // wallet's client_id and instance key, and a Key Attestation over its
-// holder keys carrying the issuer's nonce, both from the provider.
+// holder keys carrying the issuer's nonce, both from the provider. The
+// Key Attestation carries the status of the instance key it's for.
 func TestService_Attests(t *testing.T) {
 	_, c := newService(t)
 	ctx := context.Background()
 
-	wa, err := c.WalletAttestation(ctx, "wallet-1", &p256(t).PublicKey)
+	instanceKey := &p256(t).PublicKey
+	wa, err := c.WalletAttestation(ctx, "wallet-1", instanceKey)
 	if err != nil {
 		t.Fatalf("WalletAttestation: %v", err)
 	}
-	if claims := jwtClaims(t, wa); claims["iss"] != testIssuer || claims["sub"] != "wallet-1" || claims["cnf"] == nil {
-		t.Errorf("Wallet Attestation claims = %v", claims)
+	waClaims := jwtClaims(t, wa)
+	if waClaims["iss"] != testIssuer || waClaims["sub"] != "wallet-1" || waClaims["cnf"] == nil {
+		t.Errorf("Wallet Attestation claims = %v", waClaims)
 	}
 
-	ka, err := c.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey, &p256(t).PublicKey}, "c-nonce-1")
+	ka, err := c.KeyAttestation(ctx, instanceKey, []*ecdsa.PublicKey{&p256(t).PublicKey, &p256(t).PublicKey}, "c-nonce-1")
 	if err != nil {
 		t.Fatalf("KeyAttestation: %v", err)
 	}
 	claims := jwtClaims(t, ka)
 	if keys, _ := claims["attested_keys"].([]any); claims["iss"] != testIssuer || claims["nonce"] != "c-nonce-1" || claims["iat"] == nil || len(keys) != 2 {
 		t.Errorf("Key Attestation claims = %v", claims)
+	}
+	if got, want := fmt.Sprint(claims["status"]), fmt.Sprint(waClaims["status"]); got != want || waClaims["status"] == nil {
+		t.Errorf("Key Attestation status = %s, want the instance key's, %s", got, want)
 	}
 }
 
@@ -87,8 +121,9 @@ func TestService_Refuses(t *testing.T) {
 	if _, err := c.WalletAttestation(ctx, "another-wallet", &p256(t).PublicKey); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("another client_id: %v, want 403", err)
 	}
+	instanceKey := registered(t, c)
 	for _, nonce := range []string{"", strings.Repeat("n", maxNonceLength+1), "with space", "tab\t"} {
-		if _, err := c.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey}, nonce); err == nil {
+		if _, err := c.KeyAttestation(ctx, instanceKey, []*ecdsa.PublicKey{&p256(t).PublicKey}, nonce); err == nil {
 			t.Errorf("a Key Attestation was issued with nonce %q", nonce)
 		}
 	}
@@ -96,7 +131,7 @@ func TestService_Refuses(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = &p256(t).PublicKey
 	}
-	if _, err := c.KeyAttestation(ctx, tooMany, "n"); err == nil {
+	if _, err := c.KeyAttestation(ctx, instanceKey, tooMany, "n"); err == nil {
 		t.Error("a Key Attestation was issued over too many keys")
 	}
 
@@ -112,15 +147,22 @@ func TestService_Refuses(t *testing.T) {
 	// Decoding keeps the last of repeated members, so a private "d"
 	// followed by an empty one would pass a check of the decoded value.
 	repeatedD := strings.TrimSuffix(string(pub), "}") + `,"d":"AAAA","D":""}`
+	// Without an instance_key, as an older wallet sends.
 	valid := `{"keys":[` + string(pub) + `],"nonce":"n"}`
+	unrecorded, err := attestation.AttestedKey(&p256(t).PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, tc := range map[string]struct{ path, body string }{
-		"private key":     {WalletAttestationPath, `{"client_id":"wallet-1","instance_key":` + string(private) + `}`},
-		"repeated d":      {KeyAttestationPath, `{"keys":[` + repeatedD + `],"nonce":"n"}`},
-		"no instance key": {WalletAttestationPath, `{"client_id":"wallet-1"}`},
-		"trailing data":   {KeyAttestationPath, valid + `{}`},
-		"P-384 key":       {KeyAttestationPath, `{"keys":[{"kty":"EC","crv":"P-384","x":"AA","y":"AA"}],"nonce":"n"}`},
-		"not JSON":        {KeyAttestationPath, `keys`},
-		"unknown member":  {KeyAttestationPath, `{"keys":[` + string(pub) + `],"nonce":"n","key_storage":["iso_18045_high"]}`},
+		"unrecorded instance key": {KeyAttestationPath, `{"instance_key":` + string(unrecorded) + `,"keys":[` + string(pub) + `],"nonce":"n"}`},
+		"P-384 instance key":      {KeyAttestationPath, `{"instance_key":{"kty":"EC","crv":"P-384","x":"AA","y":"AA"},"keys":[` + string(pub) + `],"nonce":"n"}`},
+		"private key":             {WalletAttestationPath, `{"client_id":"wallet-1","instance_key":` + string(private) + `}`},
+		"repeated d":              {KeyAttestationPath, `{"keys":[` + repeatedD + `],"nonce":"n"}`},
+		"no instance key":         {WalletAttestationPath, `{"client_id":"wallet-1"}`},
+		"trailing data":           {KeyAttestationPath, valid + `{}`},
+		"P-384 key":               {KeyAttestationPath, `{"keys":[{"kty":"EC","crv":"P-384","x":"AA","y":"AA"}],"nonce":"n"}`},
+		"not JSON":                {KeyAttestationPath, `keys`},
+		"unknown member":          {KeyAttestationPath, `{"keys":[` + string(pub) + `],"nonce":"n","key_storage":["iso_18045_high"]}`},
 		// A request that would succeed, padded past the limit with
 		// whitespace: only the size limit can refuse it.
 		"too large": {KeyAttestationPath, strings.TrimSuffix(valid, "}") + strings.Repeat(" ", maxRequestBytes) + "}"},
@@ -163,7 +205,7 @@ func TestClient_ChecksWhatComesBack(t *testing.T) {
 	}))
 	defer redirecting.Close()
 	c := Client{URL: redirecting.URL, HTTP: redirecting.Client()}
-	if _, err := c.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n"); err == nil || elsewhere {
+	if _, err := c.KeyAttestation(ctx, &p256(t).PublicKey, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n"); err == nil || elsewhere {
 		t.Errorf("redirect: err = %v, request sent elsewhere %v; want it refused, not followed", err, elsewhere)
 	}
 
@@ -172,11 +214,12 @@ func TestClient_ChecksWhatComesBack(t *testing.T) {
 	genuine := httptest.NewTLSServer(p.Handler("wallet-1"))
 	defer genuine.Close()
 	gc := Client{URL: genuine.URL, HTTP: genuine.Client()}
-	otherWA, err := gc.WalletAttestation(ctx, "wallet-1", &p256(t).PublicKey)
+	otherInstance := &p256(t).PublicKey
+	otherWA, err := gc.WalletAttestation(ctx, "wallet-1", otherInstance)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherKA, err := gc.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n")
+	otherKA, err := gc.KeyAttestation(ctx, otherInstance, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +235,7 @@ func TestClient_ChecksWhatComesBack(t *testing.T) {
 	if _, err := c.WalletAttestation(ctx, "wallet-1", &p256(t).PublicKey); err == nil {
 		t.Error("accepted a Wallet Attestation for another instance key")
 	}
-	if _, err := c.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n"); err == nil {
+	if _, err := c.KeyAttestation(ctx, otherInstance, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n"); err == nil {
 		t.Error("accepted a Key Attestation over another key")
 	}
 }

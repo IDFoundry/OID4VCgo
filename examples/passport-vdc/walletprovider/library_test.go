@@ -49,7 +49,7 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 func TestService_KeyAttestationFromLibrary(t *testing.T) {
 	f := newLibraryFixture(t)
 	holder := p256(t)
-	compact, err := f.c.KeyAttestation(context.Background(), []*ecdsa.PublicKey{&holder.PublicKey}, "c-nonce")
+	compact, err := f.c.KeyAttestation(context.Background(), registered(t, f.c), []*ecdsa.PublicKey{&holder.PublicKey}, "c-nonce")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -55,8 +55,13 @@ func (c Client) WalletAttestation(ctx context.Context, clientID string, instance
 }
 
 // KeyAttestation asks for a Key Attestation over keys carrying nonce,
-// the Credential Issuer's c_nonce.
-func (c Client) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+// the Credential Issuer's c_nonce, for instanceKey, the issuance's
+// instance key a Wallet Attestation from the service recorded.
+func (c Client) KeyAttestation(ctx context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	instanceJWK, err := attestation.AttestedKey(instanceKey)
+	if err != nil {
+		return "", fmt.Errorf("walletprovider: instance key: %w", err)
+	}
 	jwks := make([]json.RawMessage, len(keys))
 	for i, k := range keys {
 		jwk, err := attestation.AttestedKey(k)
@@ -65,7 +70,7 @@ func (c Client) KeyAttestation(ctx context.Context, keys []*ecdsa.PublicKey, non
 		}
 		jwks[i] = jwk
 	}
-	jwt, err := c.post(ctx, KeyAttestationPath, KeyAttestationRequest{Keys: jwks, Nonce: nonce})
+	jwt, err := c.post(ctx, KeyAttestationPath, KeyAttestationRequest{InstanceKey: instanceJWK, Keys: jwks, Nonce: nonce})
 	if err != nil {
 		return "", err
 	}

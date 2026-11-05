@@ -37,7 +37,7 @@ func (attestingProvider) WalletAttestation(context.Context, string, crypto.Publi
 	return "", nil
 }
 
-func (attestingProvider) KeyAttestation(context.Context, []*ecdsa.PublicKey, string) (string, error) {
+func (attestingProvider) KeyAttestation(context.Context, crypto.PublicKey, []*ecdsa.PublicKey, string) (string, error) {
 	return "", nil
 }
 

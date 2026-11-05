@@ -687,8 +687,10 @@ func (w *Wallet) replaceStored(ctx context.Context, stored StoredCredential, gra
 }
 
 // endRefresh releases a refresh's DPoP key, and never its instance key,
-// which the grant keeps.
+// which the grant keeps; it deletes an instance key made for its Key
+// Attestation (attestationInstanceKey), which no grant keeps.
 func (s *Issuance) endRefresh(ctx context.Context) {
+	_ = s.deleteKeyAttestationKey(ctx)
 	if s.dpopKey == nil {
 		return
 	}

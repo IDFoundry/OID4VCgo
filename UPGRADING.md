@@ -50,6 +50,24 @@ another (HAIP 1.0 §4.4.1).
   instance key, and carry a status index nothing will set any more:
   register them again.
 
+### Wallet (`walletflow`)
+
+- **`WalletProvider.KeyAttestation` takes the issuance's instance
+  key:** `KeyAttestation(ctx, instanceKey crypto.PublicKey, keys
+  []*ecdsa.PublicKey, nonce string)`. `instanceKey` is the key
+  `WalletAttestation` was asked to attest first for the same issuance.
+  Pass it to your provider (`walletprovider.KeyAttestationRequest.InstanceKey`,
+  `instance_key` on `POST /v1/key-attestation`), so the Key Attestation
+  carries that key's status.
+- An issuance that redeems a pre-authorized code without client
+  authentication (or refreshes a grant that has none) has no instance
+  key of its own. For a Key Attestation it now makes one, has
+  `WalletAttestation` attest it, and deletes it when the issuance ends.
+  This needs `Config.ClientID`. Without one, the credential request
+  fails with `ErrProofUnsupported`.
+- `walletflowtest.Provider` gives a Key Attestation only for an
+  instance key it gave a Wallet Attestation for.
+
 ## v0.64.0 → v0.65.0
 
 ### Credential status (`walletflow`)
