@@ -49,6 +49,9 @@ var (
 	// key generated in the secure hardware, or don't match the leaf
 	// certificate's key.
 	ErrKeyProperties = errors.New("androidkey: attested key properties not acceptable")
+	// ErrKeyNotRequested: the chain attests a key the request to the
+	// Wallet Provider doesn't name (EvidenceVerifier).
+	ErrKeyNotRequested = errors.New("androidkey: attested key not one the request names")
 )
 
 func fail(kind error, format string, args ...any) error {

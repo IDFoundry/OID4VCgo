@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"encoding/asn1"
-	"errors"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -27,7 +26,8 @@ func Evidence(chain [][]byte) walletprovider.Evidence {
 // for evidence of EvidenceKind: one key's attestation chain (Evidence),
 // over the provider's challenge. Verify runs Verifier.Verify, so every
 // check and policy setting of the Verifier applies; the chain's key
-// must be one of the keys the request names. It reports:
+// must be one of the keys the request names (ErrKeyNotRequested). It
+// reports:
 //
 //   - the platform, walletprovider.PlatformAndroid;
 //   - the app: its package name as AppID and its versionCode as
@@ -66,7 +66,7 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 	}
 	i := slices.IndexFunc(in.Keys, func(k crypto.PublicKey) bool { return certchain.SameKey(k, r.PublicKey) })
 	if i < 0 {
-		return walletprovider.VerifiedEvidence{}, errors.New("androidkey: the attested key isn't one the request names")
+		return walletprovider.VerifiedEvidence{}, fail(ErrKeyNotRequested, "the chain's key isn't among the request's %d keys", len(in.Keys))
 	}
 	if len(r.App.Packages) != 1 {
 		return walletprovider.VerifiedEvidence{}, fail(ErrAppNotAllowed, "%d packages share the key's user ID, want one", len(r.App.Packages))
