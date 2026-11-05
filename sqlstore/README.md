@@ -45,8 +45,10 @@ walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
 A `statuslist.Allocator`'s `Store` is `db.StatusIndices()`: the Status
 List indices handed out, and their statuses, kept durably and shared
 between processes, so no index is handed out twice. `Reserve` is one
-`INSERT` on the `(uri, idx)` primary key; `Delete` deletes a retired
-list's rows in bounded batches, then its count.
+`INSERT` on the `(uri, idx)` primary key, which a trigger counts in one
+of 32 rows per list that `Reserved` sums, so concurrent reservations in
+one list don't queue on one row; `Delete` deletes a retired list's rows
+in bounded batches, then its count.
 
 ```go
 alloc := &statuslist.Allocator{
