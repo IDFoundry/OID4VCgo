@@ -82,3 +82,18 @@ func TestCRLs_IndexDroppedWithList(t *testing.T) {
 		t.Fatalf("%d lists still indexed after they became unreachable, want 0", indexed())
 	}
 }
+
+// Issuer certificates without their DER, built by hand, aren't told
+// apart by it: one whose key signed a list doesn't vouch for another's.
+func TestCRLs_HandBuiltIssuersNotConfused(t *testing.T) {
+	p := newPKI(t)
+	list := testcert.CRL(t, p.inter, p.interKey)
+	signer := &x509.Certificate{PublicKey: p.inter.PublicKey, PublicKeyAlgorithm: p.inter.PublicKeyAlgorithm, Subject: p.inter.Subject}
+	other := &x509.Certificate{PublicKey: p.fakeInter.PublicKey, PublicKeyAlgorithm: p.fakeInter.PublicKeyAlgorithm, Subject: p.fakeInter.Subject}
+	if !certrevocation.SignedByForTest(list, signer) {
+		t.Fatal("the list's own issuer, by hand: not signed")
+	}
+	if certrevocation.SignedByForTest(list, other) {
+		t.Error("another key, by hand: signed, from the first issuer's answer")
+	}
+}

@@ -86,8 +86,13 @@ func serialKey(n *big.Int) string {
 }
 
 // signedBy reports whether list's signature verifies under issuer,
-// verifying it once per issuer certificate.
+// verifying it once per issuer certificate. One without its DER, built
+// by hand rather than parsed, has nothing to tell it apart from another
+// by: its answer isn't kept.
 func (idx *listIndex) signedBy(list *x509.RevocationList, issuer *x509.Certificate) bool {
+	if len(issuer.Raw) == 0 {
+		return list.CheckSignatureFrom(issuer) == nil
+	}
 	key := sha256.Sum256(issuer.Raw)
 	idx.mu.Lock()
 	ok, done := idx.verified[key]

@@ -2,6 +2,7 @@ package certrevocation
 
 import (
 	"context"
+	"crypto/x509"
 	"time"
 )
 
@@ -32,4 +33,9 @@ func IndexedForTest() (lists, certs int) {
 	certs = len(selfSignedAnchors)
 	selfSignedMu.Unlock()
 	return lists, certs
+}
+
+// SignedByForTest is whether list's index finds it signed by issuer.
+func SignedByForTest(list *x509.RevocationList, issuer *x509.Certificate) bool {
+	return indexOf(list).signedBy(list, issuer)
 }
