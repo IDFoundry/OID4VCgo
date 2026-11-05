@@ -66,6 +66,11 @@ type Publisher struct {
 	// Typ is the tokens' COSE typ header, as IssueOptions.Typ.
 	Typ string
 
+	// MaxTokenBytes is the largest token Token signs, as
+	// IssueOptions.MaxTokenBytes: zero means DefaultMaxTokenBytes, the
+	// largest a Checker reads by default.
+	MaxTokenBytes int
+
 	// OnError, if set, is called with the request and the error when
 	// ServeHTTP can't sign a token: when it answers 500, and when it
 	// answers with the cached token instead, still within its exp,
@@ -102,7 +107,7 @@ func (p *Publisher) sign(ctx context.Context, now time.Time) ([]byte, time.Time,
 		ttl := int64(p.TTL / time.Second)
 		claims.TTL = &ttl
 	}
-	token, err := IssueToken(p.Signer, alg, claims, p.Chain, IssueOptions{Typ: p.Typ})
+	token, err := IssueToken(p.Signer, alg, claims, p.Chain, IssueOptions{Typ: p.Typ, MaxTokenBytes: p.MaxTokenBytes})
 	if err != nil {
 		return nil, time.Time{}, err
 	}

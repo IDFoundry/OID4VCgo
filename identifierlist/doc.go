@@ -14,4 +14,13 @@
 // whether an identifier is on it; a verifier.StatusPolicy
 // (verifier.TransactionsConfig.Status, mdocdcapi.VerifyParams.Status,
 // proximity.WithStatus) checks a presented mdoc's identifier list.
+//
+// A list holds every revoked MSO that is still within its validUntil,
+// and readers refuse one over DefaultMaxTokenBytes (4 MiB, about
+// 220,000 16-byte identifiers) unless they raised their limit
+// (VerifyOptions.MaxTokenBytes, the Checker's Fetcher.MaxBytes,
+// walletflow.Config.IdentifierListMaxBytes). Keep a list under it: drop
+// an identifier once its MSO has expired, and shard MSOs over several
+// lists, by issuance period say, each MSO naming its own, rather than
+// raising the limit every reader must raise too.
 package identifierlist
