@@ -52,6 +52,24 @@
 // no token still in circulation names — can be forgotten with
 // IndexStore.Delete. See Allocator's example.
 //
+// # Sizing a list
+//
+// A Status List Token grows with its list's size and with how many of
+// its statuses aren't VALID, and a Relying Party refuses one over its
+// limit — DefaultMaxTokenBytes (1 MiB) unless it raised it
+// (VerifyOptions.MaxTokenBytes, Fetcher.MaxBytes, and in a wallet
+// walletflow.Config.StatusMaxBytes). Past it, every check of every
+// credential on the list fails at once. A 1-bit list of 2^24 entries
+// makes a JWT of about 806 KB with 2.5% of them revoked at random and
+// 1.20 MB with 5%, and a CWT of about 1.03 MB with 10%: too close to
+// the limit, or over it. Prefer lists of 2^20 entries or so, adding a
+// list as each fills (Allocator's lists) and starting new ones each
+// period, as walletprovider does, so a list stops growing and its
+// revocations stop accumulating once its credentials expire. A
+// Publisher refuses to sign a token over its MaxTokenBytes, so a list
+// that outgrows what Relying Parties read fails at the issuer, not at
+// each of them.
+//
 // # Lists both formats reference
 //
 // A Relying Party may send no Accept header when it knows which form
