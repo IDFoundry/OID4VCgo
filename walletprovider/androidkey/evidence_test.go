@@ -212,7 +212,7 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 	v := &androidkey.Verifier{Revocation: statusFixture(t), Apps: []androidkey.AllowedApp{testApp}}
 	adapter := androidkey.EvidenceVerifier{Verifier: v}
 	p, err := walletprovider.New(walletprovider.Config{
-		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListURI: "https://provider.example/v1/status",
+		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListBaseURI: "https://provider.example/v1/status",
 		StatusListSize: 1024,
 		Policy: walletprovider.Policy{
 			Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{walletprovider.PlatformAndroid: {

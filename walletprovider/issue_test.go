@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,8 @@ func TestWalletAttestation(t *testing.T) {
 	}
 	ik := h.instanceKey(&key.PublicKey)
 	if ik.InstanceID != in.ID || ik.SecurityLevel != walletprovider.SecurityLevelTEE || ik.Binding != walletprovider.KeyBindingAttested ||
-		ik.Status.URI != statusURI || !ik.CreatedAt.Equal(h.clock.now()) {
+		ik.Status.URI != listURI(h.periodStart(), 0) || ik.PreviousStatus != (statuslist.StatusListRef{}) || ik.Revision != 1 ||
+		!ik.CreatedAt.Equal(h.clock.now()) {
 		t.Fatalf("recorded instance key %+v", ik)
 	}
 	header, payload, err := jose.Verify(oid4vci.ES256, &h.signer.PublicKey, jwt)
@@ -240,21 +242,28 @@ func withEvidence(t *testing.T, h *harness, kind string, purpose walletprovider.
 }
 
 // TestStatusIndexPerInstanceKey: registering reserves no status index;
-// each new instance key reserves one, until the list is full.
+// each new instance key reserves one, on the period's lists in order,
+// until every one of them is full.
 func TestStatusIndexPerInstanceKey(t *testing.T) {
-	// Four entries, of which half are handed out.
+	// Four entries a list, of which half are handed out.
 	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.StatusListSize = 4 })
-	var instances []walletprovider.Instance
-	for range 5 {
-		in, _ := h.register(kindStrongBox)
-		instances = append(instances, in)
+	in, _ := h.register(kindStrongBox)
+	if n, err := h.deps.StatusIndices.Reserved(context.Background(), listURI(h.periodStart(), 0)); err != nil || n != 0 {
+		t.Fatalf("registering reserved %d status indices (%v)", n, err)
 	}
-	h.newInstanceKey(instances[0].ID, kindStrongBox)
-	h.newInstanceKey(instances[1].ID, kindStrongBox)
-	_, err := h.walletAttestation(instances[2].ID, &newKey(t).PublicKey, kindStrongBox)
-	if !errors.Is(err, statuslist.ErrListsFull) {
-		t.Fatalf("a third instance key on a list of two = %v, want ErrListsFull", err)
+	for i := range 2 * walletprovider.MaxStatusListsPerPeriod {
+		key := h.newInstanceKey(in.ID, kindStrongBox)
+		if got, want := h.instanceKey(&key.PublicKey).Status.URI, listURI(h.periodStart(), i/2); got != want {
+			t.Fatalf("instance key %d is on %s, want %s", i, got, want)
+		}
 	}
+	_, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindStrongBox)
+	if !errors.Is(err, statuslist.ErrListsFull) || !strings.Contains(err.Error(), "the status lists of the current period are full") {
+		t.Fatalf("an instance key past the period's lists = %v, want them full", err)
+	}
+	// The next period has room again.
+	h.clock.advance(walletprovider.DefaultStatusListPeriod)
+	h.newInstanceKey(in.ID, kindStrongBox)
 }
 
 // TestInstanceKeyAssertionCounter: instance key evidence that advances

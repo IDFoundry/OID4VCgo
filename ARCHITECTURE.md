@@ -470,16 +470,24 @@ changes whether *every* bullet below is `(done)`.
     which it's recorded against the instance (`InstanceKeyStore`) and
     reused without evidence. Only the provider knows which instance
     keys are whose.
-  - **Status is per instance key.** Each instance key holds one
-    `statuslist.Allocator` index (two bits, so SUSPENDED fits),
-    reserved when it's recorded, that its Wallet Attestations and the
-    Key Attestations issued with it (`KeyAttestationRequest.InstanceKey`)
-    reference; `Suspend`/`Resume`/`Revoke` and `RevokeWhere` act on
-    the instance and set every one of its keys' statuses, and
-    `Provider.StatusList` serves the list signed with the
-    attestations' own key, the binding issuers check by default. Each
-    issuance uses up an index for good; retiring lists whose
-    attestations have all expired is still to come.
+  - **Status is per instance key, and lists rotate by period.** Each
+    instance key holds a `statuslist.Allocator` index (two bits, so
+    SUSPENDED fits) that its Wallet Attestations and the Key
+    Attestations issued with it (`KeyAttestationRequest.InstanceKey`)
+    reference. Indices come from the current period's lists
+    (`Config.StatusListPeriod`, at least every attestation TTL, so a
+    live attestation names the current period's list or the
+    previous one's): a key used in a later period moves to a fresh
+    index there, keeping the previous period's as
+    `InstanceKey.PreviousStatus`, through `InstanceKeyStore.Update`'s
+    compare-and-swap. So capacity is per period, not for every key
+    ever recorded. `Suspend`/`Resume`/`Revoke` and `RevokeWhere` act
+    on the instance and set both indices of every one of its keys, and
+    `Provider.StatusLists` serves the lists of the periods a live
+    attestation may name (and only those with an index handed out),
+    signed with the attestations' own key, the binding issuers check
+    by default. Deleting the reserved-index rows of retired lists is
+    still to come.
   - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
     short JWT over method, path, body hash and a `PurposeRequest`
     challenge, signed with the registration key. The signature is
@@ -493,7 +501,7 @@ changes whether *every* bullet below is `(done)`.
   - **Its own versioned HTTP protocol.** No standard defines how a
     wallet talks to its provider, so `Provider.Handler` serves a small
     JSON protocol under `/v1/` (challenge, instances,
-    wallet-attestation, key-attestation, status) and
+    wallet-attestation, key-attestation, the status lists) and
     `walletprovider.Client` speaks it, over fapihttp's hardened
     transport and following no redirect. Bodies are bounded
     (`MaxRequestBytes`) and decoded strictly (unknown, duplicate or

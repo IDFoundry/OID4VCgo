@@ -26,8 +26,8 @@
 //
 // The attestations are issued by the library's Wallet Provider
 // (oid4vcgo/walletprovider), which this service gives demo-only
-// evidence for what it checked; each names the provider's status list,
-// served at /v1/status under -url. The library's own protocol is served
+// evidence for what it checked; each names one of the provider's status
+// lists, served under /v1/status/ under -url. The library's own protocol is served
 // under /v1/ too; with -android-app it attests that app's Android Key
 // Attestation chains (Google-rooted, locked and verified boot) there.
 // The library's instances and their instance keys are kept in

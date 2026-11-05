@@ -3,6 +3,7 @@ package walletprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sort"
 	"sync"
@@ -19,8 +20,9 @@ import (
 // for a Wallet Attestation for it; the provider then records it
 // against the instance and reserves its status list index, which every
 // Wallet Attestation for it, and every Key Attestation issued with it,
-// references. Suspending or revoking the instance sets the status of
-// each of its instance keys.
+// references, until a later period: the key then gets an index on that
+// period's lists (Config.StatusListPeriod). Suspending or revoking the
+// instance sets the status of each of its instance keys.
 //
 // The provider knows which instance keys belong to which instance;
 // issuers don't. Keep the records as private as the instances.
@@ -34,8 +36,12 @@ type InstanceKey struct {
 	// InstanceID is the instance the key belongs to.
 	InstanceID string
 
-	// Status is the key's index in the provider's status list.
-	Status statuslist.StatusListRef
+	// Status is the key's index on one of the provider's status lists,
+	// the one attestations name, and PreviousStatus the one it had in
+	// the previous period, which attestations issued then may still
+	// name, or the zero StatusListRef.
+	Status         statuslist.StatusListRef
+	PreviousStatus statuslist.StatusListRef
 
 	// SecurityLevel is where the key's evidence showed it's held, and
 	// Binding how the evidence vouched for it.
@@ -43,6 +49,11 @@ type InstanceKey struct {
 	Binding       KeyBinding
 
 	CreatedAt time.Time
+
+	// Revision is the store's version of the record: Create stores 1,
+	// and each Update one more. Update compares it to detect a
+	// concurrent change.
+	Revision uint64
 }
 
 // clone returns a copy of k sharing no memory with it.
@@ -54,18 +65,28 @@ func (k InstanceKey) clone() InstanceKey {
 // InstanceKeyStore keeps instance keys. A production store is durable
 // and shared by every process serving the provider, as the
 // github.com/idfoundry/oid4vcgo/sqlstore module's
-// DB.WalletProviderInstanceKeys is. Records are never changed once
-// created.
+// DB.WalletProviderInstanceKeys is. A record changes only when the
+// key moves to a later period's status lists (Update).
 type InstanceKeyStore interface {
 	// Get returns the instance key with thumbprint, or an error wrapping
 	// ErrNotFound.
 	Get(ctx context.Context, thumbprint string) (InstanceKey, error)
 
-	// Create stores k, or returns an error wrapping ErrExists if an
-	// instance key with its Thumbprint is stored, whatever its instance:
-	// one key belongs to one instance. The check and the store are one
-	// atomic step, as a UNIQUE constraint makes them.
+	// Create stores k with Revision 1 (whatever k.Revision is), or
+	// returns an error wrapping ErrExists if an instance key with its
+	// Thumbprint is stored, whatever its instance: one key belongs to
+	// one instance. The check and the store are one atomic step, as a
+	// UNIQUE constraint makes them.
 	Create(ctx context.Context, k InstanceKey) error
+
+	// Update replaces the stored instance key with k's Thumbprint by k,
+	// with Revision k.Revision+1, if the stored one's Revision is
+	// k.Revision — one atomic compare-and-swap, as an UPDATE ... WHERE
+	// revision = ? is. It returns an error wrapping ErrConflict, and
+	// changes nothing, if the stored Revision differs, and ErrNotFound
+	// if no instance key has the Thumbprint. It refuses, changing
+	// nothing, a k of another instance than the stored one's.
+	Update(ctx context.Context, k InstanceKey) error
 
 	// List returns up to limit of the instance keys of the instance
 	// instanceID whose thumbprints sort after after (every one when
@@ -113,7 +134,31 @@ func (s *MemoryInstanceKeyStore) Create(ctx context.Context, k InstanceKey) erro
 	if s.keys == nil {
 		s.keys = make(map[string]InstanceKey)
 	}
-	s.keys[k.Thumbprint] = k.clone()
+	k = k.clone()
+	k.Revision = 1
+	s.keys[k.Thumbprint] = k
+	return nil
+}
+
+// Update implements InstanceKeyStore.
+func (s *MemoryInstanceKeyStore) Update(ctx context.Context, k InstanceKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.keys[k.Thumbprint]
+	switch {
+	case !ok:
+		return ErrNotFound
+	case stored.InstanceID != k.InstanceID:
+		return errors.New("walletprovider: an update can't move an instance key to another instance")
+	case stored.Revision != k.Revision:
+		return ErrConflict
+	}
+	k = k.clone()
+	k.Revision++
+	s.keys[k.Thumbprint] = k
 	return nil
 }
 

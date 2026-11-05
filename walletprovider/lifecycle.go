@@ -47,12 +47,14 @@ func (p *Provider) Revoke(ctx context.Context, id, reason string) error {
 }
 
 // transition moves the instance to state, then sets the status of each
-// of its instance keys to match. The state is stored first: should
-// setting a status fail, the provider already refuses the instance,
-// and repeating the call sets the statuses again. A key recorded while
-// the statuses are set is one whose request saw the instance still
-// active after it was recorded (WalletAttestation), so it's listed
-// here, or no attestation names it.
+// of its instance keys to match: at its Status and PreviousStatus, on
+// the lists still served (no live attestation names another). The
+// state is stored first: should setting a status fail, the provider
+// already refuses the instance, and repeating the call sets the
+// statuses again. A key recorded or moved while the statuses are set
+// is one whose request saw the instance still active after its record
+// changed (WalletAttestation, KeyAttestation), so it's listed here, or
+// no attestation names its new index.
 func (p *Provider) transition(ctx context.Context, id string, state State, reason string) error {
 	if err := p.update(ctx, id, func(in *Instance) error {
 		if in.State == StateRevoked && state != StateRevoked {
@@ -70,12 +72,7 @@ func (p *Provider) transition(ctx context.Context, id string, state State, reaso
 	status := map[State]statuslist.StatusType{
 		StateActive: statuslist.StatusValid, StateSuspended: statuslist.StatusSuspended, StateRevoked: statuslist.StatusInvalid,
 	}[state]
-	set := 0
-	defer func() {
-		if set > 0 {
-			p.publisher.Invalidate()
-		}
-	}()
+	now := p.now()
 	after := ""
 	for {
 		page, err := p.deps.InstanceKeys.List(ctx, id, after, listPageSize)
@@ -83,10 +80,11 @@ func (p *Provider) transition(ctx context.Context, id string, state State, reaso
 			return fmt.Errorf("walletprovider: listing the instance's keys: %w", err)
 		}
 		for _, k := range page {
-			if err := p.allocator.SetStatus(ctx, k.Status, status); err != nil {
-				return fmt.Errorf("walletprovider: setting an instance key's status to %v: %w", status, err)
+			for _, ref := range []statuslist.StatusListRef{k.Status, k.PreviousStatus} {
+				if err := p.setStatus(ctx, ref, status, now); err != nil {
+					return err
+				}
 			}
-			set++
 		}
 		if len(page) < listPageSize {
 			return nil

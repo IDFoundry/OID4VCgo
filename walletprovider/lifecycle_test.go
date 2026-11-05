@@ -10,15 +10,21 @@ import (
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
-// expectStatus checks the status of each of the instance keys keys in
-// both forms of the published list.
+// expectStatus checks the status of each of the instance keys keys, at
+// its Status and any PreviousStatus, in both forms of the published
+// lists.
 func (h *harness) expectStatus(want statuslist.StatusType, keys ...*ecdsa.PrivateKey) {
 	h.t.Helper()
 	for _, k := range keys {
-		ref := h.instanceKey(&k.PublicKey).Status
-		for _, cwt := range []bool{false, true} {
-			if got := h.status(ref, cwt); got != want {
-				h.t.Fatalf("published status of %+v (cwt %t) = %v, want %v", ref, cwt, got, want)
+		ik := h.instanceKey(&k.PublicKey)
+		for _, ref := range []statuslist.StatusListRef{ik.Status, ik.PreviousStatus} {
+			if ref.URI == "" {
+				continue
+			}
+			for _, cwt := range []bool{false, true} {
+				if got := h.status(ref, cwt); got != want {
+					h.t.Fatalf("published status of %+v (cwt %t) = %v, want %v", ref, cwt, got, want)
+				}
 			}
 		}
 	}

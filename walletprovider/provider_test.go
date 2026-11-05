@@ -42,8 +42,29 @@ func TestNewRefuses(t *testing.T) {
 			c.ClientIDs = []string{""}
 		}, "ClientIDs"},
 		{"http status list", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
-			c.StatusListURI = "http://provider.example/status"
-		}, "StatusListURI"},
+			c.StatusListBaseURI = "http://provider.example/status"
+		}, "StatusListBaseURI"},
+		{"status list base with a query", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListBaseURI = "https://provider.example/status?list=1"
+		}, "StatusListBaseURI"},
+		{"status list base with an empty query", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListBaseURI = "https://provider.example/status?"
+		}, "StatusListBaseURI"},
+		{"status list base ending in a slash", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListBaseURI = "https://provider.example/status/"
+		}, "StatusListBaseURI"},
+		{"status list period shorter than a Wallet Attestation", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.WalletAttestationTTL, c.StatusListPeriod = 3*time.Hour, 2*time.Hour
+		}, "StatusListPeriod"},
+		{"status list period shorter than a Key Attestation", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.KeyAttestationTTL, c.StatusListPeriod = 12*time.Hour, 6*time.Hour
+		}, "StatusListPeriod"},
+		{"status list period over a year", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListPeriod = walletprovider.MaxStatusListPeriod + time.Second
+		}, "StatusListPeriod"},
+		{"status list period not whole seconds", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListPeriod = 3*time.Hour + time.Millisecond
+		}, "StatusListPeriod"},
 		{"http wallet link", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
 			c.WalletLink = "http://wallet.example"
 		}, "WalletLink"},

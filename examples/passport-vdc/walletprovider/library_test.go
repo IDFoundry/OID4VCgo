@@ -71,7 +71,7 @@ func TestService_KeyAttestationFromLibrary(t *testing.T) {
 		t.Error("the demo claims an attack-potential level for its keys")
 	}
 	ref, err := statuslist.ParseStatusClaim(v.Status)
-	if err != nil || ref.URI != DefaultURL+wp.StatusPath {
+	if err != nil || !strings.HasPrefix(ref.URI, DefaultURL+wp.StatusPath+"/") {
 		t.Fatalf("status = %v (%v)", v.Status, err)
 	}
 }
@@ -125,13 +125,14 @@ func TestService_InstancesFromLibrary(t *testing.T) {
 		t.Fatalf("a revoked instance: %v, want refused as revoked", err)
 	}
 
-	resp, err := f.srv.Client().Get(f.srv.URL + wp.StatusPath)
+	list := strings.TrimPrefix(ik.Status.URI, DefaultURL)
+	resp, err := f.srv.Client().Get(f.srv.URL + list)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/statuslist+jwt" {
-		t.Fatalf("GET %s: %d %s", wp.StatusPath, resp.StatusCode, resp.Header.Get("Content-Type"))
+		t.Fatalf("GET %s: %d %s", list, resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 }
 

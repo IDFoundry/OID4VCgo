@@ -83,6 +83,24 @@ func TestFileInstanceStore_Reopens(t *testing.T) {
 		t.Fatalf("reopened instance key = %+v, %v", got, err)
 	}
 
+	// An instance key saved before keys could move has no Revision: it
+	// opens at 1, and moves from there.
+	older := filepath.Join(t.TempDir(), "instances.json")
+	if err := os.WriteFile(older, []byte(`{"version":2,"instances":{"a":{"ID":"a","KeyThumbprint":"tp","Revision":1}},"instance_keys":{"k":{"Thumbprint":"k","InstanceID":"a"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := openFileInstanceStore(older)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := opened.keys().Get(ctx, "k")
+	if err != nil || legacy.Revision != 1 {
+		t.Fatalf("an instance key without a Revision = %+v, %v; want it at 1", legacy, err)
+	}
+	if err := opened.keys().Update(ctx, legacy); err != nil {
+		t.Fatalf("Update of an instance key without a Revision: %v", err)
+	}
+
 	for name, content := range map[string]string{
 		"not JSON":                  "{",
 		"from before instance keys": `{"instances":{"a":{"ID":"a","KeyThumbprint":"tp"}}}`,

@@ -98,6 +98,10 @@ func openFileInstanceStore(path string) (*fileInstanceStore, error) {
 		if _, ok := s.state.Instances[k.InstanceID]; !ok {
 			return nil, fmt.Errorf("walletprovider: %s: instance key %q is of an unknown instance", path, tp)
 		}
+		// A file from before instance keys could move has no Revision:
+		// each was created, at 1.
+		k.Revision = max(k.Revision, 1)
+		s.state.InstanceKeys[tp] = k
 	}
 	return s, nil
 }
@@ -231,9 +235,38 @@ func (k fileInstanceKeyStore) Create(ctx context.Context, ik wp.InstanceKey) err
 	if _, ok := k.s.state.InstanceKeys[ik.Thumbprint]; ok {
 		return wp.ErrExists
 	}
-	k.s.state.InstanceKeys[ik.Thumbprint] = cloneInstanceKey(ik)
+	ik = cloneInstanceKey(ik)
+	ik.Revision = 1
+	k.s.state.InstanceKeys[ik.Thumbprint] = ik
 	if err := k.s.save(); err != nil {
 		delete(k.s.state.InstanceKeys, ik.Thumbprint)
+		return err
+	}
+	return nil
+}
+
+// Update implements wp.InstanceKeyStore, saving the change before it
+// returns; should saving fail, it changes nothing.
+func (k fileInstanceKeyStore) Update(ctx context.Context, ik wp.InstanceKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	k.s.mu.Lock()
+	defer k.s.mu.Unlock()
+	stored, ok := k.s.state.InstanceKeys[ik.Thumbprint]
+	switch {
+	case !ok:
+		return wp.ErrNotFound
+	case stored.InstanceID != ik.InstanceID:
+		return errors.New("walletprovider: an update can't move an instance key to another instance")
+	case stored.Revision != ik.Revision:
+		return wp.ErrConflict
+	}
+	ik = cloneInstanceKey(ik)
+	ik.Revision++
+	k.s.state.InstanceKeys[ik.Thumbprint] = ik
+	if err := k.s.save(); err != nil {
+		k.s.state.InstanceKeys[ik.Thumbprint] = stored
 		return err
 	}
 	return nil

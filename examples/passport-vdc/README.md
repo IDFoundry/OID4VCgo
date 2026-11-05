@@ -583,10 +583,11 @@ level its chain showed (software without one); a Key Attestation is
 issued for the instance key its request names, under that key's
 instance (one naming none, as an older wallet's, for one shared
 instance key of one shared instance). Every attestation then names its
-instance key's entry in the provider's Token Status List, served at
-`/v1/status` (`-url` on `cmd/wallet-provider`, `-provider-url` on
-`cmd/demo`), and a revoked or suspended instance gets no more Wallet
-or Key Attestations. Instances and
+instance key's entry in one of the provider's Token Status Lists,
+served under `/v1/status/`, one set a week (`-url` on
+`cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a revoked
+or suspended instance gets no more Wallet or Key Attestations.
+Instances and
 their instance keys are kept in `wallet-provider-instances.json` and
 the instance keys' status list indices and statuses in
 `wallet-provider-status-indices.json` (`-instances` and

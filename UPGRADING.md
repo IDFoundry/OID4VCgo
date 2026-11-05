@@ -8,7 +8,42 @@ them.
 
 ## v0.67.0 → next
 
-### sqlstore (next after v0.7.0)
+### Wallet Provider (`walletprovider`)
+
+Status lists now rotate by period, so a provider's capacity is the
+instance keys used in a period, not every one ever recorded.
+
+- **`Config.StatusListURI` is `Config.StatusListBaseURI`**: the lists
+  are under it, at `{base}/{start}/{n}`, so it has no query and doesn't
+  end in `/`. With `Handler` at the provider's URL it's that URL
+  followed by `StatusPath`, as `StatusListURI` was.
+- **`Config.StatusListPeriod`** is new: how long one period's lists
+  hand out indices, by default `DefaultStatusListPeriod` (7 days); a
+  whole number of seconds, at least `WalletAttestationTTL` and
+  `KeyAttestationTTL`, and at most a year. Changing it later stops
+  serving the old period's lists at once: the attestations naming
+  them fail status checks until they expire.
+- **`Config.StatusListSize` is per list**, and a period has up to
+  `MaxStatusListsPerPeriod` (64) lists, of which half of each is
+  handed out: size it for the instance keys used in a period. When
+  they're all used, an attestation for a new key, or for one moving
+  to the period, fails until the next period.
+- **`Provider.StatusList()` is `Provider.StatusLists()`**, an
+  `http.Handler` serving `GET /{start}/{n}` relative to
+  `StatusListBaseURI`. `Handler` serves it under `StatusPath`;
+  `GET StatusPath` itself is now `404`.
+- **Custom `InstanceKeyStore`s implement `Update`**, a compare-and-swap
+  on the new `InstanceKey.Revision`, like `InstanceStore.Update`, and
+  `Create` stores Revision 1. `InstanceKey` also gains `PreviousStatus`;
+  store it. `walletprovidertest.TestInstanceKeyStoreContract` checks
+  both. sqlstore's needs its migration 0008 (below).
+- **Attestations issued before the upgrade fail status checks** until
+  they expire (within their TTL, a day at most): they name the old
+  single list, which is no longer served. Each recorded instance key
+  moves to the current period's lists at its next attestation, and a
+  suspended or revoked instance still gets none.
+
+### sqlstore (v0.7.1, and next after it)
 
 - **Run `Migrate`.** Migration 0007 keeps a count of each status
   list's reserved indices and adds a partial index over the indices
@@ -18,6 +53,13 @@ them.
   first, then roll out. On PostgreSQL the index build blocks writes to
   `oid4vc_status_indices` while it runs: about two seconds for a list
   of eight million indices.
+- **Run `Migrate` again for migration 0008**, from the release after
+  v0.7.1. It adds a `revision` column to
+  `oid4vc_walletprovider_instance_keys`, which
+  `WalletProviderInstanceKeys().Update` compares and increments; a row
+  from before is at revision 1. `CheckSchema` fails until it has run.
+  A release before it still runs against the migrated schema, so
+  migrate first, then roll out.
 
 ## v0.66.0 → v0.67.0
 

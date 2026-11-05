@@ -241,6 +241,10 @@ func TestInstanceKeyStoreContract(t *testing.T, newStore func(t *testing.T) wall
 		{"CreateThenGet", instanceKeyCreateThenGet},
 		{"CreateDuplicateIsExists", instanceKeyCreateDuplicate},
 		{"ConcurrentCreatesSucceedOnce", instanceKeyConcurrentCreates},
+		{"UpdateComparesRevision", instanceKeyUpdateComparesRevision},
+		{"UpdateUnknownIsNotFound", instanceKeyUpdateUnknown},
+		{"UpdateKeepsTheInstance", instanceKeyUpdateKeepsInstance},
+		{"ConcurrentUpdatesLoseNothing", instanceKeyConcurrentUpdates},
 		{"ListPagesOneInstanceInThumbprintOrder", instanceKeyListPages},
 		{"ReturnedRecordsAreCopies", instanceKeyCopies},
 	}
@@ -254,8 +258,9 @@ func TestInstanceKeyStoreContract(t *testing.T, newStore func(t *testing.T) wall
 func sampleInstanceKey(thumbprint, instanceID string) walletprovider.InstanceKey {
 	return walletprovider.InstanceKey{
 		Thumbprint: thumbprint, Key: []byte(`{"kty":"EC","crv":"P-256","x":"x","y":"y"}`), InstanceID: instanceID,
-		Status:        statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status"},
-		SecurityLevel: walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
+		Status:         statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status/1762300800/0"},
+		PreviousStatus: statuslist.StatusListRef{Idx: 77, URI: "https://provider.example/status/1761696000/3"},
+		SecurityLevel:  walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
 		CreatedAt: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
 	}
 }
@@ -292,13 +297,16 @@ func instanceKeyGetUnknown(t *testing.T, s walletprovider.InstanceKeyStore) {
 
 func instanceKeyCreateThenGet(t *testing.T, s walletprovider.InstanceKeyStore) {
 	k := sampleInstanceKey("tp-1", "a")
+	k.Revision = 99 // Create ignores it
 	mustCreateInstanceKey(t, s, k)
+	k.Revision = 1
 	expectInstanceKey(t, s, "after Create", k)
 }
 
 func instanceKeyCreateDuplicate(t *testing.T, s walletprovider.InstanceKeyStore) {
 	k := sampleInstanceKey("tp-1", "a")
 	mustCreateInstanceKey(t, s, k)
+	k.Revision = 1
 	// One key belongs to one instance: the same thumbprint is refused
 	// for another instance too.
 	for _, instanceID := range []string{"a", "b"} {
@@ -339,6 +347,92 @@ func instanceKeyConcurrentCreates(t *testing.T, s walletprovider.InstanceKeyStor
 	}
 	if created != 1 {
 		t.Fatalf("%d concurrent Creates of one thumbprint succeeded, want 1", created)
+	}
+}
+
+func mustGetInstanceKey(t *testing.T, s walletprovider.InstanceKeyStore, thumbprint string) walletprovider.InstanceKey {
+	t.Helper()
+	k, err := s.Get(context.Background(), thumbprint)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", thumbprint, err)
+	}
+	return k
+}
+
+func instanceKeyUpdateComparesRevision(t *testing.T, s walletprovider.InstanceKeyStore) {
+	mustCreateInstanceKey(t, s, sampleInstanceKey("tp-1", "a"))
+	k := mustGetInstanceKey(t, s, "tp-1")
+	k.PreviousStatus, k.Status = k.Status, statuslist.StatusListRef{Idx: 9, URI: "https://provider.example/status/1762905600/1"}
+	if err := s.Update(context.Background(), k); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	want := k
+	want.Revision = 2
+	expectInstanceKey(t, s, "after Update", want)
+
+	stale := k // still Revision 1
+	stale.Status.Idx = 10
+	if err := s.Update(context.Background(), stale); !errors.Is(err, walletprovider.ErrConflict) {
+		t.Fatalf("Update(stale revision) = %v, want ErrConflict", err)
+	}
+	expectInstanceKey(t, s, "after a stale Update", want)
+}
+
+func instanceKeyUpdateUnknown(t *testing.T, s walletprovider.InstanceKeyStore) {
+	k := sampleInstanceKey("nope", "a")
+	k.Revision = 1
+	if err := s.Update(context.Background(), k); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("Update(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+func instanceKeyUpdateKeepsInstance(t *testing.T, s walletprovider.InstanceKeyStore) {
+	mustCreateInstanceKey(t, s, sampleInstanceKey("tp-1", "a"))
+	want := mustGetInstanceKey(t, s, "tp-1")
+	moved := want
+	moved.InstanceID = "b"
+	if err := s.Update(context.Background(), moved); err == nil || errors.Is(err, walletprovider.ErrConflict) || errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("Update moving the key to another instance = %v, want it refused", err)
+	}
+	expectInstanceKey(t, s, "after a refused Update", want)
+	if page, err := s.List(context.Background(), "b", "", 10); err != nil || len(page) != 0 {
+		t.Fatalf("List(the other instance) = %v, %v; want none", page, err)
+	}
+}
+
+func instanceKeyConcurrentUpdates(t *testing.T, s walletprovider.InstanceKeyStore) {
+	k := sampleInstanceKey("tp-1", "a")
+	k.Status.Idx = 0
+	mustCreateInstanceKey(t, s, k)
+	const workers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for range workers {
+		wg.Go(func() {
+			for {
+				cur, err := s.Get(context.Background(), "tp-1")
+				if err != nil {
+					errs <- err
+					return
+				}
+				cur.Status.Idx++
+				if err := s.Update(context.Background(), cur); !errors.Is(err, walletprovider.ErrConflict) {
+					if err != nil {
+						errs <- err
+					}
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Update: %v", err)
+	}
+	got := mustGetInstanceKey(t, s, "tp-1")
+	if got.Status.Idx != workers || got.Revision != workers+1 {
+		t.Fatalf("after %d concurrent increments: Status.Idx %d, Revision %d; want %d, %d", workers, got.Status.Idx, got.Revision, workers, workers+1)
 	}
 }
 
@@ -392,11 +486,16 @@ func instanceKeyCopies(t *testing.T, s walletprovider.InstanceKeyStore) {
 		t.Fatalf("List = %v, %v", listed, err)
 	}
 	listed[0].Key[2] = 'X'
+	updated := mustGetInstanceKey(t, s, "tp-1")
+	if err := s.Update(context.Background(), updated); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	updated.Key[3] = 'X' // the caller's copy, after Update
 	again, err := s.Get(context.Background(), "tp-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Key[2] == 'X' {
+	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Key[2] == 'X' || again.Key[3] == 'X' {
 		t.Fatalf("the stored record shares memory with the caller's: %s", again.Key)
 	}
 }
