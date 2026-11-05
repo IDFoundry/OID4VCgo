@@ -31,8 +31,10 @@ public data class CRLRefreshResult(
     @SerialName("crls") val crls: String,
     /**
      * When to refresh again: halfway to the earliest list's nextUpdate, at
-     * most an hour away, or in minutes after a failure. WorkManager may run
-     * the work later.
+     * most an hour away, or after a backoff growing with each failure, both
+     * a little randomised so devices don't fetch together. Refresh at a
+     * foreground only once it has passed; WorkManager may run the work
+     * later.
      */
     @SerialName("next_refresh") @Serializable(InstantSerializer::class) val nextRefresh: Instant,
 ) {

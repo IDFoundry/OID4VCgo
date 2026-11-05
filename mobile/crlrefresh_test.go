@@ -9,12 +9,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -169,12 +171,13 @@ func TestRefreshCRLs_Outcomes(t *testing.T) {
 }
 
 // next_refresh is halfway from now to the list's nextUpdate, at most an
-// hour away; after a failure, within minutes.
+// hour away; after a failure, within minutes. (Without jitter: see
+// TestRefreshCRLs_Jitter.)
 func TestRefreshCRLs_NextRefresh(t *testing.T) {
 	ca, caKey := testcert.CA(t, "refresh CA")
 	srv := newCRLServer(t)
 	now := time.Now()
-	s := &crlSet{now: func() time.Time { return now }}
+	s := &crlSet{now: func() time.Time { return now }, jitter: func(time.Duration) time.Duration { return 0 }}
 	if err := s.configureRefresh(crlRefreshConfig{development: true, points: []crlDistributionPoint{{URL: srv.URL, Issuer: pemOf("CERTIFICATE", ca.Raw)}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -200,9 +203,130 @@ func TestRefreshCRLs_NextRefresh(t *testing.T) {
 	if got := next(); got < 59*time.Minute || got > 61*time.Minute {
 		t.Errorf("next_refresh in %v, want 1h", got)
 	}
+	// Failures back off, doubling from 2½ minutes (5, less the jitter's
+	// half, which is all of it here) to half an hour.
 	srv.status.Store(http.StatusNotFound)
-	if got := next(); got < 4*time.Minute || got > 6*time.Minute {
+	for _, want := range []time.Duration{150 * time.Second, 5 * time.Minute, 10 * time.Minute, 20 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
+		if got := next(); got < want-time.Second || got > want+time.Second {
+			t.Errorf("after a failure, next_refresh in %v, want %v", got, want)
+		}
+	}
+	// A success ends the backoff.
+	srv.status.Store(http.StatusOK)
+	srv.serve(testcert.CRLFromTemplate(t, &x509.RevocationList{Number: big.NewInt(3), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(40 * time.Minute)}, ca, caKey).Raw)
+	if got := next(); got < 19*time.Minute || got > 21*time.Minute {
+		t.Errorf("next_refresh in %v, want 20m", got)
+	}
+	// However long the backoff, a failing point is due again halfway to
+	// its held list's nextUpdate, before the list expires.
+	srv.status.Store(http.StatusNotFound)
+	for range 5 {
+		next()
+	}
+	if got := next(); got < 19*time.Minute || got > 21*time.Minute {
+		t.Errorf("after six failures, with the list current for 40 minutes, next_refresh in %v, want 20m", got)
+	}
+}
+
+// next_refresh takes up to a fifth off a good fetch's wait, and up to
+// half off a failure's backoff, never sooner than a minute.
+func TestRefreshCRLs_Jitter(t *testing.T) {
+	ca, caKey := testcert.CA(t, "refresh CA")
+	srv := newCRLServer(t)
+	now := time.Now()
+	most := func(n time.Duration) time.Duration { return n - 1 }
+	s := &crlSet{now: func() time.Time { return now }, jitter: most}
+	if err := s.configureRefresh(crlRefreshConfig{development: true, points: []crlDistributionPoint{{URL: srv.URL, Issuer: pemOf("CERTIFICATE", ca.Raw)}}}); err != nil {
+		t.Fatal(err)
+	}
+	next := func() time.Duration {
+		t.Helper()
+		out, err := s.refresh(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		at, err := time.Parse(time.RFC3339, refreshResult(t, out).NextRefresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return at.Sub(now.Truncate(time.Second))
+	}
+	var n int64
+	for _, tc := range []struct {
+		validFor time.Duration
+		want     time.Duration
+	}{
+		{7 * 24 * time.Hour, 48 * time.Minute}, // an hour less a fifth
+		{40 * time.Minute, 16 * time.Minute},   // 20 minutes less a fifth
+		{90 * time.Second, time.Minute},        // never sooner than a minute
+	} {
+		n++
+		srv.serve(testcert.CRLFromTemplate(t, &x509.RevocationList{Number: big.NewInt(n), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(tc.validFor)}, ca, caKey).Raw)
+		if got := next(); got < tc.want-time.Second || got > tc.want+time.Second {
+			t.Errorf("valid for %v: next_refresh in %v, want %v", tc.validFor, got, tc.want)
+		}
+	}
+	// A failure's first backoff is 2½ to 5 minutes: here, 5. (The list
+	// held is current for a week, so doesn't bring it closer.)
+	srv.serve(testcert.CRLFromTemplate(t, &x509.RevocationList{Number: big.NewInt(n + 1), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(7 * 24 * time.Hour)}, ca, caKey).Raw)
+	next()
+	srv.status.Store(http.StatusNotFound)
+	if got := next(); got < 5*time.Minute-time.Second || got > 5*time.Minute+time.Second {
 		t.Errorf("after a failure, next_refresh in %v, want 5m", got)
+	}
+}
+
+// Refreshes reuse one connection, and once a list is held, fetch it
+// conditionally: a 304 keeps it, reported unchanged.
+func TestRefreshCRLs_ConditionalAndReused(t *testing.T) {
+	ca, caKey := testcert.CA(t, "refresh CA")
+	list := crlAt(t, ca, caKey, 1, 0, 4*time.Hour)
+	var mu sync.Mutex
+	var conns int
+	var conditions []string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		conditions = append(conditions, req.Header.Get("If-None-Match"))
+		mu.Unlock()
+		w.Header().Set("ETag", `"one"`)
+		if req.Header.Get("If-None-Match") == `"one"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write(list.Raw)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			mu.Lock()
+			conns++
+			mu.Unlock()
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	s := &crlSet{}
+	if err := s.configureRefresh(crlRefreshConfig{development: true, points: []crlDistributionPoint{{URL: srv.URL, Issuer: pemOf("CERTIFICATE", ca.Raw)}}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for range 3 {
+		out, err := s.refresh(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, outcomes(refreshResult(t, out))...)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{crlUpdated, crlUnchanged, crlUnchanged}; !slices.Equal(got, want) {
+		t.Errorf("outcomes %v, want %v", got, want)
+	}
+	if want := []string{"", `"one"`, `"one"`}; !slices.Equal(conditions, want) {
+		t.Errorf("If-None-Match sent %q, want %q", conditions, want)
+	}
+	if conns != 1 {
+		t.Errorf("%d connections for three refreshes, want one", conns)
 	}
 }
 

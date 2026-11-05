@@ -233,8 +233,9 @@ those, where your CAs serve `https`. A `ProximityReader` has the same
 `refreshCRLs`.
 
 The library schedules nothing and depends on no scheduler. Refresh when
-the app starts and comes to the foreground, and in the background with
-WorkManager, and keep `crls` to pass back as `WalletConfiguration.crls`
+the app starts, when it comes to the foreground once the last result's
+`nextRefresh` has passed (not at every foreground: a fleet of devices
+adds up), and in the background with WorkManager, and keep `crls` to pass back as `WalletConfiguration.crls`
 at the next launch, so checks work before the first refresh and an
 older list is still refused after a restart:
 
@@ -291,9 +292,10 @@ class CRLRefreshWorker(context: Context, params: WorkerParameters) : CoroutineWo
 }
 ```
 
-At the foreground, call `refreshAndKeepCRLs` from the app's scope in
-`ProcessLifecycleOwner`'s `onStart`, and schedule the worker with its
-result. A list that does pass its nextUpdate unrefreshed fails its
+At the foreground, in `ProcessLifecycleOwner`'s `onStart`, call
+`refreshAndKeepCRLs` from the app's scope when the delay it last
+returned has run out (keep the `Instant` it pointed to), and schedule
+the worker with its result. A list that does pass its nextUpdate unrefreshed fails its
 role's checks closed until a fresh one arrives.
 
 ### Settings to decide

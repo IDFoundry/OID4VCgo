@@ -148,7 +148,8 @@ serve `https`. A ``ProximityReader`` has the same
 ``ProximityReader/refreshCRLs()``.
 
 The SDK schedules nothing: an iOS app's process is suspended in the
-background. Refresh when the app comes to the foreground and in a
+background. Refresh when the app comes to the foreground, once
+``CRLRefreshResult/nextRefresh`` has passed, and in a
 `BGAppRefreshTask`, and keep ``CRLRefreshResult/crls`` to pass back as
 ``WalletConfiguration/crls`` at the next launch, so checks work before
 the first refresh and an older list is still refused after a restart.
@@ -160,13 +161,16 @@ import BackgroundTasks
 import OID4VCWallet
 import UIKit
 
-/// Keeps a wallet's CRLs current: at launch, at every foreground and
-/// in background app refresh, persisting the lists for the next launch.
+/// Keeps a wallet's CRLs current: at launch, at a foreground once the
+/// last result's `nextRefresh` has passed, and in background app
+/// refresh, persisting the lists for the next launch.
 @MainActor
 final class CRLRefresher {
     static let taskIdentifier = "com.example.wallet.crl-refresh"
     private let wallet: Wallet
     private let storedLists: URL
+    /// When the next refresh is due; distantPast until one succeeds.
+    private var due = Date.distantPast
 
     init(wallet: Wallet, storedLists: URL) {
         self.wallet = wallet
@@ -189,7 +193,9 @@ final class CRLRefresher {
             task.expirationHandler = { work.cancel() }
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
-            Task { @MainActor in _ = await self.refresh() }
+            Task { @MainActor in
+                if Date() >= self.due { _ = await self.refresh() }
+            }
         }
     }
 
@@ -203,8 +209,10 @@ final class CRLRefresher {
             let result = try await wallet.refreshCRLs()
             try result.crls.write(to: storedLists, atomically: true, encoding: .utf8)
             next = result.nextRefresh
+            due = result.nextRefresh
             return !result.anyFailed
         } catch {
+            due = .distantPast
             return false
         }
     }

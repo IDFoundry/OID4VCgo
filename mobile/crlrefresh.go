@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -80,9 +81,13 @@ const (
 	// due again, so a list close to its nextUpdate isn't fetched in a
 	// tight loop (certrevocation.Refresher's own floor).
 	crlMinRefresh = time.Minute
-	// crlRetry is when a distribution point a refresh failed for is
-	// due again.
-	crlRetry = 5 * time.Minute
+	// crlRetryBase and crlRetryMax bound the backoff of a distribution
+	// point a refresh failed for: it doubles from crlRetryBase per
+	// consecutive failure, up to crlRetryMax, and a random half is taken
+	// off, so a fleet that failed together during an outage doesn't
+	// retry together after it.
+	crlRetryBase = 5 * time.Minute
+	crlRetryMax  = time.Hour
 )
 
 // configureRefresh sets the distribution points s.refresh fetches, from
@@ -158,22 +163,58 @@ func fetchableURL(u string, requireHTTPS bool) bool {
 }
 
 // refresher is a certrevocation.Refresher fetching p alone, bound to
-// its issuer, with floors as the lists it may not be older than: it
-// fetches from public addresses only, outside development, caps the
-// response's size, and follows redirects only on p's host. With
-// development_roots, in development, it fetches with cfg.http, which
-// trusts them.
-func (p crlPoint) refresher(cfg crlRefreshConfig, floors []*x509.RevocationList, now func() time.Time) (*certrevocation.Refresher, error) {
+// its issuer, with floors as the lists it may not be older than,
+// fetching with client: it caps the response's size and follows
+// redirects only on p's host.
+func (p crlPoint) refresher(cfg crlRefreshConfig, client *http.Client, floors []*x509.RevocationList, now func() time.Time) (*certrevocation.Refresher, error) {
 	return certrevocation.NewRefresher(certrevocation.RefresherConfig{
-		URLs:          []string{p.url},
-		Issuers:       []*x509.Certificate{p.issuer},
-		URLIssuers:    map[string]*x509.Certificate{p.url: p.issuer},
-		RequireHTTPS:  cfg.requireHTTPS,
-		HTTPClient:    cfg.http,
-		AllowLoopback: cfg.development && cfg.http == nil,
-		Floors:        floors,
-		Clock:         now,
+		URLs:         []string{p.url},
+		Issuers:      []*x509.Certificate{p.issuer},
+		URLIssuers:   map[string]*x509.Certificate{p.url: p.issuer},
+		RequireHTTPS: cfg.requireHTTPS,
+		HTTPClient:   client,
+		Floors:       floors,
+		Clock:        now,
 	})
+}
+
+// refreshClient is the client cfg's lists are fetched with: with
+// development_roots, in development, cfg.http, which trusts them;
+// otherwise the hardened client certrevocation.Refresher builds by
+// default, dialling public addresses only outside development.
+func refreshClient(cfg crlRefreshConfig) (*http.Client, error) {
+	if cfg.http != nil {
+		return cfg.http, nil
+	}
+	tc := fapihttp.RecommendedTransportConfig()
+	tc.AllowLoopbackHosts = cfg.development
+	return fapihttp.NewClient(tc)
+}
+
+// pointRefreshers returns s's points' Refreshers, building them the
+// first time, with the lists held then as their floors.
+func (s *crlSet) pointRefreshers(now func() time.Time) ([]*certrevocation.Refresher, error) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.refreshers != nil {
+		return s.refreshers, nil
+	}
+	client, err := refreshClient(s.refreshCfg)
+	if err != nil {
+		return nil, fmt.Errorf("certrevocation: build the HTTP client: %w", err)
+	}
+	var floors []*x509.RevocationList
+	if held := s.lists.Load(); held != nil {
+		floors = *held
+	}
+	refreshers := make([]*certrevocation.Refresher, len(s.points))
+	for i, p := range s.points {
+		if refreshers[i], err = p.refresher(s.refreshCfg, client, floors, now); err != nil {
+			return nil, err
+		}
+	}
+	s.refreshers, s.failures = refreshers, make([]int, len(s.points))
+	return refreshers, nil
 }
 
 // CRL refresh outcomes, a crlRefreshResult's "outcome".
@@ -213,10 +254,14 @@ func (s *crlSet) refresh(ctx context.Context) (string, error) {
 		now = time.Now
 	}
 	out := crlRefreshJSON{result: result{ABIVersion}, Results: make([]crlRefreshResult, 0, len(s.points))}
+	refreshers, err := s.pointRefreshers(now)
+	if err != nil {
+		return "", newError(CodeInternal, err)
+	}
 	var next time.Time
-	for _, p := range s.points {
+	for i, p := range s.points {
 		res := crlRefreshResult{URL: redactedURL(p.url)}
-		list, err := s.fetch(ctx, p, now)
+		list, err := fetchOne(ctx, refreshers[i])
 		if err == nil {
 			var changed bool
 			if changed, err = s.merge(list); err == nil {
@@ -226,11 +271,12 @@ func (s *crlSet) refresh(ctx context.Context) (string, error) {
 				}
 			}
 		}
-		due := now().Add(crlRetry)
+		var due time.Time
 		if err != nil {
 			res.Outcome, res.Error = crlFailed, crlError(err).Error()
+			due = s.retryDue(now(), i, p)
 		} else {
-			due = halfwayDue(now(), list.NextUpdate)
+			due = s.refreshedDue(now(), i, list.NextUpdate)
 		}
 		if next.IsZero() || due.Before(next) {
 			next = due
@@ -245,26 +291,74 @@ func (s *crlSet) refresh(ctx context.Context) (string, error) {
 	return marshal(out)
 }
 
-// halfwayDue is when a list just fetched at now, current until
-// nextUpdate, is due again: halfway there, no sooner than crlMinRefresh
-// and no later than certrevocation.DefaultCRLMaxInterval, which
-// certrevocation.Refresher's Run waits by too, so a revocation the CA
-// publishes is picked up within it.
-func halfwayDue(now, nextUpdate time.Time) time.Time {
-	return now.Add(min(max(nextUpdate.Sub(now)/2, crlMinRefresh), certrevocation.DefaultCRLMaxInterval))
+// refreshedDue is when point i, whose list just fetched at now is
+// current until nextUpdate, is due again: halfway there, no later than
+// certrevocation.DefaultCRLMaxInterval, which certrevocation.Refresher's
+// Run waits by too, so a revocation the CA publishes is picked up
+// within it; less a random part of up to a fifth, so devices that
+// fetched together, or whose lists share a nextUpdate, don't fetch
+// together again; and no sooner than crlMinRefresh. It ends the point's
+// backoff.
+func (s *crlSet) refreshedDue(now time.Time, i int, nextUpdate time.Time) time.Time {
+	s.refreshMu.Lock()
+	s.failures[i] = 0
+	s.refreshMu.Unlock()
+	d := min(nextUpdate.Sub(now)/2, certrevocation.DefaultCRLMaxInterval)
+	if d > 0 {
+		d -= s.random(d / 5)
+	}
+	return now.Add(max(d, crlMinRefresh))
 }
 
-// fetch fetches p's list with a Refresher whose floors are s's lists
-// held now, and returns it if the Refresher accepted it.
-func (s *crlSet) fetch(ctx context.Context, p crlPoint, now func() time.Time) (*x509.RevocationList, error) {
-	var floors []*x509.RevocationList
-	if held := s.lists.Load(); held != nil {
-		floors = *held
+// retryDue is when point i, p, a fetch just failed for at now, is due
+// again: after a backoff growing with its consecutive failures (see
+// crlRetryBase), but no later than halfway to the nextUpdate of the
+// list held for p's CA while that's current, so it's tried again
+// before the list expires.
+func (s *crlSet) retryDue(now time.Time, i int, p crlPoint) time.Time {
+	s.refreshMu.Lock()
+	s.failures[i]++
+	failures := s.failures[i]
+	s.refreshMu.Unlock()
+	d := crlRetryMax
+	if shift := failures - 1; shift < 16 {
+		d = min(crlRetryBase<<shift, crlRetryMax)
 	}
-	r, err := p.refresher(s.refreshCfg, floors, now)
-	if err != nil {
-		return nil, err
+	d = d/2 + s.random(d/2)
+	if held := s.heldFrom(p.issuer); held != nil && now.Before(held.NextUpdate) {
+		d = min(d, max(held.NextUpdate.Sub(now)/2, crlMinRefresh))
 	}
+	return now.Add(d)
+}
+
+// heldFrom is the list s holds that issuer signed, or nil.
+func (s *crlSet) heldFrom(issuer *x509.Certificate) *x509.RevocationList {
+	p := s.lists.Load()
+	if p == nil {
+		return nil
+	}
+	for _, l := range *p {
+		if bytes.Equal(l.RawIssuer, issuer.RawSubject) && l.CheckSignatureFrom(issuer) == nil {
+			return l
+		}
+	}
+	return nil
+}
+
+// random is a random duration in [0, n), by s.jitter; zero for n ≤ 0.
+func (s *crlSet) random(n time.Duration) time.Duration {
+	switch {
+	case n <= 0:
+		return 0
+	case s.jitter != nil:
+		return s.jitter(n)
+	}
+	return rand.N(n) //nolint:gosec // schedule jitter, not a secret
+}
+
+// fetchOne fetches with r, a point's Refresher, and returns the list
+// if r accepted it.
+func fetchOne(ctx context.Context, r *certrevocation.Refresher) (*x509.RevocationList, error) {
 	if err := r.Refresh(ctx); err != nil {
 		return nil, err
 	}

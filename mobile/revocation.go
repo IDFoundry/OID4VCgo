@@ -34,6 +34,19 @@ type crlSet struct {
 	points     []crlPoint
 	refreshCfg crlRefreshConfig
 	now        func() time.Time
+	// jitter returns a random duration in [0, n), spreading next_refresh;
+	// nil means rand.N. Tests set it.
+	jitter func(n time.Duration) time.Duration
+
+	// refreshMu guards refreshers and failures. refreshers are the
+	// points' Refreshers, in points order, built at the first refresh and
+	// kept, so each fetch is conditional on the last list's ETag or
+	// Last-Modified and all of them share one client's connections;
+	// failures counts each point's consecutive failed fetches, for its
+	// backoff.
+	refreshMu  sync.Mutex
+	refreshers []*certrevocation.Refresher
+	failures   []int
 }
 
 // newCRLSet is a crlSet holding the CRLs of crls, a configuration's
