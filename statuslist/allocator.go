@@ -10,6 +10,8 @@ import (
 	"math"
 	"math/bits"
 	"net/url"
+	"slices"
+	"sync"
 )
 
 // ErrIndexTaken is what IndexStore.Reserve returns, possibly wrapped,
@@ -131,6 +133,15 @@ const maxListBytes = maxDecompressedSize
 // Bits is the Allocator's, and whose Statuses is Allocator.Statuses
 // for that list; after SetStatus, call the Publisher's Invalidate.
 // Keep a full list in Lists: SetStatus and Statuses still need it.
+//
+// An Allocator remembers its settings once it has validated them, and
+// which of its lists it has found full: a list only fills up, so
+// Allocate counts a list's reserved indices until it finds the list
+// full, whether filled here or by another process, and never again.
+// Changing Lists, Bits or FillLimit has the next call validate them
+// afresh and forget the full lists; for another Store, use another
+// Allocator. Its methods are safe for concurrent use, so long as its
+// fields aren't changed meanwhile. Don't copy an Allocator once used.
 type Allocator struct {
 	// Lists are the lists indices are handed out of, in order: a list
 	// is used until FillLimit of it is reserved, then the next. At
@@ -154,6 +165,19 @@ type Allocator struct {
 	// most MaxFillLimit, reserved before Allocate moves on to the next
 	// list; zero means DefaultFillLimit.
 	FillLimit float64
+
+	mu      sync.Mutex
+	checked *allocatorCheck // the settings validate last accepted
+}
+
+// allocatorCheck is a copy of the settings of an Allocator that
+// validate accepted, and how many of its lists, from the first,
+// Allocate has found full.
+type allocatorCheck struct {
+	lists     []AllocatorList
+	bits      Bits
+	fillLimit float64
+	full      int // guarded by the Allocator's mu
 }
 
 // Allocate reserves a random, never-before-allocated index in the
@@ -161,16 +185,21 @@ type Allocator struct {
 // names it by. It returns an error wrapping ErrListsFull when every
 // list has reached FillLimit.
 func (a *Allocator) Allocate(ctx context.Context) (StatusListRef, error) {
-	if err := a.validate(); err != nil {
+	c, err := a.check()
+	if err != nil {
 		return StatusListRef{}, err
 	}
 	exhausted := false
-	for _, list := range a.Lists {
+	for i := a.fullLists(c); i < len(c.lists); i++ {
+		list := c.lists[i]
 		reserved, err := a.Store.Reserved(ctx, list.URI)
 		if err != nil {
 			return StatusListRef{}, fmt.Errorf("statuslist: counting the reserved indices of %s: %w", list.URI, err)
 		}
 		if reserved >= a.limit(list) {
+			if !exhausted {
+				a.filled(c, i)
+			}
 			continue
 		}
 		ref, ok, err := a.reserveIn(ctx, list)
@@ -186,6 +215,21 @@ func (a *Allocator) Allocate(ctx context.Context) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: no free index found in %d random draws per list: is Allocator.Rand random?", maxAllocateAttempts)
 	}
 	return StatusListRef{}, ErrListsFull
+}
+
+// fullLists is how many of c's lists, from the first, are known to be
+// full.
+func (a *Allocator) fullLists(c *allocatorCheck) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return c.full
+}
+
+// filled records that list i of c is full, as are those before it.
+func (a *Allocator) filled(c *allocatorCheck, i int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c.full = max(c.full, i+1)
 }
 
 // reserveIn draws random indices in list until one reserves, reporting
@@ -261,10 +305,11 @@ func (a *Allocator) Statuses(uri string) func(ctx context.Context) ([]uint8, err
 // listFor validates a and returns the list ref names, refusing an
 // index outside it.
 func (a *Allocator) listFor(ref StatusListRef) (AllocatorList, error) {
-	if err := a.validate(); err != nil {
+	c, err := a.check()
+	if err != nil {
 		return AllocatorList{}, err
 	}
-	for _, list := range a.Lists {
+	for _, list := range c.lists {
 		if list.URI != ref.URI {
 			continue
 		}
@@ -274,6 +319,21 @@ func (a *Allocator) listFor(ref StatusListRef) (AllocatorList, error) {
 		return list, nil
 	}
 	return AllocatorList{}, fmt.Errorf("statuslist: %q isn't one of Allocator.Lists", ref.URI)
+}
+
+// check validates a's settings, unless they're those it last accepted,
+// and returns them as accepted.
+func (a *Allocator) check() (*allocatorCheck, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if c := a.checked; c != nil && a.Store != nil && a.Bits == c.bits && a.FillLimit == c.fillLimit && slices.Equal(a.Lists, c.lists) {
+		return c, nil
+	}
+	if err := a.validate(); err != nil {
+		return nil, err
+	}
+	a.checked = &allocatorCheck{lists: slices.Clone(a.Lists), bits: a.Bits, fillLimit: a.FillLimit}
+	return a.checked, nil
 }
 
 // validate checks a's settings.

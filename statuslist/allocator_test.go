@@ -308,6 +308,137 @@ func TestAllocator_Concurrent(t *testing.T) {
 	}
 }
 
+// countingStore counts the Reserved calls for each list.
+type countingStore struct {
+	MemoryIndexStore
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (s *countingStore) Reserved(ctx context.Context, uri string) (int, error) {
+	s.mu.Lock()
+	if s.counts == nil {
+		s.counts = map[string]int{}
+	}
+	s.counts[uri]++
+	s.mu.Unlock()
+	return s.MemoryIndexStore.Reserved(ctx, uri)
+}
+
+// count is how many times Reserved was called for the list at uri.
+func (s *countingStore) count(uri string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counts[uri]
+}
+
+// TestAllocator_SkipsFullLists: once Allocate finds a list full, it
+// counts that list's reserved indices no more, and once it has found
+// every list full, it returns ErrListsFull without asking the store.
+func TestAllocator_SkipsFullLists(t *testing.T) {
+	ctx := context.Background()
+	store := &countingStore{}
+	a := &Allocator{Lists: []AllocatorList{{URI: allocListA, Size: 16}, {URI: allocListB, Size: 16}}, Store: store, Rand: seeded()}
+	for range 8 + 8 {
+		ok(a.Allocate(ctx))(t)
+	}
+	// Eight allocations in A, then one finding it full.
+	if n := store.count(allocListA); n != 9 {
+		t.Fatalf("Reserved(A) called %d times, want 9", n)
+	}
+	if _, err := a.Allocate(ctx); !errors.Is(err, ErrListsFull) {
+		t.Fatalf("got %v, want ErrListsFull", err)
+	}
+	before := store.count(allocListA) + store.count(allocListB)
+	for range 3 {
+		if _, err := a.Allocate(ctx); !errors.Is(err, ErrListsFull) {
+			t.Fatalf("got %v, want ErrListsFull", err)
+		}
+	}
+	if after := store.count(allocListA) + store.count(allocListB); after != before {
+		t.Fatalf("Reserved called %d more times once every list was known full", after-before)
+	}
+	// SetStatus and Statuses still serve a full list.
+	if _, err := a.Statuses(allocListA)(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAllocator_ListFilledElsewhere: a list another Allocator — in
+// another process — fills is found full when next counted, and
+// skipped from then on.
+func TestAllocator_ListFilledElsewhere(t *testing.T) {
+	ctx := context.Background()
+	store := &countingStore{}
+	lists := []AllocatorList{{URI: allocListA, Size: 16}, {URI: allocListB, Size: 16}}
+	here := &Allocator{Lists: lists, Store: store, Rand: seeded()}
+	elsewhere := &Allocator{Lists: lists, Store: store, Rand: mrand.NewChaCha8([32]byte{4})}
+	if ref := ok(here.Allocate(ctx))(t); ref.URI != allocListA {
+		t.Fatalf("first allocation in %s", ref.URI)
+	}
+	for range 7 {
+		if ref := ok(elsewhere.Allocate(ctx))(t); ref.URI != allocListA {
+			t.Fatalf("allocation elsewhere in %s", ref.URI)
+		}
+	}
+	for range 4 {
+		if ref := ok(here.Allocate(ctx))(t); ref.URI != allocListB {
+			t.Fatalf("allocation after A filled elsewhere in %s, want B", ref.URI)
+		}
+	}
+	// Here once finding room, elsewhere seven times, here once finding
+	// it full.
+	if n := store.count(allocListA); n != 9 {
+		t.Fatalf("Reserved(A) called %d times, want 9", n)
+	}
+}
+
+// TestAllocator_ChangedSettings: settings once validated are validated
+// again when they change, and a raised FillLimit reopens a list found
+// full at the lower one.
+func TestAllocator_ChangedSettings(t *testing.T) {
+	ctx := context.Background()
+	a := &Allocator{Lists: []AllocatorList{{URI: allocListA, Size: 16}, {URI: allocListB, Size: 16}}, Store: &MemoryIndexStore{}, Rand: seeded(), FillLimit: 0.25}
+	for range 4 + 1 {
+		ok(a.Allocate(ctx))(t)
+	}
+	checked := a.checked
+	ok(a.Allocate(ctx))(t)
+	if a.checked != checked || checked.full != 1 {
+		t.Fatalf("settings unchanged, validated again, or A not known full: %d", checked.full)
+	}
+	a.FillLimit = 0.5
+	if ref := ok(a.Allocate(ctx))(t); ref.URI != allocListA {
+		t.Fatalf("allocation after FillLimit raised in %s, want A", ref.URI)
+	}
+	a.Lists[1].URI = "http://issuer.example/statuslists/2"
+	if _, err := a.Allocate(ctx); err == nil {
+		t.Fatal("a list changed in place wasn't validated again")
+	}
+}
+
+// TestAllocator_ExhaustedListNotFull: a list Allocate gave up drawing
+// in isn't taken to be full, nor are those before a full list after it.
+func TestAllocator_ExhaustedListNotFull(t *testing.T) {
+	ctx := context.Background()
+	store := &MemoryIndexStore{}
+	if err := store.Reserve(ctx, allocListA, 0); err != nil {
+		t.Fatal(err)
+	}
+	for idx := range uint64(4) {
+		if err := store.Reserve(ctx, allocListB, idx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := &Allocator{Lists: []AllocatorList{{URI: allocListA, Size: 8}, {URI: allocListB, Size: 8}}, Store: store, Rand: bytes.NewReader(make([]byte, 8*maxAllocateAttempts))}
+	if _, err := a.Allocate(ctx); err == nil || errors.Is(err, ErrListsFull) {
+		t.Fatalf("got %v", err)
+	}
+	if a.checked.full != 0 {
+		t.Fatalf("%d lists taken to be full, want none", a.checked.full)
+	}
+}
+
 // TestAllocator_Validate: each misconfiguration is refused by every
 // method.
 func TestAllocator_Validate(t *testing.T) {
