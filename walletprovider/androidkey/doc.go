@@ -13,7 +13,7 @@
 //     GoogleRoots), every certificate valid at Verifier.Now, and the
 //     attestation extension on the leaf alone;
 //   - the key description, parsed for attestation versions 1 to 4
-//     (Keymaster) and 100 to 400 (KeyMint), and later ones, whose added
+//     (Keymaster) and 100 to 500 (KeyMint), and later ones, whose added
 //     fields it skips;
 //   - the attestation challenge, compared in constant time;
 //   - the attestation version, and both security levels: the TEE or
@@ -21,7 +21,9 @@
 //     RequireStrongBox);
 //   - the key, from the hardware-enforced authorization list: SIGN
 //     among its purposes, an EC key on an allowed curve matching the
-//     leaf's key, generated in the secure hardware;
+//     leaf's key (by its attested curve, or by its key size where the
+//     curve is left out, as Keymaster 4 may), generated in the secure
+//     hardware;
 //   - the root of trust: a locked bootloader and a verified boot,
 //     unless AllowUntrustedBoot; optionally a minimum OS patch level;
 //   - the app that made the key: every package Keystore names, with
@@ -41,6 +43,11 @@
 // Keystore service, not the secure hardware, reports which app asked
 // for the key. A device whose boot state the hardware attests as
 // verified and locked runs an OS that reports it faithfully.
+//
+// EvidenceVerifier adapts a Verifier to walletprovider.EvidenceVerifier,
+// for a walletprovider.Provider's Dependencies.Evidence: the evidence
+// is one key's chain (Evidence), and what the Verifier proves becomes
+// the VerifiedEvidence the provider's Policy decides on.
 //
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension
