@@ -117,7 +117,7 @@ public class FileInstanceRegistry(
             temp.writeText(json.encodeToString(Contents.serializer(), Contents(list)))
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } finally {
-            temp.delete()
+            Files.deleteIfExists(temp.toPath())
         }
     }
 

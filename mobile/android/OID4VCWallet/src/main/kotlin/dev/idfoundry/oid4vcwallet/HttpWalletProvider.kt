@@ -293,10 +293,10 @@ public class HttpWalletProvider internal constructor(
         withContext(Dispatchers.IO) {
             val targetPath = (base.rawPath ?: "") + path
             val bytes = body.toString().toByteArray()
-            val headers = linkedMapOf("Content-Type" to "application/json", "Accept" to "application/json")
+            val headers = linkedMapOf("Content-Type" to JSON_TYPE, "Accept" to JSON_TYPE)
             if (sign != null) headers[REQUEST_HEADER] = sign(targetPath, bytes)
             val answer = transport.post(URI(base.toString() + path), headers, bytes)
-            val isJSON = answer.contentType?.substringBefore(';')?.trim()?.lowercase() == "application/json"
+            val isJSON = answer.contentType?.substringBefore(';')?.trim()?.lowercase() == JSON_TYPE
             if (answer.status != want) throw failure(path, answer, isJSON)
             if (!isJSON) throw StoreException("the Wallet Provider answered $path with content type ${answer.contentType}")
             parseObject(answer.body) ?: throw StoreException("the Wallet Provider's answer to $path is malformed")
@@ -514,34 +514,51 @@ internal fun signES256(header: String, claims: JsonObject, sign: (ByteArray) -> 
  * JWS's fixed-width r || s, each [size] bytes.
  */
 internal fun derToRawECDSA(der: ByteArray, size: Int): ByteArray {
+    val reader = DerReader(der)
+    reader.expect(reader.byte() == 0x30)
+    reader.expect(reader.length() == der.size - reader.at)
+    val r = reader.integer(size)
+    val s = reader.integer(size)
+    reader.expect(reader.at == der.size)
+    return r + s
+}
+
+/** Reads a DER ECDSA signature, failing with [NOT_DER_ECDSA]. */
+private class DerReader(private val der: ByteArray) {
     var at = 0
+
+    fun expect(ok: Boolean) {
+        if (!ok) throw StoreException(NOT_DER_ECDSA)
+    }
+
     fun byte(): Int {
-        if (at >= der.size) throw StoreException("the key store's signature isn't DER ECDSA")
+        expect(at < der.size)
         return der[at++].toInt() and 0xff
     }
+
     fun length(): Int {
         val first = byte()
         if (first < 0x80) return first
-        if (first != 0x81) throw StoreException("the key store's signature isn't DER ECDSA")
-        return byte().also { if (it < 0x80) throw StoreException("the key store's signature isn't DER ECDSA") }
+        expect(first == 0x81)
+        return byte().also { expect(it >= 0x80) }
     }
-    fun integer(): ByteArray {
-        if (byte() != 0x02) throw StoreException("the key store's signature isn't DER ECDSA")
+
+    /** An INTEGER, unsigned and left-padded to [size] bytes. */
+    fun integer(size: Int): ByteArray {
+        expect(byte() == 0x02)
         val n = length()
-        if (n == 0 || at + n > der.size) throw StoreException("the key store's signature isn't DER ECDSA")
+        expect(n != 0 && at + n <= der.size)
         val v = der.copyOfRange(at, at + n)
         at += n
         val stripped = v.dropWhile { it == 0.toByte() }.toByteArray()
-        if (stripped.size > size) throw StoreException("the key store's signature isn't DER ECDSA")
+        expect(stripped.size <= size)
         return ByteArray(size - stripped.size) + stripped
     }
-    if (byte() != 0x30) throw StoreException("the key store's signature isn't DER ECDSA")
-    if (length() != der.size - at) throw StoreException("the key store's signature isn't DER ECDSA")
-    val r = integer()
-    val s = integer()
-    if (at != der.size) throw StoreException("the key store's signature isn't DER ECDSA")
-    return r + s
 }
+
+private const val NOT_DER_ECDSA = "the key store's signature isn't DER ECDSA"
+
+private const val JSON_TYPE = "application/json"
 
 /** A compact JWS's payload, decoded but not verified: a check the provider answered what was asked. */
 internal fun unverifiedClaims(jwt: String): JsonObject? {
