@@ -229,7 +229,7 @@ func (o VerifyOptions) maxTokenBytes() (int, error) {
 // It does not check sub against a specific Referenced Token — that's
 // Check's job, since it needs the StatusListRef to compare against.
 func VerifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (TokenClaims, error) {
-	parsed, err := verifyToken(token, pub, alg, opts, nil)
+	parsed, err := verifyToken(token, pub, alg, opts)
 	if err != nil {
 		return TokenClaims{}, err
 	}
@@ -245,11 +245,8 @@ type parsedClaims struct {
 	nbf    *int64
 }
 
-// verifyToken is VerifyToken, given the claims parsed from the same
-// token's bytes before when memo isn't nil: the signature and typ are
-// verified again, and the claims checked again against opts, but not
-// parsed again.
-func verifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
+// verifyToken is VerifyToken, with the claims as parsed.
+func verifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts VerifyOptions) (parsedClaims, error) {
 	limit, err := opts.maxTokenBytes()
 	if err != nil {
 		return parsedClaims{}, err
@@ -264,20 +261,14 @@ func verifyToken(token string, pub crypto.PublicKey, alg oid4vci.JOSEAlg, opts V
 	if !jose.TypeIs(typ, TokenMediaType) {
 		return parsedClaims{}, fmt.Errorf("statuslist: token typ is %q, want %q", typ, TokenTyp)
 	}
-	return parsedOrMemo(raw, memo, parseJWTClaims, opts)
+	return parseChecked(raw, parseJWTClaims, opts)
 }
 
-// parsedOrMemo is memo, or raw parsed when memo is nil, once checked
-// against opts.
-func parsedOrMemo(raw []byte, memo *parsedClaims, parse func([]byte) (parsedClaims, error), opts VerifyOptions) (parsedClaims, error) {
-	var parsed parsedClaims
-	if memo != nil {
-		parsed = *memo
-	} else {
-		var err error
-		if parsed, err = parse(raw); err != nil {
-			return parsedClaims{}, err
-		}
+// parseChecked is raw parsed, once checked against opts.
+func parseChecked(raw []byte, parse func([]byte) (parsedClaims, error), opts VerifyOptions) (parsedClaims, error) {
+	parsed, err := parse(raw)
+	if err != nil {
+		return parsedClaims{}, err
 	}
 	if err := parsed.check(opts); err != nil {
 		return parsedClaims{}, err

@@ -84,7 +84,7 @@
 // size limit), so a verifier checks a credential's status in one call.
 // Give it a Cache, shared by every Checker in the process, to fetch a
 // list once for as long as its ttl allows rather than once per check:
-// each check still verifies the kept token with its own Checker's trust
+// each check still checks the kept token with its own Checker's trust
 // and clock. A Fetcher reuses its connections either way.
 // Locating the reference on an already-validated Referenced Token stays
 // with its format: verifier.VerifiedCredential.StatusListRef does it

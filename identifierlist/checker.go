@@ -2,7 +2,6 @@ package identifierlist
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -27,9 +26,10 @@ import (
 // and a list near the 4 MiB limit takes a noticeable fraction of a
 // second to parse. With one, a list is kept as statuslist.Cache
 // describes, for no longer than its ttl and exp allow, and each Check
-// verifies the cached list again against its own MSO's binding, its
-// signer's chain, its signature and its times, but doesn't parse it
-// again.
+// checks the cached list again against its own MSO's binding, its
+// signer's chain and revocation, and its times, but doesn't verify its
+// signature or parse it again. Check copies the cached identifiers'
+// slice for its caller; RequireNotRevoked doesn't need to.
 type Checker struct {
 	Fetcher statuslist.Fetcher
 
@@ -55,8 +55,21 @@ type Checker struct {
 // error, revoked is true. With a Cache, the identifiers returned share
 // memory with it: treat them as read-only.
 func (c Checker) Check(ctx context.Context, ref Ref, documentSignerPath []*x509.Certificate) (revoked bool, claims TokenClaims, err error) {
-	if err := ref.validate(); err != nil {
+	claims, cached, err := c.check(ctx, ref, documentSignerPath)
+	if err != nil {
 		return true, TokenClaims{}, err
+	}
+	if cached {
+		claims = claims.clone()
+	}
+	return claims.listed(ref.ID), claims, nil
+}
+
+// check is Check before deciding revoked, with the claims as verified:
+// a Cache's own when cached is set.
+func (c Checker) check(ctx context.Context, ref Ref, documentSignerPath []*x509.Certificate) (claims TokenClaims, cached bool, err error) {
+	if err := ref.validate(); err != nil {
+		return TokenClaims{}, false, err
 	}
 	f := c.Fetcher
 	if f.MaxBytes <= 0 {
@@ -64,13 +77,10 @@ func (c Checker) Check(ctx context.Context, ref Ref, documentSignerPath []*x509.
 	}
 	if engine := statuscache.Unwrap(c.Cache); engine != nil {
 		claims, err = c.checkCached(ctx, engine, f, ref, documentSignerPath)
-	} else {
-		claims, err = c.checkFetched(ctx, f, ref, documentSignerPath)
+		return claims, true, err
 	}
-	if err != nil {
-		return true, TokenClaims{}, err
-	}
-	return claims.Contains(ref.ID), claims, nil
+	claims, err = c.checkFetched(ctx, f, ref, documentSignerPath)
+	return claims, false, err
 }
 
 // checkFetched is Check without a Cache.
@@ -79,7 +89,7 @@ func (c Checker) checkFetched(ctx context.Context, f statuslist.Fetcher, ref Ref
 	if err != nil {
 		return TokenClaims{}, err
 	}
-	parsed, err := check(ctx, token, c.Roots, ref, documentSignerPath, c.Options, nil)
+	parsed, _, err := check(ctx, token, c.Roots, ref, documentSignerPath, c.Options)
 	return parsed.claims, err
 }
 
@@ -91,35 +101,49 @@ func fetch(ctx context.Context, f statuslist.Fetcher, uri string) ([]byte, error
 	return token, nil
 }
 
-// checkCached is Check through engine: each list it's handed, cached
-// or fetched, is checked against this Checker's trust and ref's
-// binding.
+// checkCached is Check through engine: a list it fetches is verified
+// in full, and one a check verified before is checked again, from its
+// memo, against this Checker's trust and ref's binding.
 func (c Checker) checkCached(ctx context.Context, engine *statuscache.Cache, f statuslist.Fetcher, ref Ref, documentSignerPath []*x509.Certificate) (TokenClaims, error) {
-	var claims TokenClaims
+	var used *tokenMemo
 	err := engine.Check(ctx, ref.URI, MediaType, fetcherKey(f),
 		func(ctx context.Context) ([]byte, error) { return fetch(ctx, f, ref.URI) },
-		func(token []byte, memo any) (statuscache.Verified, error) {
-			// A list another Checker's Fetcher fetched may be larger than
-			// this one's would.
-			if len(token) > f.MaxBytes {
-				return statuscache.Verified{}, fmt.Errorf("identifierlist: statuslist: fetch %s: token exceeds %d bytes", ref.URI, f.MaxBytes)
-			}
-			m, _ := memo.(*tokenMemo)
-			m = m.of(token)
-			parsed, err := check(ctx, token, c.Roots, ref, documentSignerPath, c.Options, m.parsedClaims())
+		func(token []byte) (statuscache.Verified, error) {
+			parsed, chain, err := check(ctx, token, c.Roots, ref, documentSignerPath, c.Options)
 			if err != nil {
 				return statuscache.Verified{}, err
 			}
-			claims = parsed.claims.clone()
-			if m == nil {
-				m = &tokenMemo{digest: sha256.Sum256(token), parsed: parsed}
+			m := &tokenMemo{size: len(token), parsed: parsed}
+			// Copied, so that m doesn't keep the token's bytes alive.
+			for _, der := range chain {
+				m.chain = append(m.chain, slices.Clone(der))
 			}
+			used = m
 			return statuscache.Verified{
 				Iat: parsed.claims.Iat, Exp: parsed.claims.Exp, TTL: parsed.claims.TTL,
-				Memo: m, MemoBytes: m.size(),
+				Memo: m, MemoBytes: m.bytes(),
 			}, nil
+		},
+		func(memo any) error {
+			m, ok := memo.(*tokenMemo)
+			if !ok {
+				return errors.New("identifierlist: the cached entry isn't an identifier list's")
+			}
+			// A list another Checker's Fetcher fetched may be larger than
+			// this one's would.
+			if m.size > f.MaxBytes {
+				return fmt.Errorf("identifierlist: statuslist: fetch %s: token exceeds %d bytes", ref.URI, f.MaxBytes)
+			}
+			if err := recheck(ctx, m.chain, m.parsed, c.Roots, ref, documentSignerPath, c.Options); err != nil {
+				return err
+			}
+			used = m
+			return nil
 		})
-	return claims, err
+	if err != nil {
+		return TokenClaims{}, err
+	}
+	return used.parsed.claims, nil
 }
 
 // fetcherKey names f's configuration, so that only checks whose
@@ -128,36 +152,22 @@ func fetcherKey(f statuslist.Fetcher) string {
 	return fmt.Sprintf("%p/%d/%t/%t/%t/%t", f.HTTP, f.MaxBytes, f.AllowLoopback, f.AllowPrivate, f.AllowProxy, f.UncheckedTransport)
 }
 
-// tokenMemo is what a Cache keeps of a verified list's bytes beyond the
-// bytes themselves: its parsed claims, which depend on those bytes
-// alone, which digest names.
+// tokenMemo is what a Cache keeps of a list a check verified in full:
+// what that check found that depends on the list's bytes alone, without
+// the bytes — their size, the signer's chain the list carries, whose
+// leaf's key its signature verified under, and its claims as parsed.
 type tokenMemo struct {
-	digest [sha256.Size]byte
+	size   int
+	chain  [][]byte
 	parsed parsedClaims
 }
 
-// of is m if it was made from token's bytes, nil otherwise.
-func (m *tokenMemo) of(token []byte) *tokenMemo {
-	if m == nil || m.digest != sha256.Sum256(token) {
-		return nil
-	}
-	return m
-}
-
-// parsedClaims is m's parsed claims, nil for a nil m.
-func (m *tokenMemo) parsedClaims() *parsedClaims {
-	if m == nil {
-		return nil
-	}
-	return &m.parsed
-}
-
-// size is roughly how many bytes m holds: the identifiers share the
-// verified payload, a copy of the token's.
-func (m *tokenMemo) size() int {
-	n := len(m.parsed.claims.Sub)
-	for _, id := range m.parsed.claims.Identifiers {
-		n += len(id) + 24
+// bytes is roughly how many bytes m holds: the identifiers share the
+// verified payload, a copy of the token's and no larger.
+func (m *tokenMemo) bytes() int {
+	n := m.size + len(m.parsed.claims.Sub) + 24*len(m.parsed.claims.Identifiers)
+	for _, der := range m.chain {
+		n += len(der)
 	}
 	return n
 }
@@ -185,11 +195,12 @@ var ErrRevoked = errors.New("identifierlist: the MSO's identifier is on its iden
 // the MSO isn't revoked: ErrRevoked when it is, and Check's error when
 // the list can't be read.
 func (c Checker) RequireNotRevoked(ctx context.Context, ref Ref, documentSignerPath []*x509.Certificate) error {
-	revoked, _, err := c.Check(ctx, ref, documentSignerPath)
+	// The claims aren't returned, so a Cache's aren't copied.
+	claims, _, err := c.check(ctx, ref, documentSignerPath)
 	if err != nil {
 		return err
 	}
-	if revoked {
+	if claims.listed(ref.ID) {
 		return ErrRevoked
 	}
 	return nil

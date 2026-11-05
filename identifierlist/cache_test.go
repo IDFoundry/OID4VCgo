@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -83,5 +85,72 @@ func TestChecker_Cache(t *testing.T) {
 	small.Fetcher.MaxBytes = 10
 	if _, _, err := small.Check(ctx, Ref{ID: []byte{0xdd}, URI: uri}, pki.dsPath); err == nil {
 		t.Error("a cached list over the Fetcher's MaxBytes passed")
+	}
+}
+
+// revocationFunc is a certrevocation.Checker calling itself.
+type revocationFunc func(context.Context, certrevocation.Check) error
+
+func (f revocationFunc) CheckRevocation(ctx context.Context, check certrevocation.Check) error {
+	return f(ctx, check)
+}
+
+// A cached list is checked again on each hit against the Checker's own
+// clock and Revocation: past its exp, or with its signer revoked, it's
+// refused.
+func TestChecker_CacheHitRechecked(t *testing.T) {
+	pki := newPKI(t)
+	var fetches atomic.Int32
+	now := time.Now()
+	var uri string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetches.Add(1)
+		(&Publisher{
+			URI: uri, Signer: pki.key, Chain: []*x509.Certificate{pki.leaf}, TTL: time.Hour, Lifetime: time.Hour,
+			Now:         func() time.Time { return now },
+			Identifiers: func(context.Context) ([][]byte, error) { return [][]byte{{0xcc}}, nil },
+		}).ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	uri = srv.URL + "/identifierlists/1"
+	var calls atomic.Int32
+	var revoked atomic.Bool
+	c := Checker{
+		Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true},
+		Roots:   pki.roots,
+		Options: VerifyOptions{
+			Now: func() time.Time { return now },
+			Revocation: revocationFunc(func(context.Context, certrevocation.Check) error {
+				calls.Add(1)
+				if revoked.Load() {
+					return certrevocation.ErrRevoked
+				}
+				return nil
+			}),
+		},
+		Cache: statuslist.NewCache(statuslist.CacheOptions{Now: func() time.Time { return now }}),
+	}
+	ctx := context.Background()
+	ref := Ref{ID: []byte{0xdd}, URI: uri}
+	for range 3 {
+		if err := c.RequireNotRevoked(ctx, ref, pki.dsPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("%d fetches, want 1", got)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("Revocation asked %d times in three checks", got)
+	}
+
+	later := c
+	later.Options.Now = func() time.Time { return now.Add(2 * time.Hour) }
+	if err := later.RequireNotRevoked(ctx, ref, pki.dsPath); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Errorf("a cached list past its exp: %v", err)
+	}
+	revoked.Store(true)
+	if err := c.RequireNotRevoked(ctx, ref, pki.dsPath); !errors.Is(err, certrevocation.ErrRevoked) {
+		t.Errorf("a cached list whose signer is revoked: %v", err)
 	}
 }

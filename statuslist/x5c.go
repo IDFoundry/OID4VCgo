@@ -47,47 +47,66 @@ func IssueTokenCWTX5Chain(signer crypto.Signer, alg oid4vci.COSEAlg, claims Toke
 // chain must verify to one of roots, and its leaf must not be
 // self-signed; the leaf's key then validates the token.
 func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	status, parsed, err := checkX5C(context.Background(), token, roots, ref, opts, nil)
+	status, parsed, err := checkX5C(context.Background(), token, roots, ref, opts)
 	return failClosed(status, parsed.claims, err)
 }
 
-// checkX5C is CheckX5C, before failClosed, with ctx for opts.Revocation,
-// given what a Cache remembers of the same token's bytes when memo isn't
-// nil: the signer's chain and the signature are verified all the same.
-func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions, memo *tokenMemo) (StatusType, parsedClaims, error) {
+// checkX5C is CheckX5C, before failClosed, with ctx for
+// opts.Revocation.
+func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, parsedClaims, error) {
+	signed, err := verifyX5C(ctx, token, roots, opts)
+	if err != nil {
+		return 0, parsedClaims{}, err
+	}
+	return checkClaims(signed.parsed, ref, nil)
+}
+
+// signedToken is what verifying a token found that depends on its bytes
+// alone: the signer's chain, as the token carries it, whose leaf's key
+// its signature verifies under, and its claims as parsed.
+type signedToken struct {
+	chain [][]byte
+	// chainProtected is whether a CWT token's chain is from its
+	// protected header.
+	chainProtected bool
+	parsed         parsedClaims
+}
+
+// verifyX5C is checkX5C short of sub and the status: the signer's
+// chain to roots, on a path opts's policy approves and its Revocation
+// passes, and its binding to the Referenced Token's issuer; the
+// signature and typ; and the claims' iss and times.
+func verifyX5C(ctx context.Context, token string, roots *x509.CertPool, opts VerifyOptions) (signedToken, error) {
 	opts = opts.atOneInstant()
-	policy, err := opts.signerPolicy()
+	trust, err := signerTrust(roots, opts)
 	if err != nil {
-		return 0, parsedClaims{}, err
+		return signedToken{}, err
 	}
-	limit, err := opts.maxTokenBytes()
+	header, _, err := jose.DecodeUnverifiedMax(token, trust.MaxBytes)
 	if err != nil {
-		return 0, parsedClaims{}, err
-	}
-	header, _, err := jose.DecodeUnverifiedMax(token, limit)
-	if err != nil {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: decode token: %w", err)
+		return signedToken{}, fmt.Errorf("statuslist: decode token: %w", err)
 	}
 	chain, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
+		return signedToken{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, policy, opts.Revocation, opts.now())
+	leaf, _, err := trustedSigner(ctx, trust, chain, false, opts)
 	if err != nil {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
-	}
-	if err := checkSignerIsIssuer(leaf, opts); err != nil {
-		return 0, parsedClaims{}, err
+		return signedToken{}, err
 	}
 	eddsa, err := certchain.SignerKeyIsEdDSA(leaf.PublicKey)
 	if err != nil {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: token signer: %w", err)
+		return signedToken{}, fmt.Errorf("statuslist: token signer: %w", err)
 	}
 	alg := jose.ES256
 	if eddsa {
 		alg = jose.EdDSA
 	}
-	return checkJWT(token, leaf.PublicKey, alg, ref, opts, memo)
+	parsed, err := verifyToken(token, leaf.PublicKey, alg, opts)
+	if err != nil {
+		return signedToken{}, err
+	}
+	return signedToken{chain: chain, parsed: parsed}, nil
 }
 
 // CheckCWTX5Chain is CheckX5C for a Status List Token in CWT format
@@ -96,34 +115,79 @@ func checkX5C(ctx context.Context, token string, roots *x509.CertPool, ref Statu
 // unprotected (protected only, with opts.X5ChainProtectedOnly); tagged
 // or untagged.
 func CheckCWTX5Chain(token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	status, parsed, err := checkCWTX5Chain(context.Background(), token, roots, ref, opts, nil)
+	status, parsed, err := checkCWTX5Chain(context.Background(), token, roots, ref, opts)
 	return failClosed(status, parsed.claims, err)
 }
 
 // checkCWTX5Chain is CheckCWTX5Chain, before failClosed, with ctx for
-// opts.Revocation, given memo as checkX5C is.
-func checkCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions, memo *tokenMemo) (StatusType, parsedClaims, error) {
-	opts = opts.atOneInstant()
-	policy, err := opts.signerPolicy()
+// opts.Revocation.
+func checkCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, parsedClaims, error) {
+	signed, err := verifyCWTX5Chain(ctx, token, roots, opts)
 	if err != nil {
 		return 0, parsedClaims{}, err
+	}
+	return checkClaims(signed.parsed, ref, nil)
+}
+
+// verifyCWTX5Chain is verifyX5C for the CWT form.
+func verifyCWTX5Chain(ctx context.Context, token []byte, roots *x509.CertPool, opts VerifyOptions) (signedToken, error) {
+	opts = opts.atOneInstant()
+	trust, err := signerTrust(roots, opts)
+	if err != nil {
+		return signedToken{}, err
+	}
+	chain, protected, err := trust.Chain(token)
+	if err != nil {
+		return signedToken{}, fmt.Errorf("statuslist: %w", err)
+	}
+	leaf, alg, err := trustedSigner(ctx, trust, chain, true, opts)
+	if err != nil {
+		return signedToken{}, err
+	}
+	parsed, err := verifyTokenCWT(token, leaf.PublicKey, alg, opts)
+	if err != nil {
+		return signedToken{}, err
+	}
+	return signedToken{chain: chain, chainProtected: protected, parsed: parsed}, nil
+}
+
+// signerTrust is how a token's signer is verified under roots and opts,
+// short of its binding to the Referenced Token's issuer
+// (checkSignerIsIssuer).
+func signerTrust(roots *x509.CertPool, opts VerifyOptions) (cose.X5ChainTrust, error) {
+	policy, err := opts.signerPolicy()
+	if err != nil {
+		return cose.X5ChainTrust{}, err
 	}
 	limit, err := opts.maxTokenBytes()
 	if err != nil {
-		return 0, parsedClaims{}, err
+		return cose.X5ChainTrust{}, err
 	}
-	leaf, alg, err := cose.X5ChainSigner(ctx, token, cose.X5ChainTrust{
+	return cose.X5ChainTrust{
 		MaxBytes: limit, ProtectedOnly: opts.X5ChainProtectedOnly, Roots: roots,
 		Policy: policy, Revocation: opts.Revocation, Now: opts.now(),
-	})
-	if err != nil {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: %w", err)
+	}, nil
+}
+
+// trustedSigner is the leaf of a token's signer chain once trust
+// verifies it and it's bound to the Referenced Token's issuer, with the
+// COSE alg its key signs with when cwt is set.
+func trustedSigner(ctx context.Context, trust cose.X5ChainTrust, chain [][]byte, cwt bool, opts VerifyOptions) (*x509.Certificate, cose.Alg, error) {
+	var leaf *x509.Certificate
+	var alg cose.Alg
+	var err error
+	if cwt {
+		if leaf, alg, err = trust.Signer(ctx, chain); err != nil {
+			return nil, 0, fmt.Errorf("statuslist: %w", err)
+		}
+	} else if leaf, _, err = certchain.VerifyTrustedChainsAt(ctx, chain, trust.Roots, trust.Policy, trust.Revocation, trust.Now); err != nil {
+		return nil, 0, fmt.Errorf("statuslist: token signer: %w", err)
 	}
-	// As for a JWT token: Issuer and IssuerKey bind the signer.
+	// Either form: Issuer and IssuerKey bind the signer.
 	if err := checkSignerIsIssuer(leaf, opts); err != nil {
-		return 0, parsedClaims{}, err
+		return nil, 0, err
 	}
-	return checkCWT(token, leaf.PublicKey, alg, ref, opts, memo)
+	return leaf, alg, nil
 }
 
 // checkSignerIsIssuer checks a token's signer is the Referenced Token's

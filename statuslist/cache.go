@@ -2,8 +2,10 @@ package statuslist
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/statuscache"
@@ -16,9 +18,16 @@ type CacheOptions struct {
 	// recently used is dropped first. Zero means 256.
 	MaxEntries int
 
-	// MaxBytes bounds the tokens' total size, with what the Cache keeps
-	// of each decoded; a token larger than that alone isn't cached.
-	// Zero means 64 MiB.
+	// MaxBytes bounds the total size of what the Cache keeps of its
+	// tokens; a token whose share is larger than that alone isn't
+	// cached. Zero means 64 MiB.
+	//
+	// A token's share is about its list decompressed, entries × bits /
+	// 8 bytes, plus its lst as it carries it; the token itself isn't
+	// kept. A list of 2^24 one-bit entries takes 2 MiB and its lst, a
+	// fifth of a MiB to a MiB for 1% to 5% of them revoked at random,
+	// so 64 MiB holds about 22 to 27 of those: size it for the lists
+	// the Checkers read in the time the tokens are kept.
 	MaxBytes int64
 
 	// MaxAge is the longest a token is kept after it was fetched, also
@@ -39,24 +48,30 @@ const DefaultCacheMaxAge = statuscache.DefaultMaxAge
 // again soon after, isn't fetched each time: for no longer than the
 // token's ttl allows. An identifierlist.Checker takes one too.
 //
-// It caches a token's bytes, by its uri and media type, and only once a
-// check has verified it in full. It keeps a token until the earliest of
+// It caches a token, by its uri and media type, only once a check has
+// verified it in full, and keeps what that check found that depends on
+// the token's bytes alone: that its signature verifies under the leaf
+// of the signer's chain it carries, that chain, its claims and its list
+// decompressed — not the token. It keeps a token until the earliest of
 // its exp, its iat plus its ttl, and MaxAge after it was fetched. A
 // check failure is never cached, and an expired token is never used: a
 // check that can't fetch it afresh fails, however recently it was
 // valid.
 //
-// Every check verifies the cached token again, with its own Checker's
-// Roots and Options — the signer's chain and binding to the Referenced
-// Token's issuer, its revocation, the signature, and the token's times
-// at that check's Now — so a token one Checker accepted never satisfies
-// another's trust by being cached. A token a check refuses is fetched
-// afresh, as without a Cache. Only the token's decoded claims and
-// decompressed list are reused, since they depend on its bytes alone:
-// a cached check costs a signature and a chain verification.
+// Every check of a cached token checks it again with its own Checker's
+// Roots and Options — the signer's chain to those Roots, its policy and
+// binding to the Referenced Token's issuer, its revocation, and the
+// token's iss, sub, size and times at that check's Now — so a token one
+// Checker accepted never satisfies another's trust by being cached.
+// Only what depends on the bytes alone isn't done again: a cached check
+// costs a chain verification, not a signature over the whole token, a
+// parse or a decompression. A cached token a check refuses is fetched
+// afresh, as without a Cache.
 //
 // Concurrent checks of a token that isn't cached share one fetch, when
-// their Fetchers are configured alike.
+// their Fetchers are configured alike, and the first of them to verify
+// it decompresses its list for all: the others check it again as a
+// cached one.
 //
 // A Cache is safe for concurrent use. The claims a check through one
 // returns may share memory with it: treat them as read-only.
@@ -84,93 +99,147 @@ func init() {
 	}
 }
 
-// tokenMemo is what a Cache keeps of a verified token's bytes beyond
-// the bytes themselves: its parsed claims, and its list decompressed.
-// Both depend on the bytes alone, which digest names.
+// tokenMemo is what a Cache keeps of a token a check verified in full:
+// what that check found that depends on the token's bytes alone,
+// without the bytes — their size, the signer's chain the token carries,
+// whose leaf's key its signature verified under, its claims as parsed,
+// and its list decompressed.
 type tokenMemo struct {
-	digest  [sha256.Size]byte
-	parsed  parsedClaims
-	decoded *Decoded // nil when the list didn't decompress whole
+	size int
+	cwt  bool
+	// chainProtected is whether a CWT token's chain is from its
+	// protected header.
+	chainProtected bool
+	chain          [][]byte
+	parsed         parsedClaims
+	decoded        *Decoded // nil when the list didn't decompress whole
 }
 
-// newTokenMemo is token's memo, given its parsed claims.
-func newTokenMemo(token []byte, parsed parsedClaims) *tokenMemo {
-	m := &tokenMemo{digest: sha256.Sum256(token), parsed: parsed}
-	if decoded, err := parsed.claims.StatusList.Decode(); err == nil {
+// verifyMemo verifies token, fetched from uri, as checkX5C or, when cwt
+// is set, checkCWTX5Chain does short of the status lookup, and returns
+// what a Cache keeps of it: its list is decompressed once, for this
+// check and the later ones.
+func verifyMemo(ctx context.Context, token []byte, cwt bool, roots *x509.CertPool, uri string, opts VerifyOptions) (*tokenMemo, error) {
+	var signed signedToken
+	var err error
+	if cwt {
+		signed, err = verifyCWTX5Chain(ctx, token, roots, opts)
+	} else {
+		signed, err = verifyX5C(ctx, string(token), roots, opts)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSub(signed.parsed.claims, uri); err != nil {
+		return nil, err
+	}
+	m := &tokenMemo{size: len(token), cwt: cwt, chainProtected: signed.chainProtected, parsed: signed.parsed}
+	// Copied, so that m doesn't keep the token's bytes alive.
+	for _, der := range signed.chain {
+		m.chain = append(m.chain, slices.Clone(der))
+	}
+	if decoded, err := signed.parsed.claims.StatusList.Decode(); err == nil {
+		// Trimmed to what it holds: io.ReadAll leaves room to spare.
+		if cap(decoded.Packed) > len(decoded.Packed) {
+			decoded.Packed = slices.Clone(decoded.Packed)
+		}
 		m.decoded = &decoded
 	}
-	return m
+	return m, nil
 }
 
-// of is m if it was made from token's bytes, nil otherwise.
-func (m *tokenMemo) of(token []byte) *tokenMemo {
-	if m == nil || m.digest != sha256.Sum256(token) {
-		return nil
+// recheck checks the token m was made of as verifyMemo does, for
+// another check, from m alone: the signer's chain is verified again to
+// roots at opts's Now, on a path opts's policy approves and its
+// Revocation passes, and bound again to the Referenced Token's issuer,
+// and the claims are checked again against opts and uri. What depends
+// on the bytes alone — the signature under the chain's leaf, the typ,
+// the parse and the decompression — isn't done again.
+func (m *tokenMemo) recheck(ctx context.Context, roots *x509.CertPool, uri string, opts VerifyOptions) error {
+	opts = opts.atOneInstant()
+	trust, err := signerTrust(roots, opts)
+	if err != nil {
+		return err
 	}
-	return m
+	// As a decode under trust.MaxBytes would refuse it.
+	if m.size > trust.MaxBytes {
+		return fmt.Errorf("statuslist: decode token: %d bytes, over the %d allowed", m.size, trust.MaxBytes)
+	}
+	// The chain trust.Chain would read: under X5ChainProtectedOnly, none
+	// unless it's in the protected header.
+	chain := m.chain
+	if m.cwt && opts.X5ChainProtectedOnly && !m.chainProtected {
+		chain = nil
+	}
+	if _, _, err := trustedSigner(ctx, trust, chain, m.cwt, opts); err != nil {
+		return err
+	}
+	if err := m.parsed.check(opts); err != nil {
+		return err
+	}
+	return checkSub(m.parsed.claims, uri)
 }
 
-// size is roughly how many bytes m holds.
-func (m *tokenMemo) size() int {
+// bytes is roughly how many bytes m holds.
+func (m *tokenMemo) bytes() int {
 	n := len(m.parsed.claims.Sub) + len(m.parsed.claims.StatusList.Lst) + len(m.parsed.claims.StatusList.AggregationURI) + len(m.parsed.iss)
+	for _, der := range m.chain {
+		n += len(der)
+	}
 	if m.decoded != nil {
-		n += len(m.decoded.Packed)
+		n += cap(m.decoded.Packed)
 	}
 	return n
 }
 
-// parsedClaims is m's parsed claims, nil for a nil m.
-func (m *tokenMemo) parsedClaims() *parsedClaims {
-	if m == nil {
-		return nil
-	}
-	return &m.parsed
-}
-
-// decodedList is m's decompressed list, nil for a nil m.
-func (m *tokenMemo) decodedList() *Decoded {
-	if m == nil {
-		return nil
-	}
-	return m.decoded
-}
-
-// check is Checker.check through c: verify checks a token, given its
-// memo if c has one.
-func (c *Cache) check(ctx context.Context, fetcher Fetcher, uri, mediaType string, verify func([]byte, *tokenMemo) (StatusType, parsedClaims, error)) (StatusType, TokenClaims, error) {
-	var status StatusType
-	var claims TokenClaims
+// check is Checker.check through c: verify verifies a token fetched for
+// ref, and recheck one a check verified before, from its memo; ref's
+// status is then read from the memo either passed.
+func (c *Cache) check(ctx context.Context, fetcher Fetcher, ref StatusListRef, mediaType string, verify func([]byte) (*tokenMemo, error), recheck func(*tokenMemo) error) (StatusType, TokenClaims, error) {
 	limit := fetcher.MaxBytes
 	if limit <= 0 {
 		limit = DefaultMaxTokenBytes
 	}
-	err := c.engine.Check(ctx, uri, mediaType, fetcher.cacheKey(),
-		func(ctx context.Context) ([]byte, error) { return fetcher.Fetch(ctx, uri, mediaType) },
-		func(token []byte, memo any) (statuscache.Verified, error) {
-			// A token another Checker's Fetcher fetched may be larger than
-			// this one's would.
-			if len(token) > limit {
-				return statuscache.Verified{}, fmt.Errorf("statuslist: fetch %s: token exceeds %d bytes", uri, limit)
-			}
-			m, _ := memo.(*tokenMemo)
-			m = m.of(token)
-			s, parsed, err := verify(token, m)
+	var used *tokenMemo
+	err := c.engine.Check(ctx, ref.URI, mediaType, fetcher.cacheKey(),
+		func(ctx context.Context) ([]byte, error) { return fetcher.Fetch(ctx, ref.URI, mediaType) },
+		func(token []byte) (statuscache.Verified, error) {
+			m, err := verify(token)
 			if err != nil {
 				return statuscache.Verified{}, err
 			}
-			status, claims = s, parsed.claims.clone()
-			if m == nil {
-				m = newTokenMemo(token, parsed)
-			}
+			used = m
 			return statuscache.Verified{
-				Iat: parsed.claims.Iat, Exp: parsed.claims.Exp, TTL: parsed.claims.TTL,
-				Memo: m, MemoBytes: m.size(),
+				Iat: m.parsed.claims.Iat, Exp: m.parsed.claims.Exp, TTL: m.parsed.claims.TTL,
+				Memo: m, MemoBytes: m.bytes(),
 			}, nil
+		},
+		func(memo any) error {
+			m, ok := memo.(*tokenMemo)
+			if !ok {
+				return errors.New("statuslist: the cached entry isn't a status list token's")
+			}
+			// A token another Checker's Fetcher fetched may be larger than
+			// this one's would.
+			if m.size > limit {
+				return fmt.Errorf("statuslist: fetch %s: token exceeds %d bytes", ref.URI, limit)
+			}
+			if err := recheck(m); err != nil {
+				return err
+			}
+			used = m
+			return nil
 		})
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
-	return status, claims, nil
+	// Read once the token passed, so that a reference the list doesn't
+	// cover, say, doesn't keep the list from being cached.
+	status, parsed, err := checkClaims(used.parsed, ref, used.decoded)
+	if err != nil {
+		return 0, TokenClaims{}, err
+	}
+	return status, parsed.claims.clone(), nil
 }
 
 // clone is c with its own exp and ttl, so a caller changing them

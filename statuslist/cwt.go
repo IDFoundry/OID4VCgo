@@ -123,17 +123,15 @@ func issueTokenCWT(signer crypto.Signer, alg cose.Alg, claims TokenClaims, prote
 // VerifyToken. It does not check sub against a specific Referenced
 // Token — that's Check's job.
 func VerifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (TokenClaims, error) {
-	parsed, err := verifyTokenCWT(token, pub, alg, opts, nil)
+	parsed, err := verifyTokenCWT(token, pub, alg, opts)
 	if err != nil {
 		return TokenClaims{}, err
 	}
 	return parsed.claims, nil
 }
 
-// verifyTokenCWT is VerifyTokenCWT, given the claims parsed from the
-// same token's bytes before when memo isn't nil, as verifyToken is for
-// a JWT.
-func verifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions, memo *parsedClaims) (parsedClaims, error) {
+// verifyTokenCWT is VerifyTokenCWT, with the claims as parsed.
+func verifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opts VerifyOptions) (parsedClaims, error) {
 	// COSE_Sign1, tagged (#6.18) or untagged; nothing else in front of
 	// it, so a CWT tag (61) is refused. Draft-14 §5.2, which HAIP pins,
 	// requires neither form, and its own example is untagged; draft-21
@@ -153,7 +151,7 @@ func verifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	if !strings.EqualFold(protected.Typ, CWTTokenMediaType) {
 		return parsedClaims{}, fmt.Errorf("statuslist: CWT typ is %q, want %q", protected.Typ, CWTTokenMediaType)
 	}
-	return parsedOrMemo(raw, memo, parseCWTPayload, opts)
+	return parseChecked(raw, parseCWTPayload, opts)
 }
 
 // parseCWTPayload reads a CWT Status List Token's verified payload.
