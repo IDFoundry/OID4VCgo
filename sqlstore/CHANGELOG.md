@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.7.1...sqlstore/v0.8.0) (2026-11-05)
+
+
+### Features
+
+* **sqlstore:** update Wallet Provider instance keys with a compare-and-swap ([73c2db4](https://github.com/IDFoundry/OID4VCgo/commit/73c2db41b4eeb382267e260fab0a2bc7727d84c5))
+
 ## [0.7.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.7.0...sqlstore/v0.7.1) (2026-11-05)
 
 
