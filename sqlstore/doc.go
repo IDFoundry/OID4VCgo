@@ -249,6 +249,12 @@
 // called for that one. A wallet should call KeysInUse periodically, or
 // the authorizations it abandoned, and their keys, stay.
 //
+// Sweep deletes each table's expired rows in batches of about 10,000,
+// each its own transaction, so a sweep after a long pause neither holds
+// one transaction across millions of rows nor, on SQLite, keeps other
+// writers waiting for all of it. Run it from one process: running it
+// from several at once is safe, but they only delete the same rows.
+//
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
 // and its instance keys after their RetainUntil (never one without,
 // written before RetainUntil existed, until its key next moves). It
@@ -273,5 +279,16 @@
 //     reference alone.
 //   - Don't share a wallet's tables between users: walletflow's
 //     ResumeIssuance finds an authorization by its state alone.
+//   - SQLite takes one writer at a time: use it for a single process,
+//     such as a wallet or a single-instance server, not for a
+//     deployment scaled out across machines.
+//   - On PostgreSQL, size each process's pool (sql.DB's
+//     SetMaxOpenConns) so the pools of every replica, and FAPIgo's if
+//     separate, stay below the server's max_connections, or put a
+//     pooler such as PgBouncer between them. The stores hold nothing
+//     on a connection between transactions (Migrate's advisory lock is
+//     a transaction's), so transaction pooling serves them; with
+//     PgBouncer, set max_prepared_statements for pgx's prepared
+//     statements.
 //   - Back up the database with the Sealer's key kept apart from it.
 package sqlstore

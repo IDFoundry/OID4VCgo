@@ -12,3 +12,11 @@ func MigrateTo(ctx context.Context, d *DB, version int) error {
 	}
 	return nil
 }
+
+// SetSweepBatch sets how many rows each of Sweep's writes deletes, and
+// returns a func restoring it.
+func SetSweepBatch(n int) (restore func()) {
+	old := sweepBatch
+	sweepBatch = n
+	return func() { sweepBatch = old }
+}
