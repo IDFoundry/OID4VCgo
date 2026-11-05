@@ -14,13 +14,14 @@ import (
 // CacheOptions bounds a Cache. A zero or negative field means its
 // default.
 type CacheOptions struct {
-	// MaxEntries is how many tokens the Cache holds at most; the least
-	// recently used is dropped first. Zero means 256.
+	// MaxEntries is how many tokens, and failures, the Cache holds at
+	// most; the least recently used is dropped first. Zero means 256.
 	MaxEntries int
 
 	// MaxBytes bounds the total size of what the Cache keeps of its
-	// tokens; a token whose share is larger than that alone isn't
-	// cached. Zero means 64 MiB.
+	// tokens, and of the refused tokens it keeps (MaxFailureAge); a
+	// token whose share is larger than that alone isn't cached. Zero
+	// means 64 MiB.
 	//
 	// A token's share is about its list decompressed, entries × bits /
 	// 8 bytes, plus its lst as it carries it; the token itself isn't
@@ -35,6 +36,13 @@ type CacheOptions struct {
 	// at its issuer isn't seen. Zero means DefaultCacheMaxAge.
 	MaxAge time.Duration
 
+	// MaxFailureAge is how long a failed fetch, or a token a check
+	// refused, is kept after it was fetched: checks of its uri in that
+	// time fail with the fetch's error, or verify the refused token
+	// again, rather than fetch it again. Zero means
+	// DefaultCacheMaxFailureAge; it's never longer than MaxAge.
+	MaxFailureAge time.Duration
+
 	// Now is the clock entries expire by; nil means time.Now. Each check
 	// still verifies a token's times at its own VerifyOptions.Now.
 	Now func() time.Time
@@ -42,6 +50,10 @@ type CacheOptions struct {
 
 // DefaultCacheMaxAge is CacheOptions.MaxAge's default: 5 minutes.
 const DefaultCacheMaxAge = statuscache.DefaultMaxAge
+
+// DefaultCacheMaxFailureAge is CacheOptions.MaxFailureAge's default: 30
+// seconds.
+const DefaultCacheMaxFailureAge = statuscache.DefaultMaxFailureAge
 
 // Cache keeps fetched Status List Tokens for a Checker, or for several
 // sharing it, so a list several credentials reference, or one checked
@@ -53,10 +65,9 @@ const DefaultCacheMaxAge = statuscache.DefaultMaxAge
 // the token's bytes alone: that its signature verifies under the leaf
 // of the signer's chain it carries, that chain, its claims and its list
 // decompressed — not the token. It keeps a token until the earliest of
-// its exp, its iat plus its ttl, and MaxAge after it was fetched. A
-// check failure is never cached, and an expired token is never used: a
-// check that can't fetch it afresh fails, however recently it was
-// valid.
+// its exp, its iat plus its ttl, and MaxAge after it was fetched. An
+// expired token is never used: a check that can't fetch it afresh
+// fails, however recently it was valid.
 //
 // Every check of a cached token checks it again with its own Checker's
 // Roots and Options — the signer's chain to those Roots, its policy and
@@ -73,6 +84,11 @@ const DefaultCacheMaxAge = statuscache.DefaultMaxAge
 // it decompresses its list for all: the others check it again as a
 // cached one.
 //
+// A failure is kept for MaxFailureAge: a failed fetch fails the checks
+// of its uri in that time, and a token a check refused is verified
+// again by each of them instead of fetched, and cached once one passes,
+// unless they're the cached token's bytes, whose refusal then stands.
+//
 // A Cache is safe for concurrent use. The claims a check through one
 // returns may share memory with it: treat them as read-only.
 type Cache struct {
@@ -82,7 +98,8 @@ type Cache struct {
 // NewCache returns an empty Cache bounded by opts.
 func NewCache(opts CacheOptions) *Cache {
 	return &Cache{engine: statuscache.New(statuscache.Options{
-		MaxEntries: opts.MaxEntries, MaxBytes: opts.MaxBytes, MaxAge: opts.MaxAge, Now: opts.Now,
+		MaxEntries: opts.MaxEntries, MaxBytes: opts.MaxBytes, MaxAge: opts.MaxAge,
+		MaxFailureAge: opts.MaxFailureAge, Now: opts.Now,
 	})}
 }
 

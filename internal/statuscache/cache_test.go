@@ -161,7 +161,107 @@ func TestCheck_Stampede(t *testing.T) {
 	}
 }
 
-// The memos held stay within MaxEntries and MaxBytes, the
+// A failed fetch fails every check with its policy for MaxFailureAge,
+// then is fetched again; another policy fetches on its own.
+func TestCheck_FetchFailureKept(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	c := New(Options{MaxFailureAge: 10 * time.Second, Now: func() time.Time { return now }})
+	down := errors.New("down")
+	var fetches atomic.Int32
+	failing := true
+	fetch := func(context.Context) ([]byte, error) {
+		fetches.Add(1)
+		if failing {
+			return nil, down
+		}
+		return []byte("token"), nil
+	}
+	var n counter
+	v := Verified{Iat: now.Unix(), Memo: "memo"}
+	ctx := context.Background()
+	for range 2 {
+		if err := c.Check(ctx, "u", "m", "p", fetch, n.verify(v, nil), n.rechecks(nil)); !errors.Is(err, down) {
+			t.Errorf("Check = %v, want the fetch's error", err)
+		}
+	}
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("%d fetches, want 1", got)
+	}
+	failing = false
+	if err := c.Check(ctx, "u", "m", "other", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+		t.Errorf("another policy: %v", err)
+	}
+	now = now.Add(10 * time.Second)
+	if err := c.Check(ctx, "u", "m", "p", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+		t.Errorf("after MaxFailureAge: %v", err)
+	}
+	if got := fetches.Load(); got != 2 {
+		t.Errorf("%d fetches, want 2", got)
+	}
+}
+
+// Bytes a check refused are kept for MaxFailureAge and verified again
+// rather than fetched, unless they're the verified entry's, whose
+// recheck's error then stands; and they're not used past what their
+// ttl allows.
+func TestCheck_RefusedTokenKept(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	c := New(Options{Now: func() time.Time { return now }})
+	var fetches atomic.Int32
+	fetch := func(context.Context) ([]byte, error) { fetches.Add(1); return []byte("token"), nil }
+	refused := errors.New("refused")
+	ctx := context.Background()
+	var n counter
+	v := Verified{Iat: now.Unix(), Memo: "memo", MemoBytes: 4}
+	for range 2 {
+		if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(nil)); !errors.Is(err, refused) {
+			t.Fatalf("Check = %v", err)
+		}
+	}
+	n.want(t, 2, 0, "a refused token, checked twice")
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got := fetches.Load(); got != 1 {
+		t.Errorf("%d fetches, want 1", got)
+	}
+	if entries, _ := c.Len(); entries != 1 {
+		t.Errorf("the kept token, once verified: %d entries, want 1", entries)
+	}
+	// The entry's own bytes, refetched and refused: its recheck stands.
+	now = now.Add(time.Second)
+	c.Purge()
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(v, nil), n.rechecks(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
+		t.Fatalf("Check = %v", err)
+	}
+	before := fetches.Load()
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
+		t.Errorf("Check = %v, want the recheck's error", err)
+	}
+	if got := fetches.Load(); got != before {
+		t.Errorf("the entry's refused bytes were fetched again")
+	}
+
+	// Kept bytes whose ttl has passed are fetched afresh.
+	c.Purge()
+	short := Verified{Iat: now.Unix(), TTL: ptr(5), Memo: "memo"}
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(Verified{}, refused), nil); !errors.Is(err, refused) {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
+	before = fetches.Load()
+	if err := c.Check(ctx, "u", "m", "", fetch, n.verify(short, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := fetches.Load(); got != before+1 {
+		t.Errorf("kept bytes past their ttl weren't fetched afresh")
+	}
+}
+
+// The memos and failures held stay within MaxEntries and MaxBytes, the
 // least recently used dropped first, and a memo larger than MaxBytes
 // isn't kept.
 func TestCheck_Bounds(t *testing.T) {

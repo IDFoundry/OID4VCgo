@@ -331,9 +331,11 @@ func TestCache_HitCost(t *testing.T) {
 	}
 }
 
-// A failed fetch or a failed verification is never cached, and an
-// expired token whose refetch fails fails the check.
-func TestCache_FailuresNotCached(t *testing.T) {
+// A failed fetch fails the checks of its uri for MaxFailureAge without
+// fetching it again; a token a check refused is verified again by the
+// checks in that time instead of fetched, and cached once one passes;
+// and an expired token whose refetch fails fails the check.
+func TestCache_Failures(t *testing.T) {
 	s := newCacheServer(t)
 	cache := NewCache(CacheOptions{Now: s.clock.Now})
 	c := s.checker(cache)
@@ -344,17 +346,30 @@ func TestCache_FailuresNotCached(t *testing.T) {
 	if _, _, err := c.Check(ctx, ref, false); err == nil {
 		t.Fatal("a failed fetch passed")
 	}
+	s.set(func(s *cacheServer) { s.failing = false })
+	if _, _, err := c.Check(ctx, ref, false); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Errorf("within MaxFailureAge of a failed fetch: %v, want its error", err)
+	}
+	s.wantFetches(t, 1, "a failed fetch, checked twice")
+
+	s.clock.Add(DefaultCacheMaxFailureAge)
 	untrusted := c
 	untrusted.Roots = x509.NewCertPool()
-	s.set(func(s *cacheServer) { s.failing = false })
-	if _, _, err := untrusted.Check(ctx, ref, false); err == nil {
-		t.Fatal("an untrusted token passed")
+	for range 2 {
+		if _, _, err := untrusted.Check(ctx, ref, false); err == nil {
+			t.Fatal("an untrusted token passed")
+		}
 	}
+	s.wantFetches(t, 2, "a refused token, checked twice")
 	if n, _ := cache.engine.Len(); n != 0 {
 		t.Errorf("%d entries after failures, want none", n)
 	}
 	s.check(t, c, "/l", 0, false)
-	s.wantFetches(t, 3, "after two failures and a success")
+	s.check(t, c, "/l", 0, false)
+	s.wantFetches(t, 2, "the refused token, checked by a Checker trusting it")
+	if n, _ := cache.engine.Len(); n != 1 {
+		t.Errorf("%d entries once a check passed, want 1", n)
+	}
 
 	s.clock.Add(DefaultCacheMaxAge)
 	s.set(func(s *cacheServer) { s.failing = true })
