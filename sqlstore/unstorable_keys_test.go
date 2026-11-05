@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 // A key PostgreSQL's text columns can't hold — invalid UTF-8, or one
@@ -82,11 +83,21 @@ func testUnstorableKey(t *testing.T, d *sqlstore.DB, key string) {
 	want("Keys.Key", err, walletflow.ErrNotFound)
 	want("Keys.DeleteKey", ks.DeleteKey(ctx, key), nil)
 
+	instances := d.WalletProviderInstances()
+	_, err = instances.Get(ctx, key)
+	want("WalletProviderInstances.Get", err, walletprovider.ErrNotFound)
+	want("WalletProviderInstances.Update", instances.Update(ctx, walletprovider.Instance{ID: key, Revision: 1}), walletprovider.ErrNotFound)
+	_, err = d.WalletProviderChallenges().Consume(ctx, key)
+	want("WalletProviderChallenges.Consume", err, walletprovider.ErrNotFound)
+
 	// Writes refuse it, on SQLite as on Postgres.
 	for what, err := range map[string]error{
-		"Notifications.Issue":             d.Notifications().Issue(ctx, key, issuer.NotificationRecord{}),
-		"Credentials.Put":                 d.Credentials().Put(ctx, walletflow.StoredCredential{ID: key}),
-		"Authorizations.PutAuthorization": d.Authorizations().PutAuthorization(ctx, walletflow.PendingAuthorization{State: key}),
+		"WalletProviderInstances.Create":            instances.Create(ctx, walletprovider.Instance{ID: key, KeyThumbprint: "tp"}),
+		"WalletProviderInstances.Create thumbprint": instances.Create(ctx, walletprovider.Instance{ID: "i", KeyThumbprint: key}),
+		"WalletProviderChallenges.Create":           d.WalletProviderChallenges().Create(ctx, walletprovider.ChallengeRecord{Value: key}),
+		"Notifications.Issue":                       d.Notifications().Issue(ctx, key, issuer.NotificationRecord{}),
+		"Credentials.Put":                           d.Credentials().Put(ctx, walletflow.StoredCredential{ID: key}),
+		"Authorizations.PutAuthorization":           d.Authorizations().PutAuthorization(ctx, walletflow.PendingAuthorization{State: key}),
 	} {
 		if err == nil {
 			t.Errorf("%s = nil error, want a refusal", what)

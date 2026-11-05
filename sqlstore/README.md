@@ -1,7 +1,7 @@
 # sqlstore
 
-Durable stores for OID4VCgo's `issuer`, `verifier`, `walletflow` and
-`statuslist` packages, in PostgreSQL or SQLite through `database/sql`. It's a Go
+Durable stores for OID4VCgo's `issuer`, `verifier`, `walletflow`,
+`statuslist` and `walletprovider` packages, in PostgreSQL or SQLite through `database/sql`. It's a Go
 module of its own, `github.com/idfoundry/oid4vcgo/sqlstore`, so the
 library itself takes no database driver.
 
@@ -51,6 +51,23 @@ between processes, so no index is handed out twice. `Reserve` is one
 alloc := &statuslist.Allocator{
 	Lists: []statuslist.AllocatorList{{URI: "https://issuer.example/statuslists/1", Size: 1 << 16}},
 	Store: db.StatusIndices(),
+}
+```
+
+A `walletprovider.Provider`'s stores are `db.WalletProviderInstances()`
+and `db.WalletProviderChallenges()`, with `db.StatusIndices()` for its
+status list indices. An instance's `Create` is one `INSERT` on the `id`
+primary key and the `UNIQUE` `key_thumbprint` column, so one instance key
+registers one instance across every process; `Update` is one
+`UPDATE … WHERE id = ? AND revision = ?`; a challenge's `Consume` is one
+`DELETE … RETURNING`.
+
+```go
+deps := walletprovider.Dependencies{
+	Instances:     db.WalletProviderInstances(),
+	Challenges:    db.WalletProviderChallenges(),
+	StatusIndices: db.StatusIndices(),
+	// …
 }
 ```
 
@@ -109,9 +126,10 @@ binding its records to additional data of its own. Sweep each. See
   authorizations or `ResumeIssuance` is called for it: a wallet should
   call `KeysInUse` periodically, or abandoned authorizations stay.
   Status List indices are never swept or freed: an index once handed
-  out is never reused.
-- **Sealing**: with `Options.Sealer` every issuer and walletflow record
-  is sealed, bound to its table and key. Keys, Owners, hashes and expiry
+  out is never reused. A Wallet Provider's challenges are swept after
+  their `ExpiresAt`; its instances never are.
+- **Sealing**: with `Options.Sealer` every issuer, walletflow and
+  Wallet Provider record is sealed, bound to its table and key. Keys, Owners, hashes and expiry
   times stay readable, for lookups and sweeping. A verifier transaction
   isn't sealed whole: its `TransactionCodec`, with its own Sealer or the
   DB's, seals only the response decryption key and the verified claims,
@@ -127,7 +145,8 @@ binding its records to additional data of its own. Sweep each. See
 ## Tests
 
 The tests run every contract suite — `issuer/issuertest`,
-`verifier/verifiertest` and `walletflow/storetest`, the shared-store
+`verifier/verifiertest`, `walletflow/storetest` and
+`walletprovider/walletprovidertest`, the shared-store
 ones with a separate `*sql.DB` per goroutine — against SQLite, and
 against PostgreSQL too when `SQLSTORE_POSTGRES_DSN` is set:
 
