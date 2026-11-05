@@ -3,6 +3,10 @@
 ## [0.65.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.64.0...v0.65.0) (2026-11-05)
 
 
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** CheckStatus now checks a held credential's issuer chain, so a credential may be invalid or unknown where it was valid, and one without a status list now gets a status; a CredentialStore must keep CredentialStatus.Reason and CredentialCopy.IssuerUntrusted (storetest.TestCredentialStoreContract checks them; JSON-based stores, sqlstore's included, already do).
+
 ### Features
 
 * **walletflow:** re-check a held credential's issuer certificate in CheckStatus ([ec02ab0](https://github.com/IDFoundry/OID4VCgo/commit/ec02ab0c35f850ad93ebbea2b4e9850b624f7b32))
