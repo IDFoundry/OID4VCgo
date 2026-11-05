@@ -36,6 +36,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -93,6 +94,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	go service.SweepEvery(context.Background(), time.Hour) // the provider's past status lists go
 	srv := demotls.Server(*addr, service, cert, 30*time.Second)
 	log.Printf("passport-vdc Wallet Provider on https://%s", *addr)
 	log.Fatal(srv.ListenAndServeTLS("", ""))

@@ -199,13 +199,49 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // Attestations and sets its instance key's status. Without
 // ServiceConfig's paths, instances and status indices are kept in
 // memory: a restart forgets them, and a wallet's instance key is then
-// recorded again.
-func (p *Provider) NewService(cfg ServiceConfig) (http.Handler, error) {
+// recorded again, as it is once the library's retention has deleted
+// its record. Run the service's SweepEvery to delete the status lists
+// of the periods no longer served.
+func (p *Provider) NewService(cfg ServiceConfig) (*Service, error) {
 	s, err := p.newService(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return s.handler(), nil
+	return &Service{Handler: s.handler(), s: s}, nil
+}
+
+// Service is the provider's service (NewService): an http.Handler.
+type Service struct {
+	http.Handler
+	s *service
+}
+
+// Sweep deletes the status lists of the periods the library Wallet
+// Provider no longer serves (wp.Provider.SweepStatusLists), logging
+// what it did. The instance key store drops expired instance keys
+// itself, as it records new ones.
+func (s *Service) Sweep(ctx context.Context) {
+	n, err := s.s.lib.SweepStatusLists(ctx)
+	switch {
+	case err != nil:
+		s.s.cfg.Logf("wallet provider: deleting the status lists of past periods (%d deleted): %v", n, err)
+	case n > 0:
+		s.s.cfg.Logf("wallet provider: deleted %d status lists of past periods", n)
+	}
+}
+
+// SweepEvery runs Sweep at once, then every interval until ctx is done.
+func (s *Service) SweepEvery(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		s.Sweep(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 func (s *service) handler() http.Handler {

@@ -131,3 +131,20 @@ func (s *IndexStore) Statuses(_ context.Context, uri string, size int) ([]uint8,
 	}
 	return statuses, nil
 }
+
+// Delete implements statuslist.IndexStore, saving the change before it
+// returns; should saving fail, it deletes nothing.
+func (s *IndexStore) Delete(_ context.Context, uri string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, ok := s.lists[uri]
+	if !ok {
+		return nil
+	}
+	delete(s.lists, uri)
+	if err := s.save(); err != nil {
+		s.lists[uri] = list
+		return err
+	}
+	return nil
+}

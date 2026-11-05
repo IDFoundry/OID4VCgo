@@ -246,7 +246,8 @@ func run(ctx context.Context, opts options) error {
 	if err != nil {
 		return err
 	}
-	go issuer.SweepEvery(ctx, time.Minute) // passport data goes when it expires
+	go issuer.SweepEvery(ctx, time.Minute)        // passport data goes when it expires
+	go providerService.SweepEvery(ctx, time.Hour) // and the provider's past status lists
 	verifier, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: verifierURL, IssuerVCT: issuerURL + issuerapp.VCTPath,
 		IssuerCAs: []*x509.Certificate{issuer.IssuerCACertificate()}, CSCAPool: csca,
