@@ -483,6 +483,8 @@ changes whether *every* bullet below is `(done)`.
     only; every signed request that doesn't verify — unknown instance,
     wrong key, used challenge — gets one identical 401. Rate limiting
     is the integrator's: wrap the handler.
+    [`mobile/WALLET_PROVIDER.md`](mobile/WALLET_PROVIDER.md) is the
+    protocol's contract, for the Swift and Kotlin clients to come.
   - **`walletprovider/androidkey`** verifies Android Key Attestation
     chains (Google's roots and attestation status list, authorization
     lists, root of trust, the calling app with every signing

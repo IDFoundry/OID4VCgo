@@ -10,7 +10,9 @@ separate Go module (it needs `golang.org/x/mobile`).
 - `android/OID4VCWallet`: the Kotlin library wrapping the AAR, with its
   tests.
 
-The API is described in [ABI.md](ABI.md).
+The API is described in [ABI.md](ABI.md). The HTTP protocol between a
+wallet and a Wallet Provider built with `walletprovider` is described
+in [WALLET_PROVIDER.md](WALLET_PROVIDER.md).
 
 The libraries' documentation, for app developers, is published with
 each release:

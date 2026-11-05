@@ -29,7 +29,8 @@ import (
 // "keys" are public JWKs. The two signed requests carry SignRequest's
 // JWT, over the request's method, path and body and a challenge issued
 // for PurposeRequest, in the RequestHeader header; its sub names the
-// instance. Client speaks the protocol.
+// instance. Client speaks the protocol, and mobile/WALLET_PROVIDER.md
+// in the repository documents it for a client in another language.
 //
 // Request bodies are application/json, at most MaxRequestBytes, and
 // decoded strictly: a member the request doesn't define, a duplicate
