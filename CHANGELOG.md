@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.67.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.66.0...v0.67.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletflow:** walletflow.WalletProvider.KeyAttestation is now KeyAttestation(ctx, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string). Implementations take the issuance's instance key and pass it to the Wallet Provider (walletprovider.KeyAttestationRequest.InstanceKey, instance_key on POST /v1/key-attestation). An issuance redeemed anonymously that needs a Key Attestation now needs Config.ClientID.
+
+### Features
+
+* **walletflow:** pass the issuance's instance key with every Key Attestation request ([ec4d6d1](https://github.com/IDFoundry/OID4VCgo/commit/ec4d6d1e7145f05aa3a8d8cb2e0e96950fa7244f))
+
 ## [0.66.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.65.1...v0.66.0) (2026-11-05)
 
 
