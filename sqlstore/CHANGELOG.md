@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.6.0...sqlstore/v0.7.0) (2026-11-05)
+
+
+### Features
+
+* **sqlstore:** add a durable Wallet Provider instance key store ([b4d648e](https://github.com/IDFoundry/OID4VCgo/commit/b4d648eaf5c094e91b9a7b4a95f4cfe963d438b3))
+
 ## [0.6.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.5.0...sqlstore/v0.6.0) (2026-11-05)
 
 
