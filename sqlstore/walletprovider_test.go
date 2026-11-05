@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/sqlstore"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/walletprovidertest"
 )
@@ -183,6 +184,15 @@ func TestWalletProviderInstanceKeyUnstorableKeys(t *testing.T) {
 				t.Errorf("Create(%q, %q) = %v, want it refused", k.Thumbprint, k.InstanceID, err)
 			}
 		}
+		if err := s.Update(ctx, testInstanceKey(bad, "a")); !errors.Is(err, walletprovider.ErrNotFound) {
+			t.Errorf("Update(unstorable thumbprint) = %v, want ErrNotFound", err)
+		}
+		if err := s.Create(ctx, testInstanceKey("tp", "a")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Update(ctx, testInstanceKey("tp", bad)); err == nil || errors.Is(err, walletprovider.ErrConflict) || errors.Is(err, walletprovider.ErrNotFound) {
+			t.Errorf("Update(unstorable instance ID) = %v, want it refused", err)
+		}
 		if _, err := s.List(ctx, bad, "", 10); err == nil {
 			t.Error("List(unstorable instance ID) = nil error")
 		}
@@ -241,6 +251,9 @@ func TestWalletProviderStoreOutageIsNotUnknown(t *testing.T) {
 		_, err = instanceKeys.Get(ctx, "tp")
 		requireOutage(t, "InstanceKeys.Get", err, walletprovider.ErrNotFound)
 		requireOutage(t, "InstanceKeys.Create", instanceKeys.Create(ctx, testInstanceKey("tp", "a")), walletprovider.ErrExists)
+		k := testInstanceKey("tp", "a")
+		k.Revision = 1
+		requireOutage(t, "InstanceKeys.Update", instanceKeys.Update(ctx, k), walletprovider.ErrNotFound)
 		if _, err := instanceKeys.List(ctx, "a", "", 10); err == nil {
 			t.Error("InstanceKeys.List on a closed database = nil error")
 		}
@@ -413,6 +426,60 @@ func TestMigrateAddsWalletProviderInstanceKeys(t *testing.T) {
 		}
 		if err := d.WalletProviderInstanceKeys().Create(ctx, testInstanceKey("tp", "a")); err != nil {
 			t.Errorf("Create after migration: %v", err)
+		}
+	})
+}
+
+// A database migrated by an earlier release, to version 7, migrates to
+// instance key revisions with its records kept: a record from before,
+// which has no Revision, reads as at 1, and Update moves it from there.
+// Until then, CheckSchema fails.
+func TestMigrateAddsWalletProviderInstanceKeyRevisions(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		raw := e.location()()
+		d, err := sqlstore.New(raw, e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 7); err != nil {
+			t.Fatal(err)
+		}
+		// A record as v0.67.0 wrote it, unsealed: no PreviousStatus, no
+		// Revision.
+		record := append([]byte{1}, `{"Thumbprint":"tp","Key":"e30=","InstanceID":"a","Status":{"Idx":5,"URI":"https://provider.example/status"},"SecurityLevel":"tee","Binding":"attested","CreatedAt":"2026-11-05T12:00:00Z"}`...)
+		insert := "INSERT INTO oid4vc_walletprovider_instance_keys (id, owner, sweep_after, record, instance_id) VALUES ('tp', '', NULL, ?, 'a')"
+		if e.dialect == sqlstore.Postgres {
+			insert = strings.Replace(insert, "?", "$1", 1)
+		}
+		if _, err := raw.ExecContext(ctx, insert, record); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0008_walletprovider_instance_key_revisions.sql") {
+			t.Errorf("CheckSchema at version 7 = %v, want migration 0008 missing", err)
+		}
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err != nil {
+			t.Errorf("CheckSchema after Migrate: %v", err)
+		}
+		keys := d.WalletProviderInstanceKeys()
+		k, err := keys.Get(ctx, "tp")
+		if err != nil || k.Revision != 1 || k.Status.Idx != 5 || string(k.Key) != "{}" {
+			t.Fatalf("a record from before the migration: %+v, %v; want it at Revision 1", k, err)
+		}
+		k.PreviousStatus, k.Status = k.Status, statuslist.StatusListRef{Idx: 6, URI: "https://provider.example/status/1762300800/0"}
+		if err := keys.Update(ctx, k); err != nil {
+			t.Fatalf("Update of a record from before the migration: %v", err)
+		}
+		if got, err := keys.Get(ctx, "tp"); err != nil || got.Revision != 2 || got.Status != k.Status || got.PreviousStatus.Idx != 5 {
+			t.Fatalf("after Update: %+v, %v", got, err)
+		}
+		stale := k // still at Revision 1
+		if err := keys.Update(ctx, stale); !errors.Is(err, walletprovider.ErrConflict) {
+			t.Fatalf("a stale Update = %v, want ErrConflict", err)
 		}
 	})
 }

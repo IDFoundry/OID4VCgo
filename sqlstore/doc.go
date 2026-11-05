@@ -39,9 +39,10 @@
 //     every process; its Update is one UPDATE … WHERE id = ? AND
 //     revision = ?, a compare-and-swap. An instance key's Create is one
 //     INSERT on its thumbprint, the primary key, so one key belongs to
-//     one instance; its List walks one instance's keys on an
-//     (instance_id, id) index. A challenge's Consume is one DELETE …
-//     RETURNING.
+//     one instance; its Update is one UPDATE … WHERE id = ? AND
+//     revision = ? AND instance_id = ?; its List walks one instance's
+//     keys on an (instance_id, id) index. A challenge's Consume is one
+//     DELETE … RETURNING.
 //
 // The Authorization Server's stores, and the Credential Endpoint's DPoP
 // replay and nonce stores, are FAPIgo's: see A whole issuer deployment.
@@ -203,8 +204,8 @@
 // counter, and the operator's Reason for suspending or revoking it; an
 // instance key's key, status list index and evidence's summary — so a
 // database writer can't alter one unnoticed; an instance's key
-// thumbprint and revision columns, and an instance key's instance_id,
-// stay readable. Unsealed, a record still names its own ID, thumbprint
+// thumbprint and revision columns, and an instance key's instance_id
+// and revision, stay readable. Unsealed, a record still names its own ID, thumbprint
 // or challenge value, so one moved to another row is refused, and an
 // instance key's record names its instance, so List refuses one moved
 // to another instance.

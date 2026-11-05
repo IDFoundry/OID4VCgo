@@ -62,8 +62,9 @@ with `db.StatusIndices()` for its status list indices. An instance's
 across every process; `Update` is one
 `UPDATE … WHERE id = ? AND revision = ?`. An instance key's `Create` is
 one `INSERT` on its thumbprint, the primary key, so one key belongs to
-one instance; `List` walks one instance's keys on an
-`(instance_id, id)` index. A challenge's `Consume` is one
+one instance; its `Update` is one
+`UPDATE … WHERE id = ? AND revision = ? AND instance_id = ?`; `List`
+walks one instance's keys on an `(instance_id, id)` index. A challenge's `Consume` is one
 `DELETE … RETURNING`.
 
 ```go

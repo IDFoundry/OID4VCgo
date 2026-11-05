@@ -130,23 +130,40 @@ func (s *InstanceStore) Create(ctx context.Context, in walletprovider.Instance) 
 // sharing the database. It refuses an update changing the instance's
 // KeyThumbprint, which a registered instance keeps.
 func (s *InstanceStore) Update(ctx context.Context, in walletprovider.Instance) error {
-	id := in.ID
+	next := in
+	next.Revision++
+	return updateRevision(ctx, s.t, revisioned{
+		what: "update wallet instance", update: s.t.d.sql.wpInstanceUpdate, read: s.t.d.sql.wpInstanceRevision,
+		fixedName: "key thumbprint",
+	}, in.ID, in.Revision, in.KeyThumbprint, next)
+}
+
+// revisioned is a table whose rows a compare-and-swap updates: update
+// sets the record and revision of the row whose id, revision and fixed
+// column — one an update may not change — are as given, and read
+// selects a row's revision and fixed column.
+type revisioned struct {
+	what, update, read, fixedName string
+}
+
+// updateRevision stores next as the record of id, with revision rev+1,
+// if its row's revision is rev and its fixed column fixed: one UPDATE
+// (r.update). Should it update nothing, it reads the row (r.read) to
+// say why: it's unknown, its fixed column differs, or its revision.
+func updateRevision[T any](ctx context.Context, t *table[T], r revisioned, id string, rev uint64, fixed string, next T) error {
 	if !storableKeys(id) {
-		return wpNotFound("update wallet instance", id, errNoRow)
+		return wpNotFound(r.what, id, errNoRow)
 	}
 	var n int64
-	// A revision past math.MaxInt64, or a key thumbprint no row can
-	// hold, matches no row.
-	if in.Revision < math.MaxInt64 && storableKeys(in.KeyThumbprint) {
-		next := in
-		next.Revision++
-		data, err := s.t.encodeOf(id, next)
+	// A revision past math.MaxInt64, or a fixed value no row can hold,
+	// matches no row.
+	if rev < math.MaxInt64 && storableKeys(fixed) {
+		data, err := t.encodeOf(id, next)
 		if err != nil {
-			return wpNotFound("update wallet instance", id, err)
+			return wpNotFound(r.what, id, err)
 		}
-		err = s.t.d.writeOne(ctx, func(q querier) error {
-			res, err := q.ExecContext(ctx, s.t.d.sql.wpInstanceUpdate,
-				data, revisionArg(next.Revision), id, revisionArg(in.Revision), in.KeyThumbprint)
+		err = t.d.writeOne(ctx, func(q querier) error {
+			res, err := q.ExecContext(ctx, r.update, data, revisionArg(rev+1), id, revisionArg(rev), fixed)
 			if err != nil {
 				return err
 			}
@@ -154,7 +171,7 @@ func (s *InstanceStore) Update(ctx context.Context, in walletprovider.Instance) 
 			return err
 		})
 		if err != nil {
-			return wpNotFound("update wallet instance", id, err)
+			return wpNotFound(r.what, id, err)
 		}
 	}
 	if n == 1 {
@@ -163,17 +180,17 @@ func (s *InstanceStore) Update(ctx context.Context, in walletprovider.Instance) 
 	// Nothing was updated: say why. A row is never deleted, so one found
 	// now was there for the UPDATE.
 	var revision int64
-	var thumbprint string
-	err := s.t.d.db.QueryRowContext(ctx, s.t.d.sql.wpInstanceRevision, id).Scan(&revision, &thumbprint)
+	var stored string
+	err := t.d.db.QueryRowContext(ctx, r.read, id).Scan(&revision, &stored)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return wpNotFound("update wallet instance", id, errNoRow)
+		return wpNotFound(r.what, id, errNoRow)
 	case err != nil:
-		return wpNotFound("update wallet instance", id, err)
-	case thumbprint != in.KeyThumbprint:
-		return fmt.Errorf("sqlstore: update wallet instance %q: an update can't change an instance's key thumbprint", id)
+		return wpNotFound(r.what, id, err)
+	case stored != fixed:
+		return fmt.Errorf("sqlstore: %s %q: an update can't change its %s", r.what, id, r.fixedName)
 	}
-	return fmt.Errorf("sqlstore: update wallet instance %q: %w", id, walletprovider.ErrConflict)
+	return fmt.Errorf("sqlstore: %s %q: %w", r.what, id, walletprovider.ErrConflict)
 }
 
 // List implements walletprovider.InstanceStore: one SELECT … WHERE
@@ -228,8 +245,10 @@ type instanceKeyRecord struct {
 // instance keys are one instance's is what the provider keeps from
 // issuers, so the table is as private as the instances'; sealing keeps
 // a database writer from altering a record, or moving it to another
-// instance, unnoticed. Records are never changed once created and
-// never expire: Sweep leaves them alone, and nothing here deletes one.
+// instance, unnoticed. Update is one UPDATE … WHERE id = ? AND
+// revision = ?, on the readable revision column, as InstanceStore's
+// is. Records never expire: Sweep leaves them alone, and nothing here
+// deletes one.
 type InstanceKeyStore struct {
 	t *table[walletprovider.InstanceKey]
 }
@@ -240,7 +259,9 @@ var _ walletprovider.InstanceKeyStore = (*InstanceKeyStore)(nil)
 func (d *DB) WalletProviderInstanceKeys() *InstanceKeyStore {
 	t := &table[walletprovider.InstanceKey]{
 		d: d, name: "walletprovider_instance_keys", sql: tableSQL{insert: d.sql.wpInstanceKeyInsert, get: d.sql.wpInstanceKeyGet},
-		rowOf: func(k walletprovider.InstanceKey) row { return row{extra: []any{k.InstanceID}} },
+		rowOf: func(k walletprovider.InstanceKey) row {
+			return row{extra: []any{k.InstanceID, revisionArg(k.Revision)}}
+		},
 	}
 	t.encode = func(id string, k walletprovider.InstanceKey) ([]byte, error) {
 		return d.encodeRecord(t.name, id, instanceKeyRecord{InstanceKey: k, Key: k.Key})
@@ -254,6 +275,9 @@ func (d *DB) WalletProviderInstanceKeys() *InstanceKeyStore {
 			return walletprovider.InstanceKey{}, fmt.Errorf("%w: instance key %q is stored as %q", ErrRecordFormat, r.Thumbprint, id)
 		}
 		r.InstanceKey.Key = r.Key
+		// A record from before migration 0008 has no Revision: its row's
+		// is 1.
+		r.Revision = max(r.Revision, 1)
 		return r.InstanceKey, nil
 	}
 	return &InstanceKeyStore{t}
@@ -269,7 +293,21 @@ func (s *InstanceKeyStore) Get(ctx context.Context, thumbprint string) (walletpr
 // CONFLICT DO NOTHING, which inserts nothing, and reports ErrExists, if
 // a row holds the key's thumbprint, whatever its instance.
 func (s *InstanceKeyStore) Create(ctx context.Context, k walletprovider.InstanceKey) error {
+	k.Revision = 1
 	return wpNotFound("create instance key", k.Thumbprint, insertNew(s.t, ctx, k.Thumbprint, k))
+}
+
+// Update implements walletprovider.InstanceKeyStore: one UPDATE … WHERE
+// id = ? AND revision = ? AND instance_id = ?, a compare-and-swap across
+// every process sharing the database, which refuses an update moving
+// the key to another instance.
+func (s *InstanceKeyStore) Update(ctx context.Context, k walletprovider.InstanceKey) error {
+	next := k
+	next.Revision++
+	return updateRevision(ctx, s.t, revisioned{
+		what: "update instance key", update: s.t.d.sql.wpInstanceKeyUpdate, read: s.t.d.sql.wpInstanceKeyRevision,
+		fixedName: "instance",
+	}, k.Thumbprint, k.Revision, k.InstanceID, next)
 }
 
 // List implements walletprovider.InstanceKeyStore: one SELECT … WHERE
