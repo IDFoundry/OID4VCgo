@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.65.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.64.0...v0.65.0) (2026-11-05)
+
+
+### Features
+
+* **walletflow:** re-check a held credential's issuer certificate in CheckStatus ([ec02ab0](https://github.com/IDFoundry/OID4VCgo/commit/ec02ab0c35f850ad93ebbea2b4e9850b624f7b32))
+* **walletprovider:** add the Wallet Provider core package ([2c17875](https://github.com/IDFoundry/OID4VCgo/commit/2c17875ef6abd849be35e283f6cfffc8ee1fbe0e))
+* **walletprovider:** fetch and cache Google's attestation status list ([453d2b3](https://github.com/IDFoundry/OID4VCgo/commit/453d2b3b530b62b604b0fc54ffb06dae35fc24b6))
+* **walletprovider:** make androidkey a provider EvidenceVerifier ([8a6dd4a](https://github.com/IDFoundry/OID4VCgo/commit/8a6dd4afb2757adb6c644b2dc704e34ece5c8769))
+* **walletprovider:** register an instance key once, verify signatures first ([8ad602c](https://github.com/IDFoundry/OID4VCgo/commit/8ad602cfbbbbc0ab3778463c633f3d5d98f04fd3))
+* **walletprovider:** serve the provider over HTTP and add a Go client ([4a11c20](https://github.com/IDFoundry/OID4VCgo/commit/4a11c2086ad93aa3b36b0fb043d404ae49d88d69))
+* **walletprovider:** sign and verify requests with the instance key ([723776c](https://github.com/IDFoundry/OID4VCgo/commit/723776c164f286afd4e52bff88929ffe90aa869b))
+* **walletprovider:** take attestation version 500 in androidkey ([8ad4519](https://github.com/IDFoundry/OID4VCgo/commit/8ad45190af79958821d90db3244eb452db749178))
+* **walletprovider:** verify Android Key Attestation chains ([8eefef0](https://github.com/IDFoundry/OID4VCgo/commit/8eefef0ad8fee0f7bcca4d30f507e17f503d2e7f))
+
+
+### Bug Fixes
+
+* **walletprovider:** wrap androidkey's error for a key the request doesn't name ([04f193b](https://github.com/IDFoundry/OID4VCgo/commit/04f193baf095d76cefb8c8f959b95bdb821988fe))
+
 ## [0.64.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.63.0...v0.64.0) (2026-11-04)
 
 
