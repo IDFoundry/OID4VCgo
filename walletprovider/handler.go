@@ -22,7 +22,7 @@ import (
 //	POST InstancesPath         {"challenge","registration_key","evidence"}         → 201 {"instance_id"}
 //	POST WalletAttestationPath {"client_id","instance_key","challenge","evidence"} signed → 200 {"wallet_attestation"}
 //	POST KeyAttestationPath    {"instance_key","challenge","keys","evidence","nonce"} signed → 200 {"key_attestation","expires_at"}
-//	GET  StatusPath            the status list (StatusList), JWT or CWT by Accept
+//	GET  StatusPath/{start}/{n} a status list (StatusLists), JWT or CWT by Accept
 //
 // "evidence" is {"kind","data"}, data base64url without padding (an
 // array of them in a Key Attestation request); "registration_key",
@@ -47,6 +47,10 @@ import (
 // an unknown instance from a wrong key, and it doesn't use up the
 // challenge it names.
 //
+// The status lists are StatusLists, served under StatusPath: with
+// Handler at the provider's URL, Config.StatusListBaseURI is that URL
+// followed by StatusPath.
+//
 // The path a signed request covers is the one the client sent
 // (the request's RequestURI), so Handler may be mounted under a prefix
 // with http.StripPrefix; a proxy in front of it must not rewrite paths.
@@ -60,7 +64,7 @@ func (p *Provider) Handler() http.Handler {
 	mux.HandleFunc("POST "+InstancesPath, p.serveRegister)
 	mux.HandleFunc("POST "+WalletAttestationPath, p.serveWalletAttestation)
 	mux.HandleFunc("POST "+KeyAttestationPath, p.serveKeyAttestation)
-	mux.Handle("GET "+StatusPath, p.publisher)
+	mux.HandleFunc("GET "+StatusPath+"/{start}/{n}", p.serveStatusList)
 	return mux
 }
 

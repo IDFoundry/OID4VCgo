@@ -7,7 +7,7 @@
 // as an OAuth client, and the Key Attestation (§4.5.1, OID4VCI 1.0
 // Appendix D) that vouches for the holder keys a credential is bound
 // to — claiming in each only what the evidence proved. It withdraws
-// that trust through a Token Status List (draft-ietf-oauth-status-list-14)
+// that trust through Token Status Lists (draft-ietf-oauth-status-list-14)
 // every attestation it issues references, which issuers check with
 // haip.WalletAttestationStatusList and issuer.StatusListAttestationStatus.
 //
@@ -87,25 +87,38 @@
 // §4.4.1; draft-ietf-oauth-attestation-based-client-auth-07 §11.1).
 // Platform evidence vouches for an instance key the first time a
 // Wallet Attestation is asked for it; the provider then records it
-// against the instance (InstanceKeyStore) with an index of its own in
-// the provider's status list, reserved by statuslist.Allocator and
-// never reused, which every Wallet Attestation for the key and every
-// Key Attestation issued with it reference. Issuers see only
+// against the instance (InstanceKeyStore) with an index of its own on
+// one of the provider's status lists, reserved by statuslist.Allocator
+// and never reused, which every Wallet Attestation for the key and
+// every Key Attestation issued with it reference. Issuers see only
 // per-issuance keys, per-issuance status indices and the shared client
 // ID; the provider alone knows which instance keys belong to which
 // instance (HAIP 1.0 §11.1 asks a Wallet Provider's backend to be
 // designed with its users' privacy in mind), so keep its stores as
 // private as the users they describe.
 //
+// The lists belong to periods (Config.StatusListPeriod, a week by
+// default): each period has up to MaxStatusListsPerPeriod lists of
+// Config.StatusListSize indices, at Config.StatusListBaseURI/{start}/{n},
+// filled one after another, and every attestation names an index on a
+// list of the current period. An instance key used in a later period
+// than its index's gets a fresh index there first, keeping the previous
+// period's as InstanceKey.PreviousStatus, since an attestation issued
+// then may still be live; an attestation outlives its period by less
+// than another. So a period's lists hold the instance keys used in it,
+// not every one ever recorded, and a list is served through the two
+// periods after its own, by the end of which no live attestation names
+// it.
+//
 // Suspend, Resume and Revoke set the status of every one of an
-// instance's instance keys SUSPENDED, VALID and INVALID, so revoking
-// an installation withdraws every attestation issued for it; a
-// revocation is final. Provider.StatusList serves the list (JWT or CWT
-// form, by the request's Accept header), signed with the provider's
-// own key and certificate chain, so an issuer's default check — the
-// list signed with the attestation's own key — accepts it. Each
-// issuance uses up an index for good: size Config.StatusListSize for
-// the issuances the provider will vouch for.
+// instance's instance keys SUSPENDED, VALID and INVALID, at both its
+// indices, so revoking an installation withdraws every attestation
+// issued for it; a revocation is final. Provider.StatusLists serves the
+// lists (JWT or CWT form, by the request's Accept header), signed with
+// the provider's own key and certificate chain, so an issuer's default
+// check — the list signed with the attestation's own key — accepts
+// them. Size Config.StatusListSize for the instance keys used in a
+// period.
 //
 // # Requests after registration
 //

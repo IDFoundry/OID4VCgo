@@ -11,7 +11,11 @@ import (
 	"encoding/base64"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +31,7 @@ import (
 
 const (
 	identifier = "https://provider.example"
-	statusURI  = "https://provider.example/status"
+	statusBase = "https://provider.example/status"
 	clientID   = "wallet-client"
 	walletName = "Example Wallet"
 	walletLink = "https://wallet.example"
@@ -148,7 +152,7 @@ func signerChain(t *testing.T) (*ecdsa.PrivateKey, []*x509.Certificate) {
 func baseConfig() walletprovider.Config {
 	return walletprovider.Config{
 		Identifier: identifier, ClientIDs: []string{clientID}, WalletName: walletName, WalletLink: walletLink,
-		StatusListURI: statusURI, StatusListSize: 1024, Policy: policy(),
+		StatusListBaseURI: statusBase, StatusListSize: 1024, Policy: policy(),
 	}
 }
 
@@ -292,12 +296,17 @@ func (h *harness) keyAttestation(id string, instanceKey crypto.PublicKey, keys [
 // in the JWT form or the CWT one.
 func (h *harness) status(ref statuslist.StatusListRef, cwt bool) statuslist.StatusType {
 	h.t.Helper()
-	token, err := h.p.StatusList().Token(context.Background(), cwt)
-	if err != nil {
-		h.t.Fatalf("StatusList().Token: %v", err)
+	accept := statuslist.TokenMediaType
+	if cwt {
+		accept = statuslist.CWTTokenMediaType
+	}
+	code, token := h.getStatusList(strings.TrimPrefix(ref.URI, statusBase), accept)
+	if code != http.StatusOK {
+		h.t.Fatalf("GET %s: %d %s", ref.URI, code, token)
 	}
 	opts := statuslist.VerifyOptions{Now: h.clock.now}
 	var status statuslist.StatusType
+	var err error
 	if cwt {
 		status, _, err = statuslist.CheckCWT(token, &h.signer.PublicKey, oid4vci.COSEES256, ref, opts)
 	} else {
@@ -307,4 +316,40 @@ func (h *harness) status(ref statuslist.StatusListRef, cwt bool) statuslist.Stat
 		h.t.Fatalf("checking the published status list (cwt %t): %v", cwt, err)
 	}
 	return status
+}
+
+// getStatusList asks StatusLists for path, relative to the base URI,
+// with accept as its Accept header.
+func (h *harness) getStatusList(path, accept string) (int, []byte) {
+	h.t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Accept", accept)
+	rec := httptest.NewRecorder()
+	h.p.StatusLists().ServeHTTP(rec, req)
+	return rec.Code, rec.Body.Bytes()
+}
+
+// period is the provider's StatusListPeriod.
+func (h *harness) period() time.Duration {
+	if h.cfg.StatusListPeriod == 0 {
+		return walletprovider.DefaultStatusListPeriod
+	}
+	return h.cfg.StatusListPeriod
+}
+
+// periodStart is the start of the period of the harness's clock, in
+// seconds since the Unix epoch.
+func (h *harness) periodStart() int64 {
+	period, now := int64(h.period()/time.Second), h.clock.now().Unix()
+	return now - now%period
+}
+
+// toNextPeriod advances the clock to a minute into the next period.
+func (h *harness) toNextPeriod() {
+	h.clock.advance(time.Unix(h.periodStart(), 0).Add(h.period() + time.Minute).Sub(h.clock.now()))
+}
+
+// listURI is the uri of list n of the period starting at start.
+func listURI(start int64, n int) string {
+	return statusBase + "/" + strconv.FormatInt(start, 10) + "/" + strconv.Itoa(n)
 }

@@ -140,7 +140,7 @@ func TestHandlerRoundTrip(t *testing.T) {
 			h.verifyKeyAttestation(res, ik.Status, &holder.PublicKey)
 
 			for _, accept := range []string{"application/statuslist+jwt", "application/statuslist+cwt"} {
-				req, _ := http.NewRequest(http.MethodGet, ts.URL+prefix+walletprovider.StatusPath, nil)
+				req, _ := http.NewRequest(http.MethodGet, ts.URL+prefix+walletprovider.StatusPath+strings.TrimPrefix(ik.Status.URI, statusBase), nil)
 				req.Header.Set("Accept", accept)
 				resp, err := ts.Client().Do(req)
 				if err != nil {

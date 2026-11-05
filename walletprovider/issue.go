@@ -11,7 +11,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
-	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // WalletAttestationRequest asks for a Wallet Attestation. The HTTP
@@ -51,10 +50,12 @@ type WalletAttestationRequest struct {
 // app, accepted by the Policy, at a security level the Policy accepts
 // for the platform. It then records the key for the instance
 // (InstanceKeyStore) with a status list index of its own. Later
-// requests for the key reuse the record and its index, without
-// evidence. A key recorded for another instance, or that is the
-// instance's registration key, is refused with
-// ErrInstanceKeyRegistered.
+// requests for the key reuse the record, without evidence, and its
+// index while it's on the current period's lists
+// (Config.StatusListPeriod); in a later period, the key gets an index
+// on that period's lists first.
+// A key recorded for another instance, or that is the instance's
+// registration key, is refused with ErrInstanceKeyRegistered.
 func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationRequest) (string, error) {
 	if !slices.Contains(p.cfg.ClientIDs, req.ClientID) {
 		return "", fmt.Errorf("%w: %q", ErrUnknownClient, req.ClientID)
@@ -71,12 +72,15 @@ func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationR
 	if err != nil {
 		return "", err
 	}
-	// The instance is updated after its instance key is recorded, and
-	// only while it's still active. Suspend and Revoke store the state
-	// before they set the statuses of the instance's keys, so either
-	// this request sees the new state and gets nothing, or they find
-	// the new key and set its status too.
 	now := p.now()
+	if ik, err = p.inCurrentPeriod(ctx, ik, now); err != nil {
+		return "", err
+	}
+	// The instance is updated after its instance key is recorded or
+	// moved, and only while it's still active. Suspend and Revoke store
+	// the state before they set the statuses of the instance's keys, so
+	// either this request sees the new state and gets nothing, or they
+	// find the key's record and set its statuses too.
 	if err := p.recordUse(ctx, in, counter, func(cur *Instance) {
 		cur.LastSeenAt = now
 		cur.WalletAttestations++
@@ -151,7 +155,7 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 	}
 	// An index allocated for a key that then isn't recorded stays
 	// reserved, as every allocated index does: it's never reused.
-	if ik.Status, err = p.allocateStatus(ctx); err != nil {
+	if ik.Status, err = p.allocateStatus(ctx, ik.CreatedAt); err != nil {
 		return InstanceKey{}, nil, err
 	}
 	switch err := p.deps.InstanceKeys.Create(ctx, ik); {
@@ -170,18 +174,6 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 		return InstanceKey{}, nil, fmt.Errorf("walletprovider: storing the instance key: %w", err)
 	}
 	return ik, ev.Counter, nil
-}
-
-// allocateStatus reserves a status list index.
-func (p *Provider) allocateStatus(ctx context.Context) (statuslist.StatusListRef, error) {
-	ref, err := p.allocator.Allocate(ctx)
-	switch {
-	case errors.Is(err, statuslist.ErrListsFull):
-		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: the status list is full: raise Config.StatusListSize: %w", err)
-	case err != nil:
-		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
-	}
-	return ref, nil
 }
 
 // checkInstanceKey refuses an instance key of in at a security level
@@ -293,8 +285,9 @@ type KeyAttestationResult struct {
 // accepts — a key without one is left out, and the request fails with
 // ErrNoKeyAttested if that leaves none. key_storage and
 // user_authentication come from Policy.KeyStorage alone. status is the
-// instance key's status list entry, so suspending or revoking the
-// instance withdraws its Key Attestations too. It expires after
+// instance key's status list entry, on the current period's lists as a
+// Wallet Attestation's is, so suspending or revoking the instance
+// withdraws its Key Attestations too. It expires after
 // Config.KeyAttestationTTL.
 func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest) (KeyAttestationResult, error) {
 	if err := p.checkKeys(req.Keys); err != nil {
@@ -325,9 +318,13 @@ func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest
 	}
 	keyStorage, userAuth := p.cfg.Policy.claims(in.Evidence.Platform, attested)
 
-	// The instance is updated before the attestation is issued, and
-	// only while it's still active, its counter stored first.
+	// The instance key moves to the current period's lists, and the
+	// instance is updated, before the attestation is issued, and only
+	// while it's still active, its counter stored first.
 	now := p.now()
+	if ik, err = p.inCurrentPeriod(ctx, ik, now); err != nil {
+		return KeyAttestationResult{}, err
+	}
 	if err := p.recordUse(ctx, in, counter, func(cur *Instance) {
 		cur.LastSeenAt = now
 		cur.KeyAttestations++

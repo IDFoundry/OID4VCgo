@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -29,6 +31,7 @@ const (
 	DefaultKeyAttestationTTL  = 2 * time.Hour
 	DefaultChallengeTTL       = 5 * time.Minute
 	DefaultStatusListSize     = 1 << 16
+	DefaultStatusListPeriod   = 7 * 24 * time.Hour
 	DefaultStatusListLifetime = time.Hour
 	DefaultStatusListTTL      = 5 * time.Minute
 )
@@ -46,7 +49,14 @@ const (
 	// MaxStatusListSize bounds Config.StatusListSize: 4 MiB packed,
 	// which every Relying Party fetches whole.
 	MaxStatusListSize = 1 << 24
+
+	// MaxStatusListPeriod bounds Config.StatusListPeriod.
+	MaxStatusListPeriod = 365 * 24 * time.Hour
 )
+
+// MaxStatusListsPerPeriod is how many status lists a period has, each
+// of Config.StatusListSize indices, filled one after another.
+const MaxStatusListsPerPeriod = 64
 
 // Config is a Provider's configuration.
 type Config struct {
@@ -67,18 +77,35 @@ type Config struct {
 	WalletName string
 	WalletLink string
 
-	// StatusListURI is the provider's status list's uri: where
-	// StatusList is served, and what every attestation's status claim
-	// names. An absolute https URI. REQUIRED.
-	StatusListURI string
+	// StatusListBaseURI is where the provider's status lists are: an
+	// absolute https URI without query or fragment, not ending in "/".
+	// The lists of a period are at StatusListBaseURI/{start}/{n} (the
+	// period's start in seconds since the Unix epoch, and n from 0 to
+	// MaxStatusListsPerPeriod-1), served by StatusLists, and every
+	// attestation's status claim names one. REQUIRED.
+	StatusListBaseURI string
 
-	// StatusListSize is how many indices the list has; zero means
+	// StatusListPeriod is how long the provider hands out indices of
+	// one period's lists. Periods start at multiples of it since the
+	// Unix epoch, and every attestation names an index of the current
+	// period's lists: an instance key used in a new period gets an index
+	// there first. Zero means DefaultStatusListPeriod. It's a whole
+	// number of seconds, at least WalletAttestationTTL and
+	// KeyAttestationTTL, so an attestation outlives its period by less
+	// than another one, and at most MaxStatusListPeriod. Changing it
+	// stops serving the lists of the old one at once: attestations
+	// naming them fail an issuer's status check until they expire.
+	StatusListPeriod time.Duration
+
+	// StatusListSize is how many indices each list has; zero means
 	// DefaultStatusListSize. It must be a multiple of 4 (two bits per
-	// status, so SUSPENDED fits). Each instance key holds one, for good,
-	// and at most half are handed out (statuslist.DefaultFillLimit), so
-	// a Wallet Attestation for a new instance key fails once half as
-	// many instance keys as it has have been recorded: size it for the
-	// issuances the provider will vouch for, not the instances.
+	// status, so SUSPENDED fits). At most half of a list is handed out
+	// (statuslist.DefaultFillLimit), so a period holds
+	// MaxStatusListsPerPeriod × StatusListSize/2 instance keys used in
+	// it, and an attestation for one more fails until the next period:
+	// size it for the instance keys used in a period. It may be raised
+	// at any time, but not lowered while a served list holds an index
+	// past the new size: that list can't be published until it retires.
 	StatusListSize int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
@@ -159,8 +186,7 @@ type Provider struct {
 	alg       oid4vci.JOSEAlg
 	header    attestation.Header
 	verifiers map[string]EvidenceVerifier
-	allocator *statuslist.Allocator
-	publisher *statuslist.Publisher
+	lists     statusLists
 }
 
 // New returns a Provider, refusing configuration that is incomplete or
@@ -187,15 +213,8 @@ func New(cfg Config, deps Dependencies) (*Provider, error) {
 	if err := p.checkSigner(); err != nil {
 		return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
 	}
-	p.allocator = &statuslist.Allocator{
-		Lists: []statuslist.AllocatorList{{URI: cfg.StatusListURI, Size: cfg.StatusListSize}},
-		Store: deps.StatusIndices, Bits: statuslist.Bits2,
-	}
-	p.publisher = &statuslist.Publisher{
-		URI: cfg.StatusListURI, Signer: deps.Signer, Chain: deps.Chain,
-		Statuses: p.allocator.Statuses(cfg.StatusListURI), Bits: statuslist.Bits2,
-		Lifetime: cfg.StatusListLifetime, TTL: cfg.StatusListTTL, Now: p.now,
-	}
+	p.lists.handler = http.NewServeMux()
+	p.lists.handler.HandleFunc("GET /{start}/{n}", p.serveStatusList)
 	return p, nil
 }
 
@@ -210,6 +229,7 @@ func (c Config) withDefaults() Config {
 	def(&c.ChallengeTTL, DefaultChallengeTTL)
 	def(&c.StatusListLifetime, DefaultStatusListLifetime)
 	def(&c.StatusListTTL, DefaultStatusListTTL)
+	def(&c.StatusListPeriod, DefaultStatusListPeriod)
 	if c.StatusListSize == 0 {
 		c.StatusListSize = DefaultStatusListSize
 	}
@@ -220,7 +240,7 @@ func (c Config) validate() error {
 	if err := httpsURI("Identifier", c.Identifier); err != nil {
 		return err
 	}
-	if err := httpsURI("StatusListURI", c.StatusListURI); err != nil {
+	if err := statusListBaseURI(c.StatusListBaseURI); err != nil {
 		return err
 	}
 	if c.WalletLink != "" {
@@ -245,6 +265,12 @@ func (c Config) validate() error {
 	if c.StatusListSize <= 0 || c.StatusListSize%4 != 0 || c.StatusListSize > MaxStatusListSize {
 		return fmt.Errorf("StatusListSize is %d, not a positive multiple of 4 up to %d", c.StatusListSize, MaxStatusListSize)
 	}
+	if longest := max(c.WalletAttestationTTL, c.KeyAttestationTTL); c.StatusListPeriod < longest || c.StatusListPeriod > MaxStatusListPeriod {
+		return fmt.Errorf("StatusListPeriod is %v, not between the longest attestation TTL (%v) and %v", c.StatusListPeriod, longest, MaxStatusListPeriod)
+	}
+	if c.StatusListPeriod%time.Second != 0 {
+		return fmt.Errorf("StatusListPeriod is %v, not a whole number of seconds", c.StatusListPeriod)
+	}
 	if c.StatusListTTL < time.Second || c.StatusListTTL > c.StatusListLifetime {
 		return fmt.Errorf("StatusListTTL is %v, not between a second and StatusListLifetime (%v)", c.StatusListTTL, c.StatusListLifetime)
 	}
@@ -257,6 +283,19 @@ func httpsURI(name, v string) error {
 	u, err := url.Parse(v)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return fmt.Errorf("%s %q isn't an absolute https URI without userinfo or fragment", name, v)
+	}
+	return nil
+}
+
+// statusListBaseURI refuses v unless it's an absolute https URI that
+// lists can be under: no userinfo, query or fragment, and no trailing
+// "/".
+func statusListBaseURI(v string) error {
+	if err := httpsURI("StatusListBaseURI", v); err != nil {
+		return err
+	}
+	if u, _ := url.Parse(v); u.RawQuery != "" || u.ForceQuery || strings.HasSuffix(v, "/") {
+		return fmt.Errorf("StatusListBaseURI %q has a query or ends in \"/\"", v)
 	}
 	return nil
 }
@@ -338,15 +377,6 @@ func (p *Provider) now() time.Time {
 	}
 	return p.deps.Clock()
 }
-
-// StatusList is the provider's status list: an http.Handler to serve
-// at Config.StatusListURI, answering in the JWT form
-// (application/statuslist+jwt) by default and the CWT form when the
-// request's Accept header asks for it (draft-ietf-oauth-status-list-14
-// §8.1), signed with Signer and carrying Chain. Each instance key's
-// status is two bits: VALID, INVALID (revoked) or SUSPENDED. The
-// provider invalidates its cached token whenever it changes a status.
-func (p *Provider) StatusList() *statuslist.Publisher { return p.publisher }
 
 // keyAlg is the JWS algorithm for pub: ES256 for P-256, EdDSA for
 // Ed25519.
