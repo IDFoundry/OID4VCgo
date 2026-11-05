@@ -98,7 +98,9 @@ func (in Instance) clone() Instance {
 }
 
 // InstanceStore keeps registered instances. A production store is
-// durable and shared by every process serving the provider.
+// durable and shared by every process serving the provider, as the
+// github.com/idfoundry/oid4vcgo/sqlstore module's
+// DB.WalletProviderInstances is.
 type InstanceStore interface {
 	// Get returns the instance with id, or an error wrapping ErrNotFound.
 	Get(ctx context.Context, id string) (Instance, error)

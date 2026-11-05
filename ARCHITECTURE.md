@@ -494,9 +494,12 @@ changes whether *every* bullet below is `(done)`.
     lives in the subpackage, importing `walletprovider`, so the core
     imports no platform code.
 
+  `sqlstore` keeps its durable stores (`DB.WalletProviderInstances`,
+  `DB.WalletProviderChallenges`, with `DB.StatusIndices` for its status
+  list indices).
+
   Still to come, each its own package or PR: `walletprovider/appattest`
-  (Apple App Attest), `sqlstore` stores, and the passport-vdc demo's
-  move onto it.
+  (Apple App Attest), and the passport-vdc demo's move onto it.
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no
@@ -1695,7 +1698,8 @@ changes whether *every* bullet below is `(done)`.
   — durable reference implementations of the issuer's stores
   (`NonceStore`, `PreAuthorizedCodeStore`, `DeferredTransactionStore`,
   `NotificationStore`, `CredentialOfferStore`), the verifier's
-  `TransactionStore` and walletflow's five, over `database/sql` for
+  `TransactionStore`, walletflow's five, statuslist's `IndexStore` and
+  walletprovider's `InstanceStore` and `ChallengeStore`, over `database/sql` for
   PostgreSQL and SQLite. A module of its own so the library takes no
   driver; its tests bring `pgx` and `modernc.org/sqlite` (pure Go, so
   no cgo). One `DB` wraps a `*sql.DB` and a `Dialect`, and hands out
@@ -1708,14 +1712,15 @@ changes whether *every* bullet below is `(done)`.
   schema (`search_path`). Each table has the same four columns — `id`, `owner`,
   `sweep_after`, `record` — plus the few a store looks rows up by (a
   pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
-  transaction's `key_id` and `response_code_hash`); `record` is the
+  transaction's `key_id` and `response_code_hash`, a wallet instance's
+  `UNIQUE` `key_thumbprint` and the `revision` its `Update` compares); `record` is the
   record as JSON, sealed with an optional `Sealer` (the
   `verifier.TransactionSealer` interface) bound to its table and key,
   or for the verifier `TransactionCodec`'s own encoding. Consumes are
   one `DELETE … RETURNING`, and every read-modify-write one transaction
   holding the row, so the contracts' atomicity holds across processes:
-  the tests run every `issuertest`, `verifiertest` and `storetest`
-  contract against both databases, `storetest`'s shared-store ones with
+  the tests run every `issuertest`, `verifiertest`, `storetest` and
+  `walletprovidertest` contract against both databases, `storetest`'s shared-store ones with
   a `*sql.DB` per goroutine. Migrations are embedded, versioned and run
   only by an explicit `Migrate`; `Sweep` deletes what has expired, which
   no store does on its own. The Authorization Server's stores, and the

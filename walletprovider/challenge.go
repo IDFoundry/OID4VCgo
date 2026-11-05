@@ -57,7 +57,8 @@ type ChallengeRecord struct {
 // production store is shared by every process serving the provider,
 // and its Consume is one atomic read-and-delete, so two concurrent
 // requests can't both use one challenge: in SQL, a DELETE ...
-// RETURNING.
+// RETURNING, as the github.com/idfoundry/oid4vcgo/sqlstore module's
+// DB.WalletProviderChallenges does.
 type ChallengeStore interface {
 	// Create stores rec, or returns an error wrapping ErrExists if a
 	// challenge with its Value is stored. A store may drop records
