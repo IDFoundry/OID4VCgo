@@ -566,6 +566,30 @@ Google's revocation list: the Kotlin library's
 [Going to production](../../mobile/android/docs/GoingToProduction.md)
 guide lists what a real Wallet Provider checks.
 
+**The library underneath.** The service issues every attestation
+through the library's Wallet Provider (`oid4vcgo/walletprovider`),
+signed with the provider's key and certificate. That library attests
+nothing without platform evidence, and the endpoints above carry none
+for iOS, the CLI and the web wallet, and name no wallet instance. So
+the service vouches for each request it has checked with **demo-only
+evidence** (`walletprovider.DemoEvidenceKind`): a single-use token it
+mints in memory, which no wallet can present itself. Each instance
+key registers a library instance the first time it's seen, at the
+security level its chain showed (software without one), and Key
+Attestations are issued under one shared instance. Every attestation
+then names the provider's Token Status List, served at `/v1/status`
+(`-url` on `cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a
+revoked or suspended instance gets no more Wallet Attestations.
+Instances and status entries are kept in memory, so a restart forgets
+them and a wallet's instance key registers again; the files above are
+read as before. The library's own versioned protocol (challenge,
+instance registration, and requests signed with the instance key) is
+served under `/v1/` too. With `-android-app package:sha256[,...]` on
+`cmd/wallet-provider`, it attests that app's Android Key Attestation
+chains there (`walletprovider/androidkey`: Google's roots and
+revocation list, locked and verified boot, every signing certificate
+allowed). The demo apps don't use it yet.
+
 It attests only the demo wallet's `client_id`, without checking who's
 asking: a real Wallet Provider would check platform evidence (app
 integrity, keys in secure hardware) for every request. The provider
@@ -872,7 +896,7 @@ generator, planned for gmrtd itself).
 | `credential` | `Evidence` → `mdoc.Claims` / `sdjwtvc.Claims`; validity and age claims |
 | `issuerapp` | the OID4VCI issuer: fapigo Authorization Server + oid4vcgo Issuer + upload page; its CA's CRL, and revoking the document signer |
 | `internal/democrl` | a demo CA's Certificate Revocation List: the certificates it revoked, its CRL number, the signed list it serves |
-| `walletprovider` | the stand-in Wallet Provider: signs Wallet Attestations and Key Attestations, as an HTTPS service (`NewService`) the wallets call (`Client`); issues attestation challenges and checks Android Key Attestation chains |
+| `walletprovider` | the stand-in Wallet Provider: its key and certificate, with which the library's `oid4vcgo/walletprovider` signs Wallet Attestations and Key Attestations, as an HTTPS service (`NewService`) the wallets call (`Client`); issues attestation challenges, checks Android Key Attestation chains, and vouches for what it checked with demo-only evidence |
 | `internal/androidattest` | verifies an Android Key Attestation chain (signatures, the key description's security levels and challenge) and whether it ends at Google's hardware attestation roots |
 | `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |

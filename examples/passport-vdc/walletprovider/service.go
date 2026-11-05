@@ -2,8 +2,11 @@ package walletprovider
 
 import (
 	"bytes"
+	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -11,16 +14,22 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/androidattest"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	wp "github.com/idfoundry/oid4vcgo/walletprovider"
+	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
 )
 
-// The service's paths, relative to its URL.
+// The service's paths, relative to its URL: the demo wallets' own
+// protocol. The library's (walletprovider.Handler) is served under
+// /v1/ beside it.
 const (
 	WalletAttestationPath = "/wallet-attestation"
 	KeyAttestationPath    = "/key-attestation"
@@ -30,18 +39,26 @@ const (
 const (
 	// WalletAttestationLifetime is how long a Wallet Attestation the
 	// service issues is valid.
-	WalletAttestationLifetime = time.Hour
+	WalletAttestationLifetime = wp.DefaultWalletAttestationTTL
 	// KeyAttestationLifetime is how long a Key Attestation the service
 	// issues is valid. Its c_nonce makes it fresh when it's sent, but
 	// its exp is when the keys it attests expire too (OpenID4VCI 1.0
 	// Appendix D.1), which the issuer checks again when a review it
 	// deferred issuance for is approved: it outlasts that review.
-	KeyAttestationLifetime = 2 * time.Hour
+	KeyAttestationLifetime = wp.DefaultKeyAttestationTTL
+
+	// DefaultURL is where cmd/wallet-provider serves the service by
+	// default, and so where the status list is when ServiceConfig.URL
+	// is empty.
+	DefaultURL = "https://127.0.0.1:6443"
+
+	// WalletName is the Wallet Attestations' wallet_name.
+	WalletName = "passport-vdc demo wallet"
 
 	// maxRequestBytes fits maxAttestedKeys keys with their attestation
 	// chains.
 	maxRequestBytes = 256 * 1024
-	maxAttestedKeys = 10
+	maxAttestedKeys = wp.DefaultMaxKeys
 	maxNonceLength  = 256
 )
 
@@ -74,23 +91,6 @@ type AttestationResponse struct {
 	Attestation string `json:"attestation"`
 }
 
-// KeyAttestation issues a Key Attestation over keys carrying nonce, the
-// Credential Issuer's c_nonce (HAIP 1.0 §4.5.1), issued at now and valid
-// for lifetime. It asserts no key_storage or user_authentication level:
-// the demo's holder keys are ordinary software keys.
-func (p *Provider) KeyAttestation(keys []*ecdsa.PublicKey, nonce string, now time.Time, lifetime time.Duration) (string, error) {
-	claims, err := p.KeyAttestationClaims(keys, now, lifetime)
-	if err != nil {
-		return "", err
-	}
-	claims.IssuedAt, claims.Nonce = now.Unix(), nonce
-	jwt, err := attestation.Issue(p.Key, oid4vci.ES256, p.x5cHeader(), claims)
-	if err != nil {
-		return "", fmt.Errorf("walletprovider: key attestation: %w", err)
-	}
-	return jwt, nil
-}
-
 // ServiceConfig configures the provider's service.
 type ServiceConfig struct {
 	// ClientID is the demo wallet's registration with the issuer, the
@@ -111,6 +111,18 @@ type ServiceConfig struct {
 	// AttestationRoots are the roots a hardware chain ends at; nil
 	// means Google's hardware attestation roots.
 	AttestationRoots []*x509.Certificate
+	// URL is the service's public https URL: the library's protocol is
+	// served under it at /v1/, and the provider's status list, which
+	// every attestation names, at /v1/status. Empty means DefaultURL.
+	URL string
+	// AndroidApps, if set, are the Android apps whose keys the
+	// library's own protocol (/v1/) attests, through
+	// androidkey.EvidenceVerifier: chains to Google's roots, checked
+	// against Google's attestation status list, from a locked device
+	// with verified boot, made by one of these apps, signed with every
+	// certificate listed. Without it /v1/ attests nothing; the demo
+	// wallets don't use it yet.
+	AndroidApps []androidkey.AllowedApp
 	// Logf logs each attestation and what was made of its evidence; nil
 	// means log.Printf.
 	Logf func(format string, args ...any)
@@ -122,17 +134,25 @@ type ServiceConfig struct {
 // ServiceConfig: see NewService.
 func (p *Provider) Handler(clientID string) http.Handler {
 	h, err := p.NewService(ServiceConfig{ClientID: clientID})
-	if err != nil { // only reading VerifiedKeysPath fails
+	if err != nil { // only reading VerifiedKeysPath, or a bad ClientID, fails
 		panic(err)
 	}
 	return h
 }
 
 // NewService serves the provider as a service the demo wallets call, so
-// they never hold its key: POST WalletAttestationPath with a
-// WalletAttestationRequest, or KeyAttestationPath with a
-// KeyAttestationRequest, answered with an AttestationResponse; POST
-// ChallengePath with a ChallengeRequest for a ChallengeResponse.
+// they never hold its key. The attestations are issued by the library's
+// Wallet Provider (oid4vcgo/walletprovider), signed with p's key and
+// certificate: each instance key registers an instance, every
+// attestation names its instance's entry in the provider's status list,
+// served at /v1/status, and the library's own protocol is served under
+// /v1/ for a wallet that speaks it (see ServiceConfig.AndroidApps).
+//
+// The demo wallets speak this package's older, stateless protocol:
+// POST WalletAttestationPath with a WalletAttestationRequest, or
+// KeyAttestationPath with a KeyAttestationRequest, answered with an
+// AttestationResponse; POST ChallengePath with a ChallengeRequest for a
+// ChallengeResponse.
 //
 // It attests only cfg.ClientID. A key sent with an Android Key
 // Attestation chain is attested only if the chain's signatures hold,
@@ -141,20 +161,45 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // service verified for this key before); whether it's also hardware
 // Google vouches for is logged, and required with
 // cfg.RequireHardwareKeyAttestation. A key sent without a chain is
-// attested as before, and logged as such. It doesn't authenticate the
-// wallet asking; ChallengePath answers each client address a limited
-// number of times a second (429 past it), so one client can't use up
-// the challenges every other one needs.
+// attested, and logged as such. It doesn't authenticate the wallet
+// asking; ChallengePath answers each client address a limited number of
+// times a second (429 past it), so one client can't use up the
+// challenges every other one needs, and so do the library protocol's
+// unauthenticated /v1/challenge and /v1/instances.
+//
+// The library attests nothing without platform evidence, and the older
+// protocol carries none from iOS, the CLI or the web wallet, and names
+// no instance. So the service vouches for each request it has checked
+// with DEMO-ONLY evidence (DemoEvidenceKind): a Wallet Attestation
+// registers its instance key as an instance the first time the key is
+// seen, at the security level its chain showed (software without one),
+// and every Key Attestation is issued under one shared instance the
+// service registers for the purpose. Suspending or revoking an instance
+// through the library stops its Wallet Attestations. Instances and
+// status indices are kept in memory: a restart forgets them, and a
+// wallet's instance key then registers again.
 func (p *Provider) NewService(cfg ServiceConfig) (http.Handler, error) {
 	s, err := p.newService(cfg)
 	if err != nil {
 		return nil, err
 	}
+	return s.handler(), nil
+}
+
+func (s *service) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+ChallengePath, s.challenge)
 	mux.HandleFunc("POST "+WalletAttestationPath, s.walletAttestation)
 	mux.HandleFunc("POST "+KeyAttestationPath, s.keyAttestation)
-	return mux, nil
+	v1 := s.lib.Handler()
+	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.URL.Path == wp.ChallengePath || r.URL.Path == wp.InstancesPath) && !s.challenges.allow(clientAddress(r), s.cfg.Now()) {
+			writeError(w, http.StatusTooManyRequests, "too many requests from this address; try again shortly")
+			return
+		}
+		v1.ServeHTTP(w, r)
+	}))
+	return mux
 }
 
 func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
@@ -167,11 +212,21 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.URL == "" {
+		cfg.URL = DefaultURL
+	}
 	ev, err := newEvidence(cfg.AttestationRoots, cfg.Now, cfg.VerifiedKeysPath, cfg.Logf)
 	if err != nil {
 		return nil, err
 	}
-	return &service{p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst)}, nil
+	s := &service{
+		p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst),
+		demo: newDemoVerifier(), instances: map[string]string{},
+	}
+	if s.lib, err = p.library(cfg, s.demo); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 type service struct {
@@ -179,6 +234,61 @@ type service struct {
 	cfg        ServiceConfig
 	ev         *evidence
 	challenges *clientLimiter
+	lib        *wp.Provider
+	demo       *demoVerifier
+
+	// mu serializes registrations, so an instance key registers once.
+	mu sync.Mutex
+	// instances maps an instance key's JWK thumbprint to its instance.
+	instances map[string]string
+	// holderInstance is the shared instance Key Attestations are issued
+	// under; empty until the first.
+	holderInstance string
+}
+
+// library is the library Wallet Provider p's service issues with:
+// signed with p's key and certificate, attesting cfg.ClientID, taking
+// the demo-only evidence and, with cfg.AndroidApps, Android Key
+// Attestation.
+func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier) (*wp.Provider, error) {
+	verifiers := []wp.EvidenceVerifier{demo}
+	platforms := map[wp.Platform]wp.PlatformPolicy{
+		// Whatever the older protocol's checks found, from a software
+		// key to StrongBox, as before.
+		DemoPlatform: {SecurityLevels: []wp.SecurityLevel{wp.SecurityLevelSoftware, wp.SecurityLevelTEE, wp.SecurityLevelStrongBox}},
+	}
+	if len(cfg.AndroidApps) > 0 {
+		verifiers = append(verifiers, androidkey.EvidenceVerifier{Verifier: &androidkey.Verifier{
+			Apps: cfg.AndroidApps, Revocation: &androidkey.StatusSource{}, Now: cfg.Now,
+		}})
+		platforms[wp.PlatformAndroid] = wp.PlatformPolicy{
+			SecurityLevels:      []wp.SecurityLevel{wp.SecurityLevelTEE, wp.SecurityLevelStrongBox},
+			RequireVerifiedBoot: true,
+		}
+	}
+	lib, err := wp.New(wp.Config{
+		Identifier: p.Issuer, ClientIDs: []string{cfg.ClientID}, WalletName: WalletName,
+		StatusListURI: strings.TrimSuffix(cfg.URL, "/") + wp.StatusPath,
+		Policy:        wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
+	}, wp.Dependencies{
+		Signer: p.Key, Chain: []*x509.Certificate{p.Certificate},
+		Instances: &wp.MemoryInstanceStore{}, Challenges: &wp.MemoryChallengeStore{},
+		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: verifiers,
+		Clock: cfg.Now, Random: rand.Reader,
+		Logger: slog.New(slog.NewTextHandler(logfWriter(cfg.Logf), nil)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walletprovider: %w", err)
+	}
+	return lib, nil
+}
+
+// logfWriter writes each slog line through logf.
+type logfWriter func(format string, args ...any)
+
+func (w logfWriter) Write(b []byte) (int, error) {
+	w("%s", strings.TrimSuffix(string(b), "\n"))
+	return len(b), nil
 }
 
 func (s *service) challenge(w http.ResponseWriter, r *http.Request) {
@@ -220,15 +330,93 @@ func (s *service) walletAttestation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "instance_key: "+err.Error())
 		return
 	}
-	outcome, ok := s.checkEvidence(w, "Wallet Attestation", "instance key", PurposeInstance, key, thumbprint, req.InstanceKeyCertificateChain)
+	outcome, level, ok := s.checkEvidence(w, "Wallet Attestation", "instance key", PurposeInstance, key, thumbprint, req.InstanceKeyCertificateChain)
 	if !ok {
 		return
 	}
-	jwt, err := s.p.Attest(s.cfg.ClientID, key, s.cfg.Now(), WalletAttestationLifetime)
+	ctx := r.Context()
+	id, err := s.instanceFor(ctx, key, thumbprint, level)
+	var jwt string
 	if err == nil {
-		s.cfg.Logf("wallet provider: Wallet Attestation for instance key %s: %s", thumbprint, outcome)
+		jwt, err = s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{InstanceID: id, ClientID: s.cfg.ClientID})
+	}
+	switch {
+	case errors.Is(err, wp.ErrInstanceRevoked):
+		writeError(w, http.StatusForbidden, "this wallet instance is revoked")
+		return
+	case errors.Is(err, wp.ErrInstanceNotActive):
+		writeError(w, http.StatusForbidden, "this wallet instance is suspended")
+		return
+	case err != nil:
+		s.cfg.Logf("wallet provider: Wallet Attestation for instance key %s: %v", thumbprint, err)
+	default:
+		s.cfg.Logf("wallet provider: Wallet Attestation for instance key %s (instance %s): %s", thumbprint, id, outcome)
 	}
 	writeAttestation(w, jwt, err)
+}
+
+// instanceFor returns the instance registered for the instance key
+// key, whose JWK thumbprint is thumbprint, registering it with the
+// library, at level, the first time.
+func (s *service) instanceFor(ctx context.Context, key *ecdsa.PublicKey, thumbprint string, level wp.SecurityLevel) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.instances[thumbprint]; ok {
+		return id, nil
+	}
+	in, err := s.register(ctx, key, level)
+	if err != nil {
+		return "", err
+	}
+	s.instances[thumbprint] = in.ID
+	return in.ID, nil
+}
+
+// register registers key as an instance, at level, with demo-only
+// evidence. Callers hold s.mu.
+func (s *service) register(ctx context.Context, key crypto.PublicKey, level wp.SecurityLevel) (wp.Instance, error) {
+	ch, raw, err := s.libChallenge(ctx, wp.PurposeInstance)
+	if err != nil {
+		return wp.Instance{}, err
+	}
+	ev, err := s.demo.vouch(raw, demoKey{key: key, level: level})
+	if err != nil {
+		return wp.Instance{}, err
+	}
+	defer s.demo.forget(ev)
+	return s.lib.Register(ctx, wp.RegisterRequest{Challenge: ch, InstanceKey: key, Evidence: ev})
+}
+
+// libChallenge issues a library challenge for purpose, for the service
+// itself to use at once, returning it and its raw bytes.
+func (s *service) libChallenge(ctx context.Context, purpose wp.Purpose) (string, []byte, error) {
+	ch, err := s.lib.Challenge(ctx, purpose)
+	if err != nil {
+		return "", nil, err
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(ch.Value)
+	return ch.Value, raw, err
+}
+
+// holderInstanceID returns the shared instance Key Attestations are
+// issued under, registering it the first time with a key of the
+// service's own, which signs nothing.
+func (s *service) holderInstanceID(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.holderInstance != "" {
+		return s.holderInstance, nil
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	in, err := s.register(ctx, &key.PublicKey, wp.SecurityLevelSoftware)
+	if err != nil {
+		return "", err
+	}
+	s.holderInstance = in.ID
+	return in.ID, nil
 }
 
 func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
@@ -259,19 +447,22 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 		keys[i], thumbprints[i] = key, thumbprint
 	}
 	outcomes := make([]string, len(keys))
+	vouched := make([]demoKey, len(keys))
 	for i, key := range keys {
 		var chain []string
 		if req.CertificateChains != nil {
 			chain = req.CertificateChains[i]
 		}
-		outcome, ok := s.checkEvidence(w, "Key Attestation", fmt.Sprintf("keys[%d]", i), PurposeHolder, key, thumbprints[i], chain)
+		outcome, level, ok := s.checkEvidence(w, "Key Attestation", fmt.Sprintf("keys[%d]", i), PurposeHolder, key, thumbprints[i], chain)
 		if !ok {
 			return
 		}
-		outcomes[i] = outcome
+		outcomes[i], vouched[i] = outcome, demoKey{key: key, level: level}
 	}
-	jwt, err := s.p.KeyAttestation(keys, req.Nonce, s.cfg.Now(), KeyAttestationLifetime)
-	if err == nil {
+	jwt, err := s.issueKeyAttestation(r.Context(), vouched, req.Nonce)
+	if err != nil {
+		s.cfg.Logf("wallet provider: Key Attestation: %v", err)
+	} else {
 		for i, outcome := range outcomes {
 			s.cfg.Logf("wallet provider: Key Attestation for holder key %s: %s", thumbprints[i], outcome)
 		}
@@ -279,12 +470,46 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 	writeAttestation(w, jwt, err)
 }
 
+// issueKeyAttestation has the library issue a Key Attestation over the
+// keys vouched for, carrying nonce, under the shared holder instance.
+func (s *service) issueKeyAttestation(ctx context.Context, vouched []demoKey, nonce string) (string, error) {
+	id, err := s.holderInstanceID(ctx)
+	if err != nil {
+		return "", err
+	}
+	ch, raw, err := s.libChallenge(ctx, wp.PurposeHolder)
+	if err != nil {
+		return "", err
+	}
+	ev, err := s.demo.vouch(raw, vouched...)
+	if err != nil {
+		return "", err
+	}
+	defer s.demo.forget(ev)
+	keys := make([]crypto.PublicKey, len(vouched))
+	for i, v := range vouched {
+		keys[i] = v.key
+	}
+	res, err := s.lib.KeyAttestation(ctx, wp.KeyAttestationRequest{
+		InstanceID: id, Challenge: ch, Keys: keys, Evidence: []wp.Evidence{ev}, Nonce: nonce,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(res.AttestedKeys) != len(keys) {
+		return "", fmt.Errorf("the library attested %d of %d keys", len(res.AttestedKeys), len(keys))
+	}
+	return res.JWT, nil
+}
+
 // checkEvidence checks a key's attestation chain, if it was sent one,
 // answering 403 and reporting false for one to refuse; it returns what
-// it made of it, to log.
-func (s *service) checkEvidence(w http.ResponseWriter, what, name, purpose string, key *ecdsa.PublicKey, thumbprint string, chain []string) (string, bool) {
+// it made of it, to log, and the security level the service vouches
+// for the key at: StrongBox or the TEE for a hardware chain, software
+// for any other, and for a key sent without one.
+func (s *service) checkEvidence(w http.ResponseWriter, what, name, purpose string, key *ecdsa.PublicKey, thumbprint string, chain []string) (string, wp.SecurityLevel, bool) {
 	if len(chain) == 0 {
-		return "no key attestation chain (attested as before, unverified)", true
+		return "no key attestation chain (vouched for by the demo, unverified)", wp.SecurityLevelSoftware, true
 	}
 	outcome, err := s.ev.check(purpose, key, thumbprint, chain)
 	if err == nil && s.cfg.RequireHardwareKeyAttestation && !outcome.Hardware {
@@ -293,9 +518,20 @@ func (s *service) checkEvidence(w http.ResponseWriter, what, name, purpose strin
 	if err != nil {
 		s.cfg.Logf("wallet provider: refused a %s for %s %s: %v", what, name, thumbprint, err)
 		writeError(w, http.StatusForbidden, fmt.Sprintf("%s: key attestation: %v", name, err))
-		return "", false
+		return "", "", false
 	}
-	return outcome.String(), true
+	return outcome.String(), outcome.level(), true
+}
+
+// level is the security level the outcome shows the key is held at.
+func (o KeyEvidenceOutcome) level() wp.SecurityLevel {
+	switch {
+	case !o.Hardware:
+		return wp.SecurityLevelSoftware
+	case o.KeyMintSecurityLevel == androidattest.StrongBox && o.AttestationSecurityLevel == androidattest.StrongBox:
+		return wp.SecurityLevelStrongBox
+	}
+	return wp.SecurityLevelTEE
 }
 
 // decodeRequest reads a JSON request body of at most maxRequestBytes

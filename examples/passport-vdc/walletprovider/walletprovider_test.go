@@ -5,15 +5,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"strings"
 	"testing"
-	"time"
-
-	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/attestation"
 )
 
 const testIssuer = "https://provider.example"
@@ -91,80 +85,5 @@ func TestLoad_RejectsCertificateForAnotherKey(t *testing.T) {
 	}
 	if _, err := Load(testIssuer, data); err == nil {
 		t.Fatal("Load accepted a certificate for another key")
-	}
-}
-
-// TestKeyAttestation_VerifiesAgainstCertificate checks a Key Attestation
-// built from KeyAttestationHeader and KeyAttestationClaims carries the
-// provider's certificate (not the CA) as x5c, verifies with its key and
-// attests the given key.
-func TestKeyAttestation_VerifiesAgainstCertificate(t *testing.T) {
-	p, err := New(testIssuer)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	claims, err := p.KeyAttestationClaims([]*ecdsa.PublicKey{&holder.PublicKey}, now, time.Minute)
-	if err != nil {
-		t.Fatalf("KeyAttestationClaims: %v", err)
-	}
-	claims.IssuedAt = now.Unix()
-	compact, err := attestation.Issue(p.Key, oid4vci.ES256, p.KeyAttestationHeader(), claims)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	parsed, err := attestation.Parse(compact)
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-	if x5c := parsed.X5C(); len(x5c) != 1 {
-		t.Fatalf("x5c has %d certificates, want just the provider's", len(x5c))
-	}
-	verified, err := parsed.Verify(p.Certificate.PublicKey, oid4vci.ES256, attestation.VerifyOptions{Now: now, RequireExpiry: true})
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-	if ok, err := verified.KeyAttested(&holder.PublicKey); err != nil || !ok {
-		t.Errorf("KeyAttested(holder) = %v, %v; want true", ok, err)
-	}
-	if verified.KeyStorage != nil || verified.UserAuthentication != nil {
-		t.Error("the demo asserts an attack-potential level for software keys")
-	}
-}
-
-// TestAttest_CarriesX5C checks a Wallet Attestation conveys the
-// provider's key by x5c — its certificate alone, not the CA (HAIP 1.0
-// §4.4.1) — and verifies with that certificate's key.
-func TestAttest_CarriesX5C(t *testing.T) {
-	p, err := New(testIssuer)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	instance, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compact, err := p.Attest("demo-wallet", &instance.PublicKey, time.Now(), time.Hour)
-	if err != nil {
-		t.Fatalf("Attest: %v", err)
-	}
-	encoded, _, _ := strings.Cut(compact, ".")
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var header struct {
-		X5C []string `json:"x5c"`
-		Kid string   `json:"kid"`
-	}
-	if err := json.Unmarshal(raw, &header); err != nil {
-		t.Fatal(err)
-	}
-	if len(header.X5C) != 1 || header.X5C[0] != base64.StdEncoding.EncodeToString(p.Certificate.Raw) {
-		t.Fatalf("x5c = %v, want just the provider's certificate", header.X5C)
 	}
 }
