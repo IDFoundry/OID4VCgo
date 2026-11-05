@@ -5,11 +5,11 @@
 
 ### ⚠ BREAKING CHANGES
 
-* **mobile:** ABI 15. The gomobile WalletProvider's KeyAttestation is KeyAttestation(instanceKeyJWK, keysJWK, nonce). A Kotlin WalletProvider building KeyAttestationRequest or implementing the JWK-only keyAttestation takes the instance key; a Swift one implements keyAttestation(instanceKey:keys:nonce:). Send it to the backend as the Key Attestation's instance_key. The wrappers refuse a framework of another ABI version.
+* **walletflow:** walletflow.WalletProvider.KeyAttestation is now KeyAttestation(ctx, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string). Implementations take the issuance's instance key and pass it to the Wallet Provider (walletprovider.KeyAttestationRequest.InstanceKey, instance_key on POST /v1/key-attestation). An issuance redeemed anonymously that needs a Key Attestation now needs Config.ClientID.
 
 ### Features
 
-* **mobile:** give the Wallet Provider the issuance's instance key for each Key Attestation (ABI 15) ([effbc6a](https://github.com/IDFoundry/OID4VCgo/commit/effbc6ae01dd80bab975364b2eed4fa02472a8b9))
+* **walletflow:** pass the issuance's instance key with every Key Attestation request ([ec4d6d1](https://github.com/IDFoundry/OID4VCgo/commit/ec4d6d1e7145f05aa3a8d8cb2e0e96950fa7244f))
 
 ## [0.66.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.65.1...v0.66.0) (2026-11-05)
 
