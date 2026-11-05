@@ -354,11 +354,19 @@ changes whether *every* bullet below is `(done)`.
   pool in one call, and `Cache` keeps the tokens Checkers verified, by
   uri and media type, until the earliest of the token's exp, its iat
   plus ttl, and its `MaxAge` (5 minutes by default), bounded in entries
-  and bytes, with one fetch for concurrent misses. A failure is never
-  cached, and a kept token is never trusted for being kept: every hit is
-  verified again with the calling Checker's own roots, binding, policy,
-  revocation and clock, and only the token's parsed claims and
-  decompressed list (which depend on its bytes alone) are reused. An
+  and bytes. It keeps what a full verification found that depends on
+  the token's bytes alone (the signer's chain the token carries, whose
+  leaf's key its signature verified under, its parsed claims, and its
+  list decompressed), not the token. A kept token is never trusted for
+  being kept: every hit verifies that chain again to the calling
+  Checker's own roots at its own clock, with its policy, revocation and
+  issuer binding, and checks the token's iss, sub, size and times again.
+  Only the signature, typ, parse and decompression aren't redone, so a
+  hit costs a chain verification, whatever the list's size. Concurrent
+  misses share one fetch, which the first to verify it decompresses for
+  all. A failed fetch, or a token a check refused, is kept for
+  `MaxFailureAge` (30 seconds): the checks in that time fail with the
+  fetch's error, or verify the kept token again rather than fetch it. An
   `identifierlist.Checker` takes the same `Cache`. `Publisher` is an
   `http.Handler` serving a signed token in either encoding by
   `Accept`, cached for `CacheFor` so unauthenticated requests don't

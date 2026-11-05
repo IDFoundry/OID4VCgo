@@ -43,6 +43,16 @@ them.
 - `StatusIndices().Delete` deletes a list's rows in batches; an
   interrupted one finishes when called again.
 
+### Status list caching (`statuslist.Cache`)
+
+- **Failures are kept for `CacheOptions.MaxFailureAge`**, 30 seconds by
+  default. While a failed fetch is kept, checks of the same uri fail
+  with its error and don't fetch again. While a token a check refused
+  is kept, the checks verify that token again and don't fetch it. So
+  once a status list server recovers, or reissues a list checks
+  refused, checks can take up to `MaxFailureAge` to see it. Set it
+  shorter for a quicker retry, or call `Purge`.
+
 ## v0.67.0 → v0.68.0
 
 ### Wallet Provider (`walletprovider`)
