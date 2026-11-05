@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"sync"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/listhttp"
 )
 
 // Publisher signs an identifier list from the current identifiers:
@@ -23,9 +22,11 @@ import (
 // calls Token (or IssueToken) on its own schedule and needs nothing
 // else here; see IssueToken for the Content-Type the host must serve.
 // ServeHTTP signs a token once and serves it for CacheFor, so requests
-// — which anyone can make — don't each cost a signature; Invalidate
-// drops it after a revocation. A Publisher must not be copied after
-// first use; use it by pointer.
+// — which anyone can make — don't each cost a signature, and
+// concurrent requests wait on one signature; Invalidate drops it after
+// a revocation. A response carries a strong ETag, and a request whose
+// If-None-Match names it is answered 304 Not Modified. A Publisher
+// must not be copied after first use; use it by pointer.
 type Publisher struct {
 	// URI is the list's uri: every token's sub, and the uri MSOs name.
 	// REQUIRED.
@@ -75,15 +76,8 @@ type Publisher struct {
 	// Now defaults to time.Now.
 	Now func() time.Time
 
-	mu       sync.Mutex
-	token    []byte
-	signedAt time.Time
-	exp      time.Time
+	cached listhttp.Cache
 }
-
-// signTimeout bounds a signature ServeHTTP makes for its cache, which
-// doesn't end with the request that started it.
-const signTimeout = 30 * time.Second
 
 // Token signs a new identifier list from the current identifiers. It
 // never caches.
@@ -143,73 +137,23 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	served, signErr := p.cachedToken(r.Context())
+	served, signErr := p.cached.Get(r.Context(), p.cacheWindow(), p.now, p.sign)
 	if signErr != nil && p.OnError != nil {
 		p.OnError(r, signErr)
 	}
-	if served.token == nil {
+	if served.Token == nil {
 		http.Error(w, "the identifier list is unavailable", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", MediaType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if p.TTL > 0 {
-		// No longer than the ttl left, nor past the token's exp.
-		maxAge := max(min(p.TTL-served.now.Sub(served.signedAt), served.exp.Sub(served.now)), 0)
-		w.Header().Set("Cache-Control", "max-age="+strconv.FormatInt(int64(maxAge/time.Second), 10))
-	}
-	// #nosec G705 -- token is an identifier list this Publisher signed,
-	// sent as its own media type with nosniff, never HTML.
-	_, _ = w.Write(served.token)
-}
-
-// servedToken is a token ServeHTTP answers with, when it was signed
-// and expires, and the time it's served at.
-type servedToken struct {
-	token              []byte
-	signedAt, exp, now time.Time
-}
-
-// cachedToken returns the cached token, signing a new one once it's
-// older than the cache window. Signing happens under the lock, so
-// concurrent requests share one signature, with a context that doesn't
-// end with the request that happens to start it. When signing fails
-// and the cached token hasn't expired, it's returned with the error.
-func (p *Publisher) cachedToken(ctx context.Context) (servedToken, error) {
-	signCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signTimeout)
-	defer cancel()
-	window := p.cacheWindow()
-	if window <= 0 {
-		// Nothing shared: a token per request, signed without the lock.
-		now := p.now()
-		token, exp, err := p.sign(signCtx, now)
-		return servedToken{token: token, signedAt: now, exp: exp, now: now}, err
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	now := p.now()
-	cached := servedToken{token: p.token, signedAt: p.signedAt, exp: p.exp, now: now}
-	if p.token != nil && now.Sub(p.signedAt) < window && !now.Before(p.signedAt) {
-		return cached, nil
-	}
-	token, exp, err := p.sign(signCtx, now)
-	if err != nil {
-		if p.token != nil && !now.Before(p.signedAt) && now.Before(p.exp) {
-			return cached, err
-		}
-		return servedToken{}, err
-	}
-	p.token, p.signedAt, p.exp = token, now, exp
-	return servedToken{token: token, signedAt: now, exp: exp, now: now}, nil
+	// Uncompressed, Write can't fail.
+	_ = listhttp.Write(w, r, served, MediaType, p.TTL, false)
 }
 
 // Invalidate drops the cached token, so the next request is signed
 // from the current identifiers: call it after a revocation. Until one
 // is, ServeHTTP has no token to fall back on.
 func (p *Publisher) Invalidate() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.token = nil
+	p.cached.Invalidate()
 }
 
 func (p *Publisher) cacheWindow() time.Duration {

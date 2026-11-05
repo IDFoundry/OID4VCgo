@@ -1,8 +1,6 @@
 package statuslist
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto"
 	"crypto/x509"
@@ -11,11 +9,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/listhttp"
 )
 
 // Publisher serves a Status List Token at its uri (draft-14 §8.1): an
@@ -33,11 +31,15 @@ import (
 // for the JWT form alone 406 Not Acceptable.
 //
 // Each form's token is signed once and served for CacheFor, so
-// requests — which anyone can make — don't each cost a signature. A
-// status change reaches Relying Parties within CacheFor, unless the
-// issuer calls Invalidate when it makes one, plus however long they
-// cache the token themselves (TTL). A Publisher must not be copied
-// after first use; use it by pointer.
+// requests — which anyone can make — don't each cost a signature, and
+// concurrent requests for a form wait on one signature. A status
+// change reaches Relying Parties within CacheFor, unless the issuer
+// calls Invalidate when it makes one, plus however long they cache the
+// token themselves (TTL); while signing a new token fails, the form's
+// cached one is served until its exp, and OnError told. A response
+// carries a strong ETag, and a request whose If-None-Match names it is
+// answered 304 Not Modified. A Publisher must not be copied after
+// first use; use it by pointer.
 //
 // Checker (with Fetcher) is the Relying Party side of the same exchange.
 type Publisher struct {
@@ -73,9 +75,10 @@ type Publisher struct {
 	Lifetime time.Duration
 
 	// TTL, if positive, is how long a Relying Party may cache a token:
-	// its ttl claim, and the response's Cache-Control max-age. It must
-	// be at least a second, which is what a ttl claim counts in, and no
-	// longer than Lifetime.
+	// its ttl claim, and the bound on the response's Cache-Control
+	// max-age, which counts down the ttl left on the token served. It
+	// must be at least a second, which is what a ttl claim counts in,
+	// and no longer than Lifetime.
 	TTL time.Duration
 
 	// MaxTokenBytes is the largest token Token signs; zero means
@@ -92,17 +95,17 @@ type Publisher struct {
 	// for at least half its lifetime.
 	CacheFor time.Duration
 
+	// OnError, if set, is called with the request and the error when
+	// ServeHTTP can't sign a token: when it answers 500, and when it
+	// answers with the form's cached token instead, still within its
+	// exp, because signing a new one failed. The response doesn't carry
+	// the error.
+	OnError func(r *http.Request, err error)
+
 	// Now defaults to time.Now.
 	Now func() time.Time
 
-	mu     sync.Mutex
-	cached [2]cachedToken // JWT, CWT
-}
-
-type cachedToken struct {
-	token    []byte
-	gzipped  []byte // token, gzip-compressed once first asked for
-	signedAt time.Time
+	cached [2]listhttp.Cache // JWT, CWT
 }
 
 // ServeHTTP implements http.Handler.
@@ -126,29 +129,28 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this status list is served as "+CWTTokenMediaType+" only", http.StatusNotAcceptable)
 		return
 	}
-	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
-	token, err := p.cachedTokenFor(r.Context(), cwt, gz)
-	if err != nil {
+	form, mediaType := FormJWT, TokenMediaType
+	if cwt {
+		form, mediaType = FormCWT, CWTTokenMediaType
+	}
+	// A signature ServeHTTP makes for its cache doesn't end with the
+	// request that happens to start it.
+	served, err := p.cached[form].Get(r.Context(), p.cacheWindow(), p.now, func(ctx context.Context, now time.Time) ([]byte, time.Time, error) {
+		return p.token(ctx, cwt, now)
+	})
+	if err != nil && p.OnError != nil {
+		p.OnError(r, err)
+	}
+	if served.Token == nil {
 		http.Error(w, "the status list is unavailable", http.StatusInternalServerError)
 		return
 	}
-	mediaType := TokenMediaType
-	if cwt {
-		mediaType = CWTTokenMediaType
-	}
 	w.Header().Set("Vary", "Accept, Accept-Encoding")
-	if gz {
-		// draft-14 §8.2: the response "SHOULD use gzip Content-Encoding".
-		w.Header().Set("Content-Encoding", "gzip")
+	// draft-14 §8.2: the response "SHOULD use gzip Content-Encoding".
+	gz := acceptsGzip(r.Header.Values("Accept-Encoding"))
+	if err := listhttp.Write(w, r, served, mediaType, p.TTL, gz); err != nil {
+		http.Error(w, "the status list is unavailable", http.StatusInternalServerError)
 	}
-	w.Header().Set("Content-Type", mediaType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if p.TTL > 0 {
-		w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(int(p.TTL.Seconds())))
-	}
-	// #nosec G705 -- token is a Status List Token this Publisher signed,
-	// sent as its own media type with nosniff, never HTML.
-	_, _ = w.Write(token)
 }
 
 // Form is a Status List Token's form: a JWT (an SD-JWT VC's reference)
@@ -206,59 +208,6 @@ func (p *Publisher) servesCWT(accept string) bool {
 	return cwtQ >= jwtQ
 }
 
-// cachedTokenFor returns the form's cached token, signing a new one
-// once the cached one is older than the cache window, gzip-compressed
-// when gz is set. Signing and compressing happen under the lock, so
-// concurrent requests share one signature and one compression.
-func (p *Publisher) cachedTokenFor(ctx context.Context, cwt, gz bool) ([]byte, error) {
-	window := p.cacheWindow()
-	if window <= 0 {
-		token, err := p.Token(ctx, cwt)
-		if err != nil || !gz {
-			return token, err
-		}
-		return gzipBytes(token)
-	}
-	i := 0
-	if cwt {
-		i = 1
-	}
-	now := p.now()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	c := &p.cached[i]
-	if c.token == nil || now.Sub(c.signedAt) >= window || now.Before(c.signedAt) {
-		token, err := p.Token(ctx, cwt)
-		if err != nil {
-			return nil, err
-		}
-		*c = cachedToken{token: token, signedAt: now}
-	}
-	if !gz {
-		return c.token, nil
-	}
-	if c.gzipped == nil {
-		gzipped, err := gzipBytes(c.token)
-		if err != nil {
-			return nil, err
-		}
-		c.gzipped = gzipped
-	}
-	return c.gzipped, nil
-}
-
-func gzipBytes(b []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(b); err != nil {
-		return nil, err
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
 // acceptsGzip reports whether an Accept-Encoding header accepts gzip
 // with a q above zero (RFC 9110 §12.5.3).
 func acceptsGzip(acceptEncoding []string) bool {
@@ -283,11 +232,12 @@ func acceptsGzip(acceptEncoding []string) bool {
 
 // Invalidate drops the cached tokens, so the next request is signed
 // from the current statuses — call it after a status changes, so the
-// change is served at once instead of within CacheFor.
+// change is served at once instead of within CacheFor. Until one is,
+// ServeHTTP has no token to fall back on if signing fails.
 func (p *Publisher) Invalidate() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cached = [2]cachedToken{}
+	for i := range p.cached {
+		p.cached[i].Invalidate()
+	}
 }
 
 // cacheWindow is CacheFor's effective value.
@@ -321,24 +271,31 @@ func (p *Publisher) now() time.Time {
 // Token signs a new Status List Token for the current statuses: CWT
 // when cwt is true, JWT otherwise. Unlike ServeHTTP, it never caches.
 func (p *Publisher) Token(ctx context.Context, cwt bool) ([]byte, error) {
+	token, _, err := p.token(ctx, cwt, p.now())
+	return token, err
+}
+
+// token is Token for a token issued at now, and returns its exp.
+func (p *Publisher) token(ctx context.Context, cwt bool, now time.Time) ([]byte, time.Time, error) {
 	if p.URI == "" || p.Signer == nil || len(p.Chain) == 0 || p.Statuses == nil {
-		return nil, errors.New("statuslist: Publisher.URI, Signer, Chain and Statuses are required")
+		return nil, time.Time{}, errors.New("statuslist: Publisher.URI, Signer, Chain and Statuses are required")
 	}
 	if err := p.validate(); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	limit, err := VerifyOptions{MaxTokenBytes: p.MaxTokenBytes}.maxTokenBytes()
 	if err != nil {
-		return nil, fmt.Errorf("statuslist: Publisher.MaxTokenBytes: %w", err)
+		return nil, time.Time{}, fmt.Errorf("statuslist: Publisher.MaxTokenBytes: %w", err)
 	}
-	token, err := p.sign(ctx, cwt)
+	exp := now.Add(p.lifetime()).Unix()
+	token, err := p.sign(ctx, cwt, now, exp)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	if len(token) > limit {
-		return nil, fmt.Errorf("statuslist: the token is %d bytes, over the %d a Relying Party reads (Publisher.MaxTokenBytes)", len(token), limit)
+		return nil, time.Time{}, fmt.Errorf("statuslist: the token is %d bytes, over the %d a Relying Party reads (Publisher.MaxTokenBytes)", len(token), limit)
 	}
-	return token, nil
+	return token, time.Unix(exp, 0), nil
 }
 
 // validate checks p's settings.
@@ -368,8 +325,9 @@ func (p *Publisher) cwtOnly() bool {
 	return err == nil && alg != cose.ES256 && alg != cose.EdDSA
 }
 
-// sign is Token, before its size check.
-func (p *Publisher) sign(ctx context.Context, cwt bool) ([]byte, error) {
+// sign is token, before its size check: a token issued at now that
+// expires at exp.
+func (p *Publisher) sign(ctx context.Context, cwt bool, now time.Time, exp int64) ([]byte, error) {
 	statuses, err := p.Statuses(ctx)
 	if err != nil {
 		return nil, err
@@ -382,8 +340,6 @@ func (p *Publisher) sign(ctx context.Context, cwt bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := p.now()
-	exp := now.Add(p.lifetime()).Unix()
 	claims := TokenClaims{Sub: p.URI, Iat: now.Unix(), Exp: &exp, StatusList: sl}
 	if p.TTL > 0 {
 		ttl := int64(p.TTL.Seconds())

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/base64"
+	mrand "math/rand/v2"
 	"reflect"
 	"testing"
 )
@@ -83,6 +84,68 @@ func TestCompressDecompress_RoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, original) {
 		t.Errorf("round trip = %#v, want %#v", got, original)
+	}
+}
+
+// sparseStatuses is a 1-bit list of n statuses with share of them set,
+// scattered at random, as revocations are.
+func sparseStatuses(n int, share float64) []uint8 {
+	r := mrand.New(mrand.NewPCG(1, 2))
+	statuses := make([]uint8, n)
+	for i := range statuses {
+		if r.Float64() < share {
+			statuses[i] = 1
+		}
+	}
+	return statuses
+}
+
+// TestCompress_KeepsTheSmallerStream: compress returns the default
+// level's stream or Huffman-only's, whichever is smaller — the first
+// for a list of runs, the second for scattered bits — and either
+// decodes to the list.
+func TestCompress_KeepsTheSmallerStream(t *testing.T) {
+	scattered, err := Pack(Bits1, sparseStatuses(1<<20, 0.025))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := make([]byte, 1<<17)
+	for i := range len(runs) / 2 {
+		runs[i] = 0xff
+	}
+	for name, tc := range map[string]struct {
+		packed []byte
+		level  int
+	}{"runs": {runs, zlib.DefaultCompression}, "scattered": {scattered, zlib.HuffmanOnly}} {
+		got, err := compress(tc.packed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := compressLevel(tc.packed, tc.level)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: compressed to %d bytes, want the level %d stream's %d", name, len(got), tc.level, len(want))
+		}
+		if decoded, err := decompress(got); err != nil || !bytes.Equal(decoded, tc.packed) {
+			t.Errorf("%s: decompress: %v", name, err)
+		}
+	}
+}
+
+// BenchmarkCompress_Sparse compresses a 2^24-entry list with 2.5% of
+// it set, which zlib's highest level takes seconds over.
+func BenchmarkCompress_Sparse(b *testing.B) {
+	packed, err := Pack(Bits1, sparseStatuses(1<<24, 0.025))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(packed)))
+	for b.Loop() {
+		if _, err := compress(packed); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

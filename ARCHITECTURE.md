@@ -327,7 +327,9 @@ changes whether *every* bullet below is `(done)`.
     `ParseCWTStatusClaim`), and for identifier_list, `identifierlist`.
 - **`statuslist`** (done) — Token Status List (`draft-ietf-oauth-status-list-14`, as HAIP 1.0 §9.4 pins),
   both encodings: bit-packing and ZLIB compression (`Pack`/`Unpack`,
-  `New`/`Decode`, shared by both), Status List Token issuance/verification
+  `New`/`Decode`, shared by both; compressed at zlib's default level and
+  Huffman-only, keeping the smaller, since the highest level the draft
+  recommends takes seconds over a large, sparse list), Status List Token issuance/verification
   in JWT/JOSE (§5.1, §6.2 — `IssueToken`/`VerifyToken`, built on
   `internal/jose` for the same `keys.KeyManager`-isn't-reusable reason
   `credential/sdjwtvc` is) and CWT/COSE (§5.2, §6.3 —
@@ -371,7 +373,11 @@ changes whether *every* bullet below is `(done)`.
   `http.Handler` serving a signed token in either encoding by
   `Accept`, cached for `CacheFor` so unauthenticated requests don't
   each cost a signature (`Invalidate` drops the cache when a status
-  changes). `Allocator` hands out a Referenced Token's index: uniformly
+  changes), with one signature per form for concurrent requests, made
+  off the request; it keeps serving an unexpired token when re-signing
+  fails (`OnError`), and answers an `If-None-Match` naming its strong
+  ETag with 304 — `internal/listhttp`, shared with `identifierlist`'s
+  `Publisher`. `Allocator` hands out a Referenced Token's index: uniformly
   random and never reused (draft-14 §12.4, §12.5.1, §13.3), reserved
   atomically in an `IndexStore` (`MemoryIndexStore` for tests; a
   durable store in production), moving to the next list at its
@@ -401,7 +407,8 @@ changes whether *every* bullet below is `(done)`.
   reader would (no exp, an empty identifier, an oversized list).
   `Publisher` is optional sugar over it (`Token`, and a cached
   `ServeHTTP` that keeps serving an unexpired token when re-signing
-  fails and reports failures to `OnError`). `VerifyToken` verifies the
+  fails, reports failures to `OnError`, and answers `If-None-Match` by
+  a strong ETag). `VerifyToken` verifies the
   protected x5chain to roots, the signature, typ, the claims (no
   `status_list`) and `statuslist`'s time rules with exp required
   (§12.3.6.3; the rules are shared, in `internal/jwtdate`, as is the

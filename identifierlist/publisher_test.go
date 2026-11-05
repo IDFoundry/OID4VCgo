@@ -122,8 +122,8 @@ func TestPublisher_Caches(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status %d", rec.Code)
 			}
-			if got := rec.Header().Get("Cache-Control"); got != "max-age="+wantMaxAge {
-				t.Errorf("Cache-Control %q, want max-age=%s", got, wantMaxAge)
+			if got := rec.Header().Get("Cache-Control"); got != "public, max-age="+wantMaxAge {
+				t.Errorf("Cache-Control %q, want public, max-age=%s", got, wantMaxAge)
 			}
 		}
 	}
@@ -162,5 +162,28 @@ func TestPublisher_Caches(t *testing.T) {
 	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/l", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expired cache, failed signing: status %d, want 500", rec.Code)
+	}
+}
+
+// TestPublisher_ETag: a response carries a strong ETag, and a request
+// naming it in If-None-Match is answered 304 without a body.
+func TestPublisher_ETag(t *testing.T) {
+	pki := newPKI(t)
+	p := &Publisher{
+		URI: testURI, Signer: pki.key, Chain: []*x509.Certificate{pki.leaf}, TTL: time.Minute,
+		Identifiers: func(context.Context) ([][]byte, error) { return nil, nil },
+	}
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/l", nil))
+	tag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || tag == "" {
+		t.Fatalf("status %d, ETag %q", rec.Code, tag)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/l", nil)
+	r.Header.Set("If-None-Match", tag)
+	rec = httptest.NewRecorder()
+	p.ServeHTTP(rec, r)
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != tag {
+		t.Errorf("If-None-Match its ETag: %d, headers %v; want 304", rec.Code, rec.Header())
 	}
 }
