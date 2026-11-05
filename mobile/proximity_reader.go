@@ -671,12 +671,11 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation},
 			Cache:   statusCache,
 		}
-		revoked, _, err := checker.Check(ctx, identifierlist.Ref(*ref), v.IssuerChain)
-		if err != nil {
-			return "", err
-		}
-		if revoked {
+		switch err := checker.RequireNotRevoked(ctx, identifierlist.Ref(*ref), v.IssuerChain); {
+		case errors.Is(err, identifierlist.ErrRevoked):
 			status = statuslist.StatusInvalid
+		case err != nil:
+			return "", err
 		}
 	}
 	return statusValue(status), nil

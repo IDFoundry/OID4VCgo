@@ -4,8 +4,9 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
-	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -251,59 +253,89 @@ func TestCache_HitIsVerifiedAgain(t *testing.T) {
 	s.wantFetches(t, before, "the trusted Checker, after the others")
 }
 
-// A memo is used only for the bytes it was made from, and even given
-// one, a check verifies the token's signature: a changed token is
-// refused.
-func TestCache_MemoNeedsItsToken(t *testing.T) {
-	s := newCacheServer(t)
-	opts := VerifyOptions{IssuerKey: &s.leafKey.PublicKey, Now: s.clock.Now}
+// revocationFunc is a certrevocation.Checker calling itself.
+type revocationFunc func(context.Context, certrevocation.Check) error
+
+func (f revocationFunc) CheckRevocation(ctx context.Context, check certrevocation.Check) error {
+	return f(ctx, check)
+}
+
+// A hit asks the Checker's Revocation about the signer's chain each
+// time, in both forms, and is refused once it says the signer is
+// revoked.
+func TestCache_HitChecksRevocation(t *testing.T) {
 	for _, cwt := range []bool{false, true} {
-		req, _ := http.NewRequest(http.MethodGet, s.uri("/l"), nil)
-		if cwt {
-			req.Header.Set("Accept", CWTTokenMediaType)
-		}
-		resp, err := s.srv.Client().Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var buf strings.Builder
-		_, _ = io.Copy(&buf, resp.Body)
-		_ = resp.Body.Close()
-		token := []byte(buf.String())
-		ref := StatusListRef{Idx: 1, URI: s.uri("/l")}
-		check := func(token []byte, memo *tokenMemo) (StatusType, parsedClaims, error) {
-			if cwt {
-				o := opts
-				o.RequireExp, o.X5ChainProtectedOnly = true, true
-				return checkCWTX5Chain(context.Background(), token, s.roots, ref, o, memo)
+		s := newCacheServer(t)
+		c := s.checker(NewCache(CacheOptions{Now: s.clock.Now}))
+		var calls atomic.Int32
+		var revoked atomic.Bool
+		c.Options.Revocation = revocationFunc(func(_ context.Context, check certrevocation.Check) error {
+			calls.Add(1)
+			if revoked.Load() {
+				return fmt.Errorf("%w: %s", certrevocation.ErrRevoked, check.Chain[0].Subject)
 			}
-			return checkX5C(context.Background(), string(token), s.roots, ref, opts, memo)
+			return nil
+		})
+		for range 3 {
+			s.check(t, c, "/l", 1, cwt)
 		}
-		status, parsed, err := check(token, nil)
-		if err != nil || status != StatusInvalid {
-			t.Fatalf("cwt=%v: %v, %v", cwt, status, err)
+		s.wantFetches(t, 1, fmt.Sprintf("cwt=%v, three checks", cwt))
+		if got := calls.Load(); got != 3 {
+			t.Errorf("cwt=%v: Revocation asked %d times in three checks", cwt, got)
 		}
-		memo := newTokenMemo(token, parsed)
-		if memo.of(token) != memo || memo.decoded == nil {
-			t.Errorf("cwt=%v: the memo isn't its own token's, or has no list", cwt)
-		}
-		if status, _, err := check(token, memo); err != nil || status != StatusInvalid {
-			t.Errorf("cwt=%v, with the memo: %v, %v", cwt, status, err)
-		}
-		tampered := append([]byte{}, token...)
-		tampered[len(tampered)-2] ^= 1
-		if memo.of(tampered) != nil {
-			t.Errorf("cwt=%v: a memo matched other bytes", cwt)
-		}
-		if _, _, err := check(tampered, memo); err == nil {
-			t.Errorf("cwt=%v: a tampered token passed given the original's memo", cwt)
+		revoked.Store(true)
+		if _, _, err := c.Check(context.Background(), StatusListRef{Idx: 1, URI: s.uri("/l")}, cwt); !errors.Is(err, certrevocation.ErrRevoked) {
+			t.Errorf("cwt=%v, the signer revoked: %v", cwt, err)
 		}
 	}
 }
 
-// A failed fetch or a failed verification is never cached, and an
-// expired token whose refetch fails fails the check.
-func TestCache_FailuresNotCached(t *testing.T) {
+// A hit costs the signer's chain, not the token: it neither verifies
+// the signature again nor parses or decompresses the list. What the
+// Cache keeps of a list is about its decompressed form and its lst,
+// not the token as well.
+func TestCache_HitCost(t *testing.T) {
+	s := newCacheServer(t)
+	// One in 20 revoked, at random: a list that doesn't compress away.
+	statuses := make([]uint8, 1<<20)
+	random := rand.New(rand.NewPCG(1, 2))
+	for i := range statuses {
+		if random.IntN(20) == 0 {
+			statuses[i] = 1
+		}
+	}
+	s.set(func(s *cacheServer) { s.statuses = statuses })
+	sl, err := New(Bits1, statuses, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := NewCache(CacheOptions{Now: s.clock.Now})
+	c := s.checker(cache)
+	s.check(t, c, "/l", 0, false)
+	packed := len(statuses) / 8
+	if _, size := cache.engine.Len(); size < int64(packed) || size > int64(packed+len(sl.Lst)+8<<10) {
+		t.Errorf("the Cache keeps %d bytes of a list of %d bytes, its lst %d", size, packed, len(sl.Lst))
+	}
+	const hits = 20
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := range hits {
+		if got := s.check(t, c, "/l", uint64(i), false); got != StatusType(statuses[i]) {
+			t.Fatalf("index %d is %v", i, got)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	s.wantFetches(t, 1, "the hits")
+	if perHit := (after.TotalAlloc - before.TotalAlloc) / hits; perHit > uint64(len(sl.Lst)/4) {
+		t.Errorf("a hit allocates %d bytes, for a list whose lst is %d", perHit, len(sl.Lst))
+	}
+}
+
+// A failed fetch fails the checks of its uri for MaxFailureAge without
+// fetching it again; a token a check refused is verified again by the
+// checks in that time instead of fetched, and cached once one passes;
+// and an expired token whose refetch fails fails the check.
+func TestCache_Failures(t *testing.T) {
 	s := newCacheServer(t)
 	cache := NewCache(CacheOptions{Now: s.clock.Now})
 	c := s.checker(cache)
@@ -314,17 +346,30 @@ func TestCache_FailuresNotCached(t *testing.T) {
 	if _, _, err := c.Check(ctx, ref, false); err == nil {
 		t.Fatal("a failed fetch passed")
 	}
+	s.set(func(s *cacheServer) { s.failing = false })
+	if _, _, err := c.Check(ctx, ref, false); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Errorf("within MaxFailureAge of a failed fetch: %v, want its error", err)
+	}
+	s.wantFetches(t, 1, "a failed fetch, checked twice")
+
+	s.clock.Add(DefaultCacheMaxFailureAge)
 	untrusted := c
 	untrusted.Roots = x509.NewCertPool()
-	s.set(func(s *cacheServer) { s.failing = false })
-	if _, _, err := untrusted.Check(ctx, ref, false); err == nil {
-		t.Fatal("an untrusted token passed")
+	for range 2 {
+		if _, _, err := untrusted.Check(ctx, ref, false); err == nil {
+			t.Fatal("an untrusted token passed")
+		}
 	}
+	s.wantFetches(t, 2, "a refused token, checked twice")
 	if n, _ := cache.engine.Len(); n != 0 {
 		t.Errorf("%d entries after failures, want none", n)
 	}
 	s.check(t, c, "/l", 0, false)
-	s.wantFetches(t, 3, "after two failures and a success")
+	s.check(t, c, "/l", 0, false)
+	s.wantFetches(t, 2, "the refused token, checked by a Checker trusting it")
+	if n, _ := cache.engine.Len(); n != 1 {
+		t.Errorf("%d entries once a check passed, want 1", n)
+	}
 
 	s.clock.Add(DefaultCacheMaxAge)
 	s.set(func(s *cacheServer) { s.failing = true })

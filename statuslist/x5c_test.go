@@ -1,6 +1,7 @@
 package statuslist
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -316,5 +317,17 @@ func TestCheckCWTX5Chain_X5ChainProtectedOnly(t *testing.T) {
 	}
 	if _, _, err := CheckCWTX5Chain(token, roots, ref, VerifyOptions{UnboundSigner: AnyListSigner, X5ChainProtectedOnly: true}); err == nil {
 		t.Error("unprotected x5chain accepted with X5ChainProtectedOnly")
+	}
+	// A Cache's memo of it is refused alike.
+	ctx := context.Background()
+	m, err := verifyMemo(ctx, token, true, roots, x5cTestURI, VerifyOptions{UnboundSigner: AnyListSigner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.recheck(ctx, roots, x5cTestURI, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
+		t.Errorf("unprotected x5chain, cached: %v", err)
+	}
+	if err := m.recheck(ctx, roots, x5cTestURI, VerifyOptions{UnboundSigner: AnyListSigner, X5ChainProtectedOnly: true}); err == nil {
+		t.Error("unprotected x5chain accepted with X5ChainProtectedOnly, cached")
 	}
 }

@@ -33,14 +33,30 @@ type X5ChainTrust struct {
 // Its errors start "decode token: " or "token signer: ", for the caller
 // to prefix with its package.
 func X5ChainSigner(ctx context.Context, sign1 []byte, trust X5ChainTrust) (*x509.Certificate, Alg, error) {
-	protected, unprotected, _, err := DecodeUnverifiedMax(sign1, trust.MaxBytes)
+	chain, _, err := trust.Chain(sign1)
 	if err != nil {
-		return nil, 0, fmt.Errorf("decode token: %w", err)
+		return nil, 0, err
 	}
-	chain := X5ChainOf(protected, unprotected)
-	if trust.ProtectedOnly {
-		chain = protected.X5Chain
+	return trust.Signer(ctx, chain)
+}
+
+// Chain is sign1's x5chain as X5ChainSigner reads it, unverified, and
+// whether it's from the protected header.
+func (trust X5ChainTrust) Chain(sign1 []byte) (chain [][]byte, protected bool, err error) {
+	p, u, _, err := DecodeUnverifiedMax(sign1, trust.MaxBytes)
+	if err != nil {
+		return nil, false, fmt.Errorf("decode token: %w", err)
 	}
+	if trust.ProtectedOnly || len(p.X5Chain) > 0 {
+		return p.X5Chain, true, nil
+	}
+	return u.X5Chain, false, nil
+}
+
+// Signer is X5ChainSigner given chain, the x5chain Chain read: for a
+// caller that verified a token's signature under that chain's leaf
+// before, and checks only its trust again.
+func (trust X5ChainTrust) Signer(ctx context.Context, chain [][]byte) (*x509.Certificate, Alg, error) {
 	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, trust.Roots, trust.Policy, trust.Revocation, trust.Now)
 	if err != nil {
 		return nil, 0, fmt.Errorf("token signer: %w", err)

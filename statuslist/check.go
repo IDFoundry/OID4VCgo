@@ -16,33 +16,22 @@ import (
 // job: this package has no HTTP client and doesn't validate the
 // Referenced Token itself.
 func Check(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	status, parsed, err := checkJWT(token, issuerPub, alg, ref, opts, nil)
-	return failClosed(status, parsed.claims, err)
-}
-
-// checkJWT is Check, before failClosed, given what a Cache remembers of
-// the same token's bytes when memo isn't nil.
-func checkJWT(token string, issuerPub crypto.PublicKey, alg oid4vci.JOSEAlg, ref StatusListRef, opts VerifyOptions, memo *tokenMemo) (StatusType, parsedClaims, error) {
-	parsed, err := verifyToken(token, issuerPub, alg, opts, memo.parsedClaims())
+	parsed, err := verifyToken(token, issuerPub, alg, opts)
 	if err != nil {
-		return 0, parsedClaims{}, err
+		return failClosed(0, TokenClaims{}, err)
 	}
-	return checkClaims(parsed, ref, memo.decodedList())
+	status, parsed, err := checkClaims(parsed, ref, nil)
+	return failClosed(status, parsed.claims, err)
 }
 
 // CheckCWT is Check for a Status List Token in CWT format.
 func CheckCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
-	status, parsed, err := checkCWT(token, issuerPub, alg, ref, opts, nil)
-	return failClosed(status, parsed.claims, err)
-}
-
-// checkCWT is CheckCWT, before failClosed, as checkJWT is Check.
-func checkCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref StatusListRef, opts VerifyOptions, memo *tokenMemo) (StatusType, parsedClaims, error) {
-	parsed, err := verifyTokenCWT(token, issuerPub, alg, opts, memo.parsedClaims())
+	parsed, err := verifyTokenCWT(token, issuerPub, alg, opts)
 	if err != nil {
-		return 0, parsedClaims{}, err
+		return failClosed(0, TokenClaims{}, err)
 	}
-	return checkClaims(parsed, ref, memo.decodedList())
+	status, parsed, err := checkClaims(parsed, ref, nil)
+	return failClosed(status, parsed.claims, err)
 }
 
 // checkClaims is Check/CheckCWT's shared tail once their respective
@@ -52,8 +41,8 @@ func checkCWT(token []byte, issuerPub crypto.PublicKey, alg oid4vci.COSEAlg, ref
 // unless it's nil.
 func checkClaims(parsed parsedClaims, ref StatusListRef, decoded *Decoded) (StatusType, parsedClaims, error) {
 	claims := parsed.claims
-	if claims.Sub != ref.URI {
-		return 0, parsedClaims{}, fmt.Errorf("statuslist: token sub %q does not match the Referenced Token's status_list.uri %q", claims.Sub, ref.URI)
+	if err := checkSub(claims, ref.URI); err != nil {
+		return 0, parsedClaims{}, err
 	}
 	if ref.Idx > math.MaxInt {
 		return 0, parsedClaims{}, fmt.Errorf("statuslist: index %d is out of bounds", ref.Idx)
@@ -69,4 +58,12 @@ func checkClaims(parsed parsedClaims, ref StatusListRef, decoded *Decoded) (Stat
 		return 0, parsedClaims{}, err
 	}
 	return StatusType(status), parsed, nil
+}
+
+// checkSub checks claims are uri's (draft-14 §8.3 step 4).
+func checkSub(claims TokenClaims, uri string) error {
+	if claims.Sub != uri {
+		return fmt.Errorf("statuslist: token sub %q does not match the Referenced Token's status_list.uri %q", claims.Sub, uri)
+	}
+	return nil
 }

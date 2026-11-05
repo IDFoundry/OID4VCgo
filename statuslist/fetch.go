@@ -182,7 +182,7 @@ type Checker struct {
 	// Cache, if set, keeps the Status List Tokens this Checker and
 	// others sharing it fetched and verified, for as long as each
 	// token's exp and ttl and the Cache's MaxAge allow. Each check
-	// verifies a cached token again with this Checker's own Roots and
+	// checks a cached token again with this Checker's own Roots and
 	// Options, so the Checkers sharing a Cache needn't trust the same
 	// signers. Nil fetches every token afresh.
 	Cache *Cache
@@ -225,20 +225,22 @@ func (c Checker) check(ctx context.Context, ref StatusListRef, cwt bool) (Status
 		opts.RequireExp, opts.X5ChainProtectedOnly = true, true
 	}
 	// check's result is failClosed by Check.
-	verify := func(token []byte, memo *tokenMemo) (StatusType, parsedClaims, error) {
-		if cwt {
-			return checkCWTX5Chain(ctx, token, c.Roots, ref, opts, memo)
-		}
-		return checkX5C(ctx, string(token), c.Roots, ref, opts, memo)
-	}
 	if c.Cache != nil {
-		return c.Cache.check(ctx, fetcher, ref.URI, mediaType, verify)
+		return c.Cache.check(ctx, fetcher, ref, mediaType,
+			func(token []byte) (*tokenMemo, error) { return verifyMemo(ctx, token, cwt, c.Roots, ref.URI, opts) },
+			func(m *tokenMemo) error { return m.recheck(ctx, c.Roots, ref.URI, opts) })
 	}
 	token, err := fetcher.Fetch(ctx, ref.URI, mediaType)
 	if err != nil {
 		return 0, TokenClaims{}, err
 	}
-	status, parsed, err := verify(token, nil)
+	var status StatusType
+	var parsed parsedClaims
+	if cwt {
+		status, parsed, err = checkCWTX5Chain(ctx, token, c.Roots, ref, opts)
+	} else {
+		status, parsed, err = checkX5C(ctx, string(token), c.Roots, ref, opts)
+	}
 	return status, parsed.claims, err
 }
 
