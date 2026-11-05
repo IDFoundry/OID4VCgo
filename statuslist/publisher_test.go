@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -175,6 +176,97 @@ func TestPublisher_CachesTokens(t *testing.T) {
 		if got := q.cacheWindow(); got != c.want {
 			t.Errorf("cacheWindow(CacheFor %v, TTL %v, Lifetime %v) = %v, want %v", c.cacheFor, c.ttl, c.lifetime, got, c.want)
 		}
+	}
+}
+
+// TestPublisher_ServesStaleOnError: a failed re-signing serves the
+// form's unexpired cached token, whose Cache-Control max-age counts
+// down, and reports the error; once it has expired, it's a 500.
+func TestPublisher_ServesStaleOnError(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	now := time.Now()
+	var failWith, reported error
+	p := &Publisher{
+		URI: "https://issuer.example/statuslists/1", Signer: key, Chain: []*x509.Certificate{cert}, TTL: time.Minute, Lifetime: 4 * time.Minute,
+		Statuses: func(context.Context) ([]uint8, error) { return []uint8{0, 1}, failWith },
+		Now:      func() time.Time { return now },
+		OnError:  func(_ *http.Request, err error) { reported = err },
+	}
+	get := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s", nil))
+		return rec
+	}
+	first := get()
+	if first.Code != http.StatusOK || first.Header().Get("Cache-Control") != "max-age=60" {
+		t.Fatalf("first: %d, Cache-Control %q", first.Code, first.Header().Get("Cache-Control"))
+	}
+	now = now.Add(15 * time.Second)
+	if rec := get(); rec.Header().Get("Cache-Control") != "max-age=45" {
+		t.Errorf("cached: Cache-Control %q, want max-age=45", rec.Header().Get("Cache-Control"))
+	}
+
+	dbDown := errors.New("db down")
+	failWith = dbDown
+	now = now.Add(time.Minute)
+	rec := get()
+	if rec.Code != http.StatusOK || rec.Body.String() != first.Body.String() || rec.Header().Get("Cache-Control") != "max-age=0" {
+		t.Errorf("stale: %d, Cache-Control %q; want the cached token", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	if !errors.Is(reported, dbDown) {
+		t.Errorf("reported %v, want the Statuses error", reported)
+	}
+
+	now = now.Add(3 * time.Minute)
+	reported = nil
+	if rec := get(); rec.Code != http.StatusInternalServerError || !errors.Is(reported, dbDown) {
+		t.Errorf("expired: %d, reported %v; want 500 and the error", rec.Code, reported)
+	}
+}
+
+// TestPublisher_SharesOneSignature: concurrent requests for a form wait
+// on one signature, and don't hold up a request for the other form.
+func TestPublisher_SharesOneSignature(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	p := &Publisher{
+		URI: "https://issuer.example/statuslists/1", Signer: key, Chain: []*x509.Certificate{cert}, TTL: time.Minute,
+		Statuses: func(context.Context) ([]uint8, error) {
+			if calls.Add(1) == 1 {
+				close(entered)
+				<-release
+			}
+			return []uint8{0, 1}, nil
+		},
+	}
+	get := func(accept string) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/s", nil)
+		r.Header.Set("Accept", accept)
+		p.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	codes := make(chan int, 8)
+	go func() { codes <- get(TokenMediaType) }()
+	<-entered
+	for range cap(codes) - 1 {
+		go func() { codes <- get(TokenMediaType) }()
+	}
+	if code := get(CWTTokenMediaType); code != http.StatusOK || calls.Load() != 2 {
+		t.Errorf("CWT while the JWT is signed: %d, %d signatures; want 200, 2", code, calls.Load())
+	}
+	time.Sleep(20 * time.Millisecond) // let the JWT requests reach the wait
+	close(release)
+	for range cap(codes) {
+		if code := <-codes; code != http.StatusOK {
+			t.Errorf("JWT: status %d", code)
+		}
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("%d signatures, want 2: one per form", n)
 	}
 }
 
