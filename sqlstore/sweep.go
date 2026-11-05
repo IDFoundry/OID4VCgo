@@ -51,18 +51,42 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	}
 	var total int64
 	for _, sw := range sweeps {
-		err := d.writeOne(ctx, func(q querier) error {
-			res, err := q.ExecContext(ctx, sw.statement, now.Unix())
-			if err != nil {
-				return err
-			}
-			n, err := res.RowsAffected()
-			total += n
-			return err
-		})
+		n, err := d.sweepTable(ctx, sw.statement, now)
+		total += n
 		if err != nil {
 			return total, fmt.Errorf("sqlstore: sweep %s: %w", sw.table, err)
 		}
 	}
 	return total, nil
+}
+
+// sweepBatch is about how many rows each of Sweep's writes deletes.
+var sweepBatch = 10000
+
+// sweepTable deletes a table's expired rows in batches, each its own
+// write, so a sweep after a long pause neither holds one transaction
+// open across millions of rows nor, on SQLite, keeps other writers
+// waiting for all of it. Each batch deletes the expired rows up to the
+// sweep_after of the (sweepBatch+1)th, so sweepBatch+1 of them and any
+// expiring in the same second, or every one left when fewer are: a
+// batch reads its rows through the sweep_after index, never the ones
+// before it already deleted. Another Sweep running at the same time
+// deletes some of the same rows first; it only ends this one sooner.
+func (d *DB) sweepTable(ctx context.Context, statement string, now time.Time) (int64, error) {
+	var total int64
+	for {
+		var n int64
+		err := d.writeOne(ctx, func(q querier) error {
+			res, err := q.ExecContext(ctx, statement, now.Unix(), now.Unix(), sweepBatch, now.Unix())
+			if err != nil {
+				return err
+			}
+			n, err = res.RowsAffected()
+			return err
+		})
+		total += n
+		if err != nil || n <= int64(sweepBatch) {
+			return total, err
+		}
+	}
 }
