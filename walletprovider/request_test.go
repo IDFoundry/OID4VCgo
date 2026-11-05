@@ -111,7 +111,7 @@ func TestVerifyRequest(t *testing.T) {
 	if _, err := h.p.VerifyRequest(ctx, h.signRequest(otherKey, other.ID, h.challenge(walletprovider.PurposeRequest))); !errors.Is(err, walletprovider.ErrInstanceRevoked) {
 		t.Fatalf("VerifyRequest from a revoked instance = %v, want ErrInstanceRevoked", err)
 	}
-	// Only the instance key's holder learns the instance is revoked.
+	// Only the registration key's holder learns the instance is revoked.
 	forged := h.signRequest(key, other.ID, h.challenge(walletprovider.PurposeRequest))
 	if _, err := h.p.VerifyRequest(ctx, forged); !errors.Is(err, walletprovider.ErrInvalidRequest) || errors.Is(err, walletprovider.ErrInstanceNotActive) {
 		t.Fatalf("a forged request for a revoked instance = %v, want ErrInvalidRequest alone", err)
@@ -124,9 +124,9 @@ func TestVerifyRequestEd25519(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch := h.challenge(walletprovider.PurposeInstance)
+	ch := h.challenge(walletprovider.PurposeRegistration)
 	in, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
-		Challenge: ch, InstanceKey: pub, Evidence: evidence(t, kindFake, ch, pub),
+		Challenge: ch, RegistrationKey: pub, Evidence: evidence(t, kindFake, ch, pub),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestVerifyRequestEd25519(t *testing.T) {
 	if _, err := h.p.VerifyRequest(context.Background(), h.signRequest(priv, in.ID, h.challenge(walletprovider.PurposeRequest))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.walletAttestation(in.ID); err != nil {
+	if _, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindFake); err != nil {
 		t.Fatal(err)
 	}
 }

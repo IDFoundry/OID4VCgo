@@ -6,27 +6,51 @@ with `walletprovider` (`Provider.Handler`), version **1**. The Go
 native client in Swift or Kotlin, or any other. The version is in the
 path: a change a version-1 client can't read gets a new one, `/v2/`.
 
-A wallet uses it to register an *instance* (one installation of the
-app on one device, identified by its *instance key*), then to get the
+A wallet uses it to register an *instance* (HAIP 1.0's Wallet
+Instance: one installation of the app on one device), then to get the
 two attestations HAIP 1.0 has a Credential Issuer rely on:
 
 - a **Wallet Attestation** (HAIP 1.0 §4.4.1, OID4VCI 1.0 Appendix E),
   JWT `typ` `oauth-client-attestation+jwt`, which authenticates the
   instance as an OAuth client: its `sub` is the client ID, its
-  `cnf.jwk` the instance key;
+  `cnf.jwk` an *instance key*;
 - a **Key Attestation** (HAIP 1.0 §4.5.1, OID4VCI 1.0 Appendix D), JWT
   `typ` `key-attestation+jwt`, which vouches for holder keys a
   credential is to be bound to: its `attested_keys`, with
   `key_storage` and `user_authentication` where the provider's policy
   claims them, and the issuer's `c_nonce` as `nonce`.
 
-Every attestation carries a `status` claim naming the instance's entry
-in the provider's Token Status List, which the provider serves at
-`/v1/status`; suspending or revoking the instance withdraws them all.
+The protocol has two kinds of wallet key, never the same key:
+
+- The **registration key**, one per instance, made when the app is
+  installed and kept for its life. It's registered with the provider
+  (`POST /v1/instances`) and signs every later request to it. No
+  attestation names it: it's the provider's alone.
+- An **instance key**, one per issuance: a fresh key for each
+  Credential Issuer (or each issuance), which a Wallet Attestation's
+  `cnf` names and whose holder signs the Client Attestation PoP.
+  HAIP 1.0 §4.4.1 forbids reusing a Wallet Attestation across
+  Credential Issuers, and draft-ietf-oauth-attestation-based-client-auth-07
+  §11.1 asks for different instance keys per Authorization Server, so
+  issuers can't link one issuance to another. Platform evidence
+  vouches for an instance key the first time a Wallet Attestation is
+  asked for it; the provider records it against the instance, and
+  later Wallet Attestations for it (when one expires mid-issuance)
+  need no evidence.
+
+Each instance key has its own entry in the provider's Token Status
+List, which the provider serves at `/v1/status`: every Wallet
+Attestation for the key, and every Key Attestation issued for the same
+issuance, carries a `status` claim naming it. Issuers see only
+per-issuance keys and status entries, and the shared client ID. The
+provider knows which instance keys belong to which instance, so
+suspending or revoking the instance — the installation — sets the
+status of all of them, withdrawing every attestation it was issued.
 
 The provider attests nothing without platform evidence, in development
-as in production: a registration or Key Attestation request with none
-is refused.
+as in production: a registration, a Wallet Attestation for an instance
+key it hasn't recorded, or a Key Attestation request with none is
+refused.
 
 ## Conventions
 
@@ -43,9 +67,9 @@ so on.
   but for `/v1/status`.
 - **Binary values** (evidence data) are base64url without padding.
 - **Times** (`expires_at`) are seconds since the Unix epoch.
-- **Keys** (`instance_key`, `keys`) are public JWKs (RFC 7517): EC
-  P-256 or OKP Ed25519. A JWK carrying a private member (`d`) is
-  refused.
+- **Keys** (`registration_key`, `instance_key`, `keys`) are public
+  JWKs (RFC 7517): EC P-256 or OKP Ed25519. A JWK carrying a private
+  member (`d`) is refused.
 - **Challenges** are 32 random bytes, base64url without padding (43
   characters), issued for one purpose, used once, and valid for the
   provider's challenge TTL (by default 5 minutes, at most 15). A
@@ -76,11 +100,12 @@ Clients decide on `error` and the status code, never the description.
 | 413 | `invalid_request` | The body is larger than 256 KiB. |
 | 415 | `invalid_request` | The body isn't `application/json`. |
 | 400 | `invalid_challenge` | The challenge is unknown, used, expired, or for another purpose. Get a new one. |
-| 400 | `evidence_required` | No evidence was sent. |
+| 400 | `evidence_required` | No evidence was sent: at registration, for a Key Attestation, or with a Wallet Attestation request for an instance key the provider hasn't recorded yet. |
 | 400 | `unsupported_evidence` | The provider takes no evidence of that `kind`. |
 | 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should. |
-| 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, since the policy is applied again at every attestation. |
-| 409 | `instance_key_registered` | The instance key is already registered: each instance key registers one instance. |
+| 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, or the security level its instance key was recorded at, since the policy is applied again at every attestation. |
+| 409 | `instance_key_registered` | The key is already another's: a registration key that's already registered or is an instance key, or an instance key that's another instance's or is this instance's registration key. Make a new key. |
+| 400 | `unknown_instance_key` | A Key Attestation request's `instance_key` isn't one a Wallet Attestation recorded for this instance. |
 | 400 | `unknown_client` | The provider doesn't attest that client ID. |
 | 401 | `invalid_signed_request` | The signed request didn't verify (see below). It carries `WWW-Authenticate: Wallet-Provider-Request`. |
 | 403 | `instance_not_active` | The instance is suspended. |
@@ -110,10 +135,16 @@ their revocation list, the challenge, the security levels, the root of
 trust and the app (`walletprovider/androidkey`). Keys attested with an
 app's own attestation key (`setAttestKeyAlias`) are refused.
 
-- At registration, the evidence is the **instance key's** chain, over
-  an `instance` challenge.
+- At registration, the evidence is the **registration key's** chain,
+  over a `registration` challenge.
+- For an instance key's first Wallet Attestation, the evidence is the
+  **instance key's** chain, over an `instance` challenge.
 - For a Key Attestation, the evidence is one chain **per holder key**,
   each over the same `holder` challenge.
+
+Evidence after registration must come from the same platform and app
+as the registration evidence, and is held to the provider's policy as
+that was.
 
 ### Apple App Attest
 
@@ -123,8 +154,9 @@ and format will be documented here.
 ## Signed requests
 
 Requests after registration (`/v1/wallet-attestation`,
-`/v1/key-attestation`) are signed with the instance key, so an
-instance ID alone grants nothing. The request carries one header,
+`/v1/key-attestation`) are signed with the registration key — never an
+instance key — so an instance ID alone grants nothing. The request
+carries one header,
 
 ```
 Wallet-Provider-Request: <compact JWS>
@@ -136,7 +168,7 @@ at most 4 KiB, a JWT with the header
 {"alg": "ES256", "typ": "wallet-provider-request+jwt"}
 ```
 
-(`EdDSA` for an Ed25519 instance key), and the claims
+(`EdDSA` for an Ed25519 registration key), and the claims
 
 | Claim | Value |
 | --- | --- |
@@ -166,15 +198,16 @@ that its instance is suspended (`instance_not_active`) or revoked
 ### `POST /v1/challenge`
 
 ```json
-{"purpose": "instance"}
+{"purpose": "registration"}
 ```
 
-`purpose` is `instance` (to register), `holder` (to bind Key
-Attestation evidence to) or `request` (to sign a request with). The
-answer, `200`:
+`purpose` is `registration` (to bind registration evidence to),
+`instance` (to bind a new instance key's evidence to), `holder` (to
+bind Key Attestation evidence to) or `request` (to sign a request
+with). The answer, `200`:
 
 ```json
-{"challenge": "q1x...", "purpose": "instance", "expires_at": 1767225600}
+{"challenge": "q1x...", "purpose": "registration", "expires_at": 1767225600}
 ```
 
 Not signed. A client checks `purpose` is the one it asked for.
@@ -185,13 +218,13 @@ Registers an instance.
 
 ```json
 {
-  "challenge": "<an instance challenge>",
-  "instance_key": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."},
+  "challenge": "<a registration challenge>",
+  "registration_key": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."},
   "evidence": {"kind": "android-key", "data": "MIIC..."}
 }
 ```
 
-The evidence must vouch for `instance_key` over `challenge`. The
+The evidence must vouch for `registration_key` over `challenge`. The
 answer, `201`:
 
 ```json
@@ -199,16 +232,37 @@ answer, `201`:
 ```
 
 Not signed (the evidence proves the key). Keep the instance ID with
-the instance key; registering the same key again is `409
-instance_key_registered`.
+the registration key; registering the same key again is `409
+instance_key_registered`. Registering takes no status list entry: each
+instance key gets its own.
 
 ### `POST /v1/wallet-attestation`
 
-Signed. Asks for a Wallet Attestation for a client:
+Signed. Asks for a Wallet Attestation for a client and an instance
+key:
 
 ```json
-{"client_id": "my-wallet"}
+{
+  "client_id": "my-wallet",
+  "instance_key": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."},
+  "challenge": "<an instance challenge>",
+  "evidence": {"kind": "android-key", "data": "MIIC..."}
+}
 ```
+
+- The first time the instance asks for `instance_key`, `challenge` and
+  `evidence` are required: the evidence must vouch for the key over
+  the challenge (an `instance` challenge), from the instance's
+  platform and app, at a security level the provider's policy
+  accepts. The provider then records the key for the instance, with a
+  status list entry of its own; without them the answer is `400
+  evidence_required`.
+- Once the key is recorded, `challenge` and `evidence` may be left
+  out, and are ignored if sent: not verified, and the challenge not
+  used up. The Wallet Attestation carries the same status entry as
+  before.
+- An `instance_key` that's another instance's, or this instance's
+  registration key, is `409 instance_key_registered`.
 
 The answer, `200`:
 
@@ -216,11 +270,11 @@ The answer, `200`:
 {"wallet_attestation": "eyJ..."}
 ```
 
-Its `sub` is `client_id` and its `cnf.jwk` the instance key; a client
+Its `sub` is `client_id` and its `cnf.jwk` `instance_key`; a client
 checks both before using it. Its signature and `x5c` are for the
 Credential Issuer to verify. It's valid for the provider's Wallet
-Attestation TTL (by default an hour, at most 24): ask again when it
-expires.
+Attestation TTL (by default an hour, at most 24): ask again, with the
+same instance key, when it expires during an issuance.
 
 ### `POST /v1/key-attestation`
 
@@ -228,6 +282,7 @@ Signed. Asks for a Key Attestation over holder keys:
 
 ```json
 {
+  "instance_key": {"kty": "EC", "crv": "P-256", "x": "...", "y": "..."},
   "challenge": "<a holder challenge>",
   "keys": [{"kty": "EC", "crv": "P-256", "x": "...", "y": "..."}],
   "evidence": [{"kind": "android-key", "data": "MIIC..."}],
@@ -235,6 +290,10 @@ Signed. Asks for a Key Attestation over holder keys:
 }
 ```
 
+`instance_key` is the instance key of the issuance the holder keys are
+for: one a Wallet Attestation recorded for this instance (else `400
+unknown_instance_key`). The Key Attestation's `status` is that key's
+entry, so it's withdrawn with the issuance's Wallet Attestations.
 `keys` are the holder keys, each once, at most the provider's limit
 (by default 10). `evidence` vouches for them over `challenge`: one per
 key for `android-key`, at most one per key. `nonce`, optional, is the
@@ -264,19 +323,27 @@ Credential Issuer fetches it from every attestation's `status` claim.
 
 ## A wallet's sequence
 
-1. `POST /v1/challenge` `{"purpose": "instance"}`.
-2. Generate the instance key in the platform keystore with the
-   challenge's bytes as its attestation challenge, and `POST
-   /v1/instances` with the key and its evidence. Keep the instance ID.
-3. For each Credential Issuer: `POST /v1/challenge` `{"purpose":
-   "request"}`, then a signed `POST /v1/wallet-attestation`. Use the
-   attestation as the Client Attestation JWT, with a Client
-   Attestation PoP signed by the instance key.
-4. When an issuer asks for key attestation: `POST /v1/challenge`
+1. Once, at installation: `POST /v1/challenge` `{"purpose":
+   "registration"}`; generate the registration key in the platform
+   keystore with the challenge's bytes as its attestation challenge,
+   and `POST /v1/instances` with the key and its evidence. Keep the
+   instance ID with the registration key.
+2. For each issuance (each Credential Issuer): `POST /v1/challenge`
+   `{"purpose": "instance"}`; generate a fresh instance key over it;
+   `POST /v1/challenge` `{"purpose": "request"}`; then a signed `POST
+   /v1/wallet-attestation` with the instance key and its evidence. Use
+   the attestation as the Client Attestation JWT, with a Client
+   Attestation PoP signed by the instance key. If it expires before
+   the issuance ends, ask again for the same instance key, without
+   evidence.
+3. When the issuer asks for key attestation: `POST /v1/challenge`
    `{"purpose": "holder"}`; generate the holder keys over it; `POST
    /v1/challenge` `{"purpose": "request"}`; a signed `POST
-   /v1/key-attestation` with the keys, their evidence and the issuer's
-   `c_nonce`.
-5. On `instance_revoked`, discard the instance and its key, and
-   register again from step 1. On `instance_not_active`, stop and tell
-   the user; the provider may resume it.
+   /v1/key-attestation` with the issuance's instance key, the holder
+   keys, their evidence and the issuer's `c_nonce`.
+4. Once the issuance is over, the instance key may be deleted: never
+   use it with another issuer.
+5. On `instance_revoked`, discard the instance, its registration key
+   and its instance keys, and register again from step 1. On
+   `instance_not_active`, stop and tell the user; the provider may
+   resume it.

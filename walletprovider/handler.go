@@ -18,17 +18,20 @@ import (
 // Handler serves the provider's HTTP protocol, version 1: JSON over
 // POST, each path relative to where it's mounted.
 //
-//	POST ChallengePath         {"purpose"}                                  → 200 {"challenge","purpose","expires_at"}
-//	POST InstancesPath         {"challenge","instance_key","evidence"}      → 201 {"instance_id"}
-//	POST WalletAttestationPath {"client_id"}                         signed → 200 {"wallet_attestation"}
-//	POST KeyAttestationPath    {"challenge","keys","evidence","nonce"} signed → 200 {"key_attestation","expires_at"}
+//	POST ChallengePath         {"purpose"}                                         → 200 {"challenge","purpose","expires_at"}
+//	POST InstancesPath         {"challenge","registration_key","evidence"}         → 201 {"instance_id"}
+//	POST WalletAttestationPath {"client_id","instance_key","challenge","evidence"} signed → 200 {"wallet_attestation"}
+//	POST KeyAttestationPath    {"instance_key","challenge","keys","evidence","nonce"} signed → 200 {"key_attestation","expires_at"}
 //	GET  StatusPath            the status list (StatusList), JWT or CWT by Accept
 //
 // "evidence" is {"kind","data"}, data base64url without padding (an
-// array of them in a Key Attestation request); "instance_key" and
-// "keys" are public JWKs. The two signed requests carry SignRequest's
-// JWT, over the request's method, path and body and a challenge issued
-// for PurposeRequest, in the RequestHeader header; its sub names the
+// array of them in a Key Attestation request); "registration_key",
+// "instance_key" and "keys" are public JWKs. A Wallet Attestation
+// request's "challenge" and "evidence" are for an instance key not yet
+// recorded, and may be left out otherwise. The two signed requests
+// carry SignRequest's JWT, signed with the registration key, over the
+// request's method, path and body and a challenge issued for
+// PurposeRequest, in the RequestHeader header; its sub names the
 // instance. Client speaks the protocol, and mobile/WALLET_PROVIDER.md
 // in the repository documents it for a client in another language.
 //
@@ -39,7 +42,7 @@ import (
 // protocol's codes and whose description is fixed text: the internal
 // error is logged (Dependencies.Logger), never sent. A signed request
 // that doesn't verify — its JWT malformed or stale, its signature not
-// the instance key's, its challenge unknown or used, its instance
+// the registration key's, its challenge unknown or used, its instance
 // unknown — is answered with one and the same 401, so it can't tell
 // an unknown instance from a wrong key, and it doesn't use up the
 // challenge it names.
@@ -81,7 +84,8 @@ var (
 	errPolicy        = apiError{http.StatusForbidden, "policy_refused", "The provider's policy refuses the evidence."}
 	errNotActive     = apiError{http.StatusForbidden, "instance_not_active", "The instance is suspended."}
 	errRevoked       = apiError{http.StatusForbidden, "instance_revoked", "The instance is revoked."}
-	errKeyRegistered = apiError{http.StatusConflict, "instance_key_registered", "The instance key is already registered."}
+	errKeyRegistered = apiError{http.StatusConflict, "instance_key_registered", "The key is already registered."}
+	errUnknownKey    = apiError{http.StatusBadRequest, "unknown_instance_key", "The instance key isn't recorded for the instance."}
 	errUnknownClient = apiError{http.StatusBadRequest, "unknown_client", "The provider doesn't attest that client."}
 	errNoKeyAttested = apiError{http.StatusForbidden, "no_key_attested", "No key could be attested."}
 	errServer        = apiError{http.StatusInternalServerError, "server_error", "The provider couldn't answer."}
@@ -102,6 +106,7 @@ func refusal(err error) apiError {
 	}{
 		{ErrNoKeyAttested, errNoKeyAttested},
 		{ErrInstanceKeyRegistered, errKeyRegistered},
+		{ErrUnknownInstanceKey, errUnknownKey},
 		{ErrInstanceRevoked, errRevoked},
 		{ErrInstanceNotActive, errNotActive},
 		{ErrInstanceNotFound, errUnauthorized},
@@ -138,9 +143,9 @@ func (p *Provider) serveRegister(w http.ResponseWriter, r *http.Request) {
 	if !p.readJSON(w, r, &req) {
 		return
 	}
-	key, err := jwk.ParsePublicKey(req.InstanceKey)
+	key, err := jwk.ParsePublicKey(req.RegistrationKey)
 	if err != nil {
-		p.fail(r, w, errMalformed, fmt.Errorf("instance_key: %w", err))
+		p.fail(r, w, errMalformed, fmt.Errorf("registration_key: %w", err))
 		return
 	}
 	ev, err := req.Evidence.evidence()
@@ -148,7 +153,7 @@ func (p *Provider) serveRegister(w http.ResponseWriter, r *http.Request) {
 		p.fail(r, w, errMalformed, err)
 		return
 	}
-	in, err := p.Register(r.Context(), RegisterRequest{Challenge: req.Challenge, InstanceKey: key, Evidence: ev})
+	in, err := p.Register(r.Context(), RegisterRequest{Challenge: req.Challenge, RegistrationKey: key, Evidence: ev})
 	if err != nil {
 		p.fail(r, w, refusal(err), err)
 		return
@@ -162,7 +167,19 @@ func (p *Provider) serveWalletAttestation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	jwt, err := p.WalletAttestation(r.Context(), WalletAttestationRequest{InstanceID: in.ID, ClientID: req.ClientID})
+	key, err := jwk.ParsePublicKey(req.InstanceKey)
+	if err != nil {
+		p.fail(r, w, errMalformed, fmt.Errorf("instance_key: %w", err))
+		return
+	}
+	wr := WalletAttestationRequest{InstanceID: in.ID, ClientID: req.ClientID, InstanceKey: key, Challenge: req.Challenge}
+	if req.Evidence != nil {
+		if wr.Evidence, err = req.Evidence.evidence(); err != nil {
+			p.fail(r, w, errMalformed, err)
+			return
+		}
+	}
+	jwt, err := p.WalletAttestation(r.Context(), wr)
 	if err != nil {
 		p.fail(r, w, refusal(err), err)
 		return
@@ -180,7 +197,12 @@ func (p *Provider) serveKeyAttestation(w http.ResponseWriter, r *http.Request) {
 		p.fail(r, w, errMalformed, fmt.Errorf("%d keys and %d pieces of evidence, more than %d", len(req.Keys), len(req.Evidence), p.cfg.Policy.maxKeys()))
 		return
 	}
-	kr := KeyAttestationRequest{InstanceID: in.ID, Challenge: req.Challenge, Nonce: req.Nonce}
+	instanceKey, err := jwk.ParsePublicKey(req.InstanceKey)
+	if err != nil {
+		p.fail(r, w, errMalformed, fmt.Errorf("instance_key: %w", err))
+		return
+	}
+	kr := KeyAttestationRequest{InstanceID: in.ID, InstanceKey: instanceKey, Challenge: req.Challenge, Nonce: req.Nonce}
 	for i, raw := range req.Keys {
 		key, err := jwk.ParsePublicKey(raw)
 		if err != nil {

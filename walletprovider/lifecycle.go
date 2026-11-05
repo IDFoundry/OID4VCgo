@@ -22,33 +22,38 @@ func stateError(s State) error {
 }
 
 // Suspend suspends an active or suspended instance: the provider issues
-// it nothing, and its status becomes SUSPENDED, until Resume. reason is
-// recorded. It refuses a revoked instance with ErrInstanceRevoked.
+// it nothing, and the status of each of its instance keys becomes
+// SUSPENDED, until Resume. reason is recorded. It refuses a revoked
+// instance with ErrInstanceRevoked.
 func (p *Provider) Suspend(ctx context.Context, id, reason string) error {
 	return p.transition(ctx, id, StateSuspended, reason)
 }
 
-// Resume makes a suspended instance active again, its status VALID. It
-// refuses a revoked instance with ErrInstanceRevoked; resuming an
-// active one only sets its status again.
+// Resume makes a suspended instance active again, the status of each of
+// its instance keys VALID. It refuses a revoked instance with
+// ErrInstanceRevoked; resuming an active one only sets the statuses
+// again.
 func (p *Provider) Resume(ctx context.Context, id string) error {
 	return p.transition(ctx, id, StateActive, "")
 }
 
-// Revoke revokes an instance for good: the provider issues it nothing,
-// and its status becomes INVALID, so issuers refuse every attestation
-// it was issued at their next status check. reason is recorded.
-// Revoking a revoked instance only sets its status again.
+// Revoke revokes an instance — the installation — for good: the
+// provider issues it nothing, and the status of each of its instance
+// keys becomes INVALID, so issuers refuse every attestation it was
+// issued, for every issuance, at their next status check. reason is
+// recorded. Revoking a revoked instance only sets the statuses again.
 func (p *Provider) Revoke(ctx context.Context, id, reason string) error {
 	return p.transition(ctx, id, StateRevoked, reason)
 }
 
-// transition moves the instance to state, then sets its status to
-// match. The state is stored first: should setting the status fail,
-// the provider already refuses the instance, and repeating the call
-// sets the status again.
+// transition moves the instance to state, then sets the status of each
+// of its instance keys to match. The state is stored first: should
+// setting a status fail, the provider already refuses the instance,
+// and repeating the call sets the statuses again. A key recorded while
+// the statuses are set is one whose request saw the instance still
+// active after it was recorded (WalletAttestation), so it's listed
+// here, or no attestation names it.
 func (p *Provider) transition(ctx context.Context, id string, state State, reason string) error {
-	var ref statuslist.StatusListRef
 	if err := p.update(ctx, id, func(in *Instance) error {
 		if in.State == StateRevoked && state != StateRevoked {
 			return ErrInstanceRevoked
@@ -57,7 +62,7 @@ func (p *Provider) transition(ctx context.Context, id string, state State, reaso
 			// Keep the reason it was first revoked for.
 			reason = in.Reason
 		}
-		in.State, in.Reason, ref = state, reason, in.Status
+		in.State, in.Reason = state, reason
 		return nil
 	}); err != nil {
 		return err
@@ -65,14 +70,33 @@ func (p *Provider) transition(ctx context.Context, id string, state State, reaso
 	status := map[State]statuslist.StatusType{
 		StateActive: statuslist.StatusValid, StateSuspended: statuslist.StatusSuspended, StateRevoked: statuslist.StatusInvalid,
 	}[state]
-	if err := p.allocator.SetStatus(ctx, ref, status); err != nil {
-		return fmt.Errorf("walletprovider: setting the instance's status to %v: %w", status, err)
+	set := 0
+	defer func() {
+		if set > 0 {
+			p.publisher.Invalidate()
+		}
+	}()
+	after := ""
+	for {
+		page, err := p.deps.InstanceKeys.List(ctx, id, after, listPageSize)
+		if err != nil {
+			return fmt.Errorf("walletprovider: listing the instance's keys: %w", err)
+		}
+		for _, k := range page {
+			if err := p.allocator.SetStatus(ctx, k.Status, status); err != nil {
+				return fmt.Errorf("walletprovider: setting an instance key's status to %v: %w", status, err)
+			}
+			set++
+		}
+		if len(page) < listPageSize {
+			return nil
+		}
+		after = page[len(page)-1].Thumbprint
 	}
-	p.publisher.Invalidate()
-	return nil
 }
 
-// listPageSize is how many instances RevokeWhere reads at a time.
+// listPageSize is how many instances RevokeWhere, or instance keys
+// transition, reads at a time.
 const listPageSize = 100
 
 // RevokeWhere revokes every instance not yet revoked that match

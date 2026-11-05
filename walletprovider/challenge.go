@@ -15,7 +15,12 @@ import (
 type Purpose string
 
 const (
-	// PurposeInstance: registering an instance (Provider.Register); its
+	// PurposeRegistration: registering an instance (Provider.Register);
+	// its evidence covers the registration key.
+	PurposeRegistration Purpose = "registration"
+
+	// PurposeInstance: recording an instance key, at the first Wallet
+	// Attestation asked for it (Provider.WalletAttestation); its
 	// evidence covers the instance key.
 	PurposeInstance Purpose = "instance"
 
@@ -28,7 +33,7 @@ const (
 )
 
 func (p Purpose) valid() bool {
-	return p == PurposeInstance || p == PurposeHolder || p == PurposeRequest
+	return p == PurposeRegistration || p == PurposeInstance || p == PurposeHolder || p == PurposeRequest
 }
 
 // challengeBytes is how many random bytes a challenge has.

@@ -30,8 +30,9 @@
 // served at /v1/status under -url. The library's own protocol is served
 // under /v1/ too; with -android-app it attests that app's Android Key
 // Attestation chains (Google-rooted, locked and verified boot) there.
-// The library's instances are kept in -instances, and their status list
-// indices and statuses in -status-indices, so a restart keeps them.
+// The library's instances and their instance keys are kept in
+// -instances, and the instance keys' status list indices and statuses
+// in -status-indices, so a restart keeps them.
 package main
 
 import (
@@ -57,8 +58,8 @@ func main() {
 	verifiedKeys := flag.String("verified-keys", "wallet-provider-keys.json", "file keeping the Android keys whose attestation chains were verified, so a restart still recognises them")
 	requireHardware := flag.Bool("require-hardware-key-attestation", false, "refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
 	publicURL := flag.String("url", "", "the service's public https URL, which every attestation's status list is under (default: https://-addr)")
-	instances := flag.String("instances", "wallet-provider-instances.json", "file keeping the wallet instances the library Wallet Provider registered, so a restart keeps them")
-	statusIndices := flag.String("status-indices", "wallet-provider-status-indices.json", "file keeping the instances' status list indices and statuses, so a restart neither forgets a revocation nor reuses an index")
+	instances := flag.String("instances", "wallet-provider-instances.json", "file keeping the wallet instances the library Wallet Provider registered and their instance keys, so a restart keeps them")
+	statusIndices := flag.String("status-indices", "wallet-provider-status-indices.json", "file keeping the instance keys' status list indices and statuses, so a restart neither forgets a revocation nor reuses an index")
 	var androidApps walletprovider.AndroidAppsFlag
 	flag.Var(&androidApps, "android-app", walletprovider.AndroidAppsUsage)
 	flag.Parse()

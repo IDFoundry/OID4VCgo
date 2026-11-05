@@ -12,10 +12,10 @@ import (
 const DefaultMaxKeys = 10
 
 // Policy decides what verified evidence the provider attests for. It
-// is applied when an instance registers, to each Key Attestation
-// request's evidence, and again to the instance's registration evidence
-// at every attestation, so tightening it refuses existing instances
-// too.
+// is applied when an instance registers, to an instance key's evidence
+// and each Key Attestation request's, and again to the instance's
+// registration evidence and the instance key's security level at
+// every attestation, so tightening it refuses existing instances too.
 type Policy struct {
 	// Platforms holds each accepted platform's requirements. Evidence
 	// from a platform not in it is refused. At least one is REQUIRED.
@@ -34,8 +34,9 @@ type Policy struct {
 // PlatformPolicy is what the provider requires of one platform's
 // evidence.
 type PlatformPolicy struct {
-	// SecurityLevels are the security levels accepted for an instance
-	// key and for holder keys. At least one is REQUIRED.
+	// SecurityLevels are the security levels accepted for a
+	// registration key, instance keys and holder keys. At least one is
+	// REQUIRED.
 	SecurityLevels []SecurityLevel
 
 	// MinAppVersion, if set, is the lowest app version accepted.
@@ -159,7 +160,7 @@ func (p Policy) checkInstance(in Instance) error {
 		return err
 	}
 	if !slices.Contains(pp.SecurityLevels, e.SecurityLevel) {
-		return fmt.Errorf("%w: the instance key's security level %q isn't accepted for %q", ErrPolicy, e.SecurityLevel, e.Platform)
+		return fmt.Errorf("%w: the registration key's security level %q isn't accepted for %q", ErrPolicy, e.SecurityLevel, e.Platform)
 	}
 	return nil
 }

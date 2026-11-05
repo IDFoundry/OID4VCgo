@@ -6,7 +6,51 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.64.0 → next
+## v0.65.1 → next
+
+### Wallet Provider (`walletprovider`)
+
+An instance is now one installation with a stable *registration key*,
+and a Wallet Attestation's `cnf` is a per-issuance *instance key*
+with its own status list index, so issuers can't link one issuance to
+another (HAIP 1.0 §4.4.1).
+
+- **`RegisterRequest.InstanceKey` is `RegistrationKey`**, with
+  evidence over a challenge for the new `PurposeRegistration`
+  (`"registration"`). `PurposeInstance` (`"instance"`) now binds an
+  instance key's evidence. The registration key signs every request
+  (`SignRequest`, `Client`'s `registrationKey` argument) and is never
+  an instance key.
+- **`Instance.Status` is gone**, and registering reserves no status
+  index. Each instance key (`InstanceKey`) gets one when it's recorded.
+- **`Dependencies.InstanceKeys` is required**: an `InstanceKeyStore`
+  (`MemoryInstanceKeyStore` for tests;
+  `walletprovidertest.TestInstanceKeyStoreContract` checks your own).
+  sqlstore has none yet.
+- **`WalletAttestationRequest` takes `InstanceKey`**, and, the first
+  time an instance asks for that key, `Challenge` (`PurposeInstance`)
+  and `Evidence` for it. A key already recorded for the instance needs
+  neither. A key recorded for another instance, or the instance's
+  registration key, is refused with `ErrInstanceKeyRegistered`.
+- **`KeyAttestationRequest` takes `InstanceKey`**, the issuance's
+  recorded instance key, whose status the Key Attestation carries; an
+  unrecorded key is refused with the new `ErrUnknownInstanceKey`.
+- **`Suspend`, `Resume` and `Revoke` set the status of every one of
+  the instance's instance keys.**
+- **Size `Config.StatusListSize` for issuances**, not instances: each
+  new instance key uses an index for good.
+- **The `/v1/` protocol changed** (mobile/WALLET_PROVIDER.md):
+  `POST /v1/instances` takes `registration_key` over a `registration`
+  challenge; `POST /v1/wallet-attestation` takes `instance_key`, and
+  `challenge` and `evidence` for a new one; `POST /v1/key-attestation`
+  takes `instance_key`; and a Key Attestation for an unrecorded
+  instance key is `400 unknown_instance_key`. No released client spoke
+  the old protocol.
+- **Instances stored before** were registered with what is now an
+  instance key, and carry a status index nothing will set any more:
+  register them again.
+
+## v0.64.0 → v0.65.0
 
 ### Credential status (`walletflow`)
 

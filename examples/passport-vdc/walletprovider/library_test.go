@@ -77,8 +77,9 @@ func TestService_KeyAttestationFromLibrary(t *testing.T) {
 }
 
 // TestService_InstancesFromLibrary: a Wallet Attestation carries x5c,
-// wallet_name and its instance's status; an instance key registers one
-// instance, which revoking stops.
+// wallet_name and its instance key's status; an instance key is
+// recorded for one instance, whose revocation stops it and sets its
+// status INVALID.
 func TestService_InstancesFromLibrary(t *testing.T) {
 	f := newLibraryFixture(t)
 	ctx := context.Background()
@@ -102,14 +103,22 @@ func TestService_InstancesFromLibrary(t *testing.T) {
 	if claims["wallet_name"] != WalletName || claims["status"] == nil {
 		t.Fatalf("claims = %v", claims)
 	}
-	if _, err := f.c.WalletAttestation(ctx, "wallet-1", &instance.PublicKey); err != nil {
-		t.Fatalf("a second Wallet Attestation for the instance: %v", err)
+	again, err := f.c.WalletAttestation(ctx, "wallet-1", &instance.PublicKey)
+	if err != nil {
+		t.Fatalf("a second Wallet Attestation for the instance key: %v", err)
 	}
-	if len(f.s.instances) != 1 {
-		t.Fatalf("%d instances registered for one instance key", len(f.s.instances))
+	if n := countInstances(t, f.s); n != 1 {
+		t.Fatalf("%d instances registered for one instance key", n)
 	}
-	id := f.s.instances[thumbprintOf(t, &instance.PublicKey)]
-	if err := f.s.lib.Revoke(ctx, id, "test"); err != nil {
+	ik, err := f.s.store.keys().Get(ctx, thumbprintOf(t, &instance.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := statuslist.ParseStatusClaim(jwtClaims(t, again)["status"].(map[string]any))
+	if err != nil || ref != ik.Status {
+		t.Fatalf("status %+v (%v), want the instance key's %+v", ref, err, ik.Status)
+	}
+	if err := f.s.lib.Revoke(ctx, ik.InstanceID, "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.c.WalletAttestation(ctx, "wallet-1", &instance.PublicKey); err == nil || !strings.Contains(err.Error(), "revoked") {
@@ -145,13 +154,13 @@ func TestService_V1RefusesDemoEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch, err := wc.Challenge(ctx, wp.PurposeInstance)
+	ch, err := wc.Challenge(ctx, wp.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := p256(t)
 	_, err = wc.Register(ctx, wp.RegisterRequest{
-		Challenge: ch.Value, InstanceKey: &key.PublicKey,
+		Challenge: ch.Value, RegistrationKey: &key.PublicKey,
 		Evidence: wp.Evidence{Kind: DemoEvidenceKind, Data: []byte("0123456789abcdef0123456789abcdef")},
 	})
 	if code := refusal(t, err); code != "evidence_rejected" {

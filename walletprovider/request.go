@@ -45,16 +45,17 @@ type requestClaims struct {
 	IssuedAt   int64  `json:"iat"`
 }
 
-// SignRequest signs a request to the provider with the instance key,
-// as a wallet does on every request after registration: a JWT whose
+// SignRequest signs a request to the provider with the instance's
+// registration key, as a wallet does on every request after
+// registration: a JWT whose
 // sub is the instance ID, covering the method, path, the SHA-256 of the
 // body (base64url, as body_sha256) and challenge, a challenge issued
 // for PurposeRequest, signed ES256 (P-256) or EdDSA (Ed25519) with typ
 // RequestTypHeader.
-func SignRequest(instanceKey crypto.Signer, instanceID, challenge, method, path string, body []byte, now time.Time) (string, error) {
-	alg, err := keyAlg(instanceKey.Public())
+func SignRequest(registrationKey crypto.Signer, instanceID, challenge, method, path string, body []byte, now time.Time) (string, error) {
+	alg, err := keyAlg(registrationKey.Public())
 	if err != nil {
-		return "", fmt.Errorf("walletprovider: the instance key: %w", err)
+		return "", fmt.Errorf("walletprovider: the registration key: %w", err)
 	}
 	payload, err := json.Marshal(requestClaims{
 		Subject: instanceID, Method: method, Path: path, BodySHA256: bodyHash(body),
@@ -63,7 +64,7 @@ func SignRequest(instanceKey crypto.Signer, instanceID, challenge, method, path 
 	if err != nil {
 		return "", fmt.Errorf("walletprovider: marshal request claims: %w", err)
 	}
-	jwt, err := jose.Sign(alg, instanceKey, map[string]any{"typ": RequestTypHeader}, payload)
+	jwt, err := jose.Sign(alg, registrationKey, map[string]any{"typ": RequestTypHeader}, payload)
 	if err != nil {
 		return "", fmt.Errorf("walletprovider: sign request: %w", err)
 	}
@@ -73,7 +74,8 @@ func SignRequest(instanceKey crypto.Signer, instanceID, challenge, method, path 
 // VerifyRequest checks a signed request and returns the active instance
 // it comes from. The HTTP layer requires it of every request after
 // registration, so the instance ID alone grants nothing: the JWT must
-// verify with the instance's key, cover req's method, path and body,
+// verify with the instance's registration key, cover req's method,
+// path and body,
 // be recent, and carry a challenge issued for PurposeRequest, which it
 // consumes, so a request is accepted once. It refuses a request from
 // an instance that isn't active.
@@ -101,11 +103,11 @@ func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, er
 	}
 	key, err := jwk.ParsePublicKey(in.Key)
 	if err != nil {
-		return Instance{}, fmt.Errorf("walletprovider: the stored instance key: %w", err)
+		return Instance{}, fmt.Errorf("walletprovider: the stored registration key: %w", err)
 	}
 	alg, err := keyAlg(key)
 	if err != nil {
-		return Instance{}, fmt.Errorf("walletprovider: the stored instance key: %w", err)
+		return Instance{}, fmt.Errorf("walletprovider: the stored registration key: %w", err)
 	}
 	_, verified, err := jose.Verify(alg, key, req.JWT)
 	if err != nil {

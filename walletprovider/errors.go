@@ -28,9 +28,16 @@ var (
 	// ErrInstanceNotFound: no instance has the ID.
 	ErrInstanceNotFound = errors.New("walletprovider: instance not found")
 
-	// ErrInstanceKeyRegistered: an instance with the instance key is
-	// already registered. A wallet registers each instance key once.
+	// ErrInstanceKeyRegistered: the key is already another's: a
+	// registration key that's already registered or recorded as an
+	// instance key, or an instance key recorded for another instance
+	// or that is the instance's registration key. A key is one
+	// instance's registration key or one of its instance keys, once.
 	ErrInstanceKeyRegistered = errors.New("walletprovider: instance key already registered")
+
+	// ErrUnknownInstanceKey: a Key Attestation request names an
+	// instance key no Wallet Attestation recorded for the instance.
+	ErrUnknownInstanceKey = errors.New("walletprovider: unknown instance key")
 
 	// ErrInstanceNotActive: the instance is suspended or revoked.
 	ErrInstanceNotActive = errors.New("walletprovider: instance not active")
@@ -51,8 +58,8 @@ var (
 	ErrNoKeyAttested = errors.New("walletprovider: no key could be attested")
 )
 
-// Store errors, which InstanceStore and ChallengeStore implementations
-// return, possibly wrapped.
+// Store errors, which InstanceStore, InstanceKeyStore and
+// ChallengeStore implementations return, possibly wrapped.
 var (
 	// ErrNotFound: no record has the key.
 	ErrNotFound = errors.New("walletprovider: not found")

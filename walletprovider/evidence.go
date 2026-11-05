@@ -103,15 +103,17 @@ type EvidenceInput struct {
 	Purpose Purpose
 
 	// Keys are the keys the request asks the evidence to vouch for: the
-	// instance key at registration, the holder keys of a Key
-	// Attestation request. Evidence that attests keys itself (Android)
+	// registration key at registration, the instance key at its first
+	// Wallet Attestation, the holder keys of a Key Attestation request.
+	// Evidence that attests keys itself (Android)
 	// reports which of them it covers; evidence over the app (App
 	// Attest) binds them through its signed client data.
 	Keys []crypto.PublicKey
 
-	// Instance is the registered instance a later request comes from,
-	// nil at registration: an App Attest verifier checks an assertion
-	// against its Credential and Counter.
+	// Instance is the registered instance a later request comes from
+	// (an instance key's or holder keys' evidence), nil at
+	// registration: an App Attest verifier checks an assertion against
+	// its Credential and Counter.
 	Instance *Instance
 }
 
@@ -184,8 +186,9 @@ type VerifiedEvidence struct {
 // attestation roots, its challenge and authorization lists, and returns
 // the chain's leaf key with KeyBindingAttested. An Apple App Attest
 // verifier checks the attestation object (registration) or an assertion
-// (later requests, against in.Instance) and returns in.Keys with
-// KeyBindingAppAssertion; see the package doc comment.
+// (an instance key's or holder keys' evidence, against in.Instance) and
+// returns in.Keys with KeyBindingAppAssertion; see the package doc
+// comment.
 type EvidenceVerifier interface {
 	// Kind is the Evidence.Kind it reads ("android-key",
 	// "apple-app-attest", ...). Each configured verifier's is distinct.

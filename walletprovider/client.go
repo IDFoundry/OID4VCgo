@@ -52,10 +52,11 @@ func (e *RefusedError) Unwrap() error { return ErrRefused }
 
 // Client speaks the provider's HTTP protocol (Provider.Handler) for a
 // wallet written in Go: it gets challenges, registers an instance, and
-// asks for attestations with requests signed by the instance key
-// (SignRequest). It follows no redirect, so a request is never resent
-// to a host other than the provider, and reads at most a bounded
-// response. Create one with NewClient; it is safe for concurrent use.
+// asks for attestations with requests signed by the instance's
+// registration key (SignRequest). It follows no redirect, so a request
+// is never resent to a host other than the provider, and reads at most
+// a bounded response. Create one with NewClient; it is safe for
+// concurrent use.
 type Client struct {
 	base  *url.URL
 	http  *http.Client
@@ -118,15 +119,15 @@ func (c *Client) Challenge(ctx context.Context, purpose Purpose) (Challenge, err
 }
 
 // Register registers an instance: req.Challenge is a challenge for
-// PurposeInstance, which req.Evidence is bound to. It returns the
-// instance ID, which later requests name with the instance key's
+// PurposeRegistration, which req.Evidence is bound to. It returns the
+// instance ID, which later requests name with the registration key's
 // signature.
 func (c *Client) Register(ctx context.Context, req RegisterRequest) (string, error) {
-	key, err := marshalKey(req.InstanceKey)
+	key, err := marshalKey(req.RegistrationKey)
 	if err != nil {
 		return "", err
 	}
-	body := registerRequestBody{Challenge: req.Challenge, InstanceKey: key.json, Evidence: evidenceBodyOf(req.Evidence)}
+	body := registerRequestBody{Challenge: req.Challenge, RegistrationKey: key.json, Evidence: evidenceBodyOf(req.Evidence)}
 	var resp registerResponseBody
 	if err := c.post(ctx, InstancesPath, body, nil, http.StatusCreated, &resp); err != nil {
 		return "", err
@@ -137,14 +138,26 @@ func (c *Client) Register(ctx context.Context, req RegisterRequest) (string, err
 	return resp.InstanceID, nil
 }
 
-// WalletAttestation asks for a Wallet Attestation for req.ClientID,
-// signing the request with instanceKey, req.InstanceID's key. It gets a
-// PurposeRequest challenge first. The attestation's sub and cnf are
-// checked to be the client and instanceKey; its signature is the
-// issuer's to verify.
-func (c *Client) WalletAttestation(ctx context.Context, instanceKey crypto.Signer, req WalletAttestationRequest) (string, error) {
+// WalletAttestation asks for a Wallet Attestation for req.ClientID and
+// the instance key req.InstanceKey, signing the request with
+// registrationKey, req.InstanceID's registration key. The first time
+// it's asked for an instance key, req.Challenge (a challenge for
+// PurposeInstance) and req.Evidence, vouching for the key, are
+// required; afterwards they may be left out. It gets a PurposeRequest
+// challenge first. The attestation's sub and cnf are checked to be the
+// client and req.InstanceKey; its signature is the issuer's to verify.
+func (c *Client) WalletAttestation(ctx context.Context, registrationKey crypto.Signer, req WalletAttestationRequest) (string, error) {
+	key, err := marshalKey(req.InstanceKey)
+	if err != nil {
+		return "", err
+	}
+	body := walletAttestationRequestBody{ClientID: req.ClientID, InstanceKey: key.json, Challenge: req.Challenge}
+	if req.Evidence.Kind != "" || len(req.Evidence.Data) > 0 {
+		ev := evidenceBodyOf(req.Evidence)
+		body.Evidence = &ev
+	}
 	var resp walletAttestationResponseBody
-	if err := c.postSigned(ctx, instanceKey, req.InstanceID, WalletAttestationPath, walletAttestationRequestBody{ClientID: req.ClientID}, &resp); err != nil {
+	if err := c.postSigned(ctx, registrationKey, req.InstanceID, WalletAttestationPath, body, &resp); err != nil {
 		return "", err
 	}
 	var claims struct {
@@ -156,22 +169,28 @@ func (c *Client) WalletAttestation(ctx context.Context, instanceKey crypto.Signe
 	if err := unverifiedClaims(resp.WalletAttestation, &claims); err != nil {
 		return "", fmt.Errorf("walletprovider: the Wallet Attestation: %w", err)
 	}
-	if ok, err := jwk.Matches(claims.Cnf.JWK, instanceKey.Public()); err != nil || !ok || claims.Subject != req.ClientID {
+	if ok, err := jwk.Matches(claims.Cnf.JWK, req.InstanceKey); err != nil || !ok || claims.Subject != req.ClientID {
 		return "", fmt.Errorf("walletprovider: the Wallet Attestation isn't for client %q and the instance key", req.ClientID)
 	}
 	return resp.WalletAttestation, nil
 }
 
-// KeyAttestation asks for a Key Attestation over req.Keys, signing the
-// request with instanceKey, req.InstanceID's key: req.Challenge is a
-// challenge for PurposeHolder, which every piece of req.Evidence is
-// bound to. It gets a PurposeRequest challenge for the signature first.
+// KeyAttestation asks for a Key Attestation over req.Keys, for the
+// issuance of req.InstanceKey (an instance key a Wallet Attestation
+// recorded), signing the request with registrationKey, req.InstanceID's
+// registration key: req.Challenge is a challenge for PurposeHolder,
+// which every piece of req.Evidence is bound to. It gets a
+// PurposeRequest challenge for the signature first.
 // The result's AttestedKeys are the keys the provider attested, which
 // may be fewer than req.Keys; its nonce is checked to be req.Nonce.
 // Its KeyStorage and UserAuthentication are the JWT's claims, read
 // without verifying its signature, which is the issuer's to verify.
-func (c *Client) KeyAttestation(ctx context.Context, instanceKey crypto.Signer, req KeyAttestationRequest) (KeyAttestationResult, error) {
-	body := keyAttestationRequestBody{Challenge: req.Challenge, Nonce: req.Nonce}
+func (c *Client) KeyAttestation(ctx context.Context, registrationKey crypto.Signer, req KeyAttestationRequest) (KeyAttestationResult, error) {
+	ik, err := marshalKey(req.InstanceKey)
+	if err != nil {
+		return KeyAttestationResult{}, fmt.Errorf("the instance key: %w", err)
+	}
+	body := keyAttestationRequestBody{InstanceKey: ik.json, Challenge: req.Challenge, Nonce: req.Nonce}
 	for i, k := range req.Keys {
 		mk, err := marshalKey(k)
 		if err != nil {
@@ -183,7 +202,7 @@ func (c *Client) KeyAttestation(ctx context.Context, instanceKey crypto.Signer, 
 		body.Evidence = append(body.Evidence, evidenceBodyOf(e))
 	}
 	var resp keyAttestationResponseBody
-	if err := c.postSigned(ctx, instanceKey, req.InstanceID, KeyAttestationPath, body, &resp); err != nil {
+	if err := c.postSigned(ctx, registrationKey, req.InstanceID, KeyAttestationPath, body, &resp); err != nil {
 		return KeyAttestationResult{}, err
 	}
 	var claims struct {
@@ -231,17 +250,17 @@ func unverifiedClaims(compact string, v any) error {
 }
 
 // postSigned gets a PurposeRequest challenge, then posts body to path
-// signed with instanceKey for instanceID.
-func (c *Client) postSigned(ctx context.Context, instanceKey crypto.Signer, instanceID, path string, body, out any) error {
-	if instanceKey == nil || instanceID == "" {
-		return fmt.Errorf("%w: the instance ID and key are required", ErrInvalidRequest)
+// signed with registrationKey for instanceID.
+func (c *Client) postSigned(ctx context.Context, registrationKey crypto.Signer, instanceID, path string, body, out any) error {
+	if registrationKey == nil || instanceID == "" {
+		return fmt.Errorf("%w: the instance ID and registration key are required", ErrInvalidRequest)
 	}
 	ch, err := c.Challenge(ctx, PurposeRequest)
 	if err != nil {
 		return err
 	}
 	return c.post(ctx, path, body, func(target *url.URL, payload []byte) (string, error) {
-		return SignRequest(instanceKey, instanceID, ch.Value, http.MethodPost, target.EscapedPath(), payload, c.clock())
+		return SignRequest(registrationKey, instanceID, ch.Value, http.MethodPost, target.EscapedPath(), payload, c.clock())
 	}, http.StatusOK, out)
 }
 

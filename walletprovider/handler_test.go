@@ -15,6 +15,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
@@ -38,8 +39,29 @@ func (h *harness) server(prefix string) (*httptest.Server, *walletprovider.Clien
 	return ts, c
 }
 
-// clientRegister registers an instance through c with evidence of kind.
+// clientRegister registers an instance through c with evidence of kind,
+// returning its ID and registration key.
 func (h *harness) clientRegister(c *walletprovider.Client, kind string) (string, *ecdsa.PrivateKey) {
+	h.t.Helper()
+	ctx := context.Background()
+	key := newKey(h.t)
+	ch, err := c.Challenge(ctx, walletprovider.PurposeRegistration)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	id, err := c.Register(ctx, walletprovider.RegisterRequest{
+		Challenge: ch.Value, RegistrationKey: &key.PublicKey, Evidence: evidence(h.t, kind, ch.Value, &key.PublicKey),
+	})
+	if err != nil {
+		h.t.Fatalf("Register: %v", err)
+	}
+	return id, key
+}
+
+// clientWalletAttestation asks through c for a Wallet Attestation for
+// a new instance key of the instance id, with evidence of kind,
+// returning the key and the attestation.
+func (h *harness) clientWalletAttestation(c *walletprovider.Client, id string, regKey *ecdsa.PrivateKey, kind string) (*ecdsa.PrivateKey, string) {
 	h.t.Helper()
 	ctx := context.Background()
 	key := newKey(h.t)
@@ -47,13 +69,14 @@ func (h *harness) clientRegister(c *walletprovider.Client, kind string) (string,
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	id, err := c.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch.Value, InstanceKey: &key.PublicKey, Evidence: evidence(h.t, kind, ch.Value, &key.PublicKey),
+	jwt, err := c.WalletAttestation(ctx, regKey, walletprovider.WalletAttestationRequest{
+		InstanceID: id, ClientID: clientID, InstanceKey: &key.PublicKey,
+		Challenge: ch.Value, Evidence: evidence(h.t, kind, ch.Value, &key.PublicKey),
 	})
 	if err != nil {
-		h.t.Fatalf("Register: %v", err)
+		h.t.Fatalf("WalletAttestation for a new instance key: %v", err)
 	}
-	return id, key
+	return key, jwt
 }
 
 func refusedCode(t *testing.T, err error) string {
@@ -65,8 +88,9 @@ func refusedCode(t *testing.T, err error) string {
 	return r.Code
 }
 
-// TestHandlerRoundTrip: a wallet registers, gets a Wallet Attestation
-// and a Key Attestation through the Client, and reads its status.
+// TestHandlerRoundTrip: a wallet registers, gets Wallet Attestations
+// for an instance key and a Key Attestation through the Client, and
+// reads its status.
 func TestHandlerRoundTrip(t *testing.T) {
 	for _, prefix := range []string{"", "/provider"} {
 		t.Run("prefix "+prefix, func(t *testing.T) {
@@ -83,12 +107,21 @@ func TestHandlerRoundTrip(t *testing.T) {
 				t.Fatalf("registered %+v", in.Evidence)
 			}
 
-			jwt, err := c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
-			if err != nil {
-				t.Fatalf("WalletAttestation: %v", err)
-			}
+			instanceKey, jwt := h.clientWalletAttestation(c, id, key, kindStrongBox)
 			if _, _, err := verifyES256(&h.signer.PublicKey, jwt); err != nil {
 				t.Fatalf("the Wallet Attestation doesn't verify: %v", err)
+			}
+			ik := h.instanceKey(&instanceKey.PublicKey)
+			if ik.InstanceID != id {
+				t.Fatalf("the instance key is recorded for %q, want %q", ik.InstanceID, id)
+			}
+			// Again for the same instance key, without evidence.
+			jwt, err = c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &instanceKey.PublicKey})
+			if err != nil {
+				t.Fatalf("WalletAttestation for a recorded instance key: %v", err)
+			}
+			if ref := walletAttestationStatus(t, jwt); ref != ik.Status {
+				t.Fatalf("status %+v, want the instance key's %+v", ref, ik.Status)
 			}
 
 			holder := newKey(t)
@@ -97,14 +130,14 @@ func TestHandlerRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			res, err := c.KeyAttestation(ctx, key, walletprovider.KeyAttestationRequest{
-				InstanceID: id, Challenge: ch.Value, Nonce: "c-nonce",
+				InstanceID: id, InstanceKey: &instanceKey.PublicKey, Challenge: ch.Value, Nonce: "c-nonce",
 				Keys:     []crypto.PublicKey{&holder.PublicKey},
 				Evidence: []walletprovider.Evidence{evidence(t, kindStrongBox, ch.Value, &holder.PublicKey)},
 			})
 			if err != nil {
 				t.Fatalf("KeyAttestation: %v", err)
 			}
-			h.verifyKeyAttestation(res, in, &holder.PublicKey)
+			h.verifyKeyAttestation(res, ik.Status, &holder.PublicKey)
 
 			for _, accept := range []string{"application/statuslist+jwt", "application/statuslist+cwt"} {
 				req, _ := http.NewRequest(http.MethodGet, ts.URL+prefix+walletprovider.StatusPath, nil)
@@ -120,7 +153,7 @@ func TestHandlerRoundTrip(t *testing.T) {
 			}
 
 			stored, err := h.deps.Instances.Get(ctx, id)
-			if err != nil || stored.WalletAttestations != 1 || stored.KeyAttestations != 1 {
+			if err != nil || stored.WalletAttestations != 2 || stored.KeyAttestations != 1 {
 				t.Fatalf("instance after the round trip: %+v, %v", stored, err)
 			}
 		})
@@ -184,10 +217,12 @@ func TestHandlerRefusesMalformedRequests(t *testing.T) {
 		{"unknown purpose", walletprovider.ChallengePath, `{"purpose":"other"}`, "", http.StatusBadRequest},
 		{"wrong content type", walletprovider.ChallengePath, `{"purpose":"instance"}`, "text/plain", http.StatusUnsupportedMediaType},
 		{"oversized body", walletprovider.InstancesPath, `{"challenge":"` + strings.Repeat("a", walletprovider.MaxRequestBytes) + `"}`, "", http.StatusRequestEntityTooLarge},
-		{"private instance key", walletprovider.InstancesPath,
-			`{"challenge":"x","instance_key":{"kty":"EC","crv":"P-256","x":"x","y":"y","d":"d"},"evidence":{"kind":"fake","data":"e30"}}`, "", http.StatusBadRequest},
+		{"private registration key", walletprovider.InstancesPath,
+			`{"challenge":"x","registration_key":{"kty":"EC","crv":"P-256","x":"x","y":"y","d":"d"},"evidence":{"kind":"fake","data":"e30"}}`, "", http.StatusBadRequest},
 		{"evidence not base64url", walletprovider.InstancesPath,
-			`{"challenge":"x","instance_key":{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"},"evidence":{"kind":"fake","data":"e30="}}`, "", http.StatusBadRequest},
+			`{"challenge":"x","registration_key":{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"},"evidence":{"kind":"fake","data":"e30="}}`, "", http.StatusBadRequest},
+		{"the old instance_key member", walletprovider.InstancesPath,
+			`{"challenge":"x","instance_key":{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"},"evidence":{"kind":"fake","data":"e30"}}`, "", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,18 +260,20 @@ func TestHandlerChallenges(t *testing.T) {
 
 	register := func(ch string) error {
 		_, err := c.Register(ctx, walletprovider.RegisterRequest{
-			Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &key.PublicKey),
+			Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &key.PublicKey),
 		})
 		return err
 	}
-	holder, err := c.Challenge(ctx, walletprovider.PurposeHolder)
-	if err != nil {
-		t.Fatal(err)
+	for _, purpose := range []walletprovider.Purpose{walletprovider.PurposeHolder, walletprovider.PurposeInstance} {
+		other, err := c.Challenge(ctx, purpose)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code := refusedCode(t, register(other.Value)); code != "invalid_challenge" {
+			t.Fatalf("registering with a %s challenge: %s, want invalid_challenge", purpose, code)
+		}
 	}
-	if code := refusedCode(t, register(holder.Value)); code != "invalid_challenge" {
-		t.Fatalf("registering with a holder challenge: %s, want invalid_challenge", code)
-	}
-	ch, err := c.Challenge(ctx, walletprovider.PurposeInstance)
+	ch, err := c.Challenge(ctx, walletprovider.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,15 +284,15 @@ func TestHandlerChallenges(t *testing.T) {
 		t.Fatalf("registering with a used challenge: %s, want invalid_challenge", code)
 	}
 
-	// The same instance key registers once.
-	ch, err = c.Challenge(ctx, walletprovider.PurposeInstance)
+	// The same registration key registers once.
+	ch, err = c.Challenge(ctx, walletprovider.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = register(ch.Value)
 	var r *walletprovider.RefusedError
 	if !errors.As(err, &r) || r.Code != "instance_key_registered" || r.Status != http.StatusConflict {
-		t.Fatalf("registering the instance key again: %v, want 409 instance_key_registered", err)
+		t.Fatalf("registering the registration key again: %v, want 409 instance_key_registered", err)
 	}
 }
 
@@ -267,85 +304,98 @@ func TestHandlerRefusals(t *testing.T) {
 	ctx := context.Background()
 
 	key := newKey(t)
-	ch, err := c.Challenge(ctx, walletprovider.PurposeInstance)
+	ch, err := c.Challenge(ctx, walletprovider.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other := newKey(t)
 	_, err = c.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch.Value, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch.Value, &other.PublicKey),
+		Challenge: ch.Value, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch.Value, &other.PublicKey),
 	})
 	var r *walletprovider.RefusedError
 	if !errors.As(err, &r) || r.Code != "evidence_rejected" || r.Status != http.StatusForbidden || r.Description != "The evidence didn't verify." {
 		t.Fatalf("evidence for another key: %v, want 403 evidence_rejected with the fixed description", err)
 	}
 
-	ch, err = c.Challenge(ctx, walletprovider.PurposeInstance)
+	ch, err = c.Challenge(ctx, walletprovider.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch.Value, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindOldApp, ch.Value, &key.PublicKey),
+		Challenge: ch.Value, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindOldApp, ch.Value, &key.PublicKey),
 	})
 	if code := refusedCode(t, err); code != "policy_refused" {
 		t.Fatalf("an app below the minimum version: %s, want policy_refused", code)
 	}
 
-	_, err = c.Register(ctx, walletprovider.RegisterRequest{Challenge: ch.Value, InstanceKey: &key.PublicKey})
+	_, err = c.Register(ctx, walletprovider.RegisterRequest{Challenge: ch.Value, RegistrationKey: &key.PublicKey})
 	if code := refusedCode(t, err); code != "evidence_required" {
 		t.Fatalf("no evidence: %s, want evidence_required", code)
 	}
 
 	id, key := h.clientRegister(c, kindStrongBox)
-	_, err = c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: "other-client"})
-	if code := refusedCode(t, err); code != "unknown_client" {
+	instanceKey, _ := h.clientWalletAttestation(c, id, key, kindStrongBox)
+	wa := func(req walletprovider.WalletAttestationRequest) error {
+		_, err := c.WalletAttestation(ctx, key, req)
+		return err
+	}
+	if code := refusedCode(t, wa(walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: "other-client", InstanceKey: &instanceKey.PublicKey})); code != "unknown_client" {
 		t.Fatalf("another client: %s, want unknown_client", code)
+	}
+	if code := refusedCode(t, wa(walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &newKey(t).PublicKey})); code != "evidence_required" {
+		t.Fatalf("a new instance key without evidence: %s, want evidence_required", code)
+	}
+	err = wa(walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &key.PublicKey})
+	if !errors.As(err, &r) || r.Code != "instance_key_registered" || r.Status != http.StatusConflict {
+		t.Fatalf("the registration key as an instance key: %v, want 409 instance_key_registered", err)
 	}
 
 	holder := newKey(t)
-	hch, err := c.Challenge(ctx, walletprovider.PurposeHolder)
-	if err != nil {
-		t.Fatal(err)
+	ka := func(instanceKey crypto.PublicKey, kind string) error {
+		hch, err := c.Challenge(ctx, walletprovider.PurposeHolder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.KeyAttestation(ctx, key, walletprovider.KeyAttestationRequest{
+			InstanceID: id, InstanceKey: instanceKey, Challenge: hch.Value, Nonce: "n", Keys: []crypto.PublicKey{&holder.PublicKey},
+			Evidence: []walletprovider.Evidence{evidence(t, kind, hch.Value, &holder.PublicKey)},
+		})
+		return err
 	}
-	_, err = c.KeyAttestation(ctx, key, walletprovider.KeyAttestationRequest{
-		InstanceID: id, Challenge: hch.Value, Nonce: "n", Keys: []crypto.PublicKey{&holder.PublicKey},
-		Evidence: []walletprovider.Evidence{evidence(t, kindSoftware, hch.Value, &holder.PublicKey)},
-	})
-	if code := refusedCode(t, err); code != "no_key_attested" {
+	if code := refusedCode(t, ka(&instanceKey.PublicKey, kindSoftware)); code != "no_key_attested" {
 		t.Fatalf("a software holder key: %s, want no_key_attested", code)
+	}
+	err = ka(&newKey(t).PublicKey, kindStrongBox)
+	if !errors.As(err, &r) || r.Code != "unknown_instance_key" || r.Status != http.StatusBadRequest {
+		t.Fatalf("an instance key never recorded: %v, want 400 unknown_instance_key", err)
 	}
 
 	if err := h.p.Suspend(ctx, id, "lost"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
-	if code := refusedCode(t, err); code != "instance_not_active" {
+	recorded := walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &instanceKey.PublicKey}
+	if code := refusedCode(t, wa(recorded)); code != "instance_not_active" {
 		t.Fatalf("a suspended instance: %s, want instance_not_active", code)
 	}
 	if err := h.p.Revoke(ctx, id, "stolen"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
-	if code := refusedCode(t, err); code != "instance_revoked" {
+	if code := refusedCode(t, wa(recorded)); code != "instance_revoked" {
 		t.Fatalf("a revoked instance: %s, want instance_revoked", code)
 	}
-	// Someone without the instance key learns nothing of its state.
-	_, err = c.WalletAttestation(ctx, newKey(t), walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
+	// Someone without the registration key learns nothing of its state.
+	_, err = c.WalletAttestation(ctx, newKey(t), recorded)
 	if code := refusedCode(t, err); code != "invalid_signed_request" {
 		t.Fatalf("a forged request for a revoked instance: %s, want invalid_signed_request", code)
 	}
-	if got := h.status(statusRef(t, h, id), false); got != statuslist.StatusInvalid {
+	// Nor does the instance key sign for the instance.
+	_, err = c.WalletAttestation(ctx, instanceKey, recorded)
+	if code := refusedCode(t, err); code != "invalid_signed_request" {
+		t.Fatalf("a request signed with the instance key: %s, want invalid_signed_request", code)
+	}
+	if got := h.status(h.instanceKey(&instanceKey.PublicKey).Status, false); got != statuslist.StatusInvalid {
 		t.Fatalf("status %v, want INVALID", got)
 	}
-}
-
-func statusRef(t *testing.T, h *harness, id string) statuslist.StatusListRef {
-	t.Helper()
-	in, err := h.deps.Instances.Get(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return in.Status
 }
 
 // TestHandlerUnauthorizedIsUniform: a signed request that doesn't
@@ -356,7 +406,16 @@ func TestHandlerUnauthorizedIsUniform(t *testing.T) {
 	ts, c := h.server("")
 	ctx := context.Background()
 	id, key := h.clientRegister(c, kindStrongBox)
-	body := `{"client_id":"` + clientID + `"}`
+	instanceKey := h.newInstanceKey(id, kindStrongBox)
+	instanceJWK, err := jwk.Marshal(&instanceKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceJSON, err := json.Marshal(instanceJWK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"client_id":"` + clientID + `","instance_key":` + string(instanceJSON) + `}`
 
 	challenge := func() string {
 		ch, err := c.Challenge(ctx, walletprovider.PurposeRequest)
@@ -438,8 +497,9 @@ func TestHandlerUnauthorizedIsUniform(t *testing.T) {
 
 	// A signed request with an unknown member is refused after it
 	// verified.
-	jwt := sign(key, id, challenge(), walletprovider.WalletAttestationPath, `{"client_id":"`+clientID+`","x":1}`)
-	resp, b := rawPost(t, ts, walletprovider.WalletAttestationPath, `{"client_id":"`+clientID+`","x":1}`, map[string]string{walletprovider.RequestHeader: jwt})
+	extra := strings.TrimSuffix(body, "}") + `,"x":1}`
+	jwt := sign(key, id, challenge(), walletprovider.WalletAttestationPath, extra)
+	resp, b := rawPost(t, ts, walletprovider.WalletAttestationPath, extra, map[string]string{walletprovider.RequestHeader: jwt})
 	if resp.StatusCode != http.StatusBadRequest || errorCode(t, b) != "invalid_request" {
 		t.Fatalf("a signed request with an unknown member: %d %s", resp.StatusCode, b)
 	}
@@ -460,6 +520,7 @@ func TestClientChecksAnswers(t *testing.T) {
 	_, c := h.server("")
 	ctx := context.Background()
 	id, key := h.clientRegister(c, kindStrongBox)
+	instanceKey, _ := h.clientWalletAttestation(c, id, key, kindStrongBox)
 
 	// A provider answering another client's Wallet Attestation.
 	var answer string
@@ -472,7 +533,7 @@ func TestClientChecksAnswers(t *testing.T) {
 		_, _ = io.WriteString(w, `{"wallet_attestation":"`+answer+`"}`)
 	}))
 	defer fake.Close()
-	jwt, err := c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
+	jwt, err := c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &instanceKey.PublicKey})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,10 +542,10 @@ func TestClientChecksAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fc.WalletAttestation(ctx, newKey(t), walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID}); err == nil {
+	if _, err := fc.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: &newKey(t).PublicKey}); err == nil {
 		t.Fatal("a Wallet Attestation for another instance key was accepted")
 	}
-	if _, err := fc.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: "other"}); err == nil {
+	if _, err := fc.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: "other", InstanceKey: &instanceKey.PublicKey}); err == nil {
 		t.Fatal("a Wallet Attestation for another client was accepted")
 	}
 }

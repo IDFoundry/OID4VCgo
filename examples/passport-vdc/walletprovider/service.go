@@ -117,10 +117,10 @@ type ServiceConfig struct {
 	// every attestation names, at /v1/status. Empty means DefaultURL.
 	URL string
 	// InstancesPath is the file that keeps the library instances the
-	// service registers, and StatusIndicesPath the file that keeps their
-	// status list indices and statuses, so a restart neither forgets an
-	// instance nor hands its index out again; empty keeps each in memory
-	// only.
+	// service registers and their instance keys, and StatusIndicesPath
+	// the file that keeps the instance keys' status list indices and
+	// statuses, so a restart neither forgets an instance key nor hands
+	// its index out again; empty keeps each in memory only.
 	InstancesPath     string
 	StatusIndicesPath string
 	// AndroidApps, if set, are the Android apps whose keys the
@@ -151,10 +151,11 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // NewService serves the provider as a service the demo wallets call, so
 // they never hold its key. The attestations are issued by the library's
 // Wallet Provider (oid4vcgo/walletprovider), signed with p's key and
-// certificate: each instance key registers an instance, every
-// attestation names its instance's entry in the provider's status list,
-// served at /v1/status, and the library's own protocol is served under
-// /v1/ for a wallet that speaks it (see ServiceConfig.AndroidApps).
+// certificate: each instance key is recorded for an instance of its
+// own, every attestation names its instance key's entry in the
+// provider's status list, served at /v1/status, and the library's own
+// protocol is served under /v1/ for a wallet that speaks it (see
+// ServiceConfig.AndroidApps).
 //
 // The demo wallets speak this package's older, stateless protocol:
 // POST WalletAttestationPath with a WalletAttestationRequest, or
@@ -178,14 +179,18 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // The library attests nothing without platform evidence, and the older
 // protocol carries none from iOS, the CLI or the web wallet, and names
 // no instance. So the service vouches for each request it has checked
-// with DEMO-ONLY evidence (DemoEvidenceKind): a Wallet Attestation
-// registers its instance key as an instance the first time the key is
-// seen, at the security level its chain showed (software without one),
-// and every Key Attestation is issued under one shared instance the
-// service registers for the purpose. Suspending or revoking an instance
-// through the library stops its Wallet Attestations. Instances and
-// status indices are kept in memory: a restart forgets them, and a
-// wallet's instance key then registers again.
+// with DEMO-ONLY evidence (DemoEvidenceKind). The first time a Wallet
+// Attestation is asked for an instance key, the service registers an
+// instance for it, with a registration key of the service's own that
+// signs nothing, and records the instance key for that instance at
+// the security level its chain showed (software without one). Every
+// Key Attestation is issued for one shared instance key of one shared
+// instance the service registers for the purpose. Suspending or
+// revoking an instance through the library stops its Wallet
+// Attestations and sets its instance key's status. Without
+// ServiceConfig's paths, instances and status indices are kept in
+// memory: a restart forgets them, and a wallet's instance key is then
+// recorded again.
 func (p *Provider) NewService(cfg ServiceConfig) (http.Handler, error) {
 	s, err := p.newService(cfg)
 	if err != nil {
@@ -240,7 +245,6 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	s := &service{
 		p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst),
 		demo: newDemoVerifier(), store: store,
-		instances: store.byThumbprint(), holderInstance: store.holderInstance(),
 	}
 	if s.lib, err = p.library(cfg, s.demo, store, indices); err != nil {
 		return nil, err
@@ -257,21 +261,19 @@ type service struct {
 	demo       *demoVerifier
 	store      *fileInstanceStore
 
-	// mu serializes registrations, so an instance key registers once.
+	// mu serializes recording instance keys, so an instance key is
+	// recorded for one instance.
 	mu sync.Mutex
-	// instances maps an instance key's JWK thumbprint to its instance,
-	// as store has them.
-	instances map[string]string
-	// holderInstance is the shared instance Key Attestations are issued
-	// under; empty until the first.
-	holderInstance string
+	// holderKey is the shared instance key Key Attestations are issued
+	// for; nil until the first.
+	holderKey crypto.PublicKey
 }
 
 // library is the library Wallet Provider p's service issues with:
 // signed with p's key and certificate, attesting cfg.ClientID, taking
 // the demo-only evidence and, with cfg.AndroidApps, Android Key
 // Attestation.
-func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, instances wp.InstanceStore, indices statuslist.IndexStore) (*wp.Provider, error) {
+func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileInstanceStore, indices statuslist.IndexStore) (*wp.Provider, error) {
 	verifiers := []wp.EvidenceVerifier{demo}
 	platforms := map[wp.Platform]wp.PlatformPolicy{
 		// Whatever the older protocol's checks found, from a software
@@ -293,7 +295,7 @@ func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, instances wp.I
 		Policy:        wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
 	}, wp.Dependencies{
 		Signer: p.Key, Chain: []*x509.Certificate{p.Certificate},
-		Instances: instances, Challenges: &wp.MemoryChallengeStore{},
+		Instances: store, InstanceKeys: store.keys(), Challenges: &wp.MemoryChallengeStore{},
 		StatusIndices: indices, Evidence: verifiers,
 		Clock: cfg.Now, Random: rand.Reader,
 		Logger: slog.New(slog.NewTextHandler(logfWriter(cfg.Logf), nil)),
@@ -355,12 +357,7 @@ func (s *service) walletAttestation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx := r.Context()
-	id, err := s.instanceFor(ctx, key, thumbprint, level)
-	var jwt string
-	if err == nil {
-		jwt, err = s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{InstanceID: id, ClientID: s.cfg.ClientID})
-	}
+	id, jwt, err := s.libWalletAttestation(r.Context(), key, thumbprint, level)
 	switch {
 	case errors.Is(err, wp.ErrInstanceRevoked):
 		writeError(w, http.StatusForbidden, "this wallet instance is revoked")
@@ -376,36 +373,90 @@ func (s *service) walletAttestation(w http.ResponseWriter, r *http.Request) {
 	writeAttestation(w, jwt, err)
 }
 
-// instanceFor returns the instance registered for the instance key
-// key, whose JWK thumbprint is thumbprint, registering it with the
-// library, at level, the first time.
-func (s *service) instanceFor(ctx context.Context, key *ecdsa.PublicKey, thumbprint string, level wp.SecurityLevel) (string, error) {
+// libWalletAttestation has the library issue a Wallet Attestation for
+// the instance key key, whose JWK thumbprint is thumbprint, returning
+// it with the key's instance: the instance it's recorded for, or, the
+// first time, a new one registered for it, the key recorded at level.
+func (s *service) libWalletAttestation(ctx context.Context, key *ecdsa.PublicKey, thumbprint string, level wp.SecurityLevel) (string, string, error) {
+	id, err := s.instanceOf(ctx, thumbprint)
+	if errors.Is(err, wp.ErrNotFound) {
+		return s.newInstanceWalletAttestation(ctx, key, thumbprint, level)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	jwt, err := s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{InstanceID: id, ClientID: s.cfg.ClientID, InstanceKey: key})
+	return id, jwt, err
+}
+
+// newInstanceWalletAttestation registers an instance for the instance
+// key key and records the key for it, at level, with its first Wallet
+// Attestation.
+func (s *service) newInstanceWalletAttestation(ctx context.Context, key *ecdsa.PublicKey, thumbprint string, level wp.SecurityLevel) (string, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if id, ok := s.instances[thumbprint]; ok {
-		return id, nil
+	if id, err := s.instanceOf(ctx, thumbprint); !errors.Is(err, wp.ErrNotFound) {
+		// Recorded meanwhile, or the store failed.
+		if err != nil {
+			return "", "", err
+		}
+		jwt, err := s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{InstanceID: id, ClientID: s.cfg.ClientID, InstanceKey: key})
+		return id, jwt, err
 	}
-	in, err := s.register(ctx, key, level)
+	in, err := s.register(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	jwt, err := s.recordInstanceKey(ctx, in.ID, key, level)
+	return in.ID, jwt, err
+}
+
+// instanceOf is the instance the instance key with thumbprint is
+// recorded for, or an error wrapping wp.ErrNotFound.
+func (s *service) instanceOf(ctx context.Context, thumbprint string) (string, error) {
+	ik, err := s.store.keys().Get(ctx, thumbprint)
 	if err != nil {
 		return "", err
 	}
-	s.instances[thumbprint] = in.ID
-	return in.ID, nil
+	return ik.InstanceID, nil
 }
 
-// register registers key as an instance, at level, with demo-only
-// evidence. Callers hold s.mu.
-func (s *service) register(ctx context.Context, key crypto.PublicKey, level wp.SecurityLevel) (wp.Instance, error) {
-	ch, raw, err := s.libChallenge(ctx, wp.PurposeInstance)
+// register registers an instance with a registration key of the
+// service's own, which signs nothing (the service calls the library
+// directly), with demo-only evidence. Callers hold s.mu.
+func (s *service) register(ctx context.Context) (wp.Instance, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return wp.Instance{}, err
 	}
-	ev, err := s.demo.vouch(raw, demoKey{key: key, level: level})
+	ch, raw, err := s.libChallenge(ctx, wp.PurposeRegistration)
+	if err != nil {
+		return wp.Instance{}, err
+	}
+	ev, err := s.demo.vouch(raw, demoKey{key: &key.PublicKey, level: wp.SecurityLevelSoftware})
 	if err != nil {
 		return wp.Instance{}, err
 	}
 	defer s.demo.forget(ev)
-	return s.lib.Register(ctx, wp.RegisterRequest{Challenge: ch, InstanceKey: key, Evidence: ev})
+	return s.lib.Register(ctx, wp.RegisterRequest{Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: ev})
+}
+
+// recordInstanceKey records key, at level, as an instance key of the
+// instance id with demo-only evidence, returning the Wallet
+// Attestation that records it. Callers hold s.mu.
+func (s *service) recordInstanceKey(ctx context.Context, id string, key crypto.PublicKey, level wp.SecurityLevel) (string, error) {
+	ch, raw, err := s.libChallenge(ctx, wp.PurposeInstance)
+	if err != nil {
+		return "", err
+	}
+	ev, err := s.demo.vouch(raw, demoKey{key: key, level: level})
+	if err != nil {
+		return "", err
+	}
+	defer s.demo.forget(ev)
+	return s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{
+		InstanceID: id, ClientID: s.cfg.ClientID, InstanceKey: key, Challenge: ch, Evidence: ev,
+	})
 }
 
 // libChallenge issues a library challenge for purpose, for the service
@@ -419,28 +470,52 @@ func (s *service) libChallenge(ctx context.Context, purpose wp.Purpose) (string,
 	return ch.Value, raw, err
 }
 
-// holderInstanceID returns the shared instance Key Attestations are
-// issued under, registering it the first time with a key of the
-// service's own, which signs nothing.
-func (s *service) holderInstanceID(ctx context.Context) (string, error) {
+// holderIssuance returns the shared instance Key Attestations are
+// issued under, and its one instance key they're issued for: the
+// first time, it registers the instance and records an instance key of
+// the service's own for it, which signs nothing (its Wallet
+// Attestation is discarded).
+func (s *service) holderIssuance(ctx context.Context) (string, crypto.PublicKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.holderInstance != "" {
-		return s.holderInstance, nil
+	id := s.store.holderInstance()
+	if id != "" && s.holderKey != nil {
+		return id, s.holderKey, nil
+	}
+	if id == "" {
+		in, err := s.register(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := s.store.setHolderInstance(in.ID); err != nil {
+			return "", nil, err
+		}
+		id = in.ID
+	}
+	// The key recorded before a restart, or a new one: a restart
+	// between registering the instance and recording its key leaves it
+	// with none.
+	recorded, err := s.store.keys().List(ctx, id, "", 1)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(recorded) == 1 {
+		key, _, err := parseP256Key(recorded[0].Key)
+		if err != nil {
+			return "", nil, fmt.Errorf("the holder instance key: %w", err)
+		}
+		s.holderKey = key
+		return id, key, nil
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	in, err := s.register(ctx, &key.PublicKey, wp.SecurityLevelSoftware)
-	if err != nil {
-		return "", err
+	if _, err := s.recordInstanceKey(ctx, id, &key.PublicKey, wp.SecurityLevelSoftware); err != nil {
+		return "", nil, err
 	}
-	if err := s.store.setHolderInstance(in.ID); err != nil {
-		return "", err
-	}
-	s.holderInstance = in.ID
-	return in.ID, nil
+	s.holderKey = &key.PublicKey
+	return id, s.holderKey, nil
 }
 
 func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
@@ -497,7 +572,7 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 // issueKeyAttestation has the library issue a Key Attestation over the
 // keys vouched for, carrying nonce, under the shared holder instance.
 func (s *service) issueKeyAttestation(ctx context.Context, vouched []demoKey, nonce string) (string, error) {
-	id, err := s.holderInstanceID(ctx)
+	id, instanceKey, err := s.holderIssuance(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -515,7 +590,7 @@ func (s *service) issueKeyAttestation(ctx context.Context, vouched []demoKey, no
 		keys[i] = v.key
 	}
 	res, err := s.lib.KeyAttestation(ctx, wp.KeyAttestationRequest{
-		InstanceID: id, Challenge: ch, Keys: keys, Evidence: []wp.Evidence{ev}, Nonce: nonce,
+		InstanceID: id, InstanceKey: instanceKey, Challenge: ch, Keys: keys, Evidence: []wp.Evidence{ev}, Nonce: nonce,
 	})
 	if err != nil {
 		return "", err

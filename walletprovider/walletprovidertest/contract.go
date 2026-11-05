@@ -50,7 +50,6 @@ func sampleInstance(id string) walletprovider.Instance {
 		},
 		Credential: []byte{1, 2, 3}, Counter: 7,
 		State: walletprovider.StateSuspended, Reason: "lost device",
-		Status:    statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status"},
 		CreatedAt: at, LastSeenAt: at.Add(time.Hour),
 		WalletAttestations: 3, KeyAttestations: 5,
 	}
@@ -226,6 +225,179 @@ func instanceCopies(t *testing.T, s walletprovider.InstanceStore) {
 	again := mustGet(t, s, "a")
 	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Credential[0] == 9 || again.Credential[1] == 9 {
 		t.Fatalf("the stored record shares memory with the caller's: %s %v", again.Key, again.Credential)
+	}
+}
+
+// TestInstanceKeyStoreContract checks that the stores newStore returns
+// behave as walletprovider.InstanceKeyStore requires. newStore returns
+// a new, empty store each time it's called.
+func TestInstanceKeyStoreContract(t *testing.T, newStore func(t *testing.T) walletprovider.InstanceKeyStore) {
+	t.Helper()
+	cases := []struct {
+		name string
+		run  func(*testing.T, walletprovider.InstanceKeyStore)
+	}{
+		{"GetUnknownIsNotFound", instanceKeyGetUnknown},
+		{"CreateThenGet", instanceKeyCreateThenGet},
+		{"CreateDuplicateIsExists", instanceKeyCreateDuplicate},
+		{"ConcurrentCreatesSucceedOnce", instanceKeyConcurrentCreates},
+		{"ListPagesOneInstanceInThumbprintOrder", instanceKeyListPages},
+		{"ReturnedRecordsAreCopies", instanceKeyCopies},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })
+	}
+}
+
+// sampleInstanceKey is a record with every field set, its time in UTC
+// at whole seconds so a store may keep it at that precision.
+func sampleInstanceKey(thumbprint, instanceID string) walletprovider.InstanceKey {
+	return walletprovider.InstanceKey{
+		Thumbprint: thumbprint, Key: []byte(`{"kty":"EC","crv":"P-256","x":"x","y":"y"}`), InstanceID: instanceID,
+		Status:        statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status"},
+		SecurityLevel: walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
+		CreatedAt: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func mustCreateInstanceKey(t *testing.T, s walletprovider.InstanceKeyStore, k walletprovider.InstanceKey) {
+	t.Helper()
+	if err := s.Create(context.Background(), k); err != nil {
+		t.Fatalf("Create(%q): %v", k.Thumbprint, err)
+	}
+}
+
+// expectInstanceKey reads the record with want's thumbprint and
+// compares it with want, its time by instant.
+func expectInstanceKey(t *testing.T, s walletprovider.InstanceKeyStore, what string, want walletprovider.InstanceKey) {
+	t.Helper()
+	got, err := s.Get(context.Background(), want.Thumbprint)
+	if err != nil {
+		t.Fatalf("%s: Get(%q): %v", what, want.Thumbprint, err)
+	}
+	if !got.CreatedAt.Equal(want.CreatedAt) {
+		t.Fatalf("%s: CreatedAt is %v, want %v", what, got.CreatedAt, want.CreatedAt)
+	}
+	got.CreatedAt = want.CreatedAt
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s:\n got  %+v\n want %+v", what, got, want)
+	}
+}
+
+func instanceKeyGetUnknown(t *testing.T, s walletprovider.InstanceKeyStore) {
+	if _, err := s.Get(context.Background(), "nope"); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("Get(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+func instanceKeyCreateThenGet(t *testing.T, s walletprovider.InstanceKeyStore) {
+	k := sampleInstanceKey("tp-1", "a")
+	mustCreateInstanceKey(t, s, k)
+	expectInstanceKey(t, s, "after Create", k)
+}
+
+func instanceKeyCreateDuplicate(t *testing.T, s walletprovider.InstanceKeyStore) {
+	k := sampleInstanceKey("tp-1", "a")
+	mustCreateInstanceKey(t, s, k)
+	// One key belongs to one instance: the same thumbprint is refused
+	// for another instance too.
+	for _, instanceID := range []string{"a", "b"} {
+		other := sampleInstanceKey("tp-1", instanceID)
+		other.Status.Idx = 99
+		if err := s.Create(context.Background(), other); !errors.Is(err, walletprovider.ErrExists) {
+			t.Fatalf("Create(duplicate thumbprint, instance %q) = %v, want ErrExists", instanceID, err)
+		}
+	}
+	expectInstanceKey(t, s, "after a duplicate Create", k)
+}
+
+func instanceKeyConcurrentCreates(t *testing.T, s walletprovider.InstanceKeyStore) {
+	const workers = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	var unexpected []error
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			k := sampleInstanceKey("tp-1", fmt.Sprintf("instance-%d", i))
+			err := s.Create(context.Background(), k)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				created++
+			case !errors.Is(err, walletprovider.ErrExists):
+				unexpected = append(unexpected, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if len(unexpected) > 0 {
+		t.Fatalf("concurrent Create: %v", unexpected)
+	}
+	if created != 1 {
+		t.Fatalf("%d concurrent Creates of one thumbprint succeeded, want 1", created)
+	}
+}
+
+func instanceKeyListPages(t *testing.T, s walletprovider.InstanceKeyStore) {
+	const n = 7
+	for i := n - 1; i >= 0; i-- {
+		mustCreateInstanceKey(t, s, sampleInstanceKey(fmt.Sprintf("tp-%02d", i), "a"))
+		mustCreateInstanceKey(t, s, sampleInstanceKey(fmt.Sprintf("tp-b-%02d", i), "b"))
+	}
+	var seen []string
+	after := ""
+	for range n + 1 {
+		page, err := s.List(context.Background(), "a", after, 3)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(page) > 3 {
+			t.Fatalf("List(limit 3) returned %d", len(page))
+		}
+		for _, k := range page {
+			if k.InstanceID != "a" {
+				t.Fatalf("List(instance a) returned instance %q's key %q", k.InstanceID, k.Thumbprint)
+			}
+			seen = append(seen, k.Thumbprint)
+		}
+		if len(page) < 3 {
+			break
+		}
+		after = page[len(page)-1].Thumbprint
+	}
+	want := []string{"tp-00", "tp-01", "tp-02", "tp-03", "tp-04", "tp-05", "tp-06"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("paging through List saw %v, want %v", seen, want)
+	}
+	if page, err := s.List(context.Background(), "c", "", 3); err != nil || len(page) != 0 {
+		t.Fatalf("List(an instance with no keys) = %v, %v; want none", page, err)
+	}
+}
+
+func instanceKeyCopies(t *testing.T, s walletprovider.InstanceKeyStore) {
+	k := sampleInstanceKey("tp-1", "a")
+	mustCreateInstanceKey(t, s, k)
+	k.Key[0] = 'X' // the caller's copy, after Create
+	got, err := s.Get(context.Background(), "tp-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.Key[1] = 'X' // a returned copy
+	listed, err := s.List(context.Background(), "a", "", 1)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("List = %v, %v", listed, err)
+	}
+	listed[0].Key[2] = 'X'
+	again, err := s.Get(context.Background(), "tp-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Key[2] == 'X' {
+		t.Fatalf("the stored record shares memory with the caller's: %s", again.Key)
 	}
 }
 

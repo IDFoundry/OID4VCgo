@@ -424,18 +424,20 @@ changes whether *every* bullet below is `(done)`.
   OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
 - **`walletprovider`** (started: the core package) — the Wallet
   Provider role, which decides whether to mint what `attestation`
-  mints: it registers wallet instances from platform evidence, issues
-  HAIP §4.4.1 Wallet Attestations and §4.5.1 (OID4VCI Appendix D) Key
-  Attestations claiming only what that evidence proved, and revokes
-  instances through its own Token Status List, which issuers already
+  mints: it registers wallet instances from platform evidence, records
+  their per-issuance instance keys, issues HAIP §4.4.1 Wallet
+  Attestations and §4.5.1 (OID4VCI Appendix D) Key Attestations
+  claiming only what that evidence proved, and revokes instances
+  through its own Token Status List, which issuers already
   check (`haip.WalletAttestationStatusList`,
   `issuer.StatusListAttestationStatus`). `Config`/`Dependencies`/`New`
   in `issuer`'s shape; `New` refuses a signer whose certificate isn't
   the chain HAIP and FAPIgo's `X5CAttesterChain` expect (not
   self-signed, no anchor, naming `Config.Identifier` as a URI SAN, no
   other role's extended key usage). Rules:
-  - **No unattested path.** A registration or Key Attestation request
-    without evidence is refused; there is no development setting that
+  - **No unattested path.** A registration, a Wallet Attestation for a
+    new instance key, or a Key Attestation request without evidence is
+    refused; there is no development setting that
     changes it. Tests and emulators plug in an `EvidenceVerifier` of
     their own (`walletprovidertest.FakeVerifier`, never for
     production).
@@ -446,9 +448,9 @@ changes whether *every* bullet below is `(done)`.
     (security level, `KeyBinding`, user authentication) and of the app
     and device. Android Key Attestation attests each key itself
     (`KeyBindingAttested`); Apple App Attest attests the app, which
-    then signs for keys (`KeyBindingAppAssertion`), with its
-    registration key kept as `Instance.Credential` and its assertion
-    counter advanced through `InstanceStore.Update`'s compare-and-swap.
+    then signs for keys (`KeyBindingAppAssertion`), with its App
+    Attest key kept as `Instance.Credential` and its assertion counter
+    advanced through `InstanceStore.Update`'s compare-and-swap.
   - **Claims come from policy, never the app.** `Policy` sets the
     accepted platforms, security levels, minimum app versions and
     verified boot, and is applied again at every attestation, so
@@ -457,20 +459,37 @@ changes whether *every* bullet below is `(done)`.
     `Policy.KeyStorage`, keyed by verified evidence; an app-asserted
     (iOS) key matches only a row naming `KeyBindingAppAssertion`, so
     nothing is claimed for one unless the integrator says so.
-  - **Status is per instance.** Each instance holds one
-    `statuslist.Allocator` index (two bits, so SUSPENDED fits) that
-    both attestations reference; `Suspend`/`Resume`/`Revoke` and
-    `RevokeWhere` set it, and `Provider.StatusList` serves the list
-    signed with the attestations' own key, the binding issuers check by
-    default.
+  - **An installation, and a key per issuance.** An `Instance` (HAIP's
+    Wallet Instance, one installation) registers once with a
+    *registration key* that signs its requests and is never named to
+    an issuer. A Wallet Attestation's `cnf` is an *instance key*
+    (`InstanceKey`) the wallet makes per issuance, so no two
+    Credential Issuers see the same attestation, key or status entry
+    (HAIP §4.4.1, attestation-based client auth §11.1): platform
+    evidence vouches for it at its first Wallet Attestation, after
+    which it's recorded against the instance (`InstanceKeyStore`) and
+    reused without evidence. Only the provider knows which instance
+    keys are whose.
+  - **Status is per instance key.** Each instance key holds one
+    `statuslist.Allocator` index (two bits, so SUSPENDED fits),
+    reserved when it's recorded, that its Wallet Attestations and the
+    Key Attestations issued with it (`KeyAttestationRequest.InstanceKey`)
+    reference; `Suspend`/`Resume`/`Revoke` and `RevokeWhere` act on
+    the instance and set every one of its keys' statuses, and
+    `Provider.StatusList` serves the list signed with the
+    attestations' own key, the binding issuers check by default. Each
+    issuance uses up an index for good; retiring lists whose
+    attestations have all expired is still to come.
   - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
     short JWT over method, path, body hash and a `PurposeRequest`
-    challenge, signed with the instance key. The signature is checked
-    before the instance's state is reported or the challenge consumed,
-    so a forged request learns nothing and burns nothing.
-  - **One instance per instance key.** `InstanceStore.Create` refuses
-    a second instance with the same key thumbprint
-    (`ErrInstanceKeyRegistered`), atomically, as a unique column does.
+    challenge, signed with the registration key. The signature is
+    checked before the instance's state is reported or the challenge
+    consumed, so a forged request learns nothing and burns nothing.
+  - **A key is one instance's, once.** `InstanceStore.Create` refuses
+    a second instance with the same registration key thumbprint, and
+    `InstanceKeyStore.Create` a second record of an instance key,
+    atomically, as a unique column does; a registration key is never
+    an instance key (`ErrInstanceKeyRegistered`).
   - **Its own versioned HTTP protocol.** No standard defines how a
     wallet talks to its provider, so `Provider.Handler` serves a small
     JSON protocol under `/v1/` (challenge, instances,
@@ -496,7 +515,7 @@ changes whether *every* bullet below is `(done)`.
 
   `sqlstore` keeps its durable stores (`DB.WalletProviderInstances`,
   `DB.WalletProviderChallenges`, with `DB.StatusIndices` for its status
-  list indices).
+  list indices); a store for instance keys is still to come there.
 
   Still to come, each its own package or PR: `walletprovider/appattest`
   (Apple App Attest).

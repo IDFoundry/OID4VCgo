@@ -25,7 +25,7 @@ import (
 
 func evidenceInput(chain [][]byte, challenge []byte, keys ...crypto.PublicKey) walletprovider.EvidenceInput {
 	return walletprovider.EvidenceInput{
-		Evidence: androidkey.Evidence(chain), Challenge: challenge, Purpose: walletprovider.PurposeInstance, Keys: keys,
+		Evidence: androidkey.Evidence(chain), Challenge: challenge, Purpose: walletprovider.PurposeRegistration, Keys: keys,
 	}
 }
 
@@ -222,7 +222,8 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		},
 	}, walletprovider.Dependencies{
 		Signer: signer, Chain: []*x509.Certificate{leafCert},
-		Instances: &walletprovider.MemoryInstanceStore{}, Challenges: &walletprovider.MemoryChallengeStore{},
+		Instances: &walletprovider.MemoryInstanceStore{}, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
+		Challenges:    &walletprovider.MemoryChallengeStore{},
 		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{adapter},
 		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -256,17 +257,25 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		return ch.Value, c
 	}
 
-	ch, instance := chainFor(walletprovider.PurposeInstance, false)
+	ch, registration := chainFor(walletprovider.PurposeRegistration, false)
 	instanceID, err := client.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch, InstanceKey: &instance.leafKey.PublicKey, Evidence: androidkey.Evidence(instance.der),
+		Challenge: ch, RegistrationKey: &registration.leafKey.PublicKey, Evidence: androidkey.Evidence(registration.der),
 	})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
+	ch, instance := chainFor(walletprovider.PurposeInstance, false)
+	if _, err := client.WalletAttestation(ctx, registration.leafKey, walletprovider.WalletAttestationRequest{
+		InstanceID: instanceID, ClientID: "wallet", InstanceKey: &instance.leafKey.PublicKey,
+		Challenge: ch, Evidence: androidkey.Evidence(instance.der),
+	}); err != nil {
+		t.Fatalf("WalletAttestation: %v", err)
+	}
+
 	ch, holder := chainFor(walletprovider.PurposeHolder, true)
-	res, err := client.KeyAttestation(ctx, instance.leafKey, walletprovider.KeyAttestationRequest{
-		InstanceID: instanceID, Challenge: ch, Nonce: "c-nonce",
+	res, err := client.KeyAttestation(ctx, registration.leafKey, walletprovider.KeyAttestationRequest{
+		InstanceID: instanceID, InstanceKey: &instance.leafKey.PublicKey, Challenge: ch, Nonce: "c-nonce",
 		Keys: []crypto.PublicKey{&holder.leafKey.PublicKey}, Evidence: []walletprovider.Evidence{androidkey.Evidence(holder.der)},
 	})
 	if err != nil {
@@ -283,8 +292,8 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.KeyAttestation(ctx, instance.leafKey, walletprovider.KeyAttestationRequest{
-		InstanceID: instanceID, Challenge: ch2.Value, Nonce: "c-nonce",
+	_, err = client.KeyAttestation(ctx, registration.leafKey, walletprovider.KeyAttestationRequest{
+		InstanceID: instanceID, InstanceKey: &instance.leafKey.PublicKey, Challenge: ch2.Value, Nonce: "c-nonce",
 		Keys: []crypto.PublicKey{&replayed.leafKey.PublicKey}, Evidence: []walletprovider.Evidence{androidkey.Evidence(replayed.der)},
 	})
 	var refused *walletprovider.RefusedError
@@ -292,13 +301,24 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		t.Fatalf("a chain over another challenge: %v, want no_key_attested", err)
 	}
 
-	// An instance key's chain replayed with a fresh challenge is
+	// A registration key's chain replayed with a fresh challenge is
 	// refused.
-	ch, _ = chainFor(walletprovider.PurposeInstance, false)
+	ch, _ = chainFor(walletprovider.PurposeRegistration, false)
 	_, err = client.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch, InstanceKey: &instance.leafKey.PublicKey, Evidence: androidkey.Evidence(instance.der),
+		Challenge: ch, RegistrationKey: &registration.leafKey.PublicKey, Evidence: androidkey.Evidence(registration.der),
 	})
 	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
-		t.Fatalf("an instance chain over a used challenge: %v, want evidence_rejected", err)
+		t.Fatalf("a registration chain over a used challenge: %v, want evidence_rejected", err)
+	}
+
+	// So is an instance key's, for a new instance key.
+	ch, _ = chainFor(walletprovider.PurposeInstance, false)
+	fresh := newChain(t, goodSpec(t), chainOpts{})
+	_, err = client.WalletAttestation(ctx, registration.leafKey, walletprovider.WalletAttestationRequest{
+		InstanceID: instanceID, ClientID: "wallet", InstanceKey: &fresh.leafKey.PublicKey,
+		Challenge: ch, Evidence: androidkey.Evidence(instance.der),
+	})
+	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
+		t.Fatalf("another key's instance chain: %v, want evidence_rejected", err)
 	}
 }

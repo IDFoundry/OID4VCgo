@@ -12,50 +12,60 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
-	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // RegisterRequest asks to register a wallet instance.
 type RegisterRequest struct {
-	// Challenge is a challenge issued for PurposeInstance, which the
+	// Challenge is a challenge issued for PurposeRegistration, which the
 	// evidence is bound to.
 	Challenge string
 
-	// InstanceKey is the instance key: P-256 or Ed25519.
-	InstanceKey crypto.PublicKey
+	// RegistrationKey is the registration key, which signs the
+	// instance's requests (SignRequest): P-256 or Ed25519. It is never
+	// an instance key.
+	RegistrationKey crypto.PublicKey
 
-	// Evidence is the platform evidence for the instance key. REQUIRED.
+	// Evidence is the platform evidence for the registration key.
+	// REQUIRED.
 	Evidence Evidence
 }
 
 // Register registers a wallet instance: it consumes the challenge,
 // verifies the evidence with the EvidenceVerifier for its Kind,
-// requires it to vouch for the instance key, applies the Policy,
-// reserves the instance's status list index, and stores the instance,
-// active. It refuses an instance key that's already registered with
-// ErrInstanceKeyRegistered (InstanceStore.Create enforces it).
+// requires it to vouch for the registration key, applies the Policy,
+// and stores the instance, active. The instance has no status list
+// index of its own: each of its instance keys gets one
+// (WalletAttestation). It refuses a registration key that's already
+// registered, or recorded as an instance key, with
+// ErrInstanceKeyRegistered (InstanceStore.Create enforces the first).
 func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance, error) {
-	key, err := marshalKey(req.InstanceKey)
+	key, err := marshalKey(req.RegistrationKey)
 	if err != nil {
 		return Instance{}, err
 	}
 	if req.Evidence.Kind == "" || len(req.Evidence.Data) == 0 {
 		return Instance{}, ErrEvidenceRequired
 	}
-	challenge, err := p.consumeChallenge(ctx, req.Challenge, PurposeInstance)
+	challenge, err := p.consumeChallenge(ctx, req.Challenge, PurposeRegistration)
 	if err != nil {
 		return Instance{}, err
 	}
 	ev, err := p.verify(ctx, EvidenceInput{
-		Evidence: req.Evidence, Challenge: challenge, Purpose: PurposeInstance,
-		Keys: []crypto.PublicKey{req.InstanceKey},
+		Evidence: req.Evidence, Challenge: challenge, Purpose: PurposeRegistration,
+		Keys: []crypto.PublicKey{req.RegistrationKey},
 	})
 	if err != nil {
 		return Instance{}, err
 	}
-	attested, ok := attestedKey(ev.Keys, req.InstanceKey)
+	attested, ok := attestedKey(ev.Keys, req.RegistrationKey)
 	if !ok {
-		return Instance{}, fmt.Errorf("%w: the evidence doesn't vouch for the instance key", ErrEvidenceRejected)
+		return Instance{}, fmt.Errorf("%w: the evidence doesn't vouch for the registration key", ErrEvidenceRejected)
+	}
+	switch _, err := p.deps.InstanceKeys.Get(ctx, key.thumbprint); {
+	case err == nil:
+		return Instance{}, fmt.Errorf("%w: the registration key is an instance key", ErrInstanceKeyRegistered)
+	case !errors.Is(err, ErrNotFound):
+		return Instance{}, fmt.Errorf("walletprovider: reading instance key: %w", err)
 	}
 
 	now := p.now()
@@ -78,17 +88,9 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 	if in.ID, err = randomID(p.deps.Random); err != nil {
 		return Instance{}, err
 	}
-	// An index allocated for a registration that then fails stays
-	// reserved, as every allocated index does: it's never reused.
-	if in.Status, err = p.allocator.Allocate(ctx); err != nil {
-		if errors.Is(err, statuslist.ErrListsFull) {
-			return Instance{}, fmt.Errorf("walletprovider: the status list is full: raise Config.StatusListSize: %w", err)
-		}
-		return Instance{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
-	}
 	if err := p.deps.Instances.Create(ctx, in); err != nil {
 		// A random 128-bit ID doesn't collide: an existing record is
-		// one with the same instance key.
+		// one with the same registration key.
 		if errors.Is(err, ErrExists) {
 			return Instance{}, ErrInstanceKeyRegistered
 		}
