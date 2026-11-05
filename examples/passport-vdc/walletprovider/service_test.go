@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/idfoundry/oid4vcgo/attestation"
 )
@@ -168,16 +167,25 @@ func TestClient_ChecksWhatComesBack(t *testing.T) {
 		t.Errorf("redirect: err = %v, request sent elsewhere %v; want it refused, not followed", err, elsewhere)
 	}
 
-	// A provider answering for other keys, another nonce, another client.
+	// A provider answering for other keys: genuine attestations, from
+	// a real service, over keys the wallet didn't send.
+	genuine := httptest.NewTLSServer(p.Handler("wallet-1"))
+	defer genuine.Close()
+	gc := Client{URL: genuine.URL, HTTP: genuine.Client()}
+	otherWA, err := gc.WalletAttestation(ctx, "wallet-1", &p256(t).PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKA, err := gc.KeyAttestation(ctx, []*ecdsa.PublicKey{&p256(t).PublicKey}, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wrong := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var jwt string
-		var err error
 		if r.URL.Path == WalletAttestationPath {
-			jwt, err = p.Attest("wallet-1", &p256(t).PublicKey, time.Now(), time.Minute)
+			writeAttestation(w, otherWA, nil)
 		} else {
-			jwt, err = p.KeyAttestation([]*ecdsa.PublicKey{&p256(t).PublicKey}, "n", time.Now(), time.Minute)
+			writeAttestation(w, otherKA, nil)
 		}
-		writeAttestation(w, jwt, err)
 	}))
 	defer wrong.Close()
 	c = Client{URL: wrong.URL, HTTP: wrong.Client()}

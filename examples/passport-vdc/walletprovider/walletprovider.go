@@ -1,15 +1,17 @@
-// Package walletprovider is the passport-vdc demo's stand-in Wallet
-// Provider: one P-256 key that signs Wallet Attestations and Key
-// Attestations for the demo wallet. A real Wallet Provider would attest
-// a wallet instance only after checking platform evidence (key
-// attestation, app integrity), and would attest only keys held in
-// secure hardware. This demo checks the Android Key Attestation chains
-// the Android demo wallet sends with its keys, over challenges it
-// issues, but attests a key sent without one (from iOS, or the CLI and
-// web wallets), and, unless told otherwise, one whose chain isn't from
-// hardware Google vouches for (an emulator's): see NewService. It runs
-// as a service (NewService, cmd/wallet-provider) the wallets call
-// through a Client, so they never hold its key.
+// Package walletprovider is the passport-vdc demo's Wallet Provider: one
+// P-256 key and certificate, with which the library's Wallet Provider
+// (oid4vcgo/walletprovider) signs Wallet Attestations, Key Attestations
+// and its status list for the demo wallet. A real Wallet Provider
+// attests a wallet instance only after checking platform evidence (key
+// attestation, app integrity), and attests only keys held in secure
+// hardware. This demo checks the Android Key Attestation chains the
+// Android demo wallet sends with its keys, over challenges it issues,
+// but vouches itself, with demo-only evidence the library is given in
+// their place (DemoEvidenceKind), for a key sent without one (from iOS,
+// or the CLI and web wallets), and, unless told otherwise, one whose
+// chain isn't from hardware Google vouches for (an emulator's): see
+// NewService. It runs as a service (NewService, cmd/wallet-provider)
+// the wallets call through a Client, so they never hold its key.
 //
 // The key has a certificate from a demo Wallet Provider CA, carried as
 // the x5c of every attestation it signs (HAIP 1.0 §4.4.1 for Wallet
@@ -23,14 +25,11 @@
 package walletprovider
 
 import (
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -38,8 +37,6 @@ import (
 	"slices"
 	"time"
 
-	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 )
 
@@ -153,43 +150,4 @@ func (p *Provider) PEM() ([]byte, error) {
 // to accept this provider's Key Attestations.
 func (p *Provider) CACertificatePEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.CACertificate.Raw})
-}
-
-// Attest issues a Wallet Attestation binding instanceKey to clientID,
-// valid for lifetime from now, carrying the provider's certificate as
-// x5c (HAIP 1.0 §4.4.1).
-func (p *Provider) Attest(clientID string, instanceKey crypto.PublicKey, now time.Time, lifetime time.Duration) (string, error) {
-	return attestation.IssueWalletAttestation(p.Key, oid4vci.ES256, p.x5cHeader(), attestation.WalletAttestationClaims{
-		Issuer: p.Issuer, Subject: clientID, InstanceKey: instanceKey,
-		IssuedAt: now.Unix(), ExpiresAt: now.Add(lifetime).Unix(),
-		Extra: attestation.WalletAttestationExtraClaims{WalletName: "passport-vdc demo wallet"},
-	})
-}
-
-// KeyAttestationHeader is the JOSE header conveyance for a Key
-// Attestation: x5c holding the provider's certificate, without the CA.
-func (p *Provider) KeyAttestationHeader() attestation.Header { return p.x5cHeader() }
-
-// x5cHeader conveys the provider's key by its certificate alone, the
-// trust anchor left out.
-func (p *Provider) x5cHeader() attestation.Header {
-	return attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(p.Certificate.Raw)}}
-}
-
-// KeyAttestationClaims returns the claims of a Key Attestation over
-// keys, expiring lifetime after now. The signer (wallet.Wallet's
-// GenerateAttestationProof) sets iat and the issuer's nonce. It asserts
-// no key_storage or user_authentication level: the demo's holder keys
-// are ordinary software keys.
-func (p *Provider) KeyAttestationClaims(keys []*ecdsa.PublicKey, now time.Time, lifetime time.Duration) (attestation.Claims, error) {
-	attested := make([]json.RawMessage, 0, len(keys))
-	for _, k := range keys {
-		raw, err := attestation.AttestedKey(k)
-		if err != nil {
-			return attestation.Claims{}, fmt.Errorf("walletprovider: %w", err)
-		}
-		attested = append(attested, raw)
-	}
-	exp := now.Add(lifetime).Unix()
-	return attestation.Claims{Issuer: p.Issuer, ExpiresAt: &exp, AttestedKeys: attested}, nil
 }

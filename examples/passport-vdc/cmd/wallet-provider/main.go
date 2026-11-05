@@ -23,18 +23,45 @@
 // -require-hardware-key-attestation. A key sent without a chain (iOS,
 // the CLI and web wallets) is attested as before, unverified: a real
 // Wallet Provider would first check platform evidence for every key.
+//
+// The attestations are issued by the library's Wallet Provider
+// (oid4vcgo/walletprovider), which this service gives demo-only
+// evidence for what it checked; each names the provider's status list,
+// served at /v1/status under -url. The library's own protocol is served
+// under /v1/ too; with -android-app it attests that app's Android Key
+// Attestation chains (Google-rooted, locked and verified boot) there.
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletprovider"
+	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
 )
+
+// parseAndroidApp parses -android-app's package:sha256[,sha256...].
+func parseAndroidApp(v string) (androidkey.AllowedApp, error) {
+	pkg, digests, ok := strings.Cut(v, ":")
+	if !ok || pkg == "" || digests == "" {
+		return androidkey.AllowedApp{}, fmt.Errorf("want package:sha256[,sha256...], got %q", v)
+	}
+	app := androidkey.AllowedApp{Package: pkg}
+	for _, d := range strings.Split(digests, ",") {
+		raw, err := hex.DecodeString(strings.ReplaceAll(d, ":", ""))
+		if err != nil || len(raw) != 32 {
+			return androidkey.AllowedApp{}, fmt.Errorf("%q isn't a SHA-256 digest in hex", d)
+		}
+		app.SigningCertificateDigests = append(app.SigningCertificateDigests, raw)
+	}
+	return app, nil
+}
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:6443", "listen address")
@@ -47,7 +74,19 @@ func main() {
 	certOut := flag.String("tls-cert-out", "wallet-provider-tls.pem", "where to write a generated TLS certificate for the wallets to trust")
 	verifiedKeys := flag.String("verified-keys", "wallet-provider-keys.json", "file keeping the Android keys whose attestation chains were verified, so a restart still recognises them")
 	requireHardware := flag.Bool("require-hardware-key-attestation", false, "refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
+	publicURL := flag.String("url", "", "the service's public https URL, which every attestation's status list is under (default: https://-addr)")
+	var androidApps []androidkey.AllowedApp
+	flag.Func("android-app", "package:sha256[,sha256...] — an Android app (its package and every signing certificate's SHA-256, hex) whose keys the library's own /v1/ protocol attests; repeatable", func(v string) error {
+		app, err := parseAndroidApp(v)
+		if err == nil {
+			androidApps = append(androidApps, app)
+		}
+		return err
+	})
 	flag.Parse()
+	if *publicURL == "" {
+		*publicURL = "https://" + *addr
+	}
 
 	provider, created, err := walletprovider.LoadOrCreate(*providerIssuer, *keyPath)
 	if err != nil {
@@ -69,6 +108,7 @@ func main() {
 	}
 	service, err := provider.NewService(walletprovider.ServiceConfig{
 		ClientID: *clientID, RequireHardwareKeyAttestation: *requireHardware, VerifiedKeysPath: *verifiedKeys,
+		URL: *publicURL, AndroidApps: androidApps,
 	})
 	if err != nil {
 		log.Fatal(err)

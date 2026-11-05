@@ -197,7 +197,7 @@ func run(ctx context.Context, opts options) error {
 	}
 	providerService, err := provider.NewService(walletprovider.ServiceConfig{
 		ClientID: walletClientID, RequireHardwareKeyAttestation: opts.requireHardware,
-		VerifiedKeysPath: filepath.Join(state, "wallet-provider-keys.json"),
+		VerifiedKeysPath: filepath.Join(state, "wallet-provider-keys.json"), URL: opts.urls.provider,
 	})
 	if err != nil {
 		return err
