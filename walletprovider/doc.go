@@ -37,6 +37,15 @@
 //     for this challenge. The verifier returns that key in
 //     VerifiedEvidence.Keys with KeyBindingAttested and the chain's
 //     security level, and needs no state from the instance.
+//     Nor does it tie the key to the device the instance registered
+//     from: Android attests no device identity a provider can rely
+//     on, so a holder key need only come from the instance's platform
+//     and app. A user with two registered devices can have a key made
+//     on one attested under the other's instance; what the Key
+//     Attestation claims of the key still holds, but its status is the
+//     instance it was attested under, so revoking the other device's
+//     instance doesn't withdraw it. Revoke every instance of a user
+//     whose device is lost, where the provider knows which they are.
 //   - Apple App Attest attests the app, not its keys. At registration
 //     the attestation object's client data hash covers the challenge
 //     and the instance key, and the verifier returns the instance key

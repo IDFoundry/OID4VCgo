@@ -134,8 +134,8 @@ func TestEvidenceVerifierRefuses(t *testing.T) {
 		})
 	}
 	t.Run("a key the request doesn't name", func(t *testing.T) {
-		if _, err := ev.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey)); err == nil {
-			t.Fatal("evidence for a key the request doesn't name was accepted")
+		if _, err := ev.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey)); !errors.Is(err, androidkey.ErrKeyNotRequested) {
+			t.Fatalf("Verify = %v, want %v", err, androidkey.ErrKeyNotRequested)
 		}
 	})
 	if ev.Kind() != androidkey.EvidenceKind || !bytes.Equal(androidkey.Evidence(c.der).Data, slices.Concat(c.der...)) {
