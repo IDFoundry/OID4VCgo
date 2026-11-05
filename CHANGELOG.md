@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.68.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.67.0...v0.68.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletprovider:** Config.StatusListURI is now Config.StatusListBaseURI, under which the lists are served at {start}/{n}, and Config.StatusListSize counts the indices of each list. Provider.StatusList is replaced by Provider.StatusLists, an http.Handler, and Handler serves the lists under StatusPath instead of one list at it. InstanceKeyStore gains Update, a compare-and-swap on the new InstanceKey.Revision, and Create stores Revision 1. Attestations issued before upgrading name the old list, which is no longer served, so they fail status checks until they expire.
+
+### Features
+
+* **walletprovider:** rotate status lists by period ([385414f](https://github.com/IDFoundry/OID4VCgo/commit/385414fb35ac9d78440fc202b0cc882db74d8ece))
+
 ## [0.67.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.66.0...v0.67.0) (2026-11-05)
 
 

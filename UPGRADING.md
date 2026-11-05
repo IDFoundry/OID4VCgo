@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.67.0 → next
+## v0.67.0 → v0.68.0
 
 ### Wallet Provider (`walletprovider`)
 
@@ -43,7 +43,7 @@ instance keys used in a period, not every one ever recorded.
   moves to the current period's lists at its next attestation, and a
   suspended or revoked instance still gets none.
 
-### sqlstore (v0.7.1, and next after it)
+### sqlstore (v0.7.1 and v0.8.0)
 
 - **Run `Migrate`.** Migration 0007 keeps a count of each status
   list's reserved indices and adds a partial index over the indices
