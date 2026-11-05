@@ -23,6 +23,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -134,6 +135,15 @@ type Config struct {
 	// status names, or else the CA that signed its document signer;
 	// StatusIssuers, keyed by iss, doesn't apply to it.
 	StatusIssuers map[string][]string
+
+	// StatusMaxBytes is the largest Status List Token CheckStatus
+	// fetches and reads; zero means statuslist.DefaultMaxTokenBytes (1
+	// MiB). IdentifierListMaxBytes is the largest mdoc identifier list;
+	// zero means identifierlist.DefaultMaxTokenBytes (4 MiB). A list
+	// larger fails the check, so raise them for issuers whose lists are
+	// larger, up to each package's MaxTokenBytesLimit.
+	StatusMaxBytes         int
+	IdentifierListMaxBytes int
 
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name
@@ -451,6 +461,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.validateRevocation(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateStatusMaxBytes(); err != nil {
+		return nil, err
+	}
 	if !cfg.Development {
 		if err := cfg.checkRevocationChosen(); err != nil {
 			return nil, err
@@ -637,6 +650,19 @@ func (c Config) validateRevocation() error {
 		if err := certchain.ValidateRevocation(r.checker); err != nil {
 			return fmt.Errorf("walletflow: Config.%s: %w", r.name, err)
 		}
+	}
+	return nil
+}
+
+// validateStatusMaxBytes refuses a StatusMaxBytes or
+// IdentifierListMaxBytes the status checks would refuse, so New
+// refuses it rather than every CheckStatus afterwards.
+func (c Config) validateStatusMaxBytes() error {
+	switch {
+	case c.StatusMaxBytes < 0 || c.StatusMaxBytes > statuslist.MaxTokenBytesLimit:
+		return fmt.Errorf("walletflow: Config.StatusMaxBytes is %d, not between 0 and %d", c.StatusMaxBytes, statuslist.MaxTokenBytesLimit)
+	case c.IdentifierListMaxBytes < 0 || c.IdentifierListMaxBytes > identifierlist.MaxTokenBytesLimit:
+		return fmt.Errorf("walletflow: Config.IdentifierListMaxBytes is %d, not between 0 and %d", c.IdentifierListMaxBytes, identifierlist.MaxTokenBytesLimit)
 	}
 	return nil
 }
