@@ -11,6 +11,7 @@ import kotlinx.serialization.json.long
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -35,12 +36,17 @@ import java.util.Base64
 import kotlin.concurrent.thread
 
 private const val JSON = "application/json"
+private const val CHALLENGE = "/v1/challenge"
 private const val INSTANCES = "/v1/instances"
 private const val WALLET_ATTESTATION = "/v1/wallet-attestation"
 private const val KEY_ATTESTATION = "/v1/key-attestation"
 private const val CLIENT_ID = "client-1"
 private const val NONCE = "nonce-1"
 private const val OK = "200 OK"
+private const val INSTANCE_KEY = "instance_key"
+private const val EVIDENCE = "evidence"
+private const val KEY_REGISTERED = "instance_key_registered"
+private const val NETWORK = "[network]"
 
 /**
  * HttpWalletProvider against a fake provider speaking the protocol
@@ -51,9 +57,10 @@ class HttpWalletProviderTest {
     // A key store of JVM keys signing as Android Keystore does (NONEwithECDSA
     // over a digest, DER), whose "attestation chain" is a leaf carrying the
     // challenge the key was made over, as an Android Key Attestation leaf does.
-    private class FakeKeyStore : KeyStore {
+    private class FakeKeyStore(private val attests: Boolean = true) : KeyStore {
         val pairs = mutableMapOf<String, KeyPair>()
         val challenges = mutableMapOf<String, ByteArray?>()
+        val purposes = mutableMapOf<String, KeyPurpose>()
         private var n = 0
 
         override fun createKey(purpose: KeyPurpose): String = createKey(purpose, null)
@@ -62,6 +69,7 @@ class HttpWalletProviderTest {
             val id = "k${n++}"
             pairs[id] = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
             challenges[id] = attestationChallenge
+            purposes[id] = purpose
             return id
         }
 
@@ -69,7 +77,7 @@ class HttpWalletProviderTest {
 
         override fun sign(id: String, digest: ByteArray): ByteArray =
             Signature.getInstance("NONEwithECDSA").run {
-                initSign(pairs.getValue(id).private)
+                initSign(pairs[id]?.private ?: throw StoreException("no key $id"))
                 update(digest)
                 sign()
             }
@@ -79,7 +87,7 @@ class HttpWalletProviderTest {
         }
 
         override fun attestationChain(id: String): List<ByteArray>? =
-            challenges[id]?.let { listOf("LEAF".toByteArray() + it + "END".toByteArray(), "ROOT".toByteArray()) }
+            challenges[id]?.takeIf { attests }?.let { listOf("LEAF".toByteArray() + it + "END".toByteArray(), "ROOT".toByteArray()) }
 
         fun evidence(id: String): KeyEvidence = KeyEvidence(jwkOf(publicKey(id)!!).toString().toByteArray(), id, attestationChain(id).orEmpty())
     }
@@ -88,7 +96,12 @@ class HttpWalletProviderTest {
     private class FakeProvider(val prefix: String = "/wp") : WalletProviderTransport {
         var now = 1_000_000L
         val challenges = mutableMapOf<String, Pair<String, Long>>()
+
+        /** Each instance's registration key, by instance ID. */
         val instances = mutableMapOf<String, ByteArray>()
+
+        /** Each recorded instance key's instance, by its point in hex. */
+        val instanceKeys = mutableMapOf<String, String>()
         val requests = mutableListOf<Pair<String, JsonObject>>()
         val signedClaims = mutableListOf<JsonObject>()
 
@@ -106,42 +119,70 @@ class HttpWalletProviderTest {
             assertTrue(url.rawPath.startsWith(prefix))
             val o = json.parseToJsonElement(body.decodeToString()).jsonObject
             requests += path to o
-            refuse.remove(path)?.let { (status, error) -> return answer(status, """{"error":"$error","error_description":"no"}""") }
+            refuse.remove(path)?.let { (status, error) -> return error(status, error) }
             return when (path) {
-                "/v1/challenge" -> {
-                    val purpose = o.getValue("purpose").jsonPrimitive.content
-                    val b = ByteArray(32).also(random::nextBytes)
-                    val c = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
-                    challenges[c] = purpose to now + 300
-                    answer(200, """{"challenge":"$c","purpose":"$purpose","expires_at":${now + 300}}""")
-                }
-                INSTANCES -> {
-                    val challenge = o.getValue("challenge").jsonPrimitive.content
-                    val point = jwkPoint(o.getValue("instance_key").toString().toByteArray())!!
-                    val ev = o.getValue("evidence").jsonObject
-                    assertEquals("android-key", ev.getValue("kind").jsonPrimitive.content)
-                    val data = Base64.getUrlDecoder().decode(ev.getValue("data").jsonPrimitive.content)
-                    if (!consume(challenge, "instance") || !contains(data, Base64.getUrlDecoder().decode(challenge))) {
-                        return answer(403, """{"error":"evidence_rejected"}""")
-                    }
-                    if (instances.values.any { it.contentEquals(point) }) return answer(409, """{"error":"instance_key_registered"}""")
-                    val id = "inst${instances.size}"
-                    instances[id] = point
-                    answer(201, """{"instance_id":"$id"}""")
-                }
-                WALLET_ATTESTATION -> {
-                    val point = verify(url.rawPath, headers, body) ?: return answer(401, """{"error":"invalid_signed_request"}""")
-                    jwt(mutableMapOf("sub" to o.getValue("client_id"), "cnf" to JsonObject(mapOf("jwk" to jwkOf(point)))), "wallet_attestation")
-                }
-                KEY_ATTESTATION -> {
-                    verify(url.rawPath, headers, body) ?: return answer(401, """{"error":"invalid_signed_request"}""")
-                    if (!consume(o.getValue("challenge").jsonPrimitive.content, "holder")) return answer(400, """{"error":"invalid_challenge"}""")
-                    val claims = mutableMapOf<String, JsonElement>("attested_keys" to o.getValue("keys"))
-                    o["nonce"]?.let { claims["nonce"] = it }
-                    jwt(claims, "key_attestation")
-                }
+                CHALLENGE -> challenge(o)
+                INSTANCES -> register(o)
+                WALLET_ATTESTATION -> walletAttestation(url.rawPath, headers, body, o)
+                KEY_ATTESTATION -> keyAttestation(url.rawPath, headers, body, o)
                 else -> answer(404, "not found", "text/plain")
             }
+        }
+
+        private fun challenge(o: JsonObject): WalletProviderAnswer {
+            assertEquals(setOf("purpose"), o.keys)
+            val purpose = o.getValue("purpose").jsonPrimitive.content
+            assertTrue(purpose, purpose in setOf("registration", "instance", "holder", "request"))
+            val b = ByteArray(32).also(random::nextBytes)
+            val c = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
+            challenges[c] = purpose to now + 300
+            return answer(200, """{"challenge":"$c","purpose":"$purpose","expires_at":${now + 300}}""")
+        }
+
+        private fun register(o: JsonObject): WalletProviderAnswer {
+            assertEquals(setOf("challenge", "registration_key", EVIDENCE), o.keys)
+            val challenge = o.getValue("challenge").jsonPrimitive.content
+            val point = jwkPoint(o.getValue("registration_key").toString().toByteArray())!!
+            if (!consume(challenge, "registration")) return error(400, "invalid_challenge")
+            if (!vouches(o.getValue(EVIDENCE).jsonObject, challenge)) return error(403, "evidence_rejected")
+            if (instances.values.any { it.contentEquals(point) } || hex(point) in instanceKeys) return error(409, KEY_REGISTERED)
+            val id = "inst${instances.size}"
+            instances[id] = point
+            return answer(201, """{"instance_id":"$id"}""")
+        }
+
+        private fun walletAttestation(path: String, headers: Map<String, String>, body: ByteArray, o: JsonObject): WalletProviderAnswer {
+            val instance = verify(path, headers, body) ?: return error(401, "invalid_signed_request")
+            assertTrue(o.keys.toString(), o.keys.containsAll(setOf("client_id", INSTANCE_KEY)) && (o.keys - setOf("client_id", INSTANCE_KEY, "challenge", EVIDENCE)).isEmpty())
+            val point = jwkPoint(o.getValue(INSTANCE_KEY).toString().toByteArray())!!
+            val owner = instanceKeys[hex(point)]
+            if (instances.getValue(instance).contentEquals(point) || (owner != null && owner != instance)) return error(409, KEY_REGISTERED)
+            if (owner == null) {
+                // A new instance key: its evidence over an instance challenge.
+                val ev = o[EVIDENCE]?.jsonObject ?: return error(400, "evidence_required")
+                val challenge = o.getValue("challenge").jsonPrimitive.content
+                if (!consume(challenge, "instance")) return error(400, "invalid_challenge")
+                if (!vouches(ev, challenge)) return error(403, "evidence_rejected")
+                instanceKeys[hex(point)] = instance
+            }
+            return jwt(mutableMapOf("sub" to o.getValue("client_id"), "cnf" to JsonObject(mapOf("jwk" to jwkOf(point)))), "wallet_attestation")
+        }
+
+        private fun keyAttestation(path: String, headers: Map<String, String>, body: ByteArray, o: JsonObject): WalletProviderAnswer {
+            val instance = verify(path, headers, body) ?: return error(401, "invalid_signed_request")
+            assertTrue(o.keys.toString(), (o.keys - setOf("nonce")) == setOf(INSTANCE_KEY, "challenge", "keys", EVIDENCE))
+            val point = jwkPoint(o.getValue(INSTANCE_KEY).toString().toByteArray())!!
+            if (instanceKeys[hex(point)] != instance) return error(400, "unknown_instance_key")
+            if (!consume(o.getValue("challenge").jsonPrimitive.content, "holder")) return error(400, "invalid_challenge")
+            val claims = mutableMapOf<String, JsonElement>("attested_keys" to o.getValue("keys"))
+            o["nonce"]?.let { claims["nonce"] = it }
+            return jwt(claims, "key_attestation")
+        }
+
+        private fun vouches(ev: JsonObject, challenge: String): Boolean {
+            assertEquals("android-key", ev.getValue("kind").jsonPrimitive.content)
+            val data = Base64.getUrlDecoder().decode(ev.getValue("data").jsonPrimitive.content)
+            return contains(data, Base64.getUrlDecoder().decode(challenge))
         }
 
         private fun consume(c: String, purpose: String): Boolean {
@@ -149,8 +190,8 @@ class HttpWalletProviderTest {
             return p == purpose && exp > now
         }
 
-        // The point of the instance the signed request is from, or null when it doesn't verify.
-        private fun verify(path: String, headers: Map<String, String>, body: ByteArray): ByteArray? {
+        // The instance the signed request is from, or null when it doesn't verify.
+        private fun verify(path: String, headers: Map<String, String>, body: ByteArray): String? {
             val jwt = headers["Wallet-Provider-Request"] ?: return null
             val (h, p, s) = jwt.split('.')
             val header = json.parseToJsonElement(String(Base64.getUrlDecoder().decode(h))).jsonObject
@@ -159,7 +200,8 @@ class HttpWalletProviderTest {
             val claims = json.parseToJsonElement(String(Base64.getUrlDecoder().decode(p))).jsonObject
             signedClaims += claims
             assertEquals(setOf("sub", "method", "path", "body_sha256", "challenge", "iat"), claims.keys)
-            val point = instances[claims.getValue("sub").jsonPrimitive.content] ?: return null
+            val instance = claims.getValue("sub").jsonPrimitive.content
+            val point = instances[instance] ?: return null
             val ok = Signature.getInstance("SHA256withECDSAinP1363Format").run {
                 initVerify(publicKey(point))
                 update("$h.$p".toByteArray())
@@ -171,7 +213,7 @@ class HttpWalletProviderTest {
             assertEquals(encodeBase64URL(sha256(body)), claims.getValue("body_sha256").jsonPrimitive.content)
             assertEquals(now, claims.getValue("iat").jsonPrimitive.long)
             if (!consume(claims.getValue("challenge").jsonPrimitive.content, "request")) return null
-            return point
+            return instance
         }
 
         private fun jwt(claims: MutableMap<String, JsonElement>, member: String): WalletProviderAnswer {
@@ -184,234 +226,364 @@ class HttpWalletProviderTest {
 
         fun count(path: String): Int = requests.count { it.first == path }
 
-        fun challengePurposes(): List<String> = requests.filter { it.first == "/v1/challenge" }.map { it.second.getValue("purpose").jsonPrimitive.content }
+        fun last(path: String): JsonObject = requests.last { it.first == path }.second
+
+        fun challengePurposes(): List<String> = requests.filter { it.first == CHALLENGE }.map { it.second.getValue("purpose").jsonPrimitive.content }
+
+        private fun error(status: Int, error: String) = answer(status, """{"error":"$error","error_description":"no"}""")
 
         private fun answer(status: Int, body: String, type: String = JSON) =
             WalletProviderAnswer(status, type, body.toByteArray())
+
+        private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
     }
 
-    private fun client(provider: FakeProvider, keys: FakeKeyStore, registry: InstanceRegistry = InMemoryInstanceRegistry()) =
-        HttpWalletProvider("https://wp.example${provider.prefix}/", keys, registry, provider, { provider.now }, false)
+    /** A wallet: its key store, and a client of [provider] with a registration key store of its own. */
+    private class Setup(
+        val provider: FakeProvider = FakeProvider(),
+        val registry: InstanceRegistry = InMemoryInstanceRegistry(),
+        val registrationKeys: FakeKeyStore = FakeKeyStore(),
+    ) {
+        val keys = FakeKeyStore()
+        val wp = client()
 
-    private fun newInstanceKey(wp: HttpWalletProvider, keys: FakeKeyStore): String =
-        keys.createKey(KeyPurpose.INSTANCE, runBlocking { wp.attestationChallenge(KeyPurpose.INSTANCE) })
+        fun client(registry: InstanceRegistry = this.registry) =
+            HttpWalletProvider("https://wp.example${provider.prefix}/", registry, registrationKeys, provider, { provider.now }, false)
+
+        fun newInstanceKey(): String = keys.createKey(KeyPurpose.INSTANCE, runBlocking { wp.attestationChallenge(KeyPurpose.INSTANCE) })
+
+        fun newHolderKey(): String = keys.createKey(KeyPurpose.HOLDER, runBlocking { wp.attestationChallenge(KeyPurpose.HOLDER) })
+
+        suspend fun walletAttestation(instanceKey: String, client: HttpWalletProvider = wp): String =
+            client.walletAttestation(WalletAttestationRequest(CLIENT_ID, keys.evidence(instanceKey)))
+
+        suspend fun keyAttestation(instanceKey: String, holders: List<String>, nonce: String = NONCE): String =
+            wp.keyAttestation(KeyAttestationRequest(keys.evidence(instanceKey), holders.map(keys::evidence), nonce))
+    }
 
     @Test
-    fun registersOnceAndSignsRequests() = runBlocking {
+    fun registersOnceAndSignsWithTheRegistrationKey() = runBlocking {
         val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val dir = Files.createTempDirectory("instances").toFile()
-        val registry = FileInstanceRegistry(File(dir, "sub/instances.json"))
-        val wp = client(provider, keys, registry)
-        val id = newInstanceKey(wp, keys)
-        assertEquals(32, keys.challenges.getValue(id)!!.size)
-
-        val wa = wp.walletAttestation(WalletAttestationRequest(CLIENT_ID, keys.evidence(id)))
+        val file = File(Files.createTempDirectory("instances").toFile(), "sub/instance.json")
+        val s = Setup(provider, FileInstanceRegistry(file))
+        val first = s.newInstanceKey()
+        assertEquals(32, s.keys.challenges.getValue(first)!!.size)
+        val wa = s.walletAttestation(first)
         assertEquals(CLIENT_ID, unverifiedClaims(wa)!!["sub"]!!.jsonPrimitive.content)
-        wp.walletAttestation(WalletAttestationRequest("client-2", keys.evidence(id)))
-        assertEquals(1, provider.count(INSTANCES))
-        assertEquals(2, provider.count(WALLET_ATTESTATION))
-        val registered = registry.instances().single()
-        assertEquals("inst0", registered.instanceID)
-        assertEquals(id, registered.keyID)
-        assertEquals(jwkThumbprint(keys.publicKey(id)!!), registered.keyThumbprint)
 
-        // Another launch: the registry remembers the instance.
-        val again = client(provider, keys, FileInstanceRegistry(File(dir, "sub/instances.json")))
-        again.walletAttestation(WalletAttestationRequest(CLIENT_ID, keys.evidence(id)))
+        // One registration key, made over the registration challenge, apart from the wallet's keys.
+        val registered = s.registry.instance()!!
+        assertEquals("inst0", registered.instanceID)
+        val regKey = s.registrationKeys.pairs.keys.single()
+        assertEquals(regKey, registered.keyID)
+        assertEquals(KeyPurpose.INSTANCE, s.registrationKeys.purposes.getValue(regKey))
+        assertEquals(jwkThumbprint(s.registrationKeys.publicKey(regKey)!!), registered.keyThumbprint)
+        assertEquals(encodeBase64URL(s.registrationKeys.challenges.getValue(regKey)!!), provider.last(INSTANCES)["challenge"]!!.jsonPrimitive.content)
+
+        // The instance key's first Wallet Attestation carries its chain and challenge.
+        val sent = provider.last(WALLET_ATTESTATION)
+        assertEquals(jwkOf(s.keys.publicKey(first)!!), sent[INSTANCE_KEY])
+        assertEquals(encodeBase64URL(s.keys.challenges.getValue(first)!!), sent["challenge"]!!.jsonPrimitive.content)
+
+        // A second issuance's instance key: no new registration.
+        s.walletAttestation(s.newInstanceKey())
+        // Another launch: the registry remembers the registration.
+        val again = s.client(FileInstanceRegistry(file))
+        s.walletAttestation(s.keys.createKey(KeyPurpose.INSTANCE, again.attestationChallenge(KeyPurpose.INSTANCE)), again)
         assertEquals(1, provider.count(INSTANCES))
-        assertEquals(listOf("instance", "request", "request", "request"), provider.challengePurposes())
-        // The signed path is the escaped path as sent, with the base URL's prefix.
+        assertEquals(3, provider.instanceKeys.size)
+        assertEquals(
+            listOf("instance", "registration", "request", "instance", "request", "instance", "request"),
+            provider.challengePurposes(),
+        )
+        // Every request is the registration's; the signed path is the escaped path as sent, with the base URL's prefix.
+        assertTrue(provider.signedClaims.all { it["sub"]!!.jsonPrimitive.content == "inst0" })
         assertEquals("/wp/v1/wallet-attestation", provider.signedClaims.last()["path"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun registrationUsesTheChallengeTheKeyWasMadeOver() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val first = newInstanceKey(wp, keys)
-        val second = newInstanceKey(wp, keys)
-        // The first key registers over its own challenge, not the latest.
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(first)))
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(second)))
-        assertEquals(2, provider.instances.size)
+    fun eachInstanceKeyGoesWithTheChallengeItWasMadeOver() = runBlocking {
+        val s = Setup()
+        val first = s.newInstanceKey()
+        val second = s.newInstanceKey()
+        // The first key goes with its own challenge, not the latest.
+        s.walletAttestation(first)
+        assertEquals(encodeBase64URL(s.keys.challenges.getValue(first)!!), s.provider.last(WALLET_ATTESTATION)["challenge"]!!.jsonPrimitive.content)
+        s.walletAttestation(second)
+        assertEquals(2, s.provider.instanceKeys.size)
+    }
+
+    @Test
+    fun aRecordedInstanceKeyGoesAloneOnceItsChallengeExpired() = runBlocking {
+        val s = Setup()
+        val key = s.newInstanceKey()
+        s.walletAttestation(key)
+        // Again soon: the chain goes again, and the provider ignores it.
+        s.walletAttestation(key)
+        assertTrue(EVIDENCE in s.provider.last(WALLET_ATTESTATION))
+        // At a refresh, once the challenge expired: the key alone.
+        s.provider.now += 3600
+        s.walletAttestation(key)
+        assertEquals(setOf("client_id", INSTANCE_KEY), s.provider.last(WALLET_ATTESTATION).keys)
+        // After a restart too.
+        s.walletAttestation(key, s.client())
+        assertEquals(1, s.provider.instanceKeys.size)
+    }
+
+    @Test
+    fun anUnrecordedInstanceKeyWithoutEvidenceIsRefused() = runBlocking {
+        val s = Setup()
+        val bare = s.keys.createKey(KeyPurpose.INSTANCE)
+        val e = runCatching { s.walletAttestation(bare) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.error == "evidence_required")
+        // Its challenge expired: the same.
+        val key = s.newInstanceKey()
+        s.provider.now += 600
+        val expired = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+        assertTrue("$expired", expired is WalletProviderRefusedException && expired.error == "evidence_required")
+        // The registration stands.
+        assertEquals(1, s.provider.count(INSTANCES))
     }
 
     @Test
     fun holderKeysShareAChallengeUntilUsed() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val instance = newInstanceKey(wp, keys)
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(instance)))
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
 
-        val batch = (1..3).map { keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER)) }
-        assertEquals(1, provider.challengePurposes().count { it == "holder" })
-        assertEquals(1, batch.map { keys.challenges.getValue(it)!!.toList() }.toSet().size)
-        assertNull(wp.attestationChallenge(KeyPurpose.DPOP))
+        val batch = (1..3).map { s.newHolderKey() }
+        assertEquals(1, s.provider.challengePurposes().count { it == "holder" })
+        assertEquals(1, batch.map { s.keys.challenges.getValue(it)!!.toList() }.toSet().size)
+        assertNull(s.wp.attestationChallenge(KeyPurpose.DPOP))
 
-        val ka = wp.keyAttestation(KeyAttestationRequest(batch.map(keys::evidence), NONCE))
-        val sent = provider.requests.last { it.first == KEY_ATTESTATION }.second
-        assertEquals(encodeBase64URL(keys.challenges.getValue(batch[0])!!), sent["challenge"]!!.jsonPrimitive.content)
+        val ka = s.keyAttestation(instance, batch)
+        val sent = s.provider.last(KEY_ATTESTATION)
+        assertEquals(jwkOf(s.keys.publicKey(instance)!!), sent[INSTANCE_KEY])
+        assertEquals(encodeBase64URL(s.keys.challenges.getValue(batch[0])!!), sent["challenge"]!!.jsonPrimitive.content)
         assertEquals(3, (sent["keys"] as JsonArray).size)
-        assertEquals(3, (sent["evidence"] as JsonArray).size)
+        assertEquals(3, (sent[EVIDENCE] as JsonArray).size)
         assertEquals(NONCE, sent["nonce"]!!.jsonPrimitive.content)
         assertEquals(NONCE, unverifiedClaims(ka)!!["nonce"]!!.jsonPrimitive.content)
+        assertEquals("inst0", s.provider.signedClaims.last()["sub"]!!.jsonPrimitive.content)
 
         // Used: the next batch gets a new one.
-        val next = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        assertEquals(2, provider.challengePurposes().count { it == "holder" })
-        assertFalse(keys.challenges.getValue(next)!!.contentEquals(keys.challenges.getValue(batch[0])!!))
+        val next = s.newHolderKey()
+        assertEquals(2, s.provider.challengePurposes().count { it == "holder" })
+        assertFalse(s.keys.challenges.getValue(next)!!.contentEquals(s.keys.challenges.getValue(batch[0])!!))
+    }
+
+    @Test
+    fun keyAttestationForAnUnknownInstanceKeyIsRefused() = runBlocking {
+        val s = Setup()
+        s.walletAttestation(s.newInstanceKey())
+        // An instance key no Wallet Attestation recorded.
+        val other = s.newInstanceKey()
+        val e = runCatching { s.keyAttestation(other, listOf(s.newHolderKey())) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.status == 400 && e.error == "unknown_instance_key")
+        assertTrue(e!!.message!!.contains("unknown_instance_key"))
+        val marked = runCatching { waitForProvider<Unit> { throw e } }.exceptionOrNull()!!
+        assertFalse(marked.message!!.startsWith(NETWORK))
     }
 
     @Test
     fun parallelBatchesSharingAChallengeFailAsNetwork() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(newInstanceKey(wp, keys))))
-        val a = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        val b = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(a)), "n"))
-        val e = runCatching { wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(b)), "n")) }.exceptionOrNull()
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
+        val a = s.newHolderKey()
+        val b = s.newHolderKey()
+        s.keyAttestation(instance, listOf(a), "n")
+        val e = runCatching { s.keyAttestation(instance, listOf(b), "n") }.exceptionOrNull()
         assertTrue("$e", e is WalletProviderUnavailableException && e.error == "invalid_challenge")
         // Its challenge was the one b was made over.
-        val sent = provider.requests.last { it.first == KEY_ATTESTATION }.second
-        assertEquals(encodeBase64URL(keys.challenges.getValue(b)!!), sent["challenge"]!!.jsonPrimitive.content)
+        assertEquals(encodeBase64URL(s.keys.challenges.getValue(b)!!), s.provider.last(KEY_ATTESTATION)["challenge"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun holderChallengeIsRenewedNearItsExpiry() = runBlocking {
-        val provider = FakeProvider()
-        val wp = client(provider, FakeKeyStore())
-        val a = wp.attestationChallenge(KeyPurpose.HOLDER)!!
-        provider.now += 200
-        assertArrayEquals(a, wp.attestationChallenge(KeyPurpose.HOLDER))
-        provider.now += 50 // 50 seconds left: within the margin
-        val b = wp.attestationChallenge(KeyPurpose.HOLDER)!!
+        val s = Setup()
+        val a = s.wp.attestationChallenge(KeyPurpose.HOLDER)!!
+        s.provider.now += 200
+        assertArrayEquals(a, s.wp.attestationChallenge(KeyPurpose.HOLDER))
+        s.provider.now += 50 // 50 seconds left: within the margin
+        val b = s.wp.attestationChallenge(KeyPurpose.HOLDER)!!
         assertFalse(a.contentEquals(b))
     }
 
     @Test
     fun keyAttestationSkipsKeysWithoutAChain() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(newInstanceKey(wp, keys))))
-        val attested = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        val bare = keys.createKey(KeyPurpose.HOLDER)
-        wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(attested), keys.evidence(bare)), "n"))
-        val sent = provider.requests.last().second
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
+        val attested = s.newHolderKey()
+        val bare = s.keys.createKey(KeyPurpose.HOLDER)
+        s.keyAttestation(instance, listOf(attested, bare), "n")
+        val sent = s.provider.last(KEY_ATTESTATION)
         assertEquals(2, (sent["keys"] as JsonArray).size)
-        assertEquals(1, (sent["evidence"] as JsonArray).size)
+        assertEquals(1, (sent[EVIDENCE] as JsonArray).size)
     }
 
     @Test
-    fun keyAttestationNeedsARegisteredInstance() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val holder = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        val e = runCatching { wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(holder)), "n")) }.exceptionOrNull()
-        assertTrue(e is StoreException && e.message!!.contains("no Wallet Provider instance"))
-        assertEquals(0, provider.count(KEY_ATTESTATION))
+    fun keyAttestationNeedsARegistration() = runBlocking {
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        val e = runCatching { s.keyAttestation(instance, listOf(s.newHolderKey()), "n") }.exceptionOrNull()
+        assertTrue("$e", e is StoreException && e.message!!.contains("isn't registered"))
+        assertEquals(0, s.provider.count(KEY_ATTESTATION))
+        assertEquals(0, s.provider.count(INSTANCES))
     }
 
     @Test
-    fun keyAttestationSignsWithARegisteredInstanceAfterARestart() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val registry = InMemoryInstanceRegistry()
-        val first = client(provider, keys, registry)
-        first.walletAttestation(WalletAttestationRequest("c", keys.evidence(newInstanceKey(first, keys))))
-        val wp = client(provider, keys, registry)
-        val holder = keys.createKey(KeyPurpose.HOLDER, wp.attestationChallenge(KeyPurpose.HOLDER))
-        wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(holder)), "n"))
-        assertEquals("inst0", provider.signedClaims.last()["sub"]!!.jsonPrimitive.content)
+    fun keyAttestationAfterARestart() = runBlocking {
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
+        val again = s.client()
+        val holder = s.keys.createKey(KeyPurpose.HOLDER, again.attestationChallenge(KeyPurpose.HOLDER))
+        again.keyAttestation(KeyAttestationRequest(s.keys.evidence(instance), listOf(s.keys.evidence(holder)), "n"))
+        assertEquals("inst0", s.provider.signedClaims.last()["sub"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun instanceRevokedForgetsTheInstance() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val registry = InMemoryInstanceRegistry()
-        val wp = client(provider, keys, registry)
-        val id = newInstanceKey(wp, keys)
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id)))
-        provider.refuse[WALLET_ATTESTATION] = 403 to "instance_revoked"
-        val e = runCatching { wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id))) }.exceptionOrNull()
+    fun aLostRegistrationKeyRegistersAgain() = runBlocking {
+        val s = Setup()
+        s.walletAttestation(s.newInstanceKey())
+        val lost = s.registry.instance()!!
+        s.registrationKeys.deleteKey(lost.keyID)
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals(2, s.provider.count(INSTANCES))
+        val now = s.registry.instance()!!
+        assertEquals("inst1", now.instanceID)
+        assertNotEquals(lost.keyID, now.keyID)
+        assertEquals("inst1", s.provider.signedClaims.last()["sub"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aLostRegistryRegistersAgainWithANewKey() = runBlocking {
+        val s = Setup()
+        val old = s.newInstanceKey()
+        s.walletAttestation(old)
+        s.registry.remove(s.registry.instance()!!)
+        // A new issuance works: a new registration key registers.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals(2, s.provider.instances.size)
+        assertEquals("inst1", s.registry.instance()!!.instanceID)
+        // An instance key the lost instance recorded is that instance's.
+        val e = runCatching { s.walletAttestation(old) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.status == 409 && e.error == KEY_REGISTERED)
+    }
+
+    @Test
+    fun aRegistrationKeyTheProviderHasSeenIsReplaced() = runBlocking {
+        val s = Setup()
+        s.provider.refuse[INSTANCES] = 409 to KEY_REGISTERED
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals(2, s.provider.count(INSTANCES))
+        // The refused key is deleted; the second is kept.
+        assertEquals(setOf(s.registry.instance()!!.keyID), s.registrationKeys.pairs.keys)
+        assertEquals(listOf("instance", "registration", "registration", "request"), s.provider.challengePurposes())
+    }
+
+    @Test
+    fun aRefusedRegistrationDeletesItsKey() = runBlocking {
+        val s = Setup()
+        s.provider.refuse[INSTANCES] = 403 to "policy_refused"
+        val e = runCatching { s.walletAttestation(s.newInstanceKey()) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.error == "policy_refused")
+        assertTrue(s.registrationKeys.pairs.isEmpty())
+        assertNull(s.registry.instance())
+        assertEquals(0, s.provider.count(WALLET_ATTESTATION))
+        // Tried again, it registers.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals("inst0", s.registry.instance()!!.instanceID)
+    }
+
+    @Test
+    fun aRegistrationKeyStoreThatDoesntAttestIsRefused() = runBlocking {
+        val s = Setup(registrationKeys = FakeKeyStore(attests = false))
+        expectStoreException("didn't attest the registration key") { s.walletAttestation(s.newInstanceKey()) }
+        assertTrue(s.registrationKeys.pairs.isEmpty())
+        assertEquals(0, s.provider.count(INSTANCES))
+    }
+
+    @Test
+    fun instanceRevokedForgetsTheRegistration() = runBlocking {
+        val s = Setup()
+        val key = s.newInstanceKey()
+        s.walletAttestation(key)
+        val revoked = s.registry.instance()!!
+        s.provider.refuse[WALLET_ATTESTATION] = 403 to "instance_revoked"
+        val e = runCatching { s.walletAttestation(key) }.exceptionOrNull()
         assertTrue(e is WalletProviderRefusedException)
         assertEquals("instance_revoked", (e as WalletProviderRefusedException).error)
         assertEquals(403, e.status)
         assertTrue(e.message!!.contains("instance_revoked"))
-        assertTrue(registry.instances().isEmpty())
-        // A new instance key registers afresh.
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(newInstanceKey(wp, keys))))
-        assertEquals(1, registry.instances().size)
+        assertNull(s.registry.instance())
+        assertNull(s.registrationKeys.publicKey(revoked.keyID))
+        // The next issuance registers afresh.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals("inst1", s.registry.instance()!!.instanceID)
     }
 
     @Test
     fun errorsMapToNetworkOrPlatform() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val id = newInstanceKey(wp, keys)
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id)))
+        val s = Setup()
+        val id = s.newInstanceKey()
+        s.walletAttestation(id)
         val cases = listOf(
             Triple(500, "server_error", true),
             Triple(429, "slow_down", true),
             Triple(400, "invalid_challenge", true),
             Triple(403, "evidence_rejected", false),
+            Triple(403, "policy_refused", false),
             Triple(403, "instance_not_active", false),
             Triple(401, "invalid_signed_request", false),
+            Triple(409, KEY_REGISTERED, false),
+            Triple(400, "unknown_client", false),
         )
         for ((status, error, retryable) in cases) {
-            provider.refuse[WALLET_ATTESTATION] = status to error
-            val before = provider.count(WALLET_ATTESTATION)
-            val e = runCatching { wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id))) }.exceptionOrNull()!!
+            s.provider.refuse[WALLET_ATTESTATION] = status to error
+            val before = s.provider.count(WALLET_ATTESTATION)
+            val e = runCatching { s.walletAttestation(id) }.exceptionOrNull()!!
             // Not retried.
-            assertEquals(before + 1, provider.count(WALLET_ATTESTATION))
+            assertEquals(before + 1, s.provider.count(WALLET_ATTESTATION))
+            val marked = runCatching { waitForProvider<Unit> { throw e } }.exceptionOrNull()!!
             if (retryable) {
-                assertTrue("$error", e is WalletProviderUnavailableException)
+                assertTrue(error, e is WalletProviderUnavailableException)
                 assertEquals(error, (e as WalletProviderUnavailableException).error)
                 // The adapter reports it as network.
-                val marked = runCatching { waitForProvider<Unit> { throw e } }.exceptionOrNull()!!
-                assertTrue(marked.message!!.startsWith("[network]"))
+                assertTrue(marked.message!!.startsWith(NETWORK))
             } else {
-                assertTrue("$error", e is WalletProviderRefusedException)
+                assertTrue(error, e is WalletProviderRefusedException)
                 assertEquals(error, (e as WalletProviderRefusedException).error)
-                val marked = runCatching { waitForProvider<Unit> { throw e } }.exceptionOrNull()!!
-                assertFalse(marked.message!!.startsWith("[network]"))
+                assertFalse(marked.message!!.startsWith(NETWORK))
             }
         }
-        // instance_not_active keeps the instance.
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id)))
-        assertEquals(1, provider.count(INSTANCES))
+        // None of them forgets the registration.
+        s.walletAttestation(id)
+        assertEquals(1, s.provider.count(INSTANCES))
+        assertEquals("inst0", s.registry.instance()!!.instanceID)
     }
 
     @Test
     fun attestationsAreChecked() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val id = newInstanceKey(wp, keys)
-        val other = jwkOf(keys.publicKey(keys.createKey(KeyPurpose.DPOP))!!)
+        val s = Setup()
+        val id = s.newInstanceKey()
+        val other = jwkOf(s.keys.publicKey(s.keys.createKey(KeyPurpose.DPOP))!!)
 
-        provider.tamper = { it["sub"] = JsonPrimitive("someone-else") }
-        expectStoreException("isn't for client") { wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id))) }
-        provider.tamper = { it["cnf"] = JsonObject(mapOf("jwk" to other)) }
-        expectStoreException("isn't for client") { wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id))) }
-        provider.tamper = {}
-        wp.walletAttestation(WalletAttestationRequest("c", keys.evidence(id)))
+        s.provider.tamper = { it["sub"] = JsonPrimitive("someone-else") }
+        expectStoreException("isn't for client") { s.walletAttestation(id) }
+        s.provider.tamper = { it["cnf"] = JsonObject(mapOf("jwk" to other)) }
+        expectStoreException("isn't for client") { s.walletAttestation(id) }
+        s.provider.tamper = {}
+        s.walletAttestation(id)
 
-        val holder = { keys.createKey(KeyPurpose.HOLDER, runBlocking { wp.attestationChallenge(KeyPurpose.HOLDER) }) }
-        provider.tamper = { it["nonce"] = JsonPrimitive("another") }
-        expectStoreException("nonce") { wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(holder())), "n")) }
-        provider.tamper = { it["attested_keys"] = JsonArray((it["attested_keys"] as JsonArray) + other) }
-        expectStoreException("wasn't sent") { wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(holder())), "n")) }
-        provider.tamper = { it["attested_keys"] = JsonArray(emptyList()) }
-        expectStoreException("attests no key") { wp.keyAttestation(KeyAttestationRequest(listOf(keys.evidence(holder())), "n")) }
+        s.provider.tamper = { it["nonce"] = JsonPrimitive("another") }
+        expectStoreException("nonce") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
+        s.provider.tamper = { it["attested_keys"] = JsonArray((it["attested_keys"] as JsonArray) + other) }
+        expectStoreException("wasn't sent") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
+        s.provider.tamper = { it["attested_keys"] = JsonArray(emptyList()) }
+        expectStoreException("attests no key") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
     }
 
     private suspend fun expectStoreException(text: String, body: suspend () -> Unit) {
@@ -424,15 +596,20 @@ class HttpWalletProviderTest {
     }
 
     @Test
-    fun instanceKeyNeedsAnIDAndAChain() = runBlocking {
-        val provider = FakeProvider()
-        val keys = FakeKeyStore()
-        val wp = client(provider, keys)
-        val id = newInstanceKey(wp, keys)
-        val e = keys.evidence(id)
-        expectStoreException("which key store key") { wp.walletAttestation(WalletAttestationRequest("c", KeyEvidence(e.jwk, null, e.certificateChain))) }
-        expectStoreException("no attestation chain") { wp.walletAttestation(WalletAttestationRequest("c", KeyEvidence(e.jwk, id, emptyList()))) }
-        assertEquals(0, provider.count(INSTANCES))
+    fun keysMustBeP256JWKs() = runBlocking {
+        val s = Setup()
+        val id = s.newInstanceKey()
+        val notAKey = """{"kty":"OKP","crv":"Ed25519","x":"AA"}""".toByteArray()
+        expectStoreException("instance key isn't a P-256 JWK") { s.wp.walletAttestation(WalletAttestationRequest("c", KeyEvidence(notAKey, null, emptyList()))) }
+        assertEquals(0, s.provider.count(INSTANCES))
+        s.walletAttestation(id)
+        val holder = s.keys.evidence(s.newHolderKey())
+        expectStoreException("instance key isn't a P-256 JWK") { s.wp.keyAttestation(KeyAttestationRequest(KeyEvidence(notAKey, null, emptyList()), listOf(holder), "n")) }
+        expectStoreException("holder key isn't a P-256 JWK") {
+            s.wp.keyAttestation(KeyAttestationRequest(s.keys.evidence(id), listOf(holder, KeyEvidence(notAKey, null, emptyList())), "n"))
+        }
+        expectStoreException("no holder keys") { s.wp.keyAttestation(KeyAttestationRequest(s.keys.evidence(id), emptyList(), "n")) }
+        assertEquals(0, s.provider.count(KEY_ATTESTATION))
     }
 
     @Test
@@ -444,12 +621,12 @@ class HttpWalletProviderTest {
             """{"challenge":"${"A".repeat(42)}=","purpose":"holder","expires_at":1}""",
         )
         for (body in bad) {
-            val wp = HttpWalletProvider("https://wp.example", FakeKeyStore(), InMemoryInstanceRegistry(), { _, _, _ ->
+            val wp = HttpWalletProvider("https://wp.example", InMemoryInstanceRegistry(), FakeKeyStore(), { _, _, _ ->
                 WalletProviderAnswer(200, JSON, body.toByteArray())
             }, { 0L }, false)
             expectStoreException("challenge") { wp.attestationChallenge(KeyPurpose.HOLDER) }
         }
-        val wp = HttpWalletProvider("https://wp.example", FakeKeyStore(), InMemoryInstanceRegistry(), { _, _, _ ->
+        val wp = HttpWalletProvider("https://wp.example", InMemoryInstanceRegistry(), FakeKeyStore(), { _, _, _ ->
             WalletProviderAnswer(200, "text/html", """{"challenge":"x"}""".toByteArray())
         }, { 0L }, false)
         expectStoreException("content type") { wp.attestationChallenge(KeyPurpose.HOLDER) }
@@ -459,13 +636,13 @@ class HttpWalletProviderTest {
     fun onlyHttpsBaseURLs() {
         for (url in listOf("http://wp.example", "https://user@wp.example", "https://wp.example?x=1", "https://wp.example#f", "wp.example", "https:///v1")) {
             try {
-                HttpWalletProvider(url, FakeKeyStore(), InMemoryInstanceRegistry())
+                HttpWalletProvider(url, InMemoryInstanceRegistry(), FakeKeyStore())
                 fail("accepted $url")
             } catch (e: IllegalArgumentException) {
                 // refused
             }
         }
-        HttpWalletProvider("https://wp.example/wp/", FakeKeyStore(), InMemoryInstanceRegistry())
+        HttpWalletProvider("https://wp.example/wp/", InMemoryInstanceRegistry(), FakeKeyStore())
     }
 
     @Test
@@ -533,23 +710,28 @@ class HttpWalletProviderTest {
     }
 
     @Test
-    fun fileRegistry() {
-        val file = File(Files.createTempDirectory("reg").toFile(), "instances.json")
-        val reg = FileInstanceRegistry(file)
-        assertTrue(reg.instances().isEmpty())
-        reg.put(RegisteredInstance("t1", "k1", "i1"))
-        reg.put(RegisteredInstance("t2", "k2", "i2"))
-        reg.put(RegisteredInstance("t1", "k1", "i3"))
-        assertEquals(listOf("i2", "i3"), FileInstanceRegistry(file).instances().map { it.instanceID })
-        reg.remove("t2")
-        reg.remove("nothing")
-        assertEquals(listOf("i3"), reg.instances().map { it.instanceID })
-        repeat(FileInstanceRegistry.MAX_INSTANCES + 5) { reg.put(RegisteredInstance("x$it", "k", "i")) }
-        assertEquals(FileInstanceRegistry.MAX_INSTANCES, reg.instances().size)
+    fun registries() {
+        val file = File(Files.createTempDirectory("reg").toFile(), "instance.json")
+        for (reg in listOf(FileInstanceRegistry(file), InMemoryInstanceRegistry())) {
+            assertNull(reg.instance())
+            val a = RegisteredInstance("t1", "k1", "i1")
+            val b = RegisteredInstance("t2", "k2", "i2")
+            reg.put(a)
+            reg.put(b)
+            assertEquals(b, reg.instance())
+            // Forgetting another leaves the one kept.
+            reg.remove(a)
+            assertEquals(b, reg.instance())
+            reg.remove(b)
+            assertNull(reg.instance())
+            reg.remove(b)
+        }
+        FileInstanceRegistry(file).put(RegisteredInstance("t3", "k3", "i3"))
+        assertEquals("i3", FileInstanceRegistry(file).instance()!!.instanceID)
         assertEquals(1, file.parentFile!!.listFiles()!!.size)
         file.writeText("not json")
         try {
-            reg.instances()
+            FileInstanceRegistry(file).instance()
             fail("read a malformed registry")
         } catch (e: StoreException) {
             // refused
@@ -588,7 +770,7 @@ class HttpWalletProviderTest {
         ("HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n$extra\r\n").toByteArray() + body
 
     private fun overHTTP(server: SocketServer) =
-        HttpWalletProvider(server.base, FakeKeyStore(), InMemoryInstanceRegistry(), UrlConnectionTransport(5_000), { 0L }, true)
+        HttpWalletProvider(server.base, InMemoryInstanceRegistry(), FakeKeyStore(), UrlConnectionTransport(5_000), { 0L }, true)
 
     @Test
     fun transportPostsJSON() = runBlocking {

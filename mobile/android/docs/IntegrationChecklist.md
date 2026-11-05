@@ -26,8 +26,10 @@ is a complete, working app on this library to compare against.
   passes `null` for issuers that don't ask for attestations).
   ([Getting started](GettingStarted.md))
 - [ ] With a backend built on OID4VCgo's `walletprovider`, the provider
-  is `HttpWalletProvider`, given the wallet's own key store and
-  `FileInstanceRegistry.standard(context)`, and the next item is its.
+  is `HttpWalletProvider`, given `FileInstanceRegistry.standard(context)`
+  and its default registration key store (not the wallet's), and the
+  next item is its. *Check:* the installation registers once, not at
+  each issuance.
   ([Going to production](GoingToProduction.md))
 - [ ] The `WalletProvider` gives a fresh challenge from your backend in
   `attestationChallenge` for instance and holder keys, implements the

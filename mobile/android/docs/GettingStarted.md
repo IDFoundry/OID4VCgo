@@ -161,14 +161,15 @@ An `IOException` the provider throws reaches the wallet as a retryable
 If your backend is built with OID4VCgo's `walletprovider` package, you
 needn't write this class: `HttpWalletProvider` speaks its protocol
 ([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)),
-registering each instance key with its attestation chain and signing
-each later request with it. Give it the same key store as the wallet,
-and a registry for the instance IDs it's given:
+registering the installation once, with a registration key of its own,
+and sending each instance and holder key's attestation chain. Give it a
+registry for its registration; it keeps the registration key in Android
+Keystore, apart from the wallet's keys:
 
 ```kotlin
 /** The Wallet Provider, when the backend is OID4VCgo's `walletprovider`, mounted at /wp. */
-fun oid4vcgoWalletProvider(context: Context, keys: AndroidKeystoreKeyStore): WalletProvider =
-    HttpWalletProvider("https://provider.example.com/wp", keys, FileInstanceRegistry.standard(context))
+fun oid4vcgoWalletProvider(context: Context): WalletProvider =
+    HttpWalletProvider("https://provider.example.com/wp", FileInstanceRegistry.standard(context))
 ```
 
 ## Create the wallet

@@ -10,14 +10,15 @@ import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * A wallet instance registered with a Wallet Provider: the instance key
- * and the instance ID the provider gave for it (WALLET_PROVIDER.md,
- * `POST /v1/instances`).
+ * The wallet's registration with a Wallet Provider: its registration
+ * key and the instance ID the provider gave for it (WALLET_PROVIDER.md,
+ * `POST /v1/instances`). One per installation.
  *
- * @property keyThumbprint The instance key's JWK SHA-256 thumbprint
- *   (RFC 7638), base64url: what [HttpWalletProvider] finds it by.
- * @property keyID The instance key's ID in the wallet's [KeyStore], which
- *   signs the instance's requests.
+ * @property keyThumbprint The registration key's JWK SHA-256 thumbprint
+ *   (RFC 7638), base64url: [HttpWalletProvider] checks the key store
+ *   still holds that key under [keyID].
+ * @property keyID The registration key's ID in [HttpWalletProvider]'s
+ *   registration key store, which signs every request after registration.
  * @property instanceID The provider's instance ID.
  */
 @Serializable
@@ -28,93 +29,91 @@ public data class RegisteredInstance(
 )
 
 /**
- * Where [HttpWalletProvider] keeps the instances it registered, so each
- * instance key registers once, across launches. An instance ID isn't a
- * secret — every request naming it is signed with the instance key —
- * but losing it loses the instance: the provider registers each key
- * once (`instance_key_registered`). [FileInstanceRegistry] keeps them in
+ * Where [HttpWalletProvider] keeps the wallet's registration, so the
+ * installation registers once, across launches. An instance ID isn't a
+ * secret — every request naming it is signed with the registration key —
+ * but losing it loses the instance: the wallet then registers again,
+ * with a new registration key, and the instance keys the lost instance
+ * recorded can't be attested again. [FileInstanceRegistry] keeps it in
  * a file; [InMemoryInstanceRegistry] is for tests.
  *
  * Called on Go's thread, never the main one; an exception it throws
  * fails the attestation as [WalletException.Code.platform].
  */
 public interface InstanceRegistry {
-    /** Every registered instance, the most recently [put] last. */
-    public fun instances(): List<RegisteredInstance>
+    /** The registration kept, or null for none. */
+    public fun instance(): RegisteredInstance?
 
-    /**
-     * Records [instance], replacing any with its key thumbprint, as the
-     * most recent.
-     */
+    /** Keeps [instance], replacing the one kept. */
     public fun put(instance: RegisteredInstance)
 
-    /** Forgets the instance with [keyThumbprint]; forgetting one that isn't there isn't an error. */
-    public fun remove(keyThumbprint: String)
+    /**
+     * Forgets [instance] if it's the one kept; forgetting one that isn't
+     * isn't an error, and leaves the one kept.
+     */
+    public fun remove(instance: RegisteredInstance)
 }
 
 /** An [InstanceRegistry] in memory, lost when the app quits: for tests. */
 public class InMemoryInstanceRegistry : InstanceRegistry {
-    private val entries = LinkedHashMap<String, RegisteredInstance>()
+    private var kept: RegisteredInstance? = null
 
     @Synchronized
-    override fun instances(): List<RegisteredInstance> = entries.values.toList()
+    override fun instance(): RegisteredInstance? = kept
 
     @Synchronized
     override fun put(instance: RegisteredInstance) {
-        entries.remove(instance.keyThumbprint)
-        entries[instance.keyThumbprint] = instance
+        kept = instance
     }
 
     @Synchronized
-    override fun remove(keyThumbprint: String) {
-        entries.remove(keyThumbprint)
+    override fun remove(instance: RegisteredInstance) {
+        if (kept == instance) kept = null
     }
 }
 
 /**
  * An [InstanceRegistry] in a JSON file ([file]), written whole and moved
- * into place, so a reader never sees part of it. It keeps the most recent
- * [MAX_INSTANCES]. Writes in this process are serialised per file; keep
- * one wallet process writing it. Put it where no backup copies it
- * ([standard]: `noBackupFilesDir`): a restored instance ID is useless
- * without its instance key, which stays in this device's Keystore.
+ * into place, so a reader never sees part of it. Writes in this process
+ * are serialised per file; keep one wallet process writing it. Put it
+ * where no backup copies it ([standard]: `noBackupFilesDir`): a restored
+ * instance ID is useless without its registration key, which stays in
+ * this device's Keystore.
  */
 public class FileInstanceRegistry(
-    /** The file the instances are kept in; its directory is made if missing. */
+    /** The file the registration is kept in; its directory is made if missing. */
     public val file: File,
 ) : InstanceRegistry {
     private val lock: Any = locks.computeIfAbsent(file.absoluteFile.normalize().path) { Any() }
 
-    override fun instances(): List<RegisteredInstance> = synchronized(lock) { read() }
+    override fun instance(): RegisteredInstance? = synchronized(lock) { read() }
 
-    override fun put(instance: RegisteredInstance): Unit = synchronized(lock) {
-        val list = read().filter { it.keyThumbprint != instance.keyThumbprint } + instance
-        write(list.takeLast(MAX_INSTANCES))
+    override fun put(instance: RegisteredInstance): Unit = synchronized(lock) { write(instance) }
+
+    override fun remove(instance: RegisteredInstance): Unit = synchronized(lock) {
+        if (read() == instance && !file.delete() && file.exists()) throw StoreException("can't delete the instance registry ${file.name}")
     }
 
-    override fun remove(keyThumbprint: String): Unit = synchronized(lock) {
-        val list = read()
-        if (list.any { it.keyThumbprint == keyThumbprint }) write(list.filter { it.keyThumbprint != keyThumbprint })
-    }
-
-    private fun read(): List<RegisteredInstance> {
-        if (!file.exists()) return emptyList()
+    private fun read(): RegisteredInstance? {
+        if (!file.exists()) return null
         val text = file.readText()
         return try {
-            json.decodeFromString(Contents.serializer(), text).instances
+            json.decodeFromString(Contents.serializer(), text).instance
         } catch (e: kotlinx.serialization.SerializationException) {
-            throw StoreException("the instance registry ${file.name} is malformed")
+            throw StoreException(malformed())
         } catch (e: IllegalArgumentException) {
-            throw StoreException("the instance registry ${file.name} is malformed")
+            throw StoreException(malformed())
         }
     }
 
-    private fun write(list: List<RegisteredInstance>) {
+    private fun malformed(): String = "the instance registry ${file.name} is malformed"
+
+    private fun write(instance: RegisteredInstance) {
         val dir = file.absoluteFile.parentFile ?: throw IOException("the instance registry has no directory")
         if (!dir.isDirectory && !dir.mkdirs()) throw StoreException("can't create the instance registry's directory")
-        val temp = File.createTempFile(".instances", ".tmp", dir)
+        val temp = File.createTempFile(".instance", ".tmp", dir)
         try {
-            temp.writeText(json.encodeToString(Contents.serializer(), Contents(list)))
+            temp.writeText(json.encodeToString(Contents.serializer(), Contents(instance)))
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } finally {
             Files.deleteIfExists(temp.toPath())
@@ -123,18 +122,15 @@ public class FileInstanceRegistry(
 
     @Serializable
     private class Contents(
-        @SerialName("instances") val instances: List<RegisteredInstance>,
+        @SerialName("instance") val instance: RegisteredInstance,
     )
 
     /** Registries in the app's standard place. */
     public companion object {
-        /** The most instances a [FileInstanceRegistry] keeps: the oldest go first. */
-        public const val MAX_INSTANCES: Int = 64
-
         private val locks = ConcurrentHashMap<String, Any>()
 
-        /** A registry in `noBackupFilesDir/walletprovider/instances.json`, which no backup or device transfer copies. */
+        /** A registry in `noBackupFilesDir/walletprovider/instance.json`, which no backup or device transfer copies. */
         public fun standard(context: Context): FileInstanceRegistry =
-            FileInstanceRegistry(File(File(context.noBackupFilesDir, "walletprovider"), "instances.json"))
+            FileInstanceRegistry(File(File(context.noBackupFilesDir, "walletprovider"), "instance.json"))
     }
 }

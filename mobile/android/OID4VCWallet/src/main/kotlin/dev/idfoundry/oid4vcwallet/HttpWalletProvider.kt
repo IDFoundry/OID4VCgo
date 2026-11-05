@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -22,17 +23,30 @@ import java.util.Base64
  * ([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)),
  * with Android Key Attestation (`android-key`) as its evidence:
  *
+ * - The installation registers once, at its first Wallet Attestation:
+ *   it makes a *registration key* in a key store of its own
+ *   ([registrationKeyStore]) over a `registration` challenge, registers
+ *   it with its attestation chain (`POST /v1/instances`), and keeps the
+ *   instance ID and the key's ID in its [InstanceRegistry]. The
+ *   registration key signs every later request (`Wallet-Provider-Request`);
+ *   no attestation names it. If the registration or its key is lost,
+ *   the next Wallet Attestation registers again, with a new key.
  * - [attestationChallenge] gets an `instance` challenge for each
- *   instance key, and a `holder` challenge the holder keys of one Key
+ *   instance key — the wallet makes one per issuance, in its own key
+ *   store — and a `holder` challenge the holder keys of one Key
  *   Attestation share, so [AndroidKeystoreKeyStore] makes each key over
  *   it.
- * - [walletAttestation] registers the instance key the first time it
- *   sees it (`POST /v1/instances`, with the key's attestation chain),
- *   keeps the instance ID in its [InstanceRegistry], then asks for the Wallet
- *   Attestation with a request signed by the instance key.
+ * - [walletAttestation] asks for a Wallet Attestation for the instance
+ *   key (`instance_key`). While it remembers the `instance` challenge
+ *   the key's attestation certificate carries, it sends that challenge
+ *   and the key's chain: the provider needs them the first time it's
+ *   asked for the key, and ignores them once it has recorded it. Later —
+ *   at a refresh, once the challenge has expired — it sends the key
+ *   alone.
  * - [keyAttestation] asks for a Key Attestation over the holder keys,
- *   with their chains, signed by the instance key of the wallet's most
- *   recent Wallet Attestation.
+ *   with their chains, for the issuance of its instance key
+ *   ([KeyAttestationRequest.instanceKey]), which a Wallet Attestation
+ *   recorded.
  *
  * It sends nothing but to its base URL, over https, following no
  * redirect, with its timeout for connecting and for reading, and reads at most
@@ -46,15 +60,15 @@ import java.util.Base64
  * [WalletException.Code.network], which may be retried; a refusal
  * ([WalletProviderRefusedException]) as [WalletException.Code.platform],
  * its message naming the protocol's error code. On `instance_revoked`, it
- * forgets the instance: its key can't be registered again, so the
- * credentials whose refresh needs it must be received again, which makes
- * and registers a new instance key. On `instance_not_active` (suspended)
- * it keeps it: tell the holder, as the provider may resume it. A signed
- * request refused as `invalid_signed_request` isn't retried: check the
- * device's clock, and that the provider still knows the instance.
+ * forgets the registration and deletes its registration key: the next
+ * Wallet Attestation registers the installation again. The revoked
+ * instance's instance keys stay its own (`instance_key_registered`), so
+ * a credential whose refresh needs one must be received again. On
+ * `instance_not_active` (suspended) it keeps the registration: tell the
+ * holder, as the provider may resume it. A signed request refused as
+ * `invalid_signed_request` isn't retried: check the device's clock, and
+ * that the provider still knows the instance.
  *
- * The wallet makes a new instance key for each issuance, kept with the
- * credentials' refresh token: each issuance registers one instance.
  * Keys are matched to the challenges they were made over by the
  * challenge's bytes in their attestation certificate. Holder keys made
  * while no Key Attestation has used the current holder challenge share
@@ -64,8 +78,8 @@ import java.util.Base64
  */
 public class HttpWalletProvider internal constructor(
     baseURL: String,
-    private val keyStore: KeyStore,
     private val instances: InstanceRegistry,
+    private val registrationKeys: KeyStore,
     private val transport: WalletProviderTransport,
     private val clock: () -> Long,
     allowHttp: Boolean,
@@ -77,10 +91,16 @@ public class HttpWalletProvider internal constructor(
      *   `https` URL without user info, query or fragment. Its path is the
      *   prefix of every protocol path (`https://wp.example/wp` gives
      *   `https://wp.example/wp/v1/challenge`).
-     * @param keyStore The wallet's key store, the one given to [Wallet]: it
-     *   signs requests with the instance key ([KeyStore.sign]).
-     * @param instances Where the registered instances are kept:
+     * @param instances Where the registration is kept:
      *   [FileInstanceRegistry.standard] in an app.
+     * @param registrationKeys Where the registration key is made
+     *   ([KeyStore.createKey] for [KeyPurpose.INSTANCE], over the
+     *   registration challenge) and kept, and signs requests
+     *   ([KeyStore.sign]): a store that attests its keys, and that nothing
+     *   else deletes from. By default [registrationKeyStore], Android
+     *   Keystore under an alias prefix of its own. Not the wallet's key
+     *   store: [Wallet.sweepOrphanedKeys] deletes every key there that no
+     *   credential is bound to.
      * @param timeoutMillis The connect and the read timeout of each request.
      * @throws IllegalArgumentException when [baseURL] isn't an absolute
      *   https URL without user info, query or fragment, or
@@ -88,16 +108,20 @@ public class HttpWalletProvider internal constructor(
      */
     public constructor(
         baseURL: String,
-        keyStore: KeyStore,
         instances: InstanceRegistry,
+        registrationKeys: KeyStore = registrationKeyStore(),
         timeoutMillis: Int = DEFAULT_TIMEOUT_MILLIS,
-    ) : this(baseURL, keyStore, instances, UrlConnectionTransport(checkTimeout(timeoutMillis)), { System.currentTimeMillis() / 1000 }, false)
+    ) : this(baseURL, instances, registrationKeys, UrlConnectionTransport(checkTimeout(timeoutMillis)), { System.currentTimeMillis() / 1000 }, false)
 
     private val base: URI = parseBaseURL(baseURL, allowHttp)
 
+    /** Guards the challenges below. */
     private val lock = Mutex()
 
-    /** `instance` challenges handed out, most recent last, until a registration uses one. */
+    /** Held while the installation registers or forgets its registration, so it registers once. */
+    private val registering = Mutex()
+
+    /** `instance` challenges handed out, most recent last, until they expire. */
     private val instanceChallenges = ArrayDeque<IssuedChallenge>()
 
     /** `holder` challenges handed out, most recent last, until they expire. */
@@ -105,10 +129,6 @@ public class HttpWalletProvider internal constructor(
 
     /** The holder challenge each new holder key is made over, until it's used or near its expiry. */
     private var holderChallenge: IssuedChallenge? = null
-
-    /** The instance of the latest Wallet Attestation, which signs Key Attestation requests. */
-    @Volatile
-    private var currentInstance: RegisteredInstance? = null
 
     /**
      * An `instance` challenge for each [KeyPurpose.INSTANCE] key; for
@@ -120,9 +140,7 @@ public class HttpWalletProvider internal constructor(
     override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? = when (purpose) {
         KeyPurpose.DPOP -> null
         KeyPurpose.INSTANCE -> lock.withLock {
-            val c = challenge(PURPOSE_INSTANCE)
-            remember(instanceChallenges, c)
-            c.bytes
+            challenge(PURPOSE_INSTANCE).also { remember(instanceChallenges, it) }.bytes
         }
         KeyPurpose.HOLDER -> lock.withLock {
             val current = holderChallenge?.takeIf { it.expiresAt - clock() > CHALLENGE_REUSE_MARGIN_SECONDS }
@@ -136,125 +154,155 @@ public class HttpWalletProvider internal constructor(
 
     /**
      * A Wallet Attestation for [request]'s client and instance key,
-     * registering the key first if it isn't yet.
+     * registering the installation first if it isn't yet. The key's
+     * chain goes with it while the `instance` challenge it was made over
+     * is remembered and unexpired.
      */
     override suspend fun walletAttestation(request: WalletAttestationRequest): String {
         val key = request.instanceKey
-        val keyID = key.keyID ?: throw StoreException("the Wallet Provider client can't tell which key store key the instance key is: sign with the KeyStore given to Wallet")
-        val point = jwkPoint(key.jwk) ?: throw StoreException("the instance key isn't a P-256 JWK")
-        val thumbprint = jwkThumbprint(point)
-        val registered = withContext(Dispatchers.IO) { instances.instances() }.lastOrNull { it.keyThumbprint == thumbprint }
-        val instance = when {
-            registered == null -> register(key, keyID, point, thumbprint)
-            registered.keyID != keyID -> registered.copy(keyID = keyID).also { withContext(Dispatchers.IO) { instances.put(it) } }
-            else -> registered
+        val point = jwkPoint(key.jwk) ?: throw StoreException(INSTANCE_KEY_NOT_P256)
+        val instance = registered()
+        val body = linkedMapOf<String, JsonElement>("client_id" to JsonPrimitive(request.clientID), "instance_key" to jwkOf(point))
+        instanceChallengeOf(key)?.let {
+            body["challenge"] = JsonPrimitive(it.value)
+            body["evidence"] = androidKeyEvidence(key.certificateChain)
         }
-        val answer = signed(instance, WALLET_ATTESTATION_PATH, JsonObject(mapOf("client_id" to JsonPrimitive(request.clientID))))
-        val jwt = answer.string("wallet_attestation")
+        val jwt = signed(instance, WALLET_ATTESTATION_PATH, JsonObject(body)).string("wallet_attestation")
         val claims = unverifiedClaims(jwt) ?: throw StoreException("the Wallet Attestation isn't a JWT")
         val cnf = ((claims["cnf"] as? JsonObject)?.get("jwk") as? JsonObject)?.let { jwkPoint(it.toString().toByteArray()) }
         if (claims.stringOrNull("sub") != request.clientID || cnf == null || !cnf.contentEquals(point)) {
             throw StoreException("the Wallet Attestation isn't for client ${request.clientID} and the instance key")
         }
-        currentInstance = instance
         return jwt
     }
 
     /**
-     * A Key Attestation over [request]'s holder keys, over the holder
-     * challenge they were made over, signed by the instance of the latest
-     * [walletAttestation] — or, after a restart, the most recent
-     * registered instance whose key is still in [keyStore].
+     * A Key Attestation over [request]'s holder keys, for the issuance
+     * of its instance key, over the holder challenge they were made over,
+     * signed with the registration key.
      */
     override suspend fun keyAttestation(request: KeyAttestationRequest): String {
         if (request.keys.isEmpty()) throw StoreException("no holder keys to attest")
+        val instanceKey = jwkPoint(request.instanceKey.jwk) ?: throw StoreException(INSTANCE_KEY_NOT_P256)
         val points = request.keys.map { jwkPoint(it.jwk) ?: throw StoreException("a holder key isn't a P-256 JWK") }
         val evidence = request.keys.filter { it.certificateChain.isNotEmpty() }
         if (evidence.isEmpty()) throw StoreException("no holder key has an attestation chain: make the keys with AndroidKeystoreKeyStore")
-        val instance = signingInstance()
-        val challenge = lock.withLock {
-            val leaves = evidence.map { it.certificateChain.first() }
-            val chosen = holderChallenges.filter { it.expiresAt > clock() }
-                .maxByOrNull { c -> leaves.count { contains(it, c.bytes) } }
-                ?.takeIf { c -> leaves.any { contains(it, c.bytes) } }
-                ?: holderChallenge
-                ?: throw StoreException("no holder challenge was given for these keys")
-            // A challenge is used by the request naming it, accepted or
-            // not: no new key is made over it. It's still remembered, so
-            // keys made over it that another request used are sent with
-            // it, and refused as invalid_challenge, a network failure.
-            if (holderChallenge === chosen) holderChallenge = null
-            chosen
-        }
+        val instance = withContext(Dispatchers.IO) { kept() }
+            ?: throw StoreException("the wallet isn't registered with the Wallet Provider: a Key Attestation follows a Wallet Attestation")
+        val challenge = holderChallengeOf(evidence)
         val body = JsonObject(
             mapOf(
+                "instance_key" to jwkOf(instanceKey),
                 "challenge" to JsonPrimitive(challenge.value),
                 "keys" to JsonArray(points.map(::jwkOf)),
-                "evidence" to JsonArray(evidence.map(::androidKeyEvidence)),
+                "evidence" to JsonArray(evidence.map { androidKeyEvidence(it.certificateChain) }),
                 "nonce" to JsonPrimitive(request.nonce),
             ),
         )
         val jwt = signed(instance, KEY_ATTESTATION_PATH, body).string("key_attestation")
-        val claims = unverifiedClaims(jwt) ?: throw StoreException("the Key Attestation isn't a JWT")
-        val attested = claims["attested_keys"] as? JsonArray
-        if (claims.stringOrNull("nonce") != request.nonce || attested.isNullOrEmpty()) {
-            throw StoreException("the Key Attestation isn't over the nonce sent, or attests no key")
-        }
-        for (k in attested) {
-            val p = (k as? JsonObject)?.let { jwkPoint(it.toString().toByteArray()) }
-            if (p == null || points.none { it.contentEquals(p) }) throw StoreException("the Key Attestation attests a key that wasn't sent")
-        }
+        checkKeyAttestation(jwt, points, request.nonce)
         return jwt
     }
 
-    /** Registers the instance key, over the instance challenge it was made over. */
-    private suspend fun register(key: KeyEvidence, keyID: String, point: ByteArray, thumbprint: String): RegisteredInstance {
-        val leaf = key.certificateChain.firstOrNull()
-            ?: throw StoreException("the instance key has no attestation chain: make it with AndroidKeystoreKeyStore")
-        val challenge = lock.withLock {
-            val live = instanceChallenges.filter { it.expiresAt > clock() }
-            val chosen = live.lastOrNull { contains(leaf, it.bytes) } ?: live.lastOrNull()
-                ?: throw StoreException("no instance challenge was given for the instance key")
-            instanceChallenges.remove(chosen)
-            chosen
-        }
-        val body = JsonObject(
-            mapOf(
-                "challenge" to JsonPrimitive(challenge.value),
-                "instance_key" to jwkOf(point),
-                "evidence" to androidKeyEvidence(key),
-            ),
-        )
-        val id = post(INSTANCES_PATH, body, null, HttpURLConnection.HTTP_CREATED).string("instance_id")
-        val instance = RegisteredInstance(thumbprint, keyID, id)
-        withContext(Dispatchers.IO) { instances.put(instance) }
-        return instance
+    /** The unexpired `instance` challenge [key]'s attestation certificate carries, or null. */
+    private suspend fun instanceChallengeOf(key: KeyEvidence): IssuedChallenge? {
+        val leaf = key.certificateChain.firstOrNull() ?: return null
+        return lock.withLock { instanceChallenges.lastOrNull { it.expiresAt > clock() && contains(leaf, it.bytes) } }
     }
 
-    /** The instance that signs a Key Attestation request. */
-    private suspend fun signingInstance(): RegisteredInstance = withContext(Dispatchers.IO) {
-        currentInstance?.takeIf { live(it) }
-            ?: instances.instances().lastOrNull { live(it) }
-            ?: throw StoreException("no Wallet Provider instance is registered: a Key Attestation follows a Wallet Attestation")
+    /** The holder challenge the keys with [evidence] were made over, which no new key is made over after. */
+    private suspend fun holderChallengeOf(evidence: List<KeyEvidence>): IssuedChallenge = lock.withLock {
+        val leaves = evidence.map { it.certificateChain.first() }
+        val chosen = holderChallenges.filter { it.expiresAt > clock() }
+            .maxByOrNull { c -> leaves.count { contains(it, c.bytes) } }
+            ?.takeIf { c -> leaves.any { contains(it, c.bytes) } }
+            ?: holderChallenge
+            ?: throw StoreException("no holder challenge was given for these keys")
+        // A challenge is used by the request naming it, accepted or
+        // not: no new key is made over it. It's still remembered, so
+        // keys made over it that another request used are sent with
+        // it, and refused as invalid_challenge, a network failure.
+        if (holderChallenge === chosen) holderChallenge = null
+        chosen
     }
 
-    /** Whether [instance]'s key is still in the key store. */
-    private fun live(instance: RegisteredInstance): Boolean =
-        keyStore.publicKey(instance.keyID)?.let { jwkThumbprint(it) == instance.keyThumbprint } == true
+    /** The registration kept, after registering the installation if it has none. */
+    private suspend fun registered(): RegisteredInstance = registering.withLock {
+        withContext(Dispatchers.IO) { kept() } ?: register()
+    }
 
     /**
-     * Posts [body] to [path], signed by [instance] over a fresh `request`
-     * challenge. On `instance_revoked`, forgets the instance.
+     * The registration kept, if the registration key store still holds
+     * its key; one whose key is gone is forgotten.
+     */
+    private fun kept(): RegisteredInstance? {
+        val kept = instances.instance() ?: return null
+        if (registrationKeys.publicKey(kept.keyID)?.let { jwkThumbprint(it) == kept.keyThumbprint } == true) return kept
+        instances.remove(kept)
+        return null
+    }
+
+    /**
+     * Registers the installation with a new registration key — and with
+     * another if the provider has seen that one (`instance_key_registered`).
+     */
+    private suspend fun register(): RegisteredInstance =
+        try {
+            registerKey()
+        } catch (e: WalletProviderRefusedException) {
+            if (e.error != INSTANCE_KEY_REGISTERED) throw e
+            registerKey()
+        }
+
+    /**
+     * Makes a registration key over a fresh `registration` challenge,
+     * registers it and keeps the registration; the key is deleted if it
+     * isn't registered.
+     */
+    private suspend fun registerKey(): RegisteredInstance {
+        val challenge = challenge(PURPOSE_REGISTRATION)
+        val id = withContext(Dispatchers.IO) { registrationKeys.createKey(KeyPurpose.INSTANCE, challenge.bytes) }
+        var registered: RegisteredInstance? = null
+        try {
+            val point = registrationKeys.publicKey(id) ?: throw StoreException("the registration key store lost the key it made")
+            val chain = registrationKeys.attestationChain(id).orEmpty()
+            if (chain.isEmpty()) throw StoreException("the registration key store didn't attest the registration key: use HttpWalletProvider.registrationKeyStore")
+            val body = JsonObject(
+                mapOf(
+                    "challenge" to JsonPrimitive(challenge.value),
+                    "registration_key" to jwkOf(point),
+                    "evidence" to androidKeyEvidence(chain),
+                ),
+            )
+            val instanceID = post(INSTANCES_PATH, body, null, HttpURLConnection.HTTP_CREATED).string("instance_id")
+            val instance = RegisteredInstance(jwkThumbprint(point), id, instanceID)
+            withContext(Dispatchers.IO) { instances.put(instance) }
+            registered = instance
+            return instance
+        } finally {
+            if (registered == null) registrationKeys.deleteKey(id)
+        }
+    }
+
+    /** Forgets the revoked [instance] and deletes its registration key. */
+    private suspend fun forget(instance: RegisteredInstance): Unit = registering.withLock {
+        withContext(Dispatchers.IO) {
+            instances.remove(instance)
+            registrationKeys.deleteKey(instance.keyID)
+        }
+    }
+
+    /**
+     * Posts [body] to [path], signed with [instance]'s registration key
+     * over a fresh `request` challenge. On `instance_revoked`, forgets the
+     * instance.
      */
     private suspend fun signed(instance: RegisteredInstance, path: String, body: JsonObject): JsonObject {
         val challenge = challenge(PURPOSE_REQUEST)
         return try {
             post(path, body, { target, bytes -> signRequest(instance, challenge.value, target, bytes) }, HttpURLConnection.HTTP_OK)
         } catch (e: WalletProviderRefusedException) {
-            if (e.error == "instance_revoked") {
-                withContext(Dispatchers.IO) { instances.remove(instance.keyThumbprint) }
-                if (currentInstance == instance) currentInstance = null
-            }
+            if (e.error == INSTANCE_REVOKED) forget(instance)
             throw e
         }
     }
@@ -262,7 +310,7 @@ public class HttpWalletProvider internal constructor(
     /** The `Wallet-Provider-Request` JWT for a POST of [body] to [path]. */
     private fun signRequest(instance: RegisteredInstance, challenge: String, path: String, body: ByteArray): String {
         val claims = requestClaims(instance.instanceID, "POST", path, body, challenge, clock())
-        return signES256(REQUEST_JWT_HEADER, claims) { digest -> keyStore.sign(instance.keyID, digest) }
+        return signES256(REQUEST_JWT_HEADER, claims) { digest -> registrationKeys.sign(instance.keyID, digest) }
     }
 
     /** A fresh challenge for [purpose]. */
@@ -314,35 +362,62 @@ public class HttpWalletProvider internal constructor(
         }
     }
 
-    internal companion object {
+    /** The registration key's store, and the protocol's constants. */
+    public companion object {
+        /**
+         * The alias prefix of [registrationKeyStore]'s keys. The wallet's
+         * own [AndroidKeystoreKeyStore] mustn't cover it, as its default
+         * prefix doesn't: [Wallet.sweepOrphanedKeys] would delete the
+         * registration key.
+         */
+        public const val REGISTRATION_KEY_ALIAS_PREFIX: String = "org.idfoundry.oid4vcgo.walletprovider."
+
+        /**
+         * The registration key's store: Android Keystore under
+         * [REGISTRATION_KEY_ALIAS_PREFIX], apart from the wallet's keys;
+         * in StrongBox as [strongBox] says; signing without the holder,
+         * as instance keys do.
+         */
+        public fun registrationKeyStore(
+            strongBox: AndroidKeystoreKeyStore.StrongBox = AndroidKeystoreKeyStore.StrongBox.PREFERRED,
+        ): AndroidKeystoreKeyStore = AndroidKeystoreKeyStore(
+            AndroidKeystoreKeyStore.Options(strongBox = strongBox, holderUserAuthentication = false, aliasPrefix = REGISTRATION_KEY_ALIAS_PREFIX),
+        )
+
         /** The default connect and read timeout, as the Go client's. */
-        const val DEFAULT_TIMEOUT_MILLIS = 30_000
+        internal const val DEFAULT_TIMEOUT_MILLIS = 30_000
 
-        const val CHALLENGE_PATH = "/v1/challenge"
-        const val INSTANCES_PATH = "/v1/instances"
-        const val WALLET_ATTESTATION_PATH = "/v1/wallet-attestation"
-        const val KEY_ATTESTATION_PATH = "/v1/key-attestation"
-        const val REQUEST_HEADER = "Wallet-Provider-Request"
-        const val REQUEST_JWT_HEADER = """{"alg":"ES256","typ":"wallet-provider-request+jwt"}"""
+        internal const val CHALLENGE_PATH = "/v1/challenge"
+        internal const val INSTANCES_PATH = "/v1/instances"
+        internal const val WALLET_ATTESTATION_PATH = "/v1/wallet-attestation"
+        internal const val KEY_ATTESTATION_PATH = "/v1/key-attestation"
+        internal const val REQUEST_HEADER = "Wallet-Provider-Request"
+        internal const val REQUEST_JWT_HEADER = """{"alg":"ES256","typ":"wallet-provider-request+jwt"}"""
 
-        const val PURPOSE_INSTANCE = "instance"
-        const val PURPOSE_HOLDER = "holder"
-        const val PURPOSE_REQUEST = "request"
+        internal const val PURPOSE_REGISTRATION = "registration"
+        internal const val PURPOSE_INSTANCE = "instance"
+        internal const val PURPOSE_HOLDER = "holder"
+        internal const val PURPOSE_REQUEST = "request"
+
+        internal const val INSTANCE_REVOKED = "instance_revoked"
+        internal const val INSTANCE_KEY_REGISTERED = "instance_key_registered"
 
         /** The largest answer read, as the protocol's request limit. */
-        const val MAX_RESPONSE_BYTES = 256 * 1024
+        internal const val MAX_RESPONSE_BYTES = 256 * 1024
 
         /** A holder challenge this close to its expiry isn't handed out again. */
-        const val CHALLENGE_REUSE_MARGIN_SECONDS = 60L
-        const val MIN_CHALLENGE_BYTES = 16
-        const val MAX_REMEMBERED_CHALLENGES = 8
+        internal const val CHALLENGE_REUSE_MARGIN_SECONDS = 60L
+        internal const val MIN_CHALLENGE_BYTES = 16
+        internal const val MAX_REMEMBERED_CHALLENGES = 8
 
-        fun checkTimeout(millis: Int): Int {
+        private const val INSTANCE_KEY_NOT_P256 = "the instance key isn't a P-256 JWK"
+
+        internal fun checkTimeout(millis: Int): Int {
             require(millis > 0) { "the timeout must be positive" }
             return millis
         }
 
-        fun parseBaseURL(url: String, allowHttp: Boolean): URI {
+        internal fun parseBaseURL(url: String, allowHttp: Boolean): URI {
             val u = try {
                 URI(url)
             } catch (e: URISyntaxException) {
@@ -357,6 +432,19 @@ public class HttpWalletProvider internal constructor(
     }
 }
 
+/** Fails unless [jwt] is a Key Attestation over [nonce] attesting at least one of [points], and nothing else. */
+private fun checkKeyAttestation(jwt: String, points: List<ByteArray>, nonce: String) {
+    val claims = unverifiedClaims(jwt) ?: throw StoreException("the Key Attestation isn't a JWT")
+    val attested = claims["attested_keys"] as? JsonArray
+    if (claims.stringOrNull("nonce") != nonce || attested.isNullOrEmpty()) {
+        throw StoreException("the Key Attestation isn't over the nonce sent, or attests no key")
+    }
+    for (k in attested) {
+        val p = (k as? JsonObject)?.let { jwkPoint(it.toString().toByteArray()) }
+        if (p == null || points.none { it.contentEquals(p) }) throw StoreException("the Key Attestation attests a key that wasn't sent")
+    }
+}
+
 /**
  * The Wallet Provider refused a request with one of the protocol's
  * errors, or answered other than the protocol documents (a redirect, a
@@ -368,7 +456,7 @@ public class WalletProviderRefusedException(
     public val status: Int,
     /**
      * The protocol's error code (`evidence_rejected`, `instance_revoked`,
-     * …), or null when the answer had none.
+     * `unknown_instance_key`, …), or null when the answer had none.
      */
     public val error: String?,
     /** The provider's fixed text for [error], for logs; never decide on it. */
@@ -468,10 +556,10 @@ internal fun jwkThumbprint(point: ByteArray): String {
     return encodeBase64URL(sha256("""{"crv":"P-256","kty":"EC","x":"$x","y":"$y"}""".toByteArray()))
 }
 
-/** A key's `android-key` evidence: its chain's DER certificates concatenated, leaf first. */
-internal fun androidKeyEvidence(key: KeyEvidence): JsonObject {
+/** A key's `android-key` evidence: its attestation [chain]'s DER certificates concatenated, leaf first. */
+internal fun androidKeyEvidence(chain: List<ByteArray>): JsonObject {
     val out = ByteArrayOutputStream()
-    key.certificateChain.forEach(out::write)
+    chain.forEach(out::write)
     return JsonObject(mapOf("kind" to JsonPrimitive("android-key"), "data" to JsonPrimitive(encodeBase64URL(out.toByteArray()))))
 }
 

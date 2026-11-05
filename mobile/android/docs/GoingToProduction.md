@@ -114,16 +114,25 @@ steps 1 and 2 need no code of your own (see
 protocol, version 1
 ([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)):
 
-- Each instance key is made over an `instance` challenge and
-  registered, with its chain, the first time it's attested. The
-  wallet makes an instance key for each issuance, so each issuance
-  registers an instance. `HttpWalletProvider` keeps the instance IDs in
-  an `InstanceRegistry`: `FileInstanceRegistry.standard(context)`,
-  out of backups, since an instance ID is useless without its key.
+- The installation registers once, at its first Wallet Attestation,
+  with a *registration key* made over a `registration` challenge and
+  sent with its chain. The key stays in Android Keystore under an alias
+  prefix of its own (`HttpWalletProvider.registrationKeyStore()`), apart
+  from the wallet's keys, so `Wallet.sweepOrphanedKeys` never deletes
+  it; don't give the wallet's `AndroidKeystoreKeyStore` a prefix that
+  covers `HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX`. The
+  registration — the instance ID and the key's ID — is kept in an
+  `InstanceRegistry`: `FileInstanceRegistry.standard(context)`, out of
+  backups, since an instance ID is useless without its key. If either
+  is lost, the next Wallet Attestation registers again, with a new key.
+- Every request after registration is signed with the registration key.
+- Each issuance's instance key is made over an `instance` challenge.
+  Its first Wallet Attestation sends its chain; the provider records the
+  key for the installation, and later ones — when a refresh needs a new
+  Wallet Attestation — send the key alone.
 - The holder keys of one issuance share a `holder` challenge, which
-  their Key Attestation uses up.
-- Every request after registration is signed with the instance key,
-  through the key store given to it: give it the wallet's own.
+  their Key Attestation uses up. The Key Attestation names the
+  issuance's instance key, so the provider gives it that key's status.
 - It sends nothing but to the provider's `https` URL, follows no
   redirect, and checks each attestation is for what it asked: the
   client and instance key, the nonce and the keys sent.
@@ -132,13 +141,16 @@ Its failures reach the wallet as `WalletException`s. A provider that
 can't be reached or answers HTTP 5xx or 429, or a challenge that expired
 before it was used, is `network`: try again. A refusal is `platform`,
 its `message` naming the protocol's error code (`evidence_rejected`,
-`policy_refused`, `instance_revoked`, …). On `instance_revoked` the
-instance is forgotten and its key can't register again: a credential
-whose refresh needs it must be received again, which registers a new
-instance. On `instance_not_active` the instance is suspended: tell the
-holder, since the provider may resume it. `invalid_signed_request` is
-not retried: the device's clock may be wrong, or the provider no longer
-knows the instance.
+`policy_refused`, `unknown_instance_key`, `instance_revoked`, …). On
+`instance_revoked` the registration is forgotten and its key deleted:
+the next issuance registers the installation again. The revoked
+instance's instance keys stay its own (`instance_key_registered`), so a
+credential whose refresh needs one must be received again; so must one
+whose instance key was recorded by a registration the app lost. On
+`instance_not_active` the instance is suspended: tell the holder, since
+the provider may resume it. `invalid_signed_request` is not retried: the
+device's clock may be wrong, or the provider no longer knows the
+instance.
 
 A key is attested once, when it's made, over that moment's challenge. A
 key attested again later — the instance key, when a refresh needs a new
