@@ -1122,6 +1122,21 @@ encryption, readable from the first unlock after a boot. So
   iOS's complete protection. `Protection.AFTER_FIRST_UNLOCK` drops the
   requirement, for an app that must read credentials while locked: file
   encryption alone, iOS's "until first user authentication".
+- **Where the key lives:** in the TEE by default. `Options.strongBox`
+  (`PREFERRED`, `REQUIRED`) puts it in StrongBox where the device has
+  it, with the holder keys' fallbacks: transient Keystore failures
+  retried, a key not really generated counted as failing, leftovers
+  deleted, and the last failure the cause of a `StoreException`. A new
+  key also wraps and unwraps once before it's kept, so one that
+  generates but can't be used fails (or falls back) at once rather than
+  on every write. StrongBox isn't the default because the key is used on
+  every record read and write, and StrongBox is slow: on a Pixel 8a,
+  `records()` over 26 records took about 1.1 s in StrongBox and 0.3 s
+  in the TEE, a `put` about 95 ms and 20 ms; on a Xiaomi 14 each
+  StrongBox operation took about 0.9 s. Holder keys, used once per
+  presentation, stay in StrongBox by default. `keySecurityLevel()` says
+  where the key ended up. An existing key stays where it is: moving it
+  would make its records unreadable.
 - **Backups:** the standard store is in `noBackupFilesDir`, which neither
   backups nor device transfer copy, as iOS's store is excluded from
   backups. A restored record without its key wouldn't decrypt anyway,

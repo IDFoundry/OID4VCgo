@@ -296,7 +296,7 @@ public class AndroidKeystoreKeyStore(
         val purposes = if (attempt.agree) KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_AGREE_KEY else KeyProperties.PURPOSE_SIGN
         return try {
             generator.initialize(spec(id, purpose, purposes, attempt.digests.toTypedArray(), attempt.strongBox, challenge))
-            generateRetryingTransient(generator)
+            retryingTransient { generator.generateKeyPair() }
             checkGenerated(id)
             if (challenge != null && attestationChain(id) == null) throw ProviderException("Keystore didn't attest key $id")
             null
@@ -371,30 +371,6 @@ public class AndroidKeystoreKeyStore(
         val key = keystore.getKey(alias(id), null) as? PrivateKey
             ?: throw ProviderException("Keystore reported generating key $id, but it isn't there")
         if (info(key).origin != KeyProperties.ORIGIN_GENERATED) throw ProviderException("key $id wasn't generated in Keystore")
-    }
-
-    /**
-     * Generates [generator]'s key pair, trying again up to
-     * [TRANSIENT_RETRIES] times when Keystore reports a transient failure
-     * (API 33's KeyStoreException.isTransientFailure: Keystore busy, say).
-     */
-    private fun generateRetryingTransient(generator: KeyPairGenerator) {
-        var attempt = 0
-        while (true) {
-            try {
-                generator.generateKeyPair()
-                return
-            } catch (e: ProviderException) {
-                if (attempt++ >= TRANSIENT_RETRIES || !isTransient(e)) throw e
-                Thread.sleep(TRANSIENT_BACKOFF_MILLIS * attempt)
-            }
-        }
-    }
-
-    private fun isTransient(e: Throwable): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        val cause = generateSequence(e) { it.cause }.filterIsInstance<android.security.KeyStoreException>().firstOrNull() ?: return false
-        return cause.isTransientFailure && !cause.isSystemError
     }
 
     // An uncompressed X9.63 P-256 point as a Java public key.
@@ -526,11 +502,6 @@ public class AndroidKeystoreKeyStore(
     private companion object {
         const val PROVIDER = "AndroidKeyStore"
 
-        // As the platform's own guidance for a transient KeyStoreException:
-        // a few tries, backing off.
-        const val TRANSIENT_RETRIES = 3
-        const val TRANSIENT_BACKOFF_MILLIS = 100L
-
         const val TAG = "OID4VCWallet"
 
         // The Android Key Attestation extension.
@@ -560,12 +531,48 @@ internal val DIGEST_FALLBACKS: List<List<String>> = listOf(
  * comes before one that only signs, each with every digest set.
  */
 internal fun keyAttempts(strongBox: AndroidKeystoreKeyStore.StrongBox, agree: Boolean, apiLevel: Int): List<KeyAttempt> {
-    val storages: List<Boolean?> = when {
-        apiLevel < 28 -> listOf(null)
-        strongBox == AndroidKeystoreKeyStore.StrongBox.OFF -> listOf(false)
-        strongBox == AndroidKeystoreKeyStore.StrongBox.REQUIRED -> listOf(true)
-        else -> listOf(true, false)
-    }
     val agreements = if (agree && apiLevel >= 31) listOf(true, false) else listOf(false)
-    return storages.flatMap { storage -> agreements.flatMap { a -> DIGEST_FALLBACKS.map { KeyAttempt(storage, a, it) } } }
+    return keyStorages(strongBox, apiLevel).flatMap { storage -> agreements.flatMap { a -> DIGEST_FALLBACKS.map { KeyAttempt(storage, a, it) } } }
+}
+
+/**
+ * Where to try making a Keystore key, in order, for [strongBox] on API
+ * level [apiLevel], as `setIsStrongBoxBacked` takes it: StrongBox (true),
+ * then the TEE (false), as [strongBox] allows; null below API 28, which
+ * has no StrongBox. The wallet's keys and [FileCredentialStore]'s key
+ * both follow it.
+ */
+internal fun keyStorages(strongBox: AndroidKeystoreKeyStore.StrongBox, apiLevel: Int): List<Boolean?> = when {
+    apiLevel < 28 -> listOf(null)
+    strongBox == AndroidKeystoreKeyStore.StrongBox.OFF -> listOf(false)
+    strongBox == AndroidKeystoreKeyStore.StrongBox.REQUIRED -> listOf(true)
+    else -> listOf(true, false)
+}
+
+// As the platform's own guidance for a transient KeyStoreException: a
+// few tries, backing off.
+private const val TRANSIENT_RETRIES = 3
+private const val TRANSIENT_BACKOFF_MILLIS = 100L
+
+/**
+ * Runs [generate], a Keystore key generation, trying again up to
+ * [TRANSIENT_RETRIES] times when Keystore reports a transient failure
+ * (API 33's KeyStoreException.isTransientFailure: Keystore busy, say).
+ */
+internal fun <T> retryingTransient(generate: () -> T): T {
+    var attempt = 0
+    while (true) {
+        try {
+            return generate()
+        } catch (e: ProviderException) {
+            if (attempt++ >= TRANSIENT_RETRIES || !isTransient(e)) throw e
+            Thread.sleep(TRANSIENT_BACKOFF_MILLIS * attempt)
+        }
+    }
+}
+
+private fun isTransient(e: Throwable): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+    val cause = generateSequence(e) { it.cause }.filterIsInstance<android.security.KeyStoreException>().firstOrNull() ?: return false
+    return cause.isTransientFailure && !cause.isSystemError
 }

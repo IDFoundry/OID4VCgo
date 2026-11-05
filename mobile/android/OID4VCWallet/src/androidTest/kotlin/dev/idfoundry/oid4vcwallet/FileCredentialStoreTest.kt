@@ -1,5 +1,8 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.content.pm.PackageManager
+import android.os.Build
+import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
@@ -33,6 +36,60 @@ class FileCredentialStoreTest {
         FileCredentialStore.keystoreFault = null
         dirs.forEach { it.deleteRecursively() }
         java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+    }
+
+    /** By default the store's key is made on first use, in the TEE: StrongBox is slow. */
+    @Test
+    fun keyInTheTEEByDefault() {
+        val s = store()
+        assertNull("no key before first use", s.keySecurityLevel())
+        s.put("a", RECORD_A.toByteArray())
+        val emulator = Build.FINGERPRINT.contains("generic") || Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")
+        if (!emulator) assertEquals(KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT, s.keySecurityLevel())
+        assertArrayEquals(RECORD_A.toByteArray(), s.record("a"))
+    }
+
+    /** PREFERRED makes the key in StrongBox where the device has it, else the TEE. */
+    @Test
+    fun keyInStrongBoxWherePresent() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val s = FileCredentialStore(dir, FileCredentialStore.Options(keyAlias = alias, strongBox = AndroidKeystoreKeyStore.StrongBox.PREFERRED))
+        assertNull("no key before first use", s.keySecurityLevel())
+        s.put("a", RECORD_A.toByteArray())
+        val level = s.keySecurityLevel()
+        val strongBox = context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        val emulator = Build.FINGERPRINT.contains("generic") || Build.HARDWARE.contains("ranchu") || Build.HARDWARE.contains("goldfish")
+        val expected = when {
+            // Android 11 and below report secure hardware, not which.
+            strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> KeyProperties.SECURITY_LEVEL_STRONGBOX
+            emulator -> level // an emulator's Keystore may be software
+            else -> KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+        }
+        assertEquals("StrongBox present: $strongBox", expected, level)
+        assertArrayEquals(RECORD_A.toByteArray(), s.record("a"))
+    }
+
+    /** StrongBox is required only where the device has it; elsewhere the store can't make its key, and says so as a StoreException. */
+    @Test
+    fun keyStrongBoxRequired() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val s = FileCredentialStore(dir, FileCredentialStore.Options(keyAlias = alias, strongBox = AndroidKeystoreKeyStore.StrongBox.REQUIRED))
+        val strongBox = context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        val result = runCatching { s.put("a", RECORD_A.toByteArray()) }
+        assertEquals("StrongBox present: $strongBox", strongBox, result.isSuccess)
+        if (!strongBox) {
+            assertTrue("a StoreException, not ${result.exceptionOrNull()}", result.exceptionOrNull() is StoreException)
+            assertNull("no key left behind", s.keySecurityLevel())
+        }
+    }
+
+    /** OFF, the default, makes the key in the TEE (software on an emulator). */
+    @Test
+    fun keyStrongBoxOff() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val s = FileCredentialStore(dir, FileCredentialStore.Options(keyAlias = alias, strongBox = AndroidKeystoreKeyStore.StrongBox.OFF))
+        s.put("a", RECORD_A.toByteArray())
+        assertTrue(s.keySecurityLevel() != KeyProperties.SECURITY_LEVEL_STRONGBOX)
     }
 
     @Test

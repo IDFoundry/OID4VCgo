@@ -1,8 +1,10 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.util.Log
 import androidx.annotation.VisibleForTesting
@@ -14,14 +16,17 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.GeneralSecurityException
 import java.security.KeyStore as JavaKeyStore
 import java.security.MessageDigest
+import java.security.ProviderException
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.concurrent.withLock
@@ -31,7 +36,8 @@ import kotlin.concurrent.withLock
  * directory of the app's (`noBackupFilesDir/credentials`, by default,
  * which no backup or device transfer copies). Each record is encrypted
  * (AES-256-GCM, its ID as associated data) under a key of its own,
- * wrapped by an Android Keystore key
+ * wrapped by an Android Keystore key — in the TEE, or StrongBox where
+ * [Options.strongBox] asks for it —
  * that, by default, works only while the device is unlocked — iOS's
  * complete file protection. A credential is useless without its holder
  * key, which is in this device's Keystore and can't be restored
@@ -97,6 +103,21 @@ public class FileCredentialStore(
          * protection needs another alias.
          */
         val keyAlias: String = FileCredentialStore.DEFAULT_KEY_ALIAS,
+        /**
+         * Where the key is made: by default ([AndroidKeystoreKeyStore.StrongBox.OFF])
+         * the TEE. [AndroidKeystoreKeyStore.StrongBox.PREFERRED] and
+         * [AndroidKeystoreKeyStore.StrongBox.REQUIRED] make it in StrongBox,
+         * with the fallbacks the wallet's keys have
+         * ([AndroidKeystoreKeyStore.Options.strongBox]). StrongBox is slow, and
+         * the key unwraps a record's own key on every read and wraps one on
+         * every write (twice per [put], which reads the record back). On a
+         * Pixel 8a, listing 26 records took about 1.1 s in StrongBox and
+         * 0.3 s in the TEE; on a Xiaomi 14, each StrongBox operation took
+         * about 0.9 s.
+         * It applies when the key is made: an existing key stays where it is
+         * ([keySecurityLevel] says where).
+         */
+        val strongBox: AndroidKeystoreKeyStore.StrongBox = AndroidKeystoreKeyStore.StrongBox.OFF,
     )
 
     /** This process's lock on the directory, shared by every store on it. */
@@ -390,11 +411,48 @@ public class FileCredentialStore(
     private fun existingKey(): SecretKey? =
         JavaKeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(options.keyAlias, null) as? SecretKey
 
+    /**
+     * Makes the store's key where [Options.strongBox] says, as
+     * [AndroidKeystoreKeyStore] makes the wallet's: StrongBox, then the
+     * TEE; any failure in one storage turns to the next, each generation
+     * retried where Keystore reports its failure transient, and a key
+     * that isn't really there, or doesn't encrypt and decrypt, counts as
+     * failing. When every storage fails, the last failure is the cause of
+     * a [StoreException].
+     */
     private fun newKey(): SecretKey {
+        if (options.strongBox == AndroidKeystoreKeyStore.StrongBox.REQUIRED && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            throw StoreException("StrongBox needs API 28")
+        }
         if (directory.listFiles { f -> f.name.endsWith(SUFFIX) }.orEmpty().isNotEmpty()) {
             // Restored files, or a deleted key: they're unreadable now.
             Log.w(TAG, "the store's key is missing: making a new one, so its existing records can't be read")
         }
+        val storages = keyStorages(options.strongBox, Build.VERSION.SDK_INT)
+        var failure: Exception? = null
+        for (storage in storages) {
+            if (storage == false && failure != null) {
+                Log.w(TAG, "StrongBox couldn't make the store's key (${failure.javaClass.simpleName}): making it in the TEE")
+            }
+            try {
+                val key = retryingTransient { generator(storage).generateKey() }
+                checkGenerated()
+                // A key that's made but can't be used would make every write
+                // fail: tried once, here, where the TEE may be left to try.
+                probe(key)
+                return key
+            } catch (e: GeneralSecurityException) {
+                runCatching { deleteKey() } // so its own failure doesn't hide e
+                failure = e
+            } catch (e: ProviderException) {
+                runCatching { deleteKey() }
+                failure = e
+            }
+        }
+        throw StoreException("couldn't make the store's key" + (failure?.let { ": ${it.javaClass.simpleName}: ${it.message}" } ?: ": no key storage to try"), failure)
+    }
+
+    private fun generator(strongBox: Boolean?): KeyGenerator {
         val spec = KeyGenParameterSpec.Builder(options.keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
             .setKeySize(256)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -402,11 +460,48 @@ public class FileCredentialStore(
             // API 28's: below it, WHEN_UNLOCKED holds only until the
             // first unlock since boot, as AFTER_FIRST_UNLOCK does.
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setUnlockedDeviceRequired(options.protection == Protection.WHEN_UNLOCKED) }
+            .apply { if (strongBox != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) setIsStrongBoxBacked(strongBox) }
             .build()
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).run {
-            init(spec)
-            generateKey()
-        }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).apply { init(spec) }
+    }
+
+    /**
+     * Fails unless the store's key is in Keystore as a key it generated:
+     * some devices report success for a key that then isn't there.
+     */
+    private fun checkGenerated() {
+        val key = existingKey() ?: throw ProviderException("Keystore reported generating the store's key, but it isn't there")
+        if (keyInfo(key).origin != KeyProperties.ORIGIN_GENERATED) throw ProviderException("the store's key wasn't generated in Keystore")
+    }
+
+    /** Wraps and unwraps a key's worth of bytes under [key], as [seal] and [open] will. */
+    private fun probe(key: SecretKey) {
+        val bytes = ByteArray(KEY_BYTES).also { random.nextBytes(it) }
+        val wrap = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, key) }
+        val wrapped = wrap.doFinal(bytes)
+        val unwrap = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BYTES * 8, wrap.iv)) }
+        if (!MessageDigest.isEqual(unwrap.doFinal(wrapped), bytes)) throw ProviderException("the store's new key doesn't decrypt what it encrypts")
+    }
+
+    private fun deleteKey() {
+        JavaKeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(options.keyAlias)
+    }
+
+    private fun keyInfo(key: SecretKey): KeyInfo =
+        SecretKeyFactory.getInstance(key.algorithm, PROVIDER).getKeySpec(key, KeyInfo::class.java) as KeyInfo
+
+    /**
+     * Where the store's key lives, as a KeyProperties.SECURITY_LEVEL_
+     * value: StrongBox, the TEE, or software; null before the store makes
+     * it, on first use. Android 11 and below can't tell StrongBox from the
+     * TEE: there, a key in secure hardware is the TEE's.
+     */
+    @SuppressLint("InlinedApi")
+    public fun keySecurityLevel(): Int? {
+        val info = keyInfo(existingKey() ?: return null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return info.securityLevel
+        @Suppress("DEPRECATION")
+        return if (info.isInsideSecureHardware) KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT else KeyProperties.SECURITY_LEVEL_SOFTWARE
     }
 
     /** Stores in the app's standard places. */

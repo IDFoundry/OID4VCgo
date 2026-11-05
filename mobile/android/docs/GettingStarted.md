@@ -57,8 +57,12 @@ describes the trade-off.
 
 `FileCredentialStore` encrypts each credential under a Keystore key that
 works only while the device is unlocked, in a directory no backup
-copies: a credential is useless without its holder key, which can't
-leave this device. Its writes lock a file in that directory, so
+copies. The key is in the TEE; `Options.strongBox` puts it in StrongBox
+where the device has it, falling back to the TEE, at the cost of every
+record read and write: StrongBox is several times slower, which shows
+when the wallet lists credentials. A credential is useless without its
+holder key, which can't leave this device. Its writes lock a file in
+that directory, so
 processes of the app that share it — a credential provider service in
 its own process, say — never both use one copy. A `CredentialStore` of
 your own implements `compareAndSwap` atomically across them too. A
