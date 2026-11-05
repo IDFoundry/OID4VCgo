@@ -594,7 +594,10 @@ the instance keys' status list indices and statuses in
 `-status-indices` on `cmd/wallet-provider`; in `.demo-state/` under
 `cmd/demo`), so a restart keeps each instance key, its status index and
 any revocation, and hands no index out twice; the files above are read
-as before. An instances file from before instance keys is refused:
+as before. An instance key unused for about 90 days is dropped from the
+instances file, and is recorded again, under a new instance, if a
+wallet uses it after that; the status lists of weeks no longer served
+are deleted from the status indices file at startup and hourly. An instances file from before instance keys is refused:
 delete it and the status indices file, and restart. The library's own
 versioned protocol (challenge, instance registration, per-issuance
 instance keys, and requests signed with the registration key) is

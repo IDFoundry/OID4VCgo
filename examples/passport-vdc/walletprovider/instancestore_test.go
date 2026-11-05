@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/walletprovidertest"
 )
@@ -32,6 +38,48 @@ func TestFileInstanceStore_Contract(t *testing.T) {
 			walletprovidertest.TestInstanceStoreContract(t, func(t *testing.T) wp.InstanceStore { return open(t) })
 			walletprovidertest.TestInstanceKeyStoreContract(t, func(t *testing.T) wp.InstanceKeyStore { return open(t).keys() })
 		})
+	}
+}
+
+// TestFileInstanceStore_DropsExpiredKeys: Create drops the instance
+// keys whose RetainUntil is before the new one's CreatedAt, keeping
+// those with none, and saves their absence.
+func TestFileInstanceStore_DropsExpiredKeys(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "instances.json")
+	s, err := openFileInstanceStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(ctx, wp.Instance{ID: "a", KeyThumbprint: "tp-a"}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	for tp, retain := range map[string]time.Time{"expired": at, "unset": {}, "live": at.Add(2 * time.Hour)} {
+		if err := s.keys().Create(ctx, wp.InstanceKey{Thumbprint: tp, InstanceID: "a", CreatedAt: at.Add(-time.Hour), RetainUntil: retain}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Enough keys that a Create sweeps.
+	for i := range 64 {
+		k := wp.InstanceKey{Thumbprint: fmt.Sprintf("new-%02d", i), InstanceID: "a", CreatedAt: at.Add(time.Hour), RetainUntil: at.Add(time.Hour)}
+		if err := s.keys().Create(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	again, err := openFileInstanceStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, store := range []*fileInstanceStore{s, again} {
+		if _, err := store.keys().Get(ctx, "expired"); !errors.Is(err, wp.ErrNotFound) {
+			t.Fatalf("Get(an expired key) = %v, want ErrNotFound", err)
+		}
+		for _, tp := range []string{"unset", "live", "new-00"} {
+			if _, err := store.keys().Get(ctx, tp); err != nil {
+				t.Fatalf("Get(%q): %v", tp, err)
+			}
+		}
 	}
 }
 
@@ -255,5 +303,67 @@ func TestAndroidAppsFlag(t *testing.T) {
 		if err := new(AndroidAppsFlag).Set(bad); err == nil {
 			t.Errorf("Set(%q) was accepted", bad)
 		}
+	}
+}
+
+// TestService_SweepsPastStatusLists: the service's Sweep deletes the
+// status lists of the periods no longer served, from the status indices
+// file too, and keeps the current period's.
+func TestService_SweepsPastStatusLists(t *testing.T) {
+	ctx := context.Background()
+	p, err := New(testIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	now := time.Now()
+	var logged []string
+	indicesPath := filepath.Join(t.TempDir(), "status-indices.json")
+	s, err := p.NewService(ServiceConfig{
+		ClientID: "wallet-1", StatusIndicesPath: indicesPath,
+		Logf: func(format string, args ...any) {
+			mu.Lock()
+			defer mu.Unlock()
+			logged = append(logged, fmt.Sprintf(format, args...))
+		},
+		Now: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewTLSServer(s)
+	t.Cleanup(srv.Close)
+	c := Client{URL: srv.URL, HTTP: srv.Client()}
+	listOf := func(key *ecdsa.PrivateKey) string {
+		t.Helper()
+		jwt, err := c.WalletAttestation(ctx, "wallet-1", &key.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, _ := jwtClaims(t, jwt)["status"].(map[string]any)
+		list, _ := status["status_list"].(map[string]any)
+		uri, _ := list["uri"].(string)
+		return uri
+	}
+	old := listOf(p256(t))
+	mu.Lock()
+	now = now.Add(4 * wp.DefaultStatusListPeriod)
+	mu.Unlock()
+	current := listOf(p256(t))
+
+	s.Sweep(ctx)
+	indices, err := statefile.OpenIndexStore(indicesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for uri, want := range map[string]int{old: 0, current: 1} {
+		if n, err := indices.Reserved(ctx, uri); err != nil || n != want {
+			t.Fatalf("after Sweep, Reserved(%s) = %d, %v; want %d", uri, n, err, want)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(logged, "wallet provider: deleted 1 status lists of past periods") {
+		t.Fatalf("Sweep logged %q", logged)
 	}
 }

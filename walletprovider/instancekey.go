@@ -22,7 +22,9 @@ import (
 // Wallet Attestation for it, and every Key Attestation issued with it,
 // references, until a later period: the key then gets an index on that
 // period's lists (Config.StatusListPeriod). Suspending or revoking the
-// instance sets the status of each of its instance keys.
+// instance sets the status of each of its instance keys. A key unused
+// for Config.InstanceKeyRetention may be deleted (RetainUntil): it's
+// then unknown, and needs evidence again, as a new key does.
 //
 // The provider knows which instance keys belong to which instance;
 // issuers don't. Keep the records as private as the instances.
@@ -50,6 +52,14 @@ type InstanceKey struct {
 
 	CreatedAt time.Time
 
+	// RetainUntil is when the store may delete the record: the start of
+	// Status's period plus Config.InstanceKeyRetention, set each time
+	// the provider records or moves the key. By then no live
+	// attestation names the key, nor will, but a later request for it
+	// finds it unknown. Zero, as in a record from before retention,
+	// keeps it until it moves.
+	RetainUntil time.Time
+
 	// Revision is the store's version of the record: Create stores 1,
 	// and each Update one more. Update compares it to detect a
 	// concurrent change.
@@ -66,7 +76,11 @@ func (k InstanceKey) clone() InstanceKey {
 // and shared by every process serving the provider, as the
 // github.com/idfoundry/oid4vcgo/sqlstore module's
 // DB.WalletProviderInstanceKeys is. A record changes only when the
-// key moves to a later period's status lists (Update).
+// key moves to a later period's status lists (Update). A store may
+// delete a record once its RetainUntil, if set, has passed, and should,
+// to keep the records of keys no wallet uses from piling up: nothing
+// else deletes one. Until it does, the record serves as before: using
+// the key moves it, and sets a later RetainUntil.
 type InstanceKeyStore interface {
 	// Get returns the instance key with thumbprint, or an error wrapping
 	// ErrNotFound.
@@ -99,10 +113,14 @@ type InstanceKeyStore interface {
 // MemoryInstanceKeyStore is an InstanceKeyStore held in memory, safe
 // for concurrent use; its zero value is ready to use. It isn't durable:
 // a restart forgets every instance key, and their status indices stay
-// reserved in the IndexStore. For tests and demos.
+// reserved in the IndexStore. Create drops the records whose
+// RetainUntil is before the new one's CreatedAt. For tests and demos.
 type MemoryInstanceKeyStore struct {
 	mu   sync.Mutex
 	keys map[string]InstanceKey
+	// swept is how many records were left by the last sweep: the next
+	// runs once there are twice as many, as MemoryChallengeStore's does.
+	swept int
 }
 
 var _ InstanceKeyStore = (*MemoryInstanceKeyStore)(nil)
@@ -128,6 +146,14 @@ func (s *MemoryInstanceKeyStore) Create(ctx context.Context, k InstanceKey) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.keys) >= 2*s.swept+64 {
+		for tp, stored := range s.keys {
+			if !stored.RetainUntil.IsZero() && stored.RetainUntil.Before(k.CreatedAt) {
+				delete(s.keys, tp)
+			}
+		}
+		s.swept = len(s.keys)
+	}
 	if _, ok := s.keys[k.Thumbprint]; ok {
 		return ErrExists
 	}

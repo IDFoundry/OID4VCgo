@@ -16,10 +16,11 @@ var errUnstorableIndex = errors.New("sqlstore: a status list index must be at mo
 
 // StatusIndexStore is a statuslist.IndexStore: statuslist.Allocator's
 // Store. It keeps one row per index an Allocator has handed out, keyed
-// by the list's uri and the index, with the index's status. A row is
-// never deleted: an index once handed out stays reserved, so neither
-// Sweep nor anything else frees one. Statuses aren't secret — a Status
-// List publishes them — so the rows aren't sealed.
+// by the list's uri and the index, with the index's status, and a count
+// of each list's rows. An index once handed out stays reserved while
+// its list is in use: Sweep never frees one, and only Delete deletes a
+// whole list's rows, once the list is retired. Statuses aren't secret —
+// a Status List publishes them — so the rows aren't sealed.
 //
 // Reserve is one INSERT … ON CONFLICT DO NOTHING on the (uri, idx)
 // primary key: of concurrent Reserves of one index, across every
@@ -156,6 +157,46 @@ func (s *StatusIndexStore) Statuses(ctx context.Context, uri string, size int) (
 		return nil, fmt.Errorf("sqlstore: read the statuses of %s: %w", uri, err)
 	}
 	return statuses, nil
+}
+
+// deleteBatch is how many of a list's rows each of Delete's writes
+// deletes.
+const deleteBatch = 10000
+
+// Delete implements statuslist.IndexStore. A list may hold millions of
+// rows, so it deletes them in batches of deleteBatch, each its own
+// write that holds no lock for long, then the list's count. Reserved
+// counts the list's indices until that last write, so a Delete that
+// fails part-way still finds the list, and another finishes it.
+func (s *StatusIndexStore) Delete(ctx context.Context, uri string) error {
+	if !storableKeys(uri) {
+		return nil
+	}
+	for {
+		var n int64
+		err := s.d.writeOne(ctx, func(q querier) error {
+			res, err := q.ExecContext(ctx, s.d.sql.statusIndexDeleteBatch, uri, uri, deleteBatch)
+			if err != nil {
+				return err
+			}
+			n, err = res.RowsAffected()
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("sqlstore: delete the indices of %s: %w", uri, err)
+		}
+		if n < deleteBatch {
+			break
+		}
+	}
+	err := s.d.writeOne(ctx, func(q querier) error {
+		_, err := q.ExecContext(ctx, s.d.sql.statusIndexDeleteCount, uri)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("sqlstore: delete the count of %s: %w", uri, err)
+	}
+	return nil
 }
 
 // indexArg is idx as a BIGINT argument. Every caller has checked

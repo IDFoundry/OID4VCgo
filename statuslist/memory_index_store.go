@@ -85,3 +85,11 @@ func (s *MemoryIndexStore) Statuses(_ context.Context, uri string, size int) ([]
 	}
 	return statuses, nil
 }
+
+// Delete implements IndexStore.
+func (s *MemoryIndexStore) Delete(_ context.Context, uri string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.lists, uri)
+	return nil
+}

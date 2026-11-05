@@ -65,6 +65,15 @@ func TestNewRefuses(t *testing.T) {
 		{"status list period not whole seconds", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
 			c.StatusListPeriod = 3*time.Hour + time.Millisecond
 		}, "StatusListPeriod"},
+		{"instance key retention under three periods", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.StatusListPeriod, c.InstanceKeyRetention = 30*24*time.Hour, 89*24*time.Hour
+		}, "InstanceKeyRetention"},
+		{"instance key retention over the maximum", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.InstanceKeyRetention = walletprovider.MaxInstanceKeyRetention + time.Second
+		}, "InstanceKeyRetention"},
+		{"negative instance key retention", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.InstanceKeyRetention = -time.Hour
+		}, "InstanceKeyRetention"},
 		{"http wallet link", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
 			c.WalletLink = "http://wallet.example"
 		}, "WalletLink"},

@@ -27,10 +27,11 @@ var ErrListsFull = errors.New("statuslist: every status list is full")
 
 // IndexStore records which indices of which Status Lists an Allocator
 // has handed out, and each one's status. An index once reserved stays
-// reserved: there is no release, since a Referenced Token naming it
-// may still be presented, and draft-14 §13.3 has the Status Issuer
-// "prevent any unintended double allocation". A list is named by its
-// uri, as in a StatusListRef.
+// reserved while its list is in use: there is no release of one index,
+// since a Referenced Token naming it may still be presented, and
+// draft-14 §13.3 has the Status Issuer "prevent any unintended double
+// allocation". Delete forgets a whole list once it's retired. A list
+// is named by its uri, as in a StatusListRef.
 //
 // A production store must be durable — an in-memory store forgets its
 // reservations on a restart and hands the same indices out again —
@@ -68,6 +69,16 @@ type IndexStore interface {
 	// at every index not reserved. It returns an error if a reserved
 	// index is size or more.
 	Statuses(ctx context.Context, uri string, size int) ([]uint8, error)
+
+	// Delete forgets every reservation of the list at uri, and its
+	// statuses, as if it had never been seen: Reserved then counts none
+	// and Reserve may hand its indices out again. Delete only a list
+	// that no Allocator hands indices out of any more, nor will again,
+	// and that no Referenced Token still in circulation names: a list
+	// retired for good. Deleting a list never seen does nothing. A
+	// Delete that fails part-way leaves what it hasn't deleted for
+	// another Delete of the list to finish.
+	Delete(ctx context.Context, uri string) error
 }
 
 // AllocatorList is one Status List an Allocator hands indices out of.

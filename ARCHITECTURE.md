@@ -369,7 +369,9 @@ changes whether *every* bullet below is `(done)`.
   durable store in production), moving to the next list at its
   `FillLimit` and returning `ErrListsFull` when none has room; its
   `Statuses` feeds a `Publisher` and its `SetStatus` refuses an index
-  never handed out. The CWT profile's ttl/
+  never handed out. `IndexStore.Delete` forgets a list retired for
+  good, which no token in circulation names (`statuslisttest` checks
+  a store of your own). The CWT profile's ttl/
   status_list/status claim keys (65534/65533/65535) are still "TBD
   (requested assignment)" in the IANA CWT Claims Registry as of the
   draft version this targets — see `cwt.go`'s own comment, and update if
@@ -486,8 +488,18 @@ changes whether *every* bullet below is `(done)`.
     `Provider.StatusLists` serves the lists of the periods a live
     attestation may name (and only those with an index handed out),
     signed with the attestations' own key, the binding issuers check
-    by default. Deleting the reserved-index rows of retired lists is
-    still to come.
+    by default.
+  - **Nothing grows for good.** A key's record carries `RetainUntil`,
+    its last period's start plus `Config.InstanceKeyRetention` (at
+    least three periods, 90 days by default), after which the store
+    may delete it (sqlstore's `Sweep` does): a key used again after
+    that is a new key, needing evidence. `Provider.SweepStatusLists`
+    deletes the lists of the periods no longer served through
+    `statuslist.IndexStore.Delete`, walking back until eight periods
+    in a row have none, a period's last list first so a failed sweep
+    is finished by the next. A record naming a deleted list is fine:
+    the list isn't served, so status changes pass it by and the key
+    moves on its next use. Instances themselves are kept.
   - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
     short JWT over method, path, body hash and a `PurposeRequest`
     challenge, signed with the registration key. The signature is
@@ -1741,17 +1753,20 @@ changes whether *every* bullet below is `(done)`.
   pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
   transaction's `key_id` and `response_code_hash`, a wallet instance's
   `UNIQUE` `key_thumbprint` and the `revision` its `Update` compares, an
-  instance key's `instance_id`, indexed with its thumbprint for `List`); `record` is the
+  instance key's `instance_id`, indexed with its thumbprint for `List`, its
+  `sweep_after` its `RetainUntil`); `record` is the
   record as JSON, sealed with an optional `Sealer` (the
   `verifier.TransactionSealer` interface) bound to its table and key,
   or for the verifier `TransactionCodec`'s own encoding. Consumes are
   one `DELETE … RETURNING`, and every read-modify-write one transaction
   holding the row, so the contracts' atomicity holds across processes:
-  the tests run every `issuertest`, `verifiertest`, `storetest` and
-  `walletprovidertest` contract against both databases, `storetest`'s shared-store ones with
+  the tests run every `issuertest`, `verifiertest`, `storetest`,
+  `walletprovidertest` and `statuslisttest` contract against both databases, `storetest`'s shared-store ones with
   a `*sql.DB` per goroutine. Migrations are embedded, versioned and run
   only by an explicit `Migrate`; `Sweep` deletes what has expired, which
-  no store does on its own. The Authorization Server's stores, and the
+  no store does on its own. `StatusIndices().Delete` deletes a retired
+  list's rows in bounded batches, each its own write, its count last,
+  so a Delete that stops part-way is finished by the next. The Authorization Server's stores, and the
   Credential Endpoint's DPoP replay and nonce stores, are FAPIgo's
   interfaces, kept by FAPIgo's own `fapigo/sqlstore` module: a whole
   issuer deployment runs both over one `*sql.DB` and one `Sealer`

@@ -104,12 +104,12 @@ Clients decide on `error` and the status code, never the description.
 | 413 | `invalid_request` | The body is larger than 256 KiB. |
 | 415 | `invalid_request` | The body isn't `application/json`. |
 | 400 | `invalid_challenge` | The challenge is unknown, used, expired, or for another purpose. Get a new one. |
-| 400 | `evidence_required` | No evidence was sent: at registration, for a Key Attestation, or with a Wallet Attestation request for an instance key the provider hasn't recorded yet. |
+| 400 | `evidence_required` | No evidence was sent: at registration, for a Key Attestation, or with a Wallet Attestation request for an instance key the provider hasn't recorded yet, or no longer has (see the provider's retention, below). |
 | 400 | `unsupported_evidence` | The provider takes no evidence of that `kind`. |
 | 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should. |
 | 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, or the security level its instance key was recorded at, since the policy is applied again at every attestation. |
 | 409 | `instance_key_registered` | The key is already another's: a registration key that's already registered or is an instance key, or an instance key that's another instance's or is this instance's registration key. Make a new key. |
-| 400 | `unknown_instance_key` | A Key Attestation request's `instance_key` isn't one a Wallet Attestation recorded for this instance. |
+| 400 | `unknown_instance_key` | A Key Attestation request's `instance_key` isn't one a Wallet Attestation recorded for this instance, or the provider has deleted its record (retention). |
 | 400 | `unknown_client` | The provider doesn't attest that client ID. |
 | 401 | `invalid_signed_request` | The signed request didn't verify (see below). It carries `WWW-Authenticate: Wallet-Provider-Request`. |
 | 403 | `instance_not_active` | The instance is suspended. |
@@ -266,6 +266,15 @@ key:
   used up. The Wallet Attestation carries the same status entry as
   before, unless a new period has started since: then a new entry,
   which the provider gives the key.
+- The provider deletes the record of an instance key unused for its
+  retention (90 days after the start of the week it was last used in,
+  by default; `Config.InstanceKeyRetention`). Asked for it after that,
+  it answers `400 evidence_required`, as for a new key: the key needs
+  `challenge` and `evidence` again, and gets a new status entry. Evidence
+  that binds the challenge into the key's own attestation, as Android
+  Key Attestation does, can't be made for a key that already exists:
+  such a wallet makes a new instance key, and a credential whose
+  refresh needs the old one must be received again.
 - An `instance_key` that's another instance's, or this instance's
   registration key, is `409 instance_key_registered`.
 

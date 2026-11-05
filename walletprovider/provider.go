@@ -34,6 +34,9 @@ const (
 	DefaultStatusListPeriod   = 7 * 24 * time.Hour
 	DefaultStatusListLifetime = time.Hour
 	DefaultStatusListTTL      = 5 * time.Minute
+	// DefaultInstanceKeyRetention is the least Config.InstanceKeyRetention
+	// zero means: three StatusListPeriods when they're longer.
+	DefaultInstanceKeyRetention = 90 * 24 * time.Hour
 )
 
 // Upper bounds New enforces on Config's durations.
@@ -52,6 +55,9 @@ const (
 
 	// MaxStatusListPeriod bounds Config.StatusListPeriod.
 	MaxStatusListPeriod = 365 * 24 * time.Hour
+
+	// MaxInstanceKeyRetention bounds Config.InstanceKeyRetention.
+	MaxInstanceKeyRetention = 10 * 365 * 24 * time.Hour
 )
 
 // MaxStatusListsPerPeriod is how many status lists a period has, each
@@ -116,6 +122,22 @@ type Config struct {
 	// bounds.
 	StatusListLifetime time.Duration
 	StatusListTTL      time.Duration
+
+	// InstanceKeyRetention is how long an instance key's record is kept
+	// after the start of the period it was last used in: its
+	// InstanceKey.RetainUntil, after which the InstanceKeyStore may
+	// delete it. Size it for the longest a wallet may go without using
+	// an issuance's instance key and still use it again — the lifetime
+	// of the refresh tokens of the issuers the wallet uses, say, since a
+	// refresh asks for a Wallet Attestation for the key. Once it's
+	// deleted, a Wallet Attestation for the key needs a challenge and
+	// evidence again, as a new key's does, and gets a fresh status
+	// index, and a Key Attestation naming it is refused with
+	// ErrUnknownInstanceKey. Zero means DefaultInstanceKeyRetention, or
+	// three StatusListPeriods when they're longer. It's at least three
+	// StatusListPeriods — while a list is served, and a period more —
+	// and at most MaxInstanceKeyRetention.
+	InstanceKeyRetention time.Duration
 
 	// WalletAttestationTTL and KeyAttestationTTL are the attestations'
 	// lifetimes, at most MaxAttestationTTL; zero means
@@ -230,6 +252,7 @@ func (c Config) withDefaults() Config {
 	def(&c.StatusListLifetime, DefaultStatusListLifetime)
 	def(&c.StatusListTTL, DefaultStatusListTTL)
 	def(&c.StatusListPeriod, DefaultStatusListPeriod)
+	def(&c.InstanceKeyRetention, max(DefaultInstanceKeyRetention, 3*c.StatusListPeriod))
 	if c.StatusListSize == 0 {
 		c.StatusListSize = DefaultStatusListSize
 	}
@@ -270,6 +293,9 @@ func (c Config) validate() error {
 	}
 	if c.StatusListPeriod%time.Second != 0 {
 		return fmt.Errorf("StatusListPeriod is %v, not a whole number of seconds", c.StatusListPeriod)
+	}
+	if least := 3 * c.StatusListPeriod; c.InstanceKeyRetention < least || c.InstanceKeyRetention > MaxInstanceKeyRetention {
+		return fmt.Errorf("InstanceKeyRetention is %v, not between three StatusListPeriods (%v) and %v", c.InstanceKeyRetention, least, MaxInstanceKeyRetention)
 	}
 	if c.StatusListTTL < time.Second || c.StatusListTTL > c.StatusListLifetime {
 		return fmt.Errorf("StatusListTTL is %v, not between a second and StatusListLifetime (%v)", c.StatusListTTL, c.StatusListLifetime)

@@ -171,8 +171,9 @@ Where to start, by role:
   database with FAPIgo's [`fapigo/sqlstore`](https://pkg.go.dev/github.com/idfoundry/fapigo/sqlstore),
   which keeps the Authorization Server's stores.
 - **Your own stores and resolvers** — `issuer/issuertest`,
-  `verifier/verifiertest` and `walletflow/storetest` hold contract tests
-  to run against them.
+  `verifier/verifiertest`, `walletflow/storetest`,
+  `walletprovider/walletprovidertest` and `statuslist/statuslisttest`
+  hold contract tests to run against them.
 
 For an end-to-end application — a gmrtd passport turned into both
 credential formats, a browser and a command-line wallet, and a verifier

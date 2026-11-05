@@ -139,16 +139,16 @@ func (s *InstanceStore) Update(ctx context.Context, in walletprovider.Instance) 
 }
 
 // revisioned is a table whose rows a compare-and-swap updates: update
-// sets the record and revision of the row whose id, revision and fixed
-// column — one an update may not change — are as given, and read
-// selects a row's revision and fixed column.
+// sets the sweep_after, record and revision of the row whose id,
+// revision and fixed column — one an update may not change — are as
+// given, and read selects a row's revision and fixed column.
 type revisioned struct {
 	what, update, read, fixedName string
 }
 
-// updateRevision stores next as the record of id, with revision rev+1,
-// if its row's revision is rev and its fixed column fixed: one UPDATE
-// (r.update). Should it update nothing, it reads the row (r.read) to
+// updateRevision stores next as the record of id, with revision rev+1
+// and its row's sweep_after, if its row's revision is rev and its fixed
+// column fixed: one UPDATE (r.update). Should it update nothing, it reads the row (r.read) to
 // say why: it's unknown, its fixed column differs, or its revision.
 func updateRevision[T any](ctx context.Context, t *table[T], r revisioned, id string, rev uint64, fixed string, next T) error {
 	if !storableKeys(id) {
@@ -163,7 +163,7 @@ func updateRevision[T any](ctx context.Context, t *table[T], r revisioned, id st
 			return wpNotFound(r.what, id, err)
 		}
 		err = t.d.writeOne(ctx, func(q querier) error {
-			res, err := q.ExecContext(ctx, r.update, data, revisionArg(rev+1), id, revisionArg(rev), fixed)
+			res, err := q.ExecContext(ctx, r.update, unixSeconds(t.rowOf(next).sweepAfter), data, revisionArg(rev+1), id, revisionArg(rev), fixed)
 			if err != nil {
 				return err
 			}
@@ -177,8 +177,9 @@ func updateRevision[T any](ctx context.Context, t *table[T], r revisioned, id st
 	if n == 1 {
 		return nil
 	}
-	// Nothing was updated: say why. A row is never deleted, so one found
-	// now was there for the UPDATE.
+	// Nothing was updated: say why. A row found now was there for the
+	// UPDATE, unless Sweep deleted it in between and a Create stored it
+	// again: then it's reported as changed.
 	var revision int64
 	var stored string
 	err := t.d.db.QueryRowContext(ctx, r.read, id).Scan(&revision, &stored)
@@ -247,8 +248,10 @@ type instanceKeyRecord struct {
 // a database writer from altering a record, or moving it to another
 // instance, unnoticed. Update is one UPDATE … WHERE id = ? AND
 // revision = ?, on the readable revision column, as InstanceStore's
-// is. Records never expire: Sweep leaves them alone, and nothing here
-// deletes one.
+// is. sweep_after is the record's RetainUntil, which Create and Update
+// store: Sweep deletes the record once it has passed, and never one
+// without (zero, NULL), such as a record from before retention until
+// it next moves.
 type InstanceKeyStore struct {
 	t *table[walletprovider.InstanceKey]
 }
@@ -260,7 +263,7 @@ func (d *DB) WalletProviderInstanceKeys() *InstanceKeyStore {
 	t := &table[walletprovider.InstanceKey]{
 		d: d, name: "walletprovider_instance_keys", sql: tableSQL{insert: d.sql.wpInstanceKeyInsert, get: d.sql.wpInstanceKeyGet},
 		rowOf: func(k walletprovider.InstanceKey) row {
-			return row{extra: []any{k.InstanceID, revisionArg(k.Revision)}}
+			return row{sweepAfter: k.RetainUntil, extra: []any{k.InstanceID, revisionArg(k.Revision)}}
 		},
 	}
 	t.encode = func(id string, k walletprovider.InstanceKey) ([]byte, error) {

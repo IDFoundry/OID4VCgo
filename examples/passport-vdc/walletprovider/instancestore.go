@@ -32,6 +32,10 @@ type fileInstanceStore struct {
 	mu    sync.Mutex
 	path  string
 	state instanceFile
+	// swept is how many instance keys were left by the last sweep: the
+	// next runs once there are twice as many, as
+	// wp.MemoryInstanceKeyStore's does.
+	swept int
 }
 
 // fileInstanceKeyStore is a wp.InstanceKeyStore kept in its
@@ -225,13 +229,23 @@ func (k fileInstanceKeyStore) Get(ctx context.Context, thumbprint string) (wp.In
 }
 
 // Create implements wp.InstanceKeyStore, saving the key before it
-// returns; should saving fail, it stores nothing.
+// returns; should saving fail, it stores nothing. It drops the keys
+// whose RetainUntil is before ik's CreatedAt, as
+// wp.MemoryInstanceKeyStore does, saved with ik.
 func (k fileInstanceKeyStore) Create(ctx context.Context, ik wp.InstanceKey) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	k.s.mu.Lock()
 	defer k.s.mu.Unlock()
+	if len(k.s.state.InstanceKeys) >= 2*k.s.swept+64 {
+		for tp, stored := range k.s.state.InstanceKeys {
+			if !stored.RetainUntil.IsZero() && stored.RetainUntil.Before(ik.CreatedAt) {
+				delete(k.s.state.InstanceKeys, tp)
+			}
+		}
+		k.s.swept = len(k.s.state.InstanceKeys)
+	}
 	if _, ok := k.s.state.InstanceKeys[ik.Thumbprint]; ok {
 		return wp.ErrExists
 	}

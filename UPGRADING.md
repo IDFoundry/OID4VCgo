@@ -6,6 +6,43 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.68.0 → next
+
+### Status lists (`statuslist`)
+
+- **`IndexStore` gains `Delete(ctx, uri)`**, which forgets every
+  reservation of a list its caller no longer allocates from. A custom
+  store must implement it; `statuslisttest.TestIndexStoreContract`
+  checks one. `MemoryIndexStore` and sqlstore's `StatusIndices` do.
+
+### Wallet Provider (`walletprovider`)
+
+- **Run `SweepStatusLists` periodically** (daily, say, from one
+  process; running it concurrently or again is safe). It deletes the
+  reserved indices of the periods' lists no longer served, which
+  nothing else deletes.
+- **Instance keys are kept for `Config.InstanceKeyRetention`** after
+  the start of the last period they were used in: zero means 90 days,
+  or three `StatusListPeriod`s when longer. A store may then delete
+  one (`InstanceKey.RetainUntil`). Size it for the longest an issuance
+  may go unused and still be refreshed: after deletion a Wallet
+  Attestation for the key needs fresh evidence, which Android Key
+  Attestation can't give for an existing key, and a Key Attestation
+  naming it is refused with `unknown_instance_key`; the credential
+  must be issued again.
+- A custom `InstanceKeyStore` may delete records past their
+  `RetainUntil`; one that never does is still correct.
+
+### sqlstore (next after v0.8.0)
+
+- **Run `Migrate` again for migration 0009**, which indexes
+  `oid4vc_walletprovider_instance_keys`' `sweep_after` for `DB.Sweep`.
+  `DB.Sweep` now deletes instance keys past their `RetainUntil`. A key
+  recorded before this release has no `RetainUntil` until it next
+  moves to a later period's lists, so one never used again is kept.
+- `StatusIndices().Delete` deletes a list's rows in batches; an
+  interrupted one finishes when called again.
+
 ## v0.67.0 → v0.68.0
 
 ### Wallet Provider (`walletprovider`)
