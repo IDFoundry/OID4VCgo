@@ -162,40 +162,62 @@ func (r X5CIssuerKeyResolver) BindsIssuerName() bool { return r.RequireIssuerNam
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
 func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
+	pub, alg, _, err := r.resolveIssuerKeyAndChains(ctx, header, payload)
+	return pub, alg, err
+}
+
+// resolveIssuerKeyAndChains is ResolveIssuerKey, with the chains
+// ResolveIssuerChains would return for the same header and ctx, from
+// the one verification of them.
+func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, [][]*x509.Certificate, error) {
 	if err := r.Validate(); err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if err := certchain.CheckNoAnchor(ders); err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
+	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if r.RequireIssuerName {
 		// Required means present: a credential naming no issuer would
 		// pass a check of the one it names.
 		issRaw, present := payload["iss"]
 		if !present {
-			return nil, "", errors.New("RequireIssuerName: the credential names no issuer (iss)")
+			return nil, "", nil, errors.New("RequireIssuerName: the credential names no issuer (iss)")
 		}
 		iss, ok := issRaw.(string)
 		if !ok {
-			return nil, "", errors.New("iss is not a string")
+			return nil, "", nil, errors.New("iss is not a string")
 		}
 		if err := certchain.CheckIssuerName(leaf, iss); err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 	}
 	alg, err := sdjwtvcAlgForKey(leaf.PublicKey)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	return leaf.PublicKey, alg, nil
+	return leaf.PublicKey, alg, chains, nil
+}
+
+// x5cResolver is keys as an X5CIssuerKeyResolver, when it's exactly
+// one: a type embedding it may resolve keys or chains its own way.
+func x5cResolver(keys SDJWTVCIssuerKeyResolver) (X5CIssuerKeyResolver, bool) {
+	switch r := keys.(type) {
+	case X5CIssuerKeyResolver:
+		return r, true
+	case *X5CIssuerKeyResolver:
+		if r != nil {
+			return *r, true
+		}
+	}
+	return X5CIssuerKeyResolver{}, false
 }
 
 // Capabilities implements KeySourceAssurance: validating an
