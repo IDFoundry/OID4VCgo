@@ -274,6 +274,47 @@ A challenge the provider can't be reached for fails key creation as
 of the same key (the instance key, at a refresh) brings the same chain,
 and the provider recognises a key it verified before.
 
+For a provider built with `walletprovider`, the Kotlin library has a
+client: `HttpWalletProvider` speaks its protocol, version 1
+([WALLET_PROVIDER.md](WALLET_PROVIDER.md)), with `android-key`
+evidence. The installation registers once, at its first Wallet
+Attestation: a registration key made over a `registration` challenge,
+in a `KeyStore` of its own (`HttpWalletProvider.registrationKeyStore()`,
+Android Keystore under an alias prefix the wallet's keys don't share,
+so `Wallet.sweepOrphanedKeys` never deletes it; made as a
+`KeyPurpose.INSTANCE` key, which signs without the holder), sent to
+`POST /v1/instances` with its chain. The instance ID and the key's ID
+are kept in an `InstanceRegistry` (by default a file in
+`noBackupFilesDir`); a registration whose key is gone is forgotten, and
+the next Wallet Attestation registers again with a new key, as it does
+after `instance_revoked` (which also deletes the key) or once more after
+a `409 instance_key_registered` at registration. The registration key
+signs every later request (`KeyStore.sign`'s DER signature becomes the
+JWS's r || s). Each issuance's instance key goes as `instance_key`: with
+its chain and the `instance` challenge whose bytes are in its
+attestation certificate while the client remembers that challenge
+(unexpired, in memory), which the provider needs the first time and
+ignores once it has recorded the key; without them afterwards, at a
+refresh. Tracking which keys the provider recorded isn't needed, since
+it ignores the evidence for those. A Key Attestation names
+`KeyAttestationRequest.instanceKey` as `instance_key`. The holder keys
+of a batch share one `holder` challenge, handed out again until a Key
+Attestation uses it or it's within a minute of expiring. Refusals reach
+the app as `platform` errors naming the protocol's code; a provider
+that can't answer (HTTP 5xx or 429), or a challenge that expired before
+it was used (`invalid_challenge`), as `network`. A refresh whose
+instance key the provider recorded for an instance that was revoked, or
+that the app lost the registration of, is refused as
+`instance_key_registered` and reported as `platform`, though only
+receiving the credential again helps: reporting it as
+`reissue_required` would need Go to recognise the refusal. Its JVM
+tests run it against a fake provider checking each request as the Go
+handler does; it was also run against the Go handler itself
+(`walletprovider.Provider.Handler` over HTTP, with an `android-key`
+verifier checking the challenge's and each key's bytes are in the fake
+chain the JVM key store makes), since real Key Attestation chains need
+a device. The ABI is unchanged: it's a `WalletProvider` like any other.
+
 **iOS** can't give that evidence. App Attest attests the app instance,
 with an App Attest key of its own that the app can't use for anything
 else: it says nothing about where the wallet's Secure Enclave keys

@@ -12,7 +12,8 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md). The HTTP protocol between a
 wallet and a Wallet Provider built with `walletprovider` is described
-in [WALLET_PROVIDER.md](WALLET_PROVIDER.md).
+in [WALLET_PROVIDER.md](WALLET_PROVIDER.md); the Kotlin library's
+`HttpWalletProvider` is a client of it.
 
 The libraries' documentation, for app developers, is published with
 each release:

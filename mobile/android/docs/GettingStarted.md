@@ -96,6 +96,8 @@ import androidx.annotation.RequiresApi
 import dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore
 import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
+import dev.idfoundry.oid4vcwallet.FileInstanceRegistry
+import dev.idfoundry.oid4vcwallet.HttpWalletProvider
 import dev.idfoundry.oid4vcwallet.KeyAttestationRequest
 import dev.idfoundry.oid4vcwallet.KeyEvidence
 import dev.idfoundry.oid4vcwallet.KeyPurpose
@@ -155,6 +157,20 @@ class BackendWalletProvider(private val backend: String) : WalletProvider {
 
 An `IOException` the provider throws reaches the wallet as a retryable
 `network` error; any other is `platform`.
+
+If your backend is built with OID4VCgo's `walletprovider` package, you
+needn't write this class: `HttpWalletProvider` speaks its protocol
+([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)),
+registering the installation once, with a registration key of its own,
+and sending each instance and holder key's attestation chain. Give it a
+registry for its registration; it keeps the registration key in Android
+Keystore, apart from the wallet's keys:
+
+```kotlin
+/** The Wallet Provider, when the backend is OID4VCgo's `walletprovider`, mounted at /wp. */
+fun oid4vcgoWalletProvider(context: Context): WalletProvider =
+    HttpWalletProvider("https://provider.example.com/wp", FileInstanceRegistry.standard(context))
+```
 
 ## Create the wallet
 
