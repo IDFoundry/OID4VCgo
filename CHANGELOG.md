@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.66.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.65.1...v0.66.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletprovider:** walletprovider's RegisterRequest.InstanceKey is RegistrationKey, with evidence over a challenge for the new PurposeRegistration ("registration"); PurposeInstance ("instance") now binds an instance key's evidence. Instance.Status is removed and registering reserves no status index. Dependencies.InstanceKeys (an InstanceKeyStore; MemoryInstanceKeyStore, and walletprovidertest.TestInstanceKeyStoreContract for your own) is required. WalletAttestationRequest takes InstanceKey, plus Challenge and Evidence the first time an instance asks for that key; a key recorded for another instance, or the instance's registration key, is refused with ErrInstanceKeyRegistered. KeyAttestationRequest takes InstanceKey, the issuance's recorded instance key; an unrecorded one is refused with the new ErrUnknownInstanceKey. Client's WalletAttestation and KeyAttestation are signed with the registration key. On the wire, POST /v1/instances takes registration_key over a registration challenge; POST /v1/wallet-attestation takes instance_key, and challenge and evidence for a new one; POST /v1/key-attestation takes instance_key; and an unrecorded instance key is 400 unknown_instance_key. Each new instance key uses a status index for good, so size Config.StatusListSize for issuances. Stored instances were registered with what is now an instance key: register them again. The passport-vdc demo refuses an instances file from before this change: delete it and its status indices file.
+
+### Features
+
+* **walletprovider:** attest per-issuance instance keys of an installation ([90b7d49](https://github.com/IDFoundry/OID4VCgo/commit/90b7d490084ab47255e446b85c8954518d508c85))
+
 ## [0.65.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.65.0...v0.65.1) (2026-11-05)
 
 
