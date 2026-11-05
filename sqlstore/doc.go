@@ -1,6 +1,6 @@
 // Package sqlstore holds durable stores for the issuer, verifier,
-// walletflow and statuslist packages, in a PostgreSQL or SQLite database reached
-// through database/sql. It is a module of its own, so the library takes
+// walletflow, statuslist and walletprovider packages, in a PostgreSQL
+// or SQLite database reached through database/sql. It is a module of its own, so the library takes
 // no database driver: bring the driver you use.
 //
 // # Setup
@@ -31,6 +31,13 @@
 //     one's status, durably and shared between every process using
 //     the database, so no index is handed out twice. Its Reserve is one
 //     INSERT on the (uri, idx) primary key.
+//   - walletprovider.Dependencies: WalletProviderInstances and
+//     WalletProviderChallenges, with StatusIndices as its
+//     StatusIndices. An instance's Create is one INSERT on the id
+//     primary key and the UNIQUE key_thumbprint column, so one instance
+//     key registers one instance across every process; its Update is
+//     one UPDATE … WHERE id = ? AND revision = ?, a compare-and-swap.
+//     A challenge's Consume is one DELETE … RETURNING.
 //
 // The Authorization Server's stores, and the Credential Endpoint's DPoP
 // replay and nonce stores, are FAPIgo's: see A whole issuer deployment.
@@ -141,14 +148,16 @@
 // # Atomicity
 //
 // Every consume-once operation is one statement or one transaction: a
-// c_nonce, an authorization in progress and a deferred transaction's
-// Invalidate are one DELETE (… RETURNING); a pre-authorized code's
+// c_nonce, an authorization in progress, a Wallet Provider's challenge
+// and a deferred transaction's Invalidate are one DELETE (… RETURNING); a pre-authorized code's
 // Consume, and every Update, reads the row with SELECT … FOR UPDATE on
 // Postgres, in a READ COMMITTED transaction whatever the server's
 // default isolation, or after BEGIN IMMEDIATE on SQLite, and writes it
 // in the same transaction. So the guarantees hold across every process
 // sharing the database, not just within one. Update callbacks are
-// called once.
+// called once. A Wallet Provider instance's Update takes no callback:
+// it's one UPDATE comparing the instance's revision, refused with
+// walletprovider.ErrConflict if another Update came first.
 // A store that couldn't answer (the database unreachable, a timeout, a
 // cancelled context) returns that error, never the interface's
 // not-found error, which the issuer and verifier answer as the
@@ -184,6 +193,13 @@
 // changing one leaves the record unreadable. Its status, expiry and
 // response_code hash are unprotected, so the database must be trusted
 // for their integrity.
+// A Wallet Provider's instances and challenges are sealed too, though
+// they hold nothing secret — an instance's public keys, its
+// registration evidence's summary, its App Attest key and counter, and
+// the operator's Reason for suspending or revoking it — so a database
+// writer can't alter one unnoticed; an instance's key thumbprint and
+// revision columns stay readable. Unsealed, a record still names its
+// own ID or challenge value, so one moved to another row is refused.
 // KeyStore refuses to work without a Sealer. StatusIndices' rows aren't
 // sealed: a Status List publishes every status, and the indices, which
 // Referenced Tokens carry, aren't secret either.
@@ -221,6 +237,10 @@
 // when Wallet.KeysInUse lists the authorizations, or ResumeIssuance is
 // called for that one. A wallet should call KeysInUse periodically, or
 // the authorizations it abandoned, and their keys, stay.
+//
+// Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
+// and leaves its instances alone: they never expire, and nothing here
+// deletes one.
 //
 // Sweep leaves StatusIndices' table alone, and nothing else deletes from
 // it: an index once handed out is never handed out again, since a

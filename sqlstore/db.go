@@ -44,13 +44,14 @@ func (d Dialect) String() string {
 
 // Options configures a DB.
 type Options struct {
-	// Sealer, if set, seals every record the issuer and walletflow stores
-	// write (an AEAD such as verifier.AESGCMSealer, with a key kept
-	// outside the database), each bound to its table and key, so a copy
-	// of the database reveals none of their contents and a record can't
-	// be moved to another key. The columns a store looks records up or
-	// sweeps them by stay readable: keys, Owners, the pre-authorized
-	// code's Transaction Code hash and expiry times. The verifier's
+	// Sealer, if set, seals every record the issuer, walletflow and
+	// walletprovider stores write (an AEAD such as verifier.AESGCMSealer,
+	// with a key kept outside the database), each bound to its table and
+	// key, so a copy of the database reveals none of their contents and a
+	// record can't be moved to another key. The columns a store looks
+	// records up or sweeps them by stay readable: keys, Owners, the
+	// pre-authorized code's Transaction Code hash, a wallet instance's key
+	// thumbprint and revision, and expiry times. The verifier's
 	// TransactionStore is sealed by its own TransactionCodec instead.
 	//
 	// A DB with a Sealer refuses records written without one, and one
@@ -58,9 +59,9 @@ type Options struct {
 	Sealer Sealer
 }
 
-// DB holds the issuer, verifier and walletflow stores' tables in one
-// SQL database. Make one with New, create its tables with Migrate, and
-// take its stores from its methods. It's safe for concurrent use.
+// DB holds the issuer, verifier, walletflow, statuslist and
+// walletprovider stores' tables in one SQL database. Make one with New,
+// create its tables with Migrate, and take its stores from its methods. It's safe for concurrent use.
 type DB struct {
 	db      *sql.DB
 	dialect Dialect
