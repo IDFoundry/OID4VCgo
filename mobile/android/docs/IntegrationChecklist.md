@@ -25,6 +25,10 @@ is a complete, working app on this library to compare against.
   `FileCredentialStore`, and the app implements `WalletProvider` (or
   passes `null` for issuers that don't ask for attestations).
   ([Getting started](GettingStarted.md))
+- [ ] With a backend built on OID4VCgo's `walletprovider`, the provider
+  is `HttpWalletProvider`, given the wallet's own key store and
+  `FileInstanceRegistry.standard(context)`, and the next item is its.
+  ([Going to production](GoingToProduction.md))
 - [ ] The `WalletProvider` gives a fresh challenge from your backend in
   `attestationChallenge` for instance and holder keys, implements the
   `WalletAttestationRequest` and `KeyAttestationRequest` versions of

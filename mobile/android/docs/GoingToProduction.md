@@ -104,6 +104,42 @@ attesting it:
    §4.4.1): issuers on FAPIgo refuse an attestation that breaks either
    rule (`invalid_client`).
 
+### A backend built with OID4VCgo
+
+OID4VCgo's `walletprovider` package is such a backend:
+`walletprovider/androidkey` makes the checks of step 3, and its
+`Policy` the claims of step 4. `HttpWalletProvider` is its client, so
+steps 1 and 2 need no code of your own (see
+[Getting started](GettingStarted.md)). It speaks the package's HTTP
+protocol, version 1
+([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)):
+
+- Each instance key is made over an `instance` challenge and
+  registered, with its chain, the first time it's attested. The
+  wallet makes an instance key for each issuance, so each issuance
+  registers an instance. `HttpWalletProvider` keeps the instance IDs in
+  an `InstanceRegistry`: `FileInstanceRegistry.standard(context)`,
+  out of backups, since an instance ID is useless without its key.
+- The holder keys of one issuance share a `holder` challenge, which
+  their Key Attestation uses up.
+- Every request after registration is signed with the instance key,
+  through the key store given to it: give it the wallet's own.
+- It sends nothing but to the provider's `https` URL, follows no
+  redirect, and checks each attestation is for what it asked: the
+  client and instance key, the nonce and the keys sent.
+
+Its failures reach the wallet as `WalletException`s. A provider that
+can't be reached or answers HTTP 5xx or 429, or a challenge that expired
+before it was used, is `network`: try again. A refusal is `platform`,
+its `message` naming the protocol's error code (`evidence_rejected`,
+`policy_refused`, `instance_revoked`, …). On `instance_revoked` the
+instance is forgotten and its key can't register again: a credential
+whose refresh needs it must be received again, which registers a new
+instance. On `instance_not_active` the instance is suspended: tell the
+holder, since the provider may resume it. `invalid_signed_request` is
+not retried: the device's clock may be wrong, or the provider no longer
+knows the instance.
+
 A key is attested once, when it's made, over that moment's challenge. A
 key attested again later — the instance key, when a refresh needs a new
 Wallet Attestation — brings the same chain: recognise a key you verified

@@ -274,6 +274,29 @@ A challenge the provider can't be reached for fails key creation as
 of the same key (the instance key, at a refresh) brings the same chain,
 and the provider recognises a key it verified before.
 
+For a provider built with `walletprovider`, the Kotlin library has a
+client: `HttpWalletProvider` speaks its protocol, version 1
+([WALLET_PROVIDER.md](WALLET_PROVIDER.md)), with `android-key`
+evidence. It registers each instance key the first time it's attested
+(`POST /v1/instances`, over the `instance` challenge whose bytes are in
+the key's attestation certificate), keeps the instance ID in an
+`InstanceRegistry` (by default a file in `noBackupFilesDir`), and
+signs each later request with the instance key through the app's
+`KeyStore` (`KeyStore.sign`'s DER signature becomes the JWS's r || s).
+The holder keys of a batch share one `holder` challenge, handed out
+again until a Key Attestation uses it or it's within a minute of
+expiring; a Key Attestation is signed by the instance of the latest
+Wallet Attestation. Since walletflow makes an instance key per
+issuance, each issuance registers an instance. Refusals reach the app
+as `platform` errors naming the protocol's code; a provider that can't
+answer (HTTP 5xx or 429), or a challenge that expired before it was
+used (`invalid_challenge`), as `network`. Its JVM tests run it against
+a fake provider checking each request as the Go handler does; it was
+also run by hand against the Go handler itself, with
+`walletprovidertest.FakeVerifier` standing in for `android-key`, since
+real Key Attestation chains need a device. The ABI is unchanged: it's
+a `WalletProvider` like any other.
+
 **iOS** can't give that evidence. App Attest attests the app instance,
 with an App Attest key of its own that the app can't use for anything
 else: it says nothing about where the wallet's Secure Enclave keys
