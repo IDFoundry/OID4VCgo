@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"encoding/asn1"
 	"slices"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
@@ -40,11 +41,26 @@ func Evidence(chain [][]byte) walletprovider.Evidence {
 //     SecurityLevelSoftware otherwise (which the Verifier refuses
 //     unless AllowSoftware); and its user authentication: none when
 //     the key may be used without it, required when an authenticator
-//     gates its use, and unreported otherwise.
+//     gates each use, or each use within MaxAuthTimeout of one
+//     authentication, and unreported otherwise.
 type EvidenceVerifier struct {
 	// Verifier checks the chain. REQUIRED.
 	Verifier *Verifier
+
+	// MaxAuthTimeout is the longest a key may stay usable after one
+	// user authentication (its authorization list's authTimeout) and
+	// still be reported as requiring the user. Any code in the app can
+	// use such a key until its timeout ends, not only for what the user
+	// saw, so a key usable for longer is reported as unreported, and
+	// the provider's Policy claims no user authentication for it. Zero
+	// means DefaultMaxAuthTimeout; negative, that only a key needing an
+	// authentication for every use is reported as requiring the user.
+	MaxAuthTimeout time.Duration
 }
+
+// DefaultMaxAuthTimeout is EvidenceVerifier.MaxAuthTimeout's default:
+// the window the EUDI reference wallet gives its holder keys.
+const DefaultMaxAuthTimeout = 30 * time.Second
 
 var _ walletprovider.EvidenceVerifier = EvidenceVerifier{}
 
@@ -77,7 +93,7 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 		AppID:    pkg.Name,
 		Keys: []walletprovider.AttestedKey{{
 			Key: in.Keys[i], SecurityLevel: evidenceSecurityLevel(r), Binding: walletprovider.KeyBindingAttested,
-			UserAuthentication: userAuthentication(r.Enforced),
+			UserAuthentication: userAuthentication(r.Enforced, e.maxAuthTimeout()),
 		}},
 	}
 	if pkg.Version > 0 {
@@ -125,11 +141,26 @@ func evidenceSecurityLevel(r *Result) walletprovider.SecurityLevel {
 	return walletprovider.SecurityLevelSoftware
 }
 
-func userAuthentication(l *AuthorizationList) walletprovider.UserAuthentication {
+func (e EvidenceVerifier) maxAuthTimeout() time.Duration {
+	if e.MaxAuthTimeout == 0 {
+		return DefaultMaxAuthTimeout
+	}
+	return e.MaxAuthTimeout
+}
+
+// userAuthentication is what l shows gates the key's use: none, the
+// user for each use or each use within max of an authentication, or
+// unreported.
+func userAuthentication(l *AuthorizationList, max time.Duration) walletprovider.UserAuthentication {
 	switch {
 	case l.NoAuthRequired:
 		return walletprovider.UserAuthenticationNone
-	case l.UserAuthType != nil && *l.UserAuthType != 0:
+	case l.UserAuthType == nil || *l.UserAuthType == 0:
+		return ""
+	// Without authTimeout, every use needs an authentication.
+	case l.AuthTimeout == nil || *l.AuthTimeout <= 0:
+		return walletprovider.UserAuthenticationRequired
+	case max > 0 && *l.AuthTimeout <= int64(max/time.Second):
 		return walletprovider.UserAuthenticationRequired
 	}
 	return ""
