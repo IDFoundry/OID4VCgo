@@ -1,4 +1,4 @@
-package issuerapp
+package statefile
 
 import (
 	"context"
@@ -12,41 +12,35 @@ import (
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
-// statusIndicesFile is where an issuer with Config.StateDir and no
-// Config.Database keeps its status list's index reservations and
-// statuses (fileIndexStore).
-const statusIndicesFile = "status-indices.json"
-
-// fileIndexStore is a statuslist.IndexStore kept in a JSON file,
-// rewritten whole on every change: the durable store of an issuer with
-// a state directory but no database. statuslist.MemoryIndexStore
+// IndexStore is a statuslist.IndexStore kept in a JSON file,
+// rewritten whole on every change: the durable store of a demo server
+// with a state directory but no database. statuslist.MemoryIndexStore
 // can't be saved and restored — it has no way to list its reservations
 // — and a store that forgets them on a restart hands out the indices of
-// credentials still in circulation again (draft-14 §13.3). One process
+// statuses still in circulation again (draft-14 §13.3). One process
 // uses the file; a deployment uses a database (sqlstore's
-// StatusIndices, as Config.Database does), whose Reserve is atomic
-// across processes.
-type fileIndexStore struct {
+// StatusIndices), whose Reserve is atomic across processes.
+type IndexStore struct {
 	mu    sync.Mutex
 	path  string
 	lists map[string]map[uint64]statuslist.StatusType
 }
 
-var _ statuslist.IndexStore = (*fileIndexStore)(nil)
+var _ statuslist.IndexStore = (*IndexStore)(nil)
 
-// openFileIndexStore reads the store saved at path, empty when there is
+// OpenIndexStore reads the store saved at path, empty when there is
 // none, saving it back there on every change.
-func openFileIndexStore(path string) (*fileIndexStore, error) {
-	s := &fileIndexStore{path: path, lists: map[string]map[uint64]statuslist.StatusType{}}
+func OpenIndexStore(path string) (*IndexStore, error) {
+	s := &IndexStore{path: path, lists: map[string]map[uint64]statuslist.StatusType{}}
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied state directory
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return s, nil
 	case err != nil:
-		return nil, fmt.Errorf("issuerapp: read %s: %w", path, err)
+		return nil, fmt.Errorf("statefile: read %s: %w", path, err)
 	}
 	if err := json.Unmarshal(data, &s.lists); err != nil {
-		return nil, fmt.Errorf("issuerapp: %s: %w", path, err)
+		return nil, fmt.Errorf("statefile: %s: %w", path, err)
 	}
 	for uri, list := range s.lists {
 		if list == nil {
@@ -57,17 +51,17 @@ func openFileIndexStore(path string) (*fileIndexStore, error) {
 }
 
 // save writes the store to its file. Called with s.mu held.
-func (s *fileIndexStore) save() error {
+func (s *IndexStore) save() error {
 	data, err := json.Marshal(s.lists)
 	if err != nil {
-		return fmt.Errorf("issuerapp: encode status list indices: %w", err)
+		return fmt.Errorf("statefile: encode status list indices: %w", err)
 	}
-	return writeFileAtomic(s.path, data)
+	return WriteAtomic(s.path, data)
 }
 
 // Reserve implements statuslist.IndexStore, saving the reservation
 // before it returns; should saving fail, it reserves nothing.
-func (s *fileIndexStore) Reserve(_ context.Context, uri string, idx uint64) error {
+func (s *IndexStore) Reserve(_ context.Context, uri string, idx uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.lists[uri]
@@ -87,7 +81,7 @@ func (s *fileIndexStore) Reserve(_ context.Context, uri string, idx uint64) erro
 }
 
 // Reserved implements statuslist.IndexStore.
-func (s *fileIndexStore) Reserved(_ context.Context, uri string) (int, error) {
+func (s *IndexStore) Reserved(_ context.Context, uri string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.lists[uri]), nil
@@ -95,7 +89,7 @@ func (s *fileIndexStore) Reserved(_ context.Context, uri string) (int, error) {
 
 // SetStatus implements statuslist.IndexStore, saving the status before
 // it returns; should saving fail, it changes nothing.
-func (s *fileIndexStore) SetStatus(_ context.Context, uri string, idx uint64, status statuslist.StatusType) error {
+func (s *IndexStore) SetStatus(_ context.Context, uri string, idx uint64, status statuslist.StatusType) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old, ok := s.lists[uri][idx]
@@ -111,7 +105,7 @@ func (s *fileIndexStore) SetStatus(_ context.Context, uri string, idx uint64, st
 }
 
 // Status implements statuslist.IndexStore.
-func (s *fileIndexStore) Status(_ context.Context, uri string, idx uint64) (statuslist.StatusType, error) {
+func (s *IndexStore) Status(_ context.Context, uri string, idx uint64) (statuslist.StatusType, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status, ok := s.lists[uri][idx]
@@ -122,16 +116,16 @@ func (s *fileIndexStore) Status(_ context.Context, uri string, idx uint64) (stat
 }
 
 // Statuses implements statuslist.IndexStore.
-func (s *fileIndexStore) Statuses(_ context.Context, uri string, size int) ([]uint8, error) {
+func (s *IndexStore) Statuses(_ context.Context, uri string, size int) ([]uint8, error) {
 	if size < 0 {
-		return nil, fmt.Errorf("issuerapp: list size %d is negative", size)
+		return nil, fmt.Errorf("statefile: list size %d is negative", size)
 	}
 	statuses := make([]uint8, size)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for idx, status := range s.lists[uri] {
 		if idx >= uint64(size) {
-			return nil, fmt.Errorf("issuerapp: index %d of %s is reserved, outside its %d indices", idx, uri, size)
+			return nil, fmt.Errorf("statefile: index %d of %s is reserved, outside its %d indices", idx, uri, size)
 		}
 		statuses[idx] = uint8(status)
 	}

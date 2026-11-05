@@ -3,6 +3,8 @@
 wallet-provider.pem
 wallet-provider-ca.pem
 wallet-provider-keys.json
+wallet-provider-instances.json
+wallet-provider-status-indices.json
 
 # cmd/issuer's generated TLS certificate and cmd/wallet's credential
 # store (credentials and their holder keys, unencrypted).

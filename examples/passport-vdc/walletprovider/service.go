@@ -22,6 +22,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/androidattest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
@@ -115,6 +116,13 @@ type ServiceConfig struct {
 	// served under it at /v1/, and the provider's status list, which
 	// every attestation names, at /v1/status. Empty means DefaultURL.
 	URL string
+	// InstancesPath is the file that keeps the library instances the
+	// service registers, and StatusIndicesPath the file that keeps their
+	// status list indices and statuses, so a restart neither forgets an
+	// instance nor hands its index out again; empty keeps each in memory
+	// only.
+	InstancesPath     string
+	StatusIndicesPath string
 	// AndroidApps, if set, are the Android apps whose keys the
 	// library's own protocol (/v1/) attests, through
 	// androidkey.EvidenceVerifier: chains to Google's roots, checked
@@ -219,11 +227,22 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	if err != nil {
 		return nil, err
 	}
+	store, err := openFileInstanceStore(cfg.InstancesPath)
+	if err != nil {
+		return nil, err
+	}
+	var indices statuslist.IndexStore = &statuslist.MemoryIndexStore{}
+	if cfg.StatusIndicesPath != "" {
+		if indices, err = statefile.OpenIndexStore(cfg.StatusIndicesPath); err != nil {
+			return nil, fmt.Errorf("walletprovider: %w", err)
+		}
+	}
 	s := &service{
 		p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst),
-		demo: newDemoVerifier(), instances: map[string]string{},
+		demo: newDemoVerifier(), store: store,
+		instances: store.byThumbprint(), holderInstance: store.holderInstance(),
 	}
-	if s.lib, err = p.library(cfg, s.demo); err != nil {
+	if s.lib, err = p.library(cfg, s.demo, store, indices); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -236,10 +255,12 @@ type service struct {
 	challenges *clientLimiter
 	lib        *wp.Provider
 	demo       *demoVerifier
+	store      *fileInstanceStore
 
 	// mu serializes registrations, so an instance key registers once.
 	mu sync.Mutex
-	// instances maps an instance key's JWK thumbprint to its instance.
+	// instances maps an instance key's JWK thumbprint to its instance,
+	// as store has them.
 	instances map[string]string
 	// holderInstance is the shared instance Key Attestations are issued
 	// under; empty until the first.
@@ -250,7 +271,7 @@ type service struct {
 // signed with p's key and certificate, attesting cfg.ClientID, taking
 // the demo-only evidence and, with cfg.AndroidApps, Android Key
 // Attestation.
-func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier) (*wp.Provider, error) {
+func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, instances wp.InstanceStore, indices statuslist.IndexStore) (*wp.Provider, error) {
 	verifiers := []wp.EvidenceVerifier{demo}
 	platforms := map[wp.Platform]wp.PlatformPolicy{
 		// Whatever the older protocol's checks found, from a software
@@ -272,8 +293,8 @@ func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier) (*wp.Provider,
 		Policy:        wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
 	}, wp.Dependencies{
 		Signer: p.Key, Chain: []*x509.Certificate{p.Certificate},
-		Instances: &wp.MemoryInstanceStore{}, Challenges: &wp.MemoryChallengeStore{},
-		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: verifiers,
+		Instances: instances, Challenges: &wp.MemoryChallengeStore{},
+		StatusIndices: indices, Evidence: verifiers,
 		Clock: cfg.Now, Random: rand.Reader,
 		Logger: slog.New(slog.NewTextHandler(logfWriter(cfg.Logf), nil)),
 	})
@@ -413,6 +434,9 @@ func (s *service) holderInstanceID(ctx context.Context) (string, error) {
 	}
 	in, err := s.register(ctx, &key.PublicKey, wp.SecurityLevelSoftware)
 	if err != nil {
+		return "", err
+	}
+	if err := s.store.setHolderInstance(in.ID); err != nil {
 		return "", err
 	}
 	s.holderInstance = in.ID

@@ -34,6 +34,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -636,16 +637,21 @@ func (a *App) identity() (issuerIdentity, error) {
 	return loadOrCreateIdentity(a.cfg.StateDir, a.now(), a.crlURL)
 }
 
+// statusIndicesFile is where an issuer with Config.StateDir and no
+// Config.Database keeps its status list's index reservations and
+// statuses (statefile.IndexStore).
+const statusIndicesFile = "status-indices.json"
+
 // loadStatusList is this issuer's status list. Its index reservations
 // and statuses are kept in Config.Database when set (sqlstore's
-// StatusIndices), else in Config.StateDir when set (fileIndexStore),
+// StatusIndices), else in Config.StateDir when set (statefile.IndexStore),
 // so no allocated index is handed out again, and revocations hold,
 // across a restart. Its entries, the status page's, are kept in
 // Config.StateDir when set.
 func (a *App) loadStatusList() (*statusList, error) {
 	store := a.stores.statusIndices
 	if a.cfg.Database == nil && a.cfg.StateDir != "" {
-		fileStore, err := openFileIndexStore(filepath.Join(a.cfg.StateDir, statusIndicesFile))
+		fileStore, err := statefile.OpenIndexStore(filepath.Join(a.cfg.StateDir, statusIndicesFile))
 		if err != nil {
 			return nil, err
 		}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -26,7 +27,7 @@ const testListURI = "https://issuer.example" + StatusListPath
 var indexStores = map[string]func(t *testing.T, dir string) statuslist.IndexStore{
 	"file": func(t *testing.T, dir string) statuslist.IndexStore {
 		t.Helper()
-		s, err := openFileIndexStore(filepath.Join(dir, statusIndicesFile))
+		s, err := statefile.OpenIndexStore(filepath.Join(dir, statusIndicesFile))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +282,7 @@ func TestStatusList_RejectsDamagedFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		store, err := openFileIndexStore(path)
+		store, err := statefile.OpenIndexStore(path)
 		if err == nil {
 			_, err = loadStatusList(ctx, store, testListURI, dir)
 		}

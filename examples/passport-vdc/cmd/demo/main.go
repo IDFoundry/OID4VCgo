@@ -81,6 +81,8 @@ func main() {
 	issuerURL := flag.String("issuer-url", localIssuerURL, "the issuer's public https URL, when a tunnel forwards it to "+issuerAddr+" (for a phone)")
 	verifierURL := flag.String("verifier-url", localVerifierURL, "the verifier's public https URL, when a tunnel forwards it to "+verifierAddr)
 	providerURL := flag.String("provider-url", localProviderURL, "the Wallet Provider's public https URL, when a tunnel forwards it to "+providerAddr)
+	var androidApps walletprovider.AndroidAppsFlag
+	flag.Var(&androidApps, "android-app", walletprovider.AndroidAppsUsage)
 	db := flag.Bool("db", false, "keep the issuer's stores in a SQLite database in the state directory (issuer/stores.db) rather than in memory")
 	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
 	flag.Parse()
@@ -96,7 +98,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware, db: *db}); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware, db: *db, androidApps: androidApps}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -146,6 +148,9 @@ type options struct {
 	// attestation isn't hardware Google vouches for.
 	requireHardware bool
 	db              bool // the issuer's stores in a SQLite database in state
+	// androidApps: the Android apps whose keys the Wallet Provider's
+	// own /v1/ protocol attests.
+	androidApps walletprovider.AndroidAppsFlag
 }
 
 // serviceURLs are the URLs the issuer, verifier and Wallet Provider are
@@ -198,6 +203,9 @@ func run(ctx context.Context, opts options) error {
 	providerService, err := provider.NewService(walletprovider.ServiceConfig{
 		ClientID: walletClientID, RequireHardwareKeyAttestation: opts.requireHardware,
 		VerifiedKeysPath: filepath.Join(state, "wallet-provider-keys.json"), URL: opts.urls.provider,
+		InstancesPath:     filepath.Join(state, "wallet-provider-instances.json"),
+		StatusIndicesPath: filepath.Join(state, "wallet-provider-status-indices.json"),
+		AndroidApps:       opts.androidApps,
 	})
 	if err != nil {
 		return err
