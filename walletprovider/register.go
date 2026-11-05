@@ -32,7 +32,8 @@ type RegisterRequest struct {
 // verifies the evidence with the EvidenceVerifier for its Kind,
 // requires it to vouch for the instance key, applies the Policy,
 // reserves the instance's status list index, and stores the instance,
-// active.
+// active. It refuses an instance key that's already registered with
+// ErrInstanceKeyRegistered (InstanceStore.Create enforces it).
 func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance, error) {
 	key, err := marshalKey(req.InstanceKey)
 	if err != nil {
@@ -86,6 +87,11 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 		return Instance{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
 	}
 	if err := p.deps.Instances.Create(ctx, in); err != nil {
+		// A random 128-bit ID doesn't collide: an existing record is
+		// one with the same instance key.
+		if errors.Is(err, ErrExists) {
+			return Instance{}, ErrInstanceKeyRegistered
+		}
 		return Instance{}, fmt.Errorf("walletprovider: storing the instance: %w", err)
 	}
 	in.Revision = 1

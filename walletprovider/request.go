@@ -77,6 +77,12 @@ func SignRequest(instanceKey crypto.Signer, instanceID, challenge, method, path 
 // be recent, and carry a challenge issued for PurposeRequest, which it
 // consumes, so a request is accepted once. It refuses a request from
 // an instance that isn't active.
+//
+// The signature is checked before anything else about the instance is
+// revealed or changed: a request that doesn't verify fails with
+// ErrInstanceNotFound or ErrInvalidRequest, never ErrInstanceNotActive,
+// and leaves the challenge it names unused, so a forged request can
+// neither learn an instance's state nor burn a wallet's challenge.
 func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, error) {
 	header, payload, err := jose.DecodeUnverified(req.JWT)
 	if err != nil {
@@ -91,9 +97,6 @@ func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, er
 	}
 	in, err := p.getInstance(ctx, unverified.Subject)
 	if err != nil {
-		return Instance{}, err
-	}
-	if err := stateError(in.State); err != nil {
 		return Instance{}, err
 	}
 	key, err := jwk.ParsePublicKey(in.Key)
@@ -121,6 +124,11 @@ func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, er
 		return Instance{}, fmt.Errorf("%w: signed for another body", ErrInvalidRequest)
 	case iat.After(now.Add(maxRequestClockSkew)) || iat.Before(now.Add(-p.cfg.ChallengeTTL)):
 		return Instance{}, fmt.Errorf("%w: iat %v isn't recent", ErrInvalidRequest, iat)
+	}
+	// The instance's state is reported only to its own key's holder, and
+	// the challenge used up only by a request that verified.
+	if err := stateError(in.State); err != nil {
+		return Instance{}, err
 	}
 	if _, err := p.consumeChallenge(ctx, c.Challenge, PurposeRequest); err != nil {
 		return Instance{}, err

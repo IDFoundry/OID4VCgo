@@ -25,6 +25,7 @@ func TestInstanceStoreContract(t *testing.T, newStore func(t *testing.T) walletp
 		{"GetUnknownIsNotFound", instanceGetUnknown},
 		{"CreateThenGet", instanceCreateThenGet},
 		{"CreateDuplicateIsExists", instanceCreateDuplicate},
+		{"CreateDuplicateKeyIsExists", instanceCreateDuplicateKey},
 		{"UpdateComparesRevision", instanceUpdateComparesRevision},
 		{"UpdateUnknownIsNotFound", instanceUpdateUnknown},
 		{"ConcurrentUpdatesLoseNothing", instanceConcurrentUpdates},
@@ -107,6 +108,18 @@ func instanceCreateDuplicate(t *testing.T, s walletprovider.InstanceStore) {
 	}
 	in.Revision = 1
 	expectInstance(t, "after a duplicate Create", mustGet(t, s, "a"), in)
+}
+
+func instanceCreateDuplicateKey(t *testing.T, s walletprovider.InstanceStore) {
+	mustCreate(t, s, sampleInstance("a"))
+	other := sampleInstance("b")
+	other.KeyThumbprint = "tp-a"
+	if err := s.Create(context.Background(), other); !errors.Is(err, walletprovider.ErrExists) {
+		t.Fatalf("Create(another instance with the same key thumbprint) = %v, want ErrExists", err)
+	}
+	if _, err := s.Get(context.Background(), "b"); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("Get after a refused Create = %v, want ErrNotFound", err)
+	}
 }
 
 func instanceUpdateComparesRevision(t *testing.T, s walletprovider.InstanceStore) {

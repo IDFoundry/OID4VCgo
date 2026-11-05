@@ -93,6 +93,25 @@ func TestRegisterRefuses(t *testing.T) {
 	})
 }
 
+// TestRegisterKeyOnce: an instance key registers one instance.
+func TestRegisterKeyOnce(t *testing.T) {
+	h := newHarness(t, nil)
+	key := newKey(t)
+	register := func() error {
+		ch := h.challenge(walletprovider.PurposeInstance)
+		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
+			Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &key.PublicKey),
+		})
+		return err
+	}
+	if err := register(); err != nil {
+		t.Fatal(err)
+	}
+	if err := register(); !errors.Is(err, walletprovider.ErrInstanceKeyRegistered) {
+		t.Fatalf("registering the same instance key again = %v, want ErrInstanceKeyRegistered", err)
+	}
+}
+
 func TestRegisterPolicy(t *testing.T) {
 	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) {
 		delete(c.Policy.Platforms, walletprovider.PlatformIOS)

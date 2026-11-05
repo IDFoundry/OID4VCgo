@@ -28,6 +28,10 @@ var (
 	// ErrInstanceNotFound: no instance has the ID.
 	ErrInstanceNotFound = errors.New("walletprovider: instance not found")
 
+	// ErrInstanceKeyRegistered: an instance with the instance key is
+	// already registered. A wallet registers each instance key once.
+	ErrInstanceKeyRegistered = errors.New("walletprovider: instance key already registered")
+
 	// ErrInstanceNotActive: the instance is suspended or revoked.
 	ErrInstanceNotActive = errors.New("walletprovider: instance not active")
 
