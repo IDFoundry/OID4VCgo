@@ -74,9 +74,11 @@ type Config struct {
 
 	// StatusListSize is how many indices the list has; zero means
 	// DefaultStatusListSize. It must be a multiple of 4 (two bits per
-	// status, so SUSPENDED fits). At most half are handed out
-	// (statuslist.DefaultFillLimit), so registering fails once half as
-	// many instances as it has have registered.
+	// status, so SUSPENDED fits). Each instance key holds one, for good,
+	// and at most half are handed out (statuslist.DefaultFillLimit), so
+	// a Wallet Attestation for a new instance key fails once half as
+	// many instance keys as it has have been recorded: size it for the
+	// issuances the provider will vouch for, not the instances.
 	StatusListSize int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
@@ -119,12 +121,16 @@ type Dependencies struct {
 	// Instances keeps registered instances. REQUIRED.
 	Instances InstanceStore
 
+	// InstanceKeys keeps the instances' instance keys. REQUIRED.
+	InstanceKeys InstanceKeyStore
+
 	// Challenges keeps issued challenges. REQUIRED.
 	Challenges ChallengeStore
 
 	// StatusIndices keeps the status list's reserved indices and their
 	// statuses (statuslist.Allocator's Store). Durable in production:
-	// an index handed out twice links two instances' statuses. REQUIRED.
+	// an index handed out twice links two instance keys' statuses.
+	// REQUIRED.
 	StatusIndices statuslist.IndexStore
 
 	// Evidence are the verifiers of the evidence kinds the provider
@@ -260,7 +266,7 @@ func (d Dependencies) validate() error {
 		name string
 		v    any
 	}{
-		{"Signer", d.Signer}, {"Instances", d.Instances}, {"Challenges", d.Challenges},
+		{"Signer", d.Signer}, {"Instances", d.Instances}, {"InstanceKeys", d.InstanceKeys}, {"Challenges", d.Challenges},
 		{"StatusIndices", d.StatusIndices}, {"Random", d.Random},
 	}
 	for _, r := range required {
@@ -337,9 +343,9 @@ func (p *Provider) now() time.Time {
 // at Config.StatusListURI, answering in the JWT form
 // (application/statuslist+jwt) by default and the CWT form when the
 // request's Accept header asks for it (draft-ietf-oauth-status-list-14
-// §8.1), signed with Signer and carrying Chain. Each instance's status
-// is two bits: VALID, INVALID (revoked) or SUSPENDED. The provider
-// invalidates its cached token whenever it changes a status.
+// §8.1), signed with Signer and carrying Chain. Each instance key's
+// status is two bits: VALID, INVALID (revoked) or SUSPENDED. The
+// provider invalidates its cached token whenever it changes a status.
 func (p *Provider) StatusList() *statuslist.Publisher { return p.publisher }
 
 // keyAlg is the JWS algorithm for pub: ES256 for P-256, EdDSA for

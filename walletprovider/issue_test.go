@@ -30,10 +30,16 @@ func (h *harness) x5c() []string {
 
 func TestWalletAttestation(t *testing.T) {
 	h := newHarness(t, nil)
-	in, key := h.register(kindStrongBox)
-	jwt, err := h.walletAttestation(in.ID)
+	in, _ := h.register(kindStrongBox)
+	key := newKey(t)
+	jwt, err := h.walletAttestation(in.ID, &key.PublicKey, kindTEE)
 	if err != nil {
 		t.Fatal(err)
+	}
+	ik := h.instanceKey(&key.PublicKey)
+	if ik.InstanceID != in.ID || ik.SecurityLevel != walletprovider.SecurityLevelTEE || ik.Binding != walletprovider.KeyBindingAttested ||
+		ik.Status.URI != statusURI || !ik.CreatedAt.Equal(h.clock.now()) {
+		t.Fatalf("recorded instance key %+v", ik)
 	}
 	header, payload, err := jose.Verify(oid4vci.ES256, &h.signer.PublicKey, jwt)
 	if err != nil {
@@ -73,8 +79,8 @@ func TestWalletAttestation(t *testing.T) {
 		t.Fatalf("cnf.jwk %s isn't the instance key (%v)", claims.Cnf["jwk"], err)
 	}
 	ref, err := statuslist.ParseStatusClaim(claims.Status)
-	if err != nil || ref != in.Status {
-		t.Fatalf("status = %v (%v), want %+v", claims.Status, err, in.Status)
+	if err != nil || ref != ik.Status {
+		t.Fatalf("status = %v (%v), want the instance key's %+v", claims.Status, err, ik.Status)
 	}
 	extra, err := attestation.ParseWalletAttestationClaims(jwt)
 	if err != nil || extra.WalletName != walletName {
@@ -87,17 +93,196 @@ func TestWalletAttestation(t *testing.T) {
 	}
 }
 
+// TestWalletAttestationReusesInstanceKey: a Wallet Attestation for an
+// instance key already recorded for the instance needs no evidence,
+// ignores what's sent, and carries the key's status index again; a new
+// instance key gets an index of its own.
+func TestWalletAttestationReusesInstanceKey(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	first := h.instanceKey(&key.PublicKey)
+
+	again, err := h.walletAttestation(in.ID, &key.PublicKey, "")
+	if err != nil {
+		t.Fatalf("a second Wallet Attestation for the instance key, without evidence: %v", err)
+	}
+	if ref := walletAttestationStatus(t, again); ref != first.Status {
+		t.Fatalf("the second Wallet Attestation's status is %+v, want the instance key's %+v", ref, first.Status)
+	}
+
+	// Evidence sent for a recorded key is ignored: not verified, and its
+	// challenge left unused.
+	ch := h.challenge(walletprovider.PurposeInstance)
+	if _, err := h.p.WalletAttestation(ctx, walletprovider.WalletAttestationRequest{
+		InstanceID: in.ID, ClientID: clientID, InstanceKey: &key.PublicKey,
+		Challenge: ch, Evidence: walletprovider.Evidence{Kind: "unknown", Data: []byte("x")},
+	}); err != nil {
+		t.Fatalf("a recorded key with evidence that wouldn't verify: %v", err)
+	}
+	other := newKey(t)
+	if _, err := h.p.WalletAttestation(ctx, walletprovider.WalletAttestationRequest{
+		InstanceID: in.ID, ClientID: clientID, InstanceKey: &other.PublicKey,
+		Challenge: ch, Evidence: evidence(t, kindStrongBox, ch, &other.PublicKey),
+	}); err != nil {
+		t.Fatalf("a new key with the challenge a recorded key's request named: %v", err)
+	}
+	if second := h.instanceKey(&other.PublicKey); second.Status == first.Status || second.InstanceID != in.ID {
+		t.Fatalf("a second instance key %+v shares the first's status or isn't the instance's", second)
+	}
+	if got := h.instanceKey(&key.PublicKey); !reflect.DeepEqual(got, first) {
+		t.Fatalf("the instance key's record changed: %+v, was %+v", got, first)
+	}
+	keys, err := h.deps.InstanceKeys.List(ctx, in.ID, "", 10)
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("the instance has %d instance keys (%v), want 2", len(keys), err)
+	}
+	stored, err := h.deps.Instances.Get(ctx, in.ID)
+	if err != nil || stored.WalletAttestations != 4 {
+		t.Fatalf("after four Wallet Attestations the instance has %d (%v)", stored.WalletAttestations, err)
+	}
+}
+
+func walletAttestationStatus(t *testing.T, jwt string) statuslist.StatusListRef {
+	t.Helper()
+	_, payload, err := jose.DecodeUnverified(jwt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Status map[string]any `json:"status"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := statuslist.ParseStatusClaim(claims.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
 func TestWalletAttestationRefuses(t *testing.T) {
 	h := newHarness(t, nil)
-	in, _ := h.register(kindFake)
-	if _, err := h.p.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: "other"}); !errors.Is(err, walletprovider.ErrUnknownClient) {
+	ctx := context.Background()
+	in, regKey := h.register(kindStrongBox)
+	key := newKey(t)
+	if _, err := h.p.WalletAttestation(ctx, walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: "other", InstanceKey: &key.PublicKey}); !errors.Is(err, walletprovider.ErrUnknownClient) {
 		t.Fatalf("WalletAttestation(unknown client) = %v, want ErrUnknownClient", err)
 	}
-	if _, err := h.walletAttestation("nope"); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
+	if _, err := h.walletAttestation("nope", &key.PublicKey, kindStrongBox); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
 		t.Fatalf("WalletAttestation(unknown instance) = %v, want ErrInstanceNotFound", err)
 	}
-	if _, err := h.walletAttestation(""); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
+	if _, err := h.walletAttestation("", &key.PublicKey, kindStrongBox); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
 		t.Fatalf("WalletAttestation(no instance) = %v, want ErrInstanceNotFound", err)
+	}
+	if _, err := h.p.WalletAttestation(ctx, walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: clientID}); !errors.Is(err, walletprovider.ErrInvalidRequest) {
+		t.Fatalf("WalletAttestation(no instance key) = %v, want ErrInvalidRequest", err)
+	}
+
+	other, _ := h.register(kindStrongBox)
+	othersKey := h.newInstanceKey(other.ID, kindStrongBox)
+	_, otherReg := h.register(kindStrongBox)
+	cases := []struct {
+		name string
+		key  crypto.PublicKey
+		req  func(*walletprovider.WalletAttestationRequest)
+		want error
+	}{
+		{"a new instance key without evidence", &key.PublicKey, nil, walletprovider.ErrEvidenceRequired},
+		{"another instance's instance key", &othersKey.PublicKey, nil, walletprovider.ErrInstanceKeyRegistered},
+		{"its registration key as an instance key", &regKey.PublicKey, nil, walletprovider.ErrInstanceKeyRegistered},
+		{"evidence from another platform", &key.PublicKey, withEvidence(t, h, kindIOS, walletprovider.PurposeInstance), walletprovider.ErrEvidenceRejected},
+		{"evidence from another app", &key.PublicKey, withEvidence(t, h, kindOtherApp, walletprovider.PurposeInstance), walletprovider.ErrEvidenceRejected},
+		{"a security level the policy refuses", &key.PublicKey, withEvidence(t, h, kindSoftware, walletprovider.PurposeInstance), walletprovider.ErrPolicy},
+		{"a device the policy refuses", &key.PublicKey, withEvidence(t, h, kindRooted, walletprovider.PurposeInstance), walletprovider.ErrPolicy},
+		{"an unknown evidence kind", &key.PublicKey, withEvidence(t, h, "play-integrity", walletprovider.PurposeInstance), walletprovider.ErrEvidenceKind},
+		{"a registration challenge", &key.PublicKey, withEvidence(t, h, kindStrongBox, walletprovider.PurposeRegistration), walletprovider.ErrChallenge},
+		{"a holder challenge", &key.PublicKey, withEvidence(t, h, kindStrongBox, walletprovider.PurposeHolder), walletprovider.ErrChallenge},
+		{"evidence for another key", &key.PublicKey, func(r *walletprovider.WalletAttestationRequest) {
+			r.Challenge = h.challenge(walletprovider.PurposeInstance)
+			r.Evidence = evidence(t, kindStrongBox, r.Challenge, &otherReg.PublicKey)
+		}, walletprovider.ErrEvidenceRejected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: clientID, InstanceKey: tc.key}
+			if tc.req != nil {
+				tc.req(&req)
+			}
+			if _, err := h.p.WalletAttestation(ctx, req); !errors.Is(err, tc.want) {
+				t.Fatalf("WalletAttestation = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if _, err := h.deps.InstanceKeys.Get(ctx, h.thumbprint(&key.PublicKey)); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("a refused instance key was recorded: %v", err)
+	}
+
+	// Nor is an instance key registered as another instance's
+	// registration key.
+	ch := h.challenge(walletprovider.PurposeRegistration)
+	if _, err := h.p.Register(ctx, walletprovider.RegisterRequest{
+		Challenge: ch, RegistrationKey: &othersKey.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &othersKey.PublicKey),
+	}); !errors.Is(err, walletprovider.ErrInstanceKeyRegistered) {
+		t.Fatalf("registering an instance key as a registration key = %v, want ErrInstanceKeyRegistered", err)
+	}
+}
+
+// withEvidence sets a request's challenge, one issued for purpose, and
+// evidence of kind over it for its instance key.
+func withEvidence(t *testing.T, h *harness, kind string, purpose walletprovider.Purpose) func(*walletprovider.WalletAttestationRequest) {
+	return func(r *walletprovider.WalletAttestationRequest) {
+		r.Challenge = h.challenge(purpose)
+		r.Evidence = evidence(t, kind, r.Challenge, r.InstanceKey)
+	}
+}
+
+// TestStatusIndexPerInstanceKey: registering reserves no status index;
+// each new instance key reserves one, until the list is full.
+func TestStatusIndexPerInstanceKey(t *testing.T) {
+	// Four entries, of which half are handed out.
+	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.StatusListSize = 4 })
+	var instances []walletprovider.Instance
+	for range 5 {
+		in, _ := h.register(kindStrongBox)
+		instances = append(instances, in)
+	}
+	h.newInstanceKey(instances[0].ID, kindStrongBox)
+	h.newInstanceKey(instances[1].ID, kindStrongBox)
+	_, err := h.walletAttestation(instances[2].ID, &newKey(t).PublicKey, kindStrongBox)
+	if !errors.Is(err, statuslist.ErrListsFull) {
+		t.Fatalf("a third instance key on a list of two = %v, want ErrListsFull", err)
+	}
+}
+
+// TestInstanceKeyAssertionCounter: instance key evidence that advances
+// the instance's counter (an App Attest assertion) is accepted once.
+func TestInstanceKeyAssertionCounter(t *testing.T) {
+	h := newHarness(t, nil)
+	in, _ := h.register(kindIOS)
+	record := func(counter uint64) error {
+		k := newKey(t)
+		ch := h.challenge(walletprovider.PurposeInstance)
+		ev, err := walletprovidertest.FakeAssertion(kindIOS, ch, counter, &k.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = h.p.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{
+			InstanceID: in.ID, ClientID: clientID, InstanceKey: &k.PublicKey, Challenge: ch, Evidence: ev,
+		})
+		return err
+	}
+	if err := record(3); err != nil {
+		t.Fatal(err)
+	}
+	if err := record(3); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+		t.Fatalf("a repeated counter = %v, want ErrEvidenceRejected", err)
+	}
+	stored, err := h.deps.Instances.Get(context.Background(), in.ID)
+	if err != nil || stored.Counter != 3 {
+		t.Fatalf("the instance's counter is %d (%v), want 3", stored.Counter, err)
 	}
 }
 
@@ -105,7 +290,9 @@ func TestWalletAttestationRefuses(t *testing.T) {
 // again at every attestation.
 func TestPolicyTighteningRefusesExistingInstances(t *testing.T) {
 	h := newHarness(t, nil)
-	in, key := h.register(kindTEE)
+	in, _ := h.register(kindTEE)
+	ik := h.newInstanceKey(in.ID, kindTEE)
+	key := newKey(t)
 
 	stricter := h.cfg
 	stricter.Policy = policy()
@@ -117,10 +304,10 @@ func TestPolicyTighteningRefusesExistingInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	h2 := &harness{t: t, p: p2, clock: h.clock, signer: h.signer, chain: h.chain, cfg: stricter, deps: h.deps}
-	if _, err := h2.walletAttestation(in.ID); !errors.Is(err, walletprovider.ErrPolicy) {
+	if _, err := h2.walletAttestation(in.ID, &ik.PublicKey, ""); !errors.Is(err, walletprovider.ErrPolicy) {
 		t.Fatalf("WalletAttestation after raising the minimum version = %v, want ErrPolicy", err)
 	}
-	if _, err := h2.keyAttestation(in.ID, []*ecdsa.PrivateKey{key}, kindTEE); !errors.Is(err, walletprovider.ErrPolicy) {
+	if _, err := h2.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{key}, kindTEE); !errors.Is(err, walletprovider.ErrPolicy) {
 		t.Fatalf("KeyAttestation after raising the minimum version = %v, want ErrPolicy", err)
 	}
 
@@ -133,14 +320,25 @@ func TestPolicyTighteningRefusesExistingInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p3.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: clientID}); !errors.Is(err, walletprovider.ErrPolicy) {
+	if _, err := p3.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{InstanceID: in.ID, ClientID: clientID, InstanceKey: &ik.PublicKey}); !errors.Is(err, walletprovider.ErrPolicy) {
 		t.Fatalf("WalletAttestation for a TEE instance once only StrongBox is accepted = %v, want ErrPolicy", err)
+	}
+
+	// The instance key's own security level is checked again too.
+	sb, _ := h.register(kindStrongBox)
+	sbKey := h.newInstanceKey(sb.ID, kindTEE)
+	if _, err := p3.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{InstanceID: sb.ID, ClientID: clientID, InstanceKey: &sbKey.PublicKey}); !errors.Is(err, walletprovider.ErrPolicy) {
+		t.Fatalf("WalletAttestation for a TEE instance key once only StrongBox is accepted = %v, want ErrPolicy", err)
+	}
+	h3 := &harness{t: t, p: p3, clock: h.clock, signer: h.signer, chain: h.chain, cfg: noStrongBoxOnly, deps: h.deps}
+	if _, err := h3.keyAttestation(sb.ID, &sbKey.PublicKey, []*ecdsa.PrivateKey{key}, kindStrongBox); !errors.Is(err, walletprovider.ErrPolicy) {
+		t.Fatalf("KeyAttestation for a TEE instance key once only StrongBox is accepted = %v, want ErrPolicy", err)
 	}
 }
 
 // verifyKeyAttestation parses and verifies a Key Attestation as an
 // issuer does, and checks the claims every one carries.
-func (h *harness) verifyKeyAttestation(res walletprovider.KeyAttestationResult, in walletprovider.Instance, keys ...crypto.PublicKey) attestation.VerifiedClaims {
+func (h *harness) verifyKeyAttestation(res walletprovider.KeyAttestationResult, status statuslist.StatusListRef, keys ...crypto.PublicKey) attestation.VerifiedClaims {
 	h.t.Helper()
 	ka, err := attestation.Parse(res.JWT)
 	if err != nil {
@@ -161,8 +359,8 @@ func (h *harness) verifyKeyAttestation(res walletprovider.KeyAttestationResult, 
 		h.t.Fatalf("result expires %v, the JWT %v", res.ExpiresAt, *v.ExpiresAt)
 	}
 	ref, err := statuslist.ParseStatusClaim(v.Status)
-	if err != nil || ref != in.Status {
-		h.t.Fatalf("status = %v (%v), want %+v", v.Status, err, in.Status)
+	if err != nil || ref != status {
+		h.t.Fatalf("status = %v (%v), want the instance key's %+v", v.Status, err, status)
 	}
 	if len(v.AttestedKeys) != len(keys) || len(res.AttestedKeys) != len(keys) {
 		h.t.Fatalf("attests %d keys (result %d), want %d", len(v.AttestedKeys), len(res.AttestedKeys), len(keys))
@@ -222,17 +420,18 @@ func TestKeyAttestationClaimsFromPolicyTable(t *testing.T) {
 				}
 			})
 			in, _ := h.register(tc.instance)
+			ik := h.newInstanceKey(in.ID, tc.instance)
 			keys := make([]*ecdsa.PrivateKey, len(tc.kinds))
 			pubs := make([]crypto.PublicKey, len(tc.kinds))
 			for i := range keys {
 				keys[i] = newKey(t)
 				pubs[i] = &keys[i].PublicKey
 			}
-			res, err := h.keyAttestation(in.ID, keys, tc.kinds...)
+			res, err := h.keyAttestation(in.ID, &ik.PublicKey, keys, tc.kinds...)
 			if err != nil {
 				t.Fatal(err)
 			}
-			v := h.verifyKeyAttestation(res, in, pubs...)
+			v := h.verifyKeyAttestation(res, h.instanceKey(&ik.PublicKey).Status, pubs...)
 			if !reflect.DeepEqual(nilIfEmpty(v.KeyStorage), tc.keyStorage) || !reflect.DeepEqual(nilIfEmpty(v.UserAuthentication), tc.userAu) {
 				t.Fatalf("key_storage %v, user_authentication %v; want %v, %v", v.KeyStorage, v.UserAuthentication, tc.keyStorage, tc.userAu)
 			}
@@ -243,10 +442,11 @@ func TestKeyAttestationClaimsFromPolicyTable(t *testing.T) {
 func TestKeyAttestationOnlyKeysWithPassingEvidence(t *testing.T) {
 	h := newHarness(t, nil)
 	in, _ := h.register(kindStrongBox)
+	ik := h.newInstanceKey(in.ID, kindStrongBox)
 	good, badChallenge, otherApp, software, none := newKey(t), newKey(t), newKey(t), newKey(t), newKey(t)
 	ch := h.challenge(walletprovider.PurposeHolder)
 	res, err := h.p.KeyAttestation(context.Background(), walletprovider.KeyAttestationRequest{
-		InstanceID: in.ID, Challenge: ch, Nonce: "c-nonce",
+		InstanceID: in.ID, InstanceKey: &ik.PublicKey, Challenge: ch, Nonce: "c-nonce",
 		Keys: []crypto.PublicKey{&good.PublicKey, &badChallenge.PublicKey, &otherApp.PublicKey, &software.PublicKey, &none.PublicKey},
 		Evidence: []walletprovider.Evidence{
 			evidence(t, kindStrongBox, ch, &good.PublicKey),
@@ -258,7 +458,7 @@ func TestKeyAttestationOnlyKeysWithPassingEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := h.verifyKeyAttestation(res, in, &good.PublicKey)
+	v := h.verifyKeyAttestation(res, h.instanceKey(&ik.PublicKey).Status, &good.PublicKey)
 	if !reflect.DeepEqual(v.KeyStorage, levels{attestation.ISO18045High, attestation.ISO18045Moderate}) {
 		t.Fatalf("key_storage = %v", v.KeyStorage)
 	}
@@ -270,45 +470,65 @@ func TestKeyAttestationOnlyKeysWithPassingEvidence(t *testing.T) {
 
 func TestKeyAttestationRefuses(t *testing.T) {
 	h := newHarness(t, nil)
-	in, _ := h.register(kindStrongBox)
+	in, regKey := h.register(kindStrongBox)
+	ik := &h.newInstanceKey(in.ID, kindStrongBox).PublicKey
 	k := newKey(t)
 	t.Run("no evidence", func(t *testing.T) {
-		if _, err := h.keyAttestation(in.ID, []*ecdsa.PrivateKey{k}); !errors.Is(err, walletprovider.ErrEvidenceRequired) {
+		if _, err := h.keyAttestation(in.ID, ik, []*ecdsa.PrivateKey{k}); !errors.Is(err, walletprovider.ErrEvidenceRequired) {
 			t.Fatalf("KeyAttestation = %v, want ErrEvidenceRequired", err)
 		}
 	})
 	t.Run("no keys", func(t *testing.T) {
-		if _, err := h.keyAttestation(in.ID, nil); !errors.Is(err, walletprovider.ErrInvalidRequest) {
+		if _, err := h.keyAttestation(in.ID, ik, nil); !errors.Is(err, walletprovider.ErrInvalidRequest) {
 			t.Fatalf("KeyAttestation = %v, want ErrInvalidRequest", err)
 		}
 	})
+	other, _ := h.register(kindStrongBox)
+	othersKey := &h.newInstanceKey(other.ID, kindStrongBox).PublicKey
+	for name, instanceKey := range map[string]crypto.PublicKey{
+		"an instance key never recorded":  &newKey(t).PublicKey,
+		"another instance's instance key": othersKey,
+		"the registration key":            &regKey.PublicKey,
+		"no instance key":                 nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := h.keyAttestation(in.ID, instanceKey, []*ecdsa.PrivateKey{k}, kindStrongBox)
+			want := walletprovider.ErrUnknownInstanceKey
+			if instanceKey == nil {
+				want = walletprovider.ErrInvalidRequest
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("KeyAttestation = %v, want %v", err, want)
+			}
+		})
+	}
 	t.Run("too many keys", func(t *testing.T) {
 		keys := make([]*ecdsa.PrivateKey, walletprovider.DefaultMaxKeys+1)
 		kinds := make([]string, len(keys))
 		for i := range keys {
 			keys[i], kinds[i] = newKey(t), kindStrongBox
 		}
-		if _, err := h.keyAttestation(in.ID, keys, kinds...); !errors.Is(err, walletprovider.ErrInvalidRequest) {
+		if _, err := h.keyAttestation(in.ID, ik, keys, kinds...); !errors.Is(err, walletprovider.ErrInvalidRequest) {
 			t.Fatalf("KeyAttestation = %v, want ErrInvalidRequest", err)
 		}
 	})
 	t.Run("a key twice", func(t *testing.T) {
-		if _, err := h.keyAttestation(in.ID, []*ecdsa.PrivateKey{k, k}, kindStrongBox, kindStrongBox); !errors.Is(err, walletprovider.ErrInvalidRequest) {
+		if _, err := h.keyAttestation(in.ID, ik, []*ecdsa.PrivateKey{k, k}, kindStrongBox, kindStrongBox); !errors.Is(err, walletprovider.ErrInvalidRequest) {
 			t.Fatalf("KeyAttestation = %v, want ErrInvalidRequest", err)
 		}
 	})
 	t.Run("only evidence from another platform", func(t *testing.T) {
-		if _, err := h.keyAttestation(in.ID, []*ecdsa.PrivateKey{k}, kindIOS); !errors.Is(err, walletprovider.ErrNoKeyAttested) {
+		if _, err := h.keyAttestation(in.ID, ik, []*ecdsa.PrivateKey{k}, kindIOS); !errors.Is(err, walletprovider.ErrNoKeyAttested) {
 			t.Fatalf("KeyAttestation = %v, want ErrNoKeyAttested", err)
 		}
 	})
 	t.Run("only evidence the policy refuses", func(t *testing.T) {
-		if _, err := h.keyAttestation(in.ID, []*ecdsa.PrivateKey{k}, kindRooted); !errors.Is(err, walletprovider.ErrNoKeyAttested) {
+		if _, err := h.keyAttestation(in.ID, ik, []*ecdsa.PrivateKey{k}, kindRooted); !errors.Is(err, walletprovider.ErrNoKeyAttested) {
 			t.Fatalf("KeyAttestation = %v, want ErrNoKeyAttested", err)
 		}
 	})
 	t.Run("unknown instance", func(t *testing.T) {
-		if _, err := h.keyAttestation("nope", []*ecdsa.PrivateKey{k}, kindStrongBox); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
+		if _, err := h.keyAttestation("nope", ik, []*ecdsa.PrivateKey{k}, kindStrongBox); !errors.Is(err, walletprovider.ErrInstanceNotFound) {
 			t.Fatalf("KeyAttestation = %v, want ErrInstanceNotFound", err)
 		}
 	})
@@ -319,6 +539,7 @@ func TestKeyAttestationRefuses(t *testing.T) {
 func TestKeyAttestationCounter(t *testing.T) {
 	h := newHarness(t, nil)
 	in, _ := h.register(kindIOS)
+	ik := h.newInstanceKey(in.ID, kindIOS)
 	attest := func(counter uint64) error {
 		k := newKey(t)
 		ch := h.challenge(walletprovider.PurposeHolder)
@@ -327,7 +548,8 @@ func TestKeyAttestationCounter(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = h.p.KeyAttestation(context.Background(), walletprovider.KeyAttestationRequest{
-			InstanceID: in.ID, Challenge: ch, Keys: []crypto.PublicKey{&k.PublicKey}, Evidence: []walletprovider.Evidence{ev},
+			InstanceID: in.ID, InstanceKey: &ik.PublicKey, Challenge: ch,
+			Keys: []crypto.PublicKey{&k.PublicKey}, Evidence: []walletprovider.Evidence{ev},
 		})
 		return err
 	}
@@ -430,7 +652,8 @@ func TestKeyAttestationCounterRace(t *testing.T) {
 		})
 	})
 	in, _ := h.register(kindIOS)
-	if _, err := h.keyAttestation(in.ID, []*ecdsa.PrivateKey{newKey(t)}, "racing"); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+	ik := h.newInstanceKey(in.ID, kindIOS)
+	if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, "racing"); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
 		t.Fatalf("KeyAttestation with a counter that changed meanwhile = %v, want ErrEvidenceRejected", err)
 	}
 }

@@ -11,56 +11,83 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
-	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // WalletAttestationRequest asks for a Wallet Attestation. The HTTP
-// layer has already checked the request was signed with the instance
-// key (VerifyRequest).
+// layer has already checked the request was signed with the instance's
+// registration key (VerifyRequest).
 type WalletAttestationRequest struct {
 	InstanceID string
 
 	// ClientID is the client the Wallet Attestation authenticates: its
 	// sub. One of Config.ClientIDs.
 	ClientID string
+
+	// InstanceKey is the instance key the Wallet Attestation's cnf
+	// names: the wallet's key for one issuance, P-256 or Ed25519.
+	// REQUIRED.
+	InstanceKey crypto.PublicKey
+
+	// Challenge, a challenge issued for PurposeInstance, and Evidence,
+	// bound to it and vouching for InstanceKey, are REQUIRED the first
+	// time the instance asks for a Wallet Attestation for InstanceKey.
+	// Once the key is recorded for the instance they're ignored: not
+	// verified, and the challenge not used up.
+	Challenge string
+	Evidence  Evidence
 }
 
 // WalletAttestation issues a Wallet Attestation (HAIP 1.0 §4.4.1,
 // OID4VCI 1.0 Appendix E) for an active instance whose registration
 // evidence the Policy still accepts: sub is the client ID, cnf the
-// instance key, status the instance's status list entry, and
+// instance key, status the instance key's status list entry, and
 // wallet_name and wallet_link are Config's. It expires after
 // Config.WalletAttestationTTL, and carries Chain as x5c.
+//
+// The first time the instance asks for one for an instance key, it
+// consumes the challenge and verifies the evidence for the key, as
+// KeyAttestation does a holder key's: from the instance's platform and
+// app, accepted by the Policy, at a security level the Policy accepts
+// for the platform. It then records the key for the instance
+// (InstanceKeyStore) with a status list index of its own. Later
+// requests for the key reuse the record and its index, without
+// evidence. A key recorded for another instance, or that is the
+// instance's registration key, is refused with
+// ErrInstanceKeyRegistered.
 func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationRequest) (string, error) {
 	if !slices.Contains(p.cfg.ClientIDs, req.ClientID) {
 		return "", fmt.Errorf("%w: %q", ErrUnknownClient, req.ClientID)
+	}
+	key, err := marshalKey(req.InstanceKey)
+	if err != nil {
+		return "", err
 	}
 	in, err := p.activeInstance(ctx, req.InstanceID)
 	if err != nil {
 		return "", err
 	}
-	key, err := jwk.ParsePublicKey(in.Key)
+	ik, counter, err := p.instanceKeyFor(ctx, in, key, req)
 	if err != nil {
-		return "", fmt.Errorf("walletprovider: the stored instance key: %w", err)
+		return "", err
 	}
-	// The instance is updated first, and only while it's still active,
-	// so an instance revoked meanwhile gets nothing.
+	// The instance is updated after its instance key is recorded, and
+	// only while it's still active. Suspend and Revoke store the state
+	// before they set the statuses of the instance's keys, so either
+	// this request sees the new state and gets nothing, or they find
+	// the new key and set its status too.
 	now := p.now()
-	if err := p.update(ctx, in.ID, func(cur *Instance) error {
-		if err := stateError(cur.State); err != nil {
-			return err
-		}
+	if err := p.recordUse(ctx, in, counter, func(cur *Instance) {
 		cur.LastSeenAt = now
 		cur.WalletAttestations++
-		return nil
 	}); err != nil {
 		return "", err
 	}
 	jwt, err := attestation.IssueWalletAttestation(p.deps.Signer, p.alg, p.header, attestation.WalletAttestationClaims{
-		Issuer: p.cfg.Identifier, Subject: req.ClientID, InstanceKey: key,
+		Issuer: p.cfg.Identifier, Subject: req.ClientID, InstanceKey: req.InstanceKey,
 		IssuedAt: now.Unix(), ExpiresAt: now.Add(p.cfg.WalletAttestationTTL).Unix(),
 		Extra: attestation.WalletAttestationExtraClaims{
-			WalletName: p.cfg.WalletName, WalletLink: p.cfg.WalletLink, Status: in.Status.Claim(),
+			WalletName: p.cfg.WalletName, WalletLink: p.cfg.WalletLink, Status: ik.Status.Claim(),
 		},
 	})
 	if err != nil {
@@ -69,11 +96,155 @@ func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationR
 	return jwt, nil
 }
 
+// instanceKeyFor returns the instance key key of in, recording it with
+// req's evidence if it's new, and the instance's new counter if that
+// evidence advanced it.
+func (p *Provider) instanceKeyFor(ctx context.Context, in Instance, key marshaledKey, req WalletAttestationRequest) (InstanceKey, *uint64, error) {
+	if key.thumbprint == in.KeyThumbprint {
+		return InstanceKey{}, nil, fmt.Errorf("%w: the instance key is the instance's registration key", ErrInstanceKeyRegistered)
+	}
+	ik, err := p.deps.InstanceKeys.Get(ctx, key.thumbprint)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return p.recordInstanceKey(ctx, in, key, req)
+	case err != nil:
+		return InstanceKey{}, nil, fmt.Errorf("walletprovider: reading instance key: %w", err)
+	case ik.InstanceID != in.ID:
+		return InstanceKey{}, nil, fmt.Errorf("%w: the instance key is another instance's", ErrInstanceKeyRegistered)
+	}
+	return ik, nil, p.checkInstanceKey(in, ik)
+}
+
+// recordInstanceKey verifies req's evidence for the new instance key
+// key of in, reserves its status list index and records it.
+func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marshaledKey, req WalletAttestationRequest) (InstanceKey, *uint64, error) {
+	if req.Evidence.Kind == "" || len(req.Evidence.Data) == 0 {
+		return InstanceKey{}, nil, fmt.Errorf("%w: the instance key isn't recorded yet", ErrEvidenceRequired)
+	}
+	challenge, err := p.consumeChallenge(ctx, req.Challenge, PurposeInstance)
+	if err != nil {
+		return InstanceKey{}, nil, err
+	}
+	ev, err := p.verify(ctx, EvidenceInput{
+		Evidence: req.Evidence, Challenge: challenge, Purpose: PurposeInstance,
+		Keys: []crypto.PublicKey{req.InstanceKey}, Instance: &in,
+	})
+	if err == nil {
+		err = p.checkEvidenceFrom(in, ev)
+	}
+	if err != nil {
+		return InstanceKey{}, nil, err
+	}
+	attested, ok := attestedKey(ev.Keys, req.InstanceKey)
+	switch {
+	case !ok:
+		return InstanceKey{}, nil, fmt.Errorf("%w: the evidence doesn't vouch for the instance key", ErrEvidenceRejected)
+	case ev.Counter != nil && *ev.Counter <= in.Counter:
+		return InstanceKey{}, nil, fmt.Errorf("%w: the counter %d doesn't exceed the instance's %d", ErrEvidenceRejected, *ev.Counter, in.Counter)
+	}
+	ik := InstanceKey{
+		Thumbprint: key.thumbprint, Key: key.json, InstanceID: in.ID,
+		SecurityLevel: attested.SecurityLevel, Binding: attested.Binding, CreatedAt: p.now(),
+	}
+	if err := p.checkInstanceKey(in, ik); err != nil {
+		return InstanceKey{}, nil, err
+	}
+	// An index allocated for a key that then isn't recorded stays
+	// reserved, as every allocated index does: it's never reused.
+	if ik.Status, err = p.allocateStatus(ctx); err != nil {
+		return InstanceKey{}, nil, err
+	}
+	switch err := p.deps.InstanceKeys.Create(ctx, ik); {
+	case errors.Is(err, ErrExists):
+		// Recorded meanwhile, by a concurrent request: this instance's
+		// keeps its record, another's is refused.
+		stored, err := p.deps.InstanceKeys.Get(ctx, ik.Thumbprint)
+		switch {
+		case err != nil:
+			return InstanceKey{}, nil, fmt.Errorf("walletprovider: reading instance key: %w", err)
+		case stored.InstanceID != in.ID:
+			return InstanceKey{}, nil, fmt.Errorf("%w: the instance key is another instance's", ErrInstanceKeyRegistered)
+		}
+		return stored, ev.Counter, nil
+	case err != nil:
+		return InstanceKey{}, nil, fmt.Errorf("walletprovider: storing the instance key: %w", err)
+	}
+	return ik, ev.Counter, nil
+}
+
+// allocateStatus reserves a status list index.
+func (p *Provider) allocateStatus(ctx context.Context) (statuslist.StatusListRef, error) {
+	ref, err := p.allocator.Allocate(ctx)
+	switch {
+	case errors.Is(err, statuslist.ErrListsFull):
+		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: the status list is full: raise Config.StatusListSize: %w", err)
+	case err != nil:
+		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
+	}
+	return ref, nil
+}
+
+// checkInstanceKey refuses an instance key of in at a security level
+// the Policy no longer accepts for in's platform.
+func (p *Provider) checkInstanceKey(in Instance, ik InstanceKey) error {
+	if !slices.Contains(p.cfg.Policy.Platforms[in.Evidence.Platform].SecurityLevels, ik.SecurityLevel) {
+		return fmt.Errorf("%w: the instance key's security level %q isn't accepted for %q", ErrPolicy, ik.SecurityLevel, in.Evidence.Platform)
+	}
+	return nil
+}
+
+// recordedInstanceKey returns the instance key pub of in, refusing a
+// key not recorded for in with ErrUnknownInstanceKey, or one the
+// Policy no longer accepts.
+func (p *Provider) recordedInstanceKey(ctx context.Context, in Instance, pub crypto.PublicKey) (InstanceKey, error) {
+	key, err := marshalKey(pub)
+	if err != nil {
+		return InstanceKey{}, fmt.Errorf("the instance key: %w", err)
+	}
+	ik, err := p.deps.InstanceKeys.Get(ctx, key.thumbprint)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return InstanceKey{}, ErrUnknownInstanceKey
+	case err != nil:
+		return InstanceKey{}, fmt.Errorf("walletprovider: reading instance key: %w", err)
+	case ik.InstanceID != in.ID:
+		// The same refusal as for an unknown key: whose it is isn't
+		// this instance's business.
+		return InstanceKey{}, ErrUnknownInstanceKey
+	}
+	return ik, p.checkInstanceKey(in, ik)
+}
+
+// recordUse updates the instance in with count, only while it's still
+// active, and stores counter, if set, as its new counter with a
+// compare-and-swap against the one the verifier was given (in's), so
+// a replayed or concurrent assertion gets nothing.
+func (p *Provider) recordUse(ctx context.Context, in Instance, counter *uint64, count func(*Instance)) error {
+	return p.update(ctx, in.ID, func(cur *Instance) error {
+		if err := stateError(cur.State); err != nil {
+			return err
+		}
+		if counter != nil {
+			if cur.Counter != in.Counter {
+				return fmt.Errorf("%w: the instance's counter changed while its assertion was verified", ErrEvidenceRejected)
+			}
+			cur.Counter = *counter
+		}
+		count(cur)
+		return nil
+	})
+}
+
 // KeyAttestationRequest asks for a Key Attestation over holder keys.
 // The HTTP layer has already checked the request was signed with the
-// instance key (VerifyRequest).
+// instance's registration key (VerifyRequest).
 type KeyAttestationRequest struct {
 	InstanceID string
+
+	// InstanceKey is the instance key of the issuance the holder keys
+	// are for, which a Wallet Attestation recorded for the instance: the
+	// Key Attestation's status is the instance key's. REQUIRED.
+	InstanceKey crypto.PublicKey
 
 	// Challenge is a challenge issued for PurposeHolder, which every
 	// piece of Evidence is bound to.
@@ -113,15 +284,18 @@ type KeyAttestationResult struct {
 
 // KeyAttestation issues a Key Attestation (HAIP 1.0 §4.5.1, OID4VCI 1.0
 // Appendix D) for holder keys of an active instance whose registration
-// evidence the Policy still accepts. It consumes the challenge and
-// verifies each piece of evidence; evidence must be from the instance's
-// platform and app. attested_keys lists only the keys some evidence
-// that passed vouches for at a security level the Policy accepts — a
-// key without one is left out, and the request fails with
+// evidence the Policy still accepts, for the issuance of one of its
+// instance keys (ErrUnknownInstanceKey for a key a Wallet Attestation
+// didn't record for the instance). It consumes the challenge and
+// verifies each piece of evidence; evidence must be from the
+// instance's platform and app. attested_keys lists only the keys some
+// evidence that passed vouches for at a security level the Policy
+// accepts — a key without one is left out, and the request fails with
 // ErrNoKeyAttested if that leaves none. key_storage and
 // user_authentication come from Policy.KeyStorage alone. status is the
-// instance's status list entry, so revoking the instance withdraws its
-// Key Attestations too. It expires after Config.KeyAttestationTTL.
+// instance key's status list entry, so suspending or revoking the
+// instance withdraws its Key Attestations too. It expires after
+// Config.KeyAttestationTTL.
 func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest) (KeyAttestationResult, error) {
 	if err := p.checkKeys(req.Keys); err != nil {
 		return KeyAttestationResult{}, err
@@ -133,6 +307,10 @@ func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest
 		return KeyAttestationResult{}, fmt.Errorf("%w: more evidence than keys", ErrInvalidRequest)
 	}
 	in, err := p.activeInstance(ctx, req.InstanceID)
+	if err != nil {
+		return KeyAttestationResult{}, err
+	}
+	ik, err := p.recordedInstanceKey(ctx, in, req.InstanceKey)
 	if err != nil {
 		return KeyAttestationResult{}, err
 	}
@@ -148,23 +326,11 @@ func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest
 	keyStorage, userAuth := p.cfg.Policy.claims(in.Evidence.Platform, attested)
 
 	// The instance is updated before the attestation is issued, and
-	// only while it's still active: a counter an assertion advanced is
-	// stored first, compared with the one the verifier was given, so a
-	// replayed or concurrent assertion gets nothing.
+	// only while it's still active, its counter stored first.
 	now := p.now()
-	if err := p.update(ctx, in.ID, func(cur *Instance) error {
-		if err := stateError(cur.State); err != nil {
-			return err
-		}
-		if counter != nil {
-			if cur.Counter != in.Counter {
-				return fmt.Errorf("%w: the instance's counter changed while its assertion was verified", ErrEvidenceRejected)
-			}
-			cur.Counter = *counter
-		}
+	if err := p.recordUse(ctx, in, counter, func(cur *Instance) {
 		cur.LastSeenAt = now
 		cur.KeyAttestations++
-		return nil
 	}); err != nil {
 		return KeyAttestationResult{}, err
 	}
@@ -181,7 +347,7 @@ func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest
 	result.JWT, err = attestation.Issue(p.deps.Signer, p.alg, p.header, attestation.Claims{
 		Issuer: p.cfg.Identifier, IssuedAt: now.Unix(), ExpiresAt: &exp,
 		AttestedKeys: jwks, KeyStorage: keyStorage, UserAuthentication: userAuth,
-		Nonce: req.Nonce, Status: in.Status.Claim(),
+		Nonce: req.Nonce, Status: ik.Status.Claim(),
 	})
 	if err != nil {
 		return KeyAttestationResult{}, fmt.Errorf("walletprovider: %w", err)
@@ -221,7 +387,7 @@ func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge 
 	for _, e := range req.Evidence {
 		ev, err := p.verify(ctx, EvidenceInput{Evidence: e, Challenge: challenge, Purpose: PurposeHolder, Keys: req.Keys, Instance: &in})
 		if err == nil {
-			err = p.checkHolderEvidence(in, ev)
+			err = p.checkEvidenceFrom(in, ev)
 		}
 		if err != nil {
 			lastErr = err
@@ -256,9 +422,10 @@ func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge 
 	return attested, counter, nil
 }
 
-// checkHolderEvidence refuses holder key evidence from another platform
-// or app than the instance's, or that the Policy refuses.
-func (p *Provider) checkHolderEvidence(in Instance, ev VerifiedEvidence) error {
+// checkEvidenceFrom refuses evidence sent after registration — for
+// holder keys or an instance key — from another platform or app than
+// the instance's, or that the Policy refuses.
+func (p *Provider) checkEvidenceFrom(in Instance, ev VerifiedEvidence) error {
 	if ev.Platform != in.Evidence.Platform {
 		return fmt.Errorf("%w: evidence from %q for an instance on %q", ErrEvidenceRejected, ev.Platform, in.Evidence.Platform)
 	}

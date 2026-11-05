@@ -55,9 +55,9 @@ type evidenceBody struct {
 }
 
 type registerRequestBody struct {
-	Challenge   string          `json:"challenge"`
-	InstanceKey json.RawMessage `json:"instance_key"`
-	Evidence    evidenceBody    `json:"evidence"`
+	Challenge       string          `json:"challenge"`
+	RegistrationKey json.RawMessage `json:"registration_key"`
+	Evidence        evidenceBody    `json:"evidence"`
 }
 
 type registerResponseBody struct {
@@ -65,7 +65,10 @@ type registerResponseBody struct {
 }
 
 type walletAttestationRequestBody struct {
-	ClientID string `json:"client_id"`
+	ClientID    string          `json:"client_id"`
+	InstanceKey json.RawMessage `json:"instance_key"`
+	Challenge   string          `json:"challenge,omitempty"`
+	Evidence    *evidenceBody   `json:"evidence,omitempty"`
 }
 
 type walletAttestationResponseBody struct {
@@ -73,10 +76,11 @@ type walletAttestationResponseBody struct {
 }
 
 type keyAttestationRequestBody struct {
-	Challenge string            `json:"challenge"`
-	Keys      []json.RawMessage `json:"keys"`
-	Evidence  []evidenceBody    `json:"evidence"`
-	Nonce     string            `json:"nonce,omitempty"`
+	InstanceKey json.RawMessage   `json:"instance_key"`
+	Challenge   string            `json:"challenge"`
+	Keys        []json.RawMessage `json:"keys"`
+	Evidence    []evidenceBody    `json:"evidence"`
+	Nonce       string            `json:"nonce,omitempty"`
 }
 
 type keyAttestationResponseBody struct {

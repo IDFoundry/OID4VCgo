@@ -80,6 +80,7 @@ func TestNewRefuses(t *testing.T) {
 		{"typed nil instance store", func(_ *testing.T, _ *walletprovider.Config, d *walletprovider.Dependencies) {
 			d.Instances = (*walletprovider.MemoryInstanceStore)(nil)
 		}, "Instances"},
+		{"no instance key store", func(_ *testing.T, _ *walletprovider.Config, d *walletprovider.Dependencies) { d.InstanceKeys = nil }, "InstanceKeys"},
 		{"no challenge store", func(_ *testing.T, _ *walletprovider.Config, d *walletprovider.Dependencies) { d.Challenges = nil }, "Challenges"},
 		{"no index store", func(_ *testing.T, _ *walletprovider.Config, d *walletprovider.Dependencies) { d.StatusIndices = nil }, "StatusIndices"},
 		{"no random source", func(_ *testing.T, _ *walletprovider.Config, d *walletprovider.Dependencies) { d.Random = nil }, "Random"},
@@ -131,7 +132,7 @@ func TestNewAcceptsAnIntermediate(t *testing.T) {
 		d.Signer, d.Chain = key, []*x509.Certificate{leaf, inter}
 	})
 	in, _ := h.register(kindFake)
-	jwt, err := h.walletAttestation(in.ID)
+	jwt, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindFake)
 	if err != nil {
 		t.Fatal(err)
 	}

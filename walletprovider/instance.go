@@ -7,8 +7,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // State is a wallet instance's state.
@@ -19,11 +17,12 @@ const (
 	StateActive State = "active"
 
 	// StateSuspended: the provider attests nothing for the instance,
-	// and its status is SUSPENDED, until it's resumed.
+	// and the status of each of its instance keys is SUSPENDED, until
+	// it's resumed.
 	StateSuspended State = "suspended"
 
 	// StateRevoked: the provider attests nothing for the instance, and
-	// its status is INVALID, for good.
+	// the status of each of its instance keys is INVALID, for good.
 	StateRevoked State = "revoked"
 )
 
@@ -34,8 +33,8 @@ type EvidenceSummary struct {
 
 	Platform Platform
 
-	// SecurityLevel is where the instance key is held, and Binding how
-	// the evidence vouched for it.
+	// SecurityLevel is where the registration key is held, and Binding
+	// how the evidence vouched for it.
 	SecurityLevel SecurityLevel
 	Binding       KeyBinding
 
@@ -45,14 +44,19 @@ type EvidenceSummary struct {
 	DeviceLocked bool
 }
 
-// Instance is a registered wallet instance: one installation of the
-// app on one device, identified by its instance key, which a Wallet
-// Attestation's cnf names.
+// Instance is a registered wallet instance (HAIP 1.0's Wallet
+// Instance): one installation of the app on one device, identified by
+// its registration key, which signs every request it makes after
+// registering (SignRequest). The registration key is the provider's
+// alone: no attestation names it, and the instance has no status of
+// its own. A Wallet Attestation's cnf names one of the instance's
+// instance keys (InstanceKey), a fresh one per issuance, each with its
+// own status, so issuers can't link one issuance to another.
 type Instance struct {
 	// ID is the provider's random identifier for the instance.
 	ID string
 
-	// KeyThumbprint is the instance key's RFC 7638 JWK SHA-256
+	// KeyThumbprint is the registration key's RFC 7638 JWK SHA-256
 	// thumbprint, base64url, and Key the key as a public JWK.
 	KeyThumbprint string
 	Key           json.RawMessage
@@ -71,10 +75,6 @@ type Instance struct {
 	State State
 	// Reason is why the instance was last suspended or revoked.
 	Reason string
-
-	// Status is the instance's index in the provider's status list,
-	// which every attestation issued for it references.
-	Status statuslist.StatusListRef
 
 	CreatedAt  time.Time
 	LastSeenAt time.Time
@@ -107,8 +107,8 @@ type InstanceStore interface {
 
 	// Create stores in with Revision 1 (whatever in.Revision is), or
 	// returns an error wrapping ErrExists if an instance with its ID, or
-	// with its KeyThumbprint, is stored: one instance key registers one
-	// instance. The check and the store are one atomic step, as a
+	// with its KeyThumbprint, is stored: one registration key registers
+	// one instance. The check and the store are one atomic step, as a
 	// UNIQUE constraint on each column makes them.
 	Create(ctx context.Context, in Instance) error
 
@@ -128,8 +128,7 @@ type InstanceStore interface {
 
 // MemoryInstanceStore is an InstanceStore held in memory, safe for
 // concurrent use; its zero value is ready to use. It isn't durable: a
-// restart forgets every instance, and the instances' status indices
-// stay reserved in the IndexStore. For tests and demos.
+// restart forgets every instance. For tests and demos.
 type MemoryInstanceStore struct {
 	mu        sync.Mutex
 	instances map[string]Instance

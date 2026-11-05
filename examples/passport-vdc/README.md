@@ -573,22 +573,27 @@ nothing without platform evidence, and the endpoints above carry none
 for iOS, the CLI and the web wallet, and name no wallet instance. So
 the service vouches for each request it has checked with **demo-only
 evidence** (`walletprovider.DemoEvidenceKind`): a single-use token it
-mints in memory, which no wallet can present itself. Each instance
-key registers a library instance the first time it's seen, at the
-security level its chain showed (software without one), and Key
-Attestations are issued under one shared instance. Every attestation
-then names the provider's Token Status List, served at `/v1/status`
-(`-url` on `cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a
-revoked or suspended instance gets no more Wallet Attestations.
-Instances are kept in `wallet-provider-instances.json` and their
-status list indices and statuses in
+mints in memory, which no wallet can present itself. The first time
+an instance key is seen, the service registers a library instance for
+it (with a registration key of its own, since the demo wallets have
+none) and records the instance key for that instance, at the security
+level its chain showed (software without one); Key Attestations are
+issued for one shared instance key of one shared instance. Every
+attestation then names its instance key's entry in the provider's
+Token Status List, served at `/v1/status` (`-url` on
+`cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a revoked or
+suspended instance gets no more Wallet Attestations. Instances and
+their instance keys are kept in `wallet-provider-instances.json` and
+the instance keys' status list indices and statuses in
 `wallet-provider-status-indices.json` (`-instances` and
 `-status-indices` on `cmd/wallet-provider`; in `.demo-state/` under
-`cmd/demo`), so a restart keeps each instance, its status index and any
-revocation, and hands no index out twice; the files above are read as
-before. The library's own versioned protocol (challenge, instance
-registration, and requests signed with the instance key) is served
-under `/v1/` too. With `-android-app package:sha256[,...]` (on
+`cmd/demo`), so a restart keeps each instance key, its status index and
+any revocation, and hands no index out twice; the files above are read
+as before. An instances file from before instance keys is refused:
+delete it and the status indices file, and restart. The library's own
+versioned protocol (challenge, instance registration, per-issuance
+instance keys, and requests signed with the registration key) is
+served under `/v1/` too. With `-android-app package:sha256[,...]` (on
 `cmd/wallet-provider` or `cmd/demo`, repeatable), it attests that
 app's Android Key Attestation chains there (`walletprovider/androidkey`:
 Google's roots and revocation list, locked and verified boot, every

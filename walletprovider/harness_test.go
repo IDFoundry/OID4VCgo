@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
@@ -154,7 +156,8 @@ func baseDeps(t *testing.T, c *clock) walletprovider.Dependencies {
 	key, chain := signerChain(t)
 	return walletprovider.Dependencies{
 		Signer: key, Chain: chain,
-		Instances: &walletprovider.MemoryInstanceStore{}, Challenges: &walletprovider.MemoryChallengeStore{},
+		Instances: &walletprovider.MemoryInstanceStore{}, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
+		Challenges:    &walletprovider.MemoryChallengeStore{},
 		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: verifiers(),
 		Clock: c.now, Random: rand.Reader,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -204,13 +207,14 @@ func evidence(t *testing.T, kind, challenge string, keys ...crypto.PublicKey) wa
 	return ev
 }
 
-// tryRegister registers an instance with evidence of kind.
+// tryRegister registers an instance with evidence of kind, returning it
+// with its registration key.
 func (h *harness) tryRegister(kind string) (walletprovider.Instance, *ecdsa.PrivateKey, error) {
 	h.t.Helper()
 	key := newKey(h.t)
-	ch := h.challenge(walletprovider.PurposeInstance)
+	ch := h.challenge(walletprovider.PurposeRegistration)
 	in, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
-		Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(h.t, kind, ch, &key.PublicKey),
+		Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(h.t, kind, ch, &key.PublicKey),
 	})
 	return in, key, err
 }
@@ -224,16 +228,57 @@ func (h *harness) register(kind string) (walletprovider.Instance, *ecdsa.Private
 	return in, key
 }
 
-func (h *harness) walletAttestation(id string) (string, error) {
-	return h.p.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID})
+// walletAttestation asks for a Wallet Attestation for the instance key
+// key of the instance id, with evidence of kind over a fresh instance
+// challenge unless kind is empty.
+func (h *harness) walletAttestation(id string, key crypto.PublicKey, kind string) (string, error) {
+	h.t.Helper()
+	req := walletprovider.WalletAttestationRequest{InstanceID: id, ClientID: clientID, InstanceKey: key}
+	if kind != "" {
+		req.Challenge = h.challenge(walletprovider.PurposeInstance)
+		req.Evidence = evidence(h.t, kind, req.Challenge, key)
+	}
+	return h.p.WalletAttestation(context.Background(), req)
 }
 
-// keyAttestation asks for a Key Attestation over keys, each with
-// evidence of the kind at the same index of kinds.
-func (h *harness) keyAttestation(id string, keys []*ecdsa.PrivateKey, kinds ...string) (walletprovider.KeyAttestationResult, error) {
+// newInstanceKey makes an instance key for the instance id and has its
+// first Wallet Attestation record it, with evidence of kind.
+func (h *harness) newInstanceKey(id, kind string) *ecdsa.PrivateKey {
+	h.t.Helper()
+	key := newKey(h.t)
+	if _, err := h.walletAttestation(id, &key.PublicKey, kind); err != nil {
+		h.t.Fatalf("recording an instance key with %s evidence: %v", kind, err)
+	}
+	return key
+}
+
+// instanceKey reads the record of the instance key key.
+func (h *harness) instanceKey(key crypto.PublicKey) walletprovider.InstanceKey {
+	h.t.Helper()
+	ik, err := h.deps.InstanceKeys.Get(context.Background(), h.thumbprint(key))
+	if err != nil {
+		h.t.Fatalf("reading the instance key: %v", err)
+	}
+	return ik
+}
+
+// thumbprint is key's JWK thumbprint, base64url.
+func (h *harness) thumbprint(key crypto.PublicKey) string {
+	h.t.Helper()
+	tp, err := jwk.Thumbprint(key)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(tp)
+}
+
+// keyAttestation asks for a Key Attestation over keys, for the
+// issuance of instanceKey, each with evidence of the kind at the same
+// index of kinds.
+func (h *harness) keyAttestation(id string, instanceKey crypto.PublicKey, keys []*ecdsa.PrivateKey, kinds ...string) (walletprovider.KeyAttestationResult, error) {
 	h.t.Helper()
 	ch := h.challenge(walletprovider.PurposeHolder)
-	req := walletprovider.KeyAttestationRequest{InstanceID: id, Challenge: ch, Nonce: "c-nonce"}
+	req := walletprovider.KeyAttestationRequest{InstanceID: id, InstanceKey: instanceKey, Challenge: ch, Nonce: "c-nonce"}
 	for i, k := range keys {
 		req.Keys = append(req.Keys, &k.PublicKey)
 		if i < len(kinds) {
@@ -243,8 +288,8 @@ func (h *harness) keyAttestation(id string, keys []*ecdsa.PrivateKey, kinds ...s
 	return h.p.KeyAttestation(context.Background(), req)
 }
 
-// status reads the instance's status from the provider's published
-// list, in the JWT form or the CWT one.
+// status reads the status at ref from the provider's published list,
+// in the JWT form or the CWT one.
 func (h *harness) status(ref statuslist.StatusListRef, cwt bool) statuslist.StatusType {
 	h.t.Helper()
 	token, err := h.p.StatusList().Token(context.Background(), cwt)

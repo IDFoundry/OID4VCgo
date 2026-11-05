@@ -1,6 +1,7 @@
 // Package walletprovider is the Wallet Provider role: the service that
 // vouches for a wallet app's instances and keys. It checks platform
-// evidence, registers wallet instances, and issues the two attestations
+// evidence, registers wallet instances and records their per-issuance
+// instance keys, and issues the two attestations
 // HAIP 1.0 has a Credential Issuer rely on — the Wallet Attestation
 // (§4.4.1, OID4VCI 1.0 Appendix E) that authenticates a wallet instance
 // as an OAuth client, and the Key Attestation (§4.5.1, OID4VCI 1.0
@@ -15,9 +16,10 @@
 //
 // # Evidence
 //
-// Nothing is attested without platform evidence: a registration or a
-// Key Attestation request carrying none is refused, in development as
-// in production, and there is no setting that changes that. Evidence is
+// Nothing is attested without platform evidence: a registration, a
+// Wallet Attestation for an instance key not yet recorded, or a Key
+// Attestation request carrying none is refused, in development as in
+// production, and there is no setting that changes that. Evidence is
 // checked by an EvidenceVerifier for its Kind: an Android Key
 // Attestation verifier, an Apple App Attest verifier, or one of the
 // integrator's own (Play Integrity, a WSCD's attestation, a TPM). Tests
@@ -27,7 +29,8 @@
 // Every piece of evidence is bound to a challenge the provider issued
 // (Provider.Challenge): random, used once, short-lived, and bound to its
 // Purpose, so a challenge issued for registering an instance can't
-// attest a holder key, nor one issued for a request be replayed.
+// attest an instance key or a holder key, nor one issued for a request
+// be replayed.
 //
 // The two platforms fit the one interface differently:
 //
@@ -42,20 +45,24 @@
 //     on, so a holder key need only come from the instance's platform
 //     and app. A user with two registered devices can have a key made
 //     on one attested under the other's instance; what the Key
-//     Attestation claims of the key still holds, but its status is the
-//     instance it was attested under, so revoking the other device's
-//     instance doesn't withdraw it. Revoke every instance of a user
-//     whose device is lost, where the provider knows which they are.
+//     Attestation claims of the key still holds, but its status is
+//     that of an instance key of the instance it was attested under, so
+//     revoking the other device's instance doesn't withdraw it. Revoke
+//     every instance of a user whose device is lost, where the provider
+//     knows which they are. An instance key is likewise tied only to
+//     the instance's platform and app.
 //   - Apple App Attest attests the app, not its keys. At registration
 //     the attestation object's client data hash covers the challenge
-//     and the instance key, and the verifier returns the instance key
-//     with KeyBindingAppAssertion, plus VerifiedEvidence.Credential
-//     (the App Attest key) and Counter, which the provider stores in
-//     the Instance. A later request carries an assertion over the
-//     challenge and the keys it names; the verifier checks it against
-//     EvidenceInput.Instance's Credential and Counter and returns the
-//     new Counter, which the provider stores with a compare-and-swap
-//     (InstanceStore.Update), so an assertion is accepted once.
+//     and the registration key, and the verifier returns the
+//     registration key with KeyBindingAppAssertion, plus
+//     VerifiedEvidence.Credential (the App Attest key) and Counter,
+//     which the provider stores in the Instance. A later request — an
+//     instance key's first Wallet Attestation, or a Key Attestation —
+//     carries an assertion over the challenge and the keys it names;
+//     the verifier checks it against EvidenceInput.Instance's
+//     Credential and Counter and returns the new Counter, which the
+//     provider stores with a compare-and-swap (InstanceStore.Update),
+//     so an assertion is accepted once.
 //
 // # Policy
 //
@@ -69,25 +76,46 @@
 // claimed unless the integrator says so. The policy is applied again at
 // every attestation, so tightening it stops existing instances too.
 //
-// # Instances and status
+// # Instances, instance keys and status
 //
-// Each registered instance holds one index in the provider's status
-// list, reserved by statuslist.Allocator when it registers and never
-// reused. Suspend, Resume and Revoke set it SUSPENDED, VALID and
-// INVALID; a revocation is final. Provider.StatusList serves the list
-// (JWT or CWT form, by the request's Accept header), signed with the
-// provider's own key and certificate chain, so an issuer's default
-// check — the list signed with the attestation's own key — accepts it.
+// An Instance is one installation of the wallet app (HAIP 1.0's Wallet
+// Instance), registered once with a registration key that signs its
+// requests to the provider and is never named to an issuer. A Wallet
+// Attestation's cnf names an instance key (InstanceKey) instead: a key
+// the wallet makes for one issuance, so that no two Credential Issuers
+// see the same Wallet Attestation, key or status entry (HAIP 1.0
+// §4.4.1; draft-ietf-oauth-attestation-based-client-auth-07 §11.1).
+// Platform evidence vouches for an instance key the first time a
+// Wallet Attestation is asked for it; the provider then records it
+// against the instance (InstanceKeyStore) with an index of its own in
+// the provider's status list, reserved by statuslist.Allocator and
+// never reused, which every Wallet Attestation for the key and every
+// Key Attestation issued with it reference. Issuers see only
+// per-issuance keys, per-issuance status indices and the shared client
+// ID; the provider alone knows which instance keys belong to which
+// instance (HAIP 1.0 §11.1 asks a Wallet Provider's backend to be
+// designed with its users' privacy in mind), so keep its stores as
+// private as the users they describe.
+//
+// Suspend, Resume and Revoke set the status of every one of an
+// instance's instance keys SUSPENDED, VALID and INVALID, so revoking
+// an installation withdraws every attestation issued for it; a
+// revocation is final. Provider.StatusList serves the list (JWT or CWT
+// form, by the request's Accept header), signed with the provider's
+// own key and certificate chain, so an issuer's default check — the
+// list signed with the attestation's own key — accepts it. Each
+// issuance uses up an index for good: size Config.StatusListSize for
+// the issuances the provider will vouch for.
 //
 // # Requests after registration
 //
-// Proving possession of the instance key on each later request is the
-// HTTP layer's job; SignRequest and Provider.VerifyRequest are the
+// Proving possession of the registration key on each later request is
+// the HTTP layer's job; SignRequest and Provider.VerifyRequest are the
 // signed request it uses: a short JWT over the method, path, a hash of
-// the body and a fresh challenge, signed with the instance key, so an
-// instance ID alone is useless to anyone who learns it. The signature
-// is checked first: a request that doesn't verify learns nothing of
-// the instance's state and leaves its challenge unused.
+// the body and a fresh challenge, signed with the registration key, so
+// an instance ID alone is useless to anyone who learns it. The
+// signature is checked first: a request that doesn't verify learns
+// nothing of the instance's state and leaves its challenge unused.
 //
 // # HTTP
 //

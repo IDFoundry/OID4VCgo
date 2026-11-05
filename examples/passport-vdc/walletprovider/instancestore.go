@@ -15,9 +15,16 @@ import (
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
+// instanceFileVersion is instanceFile's Version: 2 since instances
+// have a registration key and per-issuance instance keys, each with
+// its own status index. A file from before has instances whose key is
+// a wallet's instance key, and is refused.
+const instanceFileVersion = 2
+
 // fileInstanceStore is a wp.InstanceStore kept in a JSON file,
 // rewritten whole on every change, so the library instances the
-// service registers — and their status list indices — outlive a
+// service registers, and their instance keys and those keys' status
+// list indices (fileInstanceKeyStore, in the same file), outlive a
 // restart. It also keeps the ID of the shared instance the service
 // issues Key Attestations under. One process uses the file; a
 // deployment uses a database.
@@ -27,19 +34,32 @@ type fileInstanceStore struct {
 	state instanceFile
 }
 
-// instanceFile is fileInstanceStore's file.
-type instanceFile struct {
-	Instances      map[string]wp.Instance `json:"instances"`
-	HolderInstance string                 `json:"holder_instance,omitempty"`
+// fileInstanceKeyStore is a wp.InstanceKeyStore kept in its
+// fileInstanceStore's file.
+type fileInstanceKeyStore struct {
+	s *fileInstanceStore
 }
 
-var _ wp.InstanceStore = (*fileInstanceStore)(nil)
+// instanceFile is fileInstanceStore's file.
+type instanceFile struct {
+	Version        int                       `json:"version"`
+	Instances      map[string]wp.Instance    `json:"instances"`
+	InstanceKeys   map[string]wp.InstanceKey `json:"instance_keys"`
+	HolderInstance string                    `json:"holder_instance,omitempty"`
+}
+
+var (
+	_ wp.InstanceStore    = (*fileInstanceStore)(nil)
+	_ wp.InstanceKeyStore = fileInstanceKeyStore{}
+)
 
 // openFileInstanceStore reads the store saved at path, empty when there
 // is none, saving it back there on every change; with path "", it's
 // kept in memory only.
 func openFileInstanceStore(path string) (*fileInstanceStore, error) {
-	s := &fileInstanceStore{path: path, state: instanceFile{Instances: map[string]wp.Instance{}}}
+	s := &fileInstanceStore{path: path, state: instanceFile{
+		Version: instanceFileVersion, Instances: map[string]wp.Instance{}, InstanceKeys: map[string]wp.InstanceKey{},
+	}}
 	if path == "" {
 		return s, nil
 	}
@@ -50,11 +70,19 @@ func openFileInstanceStore(path string) (*fileInstanceStore, error) {
 	case err != nil:
 		return nil, fmt.Errorf("walletprovider: read %s: %w", path, err)
 	}
+	s.state = instanceFile{}
 	if err := json.Unmarshal(data, &s.state); err != nil {
 		return nil, fmt.Errorf("walletprovider: %s: %w", path, err)
 	}
+	if s.state.Version != instanceFileVersion && (len(s.state.Instances) > 0 || len(s.state.InstanceKeys) > 0) {
+		return nil, fmt.Errorf("walletprovider: %s is from before per-issuance instance keys: delete it and the status indices file beside it, and restart", path)
+	}
+	s.state.Version = instanceFileVersion
 	if s.state.Instances == nil {
 		s.state.Instances = map[string]wp.Instance{}
+	}
+	if s.state.InstanceKeys == nil {
+		s.state.InstanceKeys = map[string]wp.InstanceKey{}
 	}
 	keys := map[string]bool{}
 	for id, in := range s.state.Instances {
@@ -62,6 +90,14 @@ func openFileInstanceStore(path string) (*fileInstanceStore, error) {
 			return nil, fmt.Errorf("walletprovider: %s: instance %q is damaged or a duplicate", path, id)
 		}
 		keys[in.KeyThumbprint] = true
+	}
+	for tp, k := range s.state.InstanceKeys {
+		if k.Thumbprint != tp || keys[tp] {
+			return nil, fmt.Errorf("walletprovider: %s: instance key %q is damaged or a registration key", path, tp)
+		}
+		if _, ok := s.state.Instances[k.InstanceID]; !ok {
+			return nil, fmt.Errorf("walletprovider: %s: instance key %q is of an unknown instance", path, tp)
+		}
 	}
 	return s, nil
 }
@@ -167,18 +203,64 @@ func (s *fileInstanceStore) List(ctx context.Context, after string, limit int) (
 	return out, nil
 }
 
-// byThumbprint maps each stored instance's key thumbprint to its ID,
-// but for the shared holder instance's, whose key no wallet holds.
-func (s *fileInstanceStore) byThumbprint() map[string]string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := make(map[string]string, len(s.state.Instances))
-	for id, in := range s.state.Instances {
-		if id != s.state.HolderInstance {
-			m[in.KeyThumbprint] = id
+// keys is the store's wp.InstanceKeyStore.
+func (s *fileInstanceStore) keys() fileInstanceKeyStore { return fileInstanceKeyStore{s} }
+
+// Get implements wp.InstanceKeyStore.
+func (k fileInstanceKeyStore) Get(ctx context.Context, thumbprint string) (wp.InstanceKey, error) {
+	if err := ctx.Err(); err != nil {
+		return wp.InstanceKey{}, err
+	}
+	k.s.mu.Lock()
+	defer k.s.mu.Unlock()
+	ik, ok := k.s.state.InstanceKeys[thumbprint]
+	if !ok {
+		return wp.InstanceKey{}, wp.ErrNotFound
+	}
+	return cloneInstanceKey(ik), nil
+}
+
+// Create implements wp.InstanceKeyStore, saving the key before it
+// returns; should saving fail, it stores nothing.
+func (k fileInstanceKeyStore) Create(ctx context.Context, ik wp.InstanceKey) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	k.s.mu.Lock()
+	defer k.s.mu.Unlock()
+	if _, ok := k.s.state.InstanceKeys[ik.Thumbprint]; ok {
+		return wp.ErrExists
+	}
+	k.s.state.InstanceKeys[ik.Thumbprint] = cloneInstanceKey(ik)
+	if err := k.s.save(); err != nil {
+		delete(k.s.state.InstanceKeys, ik.Thumbprint)
+		return err
+	}
+	return nil
+}
+
+// List implements wp.InstanceKeyStore.
+func (k fileInstanceKeyStore) List(ctx context.Context, instanceID, after string, limit int) ([]wp.InstanceKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	k.s.mu.Lock()
+	defer k.s.mu.Unlock()
+	var thumbprints []string
+	for tp, ik := range k.s.state.InstanceKeys {
+		if ik.InstanceID == instanceID && tp > after {
+			thumbprints = append(thumbprints, tp)
 		}
 	}
-	return m
+	sort.Strings(thumbprints)
+	if len(thumbprints) > limit {
+		thumbprints = thumbprints[:max(limit, 0)]
+	}
+	out := make([]wp.InstanceKey, len(thumbprints))
+	for i, tp := range thumbprints {
+		out[i] = cloneInstanceKey(k.s.state.InstanceKeys[tp])
+	}
+	return out, nil
 }
 
 // holderInstance is the shared Key Attestation instance's ID, "" if
@@ -206,4 +288,9 @@ func cloneInstance(in wp.Instance) wp.Instance {
 	in.Key = slices.Clone(in.Key)
 	in.Credential = slices.Clone(in.Credential)
 	return in
+}
+
+func cloneInstanceKey(ik wp.InstanceKey) wp.InstanceKey {
+	ik.Key = slices.Clone(ik.Key)
+	return ik
 }

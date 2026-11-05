@@ -1,7 +1,7 @@
 // Package walletprovidertest helps test code built on walletprovider:
-// contract tests any InstanceStore and ChallengeStore implementation
-// must pass, and FakeVerifier, an EvidenceVerifier for tests and
-// emulators.
+// contract tests any InstanceStore, InstanceKeyStore and ChallengeStore
+// implementation must pass, and FakeVerifier, an EvidenceVerifier for
+// tests and emulators.
 package walletprovidertest
 
 import (

@@ -17,6 +17,12 @@ func TestMemoryInstanceStoreContract(t *testing.T) {
 	})
 }
 
+func TestMemoryInstanceKeyStoreContract(t *testing.T) {
+	walletprovidertest.TestInstanceKeyStoreContract(t, func(*testing.T) walletprovider.InstanceKeyStore {
+		return &walletprovider.MemoryInstanceKeyStore{}
+	})
+}
+
 func TestMemoryChallengeStoreContract(t *testing.T) {
 	walletprovidertest.TestChallengeStoreContract(t, func(*testing.T) walletprovider.ChallengeStore {
 		return &walletprovider.MemoryChallengeStore{}
@@ -37,24 +43,22 @@ func TestRegister(t *testing.T) {
 	if in.Evidence != want {
 		t.Fatalf("Evidence = %+v, want %+v", in.Evidence, want)
 	}
-	if in.Status.URI != statusURI || in.Status.Idx >= 1024 {
-		t.Fatalf("Status = %+v", in.Status)
-	}
 	stored, err := h.deps.Instances.Get(context.Background(), in.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.KeyThumbprint != in.KeyThumbprint || string(stored.Key) != string(in.Key) || stored.Status != in.Status {
+	if stored.KeyThumbprint != in.KeyThumbprint || string(stored.Key) != string(in.Key) {
 		t.Fatalf("stored %+v, returned %+v", stored, in)
 	}
-	if got := h.status(in.Status, false); got != 0 {
-		t.Fatalf("a new instance's status is %v, want VALID", got)
+	// Registering records no instance key: the first Wallet Attestation
+	// does.
+	if keys, err := h.deps.InstanceKeys.List(context.Background(), in.ID, "", 10); err != nil || len(keys) != 0 {
+		t.Fatalf("a new instance has instance keys %v (%v)", keys, err)
 	}
 
-	// A second instance gets its own index.
 	other, _ := h.register(kindStrongBox)
-	if other.ID == in.ID || other.Status == in.Status {
-		t.Fatalf("two instances share an ID or a status index: %+v, %+v", in, other)
+	if other.ID == in.ID {
+		t.Fatalf("two instances share an ID: %+v, %+v", in, other)
 	}
 }
 
@@ -72,20 +76,20 @@ func TestRegisterRefuses(t *testing.T) {
 		{"unknown kind", func(ch string) walletprovider.Evidence { return evidence(t, "play-integrity", ch, &key.PublicKey) }, walletprovider.ErrEvidenceKind},
 		{"evidence for another key", func(ch string) walletprovider.Evidence { return evidence(t, kindFake, ch, &other.PublicKey) }, walletprovider.ErrEvidenceRejected},
 		{"evidence for another challenge", func(string) walletprovider.Evidence {
-			return evidence(t, kindFake, h.challenge(walletprovider.PurposeInstance), &key.PublicKey)
+			return evidence(t, kindFake, h.challenge(walletprovider.PurposeRegistration), &key.PublicKey)
 		}, walletprovider.ErrEvidenceRejected},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ch := h.challenge(walletprovider.PurposeInstance)
-			_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{Challenge: ch, InstanceKey: &key.PublicKey, Evidence: tc.evidence(ch)})
+			ch := h.challenge(walletprovider.PurposeRegistration)
+			_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: tc.evidence(ch)})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("Register = %v, want %v", err, tc.want)
 			}
 		})
 	}
 	t.Run("no key", func(t *testing.T) {
-		ch := h.challenge(walletprovider.PurposeInstance)
+		ch := h.challenge(walletprovider.PurposeRegistration)
 		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{Challenge: ch, Evidence: evidence(t, kindFake, ch, &key.PublicKey)})
 		if !errors.Is(err, walletprovider.ErrInvalidRequest) {
 			t.Fatalf("Register = %v, want ErrInvalidRequest", err)
@@ -93,14 +97,14 @@ func TestRegisterRefuses(t *testing.T) {
 	})
 }
 
-// TestRegisterKeyOnce: an instance key registers one instance.
+// TestRegisterKeyOnce: a registration key registers one instance.
 func TestRegisterKeyOnce(t *testing.T) {
 	h := newHarness(t, nil)
 	key := newKey(t)
 	register := func() error {
-		ch := h.challenge(walletprovider.PurposeInstance)
+		ch := h.challenge(walletprovider.PurposeRegistration)
 		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
-			Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &key.PublicKey),
+			Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindStrongBox, ch, &key.PublicKey),
 		})
 		return err
 	}
@@ -108,7 +112,7 @@ func TestRegisterKeyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := register(); !errors.Is(err, walletprovider.ErrInstanceKeyRegistered) {
-		t.Fatalf("registering the same instance key again = %v, want ErrInstanceKeyRegistered", err)
+		t.Fatalf("registering the same registration key again = %v, want ErrInstanceKeyRegistered", err)
 	}
 }
 
@@ -143,8 +147,8 @@ func TestRegisterPolicy(t *testing.T) {
 func TestChallengeSingleUse(t *testing.T) {
 	h := newHarness(t, nil)
 	key := newKey(t)
-	ch := h.challenge(walletprovider.PurposeInstance)
-	req := walletprovider.RegisterRequest{Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey)}
+	ch := h.challenge(walletprovider.PurposeRegistration)
+	req := walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey)}
 	if _, err := h.p.Register(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -156,12 +160,12 @@ func TestChallengeSingleUse(t *testing.T) {
 func TestChallengeRefusedAttemptBurnsIt(t *testing.T) {
 	h := newHarness(t, nil)
 	key := newKey(t)
-	ch := h.challenge(walletprovider.PurposeInstance)
-	bad := walletprovider.RegisterRequest{Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &newKey(t).PublicKey)}
+	ch := h.challenge(walletprovider.PurposeRegistration)
+	bad := walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &newKey(t).PublicKey)}
 	if _, err := h.p.Register(context.Background(), bad); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
 		t.Fatalf("Register = %v, want ErrEvidenceRejected", err)
 	}
-	good := walletprovider.RegisterRequest{Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey)}
+	good := walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey)}
 	if _, err := h.p.Register(context.Background(), good); !errors.Is(err, walletprovider.ErrChallenge) {
 		t.Fatalf("Register after a refused attempt = %v, want ErrChallenge", err)
 	}
@@ -170,16 +174,16 @@ func TestChallengeRefusedAttemptBurnsIt(t *testing.T) {
 func TestChallengeExpiry(t *testing.T) {
 	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.ChallengeTTL = time.Minute })
 	key := newKey(t)
-	ch, err := h.p.Challenge(context.Background(), walletprovider.PurposeInstance)
+	ch, err := h.p.Challenge(context.Background(), walletprovider.PurposeRegistration)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := h.clock.now().Add(time.Minute); !ch.ExpiresAt.Equal(want) || ch.Purpose != walletprovider.PurposeInstance {
+	if want := h.clock.now().Add(time.Minute); !ch.ExpiresAt.Equal(want) || ch.Purpose != walletprovider.PurposeRegistration {
 		t.Fatalf("Challenge = %+v, want expiry %v", ch, want)
 	}
 	h.clock.advance(time.Minute)
 	_, err = h.p.Register(context.Background(), walletprovider.RegisterRequest{
-		Challenge: ch.Value, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch.Value, &key.PublicKey),
+		Challenge: ch.Value, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch.Value, &key.PublicKey),
 	})
 	if !errors.Is(err, walletprovider.ErrChallenge) {
 		t.Fatalf("Register with an expired challenge = %v, want ErrChallenge", err)
@@ -189,19 +193,20 @@ func TestChallengeExpiry(t *testing.T) {
 func TestChallengePurpose(t *testing.T) {
 	h := newHarness(t, nil)
 	key := newKey(t)
-	for _, purpose := range []walletprovider.Purpose{walletprovider.PurposeHolder, walletprovider.PurposeRequest} {
+	for _, purpose := range []walletprovider.Purpose{walletprovider.PurposeInstance, walletprovider.PurposeHolder, walletprovider.PurposeRequest} {
 		ch := h.challenge(purpose)
 		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
-			Challenge: ch, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey),
+			Challenge: ch, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, ch, &key.PublicKey),
 		})
 		if !errors.Is(err, walletprovider.ErrChallenge) {
 			t.Fatalf("Register with a %s challenge = %v, want ErrChallenge", purpose, err)
 		}
 	}
 	in, _ := h.register(kindFake)
+	ik := h.newInstanceKey(in.ID, kindFake)
 	ch := h.challenge(walletprovider.PurposeInstance)
 	_, err := h.p.KeyAttestation(context.Background(), walletprovider.KeyAttestationRequest{
-		InstanceID: in.ID, Challenge: ch, Keys: []crypto.PublicKey{&key.PublicKey},
+		InstanceID: in.ID, InstanceKey: &ik.PublicKey, Challenge: ch, Keys: []crypto.PublicKey{&key.PublicKey},
 		Evidence: []walletprovider.Evidence{evidence(t, kindFake, ch, &key.PublicKey)},
 	})
 	if !errors.Is(err, walletprovider.ErrChallenge) {
@@ -212,7 +217,7 @@ func TestChallengePurpose(t *testing.T) {
 	}
 	for _, v := range []string{"", "not base64!", "c2hvcnQ"} {
 		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{
-			Challenge: v, InstanceKey: &key.PublicKey, Evidence: evidence(t, kindFake, v, &key.PublicKey),
+			Challenge: v, RegistrationKey: &key.PublicKey, Evidence: evidence(t, kindFake, v, &key.PublicKey),
 		})
 		if !errors.Is(err, walletprovider.ErrChallenge) {
 			t.Fatalf("Register with challenge %q = %v, want ErrChallenge", v, err)
