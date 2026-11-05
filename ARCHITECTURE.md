@@ -499,7 +499,7 @@ changes whether *every* bullet below is `(done)`.
   list indices).
 
   Still to come, each its own package or PR: `walletprovider/appattest`
-  (Apple App Attest), and the passport-vdc demo's move onto it.
+  (Apple App Attest).
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no
