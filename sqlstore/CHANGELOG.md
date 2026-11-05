@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.7.0...sqlstore/v0.7.1) (2026-11-05)
+
+
+### Performance Improvements
+
+* **sqlstore:** count reserved status indices and index the set ones ([dd718c4](https://github.com/IDFoundry/OID4VCgo/commit/dd718c42bbae8b4d1e195480e9d167c2885532b4))
+
 ## [0.7.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.6.0...sqlstore/v0.7.0) (2026-11-05)
 
 
