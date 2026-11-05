@@ -70,7 +70,11 @@ func (s *StatusIndexStore) Reserve(ctx context.Context, uri string, idx uint64) 
 
 // Reserved implements statuslist.IndexStore. It reads the list's
 // count, which a trigger keeps as each reservation is inserted, rather
-// than counting rows: statuslist.Allocator calls it on every Allocate.
+// than counting rows: statuslist.Allocator calls it until it finds the
+// list full. The count is kept in 32 rows, the trigger adding index idx
+// to row idx % 32, and summed here: concurrent Reserves of a list's
+// random indices mostly update different rows, rather than each
+// waiting on one row for the one before it to commit.
 func (s *StatusIndexStore) Reserved(ctx context.Context, uri string) (int, error) {
 	if !storableKeys(uri) {
 		return 0, nil
