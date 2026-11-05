@@ -38,6 +38,9 @@ type ProximityReader struct {
 	statusRevocation certrevocation.Checker
 	// checksStatus is the configuration's "status": "check".
 	checksStatus bool
+	// statusMaxBytes and identifierListMaxBytes are the configuration's
+	// "status_max_bytes" and "identifier_list_max_bytes".
+	statusMaxBytes, identifierListMaxBytes int
 }
 
 // A reader configuration's "status" values.
@@ -68,6 +71,10 @@ type proximityReaderConfig struct {
 	// MaxClockSkewSeconds tolerates a holder's issuer's clock that far
 	// off the reader's (at most an hour).
 	MaxClockSkewSeconds int64 `json:"max_clock_skew_seconds,omitempty"`
+	// StatusMaxBytes and IdentifierListMaxBytes are the largest status
+	// list and identifier list CheckStatus reads, as a Wallet's.
+	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
+	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
 	// RequireMDLSignerEKU accepts only document signer certificates
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
@@ -148,7 +155,8 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
-// "reader_chain", "max_clock_skew_seconds", "require_mdl_signer_eku",
+// "reader_chain", "max_clock_skew_seconds", "status_max_bytes",
+// "identifier_list_max_bytes", "require_mdl_signer_eku",
 // "accept_mdl_signer_without_eku", "crls", "crl_issuers",
 // "crl_distribution_points", "crl_distribution_points_from_roots",
 // "crl_require_https", "revocation",
@@ -189,6 +197,13 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if cfg.MaxClockSkewSeconds != 0 {
 		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
 	}
+	switch {
+	case cfg.StatusMaxBytes < 0 || cfg.StatusMaxBytes > statuslist.MaxTokenBytesLimit:
+		return nil, newError(CodeInvalidInput, fmt.Errorf("status_max_bytes is %d, not between 0 and %d", cfg.StatusMaxBytes, statuslist.MaxTokenBytesLimit))
+	case cfg.IdentifierListMaxBytes < 0 || cfg.IdentifierListMaxBytes > identifierlist.MaxTokenBytesLimit:
+		return nil, newError(CodeInvalidInput, fmt.Errorf("identifier_list_max_bytes is %d, not between 0 and %d", cfg.IdentifierListMaxBytes, identifierlist.MaxTokenBytesLimit))
+	}
+	r.statusMaxBytes, r.identifierListMaxBytes = cfg.StatusMaxBytes, cfg.IdentifierListMaxBytes
 	policy, err := readerDocumentSignerPolicy(cfg)
 	if err != nil {
 		return nil, err
@@ -666,7 +681,7 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 	// list.
 	if ref := v.Status.IdentifierList; ref != nil && status != statuslist.StatusInvalid {
 		checker := identifierlist.Checker{
-			Fetcher: statusFetcher(),
+			Fetcher: statusFetcher(r.identifierListMaxBytes),
 			Roots:   anchor,
 			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation},
 			Cache:   statusCache,
@@ -696,7 +711,7 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 		roots, signer = anchor, trust.LeafPolicy
 	}
 	checker := statuslist.Checker{
-		Fetcher: statusFetcher(),
+		Fetcher: statusFetcher(r.statusMaxBytes),
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{
 			Now: r.clock, UnboundSigner: signer, Revocation: r.statusRevocation,
@@ -715,14 +730,14 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 // trust and clock.
 var statusCache = statuslist.NewCache(statuslist.CacheOptions{})
 
-// statusFetcher is the reader's status list fetcher: public addresses
-// only, or with the mobiletest build's test client, its in-process
-// issuer's too.
-func statusFetcher() statuslist.Fetcher {
+// statusFetcher is the reader's fetcher of lists up to maxBytes (zero
+// for the list's package's default): public addresses only, or with
+// the mobiletest build's test client, its in-process issuer's too.
+func statusFetcher(maxBytes int) statuslist.Fetcher {
 	if c := testHTTP.Load(); c != nil {
-		return statuslist.Fetcher{HTTP: c, AllowLoopback: true}
+		return statuslist.Fetcher{HTTP: c, AllowLoopback: true, MaxBytes: maxBytes}
 	}
-	return statuslist.Fetcher{}
+	return statuslist.Fetcher{MaxBytes: maxBytes}
 }
 
 // statusValue is s as walletflow names a credential's status.

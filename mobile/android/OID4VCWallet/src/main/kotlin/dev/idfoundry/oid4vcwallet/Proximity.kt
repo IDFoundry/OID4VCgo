@@ -635,6 +635,10 @@ public data class ProximityReaderConfiguration(
      * given. Only with [development] (`invalid_input` otherwise). From OID4VCWallet 0.27.0.
      */
     @SerialName("development_roots") val developmentRoots: String = "",
+    /** The largest status list `checkStatus` reads, in bytes; 0 means 1 MiB. */
+    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
+    /** The largest identifier list `checkStatus` reads, in bytes; 0 means 4 MiB. */
+    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

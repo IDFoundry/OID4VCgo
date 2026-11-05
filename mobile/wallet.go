@@ -135,6 +135,11 @@ type config struct {
 	// issuer's status lists on its behalf: issuer → Status Issuer
 	// identifiers (walletflow.Config.StatusIssuers).
 	StatusIssuers map[string][]string `json:"status_issuers,omitempty"`
+	// StatusMaxBytes and IdentifierListMaxBytes are the largest status
+	// list and identifier list CheckStatus reads; zero keeps 1 MiB and
+	// 4 MiB (walletflow.Config.StatusMaxBytes, IdentifierListMaxBytes).
+	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
+	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -453,6 +458,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		return walletflow.Config{}, err
 	}
 	wcfg.StatusIssuers = cfg.StatusIssuers
+	wcfg.StatusMaxBytes, wcfg.IdentifierListMaxBytes = cfg.StatusMaxBytes, cfg.IdentifierListMaxBytes
 	wcfg.RequireIssuerName, wcfg.AllowForeignIss = cfg.RequireIssuerName, cfg.AllowForeignIss
 	if wcfg.IssuerMetadataRoots, err = optionalCertPool("issuer_metadata_roots", cfg.IssuerMetadataRoots); err != nil {
 		return walletflow.Config{}, err

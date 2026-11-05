@@ -322,6 +322,10 @@ ecosystem, and record why:
 - `statusIssuers`: the Status Issuers that may sign an issuer's status
   lists for it. Without it, only the issuer's own lists are accepted:
   add only delegations your ecosystem publishes.
+- `statusMaxBytes` and `identifierListMaxBytes`: the largest status list
+  (1 MiB) and identifier list (4 MiB) `checkStatus` reads. A larger
+  list fails every check of the credentials on it: raise them only for
+  issuers whose lists are larger.
 - `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
   each document type, must chain to, instead of `issuerRoots`, so an
   SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`
