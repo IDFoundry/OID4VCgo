@@ -465,12 +465,35 @@ changes whether *every* bullet below is `(done)`.
     default.
   - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
     short JWT over method, path, body hash and a `PurposeRequest`
-    challenge, signed with the instance key — what the HTTP layer will
-    require.
+    challenge, signed with the instance key. The signature is checked
+    before the instance's state is reported or the challenge consumed,
+    so a forged request learns nothing and burns nothing.
+  - **One instance per instance key.** `InstanceStore.Create` refuses
+    a second instance with the same key thumbprint
+    (`ErrInstanceKeyRegistered`), atomically, as a unique column does.
+  - **Its own versioned HTTP protocol.** No standard defines how a
+    wallet talks to its provider, so `Provider.Handler` serves a small
+    JSON protocol under `/v1/` (challenge, instances,
+    wallet-attestation, key-attestation, status) and
+    `walletprovider.Client` speaks it, over fapihttp's hardened
+    transport and following no redirect. Bodies are bounded
+    (`MaxRequestBytes`) and decoded strictly (unknown, duplicate or
+    case-folded members refused); refusals are fixed error codes and
+    descriptions, the internal error going to `Dependencies.Logger`
+    only; every signed request that doesn't verify — unknown instance,
+    wrong key, used challenge — gets one identical 401. Rate limiting
+    is the integrator's: wrap the handler.
+  - **`walletprovider/androidkey`** verifies Android Key Attestation
+    chains (Google's roots and attestation status list, authorization
+    lists, root of trust, the calling app with every signing
+    certificate digest allowed), and `androidkey.EvidenceVerifier`
+    makes it the provider's `EvidenceVerifier` for evidence of kind
+    `android-key`: one key's chain, DER certificates concatenated. It
+    lives in the subpackage, importing `walletprovider`, so the core
+    imports no platform code.
 
-  Still to come, each its own package or PR: `walletprovider/androidkey`
-  and `walletprovider/appattest` (the platform verifiers), the HTTP
-  handler and Go client, `sqlstore` stores, and the passport-vdc demo's
+  Still to come, each its own package or PR: `walletprovider/appattest`
+  (Apple App Attest), `sqlstore` stores, and the passport-vdc demo's
   move onto it.
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors

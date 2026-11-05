@@ -111,6 +111,11 @@ func TestVerifyRequest(t *testing.T) {
 	if _, err := h.p.VerifyRequest(ctx, h.signRequest(otherKey, other.ID, h.challenge(walletprovider.PurposeRequest))); !errors.Is(err, walletprovider.ErrInstanceRevoked) {
 		t.Fatalf("VerifyRequest from a revoked instance = %v, want ErrInstanceRevoked", err)
 	}
+	// Only the instance key's holder learns the instance is revoked.
+	forged := h.signRequest(key, other.ID, h.challenge(walletprovider.PurposeRequest))
+	if _, err := h.p.VerifyRequest(ctx, forged); !errors.Is(err, walletprovider.ErrInvalidRequest) || errors.Is(err, walletprovider.ErrInstanceNotActive) {
+		t.Fatalf("a forged request for a revoked instance = %v, want ErrInvalidRequest alone", err)
+	}
 }
 
 func TestVerifyRequestEd25519(t *testing.T) {

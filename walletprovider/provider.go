@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"reflect"
 	"slices"
@@ -136,6 +137,12 @@ type Dependencies struct {
 	// Random is the source of challenges and instance IDs — ordinarily
 	// crypto/rand.Reader. REQUIRED.
 	Random io.Reader
+
+	// Logger receives Handler's record of each request it refuses, with
+	// the internal error the response leaves out: at error level for
+	// the provider's own failures, info for refusals. nil means
+	// slog.Default().
+	Logger *slog.Logger
 }
 
 // Provider is a Wallet Provider. Create one with New; it is safe for

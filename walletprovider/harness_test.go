@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"io"
+	"log/slog"
 	"net/url"
 	"sync"
 	"testing"
@@ -155,6 +157,7 @@ func baseDeps(t *testing.T, c *clock) walletprovider.Dependencies {
 		Instances: &walletprovider.MemoryInstanceStore{}, Challenges: &walletprovider.MemoryChallengeStore{},
 		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: verifiers(),
 		Clock: c.now, Random: rand.Reader,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 

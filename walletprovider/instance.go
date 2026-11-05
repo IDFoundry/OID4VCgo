@@ -104,8 +104,10 @@ type InstanceStore interface {
 	Get(ctx context.Context, id string) (Instance, error)
 
 	// Create stores in with Revision 1 (whatever in.Revision is), or
-	// returns an error wrapping ErrExists if an instance with its ID is
-	// stored.
+	// returns an error wrapping ErrExists if an instance with its ID, or
+	// with its KeyThumbprint, is stored: one instance key registers one
+	// instance. The check and the store are one atomic step, as a
+	// UNIQUE constraint on each column makes them.
 	Create(ctx context.Context, in Instance) error
 
 	// Update replaces the stored instance with in's ID by in, with
@@ -156,6 +158,11 @@ func (s *MemoryInstanceStore) Create(ctx context.Context, in Instance) error {
 	defer s.mu.Unlock()
 	if _, ok := s.instances[in.ID]; ok {
 		return ErrExists
+	}
+	for _, stored := range s.instances {
+		if stored.KeyThumbprint == in.KeyThumbprint {
+			return ErrExists
+		}
 	}
 	if s.instances == nil {
 		s.instances = make(map[string]Instance)

@@ -76,5 +76,22 @@
 // HTTP layer's job; SignRequest and Provider.VerifyRequest are the
 // signed request it uses: a short JWT over the method, path, a hash of
 // the body and a fresh challenge, signed with the instance key, so an
-// instance ID alone is useless to anyone who learns it.
+// instance ID alone is useless to anyone who learns it. The signature
+// is checked first: a request that doesn't verify learns nothing of
+// the instance's state and leaves its challenge unused.
+//
+// # HTTP
+//
+// No standard defines how a wallet talks to its provider. Provider.Handler
+// serves this package's own JSON protocol, versioned in its paths
+// (ChallengePath, InstancesPath, WalletAttestationPath,
+// KeyAttestationPath, StatusPath), and Client speaks it for a wallet
+// written in Go. Requests are bounded and decoded strictly; refusals
+// carry fixed error codes, never internal error text; and every signed
+// request that doesn't verify gets the same 401. The handler does no
+// rate limiting: an integrator wraps it with their own, per client, as
+// the challenge and registration endpoints answer anyone.
+//
+// Evidence kinds plug in from subpackages: androidkey.EvidenceVerifier
+// for Android Key Attestation.
 package walletprovider
