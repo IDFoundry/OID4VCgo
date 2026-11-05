@@ -64,7 +64,8 @@ const (
 
 	// UserAuthenticationRequired: each use of the key, or each use
 	// within a short timeout, requires the user to authenticate (an
-	// Android key with userAuthenticationRequired).
+	// Android key with userAuthenticationRequired). The verifier
+	// decides how short: androidkey.EvidenceVerifier.MaxAuthTimeout.
 	UserAuthenticationRequired UserAuthentication = "required"
 )
 

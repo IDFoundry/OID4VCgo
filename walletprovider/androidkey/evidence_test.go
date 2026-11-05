@@ -39,6 +39,7 @@ func TestEvidenceVerifier(t *testing.T) {
 		level walletprovider.SecurityLevel
 		auth  walletprovider.UserAuthentication
 		boot  walletprovider.BootState
+		max   time.Duration // EvidenceVerifier.MaxAuthTimeout
 	}{
 		"TEE, no user authentication": {
 			level: walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationNone, boot: walletprovider.BootStateVerified},
@@ -53,6 +54,28 @@ func TestEvidenceVerifier(t *testing.T) {
 				s.hw = replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint)))
 			},
 			level: walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationRequired, boot: walletprovider.BootStateVerified},
+		"user authentication within the timeout": {
+			spec: func(s *spec) {
+				s.hw = replace(replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint))), 505, derInt(t, 30))
+			},
+			level: walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationRequired, boot: walletprovider.BootStateVerified},
+		"user authentication with a longer timeout unreported": {
+			spec: func(s *spec) {
+				s.hw = replace(replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint))), 505, derInt(t, 300))
+			},
+			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
+		"a longer timeout within a raised MaxAuthTimeout": {
+			spec: func(s *spec) {
+				s.hw = replace(replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint))), 505, derInt(t, 300))
+			},
+			max:   10 * time.Minute,
+			level: walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationRequired, boot: walletprovider.BootStateVerified},
+		"any timeout unreported under a negative MaxAuthTimeout": {
+			spec: func(s *spec) {
+				s.hw = replace(replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint))), 505, derInt(t, 1))
+			},
+			max:   -1,
+			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
 		"user authentication unreported": {
 			spec:  func(s *spec) { s.hw = replace(hw, 503, nil) },
 			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
@@ -70,7 +93,7 @@ func TestEvidenceVerifier(t *testing.T) {
 			v := verifierFor(t, c)
 			v.TrustedBootKeys = [][]byte{bootKey[:]}
 			other := newKey(t, c.leafKey.Curve)
-			ev, err := androidkey.EvidenceVerifier{Verifier: v}.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey, &c.leafKey.PublicKey))
+			ev, err := androidkey.EvidenceVerifier{Verifier: v, MaxAuthTimeout: tc.max}.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey, &c.leafKey.PublicKey))
 			if err != nil {
 				t.Fatal(err)
 			}
