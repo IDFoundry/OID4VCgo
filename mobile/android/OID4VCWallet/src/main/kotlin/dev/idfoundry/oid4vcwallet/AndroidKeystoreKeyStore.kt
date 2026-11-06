@@ -232,8 +232,7 @@ public class AndroidKeystoreKeyStore(
          * Positive, from 1 second to 5 minutes, in whole seconds: holder
          * keys made from now on can be used for that long after the
          * holder authenticates, so one prompt covers every document of a
-         * presentation, as MATTR's default 20-second window and the
-         * EUDI reference wallet's 30 seconds do. A presentation prompts
+         * presentation. A presentation prompts
          * at its first signature, or not at all when the holder
          * authenticated — or unlocked the device, which Android counts —
          * within the window. Any code in the app can use any holder key

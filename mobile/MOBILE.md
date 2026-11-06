@@ -1667,8 +1667,7 @@ reader asks for several (`RequestDocuments`). Findings:
 - **Holder prompts.** Android ties a per-use key's authentication to
   one `Signature` (one `BiometricPrompt.CryptoObject`), so per-use
   holder keys prompt once per document. `holderAuthenticationTimeout`
-  (off by default) makes new holder keys time-bound, as MATTR's
-  20-second and the EUDI reference wallet's 30-second windows are: one
+  (off by default) makes new holder keys time-bound: one
   prompt then covers the response, unlocking the device counts, and any
   code in the app can use the keys during the window. Time-bound keys
   also agree keys, so they can answer with DeviceMac. On iOS an
