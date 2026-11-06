@@ -1433,8 +1433,11 @@ public final class MdocPresentation: @unchecked Sendable {
     /// `startMdocPresentation(requestData:origin:)` takes. iOS reports the
     /// origin as a URL, whose `absoluteString` can end in "/".
     public static func origin(of url: URL) -> String? {
-        guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = c.scheme?.lowercased(),
-              let host = c.encodedHost ?? c.host, !host.isEmpty else { return nil }
+        guard let c = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = c.scheme?.lowercased() else { return nil }
+        // `encodedHost` is iOS 16 and later; `percentEncodedHost` is its iOS 15 form.
+        let encodedHost: String?
+        if #available(iOS 16.0, macOS 13.0, *) { encodedHost = c.encodedHost } else { encodedHost = c.percentEncodedHost }
+        guard let host = encodedHost ?? c.host, !host.isEmpty else { return nil }
         let defaultPorts = ["https": 443, "http": 80]
         let defaultPort = defaultPorts[scheme]
         guard let port = c.port, port != defaultPort else { return "\(scheme)://\(host)" }

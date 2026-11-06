@@ -94,7 +94,7 @@ struct BackendWalletProvider: WalletProvider {
     }
 
     private func post(_ path: String, _ body: [String: Any]) async throws -> String {
-        var request = URLRequest(url: backend.appending(path: path))
+        var request = URLRequest(url: backend.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

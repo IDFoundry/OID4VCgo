@@ -243,7 +243,7 @@ public enum OID4VC {
         developmentInRelease.withLock { $0 = true }
     }
 
-    private static let developmentInRelease = OSAllocatedUnfairLock(initialState: false)
+    private static let developmentInRelease = Locked(initialState: false)
 
     /// Refuses a configuration with `development` set in a release build
     /// that hasn't called `allowDevelopmentInRelease()`.

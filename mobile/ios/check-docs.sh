@@ -46,7 +46,7 @@ import PackageDescription
 
 let package = Package(
     name: "DocExamples",
-    platforms: [.iOS(.v16), .macOS(.v13)],
+    platforms: [.iOS(.v15), .macOS(.v13)],
     products: [.library(name: "DocExamples", targets: ["DocExamples"])],
     dependencies: [.package(path: "$HERE/OID4VCWallet")],
     targets: [.target(name: "DocExamples", dependencies: ["OID4VCWallet"])]

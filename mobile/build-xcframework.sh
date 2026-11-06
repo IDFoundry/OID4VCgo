@@ -22,7 +22,7 @@ case " $* " in *" -tags mobiletest "*) OUT=build/test ;; esac
 rm -rf "$OUT/Mobile.xcframework"
 mkdir -p "$OUT"
 PATH="$PWD/build/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=13.0 gomobile bind \
-	-target=ios,iossimulator,macos -iosversion=16 \
+	-target=ios,iossimulator,macos -iosversion=15 \
 	-trimpath -ldflags="-s -w" "$@" \
 	-o "$OUT/Mobile.xcframework" .
 echo "$OUT/Mobile.xcframework"

@@ -59,7 +59,7 @@ import PackageDescription
 
 let package = Package(
     name: "OID4VCWallet",
-    platforms: [.iOS(.v16), .macOS(.v13)],
+    platforms: [.iOS(.v15), .macOS(.v13)],
     products: [.library(name: "OID4VCWallet", targets: ["OID4VCWallet"])],
     targets: [
         $1,
@@ -87,7 +87,7 @@ manifest ".binaryTarget(name: \"Mobile\", url: \"https://github.com/$REPO/releas
 # OID4VCgo-wallet-swift
 
 `OID4VCWallet`: the Swift package of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo)'s
-mobile wallet, for iOS 16+ and macOS 13+. It receives credentials over
+mobile wallet, for iOS 15+ and macOS 13+. It receives credentials over
 OpenID4VCI 1.0 and presents them over OpenID4VP 1.0, under HAIP 1.0, with
 SD-JWT VC and ISO mdoc credentials. OID4VCgo is OpenID Certified for
 those roles. It also presents an mdoc to Safari's Digital Credentials API

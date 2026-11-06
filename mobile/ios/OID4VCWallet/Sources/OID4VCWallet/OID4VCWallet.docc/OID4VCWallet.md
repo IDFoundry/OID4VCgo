@@ -7,7 +7,7 @@ API, and in person over Bluetooth.
 ## Overview
 
 OID4VCWallet is the wallet side of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo),
-for iOS 16 and macOS 13 and later. It handles SD-JWT VC and ISO mdoc
+for iOS 15 and macOS 13 and later. It handles SD-JWT VC and ISO mdoc
 credentials:
 
 - **Receiving** them from a Credential Offer (OpenID4VCI 1.0, HAIP 1.0),

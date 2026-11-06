@@ -11,7 +11,7 @@ let framework = testBuild ? "../../build/test/Mobile.xcframework" : "../../build
 
 let package = Package(
     name: "OID4VCWallet",
-    platforms: [.iOS(.v16), .macOS(.v13)],
+    platforms: [.iOS(.v15), .macOS(.v13)],
     products: [.library(name: "OID4VCWallet", targets: ["OID4VCWallet"])],
     targets: [
         .binaryTarget(name: "Mobile", path: framework),

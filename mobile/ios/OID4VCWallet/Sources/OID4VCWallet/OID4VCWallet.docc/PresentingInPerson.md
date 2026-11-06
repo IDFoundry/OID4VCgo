@@ -103,7 +103,11 @@ nothing is sent and the request stands.
 ``ProximityPresentation/cancel()`` ends a session at any point, as the
 holder leaves the screen, say. ``ProximityTimeouts`` sets how long it
 waits: by default 60 seconds for a reader to connect, 30 for its
-request, and 300 for the holder to decide.
+request, and 300 for the holder to decide. Give them as `TimeInterval`
+seconds, on iOS 15 and later
+(``ProximityTimeouts/init(connectSeconds:requestSeconds:idleSeconds:)``),
+or as `Duration`s, on iOS 16 and later
+(``ProximityTimeouts/init(connect:request:idle:)``).
 
 ### Read as the verifier
 

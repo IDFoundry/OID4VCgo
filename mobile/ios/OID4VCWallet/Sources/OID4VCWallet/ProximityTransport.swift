@@ -343,12 +343,12 @@ final class Pending<T: Sendable>: @unchecked Sendable {
 struct ProximityTimeout: Error {}
 
 /// Runs `body`, throwing `ProximityTimeout` if it takes longer than
-/// `timeout`; `body` is cancelled then.
-func withTimeout<T: Sendable>(_ timeout: Duration, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+/// `timeout` seconds; `body` is cancelled then.
+func withTimeout<T: Sendable>(_ timeout: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask { try await body() }
         group.addTask {
-            try await Task.sleep(for: timeout)
+            try await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
             throw ProximityTimeout()
         }
         defer { group.cancelAll() }

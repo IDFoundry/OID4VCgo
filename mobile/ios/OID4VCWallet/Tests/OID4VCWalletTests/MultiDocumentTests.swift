@@ -17,7 +17,7 @@ final class MultiDocumentTests: XCTestCase {
         var pipes: [PipeTransport] = []
     }
 
-    let timeouts = ProximityTimeouts(connect: .seconds(10), request: .seconds(10), idle: .seconds(30))
+    let timeouts = ProximityTimeouts(connectSeconds: 10, requestSeconds: 10, idleSeconds: 30)
     func keyStore() -> KeychainKeyStore {
         #if targetEnvironment(simulator)
         KeychainKeyStore(options: .init(secureEnclave: true, persistent: false, holderUserPresence: false))

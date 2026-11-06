@@ -121,7 +121,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             connected = p
             manager?.connect(device)
         }
-        try await withTimeout(.seconds(10)) { try await p.wait() }
+        try await withTimeout(10) { try await p.wait() }
     }
 
     /// Finds the service and its characteristics, subscribes, and writes
@@ -163,7 +163,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             identRead = p
             peripheral.readValue(for: c)
         }
-        let got = try await withTimeout(.seconds(5)) { try await p.wait() }
+        let got = try await withTimeout(5) { try await p.wait() }
         guard got == want else {
             throw ProximityTransportError("the device found isn't this session's reader (its Ident differs)", wrongReader: true)
         }
@@ -178,7 +178,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             operation = p
             try start(peripheral)
         }
-        try await withTimeout(.seconds(5)) { try await p.wait() }
+        try await withTimeout(5) { try await p.wait() }
     }
 
     /// Writes `value` without response, waiting while the queue is full.
@@ -195,7 +195,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
                 return p
             }
             guard let wait else { return }
-            try await withTimeout(.seconds(5)) { try await wait.wait() }
+            try await withTimeout(5) { try await wait.wait() }
         }
     }
 
