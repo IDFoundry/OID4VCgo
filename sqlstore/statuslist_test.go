@@ -8,12 +8,15 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"errors"
 	"math"
 	"math/big"
+	mrand "math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,12 +145,7 @@ func TestStatusIndexStoreDeleteBigList(t *testing.T) {
 		s := d.StatusIndices()
 		exec := func(query string, args ...any) {
 			t.Helper()
-			if e.dialect == sqlstore.Postgres {
-				for i := 1; strings.Contains(query, "?"); i++ {
-					query = strings.Replace(query, "?", "$"+strconv.Itoa(i), 1)
-				}
-			}
-			if _, err := raw.ExecContext(ctx, query, args...); err != nil {
+			if _, err := raw.ExecContext(ctx, inDialect(e.dialect, query), args...); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -175,6 +173,9 @@ func TestStatusIndexStoreDeleteBigList(t *testing.T) {
 			if _, err := s.Status(ctx, statusListA, bigList-1); !errors.Is(err, statuslist.ErrIndexNotReserved) {
 				t.Fatalf("Status of a deleted index = %v, want ErrIndexNotReserved", err)
 			}
+			if n := countShards(t, e.dialect, raw, statusListA); n != 0 {
+				t.Fatalf("a deleted list has %d count shards left", n)
+			}
 		}
 
 		fill()
@@ -185,6 +186,9 @@ func TestStatusIndexStoreDeleteBigList(t *testing.T) {
 			t.Fatal(err)
 		}
 		reserved(statusListA, bigList)
+		if n := countShards(t, e.dialect, raw, statusListA); n != 32 {
+			t.Fatalf("a list of %d indices has %d count shards, want 32", bigList, n)
+		}
 		deleted()
 		if got, err := s.Statuses(ctx, statusListA, bigList); err != nil || bytes.Count(got, []byte{0}) != bigList {
 			t.Fatalf("Statuses of a deleted list: %v", err)
@@ -284,6 +288,42 @@ func TestStatusIndexStoreConcurrentReserve(t *testing.T) {
 		}
 		if got, err := stores[0].Reserved(ctx, statusListA); err != nil || got != 1 {
 			t.Errorf("Reserved = %d, %v; want 1", got, err)
+		}
+	})
+}
+
+// Reserved counts every reservation exactly, however many are made at
+// once, from separate handles as from separate processes, and none of
+// those that find their index taken: the count's shards add up.
+func TestStatusIndexStoreConcurrentReserveCount(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		open := e.storage()
+		const workers, indices = 8, 200
+		var won atomic.Int64
+		var wg sync.WaitGroup
+		for range workers {
+			s := open().StatusIndices()
+			wg.Go(func() {
+				// Every worker tries every index, each in its own order.
+				for _, i := range mrand.Perm(indices) {
+					idx := uint64(i) // #nosec G115 -- small and positive
+					switch err := s.Reserve(ctx, statusListA, idx); {
+					case err == nil:
+						won.Add(1)
+					case !errors.Is(err, statuslist.ErrIndexTaken):
+						t.Errorf("Reserve(%d): %v", idx, err)
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if won.Load() != indices {
+			t.Fatalf("%d Reserves succeeded, want %d", won.Load(), indices)
+		}
+		if n, err := open().StatusIndices().Reserved(ctx, statusListA); err != nil || n != indices {
+			t.Errorf("Reserved = %d, %v; want %d", n, err, indices)
 		}
 	})
 }
@@ -465,6 +505,98 @@ func TestMigrateCountsReservedIndices(t *testing.T) {
 			t.Errorf("Statuses after migration = %v, %v", got, err)
 		}
 	})
+}
+
+// Migration 0010 moves each list's count, kept by 0007, into its count
+// shards, and counts every reservation after it in them. The table the
+// count was kept in becomes a view summing the shards, which an older
+// release reads its counts from, and whose Delete it refuses.
+func TestMigrateShardsReservedCounts(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		raw := e.location()()
+		d, err := sqlstore.New(raw, e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 9); err != nil {
+			t.Fatal(err)
+		}
+		s := d.StatusIndices()
+		for _, idx := range []uint64{1, 5, 9, 33} {
+			if err := s.Reserve(ctx, statusListA, idx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Reserve(ctx, statusListB, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0010_status_list_count_shards.sql") {
+			t.Errorf("CheckSchema at version 9 = %v, want migration 0010 missing", err)
+		}
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		reserved := func(uri string, want int) {
+			t.Helper()
+			if n, err := s.Reserved(ctx, uri); err != nil || n != want {
+				t.Errorf("Reserved(%s) = %d, %v, want %d", uri, n, err, want)
+			}
+		}
+		reserved(statusListA, 4)
+		reserved(statusListB, 1)
+		for _, idx := range []uint64{7, 65} {
+			if err := s.Reserve(ctx, statusListA, idx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Reserve(ctx, statusListA, 9); !errors.Is(err, statuslist.ErrIndexTaken) {
+			t.Fatalf("Reserve of a taken index = %v", err)
+		}
+		reserved(statusListA, 6)
+		reserved(statusListB, 1)
+		// The moved count in shard 0, 7 in shard 7, 65 in shard 1.
+		if n := countShards(t, e.dialect, raw, statusListA); n != 3 {
+			t.Errorf("list A has %d count shards, want 3", n)
+		}
+
+		// An older release's statements.
+		var n int64
+		if err := raw.QueryRowContext(ctx, inDialect(e.dialect, "SELECT COALESCE((SELECT reserved FROM oid4vc_status_list_counts WHERE uri = ?), 0)"), statusListA).Scan(&n); err != nil || n != 6 {
+			t.Errorf("an older release's Reserved = %d, %v; want 6", n, err)
+		}
+		if _, err := raw.ExecContext(ctx, inDialect(e.dialect, "DELETE FROM oid4vc_status_list_counts WHERE uri = ?"), statusListB); err == nil {
+			t.Error("an older release's Delete of a list's count succeeded")
+		}
+		reserved(statusListB, 1)
+
+		if err := s.Delete(ctx, statusListA); err != nil {
+			t.Fatal(err)
+		}
+		reserved(statusListA, 0)
+		reserved(statusListB, 1)
+	})
+}
+
+// countShards is how many count shards the list at uri has.
+func countShards(t *testing.T, dialect sqlstore.Dialect, raw *sql.DB, uri string) int64 {
+	t.Helper()
+	var n int64
+	if err := raw.QueryRowContext(context.Background(), inDialect(dialect, "SELECT COUNT(*) FROM oid4vc_status_list_count_shards WHERE uri = ?"), uri).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// inDialect is query, written with SQLite's placeholders, in dialect's.
+func inDialect(dialect sqlstore.Dialect, query string) string {
+	if dialect == sqlstore.Postgres {
+		for i := 1; strings.Contains(query, "?"); i++ {
+			query = strings.Replace(query, "?", "$"+strconv.Itoa(i), 1)
+		}
+	}
+	return query
 }
 
 // statusListSigner is a Status List signing key and its certificate

@@ -14,6 +14,11 @@ them.
   reservation of a list its caller no longer allocates from. A custom
   store must implement it; `statuslisttest.TestIndexStoreContract`
   checks one. `MemoryIndexStore` and sqlstore's `StatusIndices` do.
+- An `Allocator` now validates its settings once, and stops counting a
+  list's reserved indices once it finds the list full: keep one for the
+  process, as one built per call starts afresh each time. Don't copy
+  one once used, and use another for another `Store`; a change to
+  `Lists`, `Bits` or `FillLimit` is still picked up.
 
 ### Wallet Provider (`walletprovider`)
 
@@ -42,6 +47,15 @@ them.
   moves to a later period's lists, so one never used again is kept.
 - `StatusIndices().Delete` deletes a list's rows in batches; an
   interrupted one finishes when called again.
+- **Run `Migrate` again for migration 0010**, which keeps each status
+  list's count of reserved indices in 32 rows
+  (`oid4vc_status_list_count_shards`), so concurrent `Reserve`s in one
+  list no longer wait for each other. On Postgres it locks
+  `oid4vc_status_indices` against reservations while it moves the
+  counts, which takes a moment. `oid4vc_status_list_counts` becomes a
+  view summing them: an older release still running beside this one
+  counts correctly, but its `StatusIndices().Delete` fails, leaving the
+  list for this release's to finish.
 
 ### Status list caching (`statuslist.Cache`)
 
