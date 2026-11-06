@@ -98,100 +98,105 @@ them.
 
 ## v0.68.0 → v0.69.0
 
-### Status lists (`statuslist`)
+Upgrade sqlstore with it, to v0.9.0: they release together.
 
-- **`IndexStore` gains `Delete(ctx, uri)`**, which forgets every
-  reservation of a list its caller no longer allocates from. A custom
-  store must implement it; `statuslisttest.TestIndexStoreContract`
-  checks one. `MemoryIndexStore` and sqlstore's `StatusIndices` do.
-- An `Allocator` now validates its settings once, and stops counting a
-  list's reserved indices once it finds the list full: keep one for the
-  process, as one built per call starts afresh each time. Don't copy
-  one once used, and use another for another `Store`; a change to
-  `Lists`, `Bits` or `FillLimit` is still picked up.
-- **A `TokenStore` keeps each token's signer** (`StoredToken.Signer`,
-  the SHA-256 of its chain's leaf certificate), and a Publisher serves
-  only a stored token its own certificate signed: after you rotate a
-  list's key or certificate, replicas sign afresh rather than serve the
-  old signer's token. A custom `TokenStore` must store and return
-  `Signer` as put; `statuslisttest.TestTokenStoreContract` checks it.
+### Before rolling out: one `Migrate` (sqlstore v0.9.0)
 
-### Issuer (`issuer`)
+Run `Migrate` once, from one process, before the first replica on
+v0.69.0 starts: it applies migrations 0009 to 0012 in order, and an
+older replica keeps working beside the migrated schema while the rest
+roll out. What each does, and what it locks on Postgres:
 
-- **`CredentialRequest.PerCredential` now runs for every Credential of
-  a batch before the first is signed**, not between signings; a hook
+- **0009** indexes `oid4vc_walletprovider_instance_keys`' `sweep_after`
+  (a plain `CREATE INDEX`: writes to that table wait while it builds,
+  a time that grows with its rows; a database without a Wallet
+  Provider has none).
+- **0010** keeps each status list's count of reserved indices in 32
+  rows (`oid4vc_status_list_count_shards`), so concurrent reservations
+  in one list no longer wait for each other. It holds
+  `oid4vc_status_indices` against reservations only while it copies
+  one count per list, so for as long as copying a row per list takes,
+  not one per index. `oid4vc_status_list_counts` becomes a view
+  summing the shards, so an older replica still counts correctly.
+- **0011** adds `oid4vc_status_list_versions` and
+  `oid4vc_status_list_tokens` (new tables), with a trigger that raises
+  a list's version whenever one of its statuses changes, whichever
+  release changes it.
+- **0012** adds `oid4vc_status_list_tokens.signer`.
+
+### Behaviour that changes without a code change
+
+- **`CredentialRequest.PerCredential` runs for every Credential of a
+  batch before the first is signed**, not between signings. A hook
   that relied on the earlier Credentials being signed already must
   change. The new `PerBatch` (also on `DeferredIssuance`) is called
   once with the whole batch: with `statuslist.Allocator.AllocateN` it
   reserves a batch's status indices in one round trip.
+- **Keep one `statuslist.Allocator` per process** (per `Store`). It
+  now validates its settings once and remembers which lists it found
+  full, so one built per call starts afresh each time. Don't copy one
+  once used; a change to `Lists`, `Bits` or `FillLimit` is still
+  picked up.
+- **`statuslist.Cache` keeps failures for `CacheOptions.MaxFailureAge`**,
+  30 seconds by default. While a failed fetch is kept, checks of the
+  same uri fail with its error and don't fetch again; while a token a
+  check refused is kept, checks verify that token again and don't
+  fetch it. So once a status list server recovers, or reissues a list
+  checks refused, checks can take up to `MaxFailureAge` to see it. Set
+  it shorter for a quicker retry, or call `Purge`.
+- **`DB.Sweep` deletes Wallet Provider instance keys past their
+  `RetainUntil`** (below).
+
+### Status lists (`statuslist`, `identifierlist`)
+
+- **A custom `IndexStore` must implement `Delete(ctx, uri)`**, which
+  forgets every reservation of a list its caller no longer allocates
+  from. `statuslisttest.TestIndexStoreContract` checks one;
+  `MemoryIndexStore` and sqlstore's `StatusIndices` implement it
+  (sqlstore's deletes in batches, and an interrupted one finishes when
+  called again).
+- **New: replicas can share signed tokens.** Set
+  `statuslist.Publisher.Tokens` (and `identifierlist.Publisher.Tokens`)
+  to sqlstore's `db.StatusListTokens()` when more than one replica
+  serves a list: one replica then signs each list's token after a
+  status changes, and the others serve it within `TokensCheck` (5
+  seconds by default). Without it each replica signs its own, as
+  before. A stored token is served only by a Publisher with the same
+  signing certificate, so after a key or certificate rotation replicas
+  sign afresh. A `TokenStore` of your own must keep each token as put,
+  `Signer` included; `statuslisttest.TestTokenStoreContract` checks
+  one.
+
+### Issuer (`issuer`)
+
+- `PerCredential`'s new order and `PerBatch`: see above.
 
 ### Wallet Provider (`walletprovider`)
 
 - **Run `SweepStatusLists` periodically** (daily, say, from one
   process; running it concurrently or again is safe). It deletes the
   reserved indices of the periods' lists no longer served, which
-  nothing else deletes.
-- **Instance keys are kept for `Config.InstanceKeyRetention`** after
-  the start of the last period they were used in: zero means 90 days,
-  or three `StatusListPeriod`s when longer. A store may then delete
-  one (`InstanceKey.RetainUntil`). Size it for the longest an issuance
-  may go unused and still be refreshed: after deletion a Wallet
-  Attestation for the key needs fresh evidence, which Android Key
-  Attestation can't give for an existing key, and a Key Attestation
-  naming it is refused with `unknown_instance_key`; the credential
-  must be issued again.
-- A custom `InstanceKeyStore` may delete records past their
-  `RetainUntil`; one that never does is still correct.
-- **Keys recorded before retention get a `RetainUntil`** from
-  `SweepStatusLists`, when the store implements the new
+  nothing else deletes, and gives instance keys recorded before this
+  release a `RetainUntil` when the store implements the new
   `UnretainedInstanceKeyLister` (sqlstore's and the memory store do):
   a key on a period's list counts from that period's start, and one on
   the single list from v0.67.0 and before from the current period's.
+- **Instance keys are kept for `Config.InstanceKeyRetention`** after
+  the start of the last period they were used in: zero means 90 days,
+  or three `StatusListPeriod`s when longer. A store may then delete
+  one (`InstanceKey.RetainUntil`; sqlstore's `DB.Sweep` does, and a
+  custom `InstanceKeyStore` that never does is still correct). Size it
+  for the longest an issuance may go unused and still be refreshed:
+  after deletion a Wallet Attestation for the key needs fresh
+  evidence, which Android Key Attestation can't give for an existing
+  key, and a Key Attestation naming it is refused with
+  `unknown_instance_key`; the credential must be issued again.
 - **Delete the single status list from v0.67.0 and before** (your old
   `Config.StatusListURI`) once, with `IndexStore.Delete`: it hasn't
   been served or changed since v0.68.0, and nothing else deletes it.
 - **Set `Dependencies.StatusListTokens`** (sqlstore's
   `db.StatusListTokens()`) when more than one replica serves the
-  provider's status lists: one then signs each list's token, and the
-  others serve it. Without it each replica signs its own, as before.
-
-### sqlstore (v0.9.0)
-
-- **Run `Migrate` again for migration 0009**, which indexes
-  `oid4vc_walletprovider_instance_keys`' `sweep_after` for `DB.Sweep`.
-  `DB.Sweep` now deletes instance keys past their `RetainUntil`, which
-  `SweepStatusLists` gives keys recorded before this release.
-- `StatusIndices().Delete` deletes a list's rows in batches; an
-  interrupted one finishes when called again.
-- **Run `Migrate` again for migration 0010**, which keeps each status
-  list's count of reserved indices in 32 rows
-  (`oid4vc_status_list_count_shards`), so concurrent `Reserve`s in one
-  list no longer wait for each other. On Postgres it locks
-  `oid4vc_status_indices` against reservations while it moves the
-  counts, which takes a moment. `oid4vc_status_list_counts` becomes a
-  view summing them: an older release still running beside this one
-  counts correctly, but its `StatusIndices().Delete` fails, leaving the
-  list for this release's to finish.
-- **Run `Migrate` again for migration 0011**, which adds
-  `oid4vc_status_list_versions` and `oid4vc_status_list_tokens`. A
-  trigger raises a list's version whenever one of its statuses changes,
-  whichever release changes it. To have one replica sign each Status
-  List token and the others serve it, set `statuslist.Publisher.Tokens`
-  (and `identifierlist.Publisher.Tokens`) to `db.StatusListTokens()`;
-  without it each replica signs its own, as before.
-- **Run `Migrate` again for migration 0012**, which keeps each stored
-  token's signer (`oid4vc_status_list_tokens.signer`). A token stored
-  under migration 0011 alone has none, and is signed anew once.
-
-### Status list caching (`statuslist.Cache`)
-
-- **Failures are kept for `CacheOptions.MaxFailureAge`**, 30 seconds by
-  default. While a failed fetch is kept, checks of the same uri fail
-  with its error and don't fetch again. While a token a check refused
-  is kept, the checks verify that token again and don't fetch it. So
-  once a status list server recovers, or reissues a list checks
-  refused, checks can take up to `MaxFailureAge` to see it. Set it
-  shorter for a quicker retry, or call `Purge`.
+  provider's status lists, as for `Publisher.Tokens` above.
 
 ### Mobile (the Swift library)
 
