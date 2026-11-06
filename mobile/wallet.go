@@ -145,6 +145,13 @@ type config struct {
 	// statuslist.DefaultCacheMaxAge, at most a day; never past the
 	// list's own ttl or exp.
 	StatusCacheMaxAgeSeconds int64 `json:"status_cache_max_age_seconds,omitempty"`
+	// StatusCacheDir, an absolute path, keeps the lists CheckStatus
+	// verified across launches (statuslist.DirCacheStore): the app's
+	// cache directory, say. A launch then revalidates each list it kept
+	// with its server, a round trip, rather than downloading it, and
+	// never uses one the server hasn't confirmed. Empty keeps them in
+	// memory only.
+	StatusCacheDir string `json:"status_cache_dir,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -296,7 +303,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	// The process's, which readers share too.
-	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds); err != nil {
+	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir); err != nil {
 		return nil, err
 	}
 	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {
