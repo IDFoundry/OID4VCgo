@@ -307,7 +307,9 @@ class ProximityTest {
                 combined.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
                 val verified = awaitFinal(reader.state) { it.isFinal } as ProximityReaderSession.State.Verified
                 assertEquals("Doe", verified.result.claims[NAMESPACE]!!.jsonObject["family_name"]!!.jsonPrimitive.content)
-                assertTrue(combined.state.value is ProximityPresentation.State.Presented)
+                // The reader can see its answer verified before the holder's
+                // session records it sent: wait for that, as presentAndVerify does.
+                assertTrue(awaitFinal(combined.state) { it.isFinal } is ProximityPresentation.State.Presented)
             } finally { combined.close() }
         }
     }
