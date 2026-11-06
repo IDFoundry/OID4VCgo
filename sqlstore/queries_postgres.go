@@ -70,6 +70,7 @@ var postgresQueries = queries{ //nolint:gosec // G101: field names such as keyGe
 	wpInstanceKeyUpdate:    "UPDATE oid4vc_walletprovider_instance_keys SET sweep_after = $1, record = $2, revision = $3 WHERE id = $4 AND revision = $5 AND instance_id = $6",
 	wpInstanceKeyRevision:  "SELECT revision, instance_id FROM oid4vc_walletprovider_instance_keys WHERE id = $1",
 	wpInstanceKeyList:      "SELECT id, record FROM oid4vc_walletprovider_instance_keys WHERE instance_id = $1 AND id > $2 ORDER BY id LIMIT $3",
+	wpInstanceKeyNoRetain:  "SELECT id, record FROM oid4vc_walletprovider_instance_keys WHERE sweep_after IS NULL AND id > $1 ORDER BY id LIMIT $2",
 	wpInstanceKeySweep:     "DELETE FROM oid4vc_walletprovider_instance_keys WHERE sweep_after < $1 AND sweep_after <= COALESCE((SELECT sweep_after FROM oid4vc_walletprovider_instance_keys WHERE sweep_after < $2 ORDER BY sweep_after LIMIT 1 OFFSET $3), $4)",
 	wpChallengeInsert:      "INSERT INTO oid4vc_walletprovider_challenges (id, owner, sweep_after, record) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
 	wpChallengeConsume:     "DELETE FROM oid4vc_walletprovider_challenges WHERE id = $1 RETURNING record",

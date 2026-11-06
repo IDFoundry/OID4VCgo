@@ -37,14 +37,21 @@ them.
   must be issued again.
 - A custom `InstanceKeyStore` may delete records past their
   `RetainUntil`; one that never does is still correct.
+- **Keys recorded before retention get a `RetainUntil`** from
+  `SweepStatusLists`, when the store implements the new
+  `UnretainedInstanceKeyLister` (sqlstore's and the memory store do):
+  a key on a period's list counts from that period's start, and one on
+  the single list from v0.67.0 and before from the current period's.
+- **Delete the single status list from v0.67.0 and before** (your old
+  `Config.StatusListURI`) once, with `IndexStore.Delete`: it hasn't
+  been served or changed since v0.68.0, and nothing else deletes it.
 
 ### sqlstore (next after v0.8.0)
 
 - **Run `Migrate` again for migration 0009**, which indexes
   `oid4vc_walletprovider_instance_keys`' `sweep_after` for `DB.Sweep`.
-  `DB.Sweep` now deletes instance keys past their `RetainUntil`. A key
-  recorded before this release has no `RetainUntil` until it next
-  moves to a later period's lists, so one never used again is kept.
+  `DB.Sweep` now deletes instance keys past their `RetainUntil`, which
+  `SweepStatusLists` gives keys recorded before this release.
 - `StatusIndices().Delete` deletes a list's rows in batches; an
   interrupted one finishes when called again.
 - **Run `Migrate` again for migration 0010**, which keeps each status

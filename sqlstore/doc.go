@@ -258,8 +258,10 @@
 // from several at once is safe, but they only delete the same rows.
 //
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
-// and its instance keys after their RetainUntil (never one without,
-// written before RetainUntil existed, until its key next moves). It
+// and its instance keys after their RetainUntil. One without, written
+// before RetainUntil existed, is kept until its key next moves or
+// walletprovider's Provider.SweepStatusLists gives it one, which it
+// finds with InstanceKeyStore.ListUnretained. It
 // leaves the instances alone: they never expire, and nothing here
 // deletes one.
 //
@@ -270,7 +272,8 @@
 // the issuer retires a list for good and deletes it
 // (StatusIndexStore.Delete): a Wallet Provider's
 // Provider.SweepStatusLists does, for the lists of periods it no longer
-// serves.
+// serves. Its single list from before periods (v0.67.0 and before)
+// isn't one of them: delete it once yourself.
 //
 // # Production
 //

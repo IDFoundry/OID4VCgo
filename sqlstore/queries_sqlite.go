@@ -72,6 +72,7 @@ var sqliteQueries = queries{ //nolint:gosec // G101: field names such as keyGet 
 	wpInstanceKeyUpdate:    "UPDATE oid4vc_walletprovider_instance_keys SET sweep_after = ?, record = ?, revision = ? WHERE id = ? AND revision = ? AND instance_id = ?",
 	wpInstanceKeyRevision:  "SELECT revision, instance_id FROM oid4vc_walletprovider_instance_keys WHERE id = ?",
 	wpInstanceKeyList:      "SELECT id, record FROM oid4vc_walletprovider_instance_keys WHERE instance_id = ? AND id > ? ORDER BY id LIMIT ?",
+	wpInstanceKeyNoRetain:  "SELECT id, record FROM oid4vc_walletprovider_instance_keys WHERE sweep_after IS NULL AND id > ? ORDER BY id LIMIT ?",
 	wpInstanceKeySweep:     "DELETE FROM oid4vc_walletprovider_instance_keys WHERE sweep_after < ? AND sweep_after <= COALESCE((SELECT sweep_after FROM oid4vc_walletprovider_instance_keys WHERE sweep_after < ? ORDER BY sweep_after LIMIT 1 OFFSET ?), ?)",
 	wpChallengeInsert:      "INSERT INTO oid4vc_walletprovider_challenges (id, owner, sweep_after, record) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
 	wpChallengeConsume:     "DELETE FROM oid4vc_walletprovider_challenges WHERE id = ? RETURNING record",
