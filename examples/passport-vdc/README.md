@@ -205,6 +205,52 @@ What the second path does and doesn't give you:
   SD-JWT VC's claim names (in `credential/names.go`) remain the demo's
   own.
 
+### One process each, not a deployment template
+
+The issuer and the verifier are each written to run as one process.
+Their library calls are the production ones, but how they hold state
+around them isn't how a service that must scale out, or serve millions
+of wallets, would hold it:
+
+- **The issuer has one status list of 65,536 entries**
+  (`statusListSize` in `issuerapp/status.go`), and the Allocator stops
+  at half of it: about 32,000 credentials ever, after which issuance
+  fails. A deployment allocates from several lists (`statuslist.Allocator`'s
+  `Lists`), adds new ones as they fill, and sizes them for its fleet.
+- **The issuer serialises issuance on one mutex** (`statusList.mu`),
+  held across the store calls that allocate an index and set a
+  status, and, with a state directory, while it rewrites the whole
+  file of issued entries (`statusList.save`) on every issuance. A
+  deployment keeps what it needs about each credential in its database
+  and lets the Allocator and the store coordinate.
+- **Revoking a document signer is per process.** `revokeSigner`
+  marks the signer in an in-memory map so that credentials a request is
+  already signing with it are revoked too; a second process wouldn't
+  see that map.
+- **The issuer's status list is published by the process that changes
+  it.** It calls `Publisher.Invalidate` after each `SetStatus`, which
+  reaches only its own Publisher: replicas would each sign their own
+  token and show another's revocation only after `CacheFor`.
+- **Passports awaiting issuance, deferred issuances awaiting review
+  and offer progress are in memory** (`issuerapp/transactions.go`,
+  `review.go`, `progress.go`), as are the Authorization Server's
+  signing keys, even with `-db`.
+- **The verifier keeps its sessions and outcomes in memory**
+  (`verifierapp/app.go`), and its transactions in
+  `storage.NewVerifierTransactionStore`, so a wallet's answer must
+  reach the process that made the request.
+- **The verifier fetches the issuer CA's CRL on the request path** when
+  it holds none or the one it holds has passed its nextUpdate, one
+  fetch at a time under a mutex (`issuerCRLs.lists` in
+  `verifierapp/crl.go`), so a revocation shows at once in the demo. A
+  verifier under load runs `certrevocation.Refresher.Run` and never
+  fetches while a presentation waits.
+
+For a deployment: `sqlstore` on Postgres for the issuer's, Authorization
+Server's (`fapigo/sqlstore`) and verifier's stores, with the pool
+sizing in its package documentation; several status lists, each a
+`statuslist.Publisher`; and `certrevocation.Refresher` for CRLs.
+
 ### Demo-only settings
 
 The demo wires the library's production entry points, but runs them

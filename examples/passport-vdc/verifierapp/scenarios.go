@@ -14,6 +14,18 @@
 // claim, so that discloses everything the chip held. Either way the
 // issuer signature is checked, and the credential's device key binds it
 // to the presenter.
+//
+// # One process
+//
+// The app runs as one process and isn't a template for a verifier that
+// scales out: its sessions, outcomes and verifier transactions are in
+// memory (storage.NewVerifierTransactionStore), so an answer must reach
+// the process that made the request, and it fetches the issuer CA's CRL
+// on the request path, under a mutex, when the one it holds has
+// expired. A verifier under load keeps its transactions in a shared
+// store, such as sqlstore, and refreshes CRLs off the request path
+// (certrevocation.Refresher.Run). The demo's README ("One process each,
+// not a deployment template") has the details.
 package verifierapp
 
 import (
