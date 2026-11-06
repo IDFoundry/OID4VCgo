@@ -72,6 +72,13 @@ them.
   view summing them: an older release still running beside this one
   counts correctly, but its `StatusIndices().Delete` fails, leaving the
   list for this release's to finish.
+- **Run `Migrate` again for migration 0011**, which adds
+  `oid4vc_status_list_versions` and `oid4vc_status_list_tokens`. A
+  trigger raises a list's version whenever one of its statuses changes,
+  whichever release changes it. To have one replica sign each Status
+  List token and the others serve it, set `statuslist.Publisher.Tokens`
+  (and `identifierlist.Publisher.Tokens`) to `db.StatusListTokens()`;
+  without it each replica signs its own, as before.
 
 ### Status list caching (`statuslist.Cache`)
 

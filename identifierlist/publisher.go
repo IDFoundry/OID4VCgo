@@ -11,6 +11,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/listhttp"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // Publisher signs an identifier list from the current identifiers:
@@ -26,7 +27,9 @@ import (
 // concurrent requests wait on one signature; Invalidate drops it after
 // a revocation. A response carries a strong ETag, and a request whose
 // If-None-Match names it is answered 304 Not Modified. A Publisher
-// must not be copied after first use; use it by pointer.
+// must not be copied after first use; use it by pointer. Replicas
+// serving one list can share its tokens through Tokens, as
+// statuslist.Publisher's do.
 type Publisher struct {
 	// URI is the list's uri: every token's sub, and the uri MSOs name.
 	// REQUIRED.
@@ -78,10 +81,24 @@ type Publisher struct {
 	// error.
 	OnError func(r *http.Request, err error)
 
+	// Tokens, if set, shares the tokens between the replicas serving
+	// the list, as statuslist.Publisher.Tokens does, the tokens stored
+	// as the list's statuslist.FormCWT. An identifier list has no
+	// version a store keeps, so a revocation is served once the token's
+	// CacheFor has passed, or at once by the replica whose Invalidate is
+	// called, and by the others from their next check.
+	Tokens statuslist.TokenStore
+
+	// TokensCheck is how often a replica asks Tokens for a newer token.
+	// Zero means statuslist.DefaultTokensCheck; it's at most CacheFor's
+	// effective value.
+	TokensCheck time.Duration
+
 	// Now defaults to time.Now.
 	Now func() time.Time
 
 	cached listhttp.Cache
+	holder listhttp.Holder
 }
 
 // Token signs a new identifier list from the current identifiers. It
@@ -142,7 +159,20 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	served, signErr := p.cached.Get(r.Context(), p.cacheWindow(), p.now, p.sign)
+	var served listhttp.Served
+	var signErr error
+	if p.Tokens != nil {
+		check := p.TokensCheck
+		if check <= 0 {
+			check = statuslist.DefaultTokensCheck
+		}
+		served, signErr = p.cached.GetShared(r.Context(), listhttp.Shared{
+			Store:  listhttp.StoreOf[statuslist.Form](p.Tokens, p.URI, statuslist.FormCWT),
+			Holder: p.holder.Name(), Fresh: p.cacheWindow(), Check: check,
+		}, p.now, p.sign)
+	} else {
+		served, signErr = p.cached.Get(r.Context(), p.cacheWindow(), p.now, p.sign)
+	}
 	if signErr != nil && p.OnError != nil {
 		p.OnError(r, signErr)
 	}

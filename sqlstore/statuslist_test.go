@@ -13,6 +13,8 @@ import (
 	"math"
 	"math/big"
 	mrand "math/rand/v2"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -709,4 +712,173 @@ func statusListSigner(t *testing.T) (*ecdsa.PrivateKey, []*x509.Certificate) {
 		t.Fatal(err)
 	}
 	return key, []*x509.Certificate{leaf}
+}
+
+// The statuslist.TokenStore contract, a list's version following the
+// status changes of StatusIndices.
+func TestStatusListTokenStoreContract(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		db := e.db()
+		statuslisttest.TestTokenStoreContract(t, func(*testing.T) (statuslist.TokenStore, func(*testing.T, string)) {
+			return db.StatusListTokens(), func(t *testing.T, uri string) { bumpStatus(t, db.StatusIndices(), uri) }
+		})
+	})
+}
+
+// bumpStatus changes a status of the list at uri: index 0's, between
+// StatusValid and StatusInvalid.
+func bumpStatus(t *testing.T, s *sqlstore.StatusIndexStore, uri string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.Reserve(ctx, uri, 0); err != nil && !errors.Is(err, statuslist.ErrIndexTaken) {
+		t.Fatalf("Reserve: %v", err)
+	}
+	status, err := s.Status(ctx, uri, 0)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if err := s.SetStatus(ctx, uri, 0, status^statuslist.StatusInvalid); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+}
+
+// A status set to what it already is leaves the list's version as it
+// is; Delete forgets the list's tokens and version with its indices.
+func TestStatusListTokenStoreVersionAndDelete(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		db := e.db()
+		indices, tokens := db.StatusIndices(), db.StatusListTokens()
+		bumpStatus(t, indices, statusListA)
+		head, err := tokens.Head(ctx, statusListA, statuslist.FormJWT)
+		if err != nil || head.Version != 1 {
+			t.Fatalf("Head after one change = %+v, %v; want version 1", head, err)
+		}
+		if err := indices.SetStatus(ctx, statusListA, 0, statuslist.StatusInvalid); err != nil {
+			t.Fatal(err)
+		}
+		if head, err := tokens.Head(ctx, statusListA, statuslist.FormJWT); err != nil || head.Version != 1 {
+			t.Fatalf("Head after setting the same status = %+v, %v; want version 1", head, err)
+		}
+		now := time.UnixMilli(time.Now().UnixMilli())
+		if err := tokens.Put(ctx, statusListA, statuslist.FormJWT, "a", statuslist.StoredToken{Bytes: []byte("t"), Version: 1, SignedAt: now, Exp: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tokens.Put(ctx, statusListB, statuslist.FormJWT, "a", statuslist.StoredToken{Bytes: []byte("t"), SignedAt: now, Exp: now.Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := indices.Delete(ctx, statusListA); err != nil {
+			t.Fatal(err)
+		}
+		if head, err := tokens.Head(ctx, statusListA, statuslist.FormJWT); err != nil || head.Stored || head.Version != 0 {
+			t.Fatalf("Head after Delete = %+v, %v; want nothing", head, err)
+		}
+		if head, err := tokens.Head(ctx, statusListB, statuslist.FormJWT); err != nil || !head.Stored {
+			t.Fatalf("another list's Head after Delete = %+v, %v; want its token", head, err)
+		}
+	})
+}
+
+// Two replicas, each with its own handle on the database, serve one
+// list through StatusListTokens: one signs, the other serves its token;
+// a revocation through either replica's Allocator has one of them sign
+// anew from its next check, and the token served shows it.
+func TestStatusListTokensAcrossReplicas(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		open := e.storage()
+		lists := []statuslist.AllocatorList{{URI: statusListA, Size: 64}}
+		key, chain := statusListSigner(t)
+		now := time.UnixMilli(time.Now().UnixMilli())
+		type replica struct {
+			alloc *statuslist.Allocator
+			pub   *statuslist.Publisher
+			reads atomic.Int32
+		}
+		replicas := make([]*replica, 2)
+		for i := range replicas {
+			db := open()
+			r := &replica{alloc: &statuslist.Allocator{Lists: lists, Store: db.StatusIndices()}}
+			statuses := r.alloc.Statuses(statusListA)
+			r.pub = &statuslist.Publisher{
+				URI: statusListA, Signer: key, Chain: chain, TTL: time.Minute, Tokens: db.StatusListTokens(),
+				Statuses: func(ctx context.Context) ([]uint8, error) { r.reads.Add(1); return statuses(ctx) },
+				Now:      func() time.Time { return now },
+			}
+			replicas[i] = r
+		}
+		serve := func(i int) string {
+			t.Helper()
+			rec := httptest.NewRecorder()
+			replicas[i].pub.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("replica %d: %d %s", i, rec.Code, rec.Body)
+			}
+			return rec.Body.String()
+		}
+		ref, err := replicas[0].alloc.Allocate(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := serve(0)
+		if serve(1) != first || replicas[1].reads.Load() != 0 {
+			t.Fatal("replica 1 didn't serve replica 0's token")
+		}
+		if err := replicas[1].alloc.SetStatus(ctx, ref, statuslist.StatusInvalid); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(statuslist.DefaultTokensCheck)
+		second := serve(1)
+		if second == first || serve(0) != second {
+			t.Fatal("after a revocation: not one new token for both replicas")
+		}
+		if r0, r1 := replicas[0].reads.Load(), replicas[1].reads.Load(); r0+r1 != 2 {
+			t.Fatalf("the statuses were read %d + %d times, want 2 in all", r0, r1)
+		}
+		got, _, err := statuslist.Check(second, &key.PublicKey, oid4vci.ES256, ref, statuslist.VerifyOptions{UnboundSigner: statuslist.AnyListSigner})
+		if err != nil || got != statuslist.StatusInvalid {
+			t.Fatalf("the token served after the revocation: %v, %v", got, err)
+		}
+	})
+}
+
+// identifierlist's Publishers share their tokens through
+// StatusListTokens too: one replica signs, the other serves its token,
+// and Invalidate has a replica sign anew for both.
+func TestIdentifierListTokensAcrossReplicas(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		open := e.storage()
+		key, chain := statusListSigner(t)
+		now := time.UnixMilli(time.Now().UnixMilli())
+		var reads [2]atomic.Int32
+		pubs := make([]*identifierlist.Publisher, 2)
+		for i := range pubs {
+			pubs[i] = &identifierlist.Publisher{
+				URI: "https://issuer.example/identifierlists/1", Signer: key, Chain: chain, TTL: time.Minute,
+				Tokens:      open().StatusListTokens(),
+				Identifiers: func(context.Context) ([][]byte, error) { reads[i].Add(1); return [][]byte{{1, 2, 3}}, nil },
+				Now:         func() time.Time { return now },
+			}
+		}
+		serve := func(i int) string {
+			t.Helper()
+			rec := httptest.NewRecorder()
+			pubs[i].ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/l", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("replica %d: %d %s", i, rec.Code, rec.Body)
+			}
+			return rec.Body.String()
+		}
+		first := serve(0)
+		if serve(1) != first || reads[1].Load() != 0 {
+			t.Fatal("replica 1 didn't serve replica 0's token")
+		}
+		now = now.Add(time.Second)
+		pubs[1].Invalidate()
+		second := serve(1)
+		now = now.Add(statuslist.DefaultTokensCheck)
+		if second == first || serve(0) != second || reads[0].Load() != 1 {
+			t.Fatal("after Invalidate: not one new token for both replicas")
+		}
+	})
 }
