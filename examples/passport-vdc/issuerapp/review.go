@@ -237,13 +237,15 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	s := a.current()
 	err = s.issuer.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		MdocClaims: mdocClaims, SDJWTClaims: sdjwtClaims,
-		PerCredential: func(ctx context.Context, c *issuer.CredentialInstance) error {
-			idx, err := a.statusList.allocate(ctx, credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, signerID(s.cert), a.now())
+		PerBatch: func(ctx context.Context, batch []*issuer.CredentialInstance) error {
+			idxs, err := a.statusList.allocateN(ctx, len(batch), credentialFormat(rv.configID), !rv.evidence.Checks.PassiveAuthentication, signerID(s.cert), a.now())
 			if err != nil {
 				return err
 			}
-			statusIdxs = append(statusIdxs, idx)
-			a.withStatus(c, idx)
+			statusIdxs = append(statusIdxs, idxs...)
+			for i, c := range batch {
+				a.withStatus(c, idxs[i])
+			}
 			return nil
 		},
 	})

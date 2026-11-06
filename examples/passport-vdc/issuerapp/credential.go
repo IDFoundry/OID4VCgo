@@ -137,14 +137,16 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	}
 
 	// Each credential — every one of a batch — gets its own status list
-	// index (HAIP 1.0 §6.1).
-	req.PerCredential = func(ctx context.Context, c *issuer.CredentialInstance) error {
-		idx, err := a.statusList.allocate(ctx, credentialFormat(configID), !e.Checks.PassiveAuthentication, signer, a.now())
+	// index (HAIP 1.0 §6.1), the batch's reserved at once.
+	req.PerBatch = func(ctx context.Context, batch []*issuer.CredentialInstance) error {
+		idxs, err := a.statusList.allocateN(ctx, len(batch), credentialFormat(configID), !e.Checks.PassiveAuthentication, signer, a.now())
 		if err != nil {
 			return err
 		}
-		statusIdxs = append(statusIdxs, idx)
-		a.withStatus(c, idx)
+		statusIdxs = append(statusIdxs, idxs...)
+		for i, c := range batch {
+			a.withStatus(c, idxs[i])
+		}
 		return nil
 	}
 	return done, nil
