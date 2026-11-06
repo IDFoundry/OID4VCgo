@@ -453,9 +453,11 @@ func decodeCredential(id string, raw []byte) (walletflow.StoredCredential, error
 }
 
 func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, error) {
-	// A credential's ID is 22 random base64url characters: one beginning
-	// "grant-" (about 1 in 7e10, the other prefixes far less) would be
-	// left out, a chance taken for not decrypting every grant.
+	// A credential's ID has no "-" (walletflow.StoredCredential.ID), so
+	// none begins with these prefixes. One made before walletflow said
+	// so is 22 random base64url characters: one beginning "grant-" (about
+	// 1 in 7e10) would be left out, a chance taken for not decrypting
+	// every grant.
 	all, err := listRecords(s.cs, true, deferredPrefix, authorizationPrefix, grantPrefix)
 	if err != nil {
 		return nil, err

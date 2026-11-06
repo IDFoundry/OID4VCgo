@@ -315,8 +315,9 @@ IDs. `ResumeIssuance` completes it from the redirect after a relaunch.
 
 Go lists one kind of record at a time with `ListPrefixed`: the
 credentials by excluding the prefixes `deferred-`, `authorization-` and
-`grant-` (a refresh grant's), and each other kind by its own prefix. A
-store that decrypts each record, as the Kotlin library's does, then
+`grant-` (a refresh grant's), and each other kind by its own prefix.
+Every prefix has a `-`, which a credential's ID made from this version
+on doesn't. A store that decrypts each record, as the Kotlin library's does, then
 decrypts only those; one that can't select by ID may return every
 record, as `List` does.
 
