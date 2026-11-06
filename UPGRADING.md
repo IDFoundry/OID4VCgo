@@ -55,6 +55,32 @@ them.
   `status_cache_key`. An app calling the framework directly with
   `status_cache_dir` should pass one too (ABI.md).
 
+### SD-JWT VC (`credential/sdjwtvc`)
+
+- **`Issue` refuses a self-signed `IssueOptions.IssuerCertificate`**
+  given alone, as it did one given with intermediates (HAIP 1.0
+  §6.1.1). Issue from a certificate a CA signed.
+- **`Claims.VCTIntegrity` and Type Metadata's `extends#integrity` and
+  `uri#integrity` must be integrity metadata strings** (draft-13 §7):
+  `sha256-`, `sha384-` or `sha512-` and the base64 of a digest of that
+  length. `Issue` and `TypeMetadata.Validate` refuse anything else.
+- `Verify` accepts the transitional `vc+sd-jwt` typ (draft-13 §3.2.1)
+  when the new `VerifyOptions.AcceptLegacyTyp` is set. Nothing changes
+  by default: only `dc+sd-jwt` is accepted, by the verifier and wallet
+  too.
+
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **`BuildAuthorizationRequest` requires a `State`** when a credential
+  query sets `require_cryptographic_holder_binding` to false (OID4VP 1.0
+  §5.3), and refuses one with characters other than ASCII letters,
+  digits, `-`, `.`, `_` and `~`. `Transactions` already sent one.
+- **An Annex C credential's `CredentialQueryID` is its document type**
+  (`mdocdcapi.Verified.Credential`), where it was empty, and
+  `VerifyResponseDocuments` returns the documents, and runs `Accept`, in
+  the order of `Pending.Documents`. An `Accept` that relied on the
+  holder's order, or on an empty `CredentialQueryID`, must change.
+
 ### Wallet (`wallet`, `walletflow`)
 
 - **A Verifier's `redirect_uri` with the `mdoc-openid4vp` or
@@ -64,6 +90,11 @@ them.
   `Config.RedirectURI`: `Respond`, `Decline` and a refusal's redirect
   fail with `wallet.ErrResponseDelivered`, the response having reached
   the Verifier. Follow a redirect only from `Presented.RedirectURI`.
+- **A DC API request for another `response_type` or `response_mode`**
+  is a `wallet.RequestRejectedError` with `invalid_request`, which
+  `StartDCAPIPresentation` returns as a `RequestRefusedError` carrying
+  `{"error":"invalid_request"}` for the page, where it was an
+  `ErrMalformedRequest`.
 
 ## v0.68.0 → v0.69.0
 
