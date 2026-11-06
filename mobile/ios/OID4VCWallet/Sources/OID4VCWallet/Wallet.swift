@@ -202,6 +202,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// day, and never past the list's own `ttl` or `exp`. Longer means
     /// fewer requests, and a revocation seen that much later.
     public var statusCacheMaxAgeSeconds: Int
+    /// An absolute path, the app's own — under its Caches directory, say —
+    /// where `checkStatus` keeps the lists it verified across launches: a
+    /// launch then asks each list's server whether the list it kept is
+    /// current, a `304 Not Modified` rather than the list, and never uses
+    /// one the server hasn't confirmed. Empty keeps them in memory only.
+    public var statusCacheDir: String
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -277,7 +283,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
                 noRevocationCheck: [RevocationRole] = [], crlDistributionPoints: [CRLDistributionPoint] = [],
                 crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false,
-                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0) {
+                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0,
+                statusCacheDir: String = "") {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -320,6 +327,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.statusMaxBytes = statusMaxBytes
         self.identifierListMaxBytes = identifierListMaxBytes
         self.statusCacheMaxAgeSeconds = statusCacheMaxAgeSeconds
+        self.statusCacheDir = statusCacheDir
     }
 
     enum CodingKeys: String, CodingKey {
@@ -341,7 +349,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case crlDistributionPoints = "crl_distribution_points"
         case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
         case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
-        case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds"
+        case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -394,7 +402,8 @@ public struct WalletConfiguration: Codable, Sendable {
                   crlRequireHTTPS: try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false,
                   statusMaxBytes: try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0,
                   identifierListMaxBytes: try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0,
-                  statusCacheMaxAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0)
+                  statusCacheMaxAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0,
+                  statusCacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir) ?? "")
     }
 
     /// The scheme of `redirectURI`: the callback scheme an

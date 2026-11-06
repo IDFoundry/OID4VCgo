@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -80,8 +81,10 @@ type proximityReaderConfig struct {
 	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
 	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
 	// StatusCacheMaxAgeSeconds is how long a status or identifier list
-	// fetched is used, as a Wallet's.
-	StatusCacheMaxAgeSeconds int64 `json:"status_cache_max_age_seconds,omitempty"`
+	// fetched is used, and StatusCacheDir where lists are kept across
+	// launches, as a Wallet's.
+	StatusCacheMaxAgeSeconds int64  `json:"status_cache_max_age_seconds,omitempty"`
+	StatusCacheDir           string `json:"status_cache_dir,omitempty"`
 	// RequireMDLSignerEKU accepts only document signer certificates
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
@@ -164,7 +167,7 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "status_max_bytes",
 // "identifier_list_max_bytes", "status_cache_max_age_seconds",
-// "require_mdl_signer_eku",
+// "status_cache_dir", "require_mdl_signer_eku",
 // "accept_mdl_signer_without_eku", "crls", "crl_issuers",
 // "crl_distribution_points", "crl_distribution_points_from_roots",
 // "crl_require_https", "revocation",
@@ -212,7 +215,7 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		return nil, newError(CodeInvalidInput, fmt.Errorf("identifier_list_max_bytes is %d, not between 0 and %d", cfg.IdentifierListMaxBytes, identifierlist.MaxTokenBytesLimit))
 	}
 	r.statusMaxBytes, r.identifierListMaxBytes = cfg.StatusMaxBytes, cfg.IdentifierListMaxBytes
-	cache, err := statusCacheFor(cfg.StatusCacheMaxAgeSeconds)
+	cache, err := statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir)
 	if err != nil {
 		return nil, err
 	}
@@ -799,37 +802,67 @@ const maxStatusCacheMaxAge = 24 * time.Hour
 
 // statusCaches keep the status and identifier lists every reader and
 // Wallet in the process fetched, one Cache for each
-// "status_cache_max_age_seconds" configured: a reader checking one
-// issuer's documents in a queue fetches its list once, not per
-// document. Each check verifies a kept list again with its own
-// reader's or Wallet's trust and clock.
+// "status_cache_max_age_seconds" and "status_cache_dir" configured: a
+// reader checking one issuer's documents in a queue fetches its list
+// once, not per document. Each check verifies a kept list again with
+// its own reader's or Wallet's trust and clock.
 var statusCaches = struct {
 	sync.Mutex
-	byMaxAge map[time.Duration]*statuslist.Cache
-}{byMaxAge: map[time.Duration]*statuslist.Cache{}}
+	byConfig map[statusCacheConfig]*statuslist.Cache
+	// stores are the DirCacheStores by directory, which Caches with
+	// different max ages share.
+	stores map[string]*statuslist.DirCacheStore
+}{byConfig: map[statusCacheConfig]*statuslist.Cache{}, stores: map[string]*statuslist.DirCacheStore{}}
+
+type statusCacheConfig struct {
+	maxAge time.Duration
+	dir    string
+}
 
 // statusCacheFor is the process's Cache keeping lists for maxAgeSeconds
-// (zero: statuslist.DefaultCacheMaxAge), at most a day.
-func statusCacheFor(maxAgeSeconds int64) (*statuslist.Cache, error) {
+// (zero: statuslist.DefaultCacheMaxAge), at most a day, and across
+// launches in dir, when it's set (statuslist.DirCacheStore): a launch
+// then revalidates each list it kept, a round trip, rather than
+// downloading it.
+func statusCacheFor(maxAgeSeconds int64, dir string) (*statuslist.Cache, error) {
 	if maxAgeSeconds < 0 || maxAgeSeconds > int64(maxStatusCacheMaxAge/time.Second) {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_max_age_seconds is %d, not between 0 and %d", maxAgeSeconds, int64(maxStatusCacheMaxAge/time.Second)))
 	}
-	maxAge := time.Duration(maxAgeSeconds) * time.Second
+	if dir != "" && !filepath.IsAbs(dir) {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_dir %q isn't an absolute path", dir))
+	}
+	key := statusCacheConfig{time.Duration(maxAgeSeconds) * time.Second, filepath.Clean(dir)}
+	if dir == "" {
+		key.dir = ""
+	}
 	statusCaches.Lock()
 	defer statusCaches.Unlock()
-	c, ok := statusCaches.byMaxAge[maxAge]
-	if !ok {
-		c = statuslist.NewCache(statuslist.CacheOptions{MaxAge: maxAge})
-		statusCaches.byMaxAge[maxAge] = c
+	if c, ok := statusCaches.byConfig[key]; ok {
+		return c, nil
 	}
+	opts := statuslist.CacheOptions{MaxAge: key.maxAge}
+	if key.dir != "" {
+		store, ok := statusCaches.stores[key.dir]
+		if !ok {
+			var err error
+			if store, err = statuslist.NewDirCacheStore(key.dir, 0); err != nil {
+				return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_dir: %w", err))
+			}
+			statusCaches.stores[key.dir] = store
+		}
+		opts.Store = store
+	}
+	c := statuslist.NewCache(opts)
+	statusCaches.byConfig[key] = c
 	return c, nil
 }
 
-// purgeStatusCaches drops every list the process's Caches keep.
+// purgeStatusCaches drops every list the process's Caches keep in
+// memory.
 func purgeStatusCaches() {
 	statusCaches.Lock()
 	defer statusCaches.Unlock()
-	for _, c := range statusCaches.byMaxAge {
+	for _, c := range statusCaches.byConfig {
 		c.Purge()
 	}
 }
