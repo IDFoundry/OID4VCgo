@@ -54,11 +54,12 @@ func FuzzStatusReference(f *testing.F) {
 		present := false
 		if sdJWT {
 			present = true
+			// Valid JSON that doesn't decode (a number beyond float64,
+			// say) stays a string, as any other non-JSON status does.
 			var status any = statusJSON
-			if json.Valid([]byte(statusJSON)) {
-				if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
-					t.Fatal(err)
-				}
+			var decoded any
+			if json.Valid([]byte(statusJSON)) && json.Unmarshal([]byte(statusJSON), &decoded) == nil {
+				status = decoded
 			}
 			vc.Claims["status"] = status
 		} else {
