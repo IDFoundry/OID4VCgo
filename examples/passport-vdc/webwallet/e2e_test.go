@@ -107,8 +107,9 @@ func receiveEvidenceViaBrowser(t *testing.T, env *demotest.Env, b *http.Client, 
 	page := read(t, resp)
 	tag := approvalTag(t, page)
 	// The approval page is shown before the confirmation code is checked,
-	// so it must not show the passport's data.
-	if strings.Contains(page, "DOE") || strings.Contains(page, "K0000000A") {
+	// so it must not show the passport's data. Only its text is searched:
+	// its random interaction tag can spell "DOE".
+	if text := pageText(page); passportWord.MatchString(text) {
 		t.Error("the issuer's approval page shows passport data before the confirmation code")
 	}
 	resp, err = b.PostForm(env.IssuerURL+"/authorize/decision", url.Values{"interaction": {tag}, "decision": {"approve"}, "code": {offer.ConfirmationCode}})
@@ -666,4 +667,13 @@ func TestWebWallet_SharesSeveralPassports(t *testing.T) {
 	if !ok || len(outcome.People) != 2 {
 		t.Fatalf("verifier outcome = %+v (ok %v), want two people", outcome, ok)
 	}
+}
+
+// passportWord matches the synthetic passport's family name or number
+// as a word.
+var passportWord = regexp.MustCompile(`\b(DOE|K0000000A)\b`)
+
+// pageText is page's text, without its tags and their attributes.
+func pageText(page string) string {
+	return html.UnescapeString(regexp.MustCompile(`<[^>]*>`).ReplaceAllString(page, " "))
 }
