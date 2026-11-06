@@ -22,7 +22,8 @@ const recordSuffix = ".statuslist"
 // DirCacheStore is a CacheStore keeping each record as a file in a
 // directory: an app's cache directory, say, which the platform may
 // clear, costing a download. It keeps at most maxBytes of records,
-// removing the least recently saved first.
+// removing the least recently used first: a record's modification time
+// is when it was last saved, loaded or touched (a 304 confirming it).
 //
 // Records are written to a temporary file and renamed into place, so
 // a process that stops mid-write leaves the old record or none. The
@@ -64,11 +65,29 @@ func (s *DirCacheStore) Load(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(p)
+	data, err := os.ReadFile(p) // #nosec G304 -- p is the store's directory joined with a name path checked has no separator or dot
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+	if err == nil {
+		// Used: evicted after the records used less recently.
+		_ = s.Touch(name)
+	}
 	return data, err
+}
+
+// Touch marks the record kept under name used now, so that it's
+// evicted after records used less recently; nil when none is kept.
+func (s *DirCacheStore) Touch(name string) error {
+	p, err := s.path(name)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if err := os.Chtimes(p, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Save implements CacheStore. A record larger than the store's bound
@@ -87,9 +106,9 @@ func (s *DirCacheStore) Save(name string, record []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // gone once renamed
+	defer func() { _ = os.Remove(tmp.Name()) }() // gone once renamed
 	if _, err := tmp.Write(record); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -101,7 +120,7 @@ func (s *DirCacheStore) Save(name string, record []byte) error {
 	return s.prune(p)
 }
 
-// prune removes the least recently saved records, but never keep, until
+// prune removes the least recently used records, but never keep, until
 // the store is within its bound; s.mu is held.
 func (s *DirCacheStore) prune(keep string) error {
 	entries, err := os.ReadDir(s.dir)

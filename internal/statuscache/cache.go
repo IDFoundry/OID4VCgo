@@ -462,6 +462,8 @@ func (c *Cache) settleNotModified(k key, fk flightKey, f *flight, recheck Rechec
 		c.store(k, prior.digest, Verified{Iat: prior.iat, Exp: prior.exp, TTL: prior.ttl, Memo: prior.memo, MemoBytes: int(prior.size)}, f.at, f.fetchMeta)
 		if f.validators != f.held {
 			c.resave(k, prior.digest, f.validators)
+		} else {
+			c.touch(k)
 		}
 	} else {
 		c.mu.Lock()
@@ -698,6 +700,20 @@ func (c *Cache) write(r record) {
 		return
 	}
 	_ = c.opts.Store.Save(recordName(key{r.URI, r.MediaType}), data)
+}
+
+// Toucher is a Store that can mark a record used without rewriting it,
+// so that it's evicted after records used less recently.
+type Toucher interface {
+	Touch(name string) error
+}
+
+// touch marks k's record used, when Options.Store can: a 304 for a
+// token in memory confirmed it.
+func (c *Cache) touch(k key) {
+	if t, ok := c.opts.Store.(Toucher); ok {
+		_ = t.Touch(recordName(k))
+	}
 }
 
 func (c *Cache) unsave(k key) {

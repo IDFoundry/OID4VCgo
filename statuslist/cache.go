@@ -71,6 +71,12 @@ type CacheOptions struct {
 // removed, and downloaded again. A store's failures cost a download
 // only: they don't fail a check.
 //
+// A CacheStore whose records are bounded should evict the least
+// recently used first. A store that also has a method Touch(name string)
+// error has it called when a 304 confirms a token the Cache holds in
+// memory, which reads nothing from the store, so it can count that as a
+// use (DirCacheStore does).
+//
 // A CacheStore must be safe for concurrent use.
 type CacheStore interface {
 	// Load returns the record kept under name; nil and a nil error, or
