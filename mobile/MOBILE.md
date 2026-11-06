@@ -1137,6 +1137,18 @@ encryption, readable from the first unlock after a boot. So
   presentation, stay in StrongBox by default. `keySecurityLevel()` says
   where the key ended up. An existing key stays where it is: moving it
   would make its records unreadable.
+- **Listing:** each record read costs a Keystore unwrap (about 10 ms in
+  the TEE, 40 ms in StrongBox, on a Pixel 8a), so the wallet lists one
+  kind of record at a time (`ListPrefixed`, `records(idFilter)`): a
+  credential listing doesn't decrypt the refresh grants, pending
+  deferred credentials and authorizations beside them, nor a grant
+  listing the credentials. The store holds its Keystore key's handle
+  once looked up, which changes nothing about when the key works. Under
+  `AFTER_FIRST_UNLOCK` it also holds the record keys it has unwrapped
+  (at most 512, by record and wrapped key, so a record another process
+  rewrote is unwrapped afresh), and a record read again needs no
+  Keystore call; under `WHEN_UNLOCKED` it holds none, since a key held
+  in memory would open records while the device is locked.
 - **Backups:** the standard store is in `noBackupFilesDir`, which neither
   backups nor device transfer copy, as iOS's store is excluded from
   backups. A restored record without its key wouldn't decrypt anyway,

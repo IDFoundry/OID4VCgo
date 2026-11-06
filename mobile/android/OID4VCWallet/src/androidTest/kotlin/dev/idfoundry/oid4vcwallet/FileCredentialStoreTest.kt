@@ -378,6 +378,82 @@ class FileCredentialStoreTest {
         assertArrayEquals(old, s.record("a"))
     }
 
+    /** Counts the Keystore decryptions [body] makes: one per record key unwrapped. */
+    private fun unwraps(body: () -> Unit): Int {
+        var n = 0
+        FileCredentialStore.keystoreFault = { n++; it }
+        try {
+            body()
+        } finally {
+            FileCredentialStore.keystoreFault = null
+        }
+        return n
+    }
+
+    /** Listing by ID reads and decrypts only the records whose IDs it accepts. */
+    @Test
+    fun recordsByIDOpenOnlyThose() {
+        val s = store()
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b", RECORD_B.toByteArray())
+        s.put("deferred-x", """{"kind":"deferred"}""".toByteArray())
+        var got: List<String> = emptyList()
+        assertEquals(1, unwraps { got = s.records { it.startsWith("deferred-") }.map { r -> r.decodeToString() } })
+        assertEquals(listOf("""{"kind":"deferred"}"""), got)
+        assertEquals(2, unwraps { got = s.records { !it.startsWith("deferred-") }.map { r -> r.decodeToString() } })
+        assertEquals(listOf(RECORD_A, RECORD_B), got)
+        assertEquals(3, unwraps { s.records() })
+    }
+
+    /**
+     * Under WHEN_UNLOCKED every read asks the Keystore: no record key is
+     * held, so none opens a record while the Keystore key refuses.
+     */
+    @Test
+    fun whenUnlockedHoldsNoRecordKey() {
+        val s = store()
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b", RECORD_B.toByteArray())
+        assertEquals(2, unwraps { s.records() })
+        assertEquals(2, unwraps { s.records() })
+    }
+
+    /**
+     * Under AFTER_FIRST_UNLOCK the store holds the record keys it has
+     * unwrapped: a record read again, or just written and read back,
+     * needs no Keystore call; one rewritten by another store has another
+     * wrapped key, so is unwrapped afresh; a deleted one's key is dropped.
+     */
+    @Test
+    fun afterFirstUnlockHoldsRecordKeys() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val options = FileCredentialStore.Options(protection = FileCredentialStore.Protection.AFTER_FIRST_UNLOCK, keyAlias = alias)
+        val s = FileCredentialStore(dir, options)
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b", RECORD_B.toByteArray())
+        assertEquals("read back on put, so held", 0, unwraps { s.records() })
+        assertEquals(0, unwraps { assertArrayEquals(RECORD_A.toByteArray(), s.record("a")) })
+
+        FileCredentialStore(dir, options).put("a", RECORD_A2.toByteArray())
+        assertEquals(1, unwraps { assertArrayEquals(RECORD_A2.toByteArray(), s.record("a")) })
+        assertEquals(0, unwraps { s.records() })
+
+        s.delete("b")
+        s.compareAndSwap("a", RECORD_A2.toByteArray(), null)
+        assertTrue(s.records().isEmpty())
+    }
+
+    /** A store whose key another store made again since it looked it up reads that store's records. */
+    @Test
+    fun keyMadeAgainElsewhere() {
+        val dir = File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it }
+        val s = FileCredentialStore(dir, FileCredentialStore.Options(keyAlias = alias))
+        s.put("a", RECORD_A.toByteArray())
+        java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+        FileCredentialStore(dir, FileCredentialStore.Options(keyAlias = alias)).put("b", RECORD_B.toByteArray())
+        assertArrayEquals(RECORD_B.toByteArray(), s.record("b"))
+    }
+
     /** A version 1 record: [record] encrypted by the store's Keystore key itself, in 4 KB pieces. */
     private fun writeVersion1(s: FileCredentialStore, id: String, record: ByteArray): File {
         s.put("k", "{}".toByteArray()) // makes the store's key
