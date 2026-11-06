@@ -1,7 +1,9 @@
 package identifierlist
 
 import (
+	"bytes"
 	"context"
+	"crypto"
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/listhttp"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -91,5 +95,40 @@ func TestPublisher_TokensShared(t *testing.T) {
 	now = now.Add(statuslist.DefaultTokensCheck)
 	if second == first || serve(0) != second || reads[0].Load() != 1 || reads[1].Load() != 1 {
 		t.Fatal("after Invalidate: not one new token for both replicas")
+	}
+}
+
+// A replica whose signer changed — a new certificate for the list —
+// signs its own token rather than serve the one the old signer stored,
+// and stores it under its own signer.
+func TestPublisher_TokensRotatedSigner(t *testing.T) {
+	pki := newPKI(t)
+	newLeaf, newKey := testcert.Leaf(t, "identifier list signer, rotated", pki.ca, pki.caKey)
+	store := &oneTokenStore{}
+	now := time.UnixMilli(time.Now().UnixMilli())
+	var reads atomic.Int32
+	publisher := func(key crypto.Signer, leaf *x509.Certificate) *Publisher {
+		return &Publisher{
+			URI: testURI, Signer: key, Chain: []*x509.Certificate{leaf}, TTL: time.Minute, Tokens: store,
+			Identifiers: func(context.Context) ([][]byte, error) { reads.Add(1); return [][]byte{{0xcc}}, nil },
+			Now:         func() time.Time { return now },
+		}
+	}
+	serve := func(p *Publisher) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/l", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		return rec.Body.String()
+	}
+	old := serve(publisher(pki.key, pki.leaf))
+	now = now.Add(time.Second)
+	if serve(publisher(newKey, newLeaf)) == old || reads.Load() != 2 {
+		t.Fatalf("the rotated replica served the old signer's token (%d reads)", reads.Load())
+	}
+	if !bytes.Equal(store.token.Signer, listhttp.SignerOf(newLeaf.Raw)) {
+		t.Fatalf("stored token's signer %x, want the new certificate's", store.token.Signer)
 	}
 }

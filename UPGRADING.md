@@ -19,6 +19,12 @@ them.
   process, as one built per call starts afresh each time. Don't copy
   one once used, and use another for another `Store`; a change to
   `Lists`, `Bits` or `FillLimit` is still picked up.
+- **A `TokenStore` keeps each token's signer** (`StoredToken.Signer`,
+  the SHA-256 of its chain's leaf certificate), and a Publisher serves
+  only a stored token its own certificate signed: after you rotate a
+  list's key or certificate, replicas sign afresh rather than serve the
+  old signer's token. A custom `TokenStore` must store and return
+  `Signer` as put; `statuslisttest.TestTokenStoreContract` checks it.
 
 ### Issuer (`issuer`)
 
@@ -83,6 +89,9 @@ them.
   List token and the others serve it, set `statuslist.Publisher.Tokens`
   (and `identifierlist.Publisher.Tokens`) to `db.StatusListTokens()`;
   without it each replica signs its own, as before.
+- **Run `Migrate` again for migration 0012**, which keeps each stored
+  token's signer (`oid4vc_status_list_tokens.signer`). A token stored
+  under migration 0011 alone has none, and is signed anew once.
 
 ### Status list caching (`statuslist.Cache`)
 

@@ -1,11 +1,15 @@
 package statuslist_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -221,4 +225,53 @@ func TestPublisher_TokensStoreDown(t *testing.T) {
 		t.Fatal("store back: replica 0 doesn't serve replica 1's token")
 	}
 	rs.expectReads(1, 1)
+}
+
+// x5cLeaf is the leaf certificate in a JWT's x5c header.
+func x5cLeaf(t *testing.T, jwt string) []byte {
+	t.Helper()
+	header, err := base64.RawURLEncoding.DecodeString(strings.SplitN(jwt, ".", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h struct {
+		X5C []string `json:"x5c"`
+	}
+	if err := json.Unmarshal(header, &h); err != nil || len(h.X5C) == 0 {
+		t.Fatalf("header %s: %v", header, err)
+	}
+	leaf, err := base64.StdEncoding.DecodeString(h.X5C[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return leaf
+}
+
+// After a replica's signer changes — a new key and certificate for the
+// list, as when a document signer is revoked — it signs its own token
+// from the same version rather than serve the old signer's, and a
+// replica still on the old signer, until it changes too, signs its
+// own again: each serves only tokens its own certificate is in.
+func TestPublisher_TokensRotatedSigner(t *testing.T) {
+	rs := newReplicas(t, 2)
+	oldLeaf := rs.pubs[0].Chain[0]
+	old := rs.ok(0)
+	if !bytes.Equal(x5cLeaf(t, old), oldLeaf.Raw) {
+		t.Fatal("the first token isn't the old signer's")
+	}
+	ca, caKey := testcert.CA(t, "rotated status CA")
+	newCert, newKey := testcert.Leaf(t, "status signer, rotated", ca, caKey)
+	rs.pubs[1].Signer, rs.pubs[1].Chain = newKey, []*x509.Certificate{newCert}
+	rs.now = rs.now.Add(time.Second)
+	rotated := rs.ok(1)
+	if rotated == old || !bytes.Equal(x5cLeaf(t, rotated), newCert.Raw) {
+		t.Fatal("the rotated replica served the old signer's token")
+	}
+	rs.expectReads(1, 1)
+
+	rs.now = rs.now.Add(statuslist.DefaultTokensCheck)
+	if again := rs.ok(0); !bytes.Equal(x5cLeaf(t, again), oldLeaf.Raw) {
+		t.Fatal("a replica on the old signer served the new signer's token")
+	}
+	rs.expectReads(2, 1)
 }

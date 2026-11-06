@@ -86,7 +86,9 @@ type Publisher struct {
 	// as the list's statuslist.FormCWT. An identifier list has no
 	// version a store keeps, so a revocation is served once the token's
 	// CacheFor has passed, or at once by the replica whose Invalidate is
-	// called, and by the others from their next check.
+	// called, and by the others from their next check. As there, a
+	// stored token is served only by a replica with the same leaf
+	// certificate in Chain.
 	Tokens statuslist.TokenStore
 
 	// TokensCheck is how often a replica asks Tokens for a newer token.
@@ -169,6 +171,7 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		served, signErr = p.cached.GetShared(r.Context(), listhttp.Shared{
 			Store:  listhttp.StoreOf[statuslist.Form](p.Tokens, p.URI, statuslist.FormCWT),
 			Holder: p.holder.Name(), Fresh: p.cacheWindow(), Check: check,
+			Signer: p.signer(),
 		}, p.now, p.sign)
 	} else {
 		served, signErr = p.cached.Get(r.Context(), p.cacheWindow(), p.now, p.sign)
@@ -189,6 +192,15 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // is, ServeHTTP has no token to fall back on.
 func (p *Publisher) Invalidate() {
 	p.cached.Invalidate()
+}
+
+// signer names this Publisher's signer to Tokens: its leaf
+// certificate's SHA-256.
+func (p *Publisher) signer() []byte {
+	if len(p.Chain) == 0 {
+		return nil
+	}
+	return listhttp.SignerOf(p.Chain[0].Raw)
 }
 
 func (p *Publisher) cacheWindow() time.Duration {
