@@ -732,7 +732,9 @@ func (e *Env) Notifications() []oid4vci.NotificationEvent {
 }
 
 func (e *Env) claims() (*sdjwtvc.Claims, *mdoc.Claims) {
-	exp := sdjwtvc.RoundedExp(time.Now(), 24*time.Hour)
+	// Rounded to the start of the day, so 48 hours: with 24, one issued
+	// just before midnight UTC expires minutes later.
+	exp := sdjwtvc.RoundedExp(time.Now(), 48*time.Hour)
 	sdjwtClaims := &sdjwtvc.Claims{VCT: e.vct, Iss: e.sdjwtIss, Exp: &exp, Additional: map[string]any{
 		"family_name": sdjwtvc.SD(FamilyName), "given_name": sdjwtvc.SD(GivenName),
 		"picture": sdjwtvc.SD("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(Portrait)),
