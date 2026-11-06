@@ -455,7 +455,7 @@ func New(opts Options) (env *Env, err error) {
 				return nil, nil
 			}
 			req.SDJWTClaims, req.MdocClaims = e.claims(req.ResolvedConfigurationID)
-			req.PerCredential = e.withStatus
+			req.PerBatch = e.withStatus
 			return nil, nil
 		},
 	})
@@ -636,19 +636,22 @@ func (e *Env) Decide(approve bool) {
 	e.decision = &approve
 }
 
-// withStatus gives a credential the next entry of the status list,
-// valid until Revoke.
-func (e *Env) withStatus(_ context.Context, c *issuer.CredentialInstance) error {
+// withStatus gives each credential of a batch the next entry of the
+// status list, in batch order, valid until Revoke: the batch's entries
+// are taken at once, as a statuslist.Allocator.AllocateN would.
+func (e *Env) withStatus(_ context.Context, batch []*issuer.CredentialInstance) error {
 	e.mu.Lock()
-	idx := len(e.revoked)
-	e.revoked = append(e.revoked, 0)
+	first := len(e.revoked)
+	e.revoked = append(e.revoked, make([]uint8, len(batch))...)
 	e.mu.Unlock()
-	ref := statuslist.StatusListRef{Idx: uint64(idx), URI: e.IssuerURL + StatusListPath} // #nosec G115 -- a slice length
-	if c.SDJWTClaims != nil {
-		c.SDJWTClaims.Status = ref.Claim()
-	}
-	if c.MdocClaims != nil {
-		c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
+	for i, c := range batch {
+		ref := statuslist.StatusListRef{Idx: uint64(first + i), URI: e.IssuerURL + StatusListPath} // #nosec G115 -- a slice length
+		if c.SDJWTClaims != nil {
+			c.SDJWTClaims.Status = ref.Claim()
+		}
+		if c.MdocClaims != nil {
+			c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
+		}
 	}
 	return nil
 }
@@ -796,7 +799,7 @@ func (e *Env) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	}
 	sdjwtClaims, mdocClaims := e.claims(MdocConfigurationID)
 	return e.iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
-		SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims, PerCredential: e.withStatus,
+		SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims, PerBatch: e.withStatus,
 	})
 }
 

@@ -124,35 +124,62 @@ func (s *statusList) ref(idx int) statuslist.StatusListRef {
 // (signerID). It returns errStatusListFull once the list reaches its
 // fill limit.
 func (s *statusList) allocate(ctx context.Context, format string, unchecked bool, signer string, now time.Time) (int, error) {
-	handle, err := newHandle()
+	idxs, err := s.allocateN(ctx, 1, format, unchecked, signer, now)
 	if err != nil {
 		return 0, err
 	}
+	return idxs[0], nil
+}
+
+// allocateN reserves n indices as allocate does one, for a batch of n
+// credentials, in one statuslist.Allocator.AllocateN: one store round
+// trip, and one save of the entries. On an error none of them has an
+// entry; the indices stay reserved, as every allocated one does.
+func (s *statusList) allocateN(ctx context.Context, n int, format string, unchecked bool, signer string, now time.Time) ([]int, error) {
+	handles := make([]string, n)
+	for i := range handles {
+		handle, err := newHandle()
+		if err != nil {
+			return nil, err
+		}
+		handles[i] = handle
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ref, err := s.allocator.Allocate(ctx)
+	refs, err := s.allocator.AllocateN(ctx, n)
 	switch {
 	case errors.Is(err, statuslist.ErrListsFull):
-		return 0, fmt.Errorf("%w (%w)", errStatusListFull, err)
+		return nil, fmt.Errorf("%w (%w)", errStatusListFull, err)
 	case err != nil:
-		return 0, err
+		return nil, err
 	}
-	idx := int(ref.Idx) // #nosec G115 -- below statusListSize
-	// A signer revoked while the request was under way: its credential
-	// is revoked from the start. Should that fail, the credential isn't
-	// issued; its index stays reserved, as every allocated one does.
-	e := &IssuedStatus{Idx: idx, Handle: handle, Format: format, IssuedAt: now, Unchecked: unchecked, Signer: signer, Revoked: s.revokedSigners[signer]}
-	if e.Revoked {
-		if err := s.allocator.SetStatus(ctx, ref, statuslist.StatusInvalid); err != nil {
-			return 0, err
+	idxs := make([]int, len(refs))
+	for i, ref := range refs {
+		idxs[i] = int(ref.Idx) // #nosec G115 -- below statusListSize
+	}
+	drop := func() {
+		for _, idx := range idxs {
+			delete(s.entries, idx)
 		}
 	}
-	s.entries[idx] = e
-	if err := s.save(); err != nil {
-		delete(s.entries, idx)
-		return 0, err
+	for i, ref := range refs {
+		// A signer revoked while the request was under way: its
+		// credentials are revoked from the start. Should that fail, they
+		// aren't issued.
+		e := &IssuedStatus{Idx: idxs[i], Handle: handles[i], Format: format, IssuedAt: now, Unchecked: unchecked, Signer: signer, Revoked: s.revokedSigners[signer]}
+		if e.Revoked {
+			if err := s.allocator.SetStatus(ctx, ref, statuslist.StatusInvalid); err != nil {
+				drop()
+				return nil, err
+			}
+		}
+		s.entries[idxs[i]] = e
 	}
-	return idx, nil
+	if err := s.save(); err != nil {
+		drop()
+		return nil, err
+	}
+	return idxs, nil
 }
 
 // release drops the entry of an index whose credential wasn't issued

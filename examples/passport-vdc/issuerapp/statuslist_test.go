@@ -366,3 +366,47 @@ func TestStatusPage_ShowsIssuanceDayOnly(t *testing.T) {
 		t.Error("the revocation page shows the time of issuance")
 	}
 }
+
+// countingStore counts the reservations a statusList makes.
+type countingStore struct {
+	*statuslist.MemoryIndexStore
+	reserves, batches int
+}
+
+func (c *countingStore) Reserve(ctx context.Context, uri string, idx uint64) error {
+	c.reserves++
+	return c.MemoryIndexStore.Reserve(ctx, uri, idx)
+}
+
+func (c *countingStore) ReserveEach(ctx context.Context, uri string, idxs []uint64) ([]uint64, error) {
+	c.batches++
+	return c.MemoryIndexStore.ReserveEach(ctx, uri, idxs)
+}
+
+// TestStatusList_AllocateNReservesOnce: a batch's indices are reserved
+// in one store call, each distinct and with its own entry.
+func TestStatusList_AllocateNReservesOnce(t *testing.T) {
+	ctx := context.Background()
+	store := &countingStore{MemoryIndexStore: &statuslist.MemoryIndexStore{}}
+	s, err := loadStatusList(ctx, store, testListURI, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idxs, err := s.allocateN(ctx, 5, "mso_mdoc", false, "1", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.batches != 1 || store.reserves != 0 {
+		t.Errorf("reserved with %d ReserveEach and %d Reserve calls, want 1 and 0", store.batches, store.reserves)
+	}
+	seen := map[int]bool{}
+	for _, idx := range idxs {
+		if seen[idx] {
+			t.Errorf("index %d handed out twice", idx)
+		}
+		seen[idx] = true
+	}
+	if got := len(s.snapshot()); len(idxs) != 5 || got != 5 {
+		t.Errorf("%d indices, %d entries, want 5 each", len(idxs), got)
+	}
+}
