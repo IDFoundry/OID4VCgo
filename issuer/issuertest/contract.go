@@ -223,6 +223,30 @@ func TestNonceSpenderContract(t *testing.T, factory func() issuer.NonceSpender) 
 			t.Errorf("second Spend = %v, want issuer.ErrNonceUnknown (nonce already spent)", err)
 		}
 	})
+	t.Run("SpendRefusesARecordUnderAnyOwner", func(t *testing.T) {
+		// The Issuer spends under an Owner of its own, and v0.69.0 spent
+		// under the plain one: a nonce either recorded is spent.
+		store := factory()
+		if err := spend(store, context.Background()); err != nil {
+			t.Fatalf("first Spend: %v", err)
+		}
+		err := store.Spend(context.Background(), issuer.NonceIssuance{Nonce: "s1.n1", Owner: "another owner", ExpiresAt: time.Now().Add(time.Minute)})
+		if !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("Spend under another Owner = %v, want issuer.ErrNonceUnknown (nonce already spent)", err)
+		}
+	})
+	t.Run("SpentIsNotConsumedUnderAnotherOwner", func(t *testing.T) {
+		store := factory()
+		if err := store.Spend(context.Background(), issuer.NonceIssuance{Nonce: "s1.n1", Owner: "c_nonce spent by " + contractOwner, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+			t.Fatalf("Spend: %v", err)
+		}
+		if _, err := store.Consume(context.Background(), issuer.NonceConsumption{Nonce: "s1.n1", Owner: contractOwner}); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("Consume of a nonce spent under another Owner = %v, want issuer.ErrNonceUnknown", err)
+		}
+		if err := spend(store, context.Background()); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("Spend after that Consume = %v, want issuer.ErrNonceUnknown (still spent)", err)
+		}
+	})
 	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) {
 		requireNotUnknown(t, spend(factory(), canceledContext()), issuer.ErrNonceUnknown)
 	})

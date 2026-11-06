@@ -627,12 +627,21 @@ type Dependencies struct {
 	// recorded as spent with Nonces, which must be a NonceSpender, so
 	// each is still used once; that write is made only for a request its
 	// access token authorized. Nonces the store holds, issued before
-	// NonceKeys was set, are still consumed.
+	// NonceKeys was set, are still consumed. Set it whenever a store
+	// seals its records (sqlstore's Sealer): without it, every request
+	// to the Nonce Endpoint also spends one of the sealing key's seals.
 	//
 	// Each key is a secret of at least MinNonceKeyBytes random bytes, the
 	// same in every process serving this Credential Issuer; at most
-	// MaxNonceKeys. To rotate, put the new key first and keep the old
-	// one after it for NonceLifetime.
+	// MaxNonceKeys. Setting or removing NonceKeys across replicas one at
+	// a time is safe: a replica without NonceKeys refuses another's
+	// stateless nonce with invalid_nonce, and the Wallet fetches a new
+	// one. To rotate a key under a rolling deploy, in two steps, so no
+	// replica meets a nonce tagged with a key it doesn't hold: first
+	// deploy the new key after the old one ([old, new]) everywhere,
+	// then put it first ([new, old]), and drop the old key once
+	// NonceLifetime has passed since the last replica took the second
+	// step.
 	NonceKeys [][]byte
 
 	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce
