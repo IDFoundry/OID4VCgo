@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -131,6 +132,33 @@ func TestSealingMismatchIsRefused(t *testing.T) {
 			t.Errorf("%s: %v, want ErrRecordFormat", name, err)
 		}
 	}
+}
+
+// Sweep deletes a table's expired rows in batches until none is left,
+// and leaves the rows that haven't expired: 7 expired, in a batch of
+// 4 and one of 3.
+func TestSweepBatches(t *testing.T) {
+	defer sqlstore.SetSweepBatch(3)()
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d := e.db()
+		now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+		for i := range 8 {
+			exp := now.Add(-time.Duration(i+1) * time.Minute)
+			if i == 7 {
+				exp = now.Add(time.Minute)
+			}
+			if err := d.Nonces().Issue(ctx, issuer.NonceIssuance{Nonce: fmt.Sprint("n", i), ExpiresAt: exp}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if n, err := d.Sweep(ctx, now); err != nil || n != 7 {
+			t.Errorf("Sweep = %d, %v; want 7 deleted", n, err)
+		}
+		if n, err := d.Sweep(ctx, now.Add(2*time.Minute)); err != nil || n != 1 {
+			t.Errorf("Sweep later = %d, %v; want 1 deleted", n, err)
+		}
+	})
 }
 
 func TestSweep(t *testing.T) {
