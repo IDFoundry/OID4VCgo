@@ -55,6 +55,16 @@ them.
   `status_cache_key`. An app calling the framework directly with
   `status_cache_dir` should pass one too (ABI.md).
 
+### Wallet (`wallet`, `walletflow`)
+
+- **A Verifier's `redirect_uri` with the `mdoc-openid4vp` or
+  `eudi-openid4vp` scheme is refused**, as the other Wallet invocation
+  schemes already were (`SubmitDirectPostResponse`, `Respond`), and so,
+  in `walletflow`, is one with the scheme of the Wallet's own
+  `Config.RedirectURI`: `Respond`, `Decline` and a refusal's redirect
+  fail with `wallet.ErrResponseDelivered`, the response having reached
+  the Verifier. Follow a redirect only from `Presented.RedirectURI`.
+
 ## v0.68.0 → v0.69.0
 
 ### Status lists (`statuslist`)

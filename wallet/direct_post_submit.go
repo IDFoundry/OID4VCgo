@@ -216,10 +216,13 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 // Plain http too: HAIP requires TLS, and a same-device return over it
 // could be read or rewritten on the way. And the schemes that invoke a
 // Wallet (OpenID4VP 1.0 §13.1.1, OpenID4VCI 1.0 §4.1, HAIP 1.0 §5 and
-// §4.1): a Verifier's redirect back is to its own page or app, and one
-// to a Wallet's scheme would start another presentation or issuance
-// straight after the holder consented to this one.
+// §4.1, ISO/IEC 18013-7 Annex B's mdoc-openid4vp, the EUDI Wallet's
+// eudi-openid4vp): a Verifier's redirect back is to its own page or
+// app, and one to a Wallet's scheme would start another presentation
+// or issuance straight after the holder consented to this one.
+// walletflow refuses the Wallet's own redirect URI's scheme too.
 var unsafeRedirectSchemes = map[string]bool{
 	"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true,
 	"openid4vp": true, "haip-vp": true, "openid-credential-offer": true, "haip-vci": true,
+	"mdoc-openid4vp": true, "eudi-openid4vp": true,
 }

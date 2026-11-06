@@ -448,8 +448,12 @@ func (w *Wallet) RefreshCRLs(op *Operation) (string, error) {
 // lists are left as they were; so is a CA's list older than the one
 // held for it (a lower CRL number, or an earlier thisUpdate where either
 // has none), so a list replayed from a plain-http distribution point
-// can't un-revoke a certificate. Empty text removes them all, and a role
-// checked then fails closed.
+// can't un-revoke a certificate, and a list naming a CA the
+// configuration has (crl_issuers, a distribution point's issuer, a CA
+// certificate in the roots of a role "revocation" names) that the CA
+// didn't sign, so a forged one can't hold the genuine ones to it (only
+// lists such a CA signed are held to the older-list rule). Empty text
+// removes them all, and a role checked then fails closed.
 func (w *Wallet) SetCRLs(pemText string) error {
 	if err := w.crls.set(pemText); err != nil {
 		return newError(CodeInvalidInput, fmt.Errorf("crls: %w", err))

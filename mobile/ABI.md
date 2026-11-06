@@ -711,7 +711,8 @@ distribution point, no critical extension it doesn't process), has a
 nextUpdate, is current now, and isn't older than the one held for its
 CA (a lower CRL number, or an earlier thisUpdate), as `SetCRLs`
 refuses; the lists held, from `crls`, `SetCRLs` or an earlier refresh,
-are the floor. Fetches are a GET, over `http` or `https` (a CRL is
+are the floor — those a CA the configuration has signed, from
+OID4VCWallet 0.29.0 (see below). Fetches are a GET, over `http` or `https` (a CRL is
 signed, so distribution points are usually plain `http`), at most
 8 MiB, DER or one PEM block, following at most three redirects on the
 same host only, from public addresses only outside `development`
@@ -769,7 +770,7 @@ run. Added within ABI 14.
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
 | `RefreshCRLs(op)` | `{"abi", "results", "crls", "next_refresh"}`: fetches the configured CRL distribution points and keeps each current list its CA signed that isn't older than the one held (see Refreshing CRLs). Network requests. Added within ABI 14 |
-| `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. No network calls. Added within ABI 12 |
+| `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. From OID4VCWallet 0.29.0 (within ABI 15), a list naming a CA the configuration has — in `crl_issuers`, a distribution point's `issuer`, or a CA certificate in the roots of a role `revocation` names — that the CA didn't sign is `invalid_input` too, and is dropped from `crls` when a Wallet or ProximityReader is made (an earlier version may have held, and the app persisted, one); and only lists such a CA signed hold later ones to the older-list rule. Before, a forged list with a CA's name and a huge CRL number, from a plain `http` distribution point say, was taken and refused every genuine list after it. A list from a CA the configuration doesn't have (an intermediate CA met only on a chain) is still taken, verified when a certificate is checked, but neither refused as older nor a floor for a later one: give its CA in `crl_issuers` to have it checked. No network calls. Added within ABI 12 |
 
 A credential **summary** is `{"id", "credential_issuer",
 "configuration_id", "format", "vct", "doctype", "received_at",

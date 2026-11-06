@@ -27,6 +27,12 @@ type crlSet struct {
 	// pinned in the roots (certrevocation.CRLs.Issuers): a pinned leaf's
 	// CRL is verified against its CA, which isn't on its path.
 	issuers []*x509.Certificate
+	// known are the CA certificates the configuration names: issuers,
+	// each distribution point's issuer and the CA certificates in the
+	// roots of the roles "revocation" names. A list naming one of them
+	// must be signed by it, and only a list one of them signed is a
+	// floor (see set). Set at construction only.
+	known []*x509.Certificate
 
 	// points are the distribution points refresh fetches (RefreshCRLs),
 	// with refreshCfg's settings, and now its clock, nil for time.Now.
@@ -60,15 +66,22 @@ func newCRLSet(crls, issuers string) (*crlSet, error) {
 	if s.issuers, err = parseCRLIssuers(issuers); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("crl_issuers: %w", err))
 	}
+	s.known = s.issuers
 	return s, nil
 }
 
-// set replaces s's lists with pemText's. A list older than the one held
-// for the same CA — an earlier thisUpdate, or a lower CRL number — is
-// refused, and the lists left as they were: a CRL fetched over plain
-// http, as distribution points usually are, could otherwise be replayed
-// to un-revoke a certificate revoked since, while still before its
-// nextUpdate.
+// set replaces s's lists with pemText's. A list naming a CA s knows
+// (s.known) that it didn't sign is refused: whoever can forge one (over
+// the plain http distribution points usually are) could otherwise make
+// it the newest list of that CA, refusing every genuine one after it.
+// A list older than the one held from the same CA's key — an earlier
+// thisUpdate, or a lower CRL number — is refused too: a CRL fetched over
+// plain http could otherwise be replayed to un-revoke a certificate
+// revoked since, while still before its nextUpdate. Either way the lists
+// are left as they were. Only a list a CA s knows signed is held to
+// that, or holds others to it: a list from another CA (an intermediate
+// CA's, met only on a chain) is checked against its CA's key when a
+// certificate is, but can't be verified here.
 func (s *crlSet) set(pemText string) error {
 	lists, err := parseCRLs(pemText)
 	if err != nil {
@@ -76,17 +89,90 @@ func (s *crlSet) set(pemText string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if held := s.lists.Load(); held != nil {
-		for i, l := range lists {
-			for _, h := range *held {
-				if sameCRLIssuer(l, h) && olderCRL(l, h) {
-					return fmt.Errorf("CRL %d (%q) is older than the one held for its CA", i, l.Issuer)
-				}
+	var held []*x509.RevocationList
+	if p := s.lists.Load(); p != nil {
+		held = *p
+	}
+	heldSigners := s.signers(held)
+	for i, l := range lists {
+		signer, err := s.signer(l)
+		if err != nil {
+			return fmt.Errorf("CRL %d (%q): %w", i, l.Issuer, err)
+		}
+		if signer == nil {
+			continue
+		}
+		for j, h := range held {
+			if heldSigners[j] != nil && sameKey(signer, heldSigners[j]) && olderCRL(l, h) {
+				return fmt.Errorf("CRL %d (%q) is older than the one held for its CA", i, l.Issuer)
 			}
 		}
 	}
 	s.lists.Store(&lists)
 	return nil
+}
+
+// errCRLNotSigned is a list naming a CA the configuration has that the
+// CA didn't sign.
+var errCRLNotSigned = errors.New("it names a CA the configuration has, which didn't sign it")
+
+// signer returns the CA certificate of s.known that signed l, nil when
+// none names l's issuer, or errCRLNotSigned when one does but none
+// verifies it.
+func (s *crlSet) signer(l *x509.RevocationList) (*x509.Certificate, error) {
+	named := false
+	for _, ca := range s.known {
+		if !bytes.Equal(ca.RawSubject, l.RawIssuer) {
+			continue
+		}
+		named = true
+		if l.CheckSignatureFrom(ca) == nil {
+			return ca, nil
+		}
+	}
+	if named {
+		return nil, errCRLNotSigned
+	}
+	return nil, nil
+}
+
+// signers returns each of lists' signer (see signer), nil for a list
+// no CA s knows signed.
+func (s *crlSet) signers(lists []*x509.RevocationList) []*x509.Certificate {
+	out := make([]*x509.Certificate, len(lists))
+	for i, l := range lists {
+		out[i], _ = s.signer(l)
+	}
+	return out
+}
+
+// sameKey reports whether a and b are one CA's name and key: lists
+// either signed share a rollback floor.
+func sameKey(a, b *x509.Certificate) bool {
+	return bytes.Equal(a.RawSubject, b.RawSubject) && bytes.Equal(a.RawSubjectPublicKeyInfo, b.RawSubjectPublicKeyInfo)
+}
+
+// learn adds cas to the CA certificates s knows, then drops each list
+// held that names one of them without its signature: a list a version
+// before this one held, and the app persisted, which would otherwise
+// stay the newest list of its CA. It runs at construction only.
+func (s *crlSet) learn(cas []*x509.Certificate) {
+	for _, ca := range cas {
+		if !slices.ContainsFunc(s.known, ca.Equal) {
+			s.known = append(s.known, ca)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.lists.Load()
+	if p == nil {
+		return
+	}
+	kept := slices.DeleteFunc(slices.Clone(*p), func(l *x509.RevocationList) bool {
+		_, err := s.signer(l)
+		return err != nil
+	})
+	s.lists.Store(&kept)
 }
 
 // sameCRLIssuer reports whether a and b are lists of the same CA: the

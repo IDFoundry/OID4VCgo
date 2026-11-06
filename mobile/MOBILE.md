@@ -412,6 +412,21 @@ CRLs it holds, through `certrevocation.CRLs`.
   names its parent's list, which needs the parent bound, and a point is
   never read from a presented certificate, which would let whoever
   presents one choose where the device connects.
+- **Only a verified list is a floor.** The rollback floor compares a
+  list with the one held from the same CA's key, and a list is checked
+  against its CA's key only when a certificate is, so before
+  OID4VCWallet 0.29.0 a list nobody signed could be the floor: a forged
+  list with a CA's name and a huge CRL number, from a plain `http`
+  point, was taken by `SetCRLs` and refused every genuine list after it,
+  across launches through the persisted `crls`. Now a list naming a CA
+  the configuration has (`crl_issuers`, a point's issuer, a CA
+  certificate in the roots of a role `revocation` names) must verify
+  against it — refused by `SetCRLs`, dropped from `crls` at launch —
+  and only such lists hold others to the floor. A list from a CA the
+  configuration doesn't have, an intermediate met only on chains, is
+  still taken (a check verifies it), but can't be a floor: the
+  alternative, refusing it, would fail every chain through that CA.
+  Within ABI 15: the refusal is new only for forged input.
 - **Persistence stays the app's.** The result carries every list held
   as PEM; the app stores it and passes it back as `crls` at launch,
   which also restores the rollback floor. There's no library storage
