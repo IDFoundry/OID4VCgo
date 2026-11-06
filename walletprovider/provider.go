@@ -49,8 +49,14 @@ const (
 	// MaxChallengeTTL bounds a challenge's lifetime.
 	MaxChallengeTTL = 15 * time.Minute
 
-	// MaxStatusListSize bounds Config.StatusListSize: 4 MiB packed,
-	// which every Relying Party fetches whole.
+	// MaxStatusListSize bounds Config.StatusListSize: 4 MiB packed
+	// (two bits an index), which every Relying Party fetches whole. A
+	// list compresses well while few of its statuses are set, but a
+	// Relying Party refuses a token larger than its own limit — 1 MiB by
+	// default (statuslist.DefaultMaxTokenBytes) — so a list near this
+	// size with more than a few percent of its keys suspended or revoked
+	// fails every issuer's check: keep StatusListSize to 2^22 or below
+	// unless the issuers checking it raise their limit.
 	MaxStatusListSize = 1 << 24
 
 	// MaxStatusListPeriod bounds Config.StatusListPeriod.
@@ -109,7 +115,13 @@ type Config struct {
 	// (statuslist.DefaultFillLimit), so a period holds
 	// MaxStatusListsPerPeriod × StatusListSize/2 instance keys used in
 	// it, and an attestation for one more fails until the next period:
-	// size it for the instance keys used in a period. It may be raised
+	// size it for the instance keys used in a period. Every issuance
+	// uses a new instance key, and a key used again in a later period
+	// takes an index there too, so a period needs about the fleet's
+	// issuances and refreshes in that period. The default holds 64 ×
+	// 2^16/2 ≈ 2.1M a period (a week); 5M wallets each issuing or
+	// refreshing twice a week use about 10M, so need StatusListSize
+	// 2^19 or more (64 × 2^19/2 ≈ 16.8M). It may be raised
 	// at any time, but not lowered while a served list holds an index
 	// past the new size: that list can't be published until it retires.
 	StatusListSize int
