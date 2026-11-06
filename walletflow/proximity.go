@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
@@ -409,8 +410,11 @@ type ProximityPresented struct {
 	// DeviceResponse, ending the session. The app then disconnects.
 	Send []byte
 	// Linkable is whether the copy presented had been seen by another
-	// Verifier.
+	// Verifier: for several documents, whether any was.
 	Linkable bool
+	// LinkableCredentials are the credentials presented with such a
+	// copy, by ID, in the order of the documents they answer.
+	LinkableCredentials []string
 }
 
 // Respond presents the held mdoc credentialID for request number
@@ -423,8 +427,27 @@ type ProximityPresented struct {
 // Respond returns — while the holder key prompts, say — wins: Respond
 // fails with ErrTerminated, releasing the copy, and gives no message.
 // Once Respond has returned, the app checks it hasn't ended the session
-// itself before it sends Send.
+// itself before it sends Send. It is RespondDocuments with one answer.
 func (p *ProximityPresentation) Respond(ctx context.Context, request int, credentialID string, elements [][2]string) (ProximityPresented, error) {
+	return p.RespondDocuments(ctx, []MdocAnswer{{Request: request, CredentialID: credentialID, Elements: elements}})
+}
+
+// RespondDocuments presents several of the request's documents in one
+// DeviceResponse, each answer as Respond presents one, in the request's
+// order, each authenticated by its own holder key, and ends the
+// session. A document the holder doesn't answer is left out (ISO/IEC
+// 18013-5 allows any subset), with no documentErrors. It refuses
+// (ErrInvalidSelection) no answers, a request answered twice, a
+// credential answering two requests, and answers to two requests of one
+// document type (a Document names only its type), as Respond refuses
+// each answer.
+//
+// Every copy is reserved before any key signs. Each KeyStore that
+// requires user presence prompts in turn; if one fails or the holder
+// cancels, or Terminate comes or ctx ends between keys, nothing is
+// sent, every copy is released, the keys not yet reached aren't
+// asked, and the session goes on as after Respond's errors.
+func (p *ProximityPresentation) RespondDocuments(ctx context.Context, answers []MdocAnswer) (ProximityPresented, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.state != proximityRequested {
@@ -433,26 +456,28 @@ func (p *ProximityPresentation) Respond(ctx context.Context, request int, creden
 	if p.terminating.Load() {
 		return ProximityPresented{}, ErrTerminated
 	}
-	if err := p.checkSelection(request, credentialID, elements); err != nil {
-		return ProximityPresented{}, err
-	}
-	reserved, err := p.w.reserve(ctx, Selection{"": {credentialID}}, p.verifier, p.linkable, p.byID)
+	ordered, err := orderAnswers(answers, func(i int) string { return p.requests[i].DocType }, func(a MdocAnswer) error { return p.checkSelection(a.Request, a.CredentialID, a.Elements) })
 	if err != nil {
 		return ProximityPresented{}, err
 	}
-	send, err := p.respond(ctx, request, reserved[0], elements)
+	reserved, err := p.w.reserveAnswers(ctx, ordered, p.verifier, p.linkable, p.byID)
+	if err != nil {
+		return ProximityPresented{}, err
+	}
+	send, err := p.respond(ctx, ordered, reserved)
 	if err == nil && p.terminating.Load() {
 		// Terminate came while the holder key signed: the session is
 		// over, and the response is dropped.
 		err = ErrTerminated
 	}
 	if err != nil {
-		// Nothing left the wallet: the copy wasn't seen.
+		// Nothing left the wallet: the copies weren't seen.
 		p.w.release(ctx, reserved, p.verifier)
 		return ProximityPresented{}, err
 	}
 	p.state = proximityEnded
-	return ProximityPresented{Send: send, Linkable: reserved[0].linkable}, nil
+	linkable := linkableCredentials(reserved)
+	return ProximityPresented{Send: send, Linkable: len(linkable) > 0, LinkableCredentials: linkable}, nil
 }
 
 // checkSelection refuses a request, credential or elements Respond
@@ -479,21 +504,29 @@ func (p *ProximityPresentation) checkSelection(request int, credentialID string,
 	return nil
 }
 
-// respond builds the encrypted DeviceResponse with the reserved copy.
-func (p *ProximityPresentation) respond(ctx context.Context, request int, r reservedCopy, elements [][2]string) ([]byte, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(r.c.Credential)
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: credential %q: %w", r.id, err)
+// respond builds the encrypted DeviceResponse answering answers with
+// the copies reserved for them, one holder key at a time, stopping
+// before the next when Terminate has come or ctx has ended.
+func (p *ProximityPresentation) respond(ctx context.Context, answers []MdocAnswer, reserved []reservedCopy) ([]byte, error) {
+	docs := make([]oid4vpmdoc.Document, 0, len(answers))
+	for i, a := range answers {
+		if p.terminating.Load() {
+			return nil, ErrTerminated
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("walletflow: %w", err)
+		}
+		issuerSigned, k, err := p.w.heldMdoc(ctx, reserved[i])
+		if err != nil {
+			return nil, err
+		}
+		doc, err := p.document(a.Request, issuerSigned, k, a.Elements)
+		if err != nil {
+			return nil, fmt.Errorf("walletflow: %w", err)
+		}
+		docs = append(docs, doc)
 	}
-	issuerSigned, err := mdoc.UnmarshalIssuerSigned(raw)
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: credential %q: %w", r.id, err)
-	}
-	k, err := p.w.deps.Keys.Key(ctx, r.keyID)
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: credential %q's holder key: %w", r.id, err)
-	}
-	resp, err := p.deviceResponse(request, issuerSigned, k, elements)
+	resp, err := proximity.MarshalDeviceResponse(docs...)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
 	}
@@ -504,19 +537,20 @@ func (p *ProximityPresentation) respond(ctx context.Context, request int, r rese
 	return send, nil
 }
 
-// deviceResponse builds the DeviceResponse, authenticating the mdoc as
-// Config.ProximityDeviceAuth says: with ProximityDeviceMACPreferred and
-// a holder key that agrees keys (proximity.KeyAgreer), with a MAC;
-// otherwise, or if the key can't agree (proximity.ErrNoKeyAgreement),
-// with a signature.
-func (p *ProximityPresentation) deviceResponse(request int, issuerSigned mdoc.IssuerSigned, k Key, elements [][2]string) ([]byte, error) {
+// document builds the Document answering request number request,
+// authenticating the mdoc as Config.ProximityDeviceAuth says: with
+// ProximityDeviceMACPreferred and a holder key that agrees keys
+// (proximity.KeyAgreer), with a MAC; otherwise, or if the key can't
+// agree (proximity.ErrNoKeyAgreement), with a signature. Each document
+// decides on its own.
+func (p *ProximityPresentation) document(request int, issuerSigned mdoc.IssuerSigned, k Key, elements [][2]string) (oid4vpmdoc.Document, error) {
 	if ka, ok := k.(proximity.KeyAgreer); ok && p.w.cfg.ProximityDeviceAuth == ProximityDeviceMACPreferred {
-		resp, err := proximity.BuildDeviceResponseMAC(p.reqs[request], issuerSigned, ka, p.s.EReaderKey(), p.s.SessionTranscriptBytes(), elements)
+		doc, err := proximity.BuildDocumentMAC(p.reqs[request], issuerSigned, ka, p.s.EReaderKey(), p.s.SessionTranscriptBytes(), elements)
 		if !errors.Is(err, proximity.ErrNoKeyAgreement) {
-			return resp, err
+			return doc, err
 		}
 	}
-	return proximity.BuildDeviceResponse(p.reqs[request], issuerSigned, k, p.s.SessionTranscriptBytes(), elements)
+	return proximity.BuildDocument(p.reqs[request], issuerSigned, k, p.s.SessionTranscriptBytes(), elements)
 }
 
 // ProximityDeviceAuth is how an in-person response authenticates the

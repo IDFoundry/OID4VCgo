@@ -110,6 +110,26 @@ unsigned request could come from anyone who scanned the code.
 `WalletConfiguration.requireTrustedMdocReader` ends a session from any
 other reader before the holder sees it.
 
+### Several documents at once
+
+A reader may ask for several documents in one request: an mDL, a photo
+ID and a payment credential, say, each a `Request.documents` entry. Answer
+any of them in one response with `respond(answers)`, an
+`MdocPresentation.Answer(document, credentialID, elements)` each; a
+document left out isn't in the response. It returns
+`ProximityPresentation.Responded`: `linkable` whether any copy shared
+had been seen by another Verifier, and `linkableCredentials` which. The
+same call is on `CombinedPresentation`, and on `MdocPresentation` for
+the Digital Credentials API.
+
+Each answer's holder key signs in turn. With holder keys that require
+the holder for every signature, the default, that is one fingerprint or
+screen-lock prompt per document: Android ties each prompt to one
+signature. `AndroidKeystoreKeyStore.Options.holderAuthenticationTimeout`
+makes holder keys created from then on usable for a short time after
+the holder authenticates, so one prompt covers the whole response. If
+the holder cancels any prompt, nothing is sent and the request stands.
+
 `cancel()` ends a session at any point, as the holder leaves the screen,
 say. `ProximityTimeouts` sets how long it waits: by default 60 seconds
 for a reader to connect, 30 for its request, and 300 for the holder to

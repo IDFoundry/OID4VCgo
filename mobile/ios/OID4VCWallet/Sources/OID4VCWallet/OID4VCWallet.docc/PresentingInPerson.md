@@ -84,6 +84,22 @@ come from anyone who scanned the code. As over the Digital Credentials
 API, ``WalletConfiguration/requireTrustedMdocReader`` ends a session
 from any other reader before the holder sees it.
 
+### Several documents at once
+
+A reader may ask for several documents in one request: an mDL, a photo
+ID and a payment credential, say, each a
+``ProximityPresentation/Request/documents`` entry. Answer any of them in
+one response with ``ProximityPresentation/respond(answers:)``, a
+``MdocPresentation/Answer`` each; a document left out isn't in the
+response. It returns ``ProximityPresentation/Responded``: whether any
+copy shared had been seen by another Verifier, and which. The same call
+is on ``MdocPresentation`` for the Digital Credentials API.
+
+Each answer's holder key signs in turn, and a ``KeychainKeyStore``
+asking for user presence asks the holder once for them all: the keys
+share one authentication for that call only. If the holder cancels,
+nothing is sent and the request stands.
+
 ``ProximityPresentation/cancel()`` ends a session at any point, as the
 holder leaves the screen, say. ``ProximityTimeouts`` sets how long it
 waits: by default 60 seconds for a reader to connect, 30 for its

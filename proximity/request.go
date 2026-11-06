@@ -247,8 +247,36 @@ func cborMapHeader(raw []byte) (n uint64, indefinite bool, rest []byte, err erro
 // elements are encoded sorted, so the same request always gives the
 // same bytes.
 func encodeDeviceRequest(docType string, elements map[string][]string, sign func(itemsRequestBytes []byte) ([]byte, error)) ([]byte, error) {
+	return encodeDeviceRequestDocuments([]DocumentRequest{{DocType: docType, Elements: elements}}, sign)
+}
+
+// encodeDeviceRequestDocuments is encodeDeviceRequest with a DocRequest
+// for each of docs, in order, each signed by sign over its own
+// ItemsRequestBytes.
+func encodeDeviceRequestDocuments(docs []DocumentRequest, sign func(itemsRequestBytes []byte) ([]byte, error)) ([]byte, error) {
+	requests := make([]wireDocRequest, 0, len(docs))
+	for _, d := range docs {
+		doc, err := encodeDocRequest(d.DocType, d.Elements, sign)
+		if err != nil {
+			return nil, err
+		}
+		requests = append(requests, doc)
+	}
+	b, err := encMode.Marshal(wireDeviceRequest{
+		Version:     deviceRequestVersion,
+		DocRequests: requests,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("proximity: encode DeviceRequest: %w", err)
+	}
+	return b, nil
+}
+
+// encodeDocRequest builds one DocRequest, as encodeDeviceRequest
+// describes.
+func encodeDocRequest(docType string, elements map[string][]string, sign func(itemsRequestBytes []byte) ([]byte, error)) (wireDocRequest, error) {
 	if docType == "" {
-		return nil, fmt.Errorf("proximity: docType is required")
+		return wireDocRequest{}, fmt.Errorf("proximity: docType is required")
 	}
 	nameSpaces := map[string]map[string]bool{}
 	for ns, els := range elements {
@@ -262,33 +290,26 @@ func encodeDeviceRequest(docType string, elements map[string][]string, sign func
 		nameSpaces[ns] = m
 	}
 	if len(nameSpaces) == 0 {
-		return nil, fmt.Errorf("proximity: request at least one element")
+		return wireDocRequest{}, fmt.Errorf("proximity: request at least one element")
 	}
 	items, err := sortedEncMode.Marshal(struct {
 		DocType    string                     `cbor:"docType"`
 		NameSpaces map[string]map[string]bool `cbor:"nameSpaces"`
 	}{docType, nameSpaces})
 	if err != nil {
-		return nil, fmt.Errorf("proximity: encode ItemsRequest: %w", err)
+		return wireDocRequest{}, fmt.Errorf("proximity: encode ItemsRequest: %w", err)
 	}
 	itemsBytes, err := wrapTag24(items)
 	if err != nil {
-		return nil, fmt.Errorf("proximity: encode ItemsRequestBytes: %w", err)
+		return wireDocRequest{}, fmt.Errorf("proximity: encode ItemsRequestBytes: %w", err)
 	}
 	doc := wireDocRequest{ItemsRequest: itemsBytes}
 	if sign != nil {
 		if doc.ReaderAuth, err = sign(itemsBytes); err != nil {
-			return nil, err
+			return wireDocRequest{}, err
 		}
 	}
-	b, err := encMode.Marshal(wireDeviceRequest{
-		Version:     deviceRequestVersion,
-		DocRequests: []wireDocRequest{doc},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("proximity: encode DeviceRequest: %w", err)
-	}
-	return b, nil
+	return doc, nil
 }
 
 // requestedSet is the [namespace, element] pairs a request asked for.

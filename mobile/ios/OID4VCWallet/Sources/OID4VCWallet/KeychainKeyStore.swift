@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// The wallet's keys, in the Secure Enclave and the Keychain: P-256 keys
@@ -31,7 +32,10 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         /// and in person — a check the app's own code keeps, not the
         /// key. For Face ID, the app's Info.plist must have an
         /// `NSFaceIDUsageDescription`; without one, iOS asks for the
-        /// passcode instead.
+        /// passcode instead. A presentation answering several documents
+        /// at once (``ProximityPresentation/respond(answers:)``,
+        /// ``MdocPresentation/respond(answers:)``) asks once: its holder
+        /// keys share one authentication context for that call only.
         public var holderUserPresence: Bool
         /// Prefixes every key's Keychain application tag. Keys under
         /// another prefix are never touched, by a sweep or anything else.
@@ -224,6 +228,13 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         }
         var q = query(id)
         q[kSecReturnRef as String] = true
+        if let context = HolderPrompt.current {
+            // One presentation's holder keys share it: the first
+            // signature asks the holder, and the others don't again.
+            // It's this thread's: only that presentation's Go call
+            // signs on it.
+            q[kSecUseAuthenticationContext as String] = context
+        }
         var item: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &item)
         switch status {
@@ -287,5 +298,53 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
             throw error!.takeRetainedValue() as Error
         }
         return access
+    }
+}
+
+extension KeychainKeyStore {
+    /// Runs `body` — one presentation's Go call, which signs with each
+    /// holder key it answers with — with one authentication context
+    /// shared by those signatures alone: with `Options.holderUserPresence`,
+    /// the first asks the holder, and the holder keys after it in `body`
+    /// reuse that, so answering several documents at once asks once. The
+    /// context is invalidated when `body` returns: the next presentation
+    /// asks again.
+    ///
+    /// The context is this thread's (`HolderPrompt`), not the process's:
+    /// a C call into Go runs on the calling thread, which the goroutine
+    /// keeps until it returns, so the key store's `sign`, called back by
+    /// Go's own synchronous signing, runs on it too. A holder key used by
+    /// any other call — another presentation at the same time, on another
+    /// thread — asks the holder for itself. Were Go ever to sign on
+    /// another goroutine, those signatures would ask again rather than
+    /// share: it fails safe.
+    static func oneHolderPrompt<T>(_ body: () throws -> T) rethrows -> T {
+        try HolderPrompt.scoped(body)
+    }
+}
+
+/// The authentication context holder keys share inside
+/// `KeychainKeyStore.oneHolderPrompt`, held in the calling thread's
+/// dictionary; a nested call shares the outer one's.
+enum HolderPrompt {
+    private static let key = "dev.idfoundry.oid4vcwallet.holderPrompt"
+
+    /// This thread's context, inside `oneHolderPrompt`; else nil.
+    static var current: LAContext? { Thread.current.threadDictionary[key] as? LAContext }
+
+    static func scoped<T>(_ body: () throws -> T) rethrows -> T {
+        let dictionary = Thread.current.threadDictionary
+        if dictionary[key] is LAContext {
+            return try body()
+        }
+        let context = LAContext()
+        dictionary[key] = context
+        // A thread of a shared queue: cleared before it runs anything
+        // else.
+        defer {
+            dictionary.removeObject(forKey: key)
+            context.invalidate()
+        }
+        return try body()
     }
 }

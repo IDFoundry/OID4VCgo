@@ -14,6 +14,9 @@ public class CombinedPresentation internal constructor(internal val owner: NfcPr
     /** Answers the selected reader's request. */
     public suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>): Boolean =
         owner.presentation.respond(document, credentialID, elements)
+    /** Answers several of the selected reader's requested documents in one response ([ProximityPresentation.respond]). */
+    public suspend fun respond(answers: List<MdocPresentation.Answer>): ProximityPresentation.Responded =
+        owner.presentation.respond(answers)
     /** Declines the request. */
     public suspend fun decline(): Unit = owner.presentation.decline()
     /** Cancels both offers; use [close] to await cleanup. */

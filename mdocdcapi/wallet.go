@@ -1,6 +1,7 @@
 package mdocdcapi
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/identifier"
+	"github.com/idfoundry/oid4vcgo/internal/mdocresponse"
 	"slices"
 	"sort"
 	"strings"
@@ -355,37 +357,82 @@ func verifyReaderAuth(sig, detached []byte, t ReaderTrust) (*x509.Certificate, e
 // key, over the session transcript. It returns the CBOR EncryptedResponse
 // (Annex C.3) — what an iOS document provider returns, the platform
 // encoding it into the response's "response" member; ResponseData is the
-// whole {"response"} object.
+// whole {"response"} object. It is RespondDocuments with one answer.
 func (in Incoming) Respond(doc int, issuerSigned mdoc.IssuerSigned, holder crypto.Signer, elements [][2]string) ([]byte, error) {
-	if doc < 0 || doc >= len(in.Documents) {
-		return nil, fmt.Errorf("mdocdcapi: no document request %d", doc)
-	}
+	return in.RespondDocuments(context.Background(), []Answer{{Document: doc, IssuerSigned: issuerSigned, Holder: holder, Elements: elements}})
+}
+
+// Answer is one document request the holder answers: Document, the
+// request's index in Incoming.Documents, with IssuerSigned — the held
+// mdoc — disclosing Elements, and signed by Holder, its device key.
+type Answer struct {
+	Document     int
+	IssuerSigned mdoc.IssuerSigned
+	Holder       crypto.Signer
+	Elements     [][2]string
+}
+
+// RespondDocuments answers several of the request's documents in one
+// EncryptedResponse, as Respond answers one: a Document for each
+// answer, in order, each signed by its own holder key. A document
+// request the holder doesn't answer is left out of the response, which
+// ISO/IEC 18013-5 allows; none is answered twice. Everything is checked
+// before any key signs, including that each credential holds an element
+// to disclose, and an error leaves nothing to send. Once ctx ends, no
+// further key signs: a holder key that asks the holder isn't asked again
+// for a response that will fail.
+func (in Incoming) RespondDocuments(ctx context.Context, answers []Answer) ([]byte, error) {
 	if in.recipient == nil {
 		return nil, errors.New("mdocdcapi: Incoming isn't a parsed request")
 	}
-	requested := in.Documents[doc]
-	if err := checkConsented(requested, elements); err != nil {
-		return nil, err
+	if len(answers) == 0 {
+		return nil, errors.New("mdocdcapi: no document to answer")
 	}
-	selected := issuerSigned.SelectNameSpaces(elements)
-	if len(selected.NameSpaces) == 0 {
-		return nil, errors.New("mdocdcapi: the credential holds none of the elements to disclose")
-	}
-	alg, err := deviceAlgFor(holder.Public())
-	if err != nil {
-		return nil, err
+	selected := make([]mdoc.IssuerSigned, len(answers))
+	for i, a := range answers {
+		if a.Document < 0 || a.Document >= len(in.Documents) {
+			return nil, fmt.Errorf("mdocdcapi: no document request %d", a.Document)
+		}
+		for _, prev := range answers[:i] {
+			if prev.Document == a.Document {
+				return nil, fmt.Errorf("mdocdcapi: document request %d answered twice", a.Document)
+			}
+		}
+		if err := checkConsented(in.Documents[a.Document], a.Elements); err != nil {
+			return nil, err
+		}
+		if a.Holder == nil {
+			return nil, fmt.Errorf("mdocdcapi: document request %d has no device key", a.Document)
+		}
+		if _, err := deviceAlgFor(a.Holder.Public()); err != nil {
+			return nil, err
+		}
+		selected[i] = a.IssuerSigned.SelectNameSpaces(a.Elements)
+		if len(selected[i].NameSpaces) == 0 {
+			return nil, fmt.Errorf("mdocdcapi: document request %d: the credential holds none of the elements to disclose", a.Document)
+		}
 	}
 	stBytes, err := sessionTranscriptBytes(in.transcript)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: encode SessionTranscriptBytes: %w", err)
 	}
-	deviceSigned, err := mdoc.SignDeviceSignature(holder, alg, stBytes, requested.DocType, map[string]map[string]interface{}{})
-	if err != nil {
-		return nil, fmt.Errorf("mdocdcapi: device signature: %w", err)
+	docs := make([]oid4vpmdoc.Document, 0, len(answers))
+	for i, a := range answers {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("mdocdcapi: %w", err)
+		}
+		requested := in.Documents[a.Document]
+		alg, err := deviceAlgFor(a.Holder.Public())
+		if err != nil {
+			return nil, err
+		}
+		deviceSigned, err := mdoc.SignDeviceSignature(a.Holder, alg, stBytes, requested.DocType, map[string]map[string]interface{}{})
+		if err != nil {
+			return nil, fmt.Errorf("mdocdcapi: device signature: %w", err)
+		}
+		docs = append(docs, oid4vpmdoc.Document{DocType: requested.DocType, IssuerSigned: selected[i], DeviceSigned: deviceSigned})
 	}
-	deviceResponse, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
-		DocType: requested.DocType, IssuerSigned: selected, DeviceSigned: deviceSigned,
-	})
+	deviceResponse, err := mdocresponse.Marshal(docs...)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: %w", err)
 	}

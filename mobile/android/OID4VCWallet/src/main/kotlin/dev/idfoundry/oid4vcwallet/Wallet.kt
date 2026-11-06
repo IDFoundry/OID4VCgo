@@ -1411,8 +1411,10 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
     public data class Response(
         /** The CBOR EncryptedResponse, to hand back to the platform. */
         @Serializable(Base64Serializer::class) val response: ByteArray,
-        /** Whether the copy presented had been seen by another Verifier. */
+        /** Whether a copy presented had been seen by another Verifier: for several documents, whether any was. */
         val linkable: Boolean = false,
+        /** The credentials presented with such a copy, by ID. */
+        @SerialName("linkable_credentials") val linkableCredentials: List<String> = emptyList(),
     ) {
         /**
          * The response as the data member of a platform's Digital
@@ -1429,18 +1431,54 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
     public val request: Request = decode(handle.request())
 
     /**
+     * One requested document to answer.
+     *
+     * @property document Its number among the request's documents.
+     * @property credentialID The held mdoc that answers it.
+     * @property elements The elements to disclose, each one that document requested.
+     */
+    public data class Answer(val document: Int, val credentialID: String, val elements: List<Element>)
+
+    /**
      * Presents the held mdoc [credentialID] for document number
      * [document], disclosing exactly [elements], each one it requested.
      * The holder key signs now, so a key store requiring the holder
-     * prompts.
+     * prompts. It is [respond] with one answer.
      */
-    public suspend fun respond(document: Int, credentialID: String, elements: List<Element>): Response {
-        val pairs = json.encodeToString(ListSerializer(ListSerializer(String.serializer())), elements.map { listOf(it.namespace, it.identifier) })
-        return decode(OID4VC.cancellable { op -> handle.respond(op, document.toLong(), credentialID, pairs) })
+    public suspend fun respond(document: Int, credentialID: String, elements: List<Element>): Response =
+        respond(listOf(Answer(document, credentialID, elements)))
+
+    /**
+     * Presents several of the request's documents in one
+     * EncryptedResponse, each of [answers] as the one-document [respond]
+     * presents one. A document left out isn't in the response. No
+     * document may be answered twice, nor one credential answer two.
+     * Each holder key signs now, in the request's order, so each key
+     * store requiring the holder prompts in turn; on a
+     * [WalletException] — one prompt cancelled, say — nothing is
+     * returned, and the request can be answered again.
+     */
+    public suspend fun respond(answers: List<Answer>): Response {
+        val answersJSON = answersJSON(answers)
+        return decode(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON) })
     }
 
     /** Origins, as the platform reports them. */
     public companion object {
+        /** [answers] as the gomobile layer takes them: `[{"document", "credential_id", "elements"}]`. */
+        internal fun answersJSON(answers: List<Answer>): String =
+            json.encodeToString(
+                ListSerializer(AnswerJSON.serializer()),
+                answers.map { a -> AnswerJSON(a.document, a.credentialID, a.elements.map { listOf(it.namespace, it.identifier) }) },
+            )
+
+        @Serializable
+        private data class AnswerJSON(
+            val document: Int,
+            @SerialName("credential_id") val credentialID: String,
+            val elements: List<List<String>>,
+        )
+
         /**
          * [url]'s web origin, as a browser serializes it and the session
          * transcript binds it: `scheme://host`, with the port only when it

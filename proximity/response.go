@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
-
-	"github.com/fxamacker/cbor/v2"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/mdocresponse"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
 
@@ -24,52 +22,88 @@ import (
 // device signature (§9.1.3.6) by holder, the mdoc's device key, over
 // sessionTranscriptBytes (DeviceSession.SessionTranscriptBytes), with
 // no device-signed elements. Encrypt the result with
-// DeviceSession.Encrypt.
+// DeviceSession.Encrypt. It is BuildDocument and MarshalDeviceResponse
+// with one document.
 //
 // When nothing matches the request or the user declines, don't call
 // this: send DeviceSession.Termination instead, as Multipaz does.
 func BuildDeviceResponse(req DocRequest, issuerSigned mdoc.IssuerSigned, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
-	if err := checkRequested(req, elements); err != nil {
+	doc, err := BuildDocument(req, issuerSigned, holder, sessionTranscriptBytes, elements)
+	if err != nil {
 		return nil, err
 	}
-	if held, err := msoDocType(issuerSigned); err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
-	} else if held != req.DocType {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: the mdoc is a %q, the request is for %q", held, req.DocType)
+	return MarshalDeviceResponse(doc)
+}
+
+// BuildDocument builds the Document (§8.3.2.1.2.2) answering req, as
+// BuildDeviceResponse describes, for MarshalDeviceResponse to carry
+// beside the Documents answering the request's other DocRequests.
+func BuildDocument(req DocRequest, issuerSigned mdoc.IssuerSigned, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) (oid4vpmdoc.Document, error) {
+	if err := checkAnswer(req, issuerSigned, elements); err != nil {
+		return oid4vpmdoc.Document{}, err
 	}
-	return buildDeviceResponse(issuerSigned, req.DocType, holder, sessionTranscriptBytes, elements)
+	return buildDocument(issuerSigned, req.DocType, holder, sessionTranscriptBytes, elements)
+}
+
+// MarshalDeviceResponse encodes a DeviceResponse with status 0 carrying
+// docs, in order: a Document for each DocRequest the holder answers,
+// any subset of the request's (§8.3.2.1.2.2). A DocRequest the holder
+// doesn't answer is left out, with no documentErrors. Encrypt the
+// result with DeviceSession.Encrypt.
+func MarshalDeviceResponse(docs ...oid4vpmdoc.Document) ([]byte, error) {
+	b, err := mdocresponse.Marshal(docs...)
+	if err != nil {
+		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+	}
+	return b, nil
 }
 
 // buildDeviceResponse is BuildDeviceResponse without its checks against
 // the request.
 func buildDeviceResponse(issuerSigned mdoc.IssuerSigned, docType string, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
+	doc, err := buildDocument(issuerSigned, docType, holder, sessionTranscriptBytes, elements)
+	if err != nil {
+		return nil, err
+	}
+	return MarshalDeviceResponse(doc)
+}
+
+// buildDocument is BuildDocument without its checks against the
+// request.
+func buildDocument(issuerSigned mdoc.IssuerSigned, docType string, holder crypto.Signer, sessionTranscriptBytes []byte, elements [][2]string) (oid4vpmdoc.Document, error) {
 	if holder == nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: no device key")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: no device key")
 	}
 	if len(sessionTranscriptBytes) == 0 {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: no session transcript (session not established)")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: no session transcript (session not established)")
 	}
 	selected := issuerSigned.SelectNameSpaces(elements)
 	if len(selected.NameSpaces) == 0 {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: the credential holds none of the elements to disclose")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: the credential holds none of the elements to disclose")
 	}
 	alg, err := keyAlg(holder.Public())
 	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
 	deviceSigned, err := mdoc.SignDeviceSignature(holder, alg, sessionTranscriptBytes, docType, map[string]map[string]interface{}{})
 	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
-	// oid4vpmdoc's encoding is §8.3.2.1.2.2's single-document
-	// DeviceResponse exactly: version, documents, status 0.
-	b, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
-		DocType: docType, IssuerSigned: selected, DeviceSigned: deviceSigned,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+	return oid4vpmdoc.Document{DocType: docType, IssuerSigned: selected, DeviceSigned: deviceSigned}, nil
+}
+
+// checkAnswer refuses elements req didn't request, and an mdoc that
+// isn't of req's docType.
+func checkAnswer(req DocRequest, issuerSigned mdoc.IssuerSigned, elements [][2]string) error {
+	if err := checkRequested(req, elements); err != nil {
+		return err
 	}
-	return b, nil
+	if held, err := msoDocType(issuerSigned); err != nil {
+		return fmt.Errorf("proximity: build DeviceResponse: %w", err)
+	} else if held != req.DocType {
+		return fmt.Errorf("proximity: build DeviceResponse: the mdoc is a %q, the request is for %q", held, req.DocType)
+	}
+	return nil
 }
 
 // KeyAgreer is a device key that can agree a key with a peer — ECKA-DH
@@ -86,47 +120,49 @@ type KeyAgreer interface {
 // (DeviceSession.EReaderKey), and the DeviceResponse carries deviceMac
 // under the EMacKey derived from it. Unlike a signature, the reader can
 // check a MAC but can't show anyone else the holder made it; the
-// issuer-signed elements stay as provable as with a signature.
+// issuer-signed elements stay as provable as with a signature. It is
+// BuildDocumentMAC and MarshalDeviceResponse with one document.
 func BuildDeviceResponseMAC(req DocRequest, issuerSigned mdoc.IssuerSigned, holder KeyAgreer, eReaderKey *ecdsa.PublicKey, sessionTranscriptBytes []byte, elements [][2]string) ([]byte, error) {
-	if err := checkRequested(req, elements); err != nil {
+	doc, err := BuildDocumentMAC(req, issuerSigned, holder, eReaderKey, sessionTranscriptBytes, elements)
+	if err != nil {
 		return nil, err
 	}
-	if held, err := msoDocType(issuerSigned); err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
-	} else if held != req.DocType {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: the mdoc is a %q, the request is for %q", held, req.DocType)
+	return MarshalDeviceResponse(doc)
+}
+
+// BuildDocumentMAC is BuildDocument with MAC device authentication, as
+// BuildDeviceResponseMAC describes. Each Document in a DeviceResponse
+// authenticates on its own: one may carry a MAC and another a
+// signature.
+func BuildDocumentMAC(req DocRequest, issuerSigned mdoc.IssuerSigned, holder KeyAgreer, eReaderKey *ecdsa.PublicKey, sessionTranscriptBytes []byte, elements [][2]string) (oid4vpmdoc.Document, error) {
+	if err := checkAnswer(req, issuerSigned, elements); err != nil {
+		return oid4vpmdoc.Document{}, err
 	}
 	if holder == nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: no device key")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: no device key")
 	}
 	if eReaderKey == nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: no reader key (session not established)")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: no reader key (session not established)")
 	}
 	if _, ok := mdocCurves[eReaderKey.Curve]; !ok {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: DeviceMac needs a reader key on P-256, P-384 or P-521, got %s", eReaderKey.Curve.Params().Name)
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: DeviceMac needs a reader key on P-256, P-384 or P-521, got %s", eReaderKey.Curve.Params().Name)
 	}
 	if len(sessionTranscriptBytes) == 0 {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: no session transcript (session not established)")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: no session transcript (session not established)")
 	}
 	selected := issuerSigned.SelectNameSpaces(elements)
 	if len(selected.NameSpaces) == 0 {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: the credential holds none of the elements to disclose")
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: the credential holds none of the elements to disclose")
 	}
 	z, err := holder.Agree(eReaderKey)
 	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: key agreement: %w", err)
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: key agreement: %w", err)
 	}
 	deviceSigned, err := mdoc.ComputeDeviceMACFromSharedSecret(z, sessionTranscriptBytes, req.DocType, map[string]map[string]interface{}{})
 	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
+		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
-	b, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{
-		DocType: req.DocType, IssuerSigned: selected, DeviceSigned: deviceSigned,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("proximity: build DeviceResponse: %w", err)
-	}
-	return b, nil
+	return oid4vpmdoc.Document{DocType: req.DocType, IssuerSigned: selected, DeviceSigned: deviceSigned}, nil
 }
 
 // msoDocType is the docType in issuerSigned's MSO — the holder's own
@@ -178,23 +214,6 @@ func keyAlg(pub crypto.PublicKey) (oid4vci.COSEAlg, error) {
 	return cose.AlgForKey(pub)
 }
 
-// wireDeviceResponse is the reader's own view of DeviceResponse
-// (§8.3.2.1.2.2). oid4vpmdoc.UnmarshalDeviceResponse is HAIP's
-// exactly-one-document form and refuses a response carrying only
-// documentErrors; a proximity reader reports that instead.
-type wireDeviceResponse struct {
-	Version        string             `cbor:"version"`
-	Documents      []wireDocument     `cbor:"documents"`
-	DocumentErrors []map[string]int64 `cbor:"documentErrors"`
-	Status         uint64             `cbor:"status"`
-}
-
-type wireDocument struct {
-	DocType      string          `cbor:"docType"`
-	IssuerSigned cbor.RawMessage `cbor:"issuerSigned"`
-	DeviceSigned cbor.RawMessage `cbor:"deviceSigned"`
-}
-
 // ErrNoDocument is ReaderSession.Verify's result for a DeviceResponse
 // with status 0 and no documents, only documentErrors: the mdoc has
 // nothing to return for the request.
@@ -210,38 +229,43 @@ type responseDocument struct {
 // parseDeviceResponse decodes a DeviceResponse with exactly one
 // document — the reader requested one.
 func parseDeviceResponse(b []byte) (responseDocument, error) {
-	if len(b) > MaxMessageBytes {
-		return responseDocument{}, fmt.Errorf("proximity: DeviceResponse is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
+	docs, err := parseDeviceResponseDocuments(b, 1)
+	if err != nil {
+		return responseDocument{}, err
 	}
-	var resp wireDeviceResponse
-	if err := decMode.Unmarshal(b, &resp); err != nil {
-		return responseDocument{}, fmt.Errorf("proximity: decode DeviceResponse: %w: %w", ErrCBORDecoding, err)
+	return docs[0], nil
+}
+
+// parseDeviceResponseDocuments decodes a DeviceResponse with from one
+// to requested documents, each of a different type — the reader asked
+// for requested documents, each type once. The decoding is
+// mdocresponse.Decode's (oid4vpmdoc.UnmarshalDeviceResponse is HAIP's
+// exactly-one-document form, and refuses a response carrying only
+// documentErrors, which a proximity reader reports instead), its faults
+// reported as ErrCBORDecoding.
+func parseDeviceResponseDocuments(b []byte, requested int) ([]responseDocument, error) {
+	resp, err := mdocresponse.Decode(b, MaxMessageBytes, MaxDocRequests)
+	if errors.Is(err, mdocresponse.ErrDecoding) {
+		return nil, fmt.Errorf("proximity: decode DeviceResponse: %w: %w", ErrCBORDecoding, err)
 	}
-	if !strings.HasPrefix(resp.Version, "1.") {
-		return responseDocument{}, fmt.Errorf("proximity: DeviceResponse version %q, want 1.x", resp.Version)
+	if err != nil {
+		return nil, fmt.Errorf("proximity: %w", err)
 	}
 	if resp.Status != DeviceResponseStatusOK {
-		return responseDocument{}, &DeviceResponseStatusError{Status: resp.Status}
+		return nil, &DeviceResponseStatusError{Status: resp.Status}
 	}
-	switch len(resp.Documents) {
-	case 0:
-		return responseDocument{}, fmt.Errorf("%w (documentErrors %v)", ErrNoDocument, resp.DocumentErrors)
-	case 1:
-	default:
-		return responseDocument{}, fmt.Errorf("proximity: DeviceResponse has %d documents for one request", len(resp.Documents))
+	switch {
+	case len(resp.Documents) == 0:
+		return nil, fmt.Errorf("%w (documentErrors %v)", ErrNoDocument, resp.DocumentErrors)
+	case len(resp.Documents) > requested && requested == 1:
+		return nil, fmt.Errorf("proximity: DeviceResponse has %d documents for one request", len(resp.Documents))
+	case len(resp.Documents) > requested:
+		return nil, fmt.Errorf("proximity: DeviceResponse has %d documents for %d requested", len(resp.Documents), requested)
 	}
 
-	doc := resp.Documents[0]
-	if doc.DocType == "" || doc.IssuerSigned == nil || doc.DeviceSigned == nil {
-		return responseDocument{}, fmt.Errorf("proximity: Document needs docType, issuerSigned and deviceSigned: %w", ErrCBORDecoding)
+	out := make([]responseDocument, 0, len(resp.Documents))
+	for _, doc := range resp.Documents {
+		out = append(out, responseDocument{docType: doc.DocType, issuerSigned: doc.IssuerSigned, deviceSigned: doc.DeviceSigned})
 	}
-	issuerSigned, err := mdoc.UnmarshalIssuerSignedMax(doc.IssuerSigned, MaxMessageBytes)
-	if err != nil {
-		return responseDocument{}, fmt.Errorf("proximity: issuerSigned: %w: %w", ErrCBORDecoding, err)
-	}
-	deviceSigned, err := mdoc.UnmarshalDeviceSignedMax(doc.DeviceSigned, MaxMessageBytes)
-	if err != nil {
-		return responseDocument{}, fmt.Errorf("proximity: deviceSigned: %w: %w", ErrCBORDecoding, err)
-	}
-	return responseDocument{docType: doc.DocType, issuerSigned: issuerSigned, deviceSigned: deviceSigned}, nil
+	return out, nil
 }

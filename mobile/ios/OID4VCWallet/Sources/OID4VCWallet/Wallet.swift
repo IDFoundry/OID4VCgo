@@ -1340,8 +1340,52 @@ public final class MdocPresentation: @unchecked Sendable {
         /// The CBOR EncryptedResponse, for
         /// `ISO18013MobileDocumentResponse(responseData:)`.
         public let response: Data
-        /// Whether the copy presented had been seen by another Verifier.
+        /// Whether a copy presented had been seen by another Verifier: for
+        /// several documents, whether any was.
         public let linkable: Bool
+        /// The credentials presented with such a copy, by ID.
+        public let linkableCredentials: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case response, linkable
+            case linkableCredentials = "linkable_credentials"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            response = try c.decode(Data.self, forKey: .response)
+            linkable = try c.decode(Bool.self, forKey: .linkable)
+            linkableCredentials = try c.decodeIfPresent([String].self, forKey: .linkableCredentials) ?? []
+        }
+    }
+
+    /// One requested document to answer: number `document` of
+    /// `request.documents`, with the held mdoc `credentialID`, disclosing
+    /// exactly `elements`, each one that document requested.
+    public struct Answer: Sendable, Hashable {
+        public let document: Int
+        public let credentialID: String
+        public let elements: [Element]
+
+        /// An answer.
+        public init(document: Int, credentialID: String, elements: [Element]) {
+            self.document = document
+            self.credentialID = credentialID
+            self.elements = elements
+        }
+    }
+
+    /// `answers` as the gomobile layer takes them:
+    /// `[{"document", "credential_id", "elements"}]`.
+    static func answersJSON(_ answers: [Answer]) throws -> String {
+        struct AnswerJSON: Encodable {
+            let document: Int
+            let credentialID: String
+            let elements: [[String]]
+            enum CodingKeys: String, CodingKey { case document, credentialID = "credential_id", elements }
+        }
+        let out = answers.map { a in AnswerJSON(document: a.document, credentialID: a.credentialID, elements: a.elements.map { [$0.namespace, $0.identifier] }) }
+        return String(decoding: try JSONEncoder().encode(out), as: UTF8.self)
     }
 
     let handle: MobileMdocPresentation
@@ -1356,13 +1400,29 @@ public final class MdocPresentation: @unchecked Sendable {
     /// Presents the held mdoc `credentialID` for document number
     /// `document`, disclosing exactly `elements`, each one it requested.
     /// The holder key signs now, so a key store requiring user presence
-    /// prompts.
+    /// prompts. It is `respond(answers:)` with one answer.
     public func respond(document: Int, credentialID: String, elements: [Element]) async throws -> Response {
+        try await respond(answers: [Answer(document: document, credentialID: credentialID, elements: elements)])
+    }
+
+    /// Presents several of the request's documents in one
+    /// EncryptedResponse, each of `answers` as
+    /// `respond(document:credentialID:elements:)` presents one. A document
+    /// left out isn't in the response. No document may be answered twice,
+    /// nor one credential answer two. Each holder key signs now, in the
+    /// request's order; a `KeychainKeyStore` requiring user presence asks
+    /// the holder once for them all. On a `WalletError` — the prompt
+    /// cancelled, say — nothing is returned, and the request can be
+    /// answered again.
+    public func respond(answers: [Answer]) async throws -> Response {
         let p = handle
-        let pairs = elements.map { [$0.namespace, $0.identifier] }
-        let json = String(decoding: try JSONEncoder().encode(pairs), as: UTF8.self)
+        let json = try Self.answersJSON(answers)
+        // The shared prompt is scoped to the thread making the Go call,
+        // so it goes inside cancellable's background work.
         let out = try await OID4VC.cancellable { op in
-            try OID4VC.call { p.respond(op, document: document, credentialID: credentialID, elementsJSON: json, error: $0) }
+            try KeychainKeyStore.oneHolderPrompt {
+                try OID4VC.call { p.respondDocuments(op, answersJSON: json, error: $0) }
+            }
         }
         return try decode(Response.self, out)
     }
