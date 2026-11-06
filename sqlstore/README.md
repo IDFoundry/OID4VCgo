@@ -7,7 +7,8 @@ library itself takes no database driver.
 
 The package documentation ([doc.go](doc.go)) is the reference: setup,
 migrations, atomicity, sealing and sweeping. This page is the short
-version.
+version, and [DEPLOYING.md](../DEPLOYING.md) is the per-role checklist
+for a deployment of several replicas.
 
 ## Setup
 
@@ -39,8 +40,16 @@ deps := issuer.Dependencies{
 txs, err := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```
 
+The Sealer is any `sqlstore.Sealer`; `verifier.AESGCMSealer` makes one
+from a 32-byte key for every store here, not only the verifier's (its
+result also satisfies `verifier.TransactionSealer`, for the verifier's
+`TransactionCodec`).
+
 walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
-`db.Grants()`, `db.Deferred()` and, with a Sealer, `db.Keys()`.
+`db.Grants()`, `db.Deferred()` and, with a Sealer, `db.Keys()`. Unlike
+the others, `db.Keys()` returns `(*sqlstore.KeyStore, error)`: it fails
+without a Sealer, as a wallet's private keys are never kept in the
+clear.
 
 A `statuslist.Allocator`'s `Store` is `db.StatusIndices()`: the Status
 List indices handed out, and their statuses, kept durably and shared
@@ -155,6 +164,25 @@ binding its records to additional data of its own. Sweep each. See
 - **Sharing**: Credential Issuers may share the issuer tables (every
   record but a Credential Offer, found by its reference alone, keeps
   its Owner). A wallet's tables belong to one user.
+
+## Versions
+
+sqlstore is released with the root module it requires; upgrade the two
+together, then run `Migrate` once (see [UPGRADING.md](../UPGRADING.md)).
+
+| sqlstore | Released with | Requires oid4vcgo | Migrations |
+|---|---|---|---|
+| v0.9.0 | v0.69.0 | v0.69.0 | 0001–0012 |
+| v0.8.0 | v0.68.0 | v0.68.0 | 0001–0008 |
+| v0.7.1 | — (a patch) | v0.66.0 | 0001–0007 |
+| v0.7.0 | v0.67.0 | v0.66.0 | 0001–0006 |
+| v0.6.0 | v0.65.0 | v0.65.0 | 0001–0005 |
+| v0.5.0 | v0.64.0 | v0.64.0 | 0001–0004 |
+| v0.4.0 | v0.63.0 | v0.57.0 | 0001–0003 |
+| v0.3.0 | v0.61.0 | v0.57.0 | 0001–0003 |
+| v0.2.1 | v0.59.0 | v0.57.0 | 0001–0003 |
+| v0.2.0 | v0.58.0 | v0.57.0 | 0001–0003 |
+| v0.1.0 | v0.57.1 | v0.57.0 | 0001–0003 |
 
 ## Tests
 

@@ -16,6 +16,11 @@ import (
 type CacheOptions struct {
 	// MaxEntries is how many tokens, and failures, the Cache holds at
 	// most; the least recently used is dropped first. Zero means 256.
+	// Size it above the number of list URIs its Checkers read within
+	// the tokens' lifetime, or lists are fetched again and again: the
+	// attestations of one Wallet Provider alone can name 128 (64 lists
+	// in each of the current and previous periods), before an issuer's
+	// own lists.
 	MaxEntries int
 
 	// MaxBytes bounds the total size of what the Cache keeps of its

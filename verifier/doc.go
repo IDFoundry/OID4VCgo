@@ -28,7 +28,9 @@
 // secrets, routes each answer to its request, verifies it, and binds
 // the result to the browser that asked — the state handling OpenID4VP
 // §8.2 and §13.3 require, which the lower-level functions below leave
-// to the caller.
+// to the caller. Running several replicas: DEPLOYING.md in the
+// repository is the checklist (a shared TransactionStore, a
+// certrevocation.Refresher, a statuslist.Cache).
 //
 // Choose the flow by what the result is for. Only the same-device flow
 // and the Digital Credentials API bind the result to the browser that

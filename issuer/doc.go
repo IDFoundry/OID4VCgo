@@ -16,6 +16,10 @@
 // "Relationship to FAPIgo" for why that's a hard boundary, not a style
 // choice.
 //
+// Running several replicas in production: DEPLOYING.md in the
+// repository is the checklist — sqlstore, Dependencies.NonceKeys,
+// statuslist.Allocator and Publisher.Tokens, sweeping, sizing.
+//
 // # Status
 //
 // The Nonce Endpoint, a Metadata shape covering SD-JWT VC and mso_mdoc
