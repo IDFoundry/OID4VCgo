@@ -2,7 +2,7 @@ import Foundation
 
 /// A value guarded by a lock: what `OSAllocatedUnfairLock` is, which
 /// needs iOS 16, so that the package runs on iOS 15.
-final class Locked<State>: @unchecked Sendable {
+final class Locked<State: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var state: State
 

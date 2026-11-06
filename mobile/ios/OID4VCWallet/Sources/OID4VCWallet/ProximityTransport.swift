@@ -342,13 +342,22 @@ final class Pending<T: Sendable>: @unchecked Sendable {
 /// The time passed before `body` finished.
 struct ProximityTimeout: Error {}
 
+/// `seconds` as nanoseconds to sleep: none for a negative one or NaN,
+/// and as long as `Task.sleep` can for an infinite one or one too long
+/// for a `UInt64`, which converting would trap on.
+func nanoseconds(_ seconds: TimeInterval) -> UInt64 {
+    guard seconds > 0 else { return 0 }
+    let ns = seconds * 1_000_000_000
+    return ns < Double(UInt64.max) ? UInt64(ns) : .max
+}
+
 /// Runs `body`, throwing `ProximityTimeout` if it takes longer than
 /// `timeout` seconds; `body` is cancelled then.
 func withTimeout<T: Sendable>(_ timeout: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask { try await body() }
         group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+            try await Task.sleep(nanoseconds: nanoseconds(timeout))
             throw ProximityTimeout()
         }
         defer { group.cancelAll() }
