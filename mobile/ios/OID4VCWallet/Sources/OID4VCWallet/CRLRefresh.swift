@@ -51,9 +51,11 @@ public struct CRLRefreshResult: Decodable, Sendable, Equatable {
     /// refused after a restart.
     public let crls: String
     /// When to refresh again: halfway to the earliest list's nextUpdate,
-    /// at most an hour away, or in minutes after a failure. Use it as
-    /// `BGAppRefreshTaskRequest.earliestBeginDate`; the system may run
-    /// the task later.
+    /// at most an hour away, or after a backoff growing with each
+    /// failure, both a little randomised so devices don't fetch
+    /// together. Use it as `BGAppRefreshTaskRequest.earliestBeginDate`,
+    /// and refresh at a foreground only once it has passed; the system
+    /// may run the task later.
     public let nextRefresh: Date
 
     enum CodingKeys: String, CodingKey {

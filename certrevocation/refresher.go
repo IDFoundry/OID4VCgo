@@ -237,10 +237,19 @@ func floorKeyOf(issuer *x509.Certificate) floorKey {
 	return floorKey{name: string(issuer.RawSubject), key: string(issuer.RawSubjectPublicKeyInfo)}
 }
 
-// heldCRL is the last good list from one URL, and when it was fetched.
+// heldCRL is the last good list from one URL, when it was fetched, and
+// the validators its response carried, sent back on the next fetch.
 type heldCRL struct {
 	list      *x509.RevocationList
 	fetchedAt time.Time
+	validators
+}
+
+// validators are a response's ETag and Last-Modified, sent back as
+// If-None-Match and If-Modified-Since so that an unchanged list costs
+// the distribution point a 304 rather than the list again.
+type validators struct {
+	etag, lastModified string
 }
 
 // crlFloor is what an issuer's next list may not be older than: the
@@ -441,7 +450,10 @@ func (r *Refresher) Checker() CRLs {
 //
 // A fetch is a GET that must answer 2xx with a CRL no larger than
 // MaxBytes, in DER or as a PEM "X509 CRL" block, whatever its Content-
-// Type. Redirects are followed only on the same host (see
+// Type. Once a list is held from a URL, the fetch is conditional on the
+// ETag and Last-Modified its response carried, and a 304 Not Modified
+// fetches the held list again: it's checked as a newly fetched one
+// would be, so a held list past its nextUpdate is still a failure. Redirects are followed only on the same host (see
 // RefresherConfig.HTTPClient). The list replaces the one held from
 // that URL only when it is complete and direct (as CRLs requires: not
 // a delta CRL, no issuing distribution point, no critical extension it
@@ -478,10 +490,13 @@ func (r *Refresher) refresh(ctx context.Context, fail func(url string, err error
 // one — while a slow OnAccept holds up only other acceptances, not
 // Lists.
 func (r *Refresher) refreshOne(ctx context.Context, u string) error {
-	fetched, fetchErr := r.fetch(ctx, u)
+	r.mu.RLock()
+	held := r.held[u]
+	r.mu.RUnlock()
+	fetched, v, fetchErr := r.fetch(ctx, u, held)
 	r.acceptMu.Lock()
 	defer r.acceptMu.Unlock()
-	if err := r.keep(u, fetched, fetchErr); err != nil {
+	if err := r.keep(u, fetched, v, fetchErr); err != nil {
 		return err
 	}
 	if r.onAccept != nil {
@@ -490,10 +505,10 @@ func (r *Refresher) refreshOne(ctx context.Context, u string) error {
 	return nil
 }
 
-// keep makes fetched the list held from u if the fetch succeeded and
-// it's acceptable, raising its issuer's floor, and otherwise returns
-// why not.
-func (r *Refresher) keep(u string, fetched *x509.RevocationList, fetchErr error) error {
+// keep makes fetched, with its response's validators v, the list held
+// from u if the fetch succeeded and it's acceptable, raising its
+// issuer's floor, and otherwise returns why not.
+func (r *Refresher) keep(u string, fetched *x509.RevocationList, v validators, fetchErr error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	held, holding := r.held[u]
@@ -501,7 +516,7 @@ func (r *Refresher) keep(u string, fetched *x509.RevocationList, fetchErr error)
 	if fetchErr == nil {
 		var k floorKey
 		if k, fetchErr = r.acceptable(u, fetched, held.list, now); fetchErr == nil {
-			r.held[u] = heldCRL{list: fetched, fetchedAt: now}
+			r.held[u] = heldCRL{list: fetched, fetchedAt: now, validators: v}
 			r.raiseFloor(k, fetched)
 			return nil
 		}
@@ -571,33 +586,50 @@ func signerOf(list *x509.RevocationList, issuers []*x509.Certificate) *x509.Cert
 	return nil
 }
 
-// fetch GETs u and parses the CRL it answers with.
-func (r *Refresher) fetch(ctx context.Context, u string) (*x509.RevocationList, error) {
+// fetch GETs u, conditionally on the validators of held when it holds
+// a list, and returns the CRL it answers with and the response's
+// validators: held's list again for a 304.
+func (r *Refresher) fetch(ctx context.Context, u string, held heldCRL) (*x509.RevocationList, validators, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, errors.New("can't build the request")
+		return nil, validators{}, errors.New("can't build the request")
 	}
 	req.Header.Set("Accept", "application/pkix-crl")
+	conditional := held.list != nil && (held.etag != "" || held.lastModified != "")
+	if conditional {
+		if held.etag != "" {
+			req.Header.Set("If-None-Match", held.etag)
+		}
+		if held.lastModified != "" {
+			req.Header.Set("If-Modified-Since", held.lastModified)
+		}
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		// url.Error repeats the URL, which the caller names already.
 		if ue := (*url.Error)(nil); errors.As(err, &ue) {
 			err = ue.Err
 		}
-		return nil, err
+		return nil, validators{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	v := validators{etag: resp.Header.Get("ETag"), lastModified: resp.Header.Get("Last-Modified")}
+	switch {
+	case resp.StatusCode == http.StatusNotModified && conditional:
+		// A 304 may repeat or update the validators, or leave them out.
+		return held.list, validators{etag: cmp.Or(v.etag, held.etag), lastModified: cmp.Or(v.lastModified, held.lastModified)}, nil
+	case resp.StatusCode/100 != 2:
+		return nil, validators{}, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, r.maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read the response: %w", err)
+		return nil, validators{}, fmt.Errorf("read the response: %w", err)
 	}
 	if int64(len(body)) > r.maxBytes {
-		return nil, fmt.Errorf("the response exceeds %d bytes", r.maxBytes)
+		return nil, validators{}, fmt.Errorf("the response exceeds %d bytes", r.maxBytes)
 	}
-	return parseCRL(body)
+	list, err := parseCRL(body)
+	return list, v, err
 }
 
 // parseCRL parses a DER CRL, or one PEM "X509 CRL" block.
@@ -629,7 +661,8 @@ func redacted(u string) string {
 // then a wait, then another. After a pass that succeeded for every
 // URL, it waits until the first held list is halfway from when it was
 // fetched to its nextUpdate, but no longer than MaxInterval and no
-// less than a minute. Since each fetch moves that point on, the waits
+// less than a minute, less a random part of up to a fifth, so that
+// processes started together don't fetch together. Since each fetch moves that point on, the waits
 // shorten as a nextUpdate nears without the CA having published a
 // newer list, and never run past it unless it's under a minute away.
 // After a pass that failed for any URL, it retries after a backoff
@@ -648,6 +681,7 @@ func (r *Refresher) Run(ctx context.Context) {
 			}
 		})
 		delay := r.nextDelay()
+		delay -= r.jitter(delay / 5)
 		if failed {
 			failures++
 			delay = min(delay, retryDelay(failures, r.jitter))

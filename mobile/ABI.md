@@ -629,13 +629,20 @@ and returns `{"abi", "results", "crls", "next_refresh"}`:
   first refresh and an older list is still refused after a restart.
   Persisting is the app's.
 - `next_refresh` (RFC 3339) is when to call it again: for each point
-  whose list was just kept, halfway from now to its nextUpdate, no
-  sooner than a minute and no later than an hour from now; for one that
-  failed, five minutes from now; the earliest of these. It's a hint for
-  the platform's scheduler (BGTaskScheduler, WorkManager), which may run
-  later: the lists in hand stay in force until their nextUpdate, and a
-  role named in `revocation` refuses a CA's certificates once its list
-  has passed it.
+  whose list was just kept, halfway from now to its nextUpdate, at most
+  an hour, less a random part of up to a fifth, and no sooner than a
+  minute from now; for one that failed, after a backoff that doubles
+  with each consecutive failure from 5 minutes to an hour, less a random
+  part of up to half, but no later than halfway to the nextUpdate of the
+  list held for its CA while that's current; the earliest of these. The
+  random parts keep a fleet of devices from fetching together, after an
+  outage or when their lists share a nextUpdate. Call it when the app
+  comes to the foreground only once `next_refresh` has passed (or the
+  last call failed, or a check reported `no_current_crl`), not at every
+  foreground. It's a hint for the platform's scheduler
+  (BGTaskScheduler, WorkManager), which may run later: the lists in hand
+  stay in force until their nextUpdate, and a role named in
+  `revocation` refuses a CA's certificates once its list has passed it.
 
 A list is kept only when it was signed by the CA its distribution point
 is bound to, is complete and direct (not a delta CRL, no issuing
@@ -647,7 +654,14 @@ are the floor. Fetches are a GET, over `http` or `https` (a CRL is
 signed, so distribution points are usually plain `http`), at most
 8 MiB, DER or one PEM block, following at most three redirects on the
 same host only, from public addresses only outside `development`
-(the hardened client of `certrevocation.Refresher`). In `development`,
+(the hardened client of `certrevocation.Refresher`), over one client
+whose connections every refresh of the Wallet or ProximityReader
+reuses. Once a list has been fetched from a point, later fetches are
+conditional (`If-None-Match`, `If-Modified-Since`, from the ETag and
+Last-Modified it came with), and a `304 Not Modified` is `unchanged`:
+the list held is checked again as a fetched one is, so one past its
+nextUpdate still fails. A new Wallet or ProximityReader fetches each
+point in full once. In `development`,
 `development_roots` are trusted as for the configuration's other
 requests, through the same ordinary development client (from
 OID4VCWallet 0.27.0; before, they didn't apply), so a development CA's
