@@ -322,6 +322,9 @@ func (a *App) statusPublishers(key *ecdsa.PrivateKey, cert *x509.Certificate) (j
 			Statuses:    a.statusList.statuses,
 			DefaultForm: form,
 			Lifetime:    statusTokenLifetime, TTL: statusTokenTTL * time.Second, Now: a.now,
+			// With a database, the token is shared through it, as
+			// processes serving one list would share it; nil otherwise.
+			Tokens: a.stores.statusTokens,
 		}
 	}
 	return publisher(a.statusListURI, statuslist.FormJWT), publisher(a.mdocStatusListURI, statuslist.FormCWT)

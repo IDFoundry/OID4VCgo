@@ -31,8 +31,10 @@
 // scales out: it has one status list of 65,536 entries (about 32,000
 // credentials ever), allocates under one mutex held across store calls
 // and a rewrite of its whole entries file, keeps a revoked signer in an
-// in-memory map, invalidates only its own status list Publisher, and
-// keeps passports awaiting issuance in memory. The demo's README
+// in-memory map, invalidates only its own status list Publisher (with a
+// Database it shares the list's token through sqlstore's
+// StatusListTokens, as replicas would), and keeps passports awaiting
+// issuance in memory. The demo's README
 // ("One process each, not a deployment template") lists what a
 // deployment does instead.
 package issuerapp
