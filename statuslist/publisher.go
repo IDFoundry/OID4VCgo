@@ -111,10 +111,13 @@ type Publisher struct {
 	// list's current statuses within CacheFor, and the one that takes
 	// the store's lease signs a new one when there's none, rather than
 	// every replica reading the statuses and signing its own. While a
-	// replica signs one, the others serve the stored token, still
-	// within its exp, and a replica that stops signing is replaced when
-	// its lease ends, 35 seconds after it took it: the 30 seconds a
-	// signature may take, and 5 more. Invalidate has this replica sign
+	// replica holds the lease, the others serve the stored token for a
+	// bounded time: one signed before the list's last status change
+	// within CacheFor of its signing, as a replica sharing nothing
+	// would serve its own, and one signed after it for a lease longer,
+	// 35 seconds — the 30 a signature may take, and 5 more. Then they
+	// sign their own: a replica that holds the lease but can't sign
+	// keeps nobody serving its stale token. Invalidate has this replica sign
 	// the next token itself. A stored token is served only by a replica
 	// with the same leaf certificate in Chain: after a key or
 	// certificate changes, a replica signs its own rather than serve the

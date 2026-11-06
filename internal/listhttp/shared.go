@@ -132,9 +132,12 @@ type Shared struct {
 // reads the Store: a token signed from the list's current version, in
 // the last sh.Fresh, is served as it is; otherwise this replica takes
 // the Store's lease, signs one and stores it for the others. While
-// another replica holds the lease, the stored token is served until its
-// exp, and signed here only when there's none, or another signer signed
-// it (sh.Signer): replicas whose keys differ, as while a new key is
+// another replica holds the lease, the stored token is served for as
+// long as waitable allows — within sh.Fresh of its signing when the
+// list has changed since, otherwise one lease longer — and signed here
+// once that's passed, when there's none, or when another signer signed
+// it (sh.Signer): a lease's holder that can't sign doesn't keep the
+// others serving its token. Replicas whose keys differ, as while a new key is
 // rolled out, each sign their own and the Store keeps the newer, so
 // the token changes hands about once per sh.Check until they agree.
 // A call after Invalidate
@@ -170,7 +173,7 @@ func (c *Cache) produceShared(ctx context.Context, sh Shared, now time.Time, pre
 		c.reforce(forced)
 		return nil, fmt.Errorf("listhttp: taking the lease on signing the token: %w", err)
 	}
-	if !claimed && !forced && mine && now.Before(head.Token.Exp) && !now.Before(head.Token.SignedAt.Add(-sh.Fresh)) {
+	if !claimed && !forced && mine && waitable(head, now, sh.Fresh) {
 		// Another replica is signing: its token comes in a later check.
 		return stored(ctx, sh.Store, head, now, prev, sh.Signer)
 	}
@@ -208,6 +211,26 @@ func current(head Head, now time.Time, fresh time.Duration) bool {
 	t := head.Token
 	age := now.Sub(t.SignedAt)
 	return t.Version >= head.Version && age < fresh && age > -fresh && now.Before(t.Exp)
+}
+
+// waitable reports whether head's token is one to serve at now while
+// another replica holds the lease to sign its successor, rather than
+// sign one here. A token signed from an earlier version than the
+// list's is served only within fresh of its signing, as a replica
+// sharing nothing serves its own; one from the list's version, only
+// within fresh plus a lease, the time the lease's holder has to store
+// a new one. So a holder that can't sign, and keeps taking its own
+// lease, holds the others to its token no longer than that: they then
+// sign their own. A SignedAt as far as fresh ahead of now is another
+// replica's clock; one further ahead isn't trusted.
+func waitable(head Head, now time.Time, fresh time.Duration) bool {
+	t := head.Token
+	age := now.Sub(t.SignedAt)
+	limit := fresh + SignTimeout + LeaseSlack
+	if t.Version < head.Version {
+		limit = fresh
+	}
+	return age < limit && age > -fresh && now.Before(t.Exp)
 }
 
 // stored returns the token head describes: prev when it's that token,
