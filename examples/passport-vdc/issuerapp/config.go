@@ -24,6 +24,17 @@
 // void it. The holder still isn't authenticated — whoever sees the
 // offer page can redeem it first; a production issuer would
 // authenticate the holder at the approval step.
+//
+// # One process
+//
+// The app runs as one process and isn't a template for a service that
+// scales out: it has one status list of 65,536 entries (about 32,000
+// credentials ever), allocates under one mutex held across store calls
+// and a rewrite of its whole entries file, keeps a revoked signer in an
+// in-memory map, invalidates only its own status list Publisher, and
+// keeps passports awaiting issuance in memory. The demo's README
+// ("One process each, not a deployment template") lists what a
+// deployment does instead.
 package issuerapp
 
 import (
