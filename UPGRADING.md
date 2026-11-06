@@ -90,6 +90,22 @@ them.
   refused, checks can take up to `MaxFailureAge` to see it. Set it
   shorter for a quicker retry, or call `Purge`.
 
+### Mobile (the Swift library)
+
+- **The Swift library runs on iOS 15.** Its package and XCFramework
+  now require iOS 15 or later, where they required iOS 16. Nothing
+  changes for an app on iOS 16 or later. Neither the ABI nor the
+  Kotlin library changes.
+- **`ProximityTimeouts` is in seconds on iOS 15.**
+  `ProximityTimeouts(connectSeconds:requestSeconds:idleSeconds:)` and
+  the `connectSeconds`, `requestSeconds` and `idleSeconds` properties
+  (`TimeInterval`) work on every version. The `Duration` initializer
+  and the `connect`, `request` and `idle` properties are still there,
+  and code using them still compiles unchanged, but they're now
+  `@available(iOS 16.0, macOS 13.0, *)`. An app lowering its own
+  deployment target to iOS 15 uses the seconds forms, or puts its
+  `Duration` code behind `if #available(iOS 16.0, *)`.
+
 ## v0.67.0 → v0.68.0
 
 ### Wallet Provider (`walletprovider`)

@@ -140,7 +140,7 @@ final class SessionTests: XCTestCase {
     func testFileStoreAcrossWallets() async throws {
         let env = try TestEnv()
         defer { env.close() }
-        let dir = FileManager.default.temporaryDirectory.appending(path: "creds-\(UUID())", directoryHint: .isDirectory)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("creds-\(UUID())", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore()
         let first = try Wallet(configuration: try env.configuration, keys: KeyStoreAdapter(keys),
@@ -465,7 +465,7 @@ final class SessionTests: XCTestCase {
         let offer = "openid-credential-offer://?credential_offer_uri=" +
             "https://127.0.0.1:\(server.port)/offer".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
         let task = Task { try await w.startIssuance(offer: offer) }
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(nanoseconds: 300 * 1_000_000)
         task.cancel()
         do {
             _ = try await task.value
@@ -523,7 +523,7 @@ final class SessionTests: XCTestCase {
             XCTAssertEqual(try keys.keyIDs().count, 2, "the instance and DPoP keys")
         }
         for _ in 0..<50 where try keys.keyIDs().count > 0 {
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(nanoseconds: 100 * 1_000_000)
         }
         XCTAssertEqual(try keys.keyIDs(), [])
     }

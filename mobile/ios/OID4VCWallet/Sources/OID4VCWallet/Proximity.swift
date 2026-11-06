@@ -10,20 +10,65 @@ extension MobileProximityReaderSession: @retroactive @unchecked Sendable {}
 /// How long an in-person session waits (ISO/IEC 18013-5 recommends at
 /// least 30 seconds from engagement to the request, §8.2.3, and 300
 /// seconds of inactivity before ending a session, §9.1.1.4).
+///
+/// Times are in seconds (`TimeInterval`) on every OS version. On iOS 16
+/// and later, `Duration` properties and an initializer do the same.
 public struct ProximityTimeouts: Sendable {
-    /// For the other device to connect, after the QR code is shown or scanned.
-    public var connect: Duration
-    /// For the reader's request, once connected.
-    public var request: Duration
-    /// For the holder to decide, or the holder's answer to arrive.
-    public var idle: Duration
+    /// Seconds to wait for the other device to connect, after the QR code
+    /// is shown or scanned.
+    public var connectSeconds: TimeInterval
+    /// Seconds to wait for the reader's request, once connected.
+    public var requestSeconds: TimeInterval
+    /// Seconds to wait for the holder to decide, or the holder's answer to
+    /// arrive.
+    public var idleSeconds: TimeInterval
 
-    /// Timeouts: by default 60 seconds to connect, 30 for the request, and 300
-    /// idle.
+    /// The default timeouts: 60 seconds to connect, 30 for the request, and
+    /// 300 idle. (Spelled out so `ProximityTimeouts()` isn't ambiguous
+    /// between the two initializers below on iOS 16 and later.)
+    public init() {
+        self.init(connectSeconds: 60, requestSeconds: 30, idleSeconds: 300)
+    }
+
+    /// Timeouts in seconds: by default 60 to connect, 30 for the request,
+    /// and 300 idle.
+    public init(connectSeconds: TimeInterval = 60, requestSeconds: TimeInterval = 30, idleSeconds: TimeInterval = 300) {
+        self.connectSeconds = connectSeconds
+        self.requestSeconds = requestSeconds
+        self.idleSeconds = idleSeconds
+    }
+
+    /// Timeouts: by default 60 seconds to connect, 30 for the request, and
+    /// 300 idle.
+    @available(iOS 16.0, macOS 13.0, *)
     public init(connect: Duration = .seconds(60), request: Duration = .seconds(30), idle: Duration = .seconds(300)) {
-        self.connect = connect
-        self.request = request
-        self.idle = idle
+        self.init(connectSeconds: connect.timeInterval, requestSeconds: request.timeInterval, idleSeconds: idle.timeInterval)
+    }
+
+    /// For the other device to connect, after the QR code is shown or scanned.
+    @available(iOS 16.0, macOS 13.0, *)
+    public var connect: Duration {
+        get { .seconds(connectSeconds) }
+        set { connectSeconds = newValue.timeInterval }
+    }
+    /// For the reader's request, once connected.
+    @available(iOS 16.0, macOS 13.0, *)
+    public var request: Duration {
+        get { .seconds(requestSeconds) }
+        set { requestSeconds = newValue.timeInterval }
+    }
+    /// For the holder to decide, or the holder's answer to arrive.
+    @available(iOS 16.0, macOS 13.0, *)
+    public var idle: Duration {
+        get { .seconds(idleSeconds) }
+        set { idleSeconds = newValue.timeInterval }
+    }
+}
+
+@available(iOS 16.0, macOS 13.0, *)
+private extension Duration {
+    var timeInterval: TimeInterval {
+        Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 }
 
@@ -276,9 +321,9 @@ public final class ProximityPresentation: @unchecked Sendable {
 
     private func run() async {
         do {
-            try await within(timeouts.connect, "no reader connected") { try await self.transport.connect() }
+            try await within(timeouts.connectSeconds, "no reader connected") { try await self.transport.connect() }
             broadcast.update(.connected) { if case .waitingForReader = $0 { true } else { false } }
-            let first = try await within(timeouts.request, "the reader sent no request") { try await self.transport.receive() }
+            let first = try await within(timeouts.requestSeconds, "the reader sent no request") { try await self.transport.receive() }
             guard try await handleMessage(first) == "request" else { return }
             let request = try decode(RequestJSON.self, handle.request()).request
             guard broadcast.update(.requestReceived(request), if: { if case .connected = $0 { true } else { false } }) else { return }
@@ -286,7 +331,7 @@ public final class ProximityPresentation: @unchecked Sendable {
             // session. The idle timeout runs only while the request waits.
             while !state.isFinal {
                 do {
-                    let next = try await withTimeout(timeouts.idle) { try await self.transport.receive() }
+                    let next = try await withTimeout(timeouts.idleSeconds) { try await self.transport.receive() }
                     _ = try await handleMessage(next)
                 } catch is ProximityTimeout {
                     if case .requestReceived = state {
@@ -416,7 +461,7 @@ public final class ProximityPresentation: @unchecked Sendable {
         guard !state.isFinal else { return }
         ending.withLock { $0 = .cancelled }
         Task.detached { [self] in
-            _ = try? await withTimeout(.seconds(2)) { await self.sendTermination() }
+            _ = try? await withTimeout(2) { await self.sendTermination() }
             finish(.cancelled)
         }
     }
@@ -425,7 +470,7 @@ public final class ProximityPresentation: @unchecked Sendable {
     /// reader disconnecting on the termination sent then doesn't end it
     /// as anything else.
     private enum Ending { case declined, cancelled }
-    private let ending = OSAllocatedUnfairLock<Ending?>(initialState: nil)
+    private let ending = Locked<Ending?>(initialState: nil)
 
     /// Sends status 20, if a reader is connected.
     private func sendTermination() async {
@@ -448,13 +493,13 @@ public final class ProximityPresentation: @unchecked Sendable {
         Task.detached {
             if letReaderEnd {
                 // Until the reader disconnects or ends: receive throws then.
-                _ = try? await withTimeout(.seconds(5)) { while true { _ = try await transport.receive() } }
+                _ = try? await withTimeout(5) { while true { _ = try await transport.receive() } }
             }
             transport.close()
         }
     }
 
-    private func within<T: Sendable>(_ timeout: Duration, _ what: String, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+    private func within<T: Sendable>(_ timeout: TimeInterval, _ what: String, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
         do {
             return try await withTimeout(timeout, body)
         } catch is ProximityTimeout {
@@ -902,7 +947,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
     private let documentRequests: [ProximityReader.DocumentRequest]
     private let broadcast = StateBroadcast<State>(.connecting)
     private var task: Task<Void, Never>?
-    private let verifiedDocuments = OSAllocatedUnfairLock<[VerifiedMdoc]>(initialState: [])
+    private let verifiedDocuments = Locked<[VerifiedMdoc]>(initialState: [])
 
     /// Every verified mdoc, in the response's order, once the session is
     /// `.verified` (whose mdoc is the first): for a request of several
@@ -943,7 +988,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
     private func run() async {
         do {
             do {
-                try await withTimeout(timeouts.connect) { try await self.transport.connect() }
+                try await withTimeout(timeouts.connectSeconds) { try await self.transport.connect() }
             } catch is ProximityTimeout {
                 throw ProximityError(.timedOut, "the holder's device wasn't found")
             }
@@ -961,7 +1006,7 @@ public final class ProximityReaderSession: @unchecked Sendable {
             broadcast.update(.waitingForResponse) { if case .connecting = $0 { true } else { false } }
             let answer: Data
             do {
-                answer = try await withTimeout(timeouts.idle) { try await self.transport.receive() }
+                answer = try await withTimeout(timeouts.idleSeconds) { try await self.transport.receive() }
             } catch is ProximityTimeout {
                 throw ProximityError(.timedOut, "the holder didn't respond in time")
             }
@@ -1032,14 +1077,14 @@ public final class ProximityReaderSession: @unchecked Sendable {
         guard !state.isFinal else { return }
         cancelling.withLock { $0 = true }
         Task.detached { [self] in
-            _ = try? await withTimeout(.seconds(2)) { await self.terminate() }
+            _ = try? await withTimeout(2) { await self.terminate() }
             finish(.cancelled)
         }
     }
 
     /// Set by cancel: the holder disconnecting on its termination
     /// doesn't end the session as a failure.
-    private let cancelling = OSAllocatedUnfairLock(initialState: false)
+    private let cancelling = Locked(initialState: false)
 
     private func terminate() async {
         guard let message = try? decode(SendJSON.self, handle.terminate()).send else { return }

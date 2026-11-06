@@ -94,7 +94,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
                 return p
             }
             guard let wait else { return }
-            try await withTimeout(.seconds(5)) { try await wait.wait() }
+            try await withTimeout(5) { try await wait.wait() }
         }
     }
 

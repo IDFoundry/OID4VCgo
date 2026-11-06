@@ -188,7 +188,7 @@ final class OID4VCWalletTests: XCTestCase {
     func testAsyncProviderBridge() throws {
         struct Slow: WalletProvider {
             func walletAttestation(clientID: String, instanceKey: Data) async throws -> String {
-                try await Task.sleep(for: .milliseconds(50))
+                try await Task.sleep(nanoseconds: 50 * 1_000_000)
                 return "wa-\(clientID)-\(instanceKey.count)"
             }
             func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {

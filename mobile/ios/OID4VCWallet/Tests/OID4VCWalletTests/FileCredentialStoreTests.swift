@@ -4,7 +4,7 @@ import XCTest
 
 final class FileCredentialStoreTests: XCTestCase {
     func store() throws -> FileCredentialStore {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "store-\(UUID())", directoryHint: .isDirectory)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("store-\(UUID())", isDirectory: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         return try FileCredentialStore(directory: dir)
     }
@@ -44,7 +44,7 @@ final class FileCredentialStoreTests: XCTestCase {
     /// are on an App Group's — swap atomically between them: of
     /// concurrent read-and-swap loops, none loses another's write.
     func testCompareAndSwapAcrossStores() throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "store-\(UUID())", directoryHint: .isDirectory)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("store-\(UUID())", isDirectory: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         let stores = try (0..<4).map { _ in try FileCredentialStore(directory: dir) }
         try stores[0].put(id: "counter", record: Data("0".utf8))
@@ -78,7 +78,7 @@ final class FileCredentialStoreTests: XCTestCase {
     func testExcludedFromBackup() throws {
         let s = try store()
         XCTAssertEqual(try s.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
-        let dir = FileManager.default.temporaryDirectory.appending(path: "store-\(UUID())", directoryHint: .isDirectory)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("store-\(UUID())", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let kept = try FileCredentialStore(directory: dir, options: .init(excludedFromBackup: false))
         XCTAssertEqual(try kept.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, false)

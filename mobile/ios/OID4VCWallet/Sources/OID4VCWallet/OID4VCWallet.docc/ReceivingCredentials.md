@@ -174,7 +174,7 @@ without network requests; poll each at the interval the issuer asks for.
 func waitFor(_ deferred: DeferredCredential, wallet: Wallet) async throws -> CredentialSummary {
     var interval = deferred.intervalSeconds
     while true {
-        try await Task.sleep(for: .seconds(max(interval, 5)))
+        try await Task.sleep(nanoseconds: UInt64(max(interval, 5)) * 1_000_000_000)
         switch try await wallet.pollDeferred(id: deferred.id) {
         case .issued(let credential): return credential
         case .pending(let next): interval = next

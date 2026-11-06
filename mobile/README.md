@@ -40,6 +40,15 @@ each release:
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
 
+The Swift library runs on iOS 15 and macOS 13 and later. Presenting to
+Safari's Digital Credentials API needs iOS 26. `ProximityTimeouts`
+takes its timeouts two ways:
+
+| iOS | `ProximityTimeouts` |
+|---|---|
+| 15 and later | `TimeInterval` seconds: `ProximityTimeouts(connectSeconds:requestSeconds:idleSeconds:)`, and the `connectSeconds`, `requestSeconds` and `idleSeconds` properties |
+| 16 and later | also `Duration`s: `ProximityTimeouts(connect:request:idle:)`, and the `connect`, `request` and `idle` properties |
+
 The Kotlin library runs on Android 8 (API 26) and later. What its keys
 guarantee depends on the API level:
 
@@ -98,7 +107,8 @@ has the setup, the lifecycle and the routing rules.
   `cancel()` ends one.
 - **Timeouts** (`ProximityTimeouts`): by default 60 s for the other
   device to connect, 30 s for the request, and 300 s for the holder to
-  decide or the answer to arrive.
+  decide or the answer to arrive. In Swift, give them as `TimeInterval`
+  seconds (iOS 15 and later) or `Duration`s (iOS 16 and later).
 - **Bluetooth failures** are `ProximityError` (Swift) or
   `ProximityException` (Kotlin): Bluetooth off or not allowed, a
   timeout, or a lost connection, each with a sentence to show.

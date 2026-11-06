@@ -91,7 +91,7 @@ final class ProximityTests: XCTestCase {
         return Setup(env: env, wallet: wallet, reader: reader, mdocID: mdocID)
     }
 
-    let timeouts = ProximityTimeouts(connect: .seconds(10), request: .seconds(10), idle: .seconds(30))
+    let timeouts = ProximityTimeouts(connectSeconds: 10, requestSeconds: 10, idleSeconds: 30)
 
     func start(_ s: inout Setup, modes: Set<ProximityBLEMode> = [.peripheralServer]) throws -> (ProximityPresentation, ProximityReaderSession) {
         let (holderEnd, readerEnd) = PipeTransport.pair()
@@ -302,10 +302,29 @@ final class ProximityTests: XCTestCase {
         defer { s.env.close() }
         let (holderEnd, readerEnd) = PipeTransport.pair()
         holderEnd.peerConnects = false
-        let holder = try s.wallet.startProximityPresentation(timeouts: ProximityTimeouts(connect: .seconds(1))) { _ in holderEnd }
+        let holder = try s.wallet.startProximityPresentation(timeouts: ProximityTimeouts(connectSeconds: 1)) { _ in holderEnd }
         let h = try await final(holder.states) { $0.isFinal }
         guard case .failed(let error) = h, let e = error as? ProximityError else { return XCTFail("holder: \(h)") }
         XCTAssertEqual(e.reason, .timedOut)
+        _ = readerEnd
+    }
+
+    /// As `testNoReaderTimesOut`, with the timeout given as a `Duration`
+    /// (iOS 16 and later), which the session waits for just the same.
+    func testNoReaderTimesOutWithDuration() async throws {
+        guard #available(iOS 16.0, macOS 13.0, *) else { throw XCTSkip("Duration is iOS 16 and later") }
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        holderEnd.peerConnects = false
+        let start = Date()
+        let holder = try s.wallet.startProximityPresentation(timeouts: ProximityTimeouts(connect: .milliseconds(1500))) { _ in holderEnd }
+        let h = try await final(holder.states) { $0.isFinal }
+        let elapsed = Date().timeIntervalSince(start)
+        guard case .failed(let error) = h, let e = error as? ProximityError else { return XCTFail("holder: \(h)") }
+        XCTAssertEqual(e.reason, .timedOut)
+        XCTAssertGreaterThanOrEqual(elapsed, 1.5)
+        XCTAssertLessThan(elapsed, 10)
         _ = readerEnd
     }
 
@@ -411,7 +430,7 @@ final class EitherTransportTests: XCTestCase {
     /// One way failing (no advertising, say) leaves the other to connect.
     func testOneFailingLeavesTheOther() async throws {
         let failing = Fake { _ in throw ProximityTransportError("can't advertise") }
-        let connecting = Fake { _ in try await Task.sleep(for: .milliseconds(50)) }
+        let connecting = Fake { _ in try await Task.sleep(nanoseconds: 50 * 1_000_000) }
         let either = EitherTransport([failing, connecting])
         try await either.connect()
         XCTAssertTrue(either.connected === connecting)

@@ -35,7 +35,7 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
     /// How the records are kept.
     public let options: Options
     /// The file every write locks: not a record (no `.json`).
-    private var lockFile: URL { directory.appending(path: "store.lock") }
+    private var lockFile: URL { directory.appendingPathComponent("store.lock") }
 
     /// A store in `directory`, created if need be, with `options`' file
     /// protection, and out of backups unless `options` says otherwise.
@@ -53,7 +53,7 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
     /// A store in Application Support/credentials.
     public static func standard(options: Options = Options()) throws -> FileCredentialStore {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        return try FileCredentialStore(directory: base.appending(path: "credentials", directoryHint: .isDirectory), options: options)
+        return try FileCredentialStore(directory: base.appendingPathComponent("credentials", isDirectory: true), options: options)
     }
 
     /// A store in the app group `identifier`'s container
@@ -64,7 +64,7 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         guard let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier) else {
             throw StoreError("no container for app group \(identifier): is it in the target's entitlements?")
         }
-        let dir = container.appending(path: "Library/Application Support/credentials", directoryHint: .isDirectory)
+        let dir = container.appendingPathComponent("Library/Application Support/credentials", isDirectory: true)
         return try FileCredentialStore(directory: dir, options: options)
     }
 
@@ -72,7 +72,7 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         guard !id.isEmpty, id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
             throw StoreError("malformed credential ID")
         }
-        return directory.appending(path: id + ".json")
+        return directory.appendingPathComponent(id + ".json")
     }
 
     private var writeOptions: Data.WritingOptions {
