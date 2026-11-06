@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 )
 
@@ -87,6 +88,12 @@ func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chai
 	if err != nil {
 		return nil, fmt.Errorf("issuer certificate chain: %w", err)
 	}
+	return checkDocumentSignerPaths(chains, issuerPub, verified)
+}
+
+// checkDocumentSignerPaths is CheckMdocIssuer's document signer checks
+// over chains, the paths the resolver verified the issuer's x5chain on.
+func checkDocumentSignerPaths(chains [][]*x509.Certificate, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) ([][]byte, error) {
 	path, err := mdoc.CheckDocumentSigner(verified, chains)
 	if err != nil {
 		return nil, err
@@ -96,6 +103,84 @@ func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chai
 		return nil, errors.New("the issuer certificate path that passed the document signer checks isn't the key's")
 	}
 	return trusted, nil
+}
+
+// MdocIssuer is an mdoc issuer's key, as ResolveMdocIssuer resolved it
+// from the issuer's x5chain, with what Check needs to check the issuer
+// once mdoc.Verify has verified the document with the key.
+type MdocIssuer struct {
+	// Key is the key the document's IssuerAuth must verify with.
+	Key crypto.PublicKey
+	// Alg is the COSE algorithm Key signs with.
+	Alg oid4vci.COSEAlg
+
+	resolver MdocIssuerKeyResolver
+	x5chain  [][]byte
+	docType  string
+	// chains are the paths x5chain verified on when the key was
+	// resolved, for an X5ChainIssuerKeyResolver; verifiedChains says
+	// they were.
+	chains         [][]*x509.Certificate
+	verifiedChains bool
+}
+
+// ResolveMdocIssuer is resolver.ResolveMdocIssuerKey(ctx, x5chain,
+// docType), keeping what MdocIssuer.Check needs: VerifyResponse and
+// mdocdcapi call it, mdoc.Verify, then Check. An
+// X5ChainIssuerKeyResolver (or a pointer to one) verifies x5chain once,
+// for the key and for the document signer checks, with the same
+// verification time, roots, LeafPolicy and Revocation as the two calls
+// it replaces; any other resolver is asked twice, as
+// ResolveMdocIssuerKey and then CheckMdocIssuer would ask it.
+func ResolveMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string) (MdocIssuer, error) {
+	issuer := MdocIssuer{resolver: resolver, x5chain: x5chain, docType: docType}
+	if r, ok := x5chainResolver(resolver); ok {
+		leaf, chains, err := r.verify(ctx, x5chain, docType)
+		if err != nil {
+			return MdocIssuer{}, err
+		}
+		alg, err := mdocAlgForKey(leaf.PublicKey)
+		if err != nil {
+			return MdocIssuer{}, err
+		}
+		issuer.Key, issuer.Alg, issuer.chains, issuer.verifiedChains = leaf.PublicKey, alg, chains, true
+		return issuer, nil
+	}
+	key, alg, err := resolver.ResolveMdocIssuerKey(ctx, x5chain, docType)
+	if err != nil {
+		return MdocIssuer{}, err
+	}
+	issuer.Key, issuer.Alg = key, alg
+	return issuer, nil
+}
+
+// Check is CheckMdocIssuer for i's resolver, x5chain, document type and
+// key, after mdoc.Verify succeeded with i.Key: it returns the issuer
+// chain to trust, as CheckMdocIssuer does, from the paths
+// ResolveMdocIssuer verified where it verified them.
+func (i MdocIssuer) Check(ctx context.Context, verified mdoc.VerifiedMSO) ([][]byte, error) {
+	if !i.verifiedChains {
+		return CheckMdocIssuer(ctx, i.resolver, i.x5chain, i.docType, i.Key, verified)
+	}
+	if keyBoundChain(i.x5chain, i.Key) == nil {
+		return nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
+	}
+	return checkDocumentSignerPaths(i.chains, i.Key, verified)
+}
+
+// x5chainResolver is resolver as an X5ChainIssuerKeyResolver, when it's
+// exactly one: a type embedding it may resolve keys or chains its own
+// way.
+func x5chainResolver(resolver MdocIssuerKeyResolver) (X5ChainIssuerKeyResolver, bool) {
+	switch r := resolver.(type) {
+	case X5ChainIssuerKeyResolver:
+		return r, true
+	case *X5ChainIssuerKeyResolver:
+		if r != nil {
+			return *r, true
+		}
+	}
+	return X5ChainIssuerKeyResolver{}, false
 }
 
 // MdocIssuerKeyResolverWrapper is a resolver that wraps another, a
