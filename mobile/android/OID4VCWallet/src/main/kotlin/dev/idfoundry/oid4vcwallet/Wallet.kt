@@ -282,6 +282,10 @@ public data class WalletConfiguration(
     @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
     /** Refuses plain `http` distribution points, and leaves them out of [crlDistributionPointsFromRoots]. */
     @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
+    /** The largest status list [Wallet.checkStatus] reads, in bytes; 0 means 1 MiB. Raise it for issuers whose lists are larger. */
+    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
+    /** The largest mdoc identifier list [Wallet.checkStatus] reads, in bytes; 0 means 4 MiB. */
+    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

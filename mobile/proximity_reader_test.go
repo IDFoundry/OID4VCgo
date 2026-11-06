@@ -324,7 +324,7 @@ func TestProximityReader_StatusFetcherDefaults(t *testing.T) {
 	saved := testHTTP.Load()
 	testHTTP.Store(nil)
 	defer testHTTP.Store(saved)
-	if f := statusFetcher(); f.AllowLoopback || f.AllowPrivate || f.AllowProxy || f.UncheckedTransport || f.HTTP != nil {
+	if f := statusFetcher(0); f.MaxBytes != 0 || f.AllowLoopback || f.AllowPrivate || f.AllowProxy || f.UncheckedTransport || f.HTTP != nil {
 		t.Errorf("statusFetcher = %+v", f)
 	}
 }

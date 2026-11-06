@@ -20,6 +20,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // MediaType is the media type an identifier list is served and
@@ -53,19 +54,37 @@ const (
 	cwtClaimIdentifierList = 65530
 )
 
-// maxTokenBytes bounds a token this package issues, verifies or
-// fetches. A list grows with the MSOs it revokes: 4 MiB holds well over
-// two hundred thousand 16-byte identifiers.
-const maxTokenBytes = 4 << 20
+// DefaultMaxTokenBytes is the largest token this package issues,
+// verifies or fetches unless IssueOptions.MaxTokenBytes,
+// VerifyOptions.MaxTokenBytes or a Checker's Fetcher.MaxBytes says
+// otherwise: 4 MiB, about 220,000 16-byte identifiers. See the package
+// doc on keeping a list under it.
+const DefaultMaxTokenBytes = 4 << 20
+
+// MaxTokenBytesLimit is the most IssueOptions.MaxTokenBytes and
+// VerifyOptions.MaxTokenBytes may be: 32 MiB, as for a Status List
+// Token (statuslist.MaxTokenBytesLimit), so any Fetcher a
+// statuslist.Checker takes serves an identifierlist.Checker too.
+const MaxTokenBytesLimit = statuslist.MaxTokenBytesLimit
+
+// maxTokenBytes is limit's effective value, for the option named name.
+func maxTokenBytes(name string, limit int) (int, error) {
+	switch {
+	case limit < 0 || limit > MaxTokenBytesLimit:
+		return 0, fmt.Errorf("identifierlist: %s is %d, not between 0 and %d", name, limit, MaxTokenBytesLimit)
+	case limit == 0:
+		return DefaultMaxTokenBytes, nil
+	}
+	return limit, nil
+}
 
 // maxIdentifiers bounds how many identifiers a list may hold, and sizes
-// the decoder's limits. maxTokenBytes always binds first: an entry is a
-// bstr key and an empty map, at least 3 bytes for the 256 one-byte
-// identifiers, 4 for the 65,536 two-byte ones and 5 for any other, so a
-// token within maxTokenBytes holds fewer than 860,000. This bound is
-// the decoder's ceiling, kept above that so it never refuses a token
-// within maxTokenBytes; IssueToken checks both all the same, so it
-// never signs a list VerifyToken refuses.
+// the decoder's limits. An entry is a bstr key and an empty map, at
+// least 3 bytes for the 256 one-byte identifiers, 4 for the 65,536
+// two-byte ones and 5 for any other, so a token within
+// DefaultMaxTokenBytes holds fewer than 860,000 and this bound never
+// binds first; within MaxTokenBytesLimit it may. IssueToken checks both,
+// so it never signs a list VerifyToken refuses.
 const maxIdentifiers = 1 << 20
 
 // Ref is an MSO's status.identifier_list element (ISO/IEC 18013-5
@@ -120,6 +139,12 @@ type IssueOptions struct {
 	// Typ is the COSE typ header; empty means MediaType. Set BareTyp
 	// only for a Relying Party that refuses MediaType (see BareTyp).
 	Typ string
+
+	// MaxTokenBytes is the largest token IssueToken signs; zero means
+	// DefaultMaxTokenBytes, the largest a Checker reads by default. A
+	// list that grows past it fails to issue rather than being served
+	// to readers that refuse it. Over MaxTokenBytesLimit is an error.
+	MaxTokenBytes int
 }
 
 // IssueToken signs claims into an identifier list: a COSE_Sign1_Tagged
@@ -140,6 +165,10 @@ func IssueToken(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims, c
 	ders, err := certchain.SignerChainDERs(signer, chain)
 	if err != nil {
 		return nil, fmt.Errorf("identifierlist: %w", err)
+	}
+	limit, err := maxTokenBytes("IssueOptions.MaxTokenBytes", opts.MaxTokenBytes)
+	if err != nil {
+		return nil, err
 	}
 	typ := opts.Typ
 	if typ == "" {
@@ -173,8 +202,8 @@ func IssueToken(signer crypto.Signer, alg oid4vci.COSEAlg, claims TokenClaims, c
 	if err != nil {
 		return nil, fmt.Errorf("identifierlist: sign CWT: %w", err)
 	}
-	if len(token) > maxTokenBytes {
-		return nil, fmt.Errorf("identifierlist: the token is %d bytes, over the %d allowed", len(token), maxTokenBytes)
+	if len(token) > limit {
+		return nil, fmt.Errorf("identifierlist: the token is %d bytes, over the %d allowed (IssueOptions.MaxTokenBytes)", len(token), limit)
 	}
 	return token, nil
 }
@@ -238,6 +267,11 @@ type VerifyOptions struct {
 	// Revocation, if set, checks the signer's certificate chain for
 	// revocation; see certrevocation.
 	Revocation certrevocation.Checker
+
+	// MaxTokenBytes is the largest token VerifyToken and Check parse;
+	// zero means DefaultMaxTokenBytes. Checker uses its Fetcher's
+	// MaxBytes when this is zero. Over MaxTokenBytesLimit is an error.
+	MaxTokenBytes int
 }
 
 // AnyListSigner is a VerifyOptions.UnboundSigner accepting every
@@ -280,7 +314,11 @@ type parsedClaims struct {
 // verifyToken is VerifyToken with policy in place of opts.LeafPolicy,
 // with the claims as parsed and the signer's chain the token carries.
 func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions) (parsedClaims, [][]byte, error) {
-	trust := signerTrustAt(roots, policy, opts)
+	limit, err := maxTokenBytes("VerifyOptions.MaxTokenBytes", opts.MaxTokenBytes)
+	if err != nil {
+		return parsedClaims{}, nil, err
+	}
+	trust := signerTrustAt(roots, policy, opts, limit)
 	chain, _, err := trust.Chain(token)
 	if err != nil {
 		return parsedClaims{}, nil, fmt.Errorf("identifierlist: %w", err)
@@ -289,7 +327,7 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 	if err != nil {
 		return parsedClaims{}, nil, fmt.Errorf("identifierlist: %w", err)
 	}
-	protected, _, raw, err := cose.VerifyMax(alg, leaf.PublicKey, token, nil, maxTokenBytes)
+	protected, _, raw, err := cose.VerifyMax(alg, leaf.PublicKey, token, nil, limit)
 	if err != nil {
 		return parsedClaims{}, nil, fmt.Errorf("identifierlist: verify CWT signature: %w", err)
 	}
@@ -307,11 +345,12 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 }
 
 // signerTrustAt is how a list's signer is verified under roots and
-// policy, at opts's Now, read once. §12.3.6.3 has the x5chain
-// protected, where the signature covers it.
-func signerTrustAt(roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions) cose.X5ChainTrust {
+// policy, at opts's Now, read once, for a token of at most limit
+// bytes. §12.3.6.3 has the x5chain protected, where the signature
+// covers it.
+func signerTrustAt(roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, opts VerifyOptions, limit int) cose.X5ChainTrust {
 	return cose.X5ChainTrust{
-		MaxBytes: maxTokenBytes, ProtectedOnly: true, Roots: roots, Policy: policy, Revocation: opts.Revocation, Now: opts.now(),
+		MaxBytes: limit, ProtectedOnly: true, Roots: roots, Policy: policy, Revocation: opts.Revocation, Now: opts.now(),
 	}
 }
 
@@ -387,7 +426,11 @@ func recheck(ctx context.Context, chain [][]byte, parsed parsedClaims, roots *x5
 	if err != nil {
 		return err
 	}
-	trust := signerTrustAt(roots, policy, opts)
+	limit, err := maxTokenBytes("VerifyOptions.MaxTokenBytes", opts.MaxTokenBytes)
+	if err != nil {
+		return err
+	}
+	trust := signerTrustAt(roots, policy, opts, limit)
 	if _, _, err := trust.Signer(ctx, chain); err != nil {
 		return fmt.Errorf("identifierlist: %w", err)
 	}
@@ -489,7 +532,7 @@ func parseClaims(raw []byte) (TokenClaims, *int64, error) {
 	// The walk above checked the whole claims set, duplicate keys at
 	// every depth included, so the list is decoded without walking it
 	// again, and its identifiers are read in place rather than built
-	// into a map: a list near maxTokenBytes holds most of a million.
+	// into a map: a list near MaxTokenBytesLimit holds about a million.
 	var list identifierListClaim
 	if err := decMode.DecMode.Unmarshal(v, &list); err != nil {
 		return TokenClaims{}, nil, fmt.Errorf("identifierlist: identifier_list claim: %w", err)

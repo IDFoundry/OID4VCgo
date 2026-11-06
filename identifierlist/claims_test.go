@@ -118,7 +118,7 @@ func TestVerifyToken_ExpNotAfterIat(t *testing.T) {
 	wantErr(t, "exp at iat", err, "exp isn't after its iat")
 }
 
-// largeClaims is a claims set of about maxTokenBytes listing n
+// largeClaims is a claims set of about DefaultMaxTokenBytes listing n
 // identifiers of three bytes each.
 func largeClaims(t testing.TB, n int) []byte {
 	ids := make(map[cbor.ByteString]any, n)
@@ -130,10 +130,10 @@ func largeClaims(t testing.TB, n int) []byte {
 		cwtClaimIdentifierList: map[string]any{"identifiers": ids}})
 }
 
-// largeListIdentifiers fills a claims set to just under maxTokenBytes.
+// largeListIdentifiers fills a claims set to just under DefaultMaxTokenBytes.
 const largeListIdentifiers = 830_000
 
-// TestParseClaims_LargeListMemory: reading a list near maxTokenBytes
+// TestParseClaims_LargeListMemory: reading a list near DefaultMaxTokenBytes
 // allocates a small multiple of its size — the identifiers' slice
 // headers, mostly — not a decoded map of every entry.
 func TestParseClaims_LargeListMemory(t *testing.T) {
@@ -141,8 +141,8 @@ func TestParseClaims_LargeListMemory(t *testing.T) {
 		t.Skip("builds a 4 MB list")
 	}
 	raw := largeClaims(t, largeListIdentifiers)
-	if len(raw) > maxTokenBytes {
-		t.Fatalf("the claims set is %d bytes, over maxTokenBytes", len(raw))
+	if len(raw) > DefaultMaxTokenBytes {
+		t.Fatalf("the claims set is %d bytes, over DefaultMaxTokenBytes", len(raw))
 	}
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -159,7 +159,7 @@ func TestParseClaims_LargeListMemory(t *testing.T) {
 	}
 }
 
-// BenchmarkParseClaims_MaxTokenBytes reads a list near maxTokenBytes,
+// BenchmarkParseClaims_MaxTokenBytes reads a list near DefaultMaxTokenBytes,
 // as every Check of one does.
 func BenchmarkParseClaims_MaxTokenBytes(b *testing.B) {
 	raw := largeClaims(b, largeListIdentifiers)

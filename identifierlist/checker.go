@@ -14,8 +14,9 @@ import (
 // Checker checks an MSO's identifier list reference end to end: it
 // fetches the list at ref.URI, then Checks it. Fetcher is
 // statuslist.Fetcher, with its https-only, redirect, content type,
-// size and public-address rules; a zero MaxBytes means this package's
-// own 4 MiB. The list must be served as MediaType.
+// size and public-address rules; a zero MaxBytes means
+// Options.MaxTokenBytes, or when that's zero too, this package's own
+// DefaultMaxTokenBytes. The list must be served as MediaType.
 //
 // A Checker holds nothing about any one credential, so one serves
 // every credential: each Check is given the MSO's reference and its
@@ -71,10 +72,19 @@ func (c Checker) check(ctx context.Context, ref Ref, documentSignerPath []*x509.
 	if err := ref.validate(); err != nil {
 		return TokenClaims{}, false, err
 	}
+	opts := c.Options
+	if opts.MaxTokenBytes == 0 {
+		opts.MaxTokenBytes = c.Fetcher.MaxBytes
+	}
+	limit, err := maxTokenBytes("VerifyOptions.MaxTokenBytes", opts.MaxTokenBytes)
+	if err != nil {
+		return TokenClaims{}, false, err
+	}
 	f := c.Fetcher
 	if f.MaxBytes <= 0 {
-		f.MaxBytes = maxTokenBytes
+		f.MaxBytes = limit
 	}
+	c.Options = opts
 	if engine := statuscache.Unwrap(c.Cache); engine != nil {
 		claims, err = c.checkCached(ctx, engine, f, ref, documentSignerPath)
 		return claims, true, err

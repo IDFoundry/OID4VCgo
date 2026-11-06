@@ -42,6 +42,10 @@ type StatusPolicy struct {
 	// and its Options.Revocation set — certrevocation.CRLs, a
 	// certrevocation.Checker of your own, or certrevocation.NoCheck{}
 	// to decline checking the list signers' certificates explicitly.
+	// Its Fetcher's MaxBytes bounds both kinds of list: zero leaves
+	// each at its package's default, statuslist.DefaultMaxTokenBytes (1
+	// MiB) and identifierlist.DefaultMaxTokenBytes (4 MiB). Its
+	// Options.MaxTokenBytes bounds status lists alone.
 	Checker statuslist.Checker
 
 	// StatusIssuers, if set, accepts a separate Status Issuer's

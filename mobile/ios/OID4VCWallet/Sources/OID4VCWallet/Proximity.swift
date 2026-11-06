@@ -578,6 +578,12 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public var crlDistributionPointsFromRoots: Bool
     /// Refuses plain `http` distribution points.
     public var crlRequireHTTPS: Bool
+    /// The largest status list `checkStatus` reads, in bytes; 0 means 1
+    /// MiB.
+    public var statusMaxBytes: Int
+    /// The largest identifier list `checkStatus` reads, in bytes; 0 means
+    /// 4 MiB.
+    public var identifierListMaxBytes: Int
     /// The roles that decline checking revocation, for where something
     /// else stands in for it. Outside `development`, each role must be in
     /// `revocation` or here; a role can't be in both.
@@ -641,7 +647,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
                 crlIssuers: String = "", noRevocationCheck: [RevocationRole] = [], anyIssuerForAnyType: Bool = false,
                 statusCheck: StatusCheck? = nil, development: Bool = false,
                 crlDistributionPoints: [CRLDistributionPoint] = [], crlDistributionPointsFromRoots: Bool = false,
-                crlRequireHTTPS: Bool = false, developmentRoots: String = "") {
+                crlRequireHTTPS: Bool = false, developmentRoots: String = "",
+                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -660,6 +667,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
         self.crlRequireHTTPS = crlRequireHTTPS
         self.developmentRoots = developmentRoots
+        self.statusMaxBytes = statusMaxBytes
+        self.identifierListMaxBytes = identifierListMaxBytes
     }
 
     enum CodingKeys: String, CodingKey {
@@ -673,6 +682,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case crlDistributionPoints = "crl_distribution_points"
         case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
         case developmentRoots = "development_roots"
+        case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -695,6 +705,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         crlDistributionPointsFromRoots = try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false
         crlRequireHTTPS = try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false
         developmentRoots = try c.decodeIfPresent(String.self, forKey: .developmentRoots) ?? ""
+        statusMaxBytes = try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0
+        identifierListMaxBytes = try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0
     }
 }
 

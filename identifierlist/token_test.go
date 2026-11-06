@@ -385,7 +385,7 @@ func TestIssueToken_Refuses(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = []byte{byte(i >> 16), byte(i >> 8), byte(i)}
 	}
-	tooBig := make([][]byte, maxTokenBytes/1000+1)
+	tooBig := make([][]byte, DefaultMaxTokenBytes/1000+1)
 	for i := range tooBig {
 		tooBig[i] = append(bytes.Repeat([]byte{0}, 996), byte(i>>16), byte(i>>8), byte(i))
 	}

@@ -191,6 +191,12 @@ public struct WalletConfiguration: Codable, Sendable {
     /// Refuses plain `http` distribution points, and leaves them out of
     /// `crlDistributionPointsFromRoots`.
     public var crlRequireHTTPS: Bool
+    /// The largest status list `checkStatus` reads, in bytes; 0 means 1
+    /// MiB. Raise it for issuers whose lists are larger.
+    public var statusMaxBytes: Int
+    /// The largest mdoc identifier list `checkStatus` reads, in bytes; 0
+    /// means 4 MiB.
+    public var identifierListMaxBytes: Int
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -265,7 +271,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 acceptMDLSignerWithoutEKU: Bool = false,
                 crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
                 noRevocationCheck: [RevocationRole] = [], crlDistributionPoints: [CRLDistributionPoint] = [],
-                crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false) {
+                crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false,
+                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -305,6 +312,8 @@ public struct WalletConfiguration: Codable, Sendable {
         self.crlDistributionPoints = crlDistributionPoints
         self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
         self.crlRequireHTTPS = crlRequireHTTPS
+        self.statusMaxBytes = statusMaxBytes
+        self.identifierListMaxBytes = identifierListMaxBytes
     }
 
     enum CodingKeys: String, CodingKey {
@@ -325,6 +334,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case crls, revocation, crlIssuers = "crl_issuers", noRevocationCheck = "no_revocation_check"
         case crlDistributionPoints = "crl_distribution_points"
         case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
+        case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
     }
 
     /// Decodes a configuration, refusing a key it doesn't know: a
@@ -374,7 +384,9 @@ public struct WalletConfiguration: Codable, Sendable {
                   noRevocationCheck: try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? [],
                   crlDistributionPoints: try c.decodeIfPresent([CRLDistributionPoint].self, forKey: .crlDistributionPoints) ?? [],
                   crlDistributionPointsFromRoots: try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false,
-                  crlRequireHTTPS: try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false)
+                  crlRequireHTTPS: try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false,
+                  statusMaxBytes: try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0,
+                  identifierListMaxBytes: try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
