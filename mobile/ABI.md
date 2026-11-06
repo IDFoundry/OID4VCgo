@@ -29,7 +29,11 @@ ProximityReader asks for several documents at once, and
 `HandleMessage`'s `documents` and `CheckStatus`'s `statuses` return
 each one answered. A Wallet's and a ProximityReader's
 `status_cache_dir` keeps the lists `CheckStatus` verified across
-launches.
+launches. The CredentialStore gains `ListPrefixed`, which the wallet
+lists each kind of record with, so a store that decrypts each record
+reads only the kind asked for; the Swift and Kotlin `CredentialStore`s
+gain `records(where:)` and `records(idFilter)`, which by default return
+every record, so an app's own store needs no change.
 
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
@@ -254,6 +258,7 @@ Opaque records kept by ID, under the platform's data protection.
 | `Put(id, record)` | replaces any record with that ID |
 | `Get(id) → []byte` | empty if there's none |
 | `List() → []byte` | a JSON array of every record |
+| `ListPrefixed(prefixes, excluding) → []byte` | as `List`, the records whose IDs begin with one of `prefixes` (comma-separated) or, when `excluding`, with none of them; it may return others too, which Go tells apart (added within ABI 15) |
 | `Delete(id)` | no error if absent |
 | `CompareAndSwap(id, expected, record) → []byte` | atomically: replaces `id`'s record with `record`, or deletes it when `record` is empty, only if what's stored is byte for byte `expected` (empty: no record); returns what was stored before, either way (added in ABI 13) |
 | `Durable() → bool` | whether records survive the app quitting (below) |
@@ -307,6 +312,13 @@ It keeps each **authorization in progress** too, under the ID
 "authorization"`: FAPIgo's session record (with the PKCE verifier), the
 resolved offer, the authorization server, and the instance and DPoP key
 IDs. `ResumeIssuance` completes it from the redirect after a relaunch.
+
+Go lists one kind of record at a time with `ListPrefixed`: the
+credentials by excluding the prefixes `deferred-`, `authorization-` and
+`grant-` (a refresh grant's), and each other kind by its own prefix. A
+store that decrypts each record, as the Kotlin library's does, then
+decrypts only those; one that can't select by ID may return every
+record, as `List` does.
 
 `Durable()` says whether records survive the app quitting. Receiving
 credentials without `development` needs a durable `CredentialStore` and

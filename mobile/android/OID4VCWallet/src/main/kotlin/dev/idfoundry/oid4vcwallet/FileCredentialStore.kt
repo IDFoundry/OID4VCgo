@@ -142,8 +142,11 @@ public class FileCredentialStore(
         return open(id, sealed)
     }
 
-    override fun records(): List<ByteArray> =
-        sealedRecords().mapNotNull { (id, sealed) ->
+    override fun records(): List<ByteArray> = records { true }
+
+    /** The records whose IDs [idFilter] accepts, as [records]: the others aren't read or decrypted. */
+    override fun records(idFilter: (String) -> Boolean): List<ByteArray> =
+        sealedRecords(idFilter).mapNotNull { (id, sealed) ->
             try {
                 open(id, sealed)
             } catch (e: StoreException) {
@@ -180,8 +183,8 @@ public class FileCredentialStore(
             }
         }
 
-    private fun sealedRecords(): List<Pair<String, ByteArray>> =
-        directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") }.orEmpty()
+    private fun sealedRecords(idFilter: (String) -> Boolean = { true }): List<Pair<String, ByteArray>> =
+        directory.listFiles { f -> f.isFile && f.name.endsWith(SUFFIX) && !f.name.startsWith(".") && idFilter(f.name.removeSuffix(SUFFIX)) }.orEmpty()
             .sortedBy { it.name }
             .mapNotNull { f -> read(f)?.let { f.name.removeSuffix(SUFFIX) to it } } // one deleted meanwhile isn't listed
 

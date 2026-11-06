@@ -23,6 +23,32 @@ final class FileCredentialStoreTests: XCTestCase {
         XCTAssertNil(try s.record(id: "a"))
     }
 
+    /// Listing by ID returns only the records it accepts, as the adapter
+    /// asks for one kind at a time; a store without its own selection
+    /// returns every record, which the wallet tells apart.
+    func testRecordsWhere() throws {
+        let s = try store()
+        try s.put(id: "a", record: Data(#"{"id":"a"}"#.utf8))
+        try s.put(id: "deferred-x", record: Data(#"{"kind":"deferred"}"#.utf8))
+        try s.put(id: "grant-y", record: Data(#"{"kind":"grant"}"#.utf8))
+        XCTAssertEqual(try s.records { $0.hasPrefix("deferred-") }, [Data(#"{"kind":"deferred"}"#.utf8)])
+        let adapter = CredentialStoreAdapter(s)
+        XCTAssertEqual(String(decoding: try adapter.listPrefixed("deferred-,authorization-,grant-", excluding: true), as: UTF8.self), #"[{"id":"a"}]"#)
+        XCTAssertEqual(String(decoding: try adapter.listPrefixed("grant-", excluding: false), as: UTF8.self), #"[{"kind":"grant"}]"#)
+
+        struct Unselective: CredentialStore {
+            let inner: FileCredentialStore
+            func put(id: String, record: Data) throws { try inner.put(id: id, record: record) }
+            func record(id: String) throws -> Data? { try inner.record(id: id) }
+            func records() throws -> [Data] { try inner.records() }
+            func delete(id: String) throws { try inner.delete(id: id) }
+            func compareAndSwap(id: String, expected: Data?, record: Data?) throws -> Data? {
+                try inner.compareAndSwap(id: id, expected: expected, record: record)
+            }
+        }
+        XCTAssertEqual(try Unselective(inner: s).records { $0.hasPrefix("deferred-") }.count, 3)
+    }
+
     func testCompareAndSwap() throws {
         let s = try store()
         let a = Data(#"{"id":"a"}"#.utf8)

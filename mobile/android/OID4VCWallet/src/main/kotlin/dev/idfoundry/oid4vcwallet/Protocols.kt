@@ -127,6 +127,17 @@ public interface CredentialStore {
     /** Every record. */
     public fun records(): List<ByteArray>
 
+    /**
+     * The records whose IDs [idFilter] accepts. The wallet lists one kind
+     * of record at a time this way — its credentials, or the pending
+     * deferred credentials, authorizations or refresh grants it keeps
+     * beside them — so a store that decrypts each record, as
+     * [FileCredentialStore] does, opens only those. It may return others
+     * too: the wallet tells records apart. By default it returns
+     * [records].
+     */
+    public fun records(idFilter: (String) -> Boolean): List<ByteArray> = records()
+
     /** Deletes the record; deleting one that doesn't exist isn't an error. */
     public fun delete(id: String)
 
@@ -356,10 +367,18 @@ internal class CredentialStoreAdapter(private val store: CredentialStore) : Mobi
 
     override fun get(id: String): ByteArray = store.record(id) ?: ByteArray(0)
 
-    override fun list(): ByteArray {
+    override fun list(): ByteArray = jsonArray(store.records())
+
+    // prefixes is a comma-separated list; empty selects every ID.
+    override fun listPrefixed(prefixes: String, excluding: Boolean): ByteArray {
+        val ps = prefixes.split(',').filter { it.isNotEmpty() }
+        return jsonArray(store.records { id -> ps.any { id.startsWith(it) } != excluding })
+    }
+
+    private fun jsonArray(records: List<ByteArray>): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         out.write('['.code)
-        store.records().forEachIndexed { i, r ->
+        records.forEachIndexed { i, r ->
             if (i > 0) out.write(','.code)
             out.write(r)
         }

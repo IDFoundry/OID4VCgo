@@ -34,6 +34,14 @@ type CredentialStore interface {
 	Get(id string) ([]byte, error)
 	// List returns every record, as a JSON array of them.
 	List() ([]byte, error)
+	// ListPrefixed returns, as List does, the records whose IDs begin
+	// with one of prefixes, a comma-separated list — or, when
+	// excluding, those whose IDs begin with none of them — so that a
+	// store that decrypts each record reads only those the wallet asks
+	// for. It may return others too: the wallet tells records apart, so
+	// a store that can't select by ID may return List's (added within
+	// ABI 15).
+	ListPrefixed(prefixes string, excluding bool) ([]byte, error)
 	// Delete deletes id's record. Deleting one that doesn't exist isn't
 	// an error.
 	Delete(id string) error
@@ -445,7 +453,10 @@ func decodeCredential(id string, raw []byte) (walletflow.StoredCredential, error
 }
 
 func (s credentialStore) List(context.Context) ([]walletflow.StoredCredential, error) {
-	all, err := listRecords(s.cs)
+	// A credential's ID is 22 random base64url characters: one beginning
+	// "grant-" (about 1 in 7e10, the other prefixes far less) would be
+	// left out, a chance taken for not decrypting every grant.
+	all, err := listRecords(s.cs, true, deferredPrefix, authorizationPrefix, grantPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -514,9 +525,11 @@ func swapRecord(cs CredentialStore, storeID string, change func(raw []byte) ([]b
 	return newError(CodePlatform, errors.New("a record kept changing while it was updated"))
 }
 
-// listRecords returns every record in cs.
-func listRecords(cs CredentialStore) ([]json.RawMessage, error) {
-	raw, err := cs.List()
+// listRecords returns the records in cs whose IDs begin with one of
+// prefixes — or, when excluding, with none of them — and perhaps others
+// (CredentialStore.ListPrefixed), which the caller tells apart by kind.
+func listRecords(cs CredentialStore, excluding bool, prefixes ...string) ([]json.RawMessage, error) {
+	raw, err := cs.ListPrefixed(strings.Join(prefixes, ","), excluding)
 	if err != nil {
 		return nil, newError(CodePlatform, fmt.Errorf("list credentials: %w", err))
 	}
@@ -577,7 +590,11 @@ type deferredRecord struct {
 
 // deferredStoreID is the CredentialStore ID a pending deferred
 // credential is kept under.
-func deferredStoreID(id string) string { return "deferred-" + id }
+func deferredStoreID(id string) string { return deferredPrefix + id }
+
+// deferredPrefix begins every pending deferred credential's ID in the
+// CredentialStore.
+const deferredPrefix = "deferred-"
 
 // deferredStore is a CredentialStore as a walletflow.DeferredStore.
 type deferredStore struct{ cs CredentialStore }
@@ -611,7 +628,7 @@ func (s deferredStore) PutDeferred(_ context.Context, p walletflow.PendingDeferr
 }
 
 func (s deferredStore) ListDeferred(context.Context) ([]walletflow.PendingDeferred, error) {
-	all, err := listRecords(s.cs)
+	all, err := listRecords(s.cs, false, deferredPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -670,8 +687,12 @@ type authorizationRecord struct {
 // kept under: a hash of its state, which isn't put in an ID.
 func authorizationStoreID(state string) string {
 	sum := sha256.Sum256([]byte(state))
-	return "authorization-" + base64.RawURLEncoding.EncodeToString(sum[:])
+	return authorizationPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
 }
+
+// authorizationPrefix begins every authorization's ID in the
+// CredentialStore.
+const authorizationPrefix = "authorization-"
 
 // authorizationStore is a CredentialStore as a
 // walletflow.AuthorizationStore.
@@ -735,7 +756,7 @@ func decodeAuthorization(state string, raw []byte) (walletflow.PendingAuthorizat
 }
 
 func (s authorizationStore) ListAuthorizations(context.Context) ([]walletflow.PendingAuthorization, error) {
-	all, err := listRecords(s.cs)
+	all, err := listRecords(s.cs, false, authorizationPrefix)
 	if err != nil {
 		return nil, err
 	}

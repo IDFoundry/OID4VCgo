@@ -70,6 +70,13 @@ public protocol CredentialStore: Sendable {
     func record(id: String) throws -> Data?
     /// Every record.
     func records() throws -> [Data]
+    /// The records whose IDs `isIncluded` accepts. The wallet lists one
+    /// kind of record at a time this way — its credentials, or the
+    /// pending deferred credentials, authorizations or refresh grants it
+    /// keeps beside them — so a store that decrypts each record reads
+    /// only those. It may return others too: the wallet tells records
+    /// apart. The default returns ``records()``.
+    func records(where isIncluded: (String) -> Bool) throws -> [Data]
     /// Deletes the record; deleting one that doesn't exist isn't an
     /// error.
     func delete(id: String) throws
@@ -96,6 +103,8 @@ public protocol CredentialStore: Sendable {
 
 public extension CredentialStore {
     var isDurable: Bool { false }
+
+    func records(where isIncluded: (String) -> Bool) throws -> [Data] { try records() }
 }
 
 /// The Wallet Provider's backend, which attests the wallet and its keys
@@ -168,8 +177,15 @@ final class CredentialStoreAdapter: NSObject, MobileCredentialStoreProtocol, @un
 
     func get(_ id: String?) throws -> Data { try store.record(id: id ?? "") ?? Data() }
 
-    func list() throws -> Data {
-        let records = try store.records()
+    func list() throws -> Data { jsonArray(try store.records()) }
+
+    // prefixes is a comma-separated list; empty selects every ID.
+    func listPrefixed(_ prefixes: String?, excluding: Bool) throws -> Data {
+        let ps = (prefixes ?? "").split(separator: ",").map(String.init)
+        return jsonArray(try store.records { id in ps.contains { id.hasPrefix($0) } != excluding })
+    }
+
+    private func jsonArray(_ records: [Data]) -> Data {
         var out = Data("[".utf8)
         for (i, r) in records.enumerated() {
             if i > 0 { out.append(contentsOf: Data(",".utf8)) }

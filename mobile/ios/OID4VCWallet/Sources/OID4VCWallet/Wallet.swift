@@ -1477,6 +1477,10 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
         lock.withLock { stored.map(\.record) }
     }
 
+    public func records(where isIncluded: (String) -> Bool) throws -> [Data] {
+        lock.withLock { stored.filter { isIncluded($0.id) }.map(\.record) }
+    }
+
     public func delete(id: String) throws {
         lock.withLock { stored.removeAll { $0.id == id } }
     }

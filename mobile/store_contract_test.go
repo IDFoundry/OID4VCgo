@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,12 @@ type goCredentialStore struct {
 	records   map[string][]byte
 	order     []string
 	ephemeral bool // says it isn't Durable
+	// listed counts the records List and ListPrefixed return, as a
+	// store that decrypts each would open them.
+	listed int
+	// unselective has ListPrefixed return List's, as a store that can't
+	// select by ID may.
+	unselective bool
 }
 
 func newGoCredentialStore() *goCredentialStore {
@@ -64,13 +71,24 @@ func (s *goCredentialStore) Get(id string) ([]byte, error) {
 	return s.records[id], nil
 }
 
-func (s *goCredentialStore) List() ([]byte, error) {
+func (s *goCredentialStore) List() ([]byte, error) { return s.ListPrefixed("", true) }
+
+func (s *goCredentialStore) ListPrefixed(prefixes string, excluding bool) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var ps []string
+	if prefixes != "" && !s.unselective {
+		ps = strings.Split(prefixes, ",")
+	} else {
+		excluding = true
+	}
 	all := make([]json.RawMessage, 0, len(s.order))
 	for _, id := range s.order {
-		all = append(all, s.records[id])
+		if slices.ContainsFunc(ps, func(p string) bool { return strings.HasPrefix(id, p) }) != excluding {
+			all = append(all, s.records[id])
+		}
 	}
+	s.listed += len(all)
 	return json.Marshal(all)
 }
 
@@ -206,5 +224,40 @@ func TestCredentialStoreUpdate_GivesUpOnChurn(t *testing.T) {
 	}
 	if c, _ := (credentialStore{cs}).Get(ctx, "c"); c.HolderKeyID != "k" {
 		t.Errorf("the update was stored: holder key %q", c.HolderKeyID)
+	}
+}
+
+// Each adapter lists only its own kind of record from the app's store,
+// by ID prefix, so a store that decrypts each record opens no other
+// kind's; and a store that can't select by ID, returning every record,
+// lists each kind just the same.
+func TestListPrefixed_ReadsOneKind(t *testing.T) {
+	ctx := context.Background()
+	for _, unselective := range []bool{false, true} {
+		cs := sharedNativeStore()
+		cs.unselective = unselective
+		lists := map[string]func() (int, error){
+			"credentials": func() (int, error) { l, err := credentialStore{cs}.List(ctx); return len(l), err },
+			"deferred":    func() (int, error) { l, err := deferredStore{cs}.ListDeferred(ctx); return len(l), err },
+			"authorizations": func() (int, error) {
+				l, err := authorizationStore{cs}.ListAuthorizations(ctx)
+				return len(l), err
+			},
+			"grants": func() (int, error) { l, err := grantStore{cs}.ListGrants(ctx); return len(l), err },
+		}
+		for name, list := range lists {
+			cs.listed = 0
+			n, err := list()
+			if err != nil || n != 1 {
+				t.Errorf("unselective %v: %s = %d, %v; want the one", unselective, name, n, err)
+			}
+			want := 1
+			if unselective {
+				want = 4
+			}
+			if cs.listed != want {
+				t.Errorf("unselective %v: listing %s read %d records, want %d", unselective, name, cs.listed, want)
+			}
+		}
 	}
 }
