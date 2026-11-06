@@ -514,7 +514,13 @@ changes whether *every* bullet below is `(done)`.
     in a row have none, a period's last list first so a failed sweep
     is finished by the next. A record naming a deleted list is fine:
     the list isn't served, so status changes pass it by and the key
-    moves on its next use. Instances themselves are kept.
+    moves on its next use. The same sweep gives a key recorded before
+    retention the `RetainUntil` its last use would have set, when the
+    store can list such keys (`UnretainedInstanceKeyLister`): from its
+    list's period, or, on the single list from before periods, from
+    the current one, since any use since would have moved it. That
+    single list is deleted by hand, once. Instances themselves are
+    kept.
   - **Later requests are signed.** `SignRequest`/`VerifyRequest` are a
     short JWT over method, path, body hash and a `PurposeRequest`
     challenge, signed with the registration key. The signature is

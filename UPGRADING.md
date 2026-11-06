@@ -20,6 +20,15 @@ them.
   one once used, and use another for another `Store`; a change to
   `Lists`, `Bits` or `FillLimit` is still picked up.
 
+### Issuer (`issuer`)
+
+- **`CredentialRequest.PerCredential` now runs for every Credential of
+  a batch before the first is signed**, not between signings; a hook
+  that relied on the earlier Credentials being signed already must
+  change. The new `PerBatch` (also on `DeferredIssuance`) is called
+  once with the whole batch: with `statuslist.Allocator.AllocateN` it
+  reserves a batch's status indices in one round trip.
+
 ### Wallet Provider (`walletprovider`)
 
 - **Run `SweepStatusLists` periodically** (daily, say, from one
@@ -37,14 +46,21 @@ them.
   must be issued again.
 - A custom `InstanceKeyStore` may delete records past their
   `RetainUntil`; one that never does is still correct.
+- **Keys recorded before retention get a `RetainUntil`** from
+  `SweepStatusLists`, when the store implements the new
+  `UnretainedInstanceKeyLister` (sqlstore's and the memory store do):
+  a key on a period's list counts from that period's start, and one on
+  the single list from v0.67.0 and before from the current period's.
+- **Delete the single status list from v0.67.0 and before** (your old
+  `Config.StatusListURI`) once, with `IndexStore.Delete`: it hasn't
+  been served or changed since v0.68.0, and nothing else deletes it.
 
 ### sqlstore (next after v0.8.0)
 
 - **Run `Migrate` again for migration 0009**, which indexes
   `oid4vc_walletprovider_instance_keys`' `sweep_after` for `DB.Sweep`.
-  `DB.Sweep` now deletes instance keys past their `RetainUntil`. A key
-  recorded before this release has no `RetainUntil` until it next
-  moves to a later period's lists, so one never used again is kept.
+  `DB.Sweep` now deletes instance keys past their `RetainUntil`, which
+  `SweepStatusLists` gives keys recorded before this release.
 - `StatusIndices().Delete` deletes a list's rows in batches; an
   interrupted one finishes when called again.
 - **Run `Migrate` again for migration 0010**, which keeps each status
@@ -56,6 +72,13 @@ them.
   view summing them: an older release still running beside this one
   counts correctly, but its `StatusIndices().Delete` fails, leaving the
   list for this release's to finish.
+- **Run `Migrate` again for migration 0011**, which adds
+  `oid4vc_status_list_versions` and `oid4vc_status_list_tokens`. A
+  trigger raises a list's version whenever one of its statuses changes,
+  whichever release changes it. To have one replica sign each Status
+  List token and the others serve it, set `statuslist.Publisher.Tokens`
+  (and `identifierlist.Publisher.Tokens`) to `db.StatusListTokens()`;
+  without it each replica signs its own, as before.
 
 ### Status list caching (`statuslist.Cache`)
 

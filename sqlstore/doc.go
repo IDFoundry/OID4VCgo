@@ -34,6 +34,12 @@
 //     the database, so no index is handed out twice. Its Reserve is one
 //     INSERT on the (uri, idx) primary key; its Delete deletes a
 //     retired list's rows in bounded batches, then the list's count.
+//   - statuslist.Publisher.Tokens and identifierlist.Publisher.Tokens:
+//     StatusListTokens, through which the replicas serving a list share
+//     its token, so one signs it at a time. A trigger raises a list's
+//     version as StatusIndices changes one of its statuses; Claim, the
+//     lease on signing a token, is one INSERT … ON CONFLICT DO UPDATE
+//     … WHERE the lease is free.
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices. An instance's Create is one
@@ -258,8 +264,10 @@
 // from several at once is safe, but they only delete the same rows.
 //
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
-// and its instance keys after their RetainUntil (never one without,
-// written before RetainUntil existed, until its key next moves). It
+// and its instance keys after their RetainUntil. One without, written
+// before RetainUntil existed, is kept until its key next moves or
+// walletprovider's Provider.SweepStatusLists gives it one, which it
+// finds with InstanceKeyStore.ListUnretained. It
 // leaves the instances alone: they never expire, and nothing here
 // deletes one.
 //
@@ -270,7 +278,8 @@
 // the issuer retires a list for good and deletes it
 // (StatusIndexStore.Delete): a Wallet Provider's
 // Provider.SweepStatusLists does, for the lists of periods it no longer
-// serves.
+// serves. Its single list from before periods (v0.67.0 and before)
+// isn't one of them: delete it once yourself.
 //
 // # Production
 //

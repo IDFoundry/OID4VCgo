@@ -59,7 +59,8 @@ type cacheServer struct {
 	statuses []uint8
 	failing  bool
 	gate     chan struct{} // when set, requests wait for it to close
-	// etag, when set, has the server sign each form's token once,
+	// etag, when set, has the server sign each list's token, in each
+	// form, once,
 	// serve it with an ETag, and answer a request revalidating it with
 	// a 304; cacheControl is the Cache-Control it sends, if not empty.
 	etag         bool
@@ -91,7 +92,7 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.fetches.Add(1)
 	s.mu.Lock()
 	gate, failing, ttl, expIn, statuses := s.gate, s.failing, s.ttl, s.expIn, s.statuses
-	etag, cacheControl, held := s.etag, s.cacheControl, s.signed[r.Header.Get("Accept")]
+	etag, cacheControl, held := s.etag, s.cacheControl, s.signed[r.URL.Path+" "+r.Header.Get("Accept")]
 	s.mu.Unlock()
 	if cacheControl != "" {
 		w.Header().Set("Cache-Control", cacheControl)
@@ -132,7 +133,7 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.keep(w, etag, CWTTokenMediaType, token)
+		s.keep(w, etag, r.URL.Path+" "+CWTTokenMediaType, token)
 		w.Header().Set("Content-Type", CWTTokenMediaType)
 		_, _ = w.Write(token)
 		return
@@ -142,14 +143,14 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.keep(w, etag, TokenMediaType, []byte(token))
+	s.keep(w, etag, r.URL.Path+" "+TokenMediaType, []byte(token))
 	w.Header().Set("Content-Type", TokenMediaType)
 	_, _ = w.Write([]byte(token))
 }
 
-// keep keeps token, of mediaType, as the one s serves while etag is
-// set, and sends its ETag.
-func (s *cacheServer) keep(w http.ResponseWriter, etag bool, mediaType string, token []byte) {
+// keep keeps token, under its path and media type, as the one s serves
+// while etag is set, and sends its ETag.
+func (s *cacheServer) keep(w http.ResponseWriter, etag bool, pathAndMediaType string, token []byte) {
 	if !etag {
 		return
 	}
@@ -159,7 +160,7 @@ func (s *cacheServer) keep(w http.ResponseWriter, etag bool, mediaType string, t
 	if s.signed == nil {
 		s.signed = map[string][]byte{}
 	}
-	s.signed[mediaType] = token
+	s.signed[pathAndMediaType] = token
 }
 
 func (s *cacheServer) uri(path string) string { return s.srv.URL + path }

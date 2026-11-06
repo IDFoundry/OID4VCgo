@@ -259,12 +259,22 @@ type CredentialRequest struct {
 	// status reference. An error fails the request.
 	PerCredential func(ctx context.Context, instance *CredentialInstance) error
 
+	// PerBatch, if set, is called once with every Credential
+	// RequestCredential issues, in batch order, after PerCredential and
+	// before any is signed: what PerCredential does one Credential at a
+	// time, for the whole batch at once. Set a batch's status references
+	// here from one statuslist.Allocator.AllocateN, which reserves them
+	// in one store round trip rather than one Allocate per Credential.
+	// The same checks follow it as follow PerCredential. An error fails
+	// the request.
+	PerBatch func(ctx context.Context, batch []*CredentialInstance) error
+
 	// Defer, if set, defers issuance (§9): RequestCredential checks the
 	// request and its proofs as usual, consuming the nonce, but instead
 	// of issuing it saves a DeferredTransactionRecord holding the
 	// configuration and the proofs' binding keys, and returns a
 	// CredentialResponse with its TransactionID and Interval — sent as
-	// HTTP 202. SDJWTClaims/MdocClaims/PerCredential are then unused:
+	// HTTP 202. SDJWTClaims/MdocClaims/PerCredential/PerBatch are then unused:
 	// IssueDeferredCredential takes them when the deployment is ready.
 	// Requires Endpoints.DeferredCredential, and AuthorizedRequest.Subject
 	// to bind the transaction to. If the Credential Response then can't
@@ -289,7 +299,8 @@ type CredentialRequest struct {
 }
 
 // CredentialInstance is one Credential of a batch — possibly of one — as
-// CredentialRequest.PerCredential sees it, before it's issued.
+// CredentialRequest.PerCredential and PerBatch see it, before it's
+// issued.
 type CredentialInstance struct {
 	// Index is its position in the batch, from 0.
 	Index int
@@ -639,8 +650,7 @@ func checkDistinctKeys(keys []resolvedKey) error {
 // req's claims as req.PerCredential left it, refusing a batch in which
 // two would carry the same status reference.
 func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, req CredentialRequest, keys []resolvedKey) ([]oid4vci.IssuedCredential, error) {
-	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
-	statusRefs := make(map[string]int, len(keys))
+	instances := make([]CredentialInstance, len(keys))
 	for i, key := range keys {
 		instance, err := newCredentialInstance(cc, req, i, key)
 		if err != nil {
@@ -650,20 +660,34 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 			if err := req.PerCredential(ctx, &instance); err != nil {
 				return nil, fmt.Errorf("issuer: request credential: per-credential claims: %w", err)
 			}
-			if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
-				return nil, fmt.Errorf("issuer: request credential: per-credential claims: credential %d's claims for format %q were removed or replaced by another format's", i, cc.Format)
-			}
+		}
+		instances[i] = instance
+	}
+	if req.PerBatch != nil {
+		batch := make([]*CredentialInstance, len(instances))
+		for i := range instances {
+			batch[i] = &instances[i]
+		}
+		if err := req.PerBatch(ctx, batch); err != nil {
+			return nil, fmt.Errorf("issuer: request credential: per-batch claims: %w", err)
+		}
+	}
+	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
+	statusRefs := make(map[string]int, len(keys))
+	for i, instance := range instances {
+		if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
+			return nil, fmt.Errorf("issuer: request credential: credential %d's claims for format %q were removed or replaced by another format's, in PerCredential or PerBatch", i, cc.Format)
 		}
 		if ref, ok := instance.statusRef(); ok {
 			if first, dup := statusRefs[ref]; dup {
-				return nil, fmt.Errorf("issuer: request credential: credentials %d and %d of the batch carry the same status reference; HAIP 1.0 §6.1 requires each its own — set it in CredentialRequest.PerCredential", first, i)
+				return nil, fmt.Errorf("issuer: request credential: credentials %d and %d of the batch carry the same status reference; HAIP 1.0 §6.1 requires each its own — set it in CredentialRequest.PerCredential or PerBatch", first, i)
 			}
 			statusRefs[ref] = i
 		}
 		if err := checkInstanceType(cc, instance); err != nil {
 			return nil, fmt.Errorf("issuer: request credential: %w", err)
 		}
-		credential, err := iss.issueInstance(cc, instance, key)
+		credential, err := iss.issueInstance(cc, instance, keys[i])
 		if err != nil {
 			// The signer's failure, or claims the deployment built that
 			// can't be signed: a server error the Wallet may retry, not

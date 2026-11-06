@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -319,7 +320,11 @@ func (d *Deferred) settle(ctx context.Context, deleteHolder bool) error {
 	// Settled before it leaves the store, so a Wallet.Deferred listing
 	// it meanwhile doesn't hand it out again.
 	d.w.markSettled(d.p.ID)
-	errs := []error{d.w.deps.Deferred.DeleteDeferred(ctx, d.p.ID)}
+	deleteErr := d.w.deps.Deferred.DeleteDeferred(ctx, d.p.ID)
+	if deleteErr == nil {
+		d.w.markDeleted(d.p.ID)
+	}
+	errs := []error{deleteErr}
 	if deleteHolder {
 		errs = append(errs, d.w.deleteHolderKeys(ctx, d.p.HolderKeyIDs))
 	}
@@ -361,10 +366,10 @@ func (d *Deferred) Wait(ctx context.Context) (StoredCredential, error) {
 // Listing them makes no network calls: a resumed one fetches the
 // issuer's metadata on its first Poll.
 func (w *Wallet) Deferred(ctx context.Context) ([]*Deferred, error) {
+	w.mu.Lock()
+	w.listings++
+	w.mu.Unlock()
 	pending, err := w.deps.Deferred.ListDeferred(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("walletflow: list deferred credentials: %w", err)
-	}
 	sort.Slice(pending, func(i, j int) bool {
 		if !pending[i].DeferredAt.Equal(pending[j].DeferredAt) {
 			return pending[i].DeferredAt.Before(pending[j].DeferredAt)
@@ -373,9 +378,13 @@ func (w *Wallet) Deferred(ctx context.Context) ([]*Deferred, error) {
 	})
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	defer w.endListing()
+	if err != nil {
+		return nil, fmt.Errorf("walletflow: list deferred credentials: %w", err)
+	}
 	out := make([]*Deferred, 0, len(pending))
 	for _, p := range pending {
-		if w.settled[p.ID] {
+		if _, settling := w.settled[p.ID]; settling {
 			// Settled since it was listed.
 			continue
 		}
@@ -387,6 +396,16 @@ func (w *Wallet) Deferred(ctx context.Context) ([]*Deferred, error) {
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// endListing ends a Wallet.Deferred listing; w.mu is held. Once none is
+// in flight, the marks of the settled ones that have left the store go:
+// every later listing begins after they left.
+func (w *Wallet) endListing() {
+	w.listings--
+	if w.listings == 0 {
+		maps.DeleteFunc(w.settled, func(_ string, deleted bool) bool { return deleted })
+	}
 }
 
 // keepDeferred stores p as pending, already prepared to poll with its
@@ -416,6 +435,19 @@ func (w *Wallet) markSettled(id string) {
 	defer w.mu.Unlock()
 	if w.settled == nil {
 		w.settled = map[string]bool{}
+	}
+	w.settled[id] = false
+}
+
+// markDeleted records that the settled deferred credential id names has
+// left the DeferredStore: a listing begun since won't return it, so its
+// mark goes once none begun before is in flight.
+func (w *Wallet) markDeleted(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.listings == 0 {
+		delete(w.settled, id)
+		return
 	}
 	w.settled[id] = true
 }

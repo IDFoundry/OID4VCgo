@@ -126,7 +126,13 @@
 // and then the InstanceKeyStore may delete it, as sqlstore's DB.Sweep
 // does: a key used again after that needs evidence, as a new one does.
 // Provider.SweepStatusLists deletes the lists of the periods no longer
-// served; run it periodically. Instances themselves are kept.
+// served; run it periodically. It also gives the instance keys recorded
+// before retention a RetainUntil, when the InstanceKeyStore can list
+// them (UnretainedInstanceKeyLister, as sqlstore's can). The single
+// list of v0.67.0 and before, at the old Config.StatusListURI, is no
+// longer served or changed: delete it once with
+// statuslist.IndexStore.Delete. A key still naming it moves on its next
+// use, as one on any deleted list does. Instances themselves are kept.
 //
 // # Requests after registration
 //

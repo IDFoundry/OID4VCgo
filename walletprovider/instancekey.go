@@ -57,7 +57,8 @@ type InstanceKey struct {
 	// the provider records or moves the key. By then no live
 	// attestation names the key, nor will, but a later request for it
 	// finds it unknown. Zero, as in a record from before retention,
-	// keeps it until it moves.
+	// keeps it until it moves, or until Provider.SweepStatusLists gives
+	// it one (UnretainedInstanceKeyLister).
 	RetainUntil time.Time
 
 	// Revision is the store's version of the record: Create stores 1,
@@ -110,6 +111,20 @@ type InstanceKeyStore interface {
 	List(ctx context.Context, instanceID, after string, limit int) ([]InstanceKey, error)
 }
 
+// UnretainedInstanceKeyLister is an InstanceKeyStore that can list the
+// instance keys with no RetainUntil: those recorded, or last moved,
+// before the provider set one (v0.68.0 and before). Provider.SweepStatusLists
+// gives each one, so the store can delete it once it has passed; a
+// store without the method keeps them until they move. sqlstore's
+// DB.WalletProviderInstanceKeys and MemoryInstanceKeyStore have it.
+type UnretainedInstanceKeyLister interface {
+	// ListUnretained returns up to limit of the instance keys whose
+	// RetainUntil is zero and whose thumbprints sort after after (every
+	// one when after is empty), in ascending thumbprint order. limit is
+	// positive.
+	ListUnretained(ctx context.Context, after string, limit int) ([]InstanceKey, error)
+}
+
 // MemoryInstanceKeyStore is an InstanceKeyStore held in memory, safe
 // for concurrent use; its zero value is ready to use. It isn't durable:
 // a restart forgets every instance key, and their status indices stay
@@ -123,7 +138,10 @@ type MemoryInstanceKeyStore struct {
 	swept int
 }
 
-var _ InstanceKeyStore = (*MemoryInstanceKeyStore)(nil)
+var (
+	_ InstanceKeyStore            = (*MemoryInstanceKeyStore)(nil)
+	_ UnretainedInstanceKeyLister = (*MemoryInstanceKeyStore)(nil)
+)
 
 // Get implements InstanceKeyStore.
 func (s *MemoryInstanceKeyStore) Get(ctx context.Context, thumbprint string) (InstanceKey, error) {
@@ -190,6 +208,17 @@ func (s *MemoryInstanceKeyStore) Update(ctx context.Context, k InstanceKey) erro
 
 // List implements InstanceKeyStore.
 func (s *MemoryInstanceKeyStore) List(ctx context.Context, instanceID, after string, limit int) ([]InstanceKey, error) {
+	return s.list(ctx, after, limit, func(k InstanceKey) bool { return k.InstanceID == instanceID })
+}
+
+// ListUnretained implements UnretainedInstanceKeyLister.
+func (s *MemoryInstanceKeyStore) ListUnretained(ctx context.Context, after string, limit int) ([]InstanceKey, error) {
+	return s.list(ctx, after, limit, func(k InstanceKey) bool { return k.RetainUntil.IsZero() })
+}
+
+// list returns up to limit of the records match takes whose thumbprints
+// sort after after, in ascending thumbprint order.
+func (s *MemoryInstanceKeyStore) list(ctx context.Context, after string, limit int, match func(InstanceKey) bool) ([]InstanceKey, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -197,7 +226,7 @@ func (s *MemoryInstanceKeyStore) List(ctx context.Context, instanceID, after str
 	defer s.mu.Unlock()
 	var thumbprints []string
 	for tp, k := range s.keys {
-		if k.InstanceID == instanceID && tp > after {
+		if match(k) && tp > after {
 			thumbprints = append(thumbprints, tp)
 		}
 	}
