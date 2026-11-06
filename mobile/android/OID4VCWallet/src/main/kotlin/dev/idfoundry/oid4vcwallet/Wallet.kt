@@ -292,6 +292,14 @@ public data class WalletConfiguration(
      * list's own `ttl` or `exp`. Longer means fewer requests, and a revocation seen that much later.
      */
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
+    /**
+     * An absolute path, the app's own — under `context.cacheDir`, say — where
+     * [Wallet.checkStatus] keeps the lists it verified across launches: a launch then asks
+     * each list's server whether the list it kept is current, a `304 Not Modified` rather
+     * than the list, and never uses one the server hasn't confirmed. Empty keeps them in
+     * memory only.
+     */
+    @SerialName("status_cache_dir") val statusCacheDir: String = "",
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

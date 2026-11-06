@@ -382,10 +382,13 @@ type Wallet struct {
 
 	mu       sync.Mutex
 	deferred map[string]*Deferred // the pending ones handed out, by ID
-	// settled are the IDs of the deferred credentials settled since the
-	// wallet was created: Wallet.Deferred skips one a listing that raced
-	// its settling still returned.
-	settled map[string]bool
+	// settled are the IDs of the deferred credentials settling:
+	// Wallet.Deferred skips one a listing that raced its settling still
+	// returned. Each is true once it has left the DeferredStore, and is
+	// dropped once no listing that may have started before then is in
+	// flight (listings counts those in flight).
+	settled  map[string]bool
+	listings int
 	// liveKeys are the instance and DPoP keys open issuances hold, by
 	// ID: how many hold each. Two issuances can hold one key (a resumed
 	// authorization and the issuance that began it, or two resumes of
@@ -409,7 +412,7 @@ type Wallet struct {
 	// authorization, updating a credential or a grant — keep every other
 	// read-modify-write safe across Wallets.
 	grantMu    sync.Mutex
-	grantLocks map[string]*sync.Mutex
+	grantLocks map[string]*grantLock
 	// statusCache is deps.StatusCache, or the Wallet's own.
 	statusCache *statuslist.Cache
 }
@@ -498,7 +501,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	w := &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, settled: map[string]bool{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
-		openGrants: map[string]bool{}, grantLocks: map[string]*sync.Mutex{}, systemClock: systemClock,
+		openGrants: map[string]bool{}, grantLocks: map[string]*grantLock{}, systemClock: systemClock,
 		statusCache: deps.StatusCache,
 	}
 	if w.statusCache == nil {

@@ -147,10 +147,13 @@ type Issuance struct {
 	handled  map[string]bool
 	// grant is the grant that redeems the offer, authorizationServer
 	// the server it's redeemed at, with its metadata, and auth how the
-	// wallet authenticates there (chooseGrant).
+	// wallet authenticates there (chooseGrant). asMetaFor is the server
+	// asMeta was fetched from, which newClient uses again rather than
+	// fetching it twice; "" before it's fetched.
 	grant               Grant
 	authorizationServer string
 	asMeta              wallet.AuthorizationServerMetadata
+	asMetaFor           string
 	auth                clientAuth
 	// tokenType is the access token's: wallet.TokenTypeDPoP or
 	// wallet.TokenTypeBearer.
@@ -275,7 +278,7 @@ func (s *Issuance) planGrant(ctx context.Context, grant Grant) error {
 		// client; it has no public client.
 		return fmt.Errorf("walletflow: %s grant: %w", grant, ErrClientAuthUnsupported)
 	}
-	s.grant, s.auth, s.authorizationServer, s.asMeta = grant, auth, asURL, asMeta
+	s.grant, s.auth, s.authorizationServer, s.asMeta, s.asMetaFor = grant, auth, asURL, asMeta, asURL
 	return nil
 }
 
@@ -594,9 +597,12 @@ func (s *Issuance) newClient(ctx context.Context, asURL string, authorize bool) 
 	if s.w.deps.Provider == nil || s.w.cfg.ClientID == "" {
 		return fmt.Errorf("walletflow: a Wallet Attestation needs Dependencies.Provider and Config.ClientID: %w", ErrClientAuthUnsupported)
 	}
-	asMeta, err := s.w.core.FetchAuthorizationServerMetadata(ctx, asURL)
-	if err != nil {
-		return fmt.Errorf("walletflow: authorization server metadata: %w", err)
+	asMeta := s.asMeta
+	if s.asMetaFor != asURL {
+		var err error
+		if asMeta, err = s.w.core.FetchAuthorizationServerMetadata(ctx, asURL); err != nil {
+			return fmt.Errorf("walletflow: authorization server metadata: %w", err)
+		}
 	}
 	endpointsOf := asMeta.TokenClientEndpoints
 	if authorize {

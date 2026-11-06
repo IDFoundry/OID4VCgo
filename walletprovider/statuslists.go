@@ -237,7 +237,21 @@ const maxEmptyPeriods = 8
 // one process, as sqlstore's DB.Sweep is run; it's safe to run from
 // several at once, or again after a failure, which leaves what it
 // didn't delete for the next run.
+//
+// First, when the InstanceKeyStore is an UnretainedInstanceKeyLister,
+// it gives each instance key with no RetainUntil, one recorded or last
+// moved before the provider set one, the RetainUntil it would have
+// had: from the start of its Status's period, the one it was last used
+// in, since using it in a later one moves it. A key on no period's
+// list (the single list of v0.67.0 and before) hasn't been used since
+// the upgrade that stopped serving that list, so it gets one from the
+// current period's start, keeping it at least as long as it would
+// have been kept. The InstanceKeyStore can then delete it once that
+// has passed, as it does any other record.
 func (p *Provider) SweepStatusLists(ctx context.Context) (int, error) {
+	if err := p.retainUnretained(ctx); err != nil {
+		return 0, err
+	}
 	period := p.period()
 	deleted, empty := 0, 0
 	// The oldest period served starts two periods before the current
@@ -255,6 +269,37 @@ func (p *Provider) SweepStatusLists(ctx context.Context) (int, error) {
 		}
 	}
 	return deleted, nil
+}
+
+// retainUnretained gives each instance key with no RetainUntil one, as
+// SweepStatusLists says, with a compare-and-swap: a key moved or
+// deleted meanwhile is left as it now is.
+func (p *Provider) retainUnretained(ctx context.Context) error {
+	lister, ok := p.deps.InstanceKeys.(UnretainedInstanceKeyLister)
+	if !ok {
+		return nil
+	}
+	cur := p.periodStart(p.now())
+	for after := ""; ; {
+		page, err := lister.ListUnretained(ctx, after, listPageSize)
+		if err != nil {
+			return fmt.Errorf("walletprovider: listing instance keys without a RetainUntil: %w", err)
+		}
+		for _, ik := range page {
+			start, _, onPeriodList := p.parseList(ik.Status.URI)
+			if !onPeriodList {
+				start = cur
+			}
+			ik.RetainUntil = p.retainUntil(start)
+			if err := p.deps.InstanceKeys.Update(ctx, ik); err != nil && !errors.Is(err, ErrConflict) && !errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("walletprovider: setting an instance key's RetainUntil: %w", err)
+			}
+		}
+		if len(page) < listPageSize {
+			return nil
+		}
+		after = page[len(page)-1].Thumbprint
+	}
 }
 
 // deleteLists deletes the lists of the period starting at start that

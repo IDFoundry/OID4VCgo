@@ -47,6 +47,45 @@ type CacheOptions struct {
 	// Now is the clock entries expire by; nil means time.Now. Each check
 	// still verifies a token's times at its own VerifyOptions.Now.
 	Now func() time.Time
+
+	// Store, when set, keeps the tokens the Cache verifies across
+	// processes — an app's launches, say — so that a later process
+	// revalidates a token it kept instead of downloading it again
+	// (NewDirCacheStore keeps them in a directory). Nil keeps them in
+	// memory only.
+	Store CacheStore
+}
+
+// CacheStore keeps a Cache's tokens across processes, as named records:
+// a token's bytes and the ETag and Last-Modified its response gave.
+// Only a token a check verified in full, whose response gave either, is
+// kept.
+//
+// What a store gives back is never trusted as it is: a process's first
+// check of a list it holds revalidates the kept token with the list's
+// server, with If-None-Match and If-Modified-Since, as an expired cached
+// one is, and on a 304 verifies the token in full, as a fetched one —
+// so a list the server still serves costs a round trip, not its
+// download, and a check never passes on a kept token the server hasn't
+// confirmed in this process. A kept token that doesn't verify is
+// removed, and downloaded again. A store's failures cost a download
+// only: they don't fail a check.
+//
+// A CacheStore whose records are bounded should evict the least
+// recently used first. A store that also has a method Touch(name string)
+// error has it called when a 304 confirms a token the Cache holds in
+// memory, which reads nothing from the store, so it can count that as a
+// use (DirCacheStore does).
+//
+// A CacheStore must be safe for concurrent use.
+type CacheStore interface {
+	// Load returns the record kept under name; nil and a nil error, or
+	// an error, when none is.
+	Load(name string) ([]byte, error)
+	// Save keeps record under name, replacing any kept there.
+	Save(name string, record []byte) error
+	// Remove drops the record kept under name; nil when none is.
+	Remove(name string) error
 }
 
 // DefaultCacheMaxAge is CacheOptions.MaxAge's default: 5 minutes.
@@ -109,12 +148,13 @@ type Cache struct {
 func NewCache(opts CacheOptions) *Cache {
 	return &Cache{engine: statuscache.New(statuscache.Options{
 		MaxEntries: opts.MaxEntries, MaxBytes: opts.MaxBytes, MaxAge: opts.MaxAge,
-		MaxFailureAge: opts.MaxFailureAge, Now: opts.Now,
+		MaxFailureAge: opts.MaxFailureAge, Now: opts.Now, Store: opts.Store,
 	})}
 }
 
 // Purge drops every token c keeps: for an application told a status
-// changed, say, so that its next check fetches the list afresh.
+// changed, say, so that its next check fetches the list afresh. Its
+// CacheStore's records stay: a check revalidates one before using it.
 func (c *Cache) Purge() { c.engine.Purge() }
 
 func init() {

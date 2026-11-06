@@ -145,6 +145,13 @@ type config struct {
 	// statuslist.DefaultCacheMaxAge, at most a day; never past the
 	// list's own ttl or exp.
 	StatusCacheMaxAgeSeconds int64 `json:"status_cache_max_age_seconds,omitempty"`
+	// StatusCacheDir, an absolute path, keeps the lists CheckStatus
+	// verified across launches (statuslist.DirCacheStore): the app's
+	// cache directory, say. A launch then revalidates each list it kept
+	// with its server, a round trip, rather than downloading it, and
+	// never uses one the server hasn't confirmed. Empty keeps them in
+	// memory only.
+	StatusCacheDir string `json:"status_cache_dir,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -230,7 +237,10 @@ var testHTTP atomic.Pointer[http.Client]
 type Wallet struct {
 	w    *walletflow.Wallet
 	keys KeyStore
-	ka   *agreement
+	// creds are the wallet's credentials, in the platform's store, for
+	// Credential to read one without listing them all.
+	creds credentialStore
+	ka    *agreement
 	// crls are the lists the "revocation" roles check against.
 	crls *crlSet
 
@@ -296,7 +306,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	// The process's, which readers share too.
-	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds); err != nil {
+	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir); err != nil {
 		return nil, err
 	}
 	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {
@@ -309,7 +319,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
 	}
-	return &Wallet{w: w, keys: keys, ka: ka, crls: crls}, nil
+	return &Wallet{w: w, keys: keys, creds: credentialStore{credentials}, ka: ka, crls: crls}, nil
 }
 
 // walletRevocation sets the revocation check of each role cfg's
@@ -684,25 +694,24 @@ func (w *Wallet) Credentials() (string, error) {
 // "claims" — an SD-JWT VC's claims, or an mdoc's namespace → element →
 // value, byte strings in base64 — or not_found.
 func (w *Wallet) Credential(id string) (string, error) {
-	creds, err := w.w.Credentials(context.Background())
+	// One record read, not the whole store listed (and on Android each
+	// record's key unwrapped).
+	c, err := w.creds.Get(context.Background(), id)
+	if errors.Is(err, walletflow.ErrNotFound) {
+		return "", newError(CodeNotFound, fmt.Errorf("no credential %q", id))
+	}
 	if err != nil {
 		return "", classify(err)
 	}
-	for _, c := range creds {
-		if c.ID != id {
-			continue
-		}
-		s, err := w.summary(c)
-		if err != nil {
-			return "", err
-		}
-		return marshal(struct {
-			result
-			credentialSummary
-			Claims any `json:"claims"`
-		}{result{ABIVersion}, s, jsonClaims(c.Claims)})
+	s, err := w.summary(c)
+	if err != nil {
+		return "", err
 	}
-	return "", newError(CodeNotFound, fmt.Errorf("no credential %q", id))
+	return marshal(struct {
+		result
+		credentialSummary
+		Claims any `json:"claims"`
+	}{result{ABIVersion}, s, jsonClaims(c.Claims)})
 }
 
 // summary is c's summary, with whether its holder key is still present.

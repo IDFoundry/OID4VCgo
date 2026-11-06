@@ -41,6 +41,10 @@ import (
 // answered 304 Not Modified. A Publisher must not be copied after
 // first use; use it by pointer.
 //
+// Each replica serving a list signs its own tokens, unless Tokens
+// shares them: then one replica at a time signs the list's token, and
+// the others serve it.
+//
 // Checker (with Fetcher) is the Relying Party side of the same exchange.
 type Publisher struct {
 	// URI is the Status List's uri — every token's sub, and the uri
@@ -102,10 +106,29 @@ type Publisher struct {
 	// the error.
 	OnError func(r *http.Request, err error)
 
+	// Tokens, if set, shares the tokens between the replicas serving
+	// the list (TokenStore): each serves a stored token signed from the
+	// list's current statuses within CacheFor, and the one that takes
+	// the store's lease signs a new one when there's none, rather than
+	// every replica reading the statuses and signing its own. While a
+	// replica signs one, the others serve the stored token, still
+	// within its exp, and a replica that stops signing is replaced when
+	// its lease ends, 35 seconds after it took it: the 30 seconds a
+	// signature may take, and 5 more. Invalidate has this replica sign
+	// the next token itself. Ignored when CacheFor is negative.
+	Tokens TokenStore
+
+	// TokensCheck is how often a replica asks Tokens for a newer token:
+	// a status change reaches the others within it, plus the time a
+	// replica takes to sign. Zero means DefaultTokensCheck; it's at
+	// most CacheFor's effective value.
+	TokensCheck time.Duration
+
 	// Now defaults to time.Now.
 	Now func() time.Time
 
 	cached [2]listhttp.Cache // JWT, CWT
+	holder listhttp.Holder
 }
 
 // ServeHTTP implements http.Handler.
@@ -135,9 +158,16 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// A signature ServeHTTP makes for its cache doesn't end with the
 	// request that happens to start it.
-	served, err := p.cached[form].Get(r.Context(), p.cacheWindow(), p.now, func(ctx context.Context, now time.Time) ([]byte, time.Time, error) {
+	sign := func(ctx context.Context, now time.Time) ([]byte, time.Time, error) {
 		return p.token(ctx, cwt, now)
-	})
+	}
+	var served listhttp.Served
+	var err error
+	if p.Tokens != nil {
+		served, err = p.cached[form].GetShared(r.Context(), p.shared(form), p.now, sign)
+	} else {
+		served, err = p.cached[form].Get(r.Context(), p.cacheWindow(), p.now, sign)
+	}
 	if err != nil && p.OnError != nil {
 		p.OnError(r, err)
 	}
@@ -233,10 +263,25 @@ func acceptsGzip(acceptEncoding []string) bool {
 // Invalidate drops the cached tokens, so the next request is signed
 // from the current statuses — call it after a status changes, so the
 // change is served at once instead of within CacheFor. Until one is,
-// ServeHTTP has no token to fall back on if signing fails.
+// ServeHTTP has no token to fall back on if signing fails. With Tokens,
+// this replica signs that token whatever the store holds, and stores it
+// for the others, which serve it from their next check: a store that
+// keeps list versions needs no Invalidate for that.
 func (p *Publisher) Invalidate() {
 	for i := range p.cached {
 		p.cached[i].Invalidate()
+	}
+}
+
+// shared is how ServeHTTP shares form's tokens through Tokens.
+func (p *Publisher) shared(form Form) listhttp.Shared {
+	check := p.TokensCheck
+	if check <= 0 {
+		check = DefaultTokensCheck
+	}
+	return listhttp.Shared{
+		Store: listhttp.StoreOf[Form](p.Tokens, p.URI, form), Holder: p.holder.Name(),
+		Fresh: p.cacheWindow(), Check: check,
 	}
 }
 

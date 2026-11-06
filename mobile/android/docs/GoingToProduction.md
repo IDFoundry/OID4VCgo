@@ -30,7 +30,10 @@ services on loopback addresses are refused. The rest is the app's.
   path that doesn't ask presents without the holder: the check is the
   app's code, not the key.
 - Use `FileCredentialStore`: each record encrypted under a Keystore key
-  that works only while the device is unlocked, out of backups.
+  that works only while the device is unlocked, out of backups. The key
+  is in the TEE unless `Options.strongBox` asks for StrongBox, which is
+  several times slower on every record read and write;
+  `keySecurityLevel()` says where it is, to check or log.
   `InMemoryCredentialStore` is for tests.
 - Call `Wallet.sweepOrphanedKeys` at launch, before any issuance, so keys
   an interrupted issuance left don't accumulate.
@@ -326,6 +329,12 @@ ecosystem, and record why:
   (1 MiB) and identifier list (4 MiB) `checkStatus` reads. A larger
   list fails every check of the credentials on it: raise them only for
   issuers whose lists are larger.
+- `statusCacheDir`: a directory of the app's own, under
+  `context.cacheDir`, where `checkStatus` keeps the lists it verified
+  across launches. Each launch then revalidates a kept list with its
+  server (a `304 Not Modified`) instead of downloading it again, which
+  matters for lists of millions of entries; a list the server doesn't
+  confirm is never used.
 - `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
   each document type, must chain to, instead of `issuerRoots`, so an
   SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`

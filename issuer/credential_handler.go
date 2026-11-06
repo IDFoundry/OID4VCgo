@@ -68,8 +68,8 @@ type CredentialHandlerConfig struct {
 	Tokens AccessTokenVerifier
 
 	// Prepare decides what to issue for grant: it sets req's
-	// SDJWTClaims and MdocClaims, and PerCredential when each
-	// credential needs its own value (a status list index, for
+	// SDJWTClaims and MdocClaims, and PerCredential or PerBatch when
+	// each credential needs its own value (a status list index, for
 	// instance) — or sets req.Defer to defer issuance, which the
 	// handler answers with 202 and a transaction_id (§8.3). Those are
 	// the only fields of req read after it; req.ResolvedConfigurationID

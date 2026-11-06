@@ -83,6 +83,22 @@ type IndexStore interface {
 	Delete(ctx context.Context, uri string) error
 }
 
+// BatchIndexStore is an IndexStore that can reserve several indices of
+// one list at once: Allocator.AllocateN reserves a batch's indices with
+// one ReserveEach, rather than one Reserve each, when its Store is one.
+type BatchIndexStore interface {
+	IndexStore
+
+	// ReserveEach reserves, with status StatusValid, each of idxs in the
+	// list at uri that isn't reserved yet, and returns those it reserved,
+	// in any order; the others were already reserved. Each index is
+	// reserved as atomically as by Reserve: of concurrent calls naming
+	// it, across every process sharing the store, exactly one reserves
+	// it. idxs are distinct. In SQL, one multi-row INSERT … ON CONFLICT
+	// DO NOTHING RETURNING the inserted indices.
+	ReserveEach(ctx context.Context, uri string, idxs []uint64) ([]uint64, error)
+}
+
 // AllocatorList is one Status List an Allocator hands indices out of.
 type AllocatorList struct {
 	// URI is the list's uri: the Publisher.URI it's served at, and the
@@ -126,8 +142,9 @@ const maxListBytes = maxDecompressedSize
 //
 // Allocate one index per Referenced Token: in batch issuance, one per
 // credential copy, so the copies don't share a status entry a Relying
-// Party could link them by (§12.5.1, §13.2). Never derive an index
-// from anything about the holder or the credential.
+// Party could link them by (§12.5.1, §13.2); AllocateN allocates a
+// batch's at once. Never derive an index from anything about the
+// holder or the credential.
 //
 // Publish each list with a Publisher whose URI is the list's, whose
 // Bits is the Allocator's, and whose Statuses is Allocator.Statuses
@@ -215,6 +232,123 @@ func (a *Allocator) Allocate(ctx context.Context) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: no free index found in %d random draws per list: is Allocator.Rand random?", maxAllocateAttempts)
 	}
 	return StatusListRef{}, ErrListsFull
+}
+
+// MaxAllocateN is the most indices one AllocateN call hands out.
+const MaxAllocateN = 1024
+
+// AllocateN reserves n random, never-before-allocated indices, as n
+// Allocate calls would, and returns their references: one for each
+// Credential of a batch. It counts a list's reserved indices once for
+// the batch rather than once per index, takes from each list no more
+// than its FillLimit leaves, the rest from the next, and, when Store
+// is a BatchIndexStore, reserves each list's share with one
+// ReserveEach, drawing again for any index already taken. n is from 1
+// to MaxAllocateN. On an error, including one wrapping ErrListsFull
+// when every list has reached FillLimit, the indices it reserved stay
+// reserved, unused, as an issuance that fails after Allocate leaves
+// its index.
+func (a *Allocator) AllocateN(ctx context.Context, n int) ([]StatusListRef, error) {
+	if n < 1 || n > MaxAllocateN {
+		return nil, fmt.Errorf("statuslist: AllocateN of %d indices, not from 1 to %d", n, MaxAllocateN)
+	}
+	c, err := a.check()
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]StatusListRef, 0, n)
+	exhausted := false
+	for i := a.fullLists(c); i < len(c.lists) && len(refs) < n; i++ {
+		list := c.lists[i]
+		reserved, err := a.Store.Reserved(ctx, list.URI)
+		if err != nil {
+			return nil, fmt.Errorf("statuslist: counting the reserved indices of %s: %w", list.URI, err)
+		}
+		room := a.limit(list) - reserved
+		if room <= 0 {
+			if !exhausted {
+				a.filled(c, i)
+			}
+			continue
+		}
+		want := min(n-len(refs), room)
+		got, err := a.reserveEachIn(ctx, list, want)
+		if err != nil {
+			return nil, err
+		}
+		for _, idx := range got {
+			refs = append(refs, StatusListRef{Idx: idx, URI: list.URI})
+		}
+		if len(got) < want {
+			exhausted = true
+		}
+	}
+	switch {
+	case len(refs) == n:
+		return refs, nil
+	case exhausted:
+		return nil, fmt.Errorf("statuslist: no free index found in %d random draws per list: is Allocator.Rand random?", maxAllocateAttempts)
+	}
+	return nil, ErrListsFull
+}
+
+// reserveEachIn reserves up to want random indices of list, drawing
+// again for those already reserved, for at most maxAllocateAttempts
+// rounds; it returns fewer only if every draw of the last round landed
+// on a reserved index.
+func (a *Allocator) reserveEachIn(ctx context.Context, list AllocatorList, want int) ([]uint64, error) {
+	batch, _ := a.Store.(BatchIndexStore)
+	got := make([]uint64, 0, want)
+	tried := make(map[uint64]bool, want)
+	for range maxAllocateAttempts {
+		draw := make([]uint64, 0, want-len(got))
+		for len(draw) < want-len(got) {
+			idx, err := randomIndex(a.rand(), list.size())
+			if err != nil {
+				return nil, fmt.Errorf("statuslist: drawing a random index: %w", err)
+			}
+			if !tried[idx] {
+				tried[idx] = true
+				draw = append(draw, idx)
+			}
+			if len(tried) == list.Size {
+				break
+			}
+		}
+		if len(draw) == 0 {
+			break
+		}
+		if batch != nil {
+			reserved, err := batch.ReserveEach(ctx, list.URI, draw)
+			if err != nil {
+				return nil, fmt.Errorf("statuslist: reserving indices of %s: %w", list.URI, err)
+			}
+			asked := make(map[uint64]bool, len(draw))
+			for _, idx := range draw {
+				asked[idx] = true
+			}
+			for _, idx := range reserved {
+				if !asked[idx] {
+					return nil, fmt.Errorf("statuslist: the store reported reserving index %d of %s, which wasn't asked for or was reported twice", idx, list.URI)
+				}
+				asked[idx] = false
+			}
+			got = append(got, reserved...)
+		} else {
+			for _, idx := range draw {
+				switch err := a.Store.Reserve(ctx, list.URI, idx); {
+				case err == nil:
+					got = append(got, idx)
+				case !errors.Is(err, ErrIndexTaken):
+					return nil, fmt.Errorf("statuslist: reserving an index of %s: %w", list.URI, err)
+				}
+			}
+		}
+		if len(got) == want {
+			break
+		}
+	}
+	return got, nil
 }
 
 // fullLists is how many of c's lists, from the first, are known to be

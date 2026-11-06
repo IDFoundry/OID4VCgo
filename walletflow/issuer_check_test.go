@@ -176,3 +176,36 @@ func TestCheckStatus_IssuerCertificateWithoutStatusList(t *testing.T) {
 		t.Errorf("no roots: CheckStatus = %+v, %v; want it unchecked", checked.Status, err)
 	}
 }
+
+// A batch's copies, which carry one issuer chain, have it verified
+// once per CheckStatus, not once per copy: its revocation lists are read
+// as often for five copies as for one.
+func TestCheckStatus_IssuerChainVerifiedOnce(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 5})
+	crls := &swappableCRLs{}
+	crls.set(issuerCRL(t, f, false))
+	var reads atomic.Int32
+	counting := certrevocation.CRLs{Lists: func(ctx context.Context) ([]*x509.RevocationList, error) {
+		reads.Add(1)
+		return crls.checker().Lists(ctx)
+	}}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
+		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: counting,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range receive(t, f, w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID) {
+		if len(c.AllCopies()) < 3 {
+			t.Fatalf("%s: %d copies, want a batch", c.Format, len(c.AllCopies()))
+		}
+		reads.Store(0)
+		if _, err := w.CheckStatus(context.Background(), c.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := reads.Load(); got >= int32(len(c.AllCopies())) {
+			t.Errorf("%s: revocation lists read %d times for %d copies, want the shared chain verified once", c.Format, got, len(c.AllCopies()))
+		}
+	}
+}

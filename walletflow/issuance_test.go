@@ -822,3 +822,40 @@ func TestIssuance_RequestCredentialsRetries(t *testing.T) {
 		t.Errorf("RequestCredentials after success = %v, want ErrWrongStep", err)
 	}
 }
+
+// countingTransport counts the requests for a path.
+type countingTransport struct {
+	next  http.RoundTripper
+	path  string
+	count atomic.Int32
+}
+
+func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(r.URL.Path, c.path) {
+		c.count.Add(1)
+	}
+	return c.next.RoundTrip(r)
+}
+
+// An issuance fetches its Authorization Server's metadata once: the
+// client it builds uses the metadata the grant was planned with.
+func TestIssuance_FetchesASMetadataOnce(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	next := f.env.HTTP.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	counter := &countingTransport{next: next, path: "/.well-known/oauth-authorization-server"}
+	httpClient := *f.env.HTTP
+	httpClient.Transport = counter
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, f, w, walletflowtest.SDJWTConfigurationID)
+	if got := counter.count.Load(); got != 1 {
+		t.Errorf("authorization server metadata fetched %d times, want once", got)
+	}
+}

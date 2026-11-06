@@ -294,3 +294,197 @@ func TestInstanceKeySweptWhileMoved(t *testing.T) {
 		t.Fatalf("a Wallet Attestation for a key swept while moved = %v, want ErrUnknownInstanceKey", err)
 	}
 }
+
+// TestSweepStatusListsRetainsUnretained: SweepStatusLists gives an
+// instance key with no RetainUntil, as one recorded before retention
+// has, the one its use would have set: from its list's period's start,
+// or, on no period's list, from the current period's. A key with one
+// is left alone, and a second sweep changes nothing.
+func TestSweepStatusListsRetainsUnretained(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	recorded := h.periodStart()
+	unretain := func(key *ecdsa.PrivateKey, status statuslist.StatusListRef) {
+		t.Helper()
+		ik := h.instanceKey(&key.PublicKey)
+		ik.RetainUntil = time.Time{}
+		if status.URI != "" {
+			ik.Status = status
+		}
+		if err := h.deps.InstanceKeys.Update(ctx, ik); err != nil {
+			t.Fatal(err)
+		}
+	}
+	onPeriod, legacy, retained := h.newInstanceKey(in.ID, kindStrongBox), h.newInstanceKey(in.ID, kindStrongBox), h.newInstanceKey(in.ID, kindStrongBox)
+	unretain(onPeriod, statuslist.StatusListRef{})
+	unretain(legacy, statuslist.StatusListRef{Idx: 5, URI: statusBase})
+	kept := h.instanceKey(&retained.PublicKey)
+	h.toNextPeriod()
+	h.toNextPeriod()
+
+	h.sweep(0)
+	for _, c := range []struct {
+		what string
+		key  *ecdsa.PrivateKey
+		want time.Time
+	}{
+		{"a key on a period's list", onPeriod, time.Unix(recorded, 0).Add(3 * h.period())},
+		{"a key on the single list", legacy, time.Unix(h.periodStart(), 0).Add(3 * h.period())},
+		{"a key with a RetainUntil", retained, kept.RetainUntil},
+	} {
+		if got := h.instanceKey(&c.key.PublicKey).RetainUntil; !got.Equal(c.want) {
+			t.Errorf("%s: RetainUntil = %v, want %v", c.what, got, c.want)
+		}
+	}
+	if got := h.instanceKey(&retained.PublicKey); got.Revision != kept.Revision {
+		t.Errorf("a key with a RetainUntil was updated: revision %d, was %d", got.Revision, kept.Revision)
+	}
+	before := h.instanceKey(&onPeriod.PublicKey).Revision
+	h.sweep(0)
+	if got := h.instanceKey(&onPeriod.PublicKey).Revision; got != before {
+		t.Errorf("a second sweep updated a key again: revision %d, was %d", got, before)
+	}
+}
+
+// TestSinglePreRotationListDeletable: the single status list of v0.67.0
+// and before can be deleted whenever: a key still on it moves on its
+// next use, and revoking its instance passes the list by.
+func TestSinglePreRotationListDeletable(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	ik := h.instanceKey(&key.PublicKey)
+	ik.Status = statuslist.StatusListRef{Idx: ik.Status.Idx, URI: statusBase}
+	if err := h.deps.StatusIndices.Reserve(ctx, statusBase, ik.Status.Idx); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deps.InstanceKeys.Update(ctx, ik); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deps.StatusIndices.Delete(ctx, statusBase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); err != nil {
+		t.Fatalf("a Wallet Attestation for a key on the deleted single list: %v", err)
+	}
+	if ik := h.instanceKey(&key.PublicKey); ik.Status.URI != listURI(h.periodStart(), 0) {
+		t.Fatalf("a key on the deleted single list moved to %+v", ik)
+	}
+	if err := h.p.Revoke(ctx, in.ID, "lost"); err != nil {
+		t.Fatalf("Revoke with a key on the deleted single list: %v", err)
+	}
+	h.expectStatus(statuslist.StatusInvalid, key)
+}
+
+// unretainedStore is a MemoryInstanceKeyStore whose ListUnretained and
+// Update fail with listErr and updateErr when they're set.
+type unretainedStore struct {
+	walletprovider.MemoryInstanceKeyStore
+	listErr, updateErr error
+}
+
+func (s *unretainedStore) ListUnretained(ctx context.Context, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.MemoryInstanceKeyStore.ListUnretained(ctx, after, limit)
+}
+
+func (s *unretainedStore) Update(ctx context.Context, k walletprovider.InstanceKey) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	return s.MemoryInstanceKeyStore.Update(ctx, k)
+}
+
+// noLister hides MemoryInstanceKeyStore's ListUnretained: a store that
+// can't list keys without a RetainUntil.
+type noLister struct {
+	walletprovider.InstanceKeyStore
+}
+
+// createUnretained stores n instance keys with no RetainUntil, on the
+// list of the period starting at start, straight into s.
+func createUnretained(t *testing.T, s walletprovider.InstanceKeyStore, n int, start int64) {
+	t.Helper()
+	for i := range n {
+		k := walletprovider.InstanceKey{
+			Thumbprint: fmt.Sprintf("tp-%04d", i), Key: []byte(`{"kty":"EC"}`), InstanceID: "in",
+			Status:    statuslist.StatusListRef{Idx: uint64(i), URI: listURI(start, 0)},
+			CreatedAt: time.Unix(start, 0),
+		}
+		if err := s.Create(context.Background(), k); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestSweepStatusListsRetainsEveryPage: keys without a RetainUntil
+// across several of ListUnretained's pages all get one.
+func TestSweepStatusListsRetainsEveryPage(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	const n = 250
+	createUnretained(t, h.deps.InstanceKeys, n, h.periodStart())
+	h.sweep(0)
+	left, err := h.deps.InstanceKeys.(walletprovider.UnretainedInstanceKeyLister).ListUnretained(ctx, "", n)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("after a sweep, %d keys have no RetainUntil (%v)", len(left), err)
+	}
+	want := time.Unix(h.periodStart(), 0).Add(3 * h.period())
+	for _, tp := range []string{"tp-0000", "tp-0100", "tp-0249"} {
+		if k, err := h.deps.InstanceKeys.Get(ctx, tp); err != nil || !k.RetainUntil.Equal(want) {
+			t.Errorf("%s: RetainUntil %v (%v), want %v", tp, k.RetainUntil, err, want)
+		}
+	}
+}
+
+// TestSweepStatusListsRetainFailures: SweepStatusLists fails, deleting
+// nothing, when the keys without a RetainUntil can't be listed or
+// updated; a conflict or a key gone meanwhile isn't a failure; and a
+// store that can't list them leaves them as they are.
+func TestSweepStatusListsRetainFailures(t *testing.T) {
+	down := errors.New("the database is down")
+	for _, c := range []struct {
+		name      string
+		listErr   error
+		updateErr error
+		fails     bool
+	}{
+		{"ListFails", down, nil, true},
+		{"UpdateFails", nil, down, true},
+		{"Conflict", nil, walletprovider.ErrConflict, false},
+		{"Gone", nil, walletprovider.ErrNotFound, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := &unretainedStore{}
+			h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+				withRetention(cfg, d)
+				d.InstanceKeys = store
+			})
+			createUnretained(t, &store.MemoryInstanceKeyStore, 3, h.periodStart())
+			store.listErr, store.updateErr = c.listErr, c.updateErr
+			n, err := h.p.SweepStatusLists(context.Background())
+			switch {
+			case c.fails && (err == nil || !errors.Is(err, down) || n != 0):
+				t.Fatalf("SweepStatusLists = %d, %v; want 0 and the store's error", n, err)
+			case !c.fails && err != nil:
+				t.Fatalf("SweepStatusLists = %d, %v; want no error", n, err)
+			}
+		})
+	}
+	t.Run("NoLister", func(t *testing.T) {
+		mem := &walletprovider.MemoryInstanceKeyStore{}
+		h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+			withRetention(cfg, d)
+			d.InstanceKeys = noLister{mem}
+		})
+		createUnretained(t, mem, 3, h.periodStart())
+		h.sweep(0)
+		if left, err := mem.ListUnretained(context.Background(), "", 10); err != nil || len(left) != 3 {
+			t.Fatalf("a store without ListUnretained: %d keys left without a RetainUntil (%v), want 3", len(left), err)
+		}
+	})
+}

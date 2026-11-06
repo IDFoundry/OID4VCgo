@@ -99,3 +99,56 @@ func TestTransactionStoreRefusesAnotherSealer(t *testing.T) {
 		}
 	}
 }
+
+// An update that leaves the transaction as it was writes nothing: the
+// sealed record, sealed afresh by every write, stays byte for byte.
+func TestTransactionUpdateSkipsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	d, db := openSQLite(t, filepath.Join(t.TempDir(), "store.db"), sqlstore.Options{Sealer: testSealer(t)})
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store := d.Transactions(verifier.TransactionCodec{})
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := verifier.Transaction{
+		ID: "tx-1", KeyID: "kid-1", Owner: "o", ResponseDecryptionKey: key, BrowserBindingHash: []byte{1, 2},
+		ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending,
+	}
+	if err := store.Create(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	record := func() string {
+		t.Helper()
+		var data []byte
+		if err := db.QueryRowContext(ctx, "SELECT record FROM oid4vc_verifier_transactions WHERE id = ?", "tx-1").Scan(&data); err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	before := record()
+	if err := store.Update(ctx, "tx-1", func(*verifier.Transaction) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if record() != before {
+		t.Error("an update changing nothing rewrote the record")
+	}
+	if err := store.Update(ctx, "tx-1", func(tx *verifier.Transaction) error {
+		tx.BrowserBindingHash[0] = 9 // in place: the comparison mustn't share it
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if record() == before {
+		t.Error("an update changing the record in place didn't write it")
+	}
+	got, err := store.Get(ctx, "tx-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BrowserBindingHash[0] != 9 {
+		t.Errorf("BrowserBindingHash = %v, want the update's", got.BrowserBindingHash)
+	}
+}
