@@ -334,6 +334,11 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
 	}
+	if claims.VCTIntegrity != "" {
+		if err := validateIntegrity(claims.VCTIntegrity); err != nil {
+			return fmt.Errorf("sdjwtvc: Claims.VCTIntegrity: %w", err)
+		}
+	}
 	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
 		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
 	}

@@ -25,7 +25,7 @@ func validTypeMetadata() sdjwtvc.TypeMetadata {
 // validates.
 func TestTypeMetadata_RoundTripsAndValidates(t *testing.T) {
 	m := validTypeMetadata()
-	m.Extends, m.ExtendsIntegrity = "https://base.example/vct", "sha256-abc"
+	m.Extends, m.ExtendsIntegrity = "https://base.example/vct", "sha256-LCa0a2j/xo/5m0U8HTBBNBNCLXBkg7+g+YpeiGJm564="
 	if err := m.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

@@ -104,6 +104,11 @@ func (m TypeMetadata) Validate() error {
 	if m.VCT == "" {
 		return errors.New("sdjwtvc: type metadata: vct is required")
 	}
+	if m.ExtendsIntegrity != "" {
+		if err := validateIntegrity(m.ExtendsIntegrity); err != nil {
+			return fmt.Errorf("sdjwtvc: type metadata: extends#integrity: %w", err)
+		}
+	}
 	for i, d := range m.Display {
 		if d.Locale == "" || d.Name == "" {
 			return fmt.Errorf("sdjwtvc: type metadata: display[%d]: locale and name are required", i)
@@ -184,7 +189,8 @@ func validateSvgID(id string, seen map[string]bool) error {
 // renderingURI is a rendering method's object with a uri: a "simple"
 // logo or background_image, or an "svg_templates" entry.
 type renderingURI struct {
-	URI *string `json:"uri"`
+	URI          *string `json:"uri"`
+	URIIntegrity *string `json:"uri#integrity"`
 }
 
 // validateRendering checks the uri properties of the rendering methods
@@ -199,12 +205,12 @@ func validateRendering(rendering map[string]json.RawMessage) error {
 			return fmt.Errorf("simple: %w", err)
 		}
 		if simple.Logo != nil {
-			if err := validateRenderingURI(simple.Logo.URI); err != nil {
+			if err := simple.Logo.validate(); err != nil {
 				return fmt.Errorf("simple: logo: %w", err)
 			}
 		}
 		if simple.BackgroundImage != nil {
-			if err := validateRenderingURI(simple.BackgroundImage.URI); err != nil {
+			if err := simple.BackgroundImage.validate(); err != nil {
 				return fmt.Errorf("simple: background_image: %w", err)
 			}
 		}
@@ -215,9 +221,23 @@ func validateRendering(rendering map[string]json.RawMessage) error {
 			return fmt.Errorf("svg_templates: %w", err)
 		}
 		for i, tmpl := range templates {
-			if err := validateRenderingURI(tmpl.URI); err != nil {
+			if err := tmpl.validate(); err != nil {
 				return fmt.Errorf("svg_templates[%d]: %w", i, err)
 			}
+		}
+	}
+	return nil
+}
+
+// validate checks a rendering's uri and, if present, its uri#integrity
+// (draft-13 §7).
+func (r renderingURI) validate() error {
+	if err := validateRenderingURI(r.URI); err != nil {
+		return err
+	}
+	if r.URIIntegrity != nil {
+		if err := validateIntegrity(*r.URIIntegrity); err != nil {
+			return fmt.Errorf("uri#integrity: %w", err)
 		}
 	}
 	return nil
