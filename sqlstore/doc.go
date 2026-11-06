@@ -39,7 +39,9 @@
 //     its token, so one signs it at a time. A trigger raises a list's
 //     version as StatusIndices changes one of its statuses; Claim, the
 //     lease on signing a token, is one INSERT … ON CONFLICT DO UPDATE
-//     … WHERE the lease is free.
+//     … WHERE the lease is free. Each token is kept with its signer
+//     (migration 0012), so a replica with another certificate signs its
+//     own rather than serve it.
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices and StatusListTokens as its

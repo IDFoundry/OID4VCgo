@@ -25,8 +25,11 @@ import (
 // ended or the holder's own, so of two replicas claiming one lease one
 // gets it, across every process sharing the database. A lease's end is
 // the claiming replica's clock: replicas' clocks are assumed to agree
-// to well within a lease, which lasts 35 seconds. Tokens aren't secret — a Publisher
-// serves them to anyone — so the rows aren't sealed.
+// to well within a lease, which lasts 35 seconds. Each token's signer
+// (StoredToken.Signer) is kept with it, from migration 0012: a token
+// stored before has none, so a Publisher signs it anew once. Tokens
+// aren't secret — a Publisher serves them to anyone — so the rows aren't
+// sealed.
 type StatusListTokenStore struct{ d *DB }
 
 var _ statuslist.TokenStore = (*StatusListTokenStore)(nil)
@@ -41,13 +44,14 @@ func (s *StatusListTokenStore) Head(ctx context.Context, uri string, form status
 	}
 	var head statuslist.TokenHead
 	var version, signedAt, exp sql.NullInt64
-	err := s.d.db.QueryRowContext(ctx, s.d.sql.statusTokenHead, uri, uri, int64(form)).Scan(&head.Version, &version, &signedAt, &exp)
+	var signer []byte
+	err := s.d.db.QueryRowContext(ctx, s.d.sql.statusTokenHead, uri, uri, int64(form)).Scan(&head.Version, &version, &signedAt, &exp, &signer)
 	if err != nil {
 		return statuslist.TokenHead{}, fmt.Errorf("sqlstore: read the %v token of %s: %w", form, uri, err)
 	}
 	if version.Valid {
 		head.Stored = true
-		head.Token = statuslist.StoredToken{Version: version.Int64, SignedAt: time.UnixMilli(signedAt.Int64), Exp: time.UnixMilli(exp.Int64)}
+		head.Token = statuslist.StoredToken{Version: version.Int64, SignedAt: time.UnixMilli(signedAt.Int64), Exp: time.UnixMilli(exp.Int64), Signer: signer}
 	}
 	return head, nil
 }
@@ -59,7 +63,7 @@ func (s *StatusListTokenStore) Token(ctx context.Context, uri string, form statu
 	}
 	var token statuslist.StoredToken
 	var signedAt, exp int64
-	switch err := s.d.db.QueryRowContext(ctx, s.d.sql.statusTokenGet, uri, int64(form)).Scan(&token.Bytes, &token.Version, &signedAt, &exp); {
+	switch err := s.d.db.QueryRowContext(ctx, s.d.sql.statusTokenGet, uri, int64(form)).Scan(&token.Bytes, &token.Version, &signedAt, &exp, &token.Signer); {
 	case errors.Is(err, sql.ErrNoRows):
 		return statuslist.StoredToken{}, false, nil
 	case err != nil:
@@ -101,7 +105,7 @@ func (s *StatusListTokenStore) Put(ctx context.Context, uri string, form statusl
 		return fmt.Errorf("sqlstore: the %v token of %s is empty", form, uri)
 	}
 	err := s.d.write(ctx, func(q querier) error {
-		if _, err := q.ExecContext(ctx, s.d.sql.statusTokenPut, uri, int64(form), token.Bytes, token.Version, token.SignedAt.UnixMilli(), token.Exp.UnixMilli()); err != nil {
+		if _, err := q.ExecContext(ctx, s.d.sql.statusTokenPut, uri, int64(form), token.Bytes, token.Version, token.SignedAt.UnixMilli(), token.Exp.UnixMilli(), signerBytes(token.Signer)); err != nil {
 			return err
 		}
 		_, err := q.ExecContext(ctx, s.d.sql.statusTokenRelease, uri, int64(form), holder)
@@ -111,4 +115,12 @@ func (s *StatusListTokenStore) Put(ctx context.Context, uri string, form statusl
 		return fmt.Errorf("sqlstore: store the %v token of %s: %w", form, uri, err)
 	}
 	return nil
+}
+
+// signerBytes is signer as the signer column keeps it: never NULL.
+func signerBytes(signer []byte) []byte {
+	if signer == nil {
+		return []byte{}
+	}
+	return signer
 }
