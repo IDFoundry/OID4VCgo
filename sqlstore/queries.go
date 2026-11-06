@@ -12,7 +12,7 @@ package sqlstore
 // file each.
 type queries struct {
 	// oid4vc_issuer_nonces: issuer.NonceStore.
-	nonceInsert, nonceConsumeOwned, nonceSweep string
+	nonceInsert, nonceSpend, nonceConsumeOwned, nonceSweep string
 
 	// oid4vc_issuer_pre_authorized_codes: issuer.PreAuthorizedCodeStore.
 	pacInsert, pacSelectForConsume, pacSetAttempts, pacDelete, pacSweep string

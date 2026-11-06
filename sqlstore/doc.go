@@ -17,7 +17,9 @@
 //   - issuer.Dependencies: Nonces, PreAuthorizedCodes,
 //     DeferredTransactions, Notifications and CredentialOffers. Each
 //     declares issuer.StoreCapabilities Durable and AtomicConsume, as
-//     AssuranceProduction requires.
+//     AssuranceProduction requires. Nonces is an issuer.NonceSpender
+//     too, for Dependencies.NonceKeys: its Spend is one INSERT … ON
+//     CONFLICT DO NOTHING on the nonce, the primary key.
 //   - verifier.NewTransactions's store: Transactions, with the
 //     verifier.TransactionCodec that encodes each transaction, and
 //     seals its secret fields with its Sealer, or the DB's when it has

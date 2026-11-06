@@ -38,6 +38,21 @@ func (s *NonceStore) Issue(ctx context.Context, issuance issuer.NonceIssuance) e
 	return nil
 }
 
+// Spend implements issuer.NonceSpender: one INSERT … ON CONFLICT DO
+// NOTHING, so of two Credential Requests spending one stateless c_nonce
+// at once, in any processes, one does. Its row is swept after the
+// nonce's ExpiresAt, as an issued nonce's is.
+func (s *NonceStore) Spend(ctx context.Context, issuance issuer.NonceIssuance) error {
+	inserted, err := s.t.insertNew(ctx, s.t.d.sql.nonceSpend, issuance.Nonce, issuance)
+	switch {
+	case err != nil:
+		return fmt.Errorf("sqlstore: spend c_nonce: %w", err)
+	case !inserted:
+		return fmt.Errorf("sqlstore: %w", issuer.ErrNonceUnknown)
+	}
+	return nil
+}
+
 // Consume implements issuer.NonceStore: one DELETE … RETURNING, of the
 // nonce issued with consumption.Owner only.
 func (s *NonceStore) Consume(ctx context.Context, consumption issuer.NonceConsumption) (issuer.NonceRecord, error) {
