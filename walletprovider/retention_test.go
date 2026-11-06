@@ -377,3 +377,114 @@ func TestSinglePreRotationListDeletable(t *testing.T) {
 	}
 	h.expectStatus(statuslist.StatusInvalid, key)
 }
+
+// unretainedStore is a MemoryInstanceKeyStore whose ListUnretained and
+// Update fail with listErr and updateErr when they're set.
+type unretainedStore struct {
+	walletprovider.MemoryInstanceKeyStore
+	listErr, updateErr error
+}
+
+func (s *unretainedStore) ListUnretained(ctx context.Context, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.MemoryInstanceKeyStore.ListUnretained(ctx, after, limit)
+}
+
+func (s *unretainedStore) Update(ctx context.Context, k walletprovider.InstanceKey) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	return s.MemoryInstanceKeyStore.Update(ctx, k)
+}
+
+// noLister hides MemoryInstanceKeyStore's ListUnretained: a store that
+// can't list keys without a RetainUntil.
+type noLister struct {
+	walletprovider.InstanceKeyStore
+}
+
+// createUnretained stores n instance keys with no RetainUntil, on the
+// list of the period starting at start, straight into s.
+func createUnretained(t *testing.T, s walletprovider.InstanceKeyStore, n int, start int64) {
+	t.Helper()
+	for i := range n {
+		k := walletprovider.InstanceKey{
+			Thumbprint: fmt.Sprintf("tp-%04d", i), Key: []byte(`{"kty":"EC"}`), InstanceID: "in",
+			Status:    statuslist.StatusListRef{Idx: uint64(i), URI: listURI(start, 0)},
+			CreatedAt: time.Unix(start, 0),
+		}
+		if err := s.Create(context.Background(), k); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestSweepStatusListsRetainsEveryPage: keys without a RetainUntil
+// across several of ListUnretained's pages all get one.
+func TestSweepStatusListsRetainsEveryPage(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	const n = 250
+	createUnretained(t, h.deps.InstanceKeys, n, h.periodStart())
+	h.sweep(0)
+	left, err := h.deps.InstanceKeys.(walletprovider.UnretainedInstanceKeyLister).ListUnretained(ctx, "", n)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("after a sweep, %d keys have no RetainUntil (%v)", len(left), err)
+	}
+	want := time.Unix(h.periodStart(), 0).Add(3 * h.period())
+	for _, tp := range []string{"tp-0000", "tp-0100", "tp-0249"} {
+		if k, err := h.deps.InstanceKeys.Get(ctx, tp); err != nil || !k.RetainUntil.Equal(want) {
+			t.Errorf("%s: RetainUntil %v (%v), want %v", tp, k.RetainUntil, err, want)
+		}
+	}
+}
+
+// TestSweepStatusListsRetainFailures: SweepStatusLists fails, deleting
+// nothing, when the keys without a RetainUntil can't be listed or
+// updated; a conflict or a key gone meanwhile isn't a failure; and a
+// store that can't list them leaves them as they are.
+func TestSweepStatusListsRetainFailures(t *testing.T) {
+	down := errors.New("the database is down")
+	for _, c := range []struct {
+		name      string
+		listErr   error
+		updateErr error
+		fails     bool
+	}{
+		{"ListFails", down, nil, true},
+		{"UpdateFails", nil, down, true},
+		{"Conflict", nil, walletprovider.ErrConflict, false},
+		{"Gone", nil, walletprovider.ErrNotFound, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := &unretainedStore{}
+			h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+				withRetention(cfg, d)
+				d.InstanceKeys = store
+			})
+			createUnretained(t, &store.MemoryInstanceKeyStore, 3, h.periodStart())
+			store.listErr, store.updateErr = c.listErr, c.updateErr
+			n, err := h.p.SweepStatusLists(context.Background())
+			switch {
+			case c.fails && (err == nil || !errors.Is(err, down) || n != 0):
+				t.Fatalf("SweepStatusLists = %d, %v; want 0 and the store's error", n, err)
+			case !c.fails && err != nil:
+				t.Fatalf("SweepStatusLists = %d, %v; want no error", n, err)
+			}
+		})
+	}
+	t.Run("NoLister", func(t *testing.T) {
+		mem := &walletprovider.MemoryInstanceKeyStore{}
+		h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+			withRetention(cfg, d)
+			d.InstanceKeys = noLister{mem}
+		})
+		createUnretained(t, mem, 3, h.periodStart())
+		h.sweep(0)
+		if left, err := mem.ListUnretained(context.Background(), "", 10); err != nil || len(left) != 3 {
+			t.Fatalf("a store without ListUnretained: %d keys left without a RetainUntil (%v), want 3", len(left), err)
+		}
+	})
+}
