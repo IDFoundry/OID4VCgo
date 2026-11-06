@@ -355,7 +355,7 @@ library's an `IOException`.
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
- "status_max_bytes": 0, "identifier_list_max_bytes": 0,
+ "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
  "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>",
@@ -482,6 +482,15 @@ status list and mdoc identifier list `CheckStatus` reads, in bytes: 0
 keeps 1 MiB and 4 MiB, and each may be at most 32 MiB
 (`invalid_input` otherwise). A larger list fails the check, so raise
 them only for issuers whose lists are larger. Added within ABI 15.
+`status_cache_max_age_seconds` is how long `CheckStatus` uses a status
+or identifier list it fetched before asking its server again: 0 means
+5 minutes, and it may be at most 86400 (`invalid_input` otherwise). A
+list is never used past its own `ttl` or `exp`, nor past the
+`Cache-Control: max-age` it was served with. Asking again sends the
+list's `ETag` and `Last-Modified` back, so a list its server still
+serves costs a `304 Not Modified`, not the list. Longer means fewer
+requests, and a revocation seen that much later. Wallets and readers
+configured with the same value share their lists. Added within ABI 15.
 `require_issuer_name` refuses a received SD-JWT VC whose `iss` its
 signing certificate doesn't name; SD-JWT VC doesn't require them to
 correspond, so set it where `issuer_roots` certify several issuers.
@@ -1051,7 +1060,7 @@ added within ABI 14: before, they were refused.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"status_max_bytes", "identifier_list_max_bytes", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
+"status_max_bytes", "identifier_list_max_bytes", "status_cache_max_age_seconds", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
 "crl_distribution_points", "crl_distribution_points_from_roots",
 "crl_require_https", "development_roots", "any_issuer_for_any_type",
@@ -1072,6 +1081,8 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   that far off.
 - `status_max_bytes` and `identifier_list_max_bytes` bound the lists
   `CheckStatus` reads, as a Wallet's. Added within ABI 15.
+- `status_cache_max_age_seconds` is how long `CheckStatus` uses a list
+  it fetched, as a Wallet's. Added within ABI 15.
 - `require_mdl_signer_eku` accepts only document signers with the mDL
   document signer extended key usage. The default check requires it
   too, so a document signer certificate without one is refused either

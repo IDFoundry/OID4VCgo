@@ -639,6 +639,8 @@ public data class ProximityReaderConfiguration(
     @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
     /** The largest identifier list `checkStatus` reads, in bytes; 0 means 4 MiB. */
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
+    /** How long `checkStatus` uses a list it fetched, in seconds, as [WalletConfiguration.statusCacheMaxAgeSeconds]. */
+    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

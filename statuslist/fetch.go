@@ -6,17 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"weak"
+
+	"github.com/idfoundry/oid4vcgo/internal/statuscache"
 )
 
 // Fetcher fetches Status List Tokens (draft-14 §8.1): an HTTPS GET of a
@@ -104,14 +108,32 @@ const MaxStatusListRedirects = 3
 // Fetch GETs uri, asking for mediaType (TokenMediaType or
 // CWTTokenMediaType), and returns the token's bytes.
 func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, error) {
+	res, err := f.fetch(ctx, uri, mediaType, statuscache.Validators{})
+	if err != nil {
+		return nil, err
+	}
+	return res.Token, nil
+}
+
+// fetch is Fetch, revalidating by held when they aren't zero: with
+// If-None-Match and If-Modified-Since, so that a token a Cache holds
+// that its server still serves costs a 304, not the token again. A 304
+// answers only a conditional fetch.
+func (f Fetcher) fetch(ctx context.Context, uri, mediaType string, held statuscache.Validators) (statuscache.Fetched, error) {
 	if u, err := url.Parse(uri); err != nil || u.Scheme != "https" || u.Host == "" {
-		return nil, fmt.Errorf("statuslist: status list uri %q isn't an https URL", uri)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: status list uri %q isn't an https URL", uri)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
-		return nil, fmt.Errorf("statuslist: fetch: %w", err)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch: %w", err)
 	}
 	req.Header.Set("Accept", mediaType)
+	if held.ETag != "" {
+		req.Header.Set("If-None-Match", held.ETag)
+	}
+	if held.LastModified != "" {
+		req.Header.Set("If-Modified-Since", held.LastModified)
+	}
 	client := f.client()
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		switch {
@@ -123,20 +145,28 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 		return nil
 	}
 	if client.Transport, err = f.transport(client.Transport); err != nil {
-		return nil, err
+		return statuscache.Fetched{}, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("statuslist: fetch %s: %w", uri, err)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch %s: %w", uri, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	res := statuscache.Fetched{
+		Validators: statuscache.Validators{ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified")},
+		MaxAge:     freshFor(resp.Header),
+	}
+	if resp.StatusCode == http.StatusNotModified && held != (statuscache.Validators{}) {
+		res.NotModified = true
+		return res, nil
+	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("statuslist: fetch %s: HTTP %d", uri, resp.StatusCode)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch %s: HTTP %d", uri, resp.StatusCode)
 	}
 	// Parameters such as charset don't change the type, and media types
 	// compare case-insensitively (RFC 9110 §8.3.1).
 	if got, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil || !strings.EqualFold(got, mediaType) {
-		return nil, fmt.Errorf("statuslist: fetch %s: content type %q, want %q", uri, resp.Header.Get("Content-Type"), mediaType)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch %s: content type %q, want %q", uri, resp.Header.Get("Content-Type"), mediaType)
 	}
 	limit := f.MaxBytes
 	if limit <= 0 {
@@ -144,12 +174,42 @@ func (f Fetcher) Fetch(ctx context.Context, uri, mediaType string) ([]byte, erro
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
-		return nil, fmt.Errorf("statuslist: fetch %s: %w", uri, err)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch %s: %w", uri, err)
 	}
 	if len(body) > limit {
-		return nil, fmt.Errorf("statuslist: fetch %s: token exceeds %d bytes", uri, limit)
+		return statuscache.Fetched{}, fmt.Errorf("statuslist: fetch %s: token exceeds %d bytes", uri, limit)
 	}
-	return body, nil
+	res.Token = body
+	return res, nil
+}
+
+// freshFor is how long a response with header says it stays fresh: its
+// Cache-Control max-age less its Age (RFC 9111 §4.2), or nil when it
+// gives no max-age. Other directives are left alone: a token's own ttl
+// and exp, and a Cache's MaxAge, bound how long it's kept (draft-14
+// §5.1), and a max-age only shortens that.
+func freshFor(header http.Header) *time.Duration {
+	var maxAge *time.Duration
+	for _, directive := range strings.Split(strings.Join(header.Values("Cache-Control"), ","), ",") {
+		name, value, _ := strings.Cut(strings.TrimSpace(directive), "=")
+		if strings.EqualFold(name, "max-age") {
+			seconds, err := strconv.ParseInt(strings.Trim(value, `"`), 10, 64)
+			if err != nil || seconds < 0 {
+				// An invalid max-age makes the response stale (RFC 9111
+				// §4.2.1).
+				seconds = 0
+			}
+			d := time.Duration(min(seconds, int64(math.MaxInt64/time.Second))) * time.Second
+			maxAge = &d
+		}
+	}
+	if maxAge == nil {
+		return nil
+	}
+	if age, err := strconv.ParseInt(header.Get("Age"), 10, 64); err == nil && age > 0 {
+		*maxAge -= time.Duration(min(age, int64(math.MaxInt64/time.Second))) * time.Second
+	}
+	return maxAge
 }
 
 // Checker checks a Referenced Token's status end to end (draft-14

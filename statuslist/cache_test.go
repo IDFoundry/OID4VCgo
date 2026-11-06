@@ -3,6 +3,7 @@ package statuslist
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -58,8 +59,15 @@ type cacheServer struct {
 	statuses []uint8
 	failing  bool
 	gate     chan struct{} // when set, requests wait for it to close
+	// etag, when set, has the server sign each form's token once,
+	// serve it with an ETag, and answer a request revalidating it with
+	// a 304; cacheControl is the Cache-Control it sends, if not empty.
+	etag         bool
+	cacheControl string
+	signed       map[string][]byte
 
-	fetches atomic.Int32
+	fetches      atomic.Int32
+	notModifieds atomic.Int32
 }
 
 func newCacheServer(t *testing.T) *cacheServer {
@@ -83,7 +91,23 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.fetches.Add(1)
 	s.mu.Lock()
 	gate, failing, ttl, expIn, statuses := s.gate, s.failing, s.ttl, s.expIn, s.statuses
+	etag, cacheControl, held := s.etag, s.cacheControl, s.signed[r.Header.Get("Accept")]
 	s.mu.Unlock()
+	if cacheControl != "" {
+		w.Header().Set("Cache-Control", cacheControl)
+	}
+	if etag && held != nil {
+		tag := fmt.Sprintf(`"%x"`, sha256.Sum256(held))
+		w.Header().Set("ETag", tag)
+		if r.Header.Get("If-None-Match") == tag {
+			s.notModifieds.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", r.Header.Get("Accept"))
+		_, _ = w.Write(held)
+		return
+	}
 	if gate != nil {
 		<-gate
 	}
@@ -108,6 +132,7 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		s.keep(w, etag, CWTTokenMediaType, token)
 		w.Header().Set("Content-Type", CWTTokenMediaType)
 		_, _ = w.Write(token)
 		return
@@ -117,8 +142,24 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.keep(w, etag, TokenMediaType, []byte(token))
 	w.Header().Set("Content-Type", TokenMediaType)
 	_, _ = w.Write([]byte(token))
+}
+
+// keep keeps token, of mediaType, as the one s serves while etag is
+// set, and sends its ETag.
+func (s *cacheServer) keep(w http.ResponseWriter, etag bool, mediaType string, token []byte) {
+	if !etag {
+		return
+	}
+	w.Header().Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256(token)))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.signed == nil {
+		s.signed = map[string][]byte{}
+	}
+	s.signed[mediaType] = token
 }
 
 func (s *cacheServer) uri(path string) string { return s.srv.URL + path }

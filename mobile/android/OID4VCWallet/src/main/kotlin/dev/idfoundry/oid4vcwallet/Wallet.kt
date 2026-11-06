@@ -286,6 +286,12 @@ public data class WalletConfiguration(
     @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
     /** The largest mdoc identifier list [Wallet.checkStatus] reads, in bytes; 0 means 4 MiB. */
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
+    /**
+     * How long [Wallet.checkStatus] uses a status or identifier list it fetched before
+     * revalidating it, in seconds: 0 means 5 minutes, at most a day, and never past the
+     * list's own `ttl` or `exp`. Longer means fewer requests, and a revocation seen that much later.
+     */
+    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

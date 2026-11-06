@@ -31,9 +31,10 @@ type CacheOptions struct {
 	// the Checkers read in the time the tokens are kept.
 	MaxBytes int64
 
-	// MaxAge is the longest a token is kept after it was fetched, also
-	// when it sets no ttl (draft-14 §5.1): until then a status changed
-	// at its issuer isn't seen. Zero means DefaultCacheMaxAge.
+	// MaxAge is the longest a token is kept after it was fetched, or
+	// revalidated, also when it sets no ttl (draft-14 §5.1): until then
+	// a status changed at its issuer isn't seen. Zero means
+	// DefaultCacheMaxAge.
 	MaxAge time.Duration
 
 	// MaxFailureAge is how long a failed fetch, or a token a check
@@ -65,9 +66,18 @@ const DefaultCacheMaxFailureAge = statuscache.DefaultMaxFailureAge
 // the token's bytes alone: that its signature verifies under the leaf
 // of the signer's chain it carries, that chain, its claims and its list
 // decompressed — not the token. It keeps a token until the earliest of
-// its exp, its iat plus its ttl, and MaxAge after it was fetched. An
-// expired token is never used: a check that can't fetch it afresh
-// fails, however recently it was valid.
+// its exp, its iat plus its ttl, MaxAge after it was fetched, and the
+// Cache-Control max-age its response gave, less its Age. An expired
+// token is never used: a check that can't fetch it afresh fails,
+// however recently it was valid.
+//
+// A token whose response carried an ETag or Last-Modified is
+// revalidated once it expires, with If-None-Match and
+// If-Modified-Since: a 304 Not Modified keeps it, checked again as a
+// cached one, for as long again as a fresh fetch would — never past its
+// own exp or iat plus ttl — so a list its server still serves costs a
+// round trip, not its download. A check that refuses the token a 304
+// kept fetches it in full.
 //
 // Every check of a cached token checks it again with its own Checker's
 // Roots and Options — the signer's chain to those Roots, its policy and
@@ -113,6 +123,13 @@ func init() {
 			return c.engine
 		}
 		return nil
+	}
+	statuscache.FetchConditional = func(ctx context.Context, fetcher any, uri, mediaType string, held statuscache.Validators) (statuscache.Fetched, error) {
+		f, ok := fetcher.(Fetcher)
+		if !ok {
+			return statuscache.Fetched{}, errors.New("statuslist: not a Fetcher")
+		}
+		return f.fetch(ctx, uri, mediaType, held)
 	}
 }
 
@@ -219,7 +236,9 @@ func (c *Cache) check(ctx context.Context, fetcher Fetcher, ref StatusListRef, m
 	}
 	var used *tokenMemo
 	err := c.engine.Check(ctx, ref.URI, mediaType, fetcher.cacheKey(),
-		func(ctx context.Context) ([]byte, error) { return fetcher.Fetch(ctx, ref.URI, mediaType) },
+		func(ctx context.Context, held statuscache.Validators) (statuscache.Fetched, error) {
+			return fetcher.fetch(ctx, ref.URI, mediaType, held)
+		},
 		func(token []byte) (statuscache.Verified, error) {
 			m, err := verify(token)
 			if err != nil {
