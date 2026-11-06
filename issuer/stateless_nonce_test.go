@@ -162,6 +162,91 @@ func TestStatelessNonce_StoredNoncesStillConsumed(t *testing.T) {
 	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
 }
 
+// A stateless c_nonce spent by a replica with NonceKeys is refused by
+// a replica of the same Credential Issuer without them, sharing the
+// store, and alternating between the two never accepts it again: the
+// spent record isn't consumed as an issued nonce.
+func TestStatelessNonce_SpentNotReplayedAcrossReplicas(t *testing.T) {
+	store := storage.NewNonceStore()
+	clock := &mutableClock{now: time.Now()}
+	withKeys := statelessFixture(t, store, clock, nonceKey(1))
+	withoutKeys := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.Nonces, deps.Clock = store, clock
+	})
+	proof := buildJWTProof(t, testP256Key(t), testIssuer, requestNonce(t, withKeys.iss))
+	if _, err := requestSDJWTWithProof(withKeys, oid4vci.ProofTypeJWT, proof); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	for i, f := range []credentialEndpointFixture{withoutKeys, withKeys, withoutKeys, withKeys} {
+		_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, proof)
+		if err == nil {
+			t.Fatalf("replay %d accepted", i)
+		}
+		assertIssuerError(t, err, issuer.ErrorInvalidNonce)
+	}
+}
+
+// A stateless c_nonce reaching a replica without NonceKeys is refused
+// without touching the store, even unspent.
+func TestStatelessNonce_RefusedWithoutKeys(t *testing.T) {
+	store := &countingSpender{NonceStore: storage.NewNonceStore()}
+	clock := &mutableClock{now: time.Now()}
+	nonce := requestNonce(t, statelessFixture(t, store, clock, nonceKey(1)).iss)
+	withoutKeys := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.Nonces, deps.Clock = store, clock
+	})
+	_, err := requestSDJWTWithProof(withoutKeys, oid4vci.ProofTypeJWT, buildJWTProof(t, testP256Key(t), testIssuer, nonce))
+	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
+	if n := store.spent.Load() + store.issued.Load(); n != 0 {
+		t.Errorf("the store was written %d times", n)
+	}
+}
+
+// A nonce v0.69.0 spent, recorded under the plain Owner, is still
+// spent: a replica with NonceKeys refuses it.
+func TestStatelessNonce_LegacySpentRecordRefused(t *testing.T) {
+	store := storage.NewNonceStore()
+	clock := &mutableClock{now: time.Now()}
+	f := statelessFixture(t, store, clock, nonceKey(1))
+	nonce := requestNonce(t, f.iss)
+	if err := store.Spend(context.Background(), issuer.NonceIssuance{Nonce: nonce, Owner: testIssuer, ExpiresAt: clock.now.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, buildJWTProof(t, testP256Key(t), testIssuer, nonce))
+	assertIssuerError(t, err, issuer.ErrorInvalidNonce)
+}
+
+// A spent nonce is recorded past its expiry, by a margin for a store
+// swept on a clock ahead of the issuer's, and under an Owner no
+// Consume uses.
+func TestStatelessNonce_SpentRecord(t *testing.T) {
+	store := &recordingSpender{NonceStore: storage.NewNonceStore()}
+	clock := &mutableClock{now: time.Now()}
+	f := statelessFixture(t, store, clock, nonceKey(1))
+	nonce := requestNonce(t, f.iss)
+	if _, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, buildJWTProof(t, testP256Key(t), testIssuer, nonce)); err != nil {
+		t.Fatal(err)
+	}
+	got := store.spent
+	if got.Nonce != nonce || got.Owner == testIssuer || !strings.HasSuffix(got.Owner, testIssuer) {
+		t.Errorf("spent %+v, want the nonce under an Owner other than %q", got, testIssuer)
+	}
+	if limit := clock.now.Add(time.Minute); !got.ExpiresAt.After(limit) { // the fixture's NonceLifetime
+		t.Errorf("spent until %v, want past the nonce's expiry (%v)", got.ExpiresAt, limit)
+	}
+}
+
+// recordingSpender is a storage.NonceStore keeping the last Spend.
+type recordingSpender struct {
+	*storage.NonceStore
+	spent issuer.NonceIssuance
+}
+
+func (s *recordingSpender) Spend(ctx context.Context, issuance issuer.NonceIssuance) error {
+	s.spent = issuance
+	return s.NonceStore.Spend(ctx, issuance)
+}
+
 // New refuses NonceKeys too short or too many, or with a Nonces store
 // that can't spend.
 func TestStatelessNonce_ValidatesKeys(t *testing.T) {

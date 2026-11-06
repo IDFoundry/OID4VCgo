@@ -6,6 +6,26 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.69.0 → next
+
+### Issuer (`issuer`)
+
+- **A stateless c_nonce is spent under an Owner of its own**
+  (`"c_nonce spent by " + Config.Issuer`), and an issuer without
+  `NonceKeys` refuses a stateless nonce with `invalid_nonce` rather
+  than consuming it from the store. In v0.69.0 a spent nonce's record
+  looked like an issued nonce's, so a replica without `NonceKeys`
+  sharing the store accepted it again. A custom `NonceSpender` must
+  refuse a `Spend` of a nonce recorded under any Owner, as
+  `issuertest.TestNonceSpenderContract` now checks; sqlstore's and the
+  in-memory store do. Until the last v0.69.0 replica is replaced,
+  keep `NonceKeys` the same on every replica.
+- **Rotate `NonceKeys` in two steps** under a rolling deploy: deploy
+  the new key after the old one everywhere, then first, then drop the
+  old one after `NonceLifetime` (`Dependencies.NonceKeys`). Putting the
+  new key first in one step makes a replica that hasn't taken it yet
+  refuse nonces another issued with it.
+
 ## v0.68.0 → v0.69.0
 
 ### Status lists (`statuslist`)

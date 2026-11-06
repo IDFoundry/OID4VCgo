@@ -23,9 +23,12 @@ type NonceSpender interface {
 
 	// Spend records issuance.Nonce as used by issuance.Owner until
 	// issuance.ExpiresAt. It returns an error wrapping ErrNonceUnknown
-	// if the nonce is recorded already, and any other error only when
-	// it couldn't answer. A store may forget the record after
-	// ExpiresAt: the nonce has expired by then.
+	// if the nonce is recorded already, under any Owner, and any other
+	// error only when it couldn't answer. A store may forget the record
+	// after ExpiresAt: the nonce has expired by then. The Issuer spends
+	// under an Owner its Consume never asks for, so Consume, which
+	// returns only a nonce recorded under the Owner it's given, never
+	// takes a spent nonce for an issued one.
 	Spend(ctx context.Context, issuance NonceIssuance) error
 }
 
@@ -142,7 +145,7 @@ func (iss *Issuer) spendStatelessNonce(ctx context.Context, nonce string) error 
 		return newError(ErrorInvalidNonce, 400, "nonce has expired", errors.New("the c_nonce outlives limits.nonce_lifetime"))
 	}
 	spender := iss.deps.Nonces.(NonceSpender) // validateNonceKeys
-	err = spender.Spend(ctx, NonceIssuance{Nonce: nonce, Owner: iss.storeOwner(), ExpiresAt: exp})
+	err = spender.Spend(ctx, NonceIssuance{Nonce: nonce, Owner: spentNonceOwner(iss.storeOwner()), ExpiresAt: exp.Add(spentNonceMargin)})
 	if errors.Is(err, ErrNonceUnknown) {
 		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)
 	}
@@ -151,6 +154,21 @@ func (iss *Issuer) spendStatelessNonce(ctx context.Context, nonce string) error 
 	}
 	return nil
 }
+
+// spentNonceOwner is the Owner a stateless c_nonce is spent under: one
+// no Credential Issuer's Consume asks for (a Config.Issuer is a URL,
+// with no space), so a store's record of a spent nonce is never
+// consumed as an issued one, by a replica without NonceKeys say.
+// Spend refuses a nonce recorded under any Owner, so a nonce spent
+// under the plain Owner, as v0.69.0 did, is still spent once.
+func spentNonceOwner(owner string) string {
+	return "c_nonce spent by " + owner
+}
+
+// spentNonceMargin keeps a spent c_nonce's record past the nonce's
+// expiry, so that a store swept by a clock running ahead of this
+// replica's doesn't forget a nonce this replica still accepts.
+const spentNonceMargin = 5 * time.Minute
 
 // isStatelessNonce reports whether nonce has a stateless c_nonce's
 // form; a NonceStore's never does.
