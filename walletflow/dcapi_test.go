@@ -320,6 +320,31 @@ func TestDCAPIPresentation_RefusesTransactionData(t *testing.T) {
 	}
 }
 
+// A trusted DC API request for another response mode is refused with
+// invalid_request, for the platform to hand back to the page (OpenID4VP
+// Appendix A.4).
+func TestDCAPIPresentation_RefusesAnotherResponseMode(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	r := unsignedOf(t, v.BeginDCAPI(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, dcapiOrigin))
+	var claims map[string]any
+	if err := json.Unmarshal(r.Data, &claims); err != nil {
+		t.Fatal(err)
+	}
+	claims["response_mode"] = "direct_post.jwt"
+	data, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.StartDCAPIPresentation(context.Background(), r.Protocol, data, r.Origin)
+	var refused *walletflow.RequestRefusedError
+	if !errors.As(err, &refused) || refused.Code != "invalid_request" {
+		t.Fatalf("StartDCAPIPresentation = %v; want refused with invalid_request", err)
+	}
+	if string(refused.DCAPIResponse) != `{"error":"invalid_request"}` {
+		t.Errorf("DCAPIResponse = %s", refused.DCAPIResponse)
+	}
+}
+
 // unsignedOf is r as an unsigned request: its Request Object's claims,
 // without the signature, client_id or expected_origins.
 func unsignedOf(t *testing.T, r *walletflowtest.DCAPIRequest) *walletflowtest.DCAPIRequest {

@@ -73,7 +73,10 @@ func TestParseDCAPIRequest_RoundTrip(t *testing.T) {
 
 // TestParseDCAPIRequest_Refusals: a request is refused unless the
 // platform's origin is one it expects, it asks for dc_api.jwt, and it's
-// signed by a trusted Verifier.
+// signed by a trusted Verifier. A trusted request for another response
+// mode is refused with invalid_request, for the page (OID4VP 1.0
+// Appendix A.4); the others, from another origin among them, with no
+// response.
 func TestParseDCAPIRequest_Refusals(t *testing.T) {
 	v, _, trust := newTestVerifier(t)
 	query := testPresentationQuery(t)
@@ -90,24 +93,28 @@ func TestParseDCAPIRequest_Refusals(t *testing.T) {
 	_, _, otherTrust := newTestVerifier(t)
 
 	for name, tc := range map[string]struct {
-		params wallet.ParseDCAPIRequestParams
-		want   string
+		params         wallet.ParseDCAPIRequestParams
+		want           string
+		invalidRequest bool
 	}{
-		"another origin":        {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: "https://attacker.example", VerifierTrust: trust}, "expected_origins"},
-		"origin with a path":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin + "/", VerifierTrust: trust}, "expected_origins"},
-		"no origin":             {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, VerifierTrust: trust}, "Origin is required"},
-		"redirect-flow request": {wallet.ParseDCAPIRequestParams{Request: redirect.RequestObject, Origin: testDCAPIOrigin, VerifierTrust: trust}, "response_mode"},
-		"untrusted verifier":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin, VerifierTrust: otherTrust}, "untrusted verifier"},
-		"no trust":              {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin}, "VerifierTrust is required"},
-		"not a JWS":             {wallet.ParseDCAPIRequestParams{Request: "not-a-jws", Origin: testDCAPIOrigin, VerifierTrust: trust}, "decode"},
+		"another origin":        {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: "https://attacker.example", VerifierTrust: trust}, "expected_origins", false},
+		"origin with a path":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin + "/", VerifierTrust: trust}, "expected_origins", false},
+		"no origin":             {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, VerifierTrust: trust}, "Origin is required", false},
+		"redirect-flow request": {wallet.ParseDCAPIRequestParams{Request: redirect.RequestObject, Origin: testDCAPIOrigin, VerifierTrust: trust}, "response_mode", true},
+		"untrusted verifier":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin, VerifierTrust: otherTrust}, "untrusted verifier", false},
+		"no trust":              {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin}, "VerifierTrust is required", false},
+		"not a JWS":             {wallet.ParseDCAPIRequestParams{Request: "not-a-jws", Origin: testDCAPIOrigin, VerifierTrust: trust}, "decode", false},
 	} {
 		_, err := wallet.ParseDCAPIRequest(tc.params)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want one mentioning %q", name, err, tc.want)
 		}
 		var rejected *wallet.RequestRejectedError
-		if errors.As(err, &rejected) {
-			t.Errorf("%s: refused with a RequestRejectedError, before the request was trusted", name)
+		switch got := errors.As(err, &rejected); {
+		case got != tc.invalidRequest:
+			t.Errorf("%s: refused with a RequestRejectedError: %v, want %v", name, got, tc.invalidRequest)
+		case got && (rejected.Code != "invalid_request" || rejected.ResponseEncryptionKey != nil):
+			t.Errorf("%s: %+v, want an unencrypted invalid_request", name, rejected)
 		}
 	}
 }
