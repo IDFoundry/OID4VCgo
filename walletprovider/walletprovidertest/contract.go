@@ -247,6 +247,7 @@ func TestInstanceKeyStoreContract(t *testing.T, newStore func(t *testing.T) wall
 		{"ConcurrentUpdatesLoseNothing", instanceKeyConcurrentUpdates},
 		{"ListPagesOneInstanceInThumbprintOrder", instanceKeyListPages},
 		{"ReturnedRecordsAreCopies", instanceKeyCopies},
+		{"ListUnretainedPagesKeysWithoutRetainUntil", instanceKeyListUnretained},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, newStore(t)) })
@@ -471,6 +472,57 @@ func instanceKeyListPages(t *testing.T, s walletprovider.InstanceKeyStore) {
 	}
 	if page, err := s.List(context.Background(), "c", "", 3); err != nil || len(page) != 0 {
 		t.Fatalf("List(an instance with no keys) = %v, %v; want none", page, err)
+	}
+}
+
+// instanceKeyListUnretained checks a store that's an
+// UnretainedInstanceKeyLister, and passes one that isn't.
+func instanceKeyListUnretained(t *testing.T, s walletprovider.InstanceKeyStore) {
+	lister, ok := s.(walletprovider.UnretainedInstanceKeyLister)
+	if !ok {
+		t.Skip("not an UnretainedInstanceKeyLister")
+	}
+	ctx := context.Background()
+	for i := 6; i >= 0; i-- {
+		k := sampleInstanceKey(fmt.Sprintf("tp-%02d", i), []string{"a", "b"}[i%2])
+		if i%3 != 0 {
+			k.RetainUntil = time.Time{}
+		}
+		mustCreateInstanceKey(t, s, k)
+	}
+	list := func() []string {
+		t.Helper()
+		var seen []string
+		for after := ""; ; {
+			page, err := lister.ListUnretained(ctx, after, 2)
+			if err != nil {
+				t.Fatalf("ListUnretained: %v", err)
+			}
+			if len(page) > 2 {
+				t.Fatalf("ListUnretained(limit 2) returned %d", len(page))
+			}
+			for _, k := range page {
+				if !k.RetainUntil.IsZero() {
+					t.Fatalf("ListUnretained returned %q, with RetainUntil %v", k.Thumbprint, k.RetainUntil)
+				}
+				seen = append(seen, k.Thumbprint)
+			}
+			if len(page) < 2 {
+				return seen
+			}
+			after = page[len(page)-1].Thumbprint
+		}
+	}
+	if got, want := list(), []string{"tp-01", "tp-02", "tp-04", "tp-05"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("paging through ListUnretained saw %v, want %v", got, want)
+	}
+	k := mustGetInstanceKey(t, s, "tp-02")
+	k.RetainUntil = k.CreatedAt.Add(time.Hour)
+	if err := s.Update(ctx, k); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := list(), []string{"tp-01", "tp-04", "tp-05"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("after giving tp-02 a RetainUntil, ListUnretained saw %v, want %v", got, want)
 	}
 }
 

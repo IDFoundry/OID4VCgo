@@ -294,3 +294,86 @@ func TestInstanceKeySweptWhileMoved(t *testing.T) {
 		t.Fatalf("a Wallet Attestation for a key swept while moved = %v, want ErrUnknownInstanceKey", err)
 	}
 }
+
+// TestSweepStatusListsRetainsUnretained: SweepStatusLists gives an
+// instance key with no RetainUntil, as one recorded before retention
+// has, the one its use would have set: from its list's period's start,
+// or, on no period's list, from the current period's. A key with one
+// is left alone, and a second sweep changes nothing.
+func TestSweepStatusListsRetainsUnretained(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	recorded := h.periodStart()
+	unretain := func(key *ecdsa.PrivateKey, status statuslist.StatusListRef) {
+		t.Helper()
+		ik := h.instanceKey(&key.PublicKey)
+		ik.RetainUntil = time.Time{}
+		if status.URI != "" {
+			ik.Status = status
+		}
+		if err := h.deps.InstanceKeys.Update(ctx, ik); err != nil {
+			t.Fatal(err)
+		}
+	}
+	onPeriod, legacy, retained := h.newInstanceKey(in.ID, kindStrongBox), h.newInstanceKey(in.ID, kindStrongBox), h.newInstanceKey(in.ID, kindStrongBox)
+	unretain(onPeriod, statuslist.StatusListRef{})
+	unretain(legacy, statuslist.StatusListRef{Idx: 5, URI: statusBase})
+	kept := h.instanceKey(&retained.PublicKey)
+	h.toNextPeriod()
+	h.toNextPeriod()
+
+	h.sweep(0)
+	for _, c := range []struct {
+		what string
+		key  *ecdsa.PrivateKey
+		want time.Time
+	}{
+		{"a key on a period's list", onPeriod, time.Unix(recorded, 0).Add(3 * h.period())},
+		{"a key on the single list", legacy, time.Unix(h.periodStart(), 0).Add(3 * h.period())},
+		{"a key with a RetainUntil", retained, kept.RetainUntil},
+	} {
+		if got := h.instanceKey(&c.key.PublicKey).RetainUntil; !got.Equal(c.want) {
+			t.Errorf("%s: RetainUntil = %v, want %v", c.what, got, c.want)
+		}
+	}
+	if got := h.instanceKey(&retained.PublicKey); got.Revision != kept.Revision {
+		t.Errorf("a key with a RetainUntil was updated: revision %d, was %d", got.Revision, kept.Revision)
+	}
+	before := h.instanceKey(&onPeriod.PublicKey).Revision
+	h.sweep(0)
+	if got := h.instanceKey(&onPeriod.PublicKey).Revision; got != before {
+		t.Errorf("a second sweep updated a key again: revision %d, was %d", got, before)
+	}
+}
+
+// TestSinglePreRotationListDeletable: the single status list of v0.67.0
+// and before can be deleted whenever: a key still on it moves on its
+// next use, and revoking its instance passes the list by.
+func TestSinglePreRotationListDeletable(t *testing.T) {
+	h := newHarness(t, withRetention)
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	ik := h.instanceKey(&key.PublicKey)
+	ik.Status = statuslist.StatusListRef{Idx: ik.Status.Idx, URI: statusBase}
+	if err := h.deps.StatusIndices.Reserve(ctx, statusBase, ik.Status.Idx); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deps.InstanceKeys.Update(ctx, ik); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.deps.StatusIndices.Delete(ctx, statusBase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); err != nil {
+		t.Fatalf("a Wallet Attestation for a key on the deleted single list: %v", err)
+	}
+	if ik := h.instanceKey(&key.PublicKey); ik.Status.URI != listURI(h.periodStart(), 0) {
+		t.Fatalf("a key on the deleted single list moved to %+v", ik)
+	}
+	if err := h.p.Revoke(ctx, in.ID, "lost"); err != nil {
+		t.Fatalf("Revoke with a key on the deleted single list: %v", err)
+	}
+	h.expectStatus(statuslist.StatusInvalid, key)
+}
