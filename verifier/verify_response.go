@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -760,7 +761,19 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		return nil, nil, newError(ReasonMalformed, "unmarshal issuer jwt payload", err)
 	}
 
-	issuerPub, issuerAlg, err := req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
+	// X5CIssuerKeyResolver verifies the x5c header once for both the
+	// key and the issuer chain; any other resolver is asked for each.
+	var (
+		issuerPub    crypto.PublicKey
+		issuerAlg    oid4vci.JOSEAlg
+		issuerChains [][]*x509.Certificate
+	)
+	x5c, resolvesBoth := x5cResolver(req.IssuerKeys)
+	if resolvesBoth {
+		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, header, payload)
+	} else {
+		issuerPub, issuerAlg, err = req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
+	}
 	if err != nil {
 		return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
@@ -818,7 +831,9 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	// chain, and only where it's the key that verified the credential: a
 	// header can carry anyone's public chain.
 	var chain [][]byte
-	if chainResolver, ok := req.IssuerKeys.(SDJWTVCIssuerChainResolver); ok {
+	if resolvesBoth {
+		chain = verifiedPath(issuerChains, issuerPub)
+	} else if chainResolver, ok := req.IssuerKeys.(SDJWTVCIssuerChainResolver); ok {
 		chains, err := chainResolver.ResolveIssuerChains(ctx, header)
 		if err != nil {
 			return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer chain", err)

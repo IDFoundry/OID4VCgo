@@ -7,6 +7,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 )
@@ -101,6 +102,13 @@ type CRLs struct {
 	// up every verification. Refresher does that for lists fetched
 	// over HTTP: pass its Lists method, or use Refresher.Checker. An
 	// error refuses the chain, wrapped. Required.
+	//
+	// What a check finds that depends on a parsed list alone — its
+	// form, the serial numbers it names, and whether an issuer's key
+	// verifies its signature — is kept with the list, until it's no
+	// longer reachable, so checks of the same list (Refresher's are the
+	// same until it replaces them) are lookups. Don't change a list
+	// once Lists has returned it: return a new one instead.
 	Lists func(ctx context.Context) ([]*x509.RevocationList, error)
 
 	// Issuers are the certificates of CAs that issued trust anchors
@@ -164,7 +172,7 @@ func (c CRLs) CheckRevocation(ctx context.Context, check Check) error {
 	if len(check.Chain) == 0 {
 		return nil
 	}
-	if anchor := check.Chain[len(check.Chain)-1]; !selfSigned(anchor) {
+	if anchor := check.Chain[len(check.Chain)-1]; !selfSignedMemo(anchor) {
 		return c.checkAnchor(anchor, lists, now)
 	}
 	return nil
@@ -197,10 +205,8 @@ func checkAgainstCRLs(cert, issuer *x509.Certificate, lists []*x509.RevocationLi
 			continue
 		}
 		usable = true
-		for _, entry := range list.RevokedCertificateEntries {
-			if entry.SerialNumber != nil && entry.SerialNumber.Cmp(cert.SerialNumber) == 0 {
-				return fmt.Errorf("%w: %q (serial %s), by %q", ErrRevoked, cert.Subject, cert.SerialNumber, issuer.Subject)
-			}
+		if revokes(list, cert.SerialNumber) {
+			return fmt.Errorf("%w: %q (serial %s), by %q", ErrRevoked, cert.Subject, cert.SerialNumber, issuer.Subject)
 		}
 	}
 	if !usable {
@@ -218,7 +224,25 @@ func crlUsableFor(list *x509.RevocationList, issuer *x509.Certificate, now time.
 	if list.NextUpdate.IsZero() || notYetValid(list, now) || !now.Before(list.NextUpdate) {
 		return false
 	}
+	if idx := indexOf(list); idx != nil {
+		return idx.usable && idx.signedBy(list, issuer)
+	}
 	return completeAndDirect(list) && criticalUnderstood(list) && list.CheckSignatureFrom(issuer) == nil
+}
+
+// revokes reports whether list, one crlUsableFor found usable, names
+// serial.
+func revokes(list *x509.RevocationList, serial *big.Int) bool {
+	if idx := indexOf(list); idx != nil {
+		_, ok := idx.revoked[serialKey(serial)]
+		return ok
+	}
+	for _, entry := range list.RevokedCertificateEntries {
+		if entry.SerialNumber != nil && entry.SerialNumber.Cmp(serial) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // notYetValid reports whether list's thisUpdate is more than

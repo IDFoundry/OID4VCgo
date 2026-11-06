@@ -129,10 +129,17 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Contex
 		return fmt.Errorf("dcql: no issuer certificate chain to check an %q trusted_authorities entry against", TrustedAuthorityAKI)
 	}
 	if c.Roots != nil || len(c.Anchors) > 0 {
-		if err := c.Validate(); err != nil {
+		roots := c.Roots
+		if roots == nil {
+			set := c.anchorSetOf()
+			if set.err != nil {
+				return set.err
+			}
+			roots = set.roots
+		} else if err := c.Validate(); err != nil {
 			return err
 		}
-		return c.checkVerifiedChainAKI(ctx, issuerChain, wantAKIs)
+		return c.checkVerifiedChainAKI(ctx, issuerChain, roots, wantAKIs)
 	}
 	// OpenID4VP §6.1.1.1: the value "MUST match with the
 	// AuthorityKeyIdentifier element of an X.509 certificate in the
@@ -157,7 +164,7 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Contex
 
 // checkVerifiedChainAKI succeeds when a certificate authority on a
 // verified path from issuerChain's leaf to c's anchors has one of
-// wantAKIs as its key identifier.
+// wantAKIs as its key identifier, roots being c's anchors as a pool.
 //
 // A CA's declared Subject Key Identifier is written by whoever issued
 // its certificate — the CA itself, for an anchor — so another trusted
@@ -166,14 +173,7 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Contex
 // method 1), which no certificate for another key can carry and still
 // sign the leaf, and an anchor in Anchors by its declared one too,
 // which Validate has checked no other anchor claims.
-func (c AKITrustedAuthoritiesChecker) checkVerifiedChainAKI(ctx context.Context, issuerChain [][]byte, wantAKIs []string) error {
-	roots := c.Roots
-	if roots == nil {
-		roots = x509.NewCertPool()
-		for _, anchor := range c.Anchors {
-			roots.AddCert(anchor)
-		}
-	}
+func (c AKITrustedAuthoritiesChecker) checkVerifiedChainAKI(ctx context.Context, issuerChain [][]byte, roots *x509.CertPool, wantAKIs []string) error {
 	// At the verification time the verifier set, as its own certificate
 	// checks are.
 	//

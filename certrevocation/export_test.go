@@ -2,6 +2,7 @@ package certrevocation
 
 import (
 	"context"
+	"crypto/x509"
 	"time"
 )
 
@@ -20,4 +21,21 @@ func (r *Refresher) AcceptForTest(u string, body []byte) error {
 		return err
 	}
 	return r.keep(u, list, validators{}, nil)
+}
+
+// IndexedForTest is how many CRLs and certificates the package keeps
+// what it found about.
+func IndexedForTest() (lists, certs int) {
+	listIndexesMu.Lock()
+	lists = len(listIndexes)
+	listIndexesMu.Unlock()
+	selfSignedMu.Lock()
+	certs = len(selfSignedAnchors)
+	selfSignedMu.Unlock()
+	return lists, certs
+}
+
+// SignedByForTest is whether list's index finds it signed by issuer.
+func SignedByForTest(list *x509.RevocationList, issuer *x509.Certificate) bool {
+	return indexOf(list).signedBy(list, issuer)
 }
