@@ -561,7 +561,10 @@ changes whether *every* bullet below is `(done)`.
   FAPIgo gates CIBA on `Endpoints.BackchannelAuthentication` being set);
   `NonceStore`/`RequestNonce` implementing the Nonce Endpoint (§7),
   mirroring `fapigo/storage.NonceStore`'s own Issue/Consume,
-  single-use-on-consume shape exactly; `Metadata` (§12.2.4) covering
+  single-use-on-consume shape exactly, or, with
+  `Dependencies.NonceKeys`, stateless HMAC-tagged nonces that the
+  unauthenticated endpoint issues without writing and the Credential
+  Endpoint spends once (`NonceSpender`); `Metadata` (§12.2.4) covering
   `credential_issuer`, `credential_endpoint`, `nonce_endpoint`, and
   `credential_configurations_supported` with `format`/`scope`/
   `cryptographic_binding_methods_supported`/`proof_types_supported`

@@ -3,6 +3,7 @@ package sqlstore
 // postgresQueries are the stores' statements for PostgreSQL.
 var postgresQueries = queries{ //nolint:gosec // G101: field names such as keyGet are statements, not credentials
 	nonceInsert:            "INSERT INTO oid4vc_issuer_nonces (id, owner, sweep_after, record) VALUES ($1, $2, $3, $4)",
+	nonceSpend:             "INSERT INTO oid4vc_issuer_nonces (id, owner, sweep_after, record) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING",
 	nonceConsumeOwned:      "DELETE FROM oid4vc_issuer_nonces WHERE id = $1 AND owner = $2 RETURNING record",
 	nonceSweep:             "DELETE FROM oid4vc_issuer_nonces WHERE sweep_after < $1 AND sweep_after <= COALESCE((SELECT sweep_after FROM oid4vc_issuer_nonces WHERE sweep_after < $2 ORDER BY sweep_after LIMIT 1 OFFSET $3), $4)",
 	pacInsert:              "INSERT INTO oid4vc_issuer_pre_authorized_codes (id, owner, sweep_after, record, tx_code_hash) VALUES ($1, $2, $3, $4, $5)",

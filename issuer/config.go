@@ -618,6 +618,23 @@ type Dependencies struct {
 	// Config.Endpoints.Nonce is set.
 	Nonces NonceStore
 
+	// NonceKeys, if set, makes the Nonce Endpoint's c_nonces stateless:
+	// each carries its expiry and randomness, with an HMAC-SHA256 tag
+	// under NonceKeys[0] binding them to Config.Issuer, so issuing one
+	// writes nothing. The Nonce Endpoint is unauthenticated (§7.1), and
+	// otherwise every request to it writes a record to Nonces. A
+	// Credential Request's nonce is checked against every key, then
+	// recorded as spent with Nonces, which must be a NonceSpender, so
+	// each is still used once; that write is made only for a request its
+	// access token authorized. Nonces the store holds, issued before
+	// NonceKeys was set, are still consumed.
+	//
+	// Each key is a secret of at least MinNonceKeyBytes random bytes, the
+	// same in every process serving this Credential Issuer; at most
+	// MaxNonceKeys. To rotate, put the new key first and keep the old
+	// one after it for NonceLifetime.
+	NonceKeys [][]byte
+
 	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce
 	// returns alongside the c_nonce, for the Nonce Response's DPoP-Nonce
 	// header (§7.2: "The Credential Issuer MAY provide a DPoP nonce"),
@@ -900,7 +917,7 @@ func validateNonceEndpointDependencies(cfg Config, deps Dependencies) error {
 	if deps.Nonces == nil {
 		return fmt.Errorf("issuer: dependencies: nonces is required when endpoints.nonce is set")
 	}
-	return nil
+	return validateNonceKeys(deps)
 }
 
 func validateCredentialOfferEndpointDependencies(cfg Config, deps Dependencies) error {

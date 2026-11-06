@@ -40,27 +40,20 @@ func (r NonceResult) WriteJSON(w http.ResponseWriter) {
 }
 
 // RequestNonce implements the Nonce Endpoint (§7): it generates a
-// fresh, unpredictable c_nonce, persists it via Dependencies.Nonces,
-// and returns it, with a DPoP nonce from
-// Dependencies.CredentialDPoPNonces when that's set. The Nonce Endpoint is not a protected resource
-// (§7.1) — RequestNonce takes no credential of its own to check.
+// fresh, unpredictable c_nonce and returns it, with a DPoP nonce from
+// Dependencies.CredentialDPoPNonces when that's set. With
+// Dependencies.NonceKeys, the c_nonce is stateless and nothing is
+// written; otherwise it's persisted via Dependencies.Nonces. The Nonce
+// Endpoint is not a protected resource (§7.1) — RequestNonce takes no
+// credential of its own to check.
 func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 	if iss.cfg.Endpoints.Nonce.IsZero() {
 		return NonceResult{}, fmt.Errorf("issuer: the nonce endpoint is not configured")
 	}
 
-	nonce, err := randomID(iss.deps.Random, nonceEntropyBytes)
+	nonce, err := iss.issueNonce(ctx)
 	if err != nil {
-		return NonceResult{}, fmt.Errorf("issuer: generate nonce: %w", err)
-	}
-
-	now := iss.deps.Clock.Now()
-	if err := iss.deps.Nonces.Issue(ctx, NonceIssuance{
-		Nonce:     nonce,
-		Owner:     iss.storeOwner(),
-		ExpiresAt: now.Add(iss.cfg.Limits.NonceLifetime),
-	}); err != nil {
-		return NonceResult{}, fmt.Errorf("issuer: persist nonce: %w", err)
+		return NonceResult{}, err
 	}
 
 	result := NonceResult{CNonce: nonce}
@@ -70,4 +63,25 @@ func (iss *Issuer) RequestNonce(ctx context.Context) (NonceResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// issueNonce is a new c_nonce: stateless with Dependencies.NonceKeys,
+// otherwise persisted via Dependencies.Nonces.
+func (iss *Issuer) issueNonce(ctx context.Context) (string, error) {
+	exp := iss.deps.Clock.Now().Add(iss.cfg.Limits.NonceLifetime)
+	if len(iss.deps.NonceKeys) > 0 {
+		nonce, err := statelessNonce(iss.deps.Random, iss.deps.NonceKeys[0], iss.storeOwner(), exp)
+		if err != nil {
+			return "", fmt.Errorf("issuer: generate nonce: %w", err)
+		}
+		return nonce, nil
+	}
+	nonce, err := randomID(iss.deps.Random, nonceEntropyBytes)
+	if err != nil {
+		return "", fmt.Errorf("issuer: generate nonce: %w", err)
+	}
+	if err := iss.deps.Nonces.Issue(ctx, NonceIssuance{Nonce: nonce, Owner: iss.storeOwner(), ExpiresAt: exp}); err != nil {
+		return "", fmt.Errorf("issuer: persist nonce: %w", err)
+	}
+	return nonce, nil
 }

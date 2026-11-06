@@ -128,6 +128,29 @@ func (t *table[T]) insert(ctx context.Context, id string, v T) error {
 	})
 }
 
+// insertNew saves v under id with statement, an INSERT … ON CONFLICT
+// DO NOTHING, and reports whether it did: false when id was in use.
+func (t *table[T]) insertNew(ctx context.Context, statement, id string, v T) (bool, error) {
+	if !storableKeys(id) {
+		return false, errUnstorableKey
+	}
+	vals, err := t.values(id, v)
+	if err != nil {
+		return false, err
+	}
+	var inserted bool
+	err = t.d.writeOne(ctx, func(q querier) error {
+		res, err := q.ExecContext(ctx, statement, append([]any{id}, vals...)...)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		inserted = n == 1
+		return err
+	})
+	return inserted, err
+}
+
 // put saves v under id, replacing any row there.
 func (t *table[T]) put(ctx context.Context, id string, v T) error {
 	if !storableKeys(id) {

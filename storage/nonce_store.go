@@ -47,3 +47,19 @@ func (s *NonceStore) Consume(_ context.Context, consumption issuer.NonceConsumpt
 	delete(s.issued, consumption.Nonce)
 	return record, nil
 }
+
+// Spend implements issuer.NonceSpender: it records a stateless c_nonce
+// as used, refusing one recorded already.
+func (s *NonceStore) Spend(_ context.Context, issuance issuer.NonceIssuance) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.issued[issuance.Nonce]; ok {
+		return fmt.Errorf("storage: %w", issuer.ErrNonceUnknown)
+	}
+	if now, ok := s.prune.due(len(s.issued)); ok {
+		pruneMap(s.issued, now, func(r issuer.NonceRecord) time.Time { return r.ExpiresAt })
+		s.prune.pruned(len(s.issued))
+	}
+	s.issued[issuance.Nonce] = issuer.NonceRecord{Owner: issuance.Owner, ExpiresAt: issuance.ExpiresAt}
+	return nil
+}

@@ -204,6 +204,39 @@ func testAtomicNonceContract(t *testing.T, newAdapter func() (issue func(nonce s
 	})
 }
 
+// TestNonceSpenderContract exercises factory()'s Spend against
+// issuer.NonceSpender's guarantees: a nonce is spent once, of
+// concurrent Spends exactly one wins, and a store that can't answer
+// doesn't call the nonce spent. factory must return a fresh, empty
+// NonceSpender each call.
+func TestNonceSpenderContract(t *testing.T, factory func() issuer.NonceSpender) {
+	t.Helper()
+	spend := func(store issuer.NonceSpender, ctx context.Context) error {
+		return store.Spend(ctx, issuer.NonceIssuance{Nonce: "s1.n1", Owner: contractOwner, ExpiresAt: time.Now().Add(time.Minute)})
+	}
+	t.Run("SpendIsSingleUse", func(t *testing.T) {
+		store := factory()
+		if err := spend(store, context.Background()); err != nil {
+			t.Fatalf("first Spend: %v", err)
+		}
+		if err := spend(store, context.Background()); !errors.Is(err, issuer.ErrNonceUnknown) {
+			t.Errorf("second Spend = %v, want issuer.ErrNonceUnknown (nonce already spent)", err)
+		}
+	})
+	t.Run("CanceledContextIsNotUnknown", func(t *testing.T) {
+		requireNotUnknown(t, spend(factory(), canceledContext()), issuer.ErrNonceUnknown)
+	})
+	t.Run("ConcurrentSpendHasExactlyOneWinner", func(t *testing.T) {
+		store := factory()
+		wins := runConcurrently(contractConcurrentAttempts, func() bool {
+			return spend(store, context.Background()) == nil
+		})
+		if wins != 1 {
+			t.Errorf("concurrent Spend: %d winners, want exactly 1", wins)
+		}
+	})
+}
+
 // TestPreAuthorizedCodeStoreContract exercises factory()'s behavior
 // against PreAuthorizedCodeStore's own documented guarantees —
 // including the one genuinely security-relevant rule beyond plain
