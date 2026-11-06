@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -178,15 +179,24 @@ func (t *table[T]) get(ctx context.Context, id string) (T, error) {
 // scanRecord is the record r, a row of one record column, holds for id,
 // or errNoRow.
 func (t *table[T]) scanRecord(id string, r *sql.Row) (T, error) {
-	var data []byte
-	if err := r.Scan(&data); err != nil {
+	data, err := scanData(r)
+	if err != nil {
 		var zero T
-		if errors.Is(err, sql.ErrNoRows) {
-			return zero, errNoRow
-		}
 		return zero, err
 	}
 	return t.decodeOf(id, data)
+}
+
+// scanData is the record column r holds, or errNoRow.
+func scanData(r *sql.Row) ([]byte, error) {
+	var data []byte
+	if err := r.Scan(&data); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errNoRow
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 // list returns every record, ordered by id.
@@ -247,14 +257,28 @@ func (t *table[T]) consume(ctx context.Context, id string, more ...any) (T, erro
 
 // update loads the record keyed by id, locked, calls fn on it and saves
 // the result, in one transaction: concurrent updates of one record run
-// one after another. fn's error aborts it, saving nothing. idOf, if
-// set, is the record's own ID, which fn mustn't change.
+// one after another. fn's error aborts it, saving nothing. A record fn
+// leaves as it was isn't written again. idOf, if set, is the record's
+// own ID, which fn mustn't change.
 func (t *table[T]) update(ctx context.Context, id string, fn func(*T) error, idOf func(T) string) error {
 	if !storableKeys(id) {
 		return errNoRow
 	}
 	return t.d.write(ctx, func(q querier) error {
-		cur, err := t.scanRecord(id, q.QueryRowContext(ctx, t.sql.getForUpdate, id))
+		data, err := scanData(q.QueryRowContext(ctx, t.sql.getForUpdate, id))
+		if err != nil {
+			return err
+		}
+		cur, err := t.decodeOf(id, data)
+		if err != nil {
+			return err
+		}
+		// fn changes cur in place, maps and slices too: the record as
+		// it was is decoded again to compare. Equal values encode the
+		// same, with the same row columns, so the write is skipped;
+		// values that differ only where DeepEqual can't tell (a func,
+		// nil against empty) are written, as before.
+		was, err := t.decodeOf(id, data)
 		if err != nil {
 			return err
 		}
@@ -263,6 +287,9 @@ func (t *table[T]) update(ctx context.Context, id string, fn func(*T) error, idO
 		}
 		if idOf != nil && idOf(cur) != id {
 			return fmt.Errorf("sqlstore: an update changed %s record %q's ID", t.name, id)
+		}
+		if reflect.DeepEqual(was, cur) {
+			return nil
 		}
 		vals, err := t.values(id, cur)
 		if err != nil {
