@@ -197,6 +197,10 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	issProofAlgs := []string{"ES256"}
 	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, "jwk", issProofAlgs)
 	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
+	nonceKey := make([]byte, issuer.MinNonceKeyBytes)
+	if _, err := rand.Read(nonceKey); err != nil {
+		return nil, fmt.Errorf("nonce key: %w", err)
+	}
 	issDeps := issuer.Dependencies{
 		// The Notification Endpoint (§11) accepts events and records
 		// nothing beyond the notification_id binding.
@@ -204,8 +208,11 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		// Deferred issuance (§9): transactions cfg.Deferred creates.
 		DeferredTransactions: oid4vcgostorage.NewDeferredTransactionStore(),
 		Nonces:               oid4vcgostorage.NewNonceStore(),
-		Clock:                issuer.ClockFunc(time.Now),
-		Random:               rand.Reader,
+		// Stateless c_nonces, tagged with a key this process makes: the
+		// suite's Credential Requests spend them once.
+		NonceKeys: [][]byte{nonceKey},
+		Clock:     issuer.ClockFunc(time.Now),
+		Random:    rand.Reader,
 		SDJWTSigner: &issuer.SDJWTSigner{
 			Signer: issuerSigningKey, Alg: jose.ES256,
 			IssuerCertificate: issuerCertificate,

@@ -73,6 +73,7 @@ type App struct {
 	providerAnchors   server.StaticAttesterAnchors // the Wallet Provider CA, bound to Wallet.ProviderIssuer
 	endpoints         issuer.Endpoints
 	requestKey        *ecdsa.PrivateKey // decrypts Credential Requests, whichever signer signs
+	nonceKey          []byte            // tags c_nonces (issuer.Dependencies.NonceKeys), whichever signer signs
 	caCert            *x509.Certificate
 	crlURL            string      // where the CA serves its CRL: IssuerURL + CRLPath
 	crl               *democrl.CA // the CA's revocation list
@@ -347,6 +348,14 @@ func (a *App) buildIssuer() error {
 	if a.requestKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
 		return fmt.Errorf("issuerapp: request decryption key: %w", err)
 	}
+	// The c_nonces' key, kept across signer rotations too, so a nonce
+	// issued before one is still good after it. Only in memory: after a
+	// restart a wallet's nonce is refused as invalid_nonce, and it asks
+	// for another.
+	a.nonceKey = make([]byte, issuer.MinNonceKeyBytes)
+	if _, err := rand.Read(a.nonceKey); err != nil {
+		return fmt.Errorf("issuerapp: nonce key: %w", err)
+	}
 	s, err := a.newSigning(a.id.documentSigner, a.id.documentSignerCert)
 	if err != nil {
 		return err
@@ -421,7 +430,10 @@ func (a *App) newSigning(key *ecdsa.PrivateKey, cert *x509.Certificate) (*signin
 		// present a fresh one each time (HAIP 1.0's unlinkability).
 		BatchCredentialIssuance: &oid4vci.BatchCredentialIssuance{BatchSize: 3},
 	}, issuer.Dependencies{
-		Nonces:               a.stores.nonces,
+		Nonces: a.stores.nonces,
+		// Stateless c_nonces: the unauthenticated Nonce Endpoint writes
+		// nothing, and a Credential Request records its nonce as spent.
+		NonceKeys:            [][]byte{a.nonceKey},
 		DeferredTransactions: a.stores.deferred,
 		// The Nonce Response carries a DPoP nonce for the Credential
 		// Endpoint (OpenID4VCI §7.2), from the verifier that checks it, so
