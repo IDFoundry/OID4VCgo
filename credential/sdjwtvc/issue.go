@@ -337,10 +337,12 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
 		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
 	}
-	if len(opts.IssuerIntermediates) > 0 {
-		if opts.IssuerCertificate == nil {
-			return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
-		}
+	if len(opts.IssuerIntermediates) > 0 && opts.IssuerCertificate == nil {
+		return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
+	}
+	if opts.IssuerCertificate != nil {
+		// Alone or with intermediates: an x5c leaf mustn't be
+		// self-signed (HAIP 1.0 §6.1.1).
 		if err := certchain.CheckPresentedChain(opts.IssuerCertificate, opts.IssuerIntermediates); err != nil {
 			return fmt.Errorf("sdjwtvc: issuer certificate chain: %w", err)
 		}

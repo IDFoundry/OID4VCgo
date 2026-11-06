@@ -51,12 +51,22 @@ func newIssuedFixture(t testing.TB, leaf *x509.Certificate, leafKey *ecdsa.Priva
 	}
 	now := time.Now()
 	exp := now.Add(time.Hour).Unix()
+	// sdjwtvc.Issue refuses a self-signed x5c leaf, which a Wallet must
+	// refuse too: such a credential is signed here by hand.
+	selfSigned := string(leaf.RawIssuer) == string(leaf.RawSubject)
+	opts := sdjwtvc.IssueOptions{IssuerCertificate: leaf}
+	if selfSigned {
+		opts = sdjwtvc.IssueOptions{}
+	}
 	sdjwt, _, err := sdjwtvc.Issue(leafKey, jose.ES256, sdjwtvc.Claims{
 		VCT: issuedVCT, Exp: &exp, CNF: map[string]any{"jwk": holderJWK},
 		Additional: map[string]any{"given_name": sdjwtvc.SD("Alice")},
-	}, sdjwtvc.IssueOptions{IssuerCertificate: leaf})
+	}, opts)
 	if err != nil {
 		t.Fatalf("sdjwtvc.Issue: %v", err)
+	}
+	if selfSigned {
+		sdjwt = withX5C(t, sdjwt, leaf, leafKey)
 	}
 	signed, err := mdoc.Issue(leafKey, cose.ES256, mdoc.Claims{
 		DocType:    issuedDocType,
@@ -243,4 +253,20 @@ func TestVerifyIssuedCredential_RejectsAFinalSegment(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+}
+
+// withX5C re-signs sdjwt's issuer JWT with leaf alone as its x5c.
+func withX5C(t testing.TB, sdjwt string, leaf *x509.Certificate, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	issuerJWT, rest, _ := strings.Cut(sdjwt, "~")
+	header, payload, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header["x5c"] = []string{base64.StdEncoding.EncodeToString(leaf.Raw)}
+	signed, err := jose.Sign(jose.ES256, key, header, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed + "~" + rest
 }
