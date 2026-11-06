@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -214,12 +216,34 @@ func (w *Wallet) refuse(ctx context.Context, r *wallet.RequestRejectedError) err
 		return refused
 	}
 	reply, err := wallet.SubmitDirectPostResponse(ctx, w.deps.HTTP, r.ResponseURI, responseJWE)
+	if err == nil {
+		err = w.checkRedirect(reply.RedirectURI)
+	}
 	if err != nil {
 		refused.sendErr = err
 		return refused
 	}
 	refused.RedirectURI = reply.RedirectURI
 	return refused
+}
+
+// checkRedirect refuses redirectURI, a Verifier's redirect back after a
+// response it has, when its scheme is the Wallet's own redirect URI's
+// (Config.RedirectURI): following it would hand the Wallet's callback
+// whatever the Verifier put there, straight after the holder consented.
+// wallet refuses the schemes that invoke any Wallet.
+func (w *Wallet) checkRedirect(redirectURI string) error {
+	if redirectURI == "" || w.cfg.RedirectURI == "" {
+		return nil
+	}
+	own, err := url.Parse(w.cfg.RedirectURI)
+	if err != nil || own.Scheme == "http" || own.Scheme == "https" {
+		return nil
+	}
+	if u, err := url.Parse(redirectURI); err == nil && strings.EqualFold(u.Scheme, own.Scheme) {
+		return fmt.Errorf("%w: redirect_uri %q has the Wallet's own scheme, which isn't followed", wallet.ErrResponseDelivered, redirectURI)
+	}
+	return nil
 }
 
 func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRequest) (*Presentation, error) {
@@ -441,6 +465,10 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
 	}
 	p.answered = true
+	if err := p.w.checkRedirect(responded.Reply.RedirectURI); err != nil {
+		// The Verifier has the presentation: its copies stay presented.
+		return Presented{}, fmt.Errorf("walletflow: respond: %w", err)
+	}
 	presented := Presented{RedirectURI: responded.Reply.RedirectURI}
 	for id := range responded.VPToken {
 		presented.QueryIDs = append(presented.QueryIDs, id)
@@ -492,6 +520,9 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 		p.declined = responseJWE
 	}
 	reply, err := wallet.SubmitDirectPostResponse(ctx, p.w.deps.HTTP, p.req.ResponseURI, p.declined)
+	if err == nil {
+		err = p.w.checkRedirect(reply.RedirectURI)
+	}
 	if err != nil && deliveryUnknown(err) {
 		// Not known to have arrived: Decline may send it again.
 		return Presented{}, fmt.Errorf("walletflow: decline: %w", err)
