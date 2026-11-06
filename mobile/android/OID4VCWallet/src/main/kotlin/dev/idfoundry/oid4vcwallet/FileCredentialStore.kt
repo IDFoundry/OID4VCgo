@@ -118,7 +118,9 @@ public class FileCredentialStore(
          * 0.3 s in the TEE; on a Xiaomi 14, each StrongBox operation took
          * about 0.9 s.
          * It applies when the key is made: an existing key stays where it is
-         * ([keySecurityLevel] says where).
+         * ([keySecurityLevel] says where). OFF by default where the wallet's
+         * keys are PREFERRED, on purpose: a holder key is used once per
+         * presentation, this key on every record.
          */
         val strongBox: AndroidKeystoreKeyStore.StrongBox = AndroidKeystoreKeyStore.StrongBox.OFF,
     )

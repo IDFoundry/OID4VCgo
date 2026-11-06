@@ -182,7 +182,12 @@ public class AndroidKeystoreKeyStore(
      * it, holder keys asking for the holder each time.
      */
     public data class Options(
-        /** Where keys are made. */
+        /**
+         * Where keys are made. PREFERRED by default, where
+         * [FileCredentialStore.Options.strongBox] is OFF by default, on
+         * purpose: a holder key signs once per presentation, while the
+         * credential store's key is used on every record read and write.
+         */
         val strongBox: StrongBox = StrongBox.PREFERRED,
         /**
          * Require the holder's biometrics or screen lock for each
