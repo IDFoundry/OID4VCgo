@@ -1669,8 +1669,14 @@ reader asks for several (`RequestDocuments`). Findings:
   a device.
 - **Not yet:** the second edition's `DeviceRequestInfo` (`useCases`,
   `documentSets`) isn't decoded, so a reader's alternative sets aren't
-  shown or enforced; an answer list is already their shape. The demo
-  apps still answer and ask for one document.
+  shown or enforced; an answer list is already their shape.
+- **The demo apps** ask for and answer several documents in person,
+  and the iOS document provider extension answers several in one
+  Safari response, with one holder confirmation. iOS offers the
+  extension only the doctypes its entitlement lists and the app
+  registers, which in the demo is the Photo ID alone, so until another
+  type is added there Safari hands it one document at a time.
+
 ## Key Attestations name the issuance's instance key (ABI 15)
 
 The Wallet Provider protocol ([WALLET_PROVIDER.md](WALLET_PROVIDER.md))
