@@ -18,7 +18,7 @@ sealed interface InPersonSession {
     /** With QR and NFC both offered, the one the reader used; null until then. */
     val selected: StateFlow<SelectedEngagement?>? get() = null
 
-    suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>)
+    suspend fun respond(answers: List<MdocPresentation.Answer>)
     suspend fun decline()
     fun cancel()
     /** Prefers this app for NFC while [activity] is resumed; false if Android refused. */
@@ -32,7 +32,7 @@ sealed interface InPersonSession {
     class Qr(private val p: ProximityPresentation) : InPersonSession {
         override val qrCode get() = p.qrCode
         override val state get() = p.state
-        override suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) { p.respond(document, credentialID, elements) }
+        override suspend fun respond(answers: List<MdocPresentation.Answer>) { p.respond(answers) }
         override suspend fun decline() = p.decline()
         override fun cancel() = p.cancel()
     }
@@ -41,7 +41,7 @@ sealed interface InPersonSession {
         override val qrCode get() = ""
         override val state get() = owner.presentation.state
         override val nfc get() = true
-        override suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) { owner.presentation.respond(document, credentialID, elements) }
+        override suspend fun respond(answers: List<MdocPresentation.Answer>) { owner.presentation.respond(answers) }
         override suspend fun decline() = owner.presentation.decline()
         override fun cancel() = owner.presentation.cancel()
         override fun preferForeground(activity: Activity) = owner.preferForeground(activity, DemoNfcService::class.java)
@@ -54,7 +54,7 @@ sealed interface InPersonSession {
         override val state get() = c.state
         override val nfc get() = true
         override val selected get() = c.selectedEngagement
-        override suspend fun respond(document: Int, credentialID: String, elements: List<MdocPresentation.Element>) { c.respond(document, credentialID, elements) }
+        override suspend fun respond(answers: List<MdocPresentation.Answer>) { c.respond(answers) }
         override suspend fun decline() = c.decline()
         override fun cancel() = c.cancel()
         override fun preferForeground(activity: Activity) = c.preferForeground(activity, DemoNfcService::class.java)

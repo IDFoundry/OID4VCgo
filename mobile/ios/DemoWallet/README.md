@@ -107,7 +107,12 @@ Bluetooth, and the app shows who is asking (the reader's name, whether
 it's verified, and its certificate chain under "Reader certificate") and
 what, element by element, marking those the reader says it will keep.
 "Share" sends the chosen elements after Face ID or the passcode;
-"Decline" sends nothing. Only mdocs can be shared in person.
+"Decline" sends nothing. Only mdocs can be shared in person. A reader
+asking for several documents at once (the Verify tab's "and" presets)
+gets a section per document the wallet holds, and "Share 2 documents"
+sends them all in one response after one Face ID; a document with every
+element unticked is left out. To hold two test mdocs, take the offer
+`curl -sk -X POST 'https://127.0.0.1:8600/offer?pin=493536&mdoc=2'`.
 
 **Bluetooth modes:** the QR code offers both ISO/IEC 18013-5 modes by
 default: the phone advertises for the reader and scans for it at once,
@@ -238,6 +243,15 @@ the passport-vdc Photo ID (`org.iso.23220.photoid.1`) — and shows the
 open a verifier scenario in Safari on the phone and choose *Verify with
 an ID in this browser*. The first time a Photo ID is received, iOS asks
 whether the app may provide documents.
+
+A page asking for several documents gets a section per document the
+wallet holds, each with its own choice of credential and a switch to
+leave it out, and the documents it doesn't hold are named. "Share 2"
+sends them all in one response after one Face ID. iOS offers the
+extension only the doctypes in its entitlement (the Photo ID here), so
+for now Safari hands it one document at a time; adding a doctype means
+adding it to both entitlements files and `DocumentRegistrations`, and
+to the App IDs in the Apple Developer portal.
 
 The extension is a separate process, so the app keeps what it reads in
 shared places: the credential store and configuration in the app group

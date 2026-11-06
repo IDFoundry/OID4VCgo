@@ -45,22 +45,53 @@ struct DemoReaderKeys: KeyStore {
 
 struct DemoReaderKeysError: Error {}
 
-/// A request reader mode makes: a document type and its elements.
+/// A request reader mode makes: one or more documents, each a type and
+/// its elements.
 struct ReaderPreset: Identifiable, Hashable {
+    struct Document: Hashable {
+        let docType: String
+        let elements: [String: [String]]
+    }
+
     let title: String
-    let docType: String
-    let elements: [String: [String]]
+    let documents: [Document]
     var id: String { title }
 
-    /// The passport-vdc Photo ID, an mDL, and the test services' mdoc.
+    init(title: String, documents: [Document]) {
+        self.title = title
+        self.documents = documents
+    }
+
+    /// One document: `docType`'s `elements`.
+    init(title: String, docType: String, elements: [String: [String]]) {
+        self.init(title: title, documents: [Document(docType: docType, elements: elements)])
+    }
+
+    /// What this preset asks of documents of `docType`, by namespace.
+    func elements(for docType: String) -> [String: [String]] {
+        documents.first { $0.docType == docType }?.elements ?? [:]
+    }
+
+    /// The passport-vdc Photo ID, an mDL, and the test services' mdocs.
+    /// The "and" ones ask for two documents in one request: the holder
+    /// shares either or both.
     static let all: [ReaderPreset] = {
         let identity = ["family_name", "given_name", "portrait", "age_over_18"]
+        let name = ["family_name", "given_name"]
         return [
             ReaderPreset(title: "Photo ID: over 18?", docType: "org.iso.23220.photoid.1", elements: ["org.iso.23220.1": ["age_over_18"]]),
             ReaderPreset(title: "Photo ID: name, photo and age", docType: "org.iso.23220.photoid.1", elements: ["org.iso.23220.1": identity]),
             ReaderPreset(title: "Driving licence: over 18?", docType: "org.iso.18013.5.1.mDL", elements: ["org.iso.18013.5.1": ["age_over_18"]]),
             ReaderPreset(title: "Driving licence: name, photo and age", docType: "org.iso.18013.5.1.mDL", elements: ["org.iso.18013.5.1": identity]),
-            ReaderPreset(title: "Test mdoc: name", docType: "org.example.test.1", elements: ["org.example.test.1": ["family_name", "given_name"]]),
+            ReaderPreset(title: "Photo ID and driving licence: name", documents: [
+                Document(docType: "org.iso.23220.photoid.1", elements: ["org.iso.23220.1": name]),
+                Document(docType: "org.iso.18013.5.1.mDL", elements: ["org.iso.18013.5.1": name]),
+            ]),
+            ReaderPreset(title: "Test mdoc: name", docType: "org.example.test.1", elements: ["org.example.test.1": name]),
+            ReaderPreset(title: "Test mdocs 1 and 2: name", documents: [
+                Document(docType: "org.example.test.1", elements: ["org.example.test.1": name]),
+                Document(docType: "org.example.test.2", elements: ["org.example.test.2": name]),
+            ]),
         ]
     }()
 }
@@ -101,12 +132,15 @@ final class InPersonModel {
         }
     }
 
-    func respond(document: Int, credentialID: String, elements: [MdocPresentation.Element]) {
+    /// Shares `answers` with the reader in one response; the holder
+    /// confirms once for them all.
+    func respond(_ answers: [MdocPresentation.Answer]) {
         guard let p = presentation else { return }
         Task {
             do {
-                try await SharedWallet.confirmHolder(reason: "Share your credential with the reader.")
-                try await p.respond(document: document, credentialID: credentialID, elements: elements)
+                let reason = answers.count > 1 ? "Share \(answers.count) documents with the reader." : "Share your credential with the reader."
+                try await SharedWallet.confirmHolder(reason: reason)
+                try await p.respond(answers: answers)
             } catch {
                 // A cancelled prompt leaves the request standing.
                 notice = WalletModel.describe(error)
@@ -204,7 +238,9 @@ final class InPersonModel {
     func read(_ qrCode: String, preset: ReaderPreset, model: WalletModel) {
         do {
             guard let reader = try makeReader(model) else { return }
-            let session = try reader.start(qrCode: qrCode, docType: preset.docType, elements: preset.elements)
+            let session = try reader.start(qrCode: qrCode, documents: preset.documents.map {
+                ProximityReader.DocumentRequest(docType: $0.docType, elements: $0.elements)
+            })
             reading = session
             readingPreset = preset
             watch = Task { [weak self] in
@@ -312,14 +348,38 @@ private struct QRCodeView: View {
     }
 }
 
-/// Who is asking, what for, and the holder's choice of elements.
+/// Who is asking, what for, and the holder's choice: every requested
+/// document the wallet holds, each with its elements to tick, shared in
+/// one response; the ones it doesn't hold are named.
 private struct ConsentView: View {
     @Environment(InPersonModel.self) private var inPerson
     let request: ProximityPresentation.Request
     @State private var unchosen: Set<String> = []
 
-    private var documentIndex: Int { request.documents.firstIndex { !$0.credentials.isEmpty } ?? 0 }
-    private var document: MdocPresentation.Document? { request.documents.indices.contains(documentIndex) ? request.documents[documentIndex] : nil }
+    /// A requested document the wallet can answer: its number in the
+    /// request, and the held mdoc that answers it.
+    private struct Answerable: Identifiable {
+        let index: Int
+        let document: MdocPresentation.Document
+        let credential: CredentialSummary
+        var id: Int { index }
+    }
+
+    private var answerable: [Answerable] {
+        request.documents.enumerated().compactMap { i, d in d.credentials.first.map { Answerable(index: i, document: d, credential: $0) } }
+    }
+
+    private var missing: [MdocPresentation.Document] { request.documents.filter { $0.credentials.isEmpty } }
+
+    private func key(_ index: Int, _ e: MdocPresentation.Element) -> String { "\(index)/\(e.namespace)/\(e.identifier)" }
+
+    /// A document goes in the response when any of its elements is ticked.
+    private var answers: [MdocPresentation.Answer] {
+        answerable.compactMap { a in
+            let chosen = a.document.elements.filter { !unchosen.contains(key(a.index, $0)) }
+            return chosen.isEmpty ? nil : MdocPresentation.Answer(document: a.index, credentialID: a.credential.id, elements: chosen)
+        }
+    }
 
     var body: some View {
         List {
@@ -327,12 +387,12 @@ private struct ConsentView: View {
             if let notice = inPerson.notice {
                 Section { Text(notice).foregroundStyle(.orange) }
             }
-            if let document, let credential = document.credentials.first {
-                Section("It asks for, from \(credential.display?.name ?? document.doctype)") {
-                    ForEach(document.elements, id: \.self) { e in
-                        let key = e.namespace + "/" + e.identifier
-                        Toggle(isOn: Binding(get: { !unchosen.contains(key) },
-                                             set: { if $0 { unchosen.remove(key) } else { unchosen.insert(key) } })) {
+            ForEach(answerable) { a in
+                Section("It asks for, from \(a.credential.display?.name ?? a.document.doctype)") {
+                    ForEach(a.document.elements, id: \.self) { e in
+                        let k = key(a.index, e)
+                        Toggle(isOn: Binding(get: { !unchosen.contains(k) },
+                                             set: { if $0 { unchosen.remove(k) } else { unchosen.insert(k) } })) {
                             VStack(alignment: .leading) {
                                 Text(elementLabel(e.identifier))
                                 if e.retain { Text("The reader says it will keep this").font(.caption).foregroundStyle(.orange) }
@@ -341,18 +401,26 @@ private struct ConsentView: View {
                         .accessibilityIdentifier("in-person-element")
                     }
                 }
+            }
+            if answerable.isEmpty {
                 Section {
-                    let chosen = document.elements.filter { !unchosen.contains($0.namespace + "/" + $0.identifier) }
-                    Button("Share") { inPerson.respond(document: documentIndex, credentialID: credential.id, elements: chosen) }
-                        .disabled(chosen.isEmpty)
-                        .accessibilityIdentifier("in-person-share")
+                    Text("You have nothing this reader asks for (\(request.documents.map(\.doctype).joined(separator: ", "))).")
+                        .accessibilityIdentifier("in-person-nothing")
                     Button("Decline", role: .destructive) { inPerson.decline() }
                         .accessibilityIdentifier("in-person-decline")
                 }
             } else {
+                if !missing.isEmpty {
+                    Section {
+                        Text("It also asks for what you don't have: \(missing.map(\.doctype).joined(separator: ", ")).")
+                            .font(.caption).accessibilityIdentifier("in-person-missing")
+                    }
+                }
                 Section {
-                    Text("You have nothing this reader asks for\(document.map { " (\($0.doctype))" } ?? "").")
-                        .accessibilityIdentifier("in-person-nothing")
+                    let chosen = self.answers
+                    Button(chosen.count > 1 ? "Share \(chosen.count) documents" : "Share") { inPerson.respond(chosen) }
+                        .disabled(chosen.isEmpty)
+                        .accessibilityIdentifier("in-person-share")
                     Button("Decline", role: .destructive) { inPerson.decline() }
                         .accessibilityIdentifier("in-person-decline")
                 }
@@ -469,7 +537,8 @@ struct ReaderView: View {
                 case .waitingForResponse?:
                     ProgressView("Waiting for the holder to agree…")
                 case let s?:
-                    ReaderOutcomeView(state: s, preset: inPerson.readingPreset, mode: inPerson.reading?.mode,
+                    ReaderOutcomeView(state: s, documents: inPerson.reading?.documents ?? [], preset: inPerson.readingPreset,
+                                      mode: inPerson.reading?.mode,
                                       checksIssuerRevocation: model.config?.reader?.revocation?.contains(.issuer) ?? false) {
                         inPerson.closeReading()
                         model.engagementToRead = nil
@@ -509,7 +578,9 @@ struct ReaderView: View {
                     } label: {
                         VStack(alignment: .leading) {
                             Text(p.title)
-                            Text(p.elements.values.flatMap { $0 }.map(elementLabel).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                            let asked = p.documents.flatMap { $0.elements.values.flatMap { $0 } }
+                                .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                            Text(asked.map(elementLabel).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .accessibilityIdentifier("reader-preset")
@@ -524,6 +595,8 @@ struct ReaderView: View {
 
 private struct ReaderOutcomeView: View {
     let state: ProximityReaderSession.State
+    /// Every verified document, in the response's order: the session's.
+    let documents: [VerifiedMdoc]
     let preset: ReaderPreset?
     let mode: ProximityBLEMode?
     /// Whether the reader checks the document signer's chain against
@@ -534,38 +607,48 @@ private struct ReaderOutcomeView: View {
     var body: some View {
         List {
             switch state {
-            case .verified(let v):
+            case .verified(let first):
+                let verified = documents.isEmpty ? [first] : documents
                 Section {
-                    Label("Verified", systemImage: "checkmark.seal.fill").foregroundStyle(.green).font(.title2)
+                    Label(verified.count > 1 ? "Verified \(verified.count) documents" : "Verified", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green).font(.title2)
                         .accessibilityIdentifier("reader-outcome")
                 }
-                ForEach(v.claims.keys.sorted(), id: \.self) { namespace in
-                    if case .object(let elements)? = v.claims[namespace] {
-                        Section {
-                            ForEach(elements.keys.sorted(), id: \.self) { identifier in
-                                ClaimRow(identifier: identifier, value: elements[identifier]!)
+                ForEach(Array(verified.enumerated()), id: \.offset) { n, v in
+                    let asked = preset?.elements(for: v.doctype) ?? [:]
+                    ForEach(v.claims.keys.sorted(), id: \.self) { namespace in
+                        if case .object(let elements)? = v.claims[namespace] {
+                            Section(verified.count > 1 ? v.doctype : "") {
+                                ForEach(elements.keys.sorted(), id: \.self) { identifier in
+                                    ClaimRow(identifier: identifier, value: elements[identifier]!)
+                                }
+                                let missing = (asked[namespace] ?? []).filter { elements[$0] == nil }
+                                if !missing.isEmpty { LabeledContent("Not shared", value: missing.map(elementLabel).joined(separator: ", ")) }
                             }
-                            let missing = (preset?.elements[namespace] ?? []).filter { elements[$0] == nil }
-                            if !missing.isEmpty { LabeledContent("Not shared", value: missing.map(elementLabel).joined(separator: ", ")) }
                         }
                     }
+                    Section {
+                        LabeledContent("Document", value: v.doctype)
+                        LabeledContent("Issued by", value: "\(v.issuer) (trusted via \(v.trustAnchor))")
+                        LabeledContent("Valid", value: "\(v.validFrom.formatted(date: .abbreviated, time: .shortened)) to \(v.validUntil.formatted(date: .abbreviated, time: .shortened))")
+                        LabeledContent("Holder's device", value: v.deviceAuth == "mac" ? "authenticated (MAC)" : "authenticated (signature)")
+                        if n == 0, let mode {
+                            LabeledContent("Bluetooth", value: mode == .centralClient
+                                ? "Central client mode: the holder connected to this reader"
+                                : "Peripheral server mode: this reader connected to the holder")
+                                .accessibilityIdentifier("reader-ble-mode")
+                        }
+                        if let s = v.statusList {
+                            LabeledContent("Status list", value: v.status == nil ? "not checked: \(s.uri) #\(s.index)" : "\(statusWord(v.status)): \(s.uri) #\(s.index)")
+                        }
+                        LabeledContent("Issuer certificate", value: issuerRevocation)
+                            .accessibilityIdentifier("reader-issuer-revocation")
+                    }
                 }
-                Section {
-                    LabeledContent("Document", value: v.doctype)
-                    LabeledContent("Issued by", value: "\(v.issuer) (trusted via \(v.trustAnchor))")
-                    LabeledContent("Valid", value: "\(v.validFrom.formatted(date: .abbreviated, time: .shortened)) to \(v.validUntil.formatted(date: .abbreviated, time: .shortened))")
-                    LabeledContent("Holder's device", value: v.deviceAuth == "mac" ? "authenticated (MAC)" : "authenticated (signature)")
-                    if let mode {
-                        LabeledContent("Bluetooth", value: mode == .centralClient
-                            ? "Central client mode: the holder connected to this reader"
-                            : "Peripheral server mode: this reader connected to the holder")
-                            .accessibilityIdentifier("reader-ble-mode")
-                    }
-                    if let s = v.statusList {
-                        LabeledContent("Status list", value: v.status == nil ? "not checked: \(s.uri) #\(s.index)" : "\(statusWord(v.status)): \(s.uri) #\(s.index)")
-                    }
-                    LabeledContent("Issuer certificate", value: issuerRevocation)
-                        .accessibilityIdentifier("reader-issuer-revocation")
+                // Asked for and not shared at all: the holder may share some documents and not others.
+                let absent = (preset?.documents ?? []).map(\.docType).filter { dt in !verified.contains { $0.doctype == dt } }
+                if !absent.isEmpty {
+                    Section { LabeledContent("Not shared", value: absent.joined(separator: ", ")).accessibilityIdentifier("reader-absent") }
                 }
             case .declined:
                 Text("The holder declined.").accessibilityIdentifier("reader-outcome")

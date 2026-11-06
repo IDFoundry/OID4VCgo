@@ -805,6 +805,17 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
         docType: String,
         elements: Map<String, List<String>>,
         timeouts: ProximityTimeouts = ProximityTimeouts(),
+    ): ProximityReaderSession = startFromNfc(context, tag, listOf(DocumentRequest(docType, elements)), timeouts)
+
+    /**
+     * [startFromNfc] asking for several [documents] at once, as
+     * [start] with documents does.
+     */
+    public suspend fun startFromNfc(
+        context: Context,
+        tag: android.nfc.Tag,
+        documents: List<DocumentRequest>,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
     ): ProximityReaderSession {
         val hr = OID4VC.wrap { Mobile.newNFCHandoverRequestWithNFCData("[\"peripheral_server\",\"central_client\"]", 255, 256) }
         val connection = NfcTagConnection(tag)
@@ -822,7 +833,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 }
                 connection.allowConsentDelay(timeouts.idle.inWholeMilliseconds.coerceIn(1, Int.MAX_VALUE.toLong()).toInt())
                 val transport = NfcDataReaderTransport(connection::exchange, connection::close, connection.maxTransceive, dataParameters)
-                return ProximityReaderSession(session, listOf(DocumentRequest(docType, elements)), timeouts, usesNfcData = true) { transport }.also { retained = true }
+                return ProximityReaderSession(session, documents, timeouts, usesNfcData = true) { transport }.also { retained = true }
             }
             connection.close()
             ProximityPermissions.require(context, ProximityPermissions.reader)
@@ -830,7 +841,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
                 if (handover.hr == null) handle.startFromHandover(handover.hs)
                 else handle.startFromNegotiatedHandover(handover.hs, handover.hr)
             }
-            return ProximityReaderSession(session, listOf(DocumentRequest(docType, elements)), timeouts) { e ->
+            return ProximityReaderSession(session, documents, timeouts) { e ->
             val app = context.applicationContext
             val uuid = UUID.fromString(e.serviceUUID)
             if (e.bleMode == "central_client") {
