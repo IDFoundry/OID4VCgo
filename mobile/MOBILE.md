@@ -1623,7 +1623,7 @@ twice, or redeem one refresh token twice.
   or the holder — so the window is milliseconds, not the whole
   presentation.
 
-## Several documents in one response (ABI 14)
+## Several documents in one response (ABI 15)
 
 A reader's DeviceRequest can ask for several documents, and ISO/IEC
 18013-5 lets the holder answer any subset in one DeviceResponse. The
