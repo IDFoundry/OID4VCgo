@@ -704,7 +704,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
     private val adapter = keyStore?.let(::KeyStoreAdapter)
     private val handle: MobileProximityReader = OID4VC.wrap {
         OID4VC.checkDevelopment(configuration.development)
-        Mobile.newProximityReader(json.encodeToString(ProximityReaderConfiguration.serializer(), configuration), adapter)
+        Mobile.newProximityReader(StatusCacheKey.configuration(json.encodeToString(ProximityReaderConfiguration.serializer(), configuration), configuration.statusCacheDir), adapter)
     }
 
     /**

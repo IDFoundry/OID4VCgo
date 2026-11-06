@@ -380,7 +380,7 @@ library's an `IOException`.
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
- "status_cache_dir": "/absolute/path",
+ "status_cache_dir": "/absolute/path", "status_cache_key": "<base64 of 32 random bytes>",
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
  "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>",
@@ -524,7 +524,19 @@ rather than the list, and verifies it again in full before using it.
 A kept list the server doesn't confirm is never used, so offline the
 check fails as without it. The platform may clear the directory; that
 costs a download. Empty keeps lists in memory only, as before. Not
-absolute: `invalid_input`. Added within ABI 15.
+absolute, or writable by anyone: `invalid_input`. Added within ABI 15.
+`status_cache_key`, base64 of at least 32 random bytes, authenticates
+the lists `status_cache_dir` keeps: a 304 confirms the `ETag` a kept
+list names, not the list kept with it, so without a key anyone able to
+write the directory could pair an older list, from before a
+revocation, with the `ETag` the server serves now. With a key, a list
+anyone else wrote is dropped; without one, a kept list is used only
+within `status_cache_max_age_seconds` (five minutes by default) of the
+time it was issued, and otherwise downloaded. Keep the key in the
+Keychain or Keystore, the same across launches: the Swift and Kotlin
+libraries make one and pass it with `statusCacheDir`. Without
+`status_cache_dir`, or not base64 of 32 bytes or more: `invalid_input`.
+Added within ABI 15, after OID4VCWallet 0.28.0.
 `require_issuer_name` refuses a received SD-JWT VC whose `iss` its
 signing certificate doesn't name; SD-JWT VC doesn't require them to
 correspond, so set it where `issuer_roots` certify several issuers.
@@ -1096,7 +1108,7 @@ added within ABI 14: before, they were refused.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"status_max_bytes", "identifier_list_max_bytes", "status_cache_max_age_seconds", "status_cache_dir", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
+"status_max_bytes", "identifier_list_max_bytes", "status_cache_max_age_seconds", "status_cache_dir", "status_cache_key", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
 "crl_distribution_points", "crl_distribution_points_from_roots",
 "crl_require_https", "development_roots", "any_issuer_for_any_type",
@@ -1118,8 +1130,9 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 - `status_max_bytes` and `identifier_list_max_bytes` bound the lists
   `CheckStatus` reads, as a Wallet's. Added within ABI 15.
 - `status_cache_max_age_seconds` is how long `CheckStatus` uses a list
-  it fetched, and `status_cache_dir` where it keeps lists across
-  launches, as a Wallet's. Added within ABI 15.
+  it fetched, `status_cache_dir` where it keeps lists across launches,
+  and `status_cache_key` what authenticates them there, as a Wallet's.
+  Added within ABI 15 (`status_cache_key` after OID4VCWallet 0.28.0).
 - `require_mdl_signer_eku` accepts only document signers with the mDL
   document signer extended key usage. The default check requires it
   too, so a document signer certificate without one is refused either

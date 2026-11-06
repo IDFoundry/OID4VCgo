@@ -296,8 +296,9 @@ public data class WalletConfiguration(
      * An absolute path, the app's own — under `context.cacheDir`, say — where
      * [Wallet.checkStatus] keeps the lists it verified across launches: a launch then asks
      * each list's server whether the list it kept is current, a `304 Not Modified` rather
-     * than the list, and never uses one the server hasn't confirmed. Empty keeps them in
-     * memory only.
+     * than the list, and never uses one the server hasn't confirmed. The lists are
+     * authenticated with a key the library makes, wrapped by an Android Keystore key, so
+     * one anyone else wrote to the directory is dropped. Empty keeps them in memory only.
      */
     @SerialName("status_cache_dir") val statusCacheDir: String = "",
 ) {
@@ -710,7 +711,7 @@ public class Wallet(
         val keys = KeyStoreAdapter(keyStore, provider, created)
         val credentials = CredentialStoreAdapter(credentialStore)
         val wp = provider?.let { WalletProviderAdapter(it, keyStore, created) }
-        val config = json.encodeToString(WalletConfiguration.serializer(), configuration)
+        val config = StatusCacheKey.configuration(json.encodeToString(WalletConfiguration.serializer(), configuration), configuration.statusCacheDir)
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)
         agreement?.let(handle::setKeyAgreement)

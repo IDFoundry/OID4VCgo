@@ -13,7 +13,8 @@ import (
 // Kotlin, so an option a release enforces is never one an app can't
 // reach. The exceptions are deliberate: iOS answers the DC API only
 // with org-iso-mdoc, and trusts development services through the
-// device's own trust store.
+// device's own trust store; and the wrappers set status_cache_key
+// themselves, from a key they keep, whenever statusCacheDir is set.
 func TestConfigKeysParity(t *testing.T) {
 	var goKeys []string
 	ct := reflect.TypeOf(config{})
@@ -23,6 +24,7 @@ func TestConfigKeysParity(t *testing.T) {
 		}
 	}
 	notInSwift := []string{"require_signed_dcapi_requests", "development_roots"}
+	setByWrappers := []string{"status_cache_key"}
 
 	swift := between(t, "ios/OID4VCWallet/Sources/OID4VCWallet/Wallet.swift", "public struct WalletConfiguration", "enum CodingKeys", "\n    }\n")
 	var swiftKeys []string
@@ -48,6 +50,9 @@ func TestConfigKeysParity(t *testing.T) {
 	}
 
 	for _, k := range goKeys {
+		if slices.Contains(setByWrappers, k) {
+			continue
+		}
 		if !slices.Contains(swiftKeys, k) && !slices.Contains(notInSwift, k) {
 			t.Errorf("Swift WalletConfiguration has no %q", k)
 		}

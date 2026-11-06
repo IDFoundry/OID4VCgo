@@ -81,10 +81,12 @@ type proximityReaderConfig struct {
 	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
 	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
 	// StatusCacheMaxAgeSeconds is how long a status or identifier list
-	// fetched is used, and StatusCacheDir where lists are kept across
-	// launches, as a Wallet's.
+	// fetched is used, StatusCacheDir where lists are kept across
+	// launches, and StatusCacheKey what authenticates them there, as a
+	// Wallet's.
 	StatusCacheMaxAgeSeconds int64  `json:"status_cache_max_age_seconds,omitempty"`
 	StatusCacheDir           string `json:"status_cache_dir,omitempty"`
+	StatusCacheKey           string `json:"status_cache_key,omitempty"`
 	// RequireMDLSignerEKU accepts only document signer certificates
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
@@ -215,7 +217,7 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		return nil, newError(CodeInvalidInput, fmt.Errorf("identifier_list_max_bytes is %d, not between 0 and %d", cfg.IdentifierListMaxBytes, identifierlist.MaxTokenBytesLimit))
 	}
 	r.statusMaxBytes, r.identifierListMaxBytes = cfg.StatusMaxBytes, cfg.IdentifierListMaxBytes
-	cache, err := statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir)
+	cache, err := statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir, cfg.StatusCacheKey)
 	if err != nil {
 		return nil, err
 	}
@@ -802,7 +804,8 @@ const maxStatusCacheMaxAge = 24 * time.Hour
 
 // statusCaches keep the status and identifier lists every reader and
 // Wallet in the process fetched, one Cache for each
-// "status_cache_max_age_seconds" and "status_cache_dir" configured: a
+// "status_cache_max_age_seconds", "status_cache_dir" and
+// "status_cache_key" configured: a
 // reader checking one issuer's documents in a queue fetches its list
 // once, not per document. Each check verifies a kept list again with
 // its own reader's or Wallet's trust and clock.
@@ -817,21 +820,36 @@ var statusCaches = struct {
 type statusCacheConfig struct {
 	maxAge time.Duration
 	dir    string
+	key    string // the store key's bytes
 }
+
+// minStatusCacheKeyBytes is the shortest "status_cache_key".
+const minStatusCacheKeyBytes = 32
 
 // statusCacheFor is the process's Cache keeping lists for maxAgeSeconds
 // (zero: statuslist.DefaultCacheMaxAge), at most a day, and across
 // launches in dir, when it's set (statuslist.DirCacheStore): a launch
 // then revalidates each list it kept, a round trip, rather than
-// downloading it.
-func statusCacheFor(maxAgeSeconds int64, dir string) (*statuslist.Cache, error) {
+// downloading it. storeKey, base64, at least 32 bytes, authenticates
+// what dir keeps (statuslist.CacheOptions.StoreKey).
+func statusCacheFor(maxAgeSeconds int64, dir, storeKey string) (*statuslist.Cache, error) {
 	if maxAgeSeconds < 0 || maxAgeSeconds > int64(maxStatusCacheMaxAge/time.Second) {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_max_age_seconds is %d, not between 0 and %d", maxAgeSeconds, int64(maxStatusCacheMaxAge/time.Second)))
 	}
 	if dir != "" && !filepath.IsAbs(dir) {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_dir %q isn't an absolute path", dir))
 	}
-	key := statusCacheConfig{time.Duration(maxAgeSeconds) * time.Second, filepath.Clean(dir)}
+	var keyBytes []byte
+	if storeKey != "" {
+		var err error
+		if keyBytes, err = base64.StdEncoding.DecodeString(storeKey); err != nil || len(keyBytes) < minStatusCacheKeyBytes {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("status_cache_key isn't base64 of at least %d bytes", minStatusCacheKeyBytes))
+		}
+		if dir == "" {
+			return nil, newError(CodeInvalidInput, errors.New("status_cache_key without status_cache_dir"))
+		}
+	}
+	key := statusCacheConfig{time.Duration(maxAgeSeconds) * time.Second, filepath.Clean(dir), string(keyBytes)}
 	if dir == "" {
 		key.dir = ""
 	}
@@ -840,7 +858,7 @@ func statusCacheFor(maxAgeSeconds int64, dir string) (*statuslist.Cache, error) 
 	if c, ok := statusCaches.byConfig[key]; ok {
 		return c, nil
 	}
-	opts := statuslist.CacheOptions{MaxAge: key.maxAge}
+	opts := statuslist.CacheOptions{MaxAge: key.maxAge, StoreKey: keyBytes}
 	if key.dir != "" {
 		store, ok := statusCaches.stores[key.dir]
 		if !ok {

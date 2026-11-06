@@ -817,7 +817,7 @@ public final class ProximityReader: @unchecked Sendable {
 
     init(configuration: ProximityReaderConfiguration, keys: KeyStoreAdapter?) throws {
         try OID4VC.checkDevelopment(configuration.development)
-        let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
+        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), statusCacheDir: configuration.statusCacheDir)
         adapter = keys
         handle = try OID4VC.call { MobileNewProximityReader(json, keys, $0) }!
     }
