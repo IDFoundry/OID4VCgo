@@ -2,6 +2,8 @@ package walletflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strings"
 	"time"
@@ -88,6 +90,9 @@ func (w *Wallet) checkIssuers(ctx context.Context, c StoredCredential, now time.
 		policy = mdoc.DefaultDocumentSignerPolicy
 	}
 	checks := issuerChecks{}
+	// A batch's copies usually carry one chain: each chain is verified
+	// once.
+	byChain := map[[sha256.Size]byte]issuerOutcome{}
 	for _, cp := range c.AllCopies() {
 		if !copyLive(c, cp, now) {
 			continue
@@ -99,21 +104,41 @@ func (w *Wallet) checkIssuers(ctx context.Context, c StoredCredential, now time.
 		if len(chain) == 0 {
 			continue
 		}
+		digest := chainDigest(chain)
+		if check, done := byChain[digest]; done {
+			checks[cp.Credential] = check
+			continue
+		}
 		_, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, policy, w.cfg.IssuerRevocation, now)
+		var check issuerOutcome
 		switch {
 		case err == nil:
-			checks[cp.Credential] = issuerTrusted
+			check = issuerTrusted
 		case errors.Is(err, certrevocation.ErrNoCurrentCRL):
-			checks[cp.Credential] = issuerUndecided
+			check = issuerUndecided
 		case errors.Is(err, certchain.ErrRevocationUndecided):
 			return nil, err
 		case errors.Is(err, certrevocation.ErrRevoked):
-			checks[cp.Credential] = issuerRevoked
+			check = issuerRevoked
 		default:
-			checks[cp.Credential] = issuerUntrusted
+			check = issuerUntrusted
 		}
+		checks[cp.Credential], byChain[digest] = check, check
 	}
 	return checks, nil
+}
+
+// chainDigest names chain, its certificates as DER, each length
+// prefixed so that no two chains share it.
+func chainDigest(chain [][]byte) [sha256.Size]byte {
+	h := sha256.New()
+	for _, der := range chain {
+		_ = binary.Write(h, binary.BigEndian, uint32(len(der))) // #nosec G115 -- a certificate is far below 4 GiB
+		h.Write(der)
+	}
+	var sum [sha256.Size]byte
+	h.Sum(sum[:0])
+	return sum
 }
 
 // issuerChain is the certificate chain, leaf first, as DER, that
