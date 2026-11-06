@@ -20,6 +20,11 @@ import "time"
 // hours), or rotate it to a new one well before that day starts.
 // validUntil must likewise not be after its NotAfter (§12.3.4), which
 // Issue checks.
+//
+// An mdoc is valid for lifetime less however much of its UTC day had
+// passed when it was issued: one issued just before midnight with a
+// lifetime of 24 hours expires minutes later. Pass a day more than the
+// shortest validity an mdoc needs.
 func RoundedValidity(now time.Time, lifetime time.Duration) (signed, validFrom, validUntil time.Time) {
 	dayStart := now.UTC().Truncate(24 * time.Hour)
 	return dayStart, dayStart, dayStart.Add(lifetime)

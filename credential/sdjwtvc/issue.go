@@ -86,6 +86,11 @@ type Claims struct {
 // credential issued on the same calendar day carries an identical
 // exp, closing that channel while still bounding validity to
 // approximately lifetime.
+//
+// A credential is valid for lifetime less however much of its UTC day
+// had passed when it was issued: one issued just before midnight with
+// a lifetime of 24 hours expires minutes later. Pass a day more than
+// the shortest validity a credential needs.
 func RoundedExp(now time.Time, lifetime time.Duration) int64 {
 	dayStart := now.UTC().Truncate(24 * time.Hour)
 	return dayStart.Add(lifetime).Unix()
