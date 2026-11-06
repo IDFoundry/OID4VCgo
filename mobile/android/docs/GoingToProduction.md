@@ -210,7 +210,12 @@ authorizations: it is for development only.
   and `STATUS` (the status lists' signers). CRLs expire at their nextUpdate: fetch fresh ones in the background
   and hand them over with `Wallet.setCRLs`, which replaces them all
   (empty text removes them) and throws `invalidInput`, keeping the old
-  lists, for anything that isn't a CRL. A certificate pinned in the
+  lists, for anything that isn't a CRL, a CA's list older than the one
+  held, or a list naming a CA your configuration has (in `crlIssuers`, a
+  distribution point's issuer, or a CA certificate in the roots) that
+  the CA didn't sign. Only lists such a CA signed are held to the
+  older-list rule, so give an intermediate CA's certificate in
+  `crlIssuers` to have its lists checked too. A certificate pinned in the
   roots, such as a Verifier's leaf in `verifierRoots`, is checked
   against its CA's CRL: give that CA's certificate in `crlIssuers`, or
   it's refused. A `ProximityReader` takes the same, for its document

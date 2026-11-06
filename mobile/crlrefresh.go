@@ -118,7 +118,27 @@ func (s *crlSet) configureRefresh(cfg crlRefreshConfig) error {
 		return newError(CodeInvalidInput, fmt.Errorf("crl_distribution_points: more than %d", maxCRLs))
 	}
 	s.points, s.refreshCfg = points, cfg
+	s.learn(knownCAs(points, cfg.roots))
 	return nil
+}
+
+// knownCAs are the CA certificates of points, the distribution points'
+// issuers, and among roots, the PEM roots of the roles "revocation"
+// names: the CAs whose lists a crlSet verifies before holding them
+// (crlSet.known).
+func knownCAs(points []crlPoint, roots []string) []*x509.Certificate {
+	var cas []*x509.Certificate
+	for _, p := range points {
+		cas = append(cas, p.issuer)
+	}
+	for _, pemText := range roots {
+		for _, cert := range parseCertificates(pemCertificates(pemText)) {
+			if cert.BasicConstraintsValid && cert.IsCA {
+				cas = append(cas, cert)
+			}
+		}
+	}
+	return cas
 }
 
 // pointsFromRoots adds to points, the explicit ones, the http and https
@@ -369,10 +389,19 @@ func fetchOne(ctx context.Context, r *certrevocation.Refresher) (*x509.Revocatio
 	return lists[0], nil
 }
 
-// merge makes list the one s holds for its CA, in place of any held,
-// unless it's older (as set refuses), and reports whether the lists
-// changed: false when list is the one held already.
+// merge makes list, which its distribution point's CA signed, the one
+// s holds for its CA, in place of any held, unless it's older than one
+// held that the same CA's key signed (as set refuses), and reports
+// whether the lists changed: false when list is the one held already. A
+// list held for the CA that it didn't sign is replaced, never a floor.
 func (s *crlSet) merge(list *x509.RevocationList) (bool, error) {
+	signer, err := s.signer(list)
+	switch {
+	case err != nil:
+		return false, err
+	case signer == nil:
+		return false, errors.New("the CRL isn't signed by a CA the configuration has")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var held []*x509.RevocationList
@@ -385,10 +414,11 @@ func (s *crlSet) merge(list *x509.RevocationList) (bool, error) {
 			next = append(next, h)
 			continue
 		}
+		hs, _ := s.signer(h)
 		switch {
 		case bytes.Equal(list.Raw, h.Raw):
 			return false, nil
-		case olderCRL(list, h):
+		case hs != nil && sameKey(signer, hs) && olderCRL(list, h):
 			return false, fmt.Errorf("the CRL is older than the one held for its CA, %q", h.Issuer)
 		}
 	}

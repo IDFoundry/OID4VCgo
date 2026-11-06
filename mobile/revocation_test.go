@@ -3,6 +3,8 @@ package mobile
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -64,7 +66,8 @@ func TestCRLs_Parse(t *testing.T) {
 // SetCRLs refuses a CA's list older than the one it holds — by CRL
 // number, or by thisUpdate where either has none — so a replayed list
 // can't un-revoke a certificate; a newer list, another CA's, or removing
-// them all is taken.
+// them all is taken. The CA is one the configuration has (here in
+// crl_issuers): only its lists are verified, and so held to that.
 func TestCRLs_RefusesAnOlderList(t *testing.T) {
 	ca, caKey := testcert.CA(t, "revocation test CA")
 	other, otherKey := testcert.CA(t, "another CA")
@@ -72,7 +75,7 @@ func TestCRLs_RefusesAnOlderList(t *testing.T) {
 		tmpl := &x509.RevocationList{Number: big.NewInt(n), ThisUpdate: time.Now().Add(-time.Duration(hoursAgo) * time.Hour)}
 		return pemOf("X509 CRL", testcert.CRLFromTemplate(t, tmpl, ca, caKey).Raw)
 	}
-	s, err := newCRLSet(at(5, 2), "")
+	s, err := newCRLSet(at(5, 2), pemOf("CERTIFICATE", ca.Raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,4 +299,89 @@ func TestNewProximityReader_Revocation(t *testing.T) {
 func jsonString(s string) string {
 	text, _ := marshal(s)
 	return text
+}
+
+// A list naming a CA the configuration has that the CA didn't sign —
+// forged with the CA's name and key identifier, and a huge CRL number —
+// is refused by SetCRLs, dropped from "crls" at construction, and never
+// a floor: the CA's genuine lists, older by number, are still taken, by
+// SetCRLs and RefreshCRLs alike. Another CA's list, met only on a chain,
+// is kept but can't hold a later one to it.
+func TestCRLs_ForgedListIsNoFloor(t *testing.T) {
+	ca, caKey := testcert.CA(t, "refresh CA")
+	fakeKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeTmpl := &x509.Certificate{SerialNumber: big.NewInt(99), Subject: ca.Subject, SubjectKeyId: ca.SubjectKeyId,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCRLSign | x509.KeyUsageCertSign}
+	fakeDER, err := x509.CreateCertificate(rand.Reader, fakeTmpl, fakeTmpl, &fakeKey.PublicKey, fakeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake, err := x509.ParseCertificate(fakeDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := testcert.CRLFromTemplate(t, &x509.RevocationList{Number: big.NewInt(1 << 62), ThisUpdate: time.Now(), NextUpdate: time.Now().Add(24 * time.Hour)}, fake, fakeKey)
+	genuine, newer := crlAt(t, ca, caKey, 5, 0, 24*time.Hour), crlAt(t, ca, caKey, 6, 0, 24*time.Hour)
+	caPEM := pemOf("CERTIFICATE", ca.Raw)
+
+	t.Run("known CA", func(t *testing.T) {
+		s, err := newCRLSet(pemOf("X509 CRL", genuine.Raw), caPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.set(pemOf("X509 CRL", forged.Raw)); err == nil || !strings.Contains(err.Error(), "didn't sign") {
+			t.Errorf("set took the forged list: %v", err)
+		}
+		if err := s.set(pemOf("X509 CRL", newer.Raw)); err != nil {
+			t.Errorf("a genuine newer list: %v", err)
+		}
+		if _, err := s.merge(forged); err == nil {
+			t.Error("merge took the forged list")
+		}
+	})
+	t.Run("held from before", func(t *testing.T) {
+		// "crls" an earlier version held, with the forged list in it: the
+		// CA is known only once the distribution points are configured.
+		s, err := newCRLSet(pemOf("X509 CRL", forged.Raw), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.configureRefresh(crlRefreshConfig{points: []crlDistributionPoint{{URL: "http://ca.example/ca.crl", Issuer: caPEM}}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.pem(); got != "" {
+			t.Errorf("the forged list is still held: %q", got)
+		}
+		if changed, err := s.merge(genuine); err != nil || !changed {
+			t.Errorf("RefreshCRLs' genuine list: %v, %v", changed, err)
+		}
+	})
+	t.Run("unknown CA", func(t *testing.T) {
+		s, err := newCRLSet(pemOf("X509 CRL", genuine.Raw), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.set(pemOf("X509 CRL", forged.Raw)); err != nil {
+			t.Fatalf("an unverifiable list: %v, want kept, for checks to verify", err)
+		}
+		if err := s.set(pemOf("X509 CRL", genuine.Raw)); err != nil {
+			t.Errorf("the genuine list after the forged one: %v, want taken", err)
+		}
+		if err := s.set(pemOf("X509 CRL", forged.Raw)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.configureRefresh(crlRefreshConfig{points: []crlDistributionPoint{{URL: "http://ca.example/ca.crl", Issuer: caPEM}}}); err != nil {
+			t.Fatal(err)
+		}
+		if changed, err := s.merge(newer); err != nil || !changed {
+			t.Errorf("RefreshCRLs' genuine list after the forged one: %v, %v", changed, err)
+		}
+		if got := s.pem(); got != pemOf("X509 CRL", newer.Raw) {
+			t.Errorf("crls %q, want the genuine list alone", got)
+		}
+	})
 }
