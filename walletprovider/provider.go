@@ -182,6 +182,16 @@ type Dependencies struct {
 	// REQUIRED.
 	StatusIndices statuslist.IndexStore
 
+	// StatusListTokens, if set, shares the status lists' signed tokens
+	// between the replicas serving them (statuslist.Publisher.Tokens):
+	// one replica signs a list's token at a time and the others serve
+	// it, rather than each reading the list's statuses and signing its
+	// own. sqlstore's DB.StatusListTokens is one, over the database its
+	// StatusIndices are in, whose Delete of a retired list (from
+	// Provider.SweepStatusLists) deletes the list's tokens too. nil
+	// means each replica signs its own.
+	StatusListTokens statuslist.TokenStore
+
 	// Evidence are the verifiers of the evidence kinds the provider
 	// accepts, each Kind once. At least one is REQUIRED.
 	Evidence []EvidenceVerifier

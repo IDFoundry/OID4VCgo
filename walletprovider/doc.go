@@ -118,7 +118,9 @@
 // the provider's own key and certificate chain, so an issuer's default
 // check — the list signed with the attestation's own key — accepts
 // them. Size Config.StatusListSize for the instance keys used in a
-// period.
+// period. With Dependencies.StatusListTokens, the replicas serving the
+// lists share their tokens: one signs a list's token at a time, and a
+// status change is served by every replica from its next check.
 //
 // Neither store of instance keys and their statuses grows for good. An
 // instance key's record is kept for Config.InstanceKeyRetention after

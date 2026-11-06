@@ -379,6 +379,7 @@ func (p *Provider) publisher(ctx context.Context, startText, nText string) (*sta
 		URI: uri, Signer: p.deps.Signer, Chain: p.deps.Chain,
 		Statuses: p.allocator(start, 0).Statuses(uri), Bits: statuslist.Bits2,
 		Lifetime: p.cfg.StatusListLifetime, TTL: p.cfg.StatusListTTL, Now: p.now,
+		Tokens: p.deps.StatusListTokens,
 	}}, func(start int64) bool { return p.served(start, now) }), true, nil
 }
 
