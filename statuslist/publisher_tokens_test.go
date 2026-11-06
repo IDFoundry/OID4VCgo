@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,111 +15,11 @@ import (
 	"github.com/idfoundry/oid4vcgo/statuslist/statuslisttest"
 )
 
-// memTokenStore is a statuslist.TokenStore in memory, its versions
-// raised by bump, its every method failing while err is set.
-type memTokenStore struct {
-	mu       sync.Mutex
-	versions map[string]int64
-	tokens   map[memTokenKey]*memToken
-	err      error
-}
-
-type memTokenKey struct {
-	uri  string
-	form statuslist.Form
-}
-
-type memToken struct {
-	token      *statuslist.StoredToken
-	holder     string
-	leaseUntil time.Time
-}
-
-func newMemTokenStore() *memTokenStore {
-	return &memTokenStore{versions: map[string]int64{}, tokens: map[memTokenKey]*memToken{}}
-}
-
-func (s *memTokenStore) bump(uri string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.versions[uri]++
-}
-
-func (s *memTokenStore) fail(err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.err = err
-}
-
-func (s *memTokenStore) entry(uri string, form statuslist.Form) *memToken {
-	k := memTokenKey{uri, form}
-	if s.tokens[k] == nil {
-		s.tokens[k] = &memToken{}
-	}
-	return s.tokens[k]
-}
-
-func (s *memTokenStore) Head(_ context.Context, uri string, form statuslist.Form) (statuslist.TokenHead, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return statuslist.TokenHead{}, s.err
-	}
-	head := statuslist.TokenHead{Version: s.versions[uri]}
-	if t := s.entry(uri, form).token; t != nil {
-		head.Stored, head.Token = true, *t
-		head.Token.Bytes = nil
-	}
-	return head, nil
-}
-
-func (s *memTokenStore) Token(_ context.Context, uri string, form statuslist.Form) (statuslist.StoredToken, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return statuslist.StoredToken{}, false, s.err
-	}
-	if t := s.entry(uri, form).token; t != nil {
-		return *t, true, nil
-	}
-	return statuslist.StoredToken{}, false, nil
-}
-
-func (s *memTokenStore) Claim(_ context.Context, uri string, form statuslist.Form, holder string, now, until time.Time) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return false, s.err
-	}
-	e := s.entry(uri, form)
-	if e.holder != "" && e.holder != holder && e.leaseUntil.After(now) {
-		return false, nil
-	}
-	e.holder, e.leaseUntil = holder, until
-	return true, nil
-}
-
-func (s *memTokenStore) Put(_ context.Context, uri string, form statuslist.Form, holder string, token statuslist.StoredToken) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return s.err
-	}
-	e := s.entry(uri, form)
-	if t := e.token; t == nil || t.Version < token.Version || (t.Version == token.Version && t.SignedAt.Before(token.SignedAt)) {
-		e.token = &token
-	}
-	if e.holder == holder {
-		e.holder, e.leaseUntil = "", time.Time{}
-	}
-	return nil
-}
-
-// The in-memory store these tests use is a TokenStore.
-func TestMemTokenStoreContract(t *testing.T) {
+// statuslisttest.MemoryTokenStore is a TokenStore.
+func TestMemoryTokenStoreContract(t *testing.T) {
 	statuslisttest.TestTokenStoreContract(t, func(*testing.T) (statuslist.TokenStore, func(*testing.T, string)) {
-		s := newMemTokenStore()
-		return s, func(_ *testing.T, uri string) { s.bump(uri) }
+		s := statuslisttest.NewMemoryTokenStore()
+		return s, func(_ *testing.T, uri string) { s.Bump(uri) }
 	})
 }
 
@@ -128,7 +27,7 @@ func TestMemTokenStoreContract(t *testing.T) {
 // counting its own reads of the statuses, on one clock.
 type replicas struct {
 	t     *testing.T
-	store *memTokenStore
+	store *statuslisttest.MemoryTokenStore
 	now   time.Time
 	pubs  []*statuslist.Publisher
 	reads []*atomic.Int32
@@ -140,7 +39,7 @@ const sharedListURI = "https://issuer.example/statuslists/1"
 func newReplicas(t *testing.T, n int) *replicas {
 	ca, caKey := testcert.CA(t, "status CA")
 	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
-	rs := &replicas{t: t, store: newMemTokenStore(), now: time.UnixMilli(time.Now().UnixMilli()), errs: make([]error, n)}
+	rs := &replicas{t: t, store: statuslisttest.NewMemoryTokenStore(), now: time.UnixMilli(time.Now().UnixMilli()), errs: make([]error, n)}
 	for i := range n {
 		reads := new(atomic.Int32)
 		rs.reads = append(rs.reads, reads)
@@ -207,7 +106,7 @@ func TestPublisher_TokensShared(t *testing.T) {
 	}
 	rs.expectReads(1, 0, 0)
 
-	rs.store.bump(sharedListURI)
+	rs.store.Bump(sharedListURI)
 	rs.now = rs.now.Add(statuslist.DefaultTokensCheck)
 	second := rs.ok(2)
 	if second == first {
@@ -241,7 +140,7 @@ func TestPublisher_TokensLeaderFailover(t *testing.T) {
 	if ok, err := rs.store.Claim(ctx, sharedListURI, statuslist.FormJWT, "gone", rs.now, rs.now.Add(35*time.Second)); !ok || err != nil {
 		t.Fatalf("Claim: %v, %v", ok, err)
 	}
-	rs.store.bump(sharedListURI)
+	rs.store.Bump(sharedListURI)
 	rs.now = rs.now.Add(statuslist.DefaultTokensCheck)
 	for i := range 2 {
 		if rs.ok(i) != first {
@@ -304,7 +203,7 @@ func TestPublisher_TokensStoreDown(t *testing.T) {
 	rs := newReplicas(t, 2)
 	first := rs.ok(0)
 	down := errors.New("store down")
-	rs.store.fail(down)
+	rs.store.Fail(down)
 	rs.now = rs.now.Add(time.Minute)
 	if rs.ok(0) != first || !errors.Is(rs.errs[0], down) {
 		t.Fatalf("store down: error %v; want the token served and the error reported", rs.errs[0])
@@ -312,7 +211,7 @@ func TestPublisher_TokensStoreDown(t *testing.T) {
 	if rec := rs.get(1); rec.Code != http.StatusInternalServerError || !errors.Is(rs.errs[1], down) {
 		t.Fatalf("store down, no token: %d, %v; want 500 and the error", rec.Code, rs.errs[1])
 	}
-	rs.store.fail(nil)
+	rs.store.Fail(nil)
 	second := rs.ok(1)
 	if second == first || rs.errs[1] != nil {
 		t.Fatalf("store back: error %v", rs.errs[1])

@@ -54,6 +54,10 @@ them.
 - **Delete the single status list from v0.67.0 and before** (your old
   `Config.StatusListURI`) once, with `IndexStore.Delete`: it hasn't
   been served or changed since v0.68.0, and nothing else deletes it.
+- **Set `Dependencies.StatusListTokens`** (sqlstore's
+  `db.StatusListTokens()`) when more than one replica serves the
+  provider's status lists: one then signs each list's token, and the
+  others serve it. Without it each replica signs its own, as before.
 
 ### sqlstore (next after v0.8.0)
 

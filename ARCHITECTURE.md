@@ -556,7 +556,8 @@ changes whether *every* bullet below is `(done)`.
 
   `sqlstore` keeps its durable stores (`DB.WalletProviderInstances`,
   `DB.WalletProviderInstanceKeys`, `DB.WalletProviderChallenges`, with
-  `DB.StatusIndices` for its status list indices).
+  `DB.StatusIndices` for its status list indices and
+  `DB.StatusListTokens` for the lists' tokens its replicas share).
 
   Still to come, each its own package or PR: `walletprovider/appattest`
   (Apple App Attest).
