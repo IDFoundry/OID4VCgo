@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.68.0 → next
+## v0.68.0 → v0.69.0
 
 ### Status lists (`statuslist`)
 
@@ -65,7 +65,7 @@ them.
   provider's status lists: one then signs each list's token, and the
   others serve it. Without it each replica signs its own, as before.
 
-### sqlstore (next after v0.8.0)
+### sqlstore (v0.9.0)
 
 - **Run `Migrate` again for migration 0009**, which indexes
   `oid4vc_walletprovider_instance_keys`' `sweep_after` for `DB.Sweep`.
