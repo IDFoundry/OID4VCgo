@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.69.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.68.0...v0.69.0) (2026-11-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **statuslist:** statuslist.IndexStore has a new method, Delete. An IndexStore of your own must implement it: forget every reservation of the list and its statuses, doing nothing for a list never seen.
+
+### Features
+
+* answer several mdoc documents in one response ([f14567c](https://github.com/IDFoundry/OID4VCgo/commit/f14567ce165398402310361e3dab95f020907cf6))
+* **identifierlist:** make the token size limit configurable ([41a75cf](https://github.com/IDFoundry/OID4VCgo/commit/41a75cfb65c21bbf4f2089810feeadebb9893e09))
+* **issuer:** issue c_nonces statelessly, writing only when one is spent ([f32665f](https://github.com/IDFoundry/OID4VCgo/commit/f32665faf32ef89026a8184bd8070300415c7299))
+* **issuer:** set a batch's per-Credential claims in one PerBatch call ([d49f188](https://github.com/IDFoundry/OID4VCgo/commit/d49f18870c2e61d0fb34282c17f6fc75b6035d15))
+* **mobile:** support iOS 15 ([77a4dc9](https://github.com/IDFoundry/OID4VCgo/commit/77a4dc9855a653fa6a28338060f31ba225cb030e))
+* **statuslist:** allocate a batch's status indices at once ([9378e2b](https://github.com/IDFoundry/OID4VCgo/commit/9378e2b73fa35b1889d9133c72f1b697332e90b2))
+* **statuslist:** answer If-None-Match with 304 by a strong ETag ([1d0518e](https://github.com/IDFoundry/OID4VCgo/commit/1d0518ea7b927201f5cb5b974a78f27865063735))
+* **statuslist:** evict a DirCacheStore's least recently used lists first ([e5a9853](https://github.com/IDFoundry/OID4VCgo/commit/e5a9853f9f779e65c2e19658cbb32840646fec64))
+* **statuslist:** keep a Cache's verified tokens across processes ([539c436](https://github.com/IDFoundry/OID4VCgo/commit/539c43689b0b7a87697e154ddf3641316486ce30))
+* **statuslist:** keep a failed fetch or refused token for MaxFailureAge ([20bb5a8](https://github.com/IDFoundry/OID4VCgo/commit/20bb5a8c773b1c83f2e26fee853143b3e41bf710))
+* **statuslist:** let an IndexStore forget a retired list ([d8f73fb](https://github.com/IDFoundry/OID4VCgo/commit/d8f73fb4965a448b44bdb2a5c5a7e0996c295155))
+* **statuslist:** share signed list tokens between replicas through a TokenStore ([f59be2c](https://github.com/IDFoundry/OID4VCgo/commit/f59be2c3485cd3329ff521b66bffad7082d9179c))
+* **verifier:** verify an mdoc issuer's x5chain once per document ([0098410](https://github.com/IDFoundry/OID4VCgo/commit/0098410fb728607db296902fce40bb661c4e7e36))
+* **walletflow:** configure the largest status and identifier lists ([f0b5bf6](https://github.com/IDFoundry/OID4VCgo/commit/f0b5bf686516e8d6a6df358ca4279342be522e36))
+* **walletprovider:** give instance keys recorded before retention a RetainUntil ([63be7c9](https://github.com/IDFoundry/OID4VCgo/commit/63be7c9c3c34801d0c56b664d8fd7e3bbcd2b287))
+* **walletprovider:** retain instance keys and status lists for a bounded time ([352c32d](https://github.com/IDFoundry/OID4VCgo/commit/352c32da9f20661ebe979f7a7b8ee9a44c94e7b5))
+* **walletprovider:** share the status lists' tokens between replicas ([ffa427a](https://github.com/IDFoundry/OID4VCgo/commit/ffa427a2cf44e50343dfbb06afcc9d4401307db5))
+
+
+### Bug Fixes
+
+* **statuslist:** serve a shared token only to a replica with its signer ([b896ac6](https://github.com/IDFoundry/OID4VCgo/commit/b896ac65e9e4bf7f6c14b3f1152487a99f4f7fa4))
+* **walletflow:** drop settled deferred marks and idle grant locks ([bfc8273](https://github.com/IDFoundry/OID4VCgo/commit/bfc82732bfcdae194f28c97f98f50faeb4907d59))
+* **walletflow:** make new credential IDs without "-" ([2c20af9](https://github.com/IDFoundry/OID4VCgo/commit/2c20af9eca9dde5afd0cd840378d314237476722))
+* **walletprovider:** refuse a key swept while it moves as an unknown one ([585c1bc](https://github.com/IDFoundry/OID4VCgo/commit/585c1bcc745a762aa6833ca020017bde1c646c91))
+
+
+### Performance Improvements
+
+* **certrevocation:** check a chain against a CRL by lookup, not a walk ([ad9af5a](https://github.com/IDFoundry/OID4VCgo/commit/ad9af5abdcfbc4f9ab53bbfdc8c9bac7ae16650e))
+* **certrevocation:** fetch CRLs conditionally and jitter Run's schedule ([63326e4](https://github.com/IDFoundry/OID4VCgo/commit/63326e4bc21936ea164c7b2cf8acf9107837201a))
+* **dcql:** build an AKI checker's anchor pool once ([5cae779](https://github.com/IDFoundry/OID4VCgo/commit/5cae779a352c31fdeaa07a9385f60febf7381e77))
+* **statuslist:** check a cached token from what verifying it found ([68d44cd](https://github.com/IDFoundry/OID4VCgo/commit/68d44cded8f90c8bd633c979b2cfc29b006d1fb7))
+* **statuslist:** compress a Status List at the default level or Huffman-only ([77f0a5c](https://github.com/IDFoundry/OID4VCgo/commit/77f0a5c2d53a47502a1eae8730386edd33f95b95))
+* **statuslist:** remember an Allocator's settings and full lists ([63d4980](https://github.com/IDFoundry/OID4VCgo/commit/63d49805513b0c10db4c1c958cfa117aef39c8fd))
+* **statuslist:** revalidate cached lists with ETags and honour max-age ([19e3285](https://github.com/IDFoundry/OID4VCgo/commit/19e328567c63ac1b8abec3d3a6fb3faeec160b20))
+* **statuslist:** sign a Publisher's tokens once, off the request ([1140a6b](https://github.com/IDFoundry/OID4VCgo/commit/1140a6b4a2f74a1d1aa23518cf32bf423803c082))
+* **verifier:** verify an SD-JWT VC's x5c once, not twice ([684083b](https://github.com/IDFoundry/OID4VCgo/commit/684083b7ab2dd7cc1984d9d54edfc16732a4f2fe))
+* **walletflow:** fetch the Authorization Server's metadata once per issuance ([15f0b2d](https://github.com/IDFoundry/OID4VCgo/commit/15f0b2d0ecfa4c965eac27f0adfc90c1af4f2b5b))
+* **walletflow:** verify a batch's shared issuer chain once per CheckStatus ([b14cb88](https://github.com/IDFoundry/OID4VCgo/commit/b14cb8865ec7e15d75a22206148876d2c2d6d3e8))
+
 ## [0.68.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.67.0...v0.68.0) (2026-11-05)
 
 
