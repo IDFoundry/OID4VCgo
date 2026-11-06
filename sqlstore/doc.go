@@ -34,6 +34,12 @@
 //     the database, so no index is handed out twice. Its Reserve is one
 //     INSERT on the (uri, idx) primary key; its Delete deletes a
 //     retired list's rows in bounded batches, then the list's count.
+//   - statuslist.Publisher.Tokens and identifierlist.Publisher.Tokens:
+//     StatusListTokens, through which the replicas serving a list share
+//     its token, so one signs it at a time. A trigger raises a list's
+//     version as StatusIndices changes one of its statuses; Claim, the
+//     lease on signing a token, is one INSERT … ON CONFLICT DO UPDATE
+//     … WHERE the lease is free.
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices. An instance's Create is one

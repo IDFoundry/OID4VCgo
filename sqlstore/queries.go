@@ -45,8 +45,11 @@ type queries struct {
 	keyInsert, keyGet, keyDelete string
 
 	// oid4vc_status_indices: statuslist.IndexStore.
-	statusIndexReserve, statusIndexCount, statusIndexSet, statusIndexGet, statusIndexList string
-	statusIndexDeleteBatch, statusIndexDeleteCount                                        string
+	statusIndexReserve, statusIndexCount, statusIndexSet, statusIndexGet, statusIndexList             string
+	statusIndexDeleteBatch, statusIndexDeleteCount, statusIndexDeleteVersion, statusIndexDeleteTokens string
+
+	// oid4vc_status_list_tokens and oid4vc_status_list_versions: statuslist.TokenStore.
+	statusTokenHead, statusTokenGet, statusTokenClaim, statusTokenPut, statusTokenRelease string
 
 	// oid4vc_walletprovider_instances: walletprovider.InstanceStore.
 	wpInstanceInsert, wpInstanceGet, wpInstanceUpdate, wpInstanceRevision, wpInstanceList string

@@ -280,7 +280,8 @@ const deleteBatch = 10000
 // rows, so it deletes them in batches of deleteBatch, each its own
 // write that holds no lock for long, then the list's count. Reserved
 // counts the list's indices until that last write, so a Delete that
-// fails part-way still finds the list, and another finishes it.
+// fails part-way still finds the list, and another finishes it. That
+// last write deletes the list's StatusListTokens too, and its version.
 func (s *StatusIndexStore) Delete(ctx context.Context, uri string) error {
 	if !storableKeys(uri) {
 		return nil
@@ -302,9 +303,13 @@ func (s *StatusIndexStore) Delete(ctx context.Context, uri string) error {
 			break
 		}
 	}
-	err := s.d.writeOne(ctx, func(q querier) error {
-		_, err := q.ExecContext(ctx, s.d.sql.statusIndexDeleteCount, uri)
-		return err
+	err := s.d.write(ctx, func(q querier) error {
+		for _, statement := range []string{s.d.sql.statusIndexDeleteTokens, s.d.sql.statusIndexDeleteVersion, s.d.sql.statusIndexDeleteCount} {
+			if _, err := q.ExecContext(ctx, statement, uri); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("sqlstore: delete the count of %s: %w", uri, err)
