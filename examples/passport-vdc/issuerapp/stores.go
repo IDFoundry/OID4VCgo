@@ -44,6 +44,11 @@ type stores struct {
 	// in a file in Config.StateDir instead, when set (loadStatusList).
 	statusIndices statuslist.IndexStore
 
+	// statusTokens share the status lists' signed tokens between
+	// processes serving them (statuslist.Publisher.Tokens): nil in
+	// memory.
+	statusTokens statuslist.TokenStore
+
 	sweep func(ctx context.Context, now time.Time) error // nil in memory
 }
 
@@ -95,6 +100,7 @@ func databaseStores(ctx context.Context, db *sql.DB, sealer sqlstore.Sealer) (st
 		deferred:      issuerDB.DeferredTransactions(),
 		notifications: issuerDB.Notifications(),
 		statusIndices: issuerDB.StatusIndices(),
+		statusTokens:  issuerDB.StatusListTokens(),
 		sweep: func(ctx context.Context, now time.Time) error {
 			_, issuerErr := issuerDB.Sweep(ctx, now)
 			_, asErr := asDB.Sweep(ctx, now)

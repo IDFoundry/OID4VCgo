@@ -229,8 +229,16 @@ of wallets, would hold it:
   see that map.
 - **The issuer's status list is published by the process that changes
   it.** It calls `Publisher.Invalidate` after each `SetStatus`, which
-  reaches only its own Publisher: replicas would each sign their own
-  token and show another's revocation only after `CacheFor`.
+  reaches only its own Publisher: without a shared store, replicas
+  would each sign their own token and show another's revocation only
+  after `CacheFor`. A deployment on sqlstore sets each Publisher's
+  `Tokens` to `db.StatusListTokens()` (migrations 0011 and 0012): after
+  a status change one replica signs the list's token and stores it, and
+  the others serve it, picking up a revocation within `TokensCheck`
+  (5 s by default), each serving only a token its own signer signed.
+  The Wallet Provider takes the same store as
+  `Dependencies.StatusListTokens`. This demo sets `Tokens` when it runs
+  with `-db` (`statusPublishers` in `issuerapp/status.go`).
 - **Passports awaiting issuance, deferred issuances awaiting review
   and offer progress are in memory** (`issuerapp/transactions.go`,
   `review.go`, `progress.go`), as are the Authorization Server's

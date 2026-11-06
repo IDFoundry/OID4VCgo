@@ -66,6 +66,9 @@ func (a *App) RevokeDocumentSigner() error {
 	}
 	a.id = id
 	a.signing.Store(next)
+	for _, p := range []*statuslist.Publisher{next.jwtList, next.cwtList} {
+		p.Invalidate() // the new signer's token replaces any stored one at once
+	}
 	if err := a.crl.Revoke(old.cert); err != nil {
 		return fmt.Errorf("issuerapp: the new document signer is in use, but the old one couldn't be revoked: %w", err)
 	}

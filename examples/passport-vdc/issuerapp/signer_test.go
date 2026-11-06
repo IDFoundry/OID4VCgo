@@ -161,10 +161,16 @@ func revokeSigner(t *testing.T, env *demotest.Env, origin string) *http.Request 
 // TestRevokeDocumentSigner_RevokesItsCredentials: revoking the document
 // signer revokes every credential it signed, in either format, on the
 // status list the issuer publishes (signed by the new signer), and
-// leaves those the new signer signs valid.
+// leaves those the new signer signs valid — also with a database, whose
+// shared token the revoked signer may have signed last.
 func TestRevokeDocumentSigner_RevokesItsCredentials(t *testing.T) {
+	t.Run("memory", func(t *testing.T) { revokesItsCredentials(t) })
+	t.Run("database", func(t *testing.T) { revokesItsCredentials(t, openTestDatabase(t, t.TempDir())) })
+}
+
+func revokesItsCredentials(t *testing.T, opts ...func(*issuerapp.Config)) {
 	ctx := context.Background()
-	env := demotest.New(t, nil)
+	env := demotest.New(t, nil, opts...)
 	receive := func() {
 		t.Helper()
 		offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
@@ -177,6 +183,10 @@ func TestRevokeDocumentSigner_RevokesItsCredentials(t *testing.T) {
 	}
 	receive()
 	old := env.Issuer.IssuerCertificate().SerialNumber.String()
+	// Served once, so that with a database the old signer's token is
+	// the one stored when the signer is revoked.
+	fetchStatusList(t, env, issuerapp.StatusListPath)
+	fetchStatusList(t, env, issuerapp.MdocStatusListPath)
 	before := map[int]bool{}
 	for _, s := range env.Issuer.IssuedStatuses() {
 		before[s.Idx] = true
