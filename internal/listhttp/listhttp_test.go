@@ -222,3 +222,41 @@ func TestWrite(t *testing.T) {
 		t.Errorf("no ttl: Cache-Control %q, %v; want none", rec.Header().Get("Cache-Control"), err)
 	}
 }
+
+// A token another replica signed a little ahead of this one's clock is
+// served with its whole ttl, not more.
+func TestWrite_SignedAhead(t *testing.T) {
+	now := time.Now()
+	token := &Token{Bytes: []byte("token"), SignedAt: now.Add(2 * time.Second), Exp: now.Add(time.Hour), etag: etag([]byte("token"))}
+	rec := httptest.NewRecorder()
+	if err := Write(rec, httptest.NewRequest(http.MethodGet, "/l", nil), Served{Token: token, Now: now}, "application/x", time.Minute, false); err != nil || rec.Header().Get("Cache-Control") != "public, max-age=60" {
+		t.Fatalf("Write: %v, Cache-Control %q; want max-age=60", err, rec.Header().Get("Cache-Control"))
+	}
+}
+
+// current serves a token signed from the list's version or a later one,
+// within fresh, unexpired, and not signed further ahead than fresh.
+func TestCurrent(t *testing.T) {
+	now := time.Now()
+	fresh := time.Minute
+	head := func(version, tokenVersion int64, signedAt, exp time.Duration) Head {
+		return Head{Version: version, Stored: true, Token: Stored{Version: tokenVersion, SignedAt: now.Add(signedAt), Exp: now.Add(exp)}}
+	}
+	for _, c := range []struct {
+		name string
+		head Head
+		want bool
+	}{
+		{"current", head(1, 1, -time.Second, time.Hour), true},
+		{"later version", head(1, 2, -time.Second, time.Hour), true},
+		{"older version", head(2, 1, -time.Second, time.Hour), false},
+		{"not fresh", head(1, 1, -fresh, time.Hour), false},
+		{"expired", head(1, 1, -time.Second, 0), false},
+		{"a little ahead", head(1, 1, time.Second, time.Hour), true},
+		{"too far ahead", head(1, 1, fresh, time.Hour), false},
+	} {
+		if got := current(c.head, now, fresh); got != c.want {
+			t.Errorf("%s: current = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

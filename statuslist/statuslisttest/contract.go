@@ -1,5 +1,6 @@
-// Package statuslisttest holds a reusable contract test for
-// statuslist.IndexStore, for a caller testing its own implementation.
+// Package statuslisttest holds reusable contract tests for
+// statuslist.IndexStore and statuslist.TokenStore, for a caller testing
+// its own implementation.
 // It imports "testing": import it only from _test.go files.
 package statuslisttest
 

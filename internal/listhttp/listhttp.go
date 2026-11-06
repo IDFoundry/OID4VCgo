@@ -1,6 +1,7 @@
 // Package listhttp serves the tokens statuslist's and identifierlist's
 // Publishers sign: a Cache that signs a token once for many requests,
-// and Write, which answers a request with one.
+// or shares one signed by any of the replicas serving the list through
+// a Store, and Write, which answers a request with one.
 package listhttp
 
 import (
@@ -29,6 +30,7 @@ type Token struct {
 	Bytes         []byte
 	SignedAt, Exp time.Time
 
+	version  int64 // the list version it was signed from, when shared
 	etag     string
 	gzipOnce sync.Once
 	gzipped  []byte // Bytes, gzip-compressed once first asked for
@@ -45,9 +47,11 @@ type Served struct {
 // Cache holds the token a Publisher serves. Its zero value is empty;
 // a Cache must not be copied after first use.
 type Cache struct {
-	mu       sync.Mutex
-	token    *Token
-	building *build
+	mu        sync.Mutex
+	token     *Token
+	checkedAt time.Time // when token was signed, or last found current in a Store
+	building  *build
+	forced    bool // Invalidate was called: GetShared signs, whatever the Store holds
 }
 
 // build is a signature under way: done is closed once token or err is
@@ -65,17 +69,30 @@ type build struct {
 // hasn't expired, it's returned with the error; otherwise Served's
 // Token is nil.
 func (c *Cache) Get(ctx context.Context, window time.Duration, clock func() time.Time, sign SignFunc) (Served, error) {
+	return c.get(ctx, window, clock, func(ctx context.Context, now time.Time, _ *Token) (*Token, error) {
+		return signToken(ctx, now, sign)
+	})
+}
+
+// produceFunc makes the token a Cache serves from now on, given the one
+// it serves now (nil if none). A token returned with an error is served,
+// and the error reported.
+type produceFunc func(ctx context.Context, now time.Time, prev *Token) (*Token, error)
+
+// get is Get, with produce making each new token, at most once every
+// window.
+func (c *Cache) get(ctx context.Context, window time.Duration, clock func() time.Time, produce produceFunc) (Served, error) {
 	signCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SignTimeout)
 	defer cancel()
 	if window <= 0 {
 		// Nothing shared: a token per call.
 		now := clock()
-		token, err := signToken(signCtx, now, sign)
+		token, err := produce(signCtx, now, nil)
 		return Served{Token: token, Now: now}, err
 	}
 	c.mu.Lock()
 	now := clock()
-	if t := c.token; t != nil && now.Sub(t.SignedAt) < window && !now.Before(t.SignedAt) {
+	if t := c.token; t != nil && now.Sub(c.checkedAt) < window && !now.Before(c.checkedAt) {
 		c.mu.Unlock()
 		return Served{Token: t, Now: now}, nil
 	}
@@ -83,8 +100,9 @@ func (c *Cache) Get(ctx context.Context, window time.Duration, clock func() time
 	if b == nil {
 		b = &build{done: make(chan struct{}), err: errors.New("listhttp: signing the token panicked")}
 		c.building = b
+		prev := c.token
 		c.mu.Unlock()
-		c.run(signCtx, b, now, sign)
+		c.run(signCtx, b, now, prev, produce)
 	} else {
 		c.mu.Unlock()
 		<-b.done
@@ -92,30 +110,30 @@ func (c *Cache) Get(ctx context.Context, window time.Duration, clock func() time
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now = clock()
-	if b.err == nil {
-		return Served{Token: b.token, Now: now}, nil
+	if b.token != nil {
+		return Served{Token: b.token, Now: now}, b.err
 	}
-	if t := c.token; t != nil && !now.Before(t.SignedAt) && now.Before(t.Exp) {
+	if t := c.token; t != nil && !now.Before(c.checkedAt) && now.Before(t.Exp) {
 		return Served{Token: t, Now: now}, b.err
 	}
 	return Served{}, b.err
 }
 
-// run signs b's token, caches it unless Invalidate dropped b, and
-// closes b.done, even if sign panics.
-func (c *Cache) run(ctx context.Context, b *build, now time.Time, sign SignFunc) {
+// run makes b's token, caches it unless Invalidate dropped b, and
+// closes b.done, even if produce panics.
+func (c *Cache) run(ctx context.Context, b *build, now time.Time, prev *Token, produce produceFunc) {
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.building == b {
 			c.building = nil
-			if b.err == nil {
-				c.token = b.token
+			if b.token != nil {
+				c.token, c.checkedAt = b.token, now
 			}
 		}
 		close(b.done)
 	}()
-	b.token, b.err = signToken(ctx, now, sign)
+	b.token, b.err = produce(ctx, now, prev)
 }
 
 func signToken(ctx context.Context, now time.Time, sign SignFunc) (*Token, error) {
@@ -127,12 +145,12 @@ func signToken(ctx context.Context, now time.Time, sign SignFunc) (*Token, error
 }
 
 // Invalidate drops the cached token, and any signature under way, so
-// the next call signs a new one. Until one is signed, Get has no token
-// to fall back on.
+// the next call signs a new one — with GetShared, whatever the Store
+// holds. Until one is signed, Get has no token to fall back on.
 func (c *Cache) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.token, c.building = nil, nil
+	c.token, c.building, c.forced = nil, nil, true
 }
 
 // Write answers r with served's token, as contentType, gzip-compressed
@@ -158,7 +176,10 @@ func Write(w http.ResponseWriter, r *http.Request, served Served, contentType st
 	if ttl > 0 {
 		// To the nearest second: a token signed for this request has
 		// all its ttl left, not a second less.
-		maxAge := max(min(ttl-served.Now.Sub(served.SignedAt), served.Exp.Sub(served.Now)), 0).Round(time.Second)
+		// A token another replica signed may carry a SignedAt a little
+		// ahead of this one's clock: it's no younger than new.
+		age := max(served.Now.Sub(served.SignedAt), 0)
+		maxAge := max(min(ttl-age, served.Exp.Sub(served.Now)), 0).Round(time.Second)
 		h.Set("Cache-Control", "public, max-age="+strconv.FormatInt(int64(maxAge/time.Second), 10))
 	}
 	if matches(r.Header.Values("If-None-Match"), tag) {
