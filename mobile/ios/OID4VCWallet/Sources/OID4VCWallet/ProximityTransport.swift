@@ -343,21 +343,24 @@ final class Pending<T: Sendable>: @unchecked Sendable {
 struct ProximityTimeout: Error {}
 
 /// `seconds` as nanoseconds to sleep: none for a negative one or NaN,
-/// and as long as `Task.sleep` can for an infinite one or one too long
-/// for a `UInt64`, which converting would trap on.
-func nanoseconds(_ seconds: TimeInterval) -> UInt64 {
+/// and nil, never, for an infinite one or one past `Int64.max`
+/// nanoseconds (about 292 years). `Task.sleep(nanoseconds:)` takes the
+/// count as an `Int64`: a larger one wraps, and returns at once.
+func nanoseconds(_ seconds: TimeInterval) -> UInt64? {
     guard seconds > 0 else { return 0 }
     let ns = seconds * 1_000_000_000
-    return ns < Double(UInt64.max) ? UInt64(ns) : .max
+    return ns < Double(Int64.max) ? UInt64(ns) : nil
 }
 
 /// Runs `body`, throwing `ProximityTimeout` if it takes longer than
-/// `timeout` seconds; `body` is cancelled then.
+/// `timeout` seconds; `body` is cancelled then. An infinite timeout (see
+/// `nanoseconds`) waits for `body`, however long it takes.
 func withTimeout<T: Sendable>(_ timeout: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
+    guard let ns = nanoseconds(timeout) else { return try await body() }
+    return try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask { try await body() }
         group.addTask {
-            try await Task.sleep(nanoseconds: nanoseconds(timeout))
+            try await Task.sleep(nanoseconds: ns)
             throw ProximityTimeout()
         }
         defer { group.cancelAll() }

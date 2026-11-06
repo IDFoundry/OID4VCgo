@@ -66,15 +66,23 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertEqual(nanoseconds(0), 0)
         XCTAssertEqual(nanoseconds(-1), 0)
         XCTAssertEqual(nanoseconds(.nan), 0)
-        XCTAssertEqual(nanoseconds(.infinity), .max)
-        XCTAssertEqual(nanoseconds(1e300), .max)
-        XCTAssertEqual(nanoseconds(Double(UInt64.max) / 1e9), .max)
+        XCTAssertNil(nanoseconds(.infinity))
+        XCTAssertNil(nanoseconds(1e300))
+        XCTAssertNil(nanoseconds(Double(Int64.max) / 1e9))
+        XCTAssertNotNil(nanoseconds(9e9)) // about 285 years
     }
 
-    /// An infinite timeout is no timeout: `body` finishes.
+    /// An infinite or very long timeout is no timeout: a body that takes
+    /// a while finishes, where a sleep of more than `Int64.max`
+    /// nanoseconds would have returned at once and timed it out.
     func testWithTimeoutInfinite() async throws {
-        let got = try await withTimeout(.infinity) { 7 }
-        XCTAssertEqual(got, 7)
+        for timeout in [TimeInterval.infinity, 1e300, 9e9] {
+            let got = try await withTimeout(timeout) {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                return 7
+            }
+            XCTAssertEqual(got, 7, "\(timeout)")
+        }
     }
 
     func testOrigin() {
