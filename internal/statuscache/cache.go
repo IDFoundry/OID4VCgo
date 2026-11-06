@@ -10,6 +10,8 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 	"sync"
@@ -34,6 +36,18 @@ type Options struct {
 	MaxFailureAge time.Duration
 	// Now is the clock entries expire by; nil means time.Now.
 	Now func() time.Time
+	// Store, when set, keeps the tokens the cache verified across
+	// processes (statuslist.CacheStore), to revalidate rather than
+	// download them again.
+	Store Store
+}
+
+// Store keeps named records across processes; statuslist.CacheStore
+// documents it.
+type Store interface {
+	Load(name string) ([]byte, error)
+	Save(name string, record []byte) error
+	Remove(name string) error
 }
 
 // Verified is what a caller's verification of a token tells the cache:
@@ -131,6 +145,14 @@ type flight struct {
 	// notModified that the response found it unchanged.
 	prior       *entry
 	notModified bool
+	// held are the validators the fetch revalidated prior by.
+	held Validators
+	// stored is the token Options.Store kept, which the fetch
+	// revalidated instead, with no prior, and fromStore that the
+	// response found it unchanged: token is then stored.Token, verified
+	// in full as a fetched one.
+	stored    *record
+	fromStore bool
 
 	// turn is held by the caller verifying token, so that callers
 	// sharing the fetch verify it once: the first whose Verify passes
@@ -321,15 +343,30 @@ func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *ent
 		if stale != nil {
 			// Read under c.mu, which store changes them under.
 			f.prior, held = stale, stale.validators
+			f.held = held
 		}
 		c.flights[fk] = f
 		detached := context.WithoutCancel(ctx)
 		go func() {
+			if f.prior == nil {
+				if f.stored = c.load(fk.key); f.stored != nil {
+					held = f.stored.validators()
+				}
+			}
 			res, err := fetch(detached, held)
 			at := c.opts.Now()
 			var digest [sha256.Size]byte
+			fromStore := false
 			switch {
 			case err != nil:
+			case res.NotModified && f.stored != nil:
+				// The stored token is still the one served: verified in
+				// full, as a fetched one.
+				res.Token, res.NotModified, fromStore = f.stored.Token, false, true
+				if res.Validators == (Validators{}) {
+					res.Validators = held
+				}
+				digest = sha256.Sum256(res.Token)
 			case res.NotModified && f.prior == nil:
 				err = errors.New("statuscache: a 304 to an unconditional fetch")
 			case res.NotModified:
@@ -343,7 +380,7 @@ func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *ent
 			}
 			c.mu.Lock()
 			f.token, f.digest, f.at, f.err, f.fetched = res.Token, digest, at, err, true
-			f.notModified, f.fetchMeta = res.NotModified, fetchMeta{validators: res.Validators, maxAge: res.MaxAge}
+			f.notModified, f.fromStore, f.fetchMeta = res.NotModified, fromStore, fetchMeta{validators: res.Validators, maxAge: res.MaxAge}
 			if err != nil {
 				c.storeFailure(&entry{failure: &fk, err: err, at: at})
 			}
@@ -396,6 +433,12 @@ func (c *Cache) settle(ctx context.Context, k key, fk flightKey, f *flight, veri
 	if err == nil {
 		f.memo, f.ok = v.Memo, true
 		c.store(k, f.digest, v, f.at, f.fetchMeta)
+		c.save(k, f)
+	} else if f.fromStore {
+		// Bytes the store kept that don't verify, whatever the server's
+		// validators say: the next check downloads the token, as one
+		// whose memo a 304 kept that a check refuses.
+		c.unsave(k)
 	} else {
 		c.refuse(fk, f)
 	}
@@ -417,6 +460,9 @@ func (c *Cache) settleNotModified(k key, fk flightKey, f *flight, recheck Rechec
 	if err == nil {
 		f.memo, f.ok = prior.memo, true
 		c.store(k, prior.digest, Verified{Iat: prior.iat, Exp: prior.exp, TTL: prior.ttl, Memo: prior.memo, MemoBytes: int(prior.size)}, f.at, f.fetchMeta)
+		if f.validators != f.held {
+			c.resave(k, prior.digest, f.validators)
+		}
 	} else {
 		c.mu.Lock()
 		if c.entries[k] == prior {
@@ -568,4 +614,94 @@ func (c *Cache) Len() (entries int, size int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.entries), c.bytes
+}
+
+// record is what Options.Store keeps of a token: its bytes, and the
+// validators its response gave, for the next process to revalidate it
+// by. Only a token a check verified in full, whose response gave
+// validators, is kept.
+type record struct {
+	URI          string `json:"uri"`
+	MediaType    string `json:"media_type"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
+	Token        []byte `json:"token"`
+}
+
+func (r *record) validators() Validators {
+	return Validators{ETag: r.ETag, LastModified: r.LastModified}
+}
+
+// recordName is the name k's record is kept under.
+func recordName(k key) string {
+	sum := sha256.Sum256([]byte(k.uri + "\x00" + k.mediaType))
+	return hex.EncodeToString(sum[:])
+}
+
+// load is the record Options.Store keeps for k, nil when it keeps none
+// it can use. The store's failures only cost a download: they're not
+// the check's.
+func (c *Cache) load(k key) *record {
+	if c.opts.Store == nil {
+		return nil
+	}
+	data, err := c.opts.Store.Load(recordName(k))
+	if err != nil || data == nil {
+		return nil
+	}
+	var r record
+	if json.Unmarshal(data, &r) != nil || r.URI != k.uri || r.MediaType != k.mediaType || len(r.Token) == 0 || r.validators() == (Validators{}) {
+		c.unsave(k)
+		return nil
+	}
+	return &r
+}
+
+// save keeps f's token, which a check verified in full, in
+// Options.Store under k, when its response gave validators to
+// revalidate it by; when it gave none, a record kept for k is removed.
+// A token the store gave back unchanged isn't written again.
+func (c *Cache) save(k key, f *flight) {
+	if c.opts.Store == nil {
+		return
+	}
+	if f.validators == (Validators{}) {
+		if f.stored != nil {
+			c.unsave(k)
+		}
+		return
+	}
+	if f.fromStore && f.validators == f.stored.validators() {
+		return
+	}
+	c.write(record{URI: k.uri, MediaType: k.mediaType, ETag: f.validators.ETag, LastModified: f.validators.LastModified, Token: f.token})
+}
+
+// resave keeps validators for the token with digest that
+// Options.Store keeps under k, which a 304 gave with new validators.
+func (c *Cache) resave(k key, digest [sha256.Size]byte, validators Validators) {
+	r := c.load(k)
+	if r == nil || sha256.Sum256(r.Token) != digest {
+		return
+	}
+	if validators == (Validators{}) {
+		c.unsave(k)
+		return
+	}
+	r.ETag, r.LastModified = validators.ETag, validators.LastModified
+	c.write(*r)
+}
+
+func (c *Cache) write(r record) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	_ = c.opts.Store.Save(recordName(key{r.URI, r.MediaType}), data)
+}
+
+func (c *Cache) unsave(k key) {
+	if c.opts.Store != nil {
+		_ = c.opts.Store.Remove(recordName(k))
+	}
 }
