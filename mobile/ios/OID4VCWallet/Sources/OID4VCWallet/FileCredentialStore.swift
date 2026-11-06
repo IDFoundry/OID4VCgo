@@ -97,9 +97,12 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         try Self.read(try file(id))
     }
 
-    public func records() throws -> [Data] {
+    public func records() throws -> [Data] { try records { _ in true } }
+
+    /// The records whose IDs `isIncluded` accepts; the others aren't read.
+    public func records(where isIncluded: (String) -> Bool) throws -> [Data] {
         try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "json" }
+            .filter { $0.pathExtension == "json" && isIncluded($0.deletingPathExtension().lastPathComponent) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .compactMap { try Self.read($0) } // one deleted meanwhile isn't listed
     }

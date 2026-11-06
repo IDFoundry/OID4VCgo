@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -142,6 +143,14 @@ func (s *MemoryKeyStore) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.keys)
+}
+
+// credentialID returns a new stored credential's ID: randomID's, with
+// "-" written "_", so that it can't begin with a prefix containing "-"
+// (StoredCredential.ID).
+func credentialID(r io.Reader) (string, error) {
+	id, err := randomID(r)
+	return strings.ReplaceAll(id, "-", "_"), err
 }
 
 // randomID returns a random 128-bit identifier.

@@ -1519,6 +1519,9 @@ public class InMemoryCredentialStore : CredentialStore {
 
     @Synchronized override fun records(): List<ByteArray> = stored.values.toList()
 
+    @Synchronized override fun records(idFilter: (String) -> Boolean): List<ByteArray> =
+        stored.filterKeys(idFilter).values.toList()
+
     @Synchronized override fun delete(id: String) {
         stored.remove(id)
     }

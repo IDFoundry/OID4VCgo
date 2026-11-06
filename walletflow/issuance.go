@@ -1332,7 +1332,7 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	id := c.replace
 	if id == "" {
 		var err error
-		if id, err = randomID(w.deps.Random); err != nil {
+		if id, err = credentialID(w.deps.Random); err != nil {
 			return StoredCredential{}, err
 		}
 	}

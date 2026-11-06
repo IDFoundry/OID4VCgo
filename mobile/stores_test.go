@@ -166,6 +166,7 @@ func (m memStore) CompareAndSwap(id string, expected, record []byte) ([]byte, er
 	}
 	return prev, nil
 }
+func (m memStore) ListPrefixed(string, bool) ([]byte, error) { return m.List() }
 func (m memStore) List() ([]byte, error) {
 	all := make([]json.RawMessage, 0, len(m.records))
 	for _, r := range m.records {
@@ -224,6 +225,9 @@ func TestErrorCode(t *testing.T) {
 type unlistableStore struct{ memStore }
 
 func (unlistableStore) List() ([]byte, error) { return nil, errors.New("listed") }
+func (unlistableStore) ListPrefixed(string, bool) ([]byte, error) {
+	return nil, errors.New("listed")
+}
 
 // Credential reads the one record it's asked for, without listing the
 // store, and a deferred credential's record isn't a credential.

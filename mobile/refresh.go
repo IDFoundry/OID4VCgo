@@ -40,7 +40,10 @@ type grantRecord struct {
 	RedemptionExpiresAt *time.Time `json:"redemption_expires_at,omitempty"`
 }
 
-func grantStoreID(id string) string { return "grant-" + id }
+func grantStoreID(id string) string { return grantPrefix + id }
+
+// grantPrefix begins every refresh grant's ID in the CredentialStore.
+const grantPrefix = "grant-"
 
 // grantStore is a CredentialStore as a walletflow.GrantStore.
 type grantStore struct{ cs CredentialStore }
@@ -110,7 +113,7 @@ func decodeGrant(id string, raw []byte) (walletflow.RefreshGrant, error) {
 }
 
 func (s grantStore) ListGrants(context.Context) ([]walletflow.RefreshGrant, error) {
-	all, err := listRecords(s.cs)
+	all, err := listRecords(s.cs, false, grantPrefix)
 	if err != nil {
 		return nil, err
 	}
