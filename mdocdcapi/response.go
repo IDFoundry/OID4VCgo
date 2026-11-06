@@ -452,15 +452,15 @@ func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = verifier.WithVerificationTime(ctx, p.Now())
 	}
-	issuerPub, issuerAlg, err := p.IssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
+	issuer, err := verifier.ResolveMdocIssuer(ctx, p.IssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: resolve the issuer key: %w", err)
 	}
-	mso, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: p.Now, MaxClockSkew: p.MaxClockSkew})
+	mso, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuer.Key, issuer.Alg, mdoc.VerifyOptions{Now: p.Now, MaxClockSkew: p.MaxClockSkew})
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	issuerChain, err := verifier.CheckMdocIssuer(ctx, p.IssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, mso)
+	issuerChain, err := issuer.Check(ctx, mso)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: document signer: %w", err)
 	}

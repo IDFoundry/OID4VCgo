@@ -988,16 +988,16 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	// issuer's own CA: one bound to another chain fails closed.
 	// Accepting a chain only from the protected header would refuse
 	// conforming mdocs.
-	issuerPub, issuerAlg, err := req.MdocIssuerKeys.ResolveMdocIssuerKey(ctx, cose.X5ChainOf(protected, unprotected), doc.DocType)
+	issuer, err := ResolveMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuerPub, issuerAlg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
+	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuer.Key, issuer.Alg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
-	chain, err = CheckMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerPub, verified)
+	chain, err = issuer.Check(ctx, verified)
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
