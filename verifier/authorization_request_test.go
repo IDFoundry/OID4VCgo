@@ -3,6 +3,7 @@ package verifier_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -312,5 +313,30 @@ func TestBuildDCAPIAuthorizationRequestRejectsMissingExpectedOrigins(t *testing.
 	req := verifier.BuildDCAPIAuthorizationRequestRequest{Query: testQuery(t)}
 	if _, err := v.BuildDCAPIAuthorizationRequest(req); err == nil {
 		t.Fatalf("BuildDCAPIAuthorizationRequest = nil error, want error")
+	}
+}
+
+// TestBuildAuthorizationRequestState: a query without holder binding
+// needs a state (OID4VP 1.0 §5.3), and a state holds only URL-safe
+// ASCII.
+func TestBuildAuthorizationRequestState(t *testing.T) {
+	cfg, deps := validConfig(t)
+	v, err := verifier.New(cfg, deps)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	unbound := testQuery(t)
+	no := false
+	unbound.Credentials[0].RequireCryptographicHolderBinding = &no
+	if _, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: unbound}); err == nil || !strings.Contains(err.Error(), "state is required") {
+		t.Errorf("no holder binding, no state: %v, want state required", err)
+	}
+	if _, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: unbound, State: "s-1._~A9"}); err != nil {
+		t.Errorf("no holder binding, a state: %v", err)
+	}
+	for _, bad := range []string{"a b", "a/b", "é", "a+b"} {
+		if _, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t), State: bad}); err == nil {
+			t.Errorf("state %q accepted", bad)
+		}
 	}
 }

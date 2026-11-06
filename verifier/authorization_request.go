@@ -57,8 +57,11 @@ type BuildAuthorizationRequestRequest struct {
 	// Credential(s)/claims being requested.
 	Query dcql.Query
 
-	// State is OPTIONAL (§5.3) — round-tripped back by the Wallet's
-	// own response.
+	// State is round-tripped back by the Wallet's own response. It is
+	// REQUIRED when any of Query's credentials doesn't require
+	// cryptographic holder binding (OID4VP 1.0 §5.3), and otherwise
+	// OPTIONAL; it may hold only ASCII letters, digits, "-", ".", "_"
+	// and "~".
 	State string
 
 	// WalletNonce is OPTIONAL: the "wallet_nonce" value a Wallet sent
@@ -132,6 +135,9 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 	}
 	if err := v.checkQueryFormats(req.Query); err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: dcql_query: %w", err)
+	}
+	if err := checkRequestState(req.State, req.Query); err != nil {
+		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
 
 	nonce, err := randomToken(v.deps.Random)
@@ -245,4 +251,32 @@ func (v *Verifier) requestX5C() []string {
 		x5c = append(x5c, base64.StdEncoding.EncodeToString(c.Raw))
 	}
 	return x5c
+}
+
+// checkRequestState checks a request's state: present when a credential
+// of query doesn't require cryptographic holder binding, as only state
+// then ties the response to this request (OID4VP 1.0 §5.3), and made of
+// URL-safe ASCII only (letters, digits, "-", ".", "_", "~").
+func checkRequestState(state string, query dcql.Query) error {
+	for _, c := range query.Credentials {
+		if !c.RequiresCryptographicHolderBinding() && state == "" {
+			return fmt.Errorf("state is required: credential %q doesn't require cryptographic holder binding (OID4VP 1.0 §5.3)", c.ID)
+		}
+	}
+	for i := 0; i < len(state); i++ {
+		if !isStateByte(state[i]) {
+			return fmt.Errorf("state may hold only ASCII letters, digits, '-', '.', '_' and '~'")
+		}
+	}
+	return nil
+}
+
+// isStateByte reports whether b may appear in a state: an ASCII letter
+// or digit, '-', '.', '_' or '~'.
+func isStateByte(b byte) bool {
+	switch {
+	case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
+		return true
+	}
+	return b == '-' || b == '.' || b == '_' || b == '~'
 }
