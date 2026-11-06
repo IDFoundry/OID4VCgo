@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.8.0...sqlstore/v0.9.0) (2026-11-06)
+
+
+### Features
+
+* **sqlstore:** delete retired status lists and expired instance keys ([5faa9d4](https://github.com/IDFoundry/OID4VCgo/commit/5faa9d4f9f09251f6637697a72051fe447894700))
+* **sqlstore:** list Wallet Provider instance keys with no RetainUntil ([c82fe68](https://github.com/IDFoundry/OID4VCgo/commit/c82fe684472bea4c40512431984a13ac2773da66))
+* **sqlstore:** reserve a batch's status indices in one INSERT ([5e71a63](https://github.com/IDFoundry/OID4VCgo/commit/5e71a63e42a91b81ffdb357b8833f4a68784a0c4))
+* **sqlstore:** spend stateless c_nonces ([968ba98](https://github.com/IDFoundry/OID4VCgo/commit/968ba98ade7eea7768dadd6ebf2d4b9f194d05e3))
+* **sqlstore:** store shared Status List tokens and list versions ([53471b2](https://github.com/IDFoundry/OID4VCgo/commit/53471b26164809dd128999db1f92e704c7bbab3f))
+
+
+### Bug Fixes
+
+* **sqlstore:** keep each shared status list token's signer ([a946301](https://github.com/IDFoundry/OID4VCgo/commit/a946301b9c6b9ddaa1435ae5a0d499918df6ee46))
+
+
+### Performance Improvements
+
+* **sqlstore:** don't rewrite a record an update leaves unchanged ([fa40237](https://github.com/IDFoundry/OID4VCgo/commit/fa4023722f2a7f74c52cee880caa6e0b48316a85))
+* **sqlstore:** shard each status list's reserved count ([470bc90](https://github.com/IDFoundry/OID4VCgo/commit/470bc90ae71abfd4587c9a67b1ae0adebf7d6b82))
+* **sqlstore:** sweep in batches, and use the lookups' partial indexes ([89cfe84](https://github.com/IDFoundry/OID4VCgo/commit/89cfe84414828369f4ecb866f71c4111658152c6))
+
 ## [0.8.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.7.1...sqlstore/v0.8.0) (2026-11-05)
 
 
