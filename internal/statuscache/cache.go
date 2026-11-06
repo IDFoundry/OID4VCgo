@@ -9,7 +9,9 @@ package statuscache
 import (
 	"container/list"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,6 +42,11 @@ type Options struct {
 	// processes (statuslist.CacheStore), to revalidate rather than
 	// download them again.
 	Store Store
+	// StoreKey, when set, authenticates the records Store keeps
+	// (HMAC-SHA256): one that doesn't verify is dropped. Without it, a
+	// record is trusted on a 304 only within MaxAge of its token's iat
+	// (storedUsable).
+	StoreKey []byte
 }
 
 // Store keeps named records across processes; statuslist.CacheStore
@@ -218,6 +225,10 @@ var FetchConditional func(ctx context.Context, fetcher any, uri, mediaType strin
 // they allow.
 var errStale = errors.New("statuscache: stale")
 
+// errStoredUnusable has a check fetch afresh a token Options.Store kept
+// that a 304 can't vouch for (storedUsable).
+var errStoredUnusable = errors.New("statuscache: the kept token is too old to revalidate")
+
 // Check runs recheck on the memo cached for uri and mediaType, if one
 // is and hasn't expired, and returns nil when it passes. Otherwise —
 // nothing cached, the entry expired, or recheck refused it — it
@@ -262,12 +273,41 @@ func (c *Cache) Check(ctx context.Context, uri, mediaType, policy string, fetch 
 			}
 		}
 	}
-	f, err := c.fetch(ctx, fk, fetch, stale)
+	err := c.fetchAndSettle(ctx, k, fk, fetch, stale, true, verify, recheck)
+	if errors.Is(err, errStoredUnusable) {
+		// Fetched again without the store's token: unconditionally.
+		err = c.fetchAndSettle(ctx, k, fk, fetch, nil, false, verify, recheck)
+	}
+	return err
+}
+
+func (c *Cache) fetchAndSettle(ctx context.Context, k key, fk flightKey, fetch Fetch, stale *entry, useStore bool, verify Verify, recheck Recheck) error {
+	f, err := c.fetch(ctx, fk, fetch, stale, useStore)
 	if err != nil {
 		return err
 	}
 	defer c.leave(fk, f)
 	return c.settle(ctx, k, fk, f, verify, recheck)
+}
+
+// storedUsable reports whether the token Options.Store kept, verified
+// as v, may be used on a 304 to the validators its record names. With
+// Options.StoreKey the record was authenticated when it was loaded, so
+// it may. Without one, anyone able to write the store could pair an
+// older token, validly signed, with the validators the server serves
+// now, which are public: the token is then used only within MaxAge of
+// its iat (and its iat plus ttl, if shorter), as long as one a fetch
+// just returned could be kept.
+func (c *Cache) storedUsable(v Verified) bool {
+	if len(c.opts.StoreKey) > 0 {
+		return true
+	}
+	iat := time.Unix(v.Iat, 0)
+	limit := iat.Add(c.opts.MaxAge)
+	if v.TTL != nil && *v.TTL > 0 && v.Iat <= math.MaxInt64-*v.TTL {
+		limit = earlier(limit, time.Unix(v.Iat+*v.TTL, 0))
+	}
+	return c.opts.Now().Before(limit)
 }
 
 // lookup is the unexpired entry under k, and its memo, or else the
@@ -333,8 +373,9 @@ func (c *Cache) verifyKept(k key, failed *entry, verify Verify) error {
 // caller that started it, so that caller's cancellation doesn't fail
 // the others: each waits for it or for its own ctx. The fetcher's HTTP
 // timeout bounds it. A failed fetch is kept, as a failure, for
-// MaxFailureAge.
-func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *entry) (*flight, error) {
+// MaxFailureAge. With useStore false, a token Options.Store kept isn't
+// revalidated: the fetch is unconditional, unless stale is set.
+func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *entry, useStore bool) (*flight, error) {
 	c.mu.Lock()
 	f, ok := c.flights[fk]
 	if !ok {
@@ -348,7 +389,7 @@ func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *ent
 		c.flights[fk] = f
 		detached := context.WithoutCancel(ctx)
 		go func() {
-			if f.prior == nil {
+			if f.prior == nil && useStore {
 				if f.stored = c.load(fk.key); f.stored != nil {
 					held = f.stored.validators()
 				}
@@ -430,6 +471,13 @@ func (c *Cache) settle(ctx context.Context, k key, fk flightKey, f *flight, veri
 		return c.settleNotModified(k, fk, f, recheck)
 	}
 	v, err := verify(f.token)
+	if err == nil && f.fromStore && !c.storedUsable(v) {
+		// Unauthenticated, and too old for a 304 to vouch for it: a
+		// 304 confirms the validators the record names, not the bytes
+		// kept with them. The caller downloads the token instead.
+		c.unsave(k)
+		err = errStoredUnusable
+	}
 	if err == nil {
 		f.memo, f.ok = v.Memo, true
 		c.store(k, f.digest, v, f.at, f.fetchMeta)
@@ -621,13 +669,28 @@ func (c *Cache) Len() (entries int, size int64) {
 // record is what Options.Store keeps of a token: its bytes, and the
 // validators its response gave, for the next process to revalidate it
 // by. Only a token a check verified in full, whose response gave
-// validators, is kept.
+// validators, is kept. With Options.StoreKey, MAC authenticates the
+// rest (recordMAC).
 type record struct {
 	URI          string `json:"uri"`
 	MediaType    string `json:"media_type"`
 	ETag         string `json:"etag,omitempty"`
 	LastModified string `json:"last_modified,omitempty"`
 	Token        []byte `json:"token"`
+	MAC          []byte `json:"mac,omitempty"`
+}
+
+// recordMAC is r's HMAC-SHA256 under key: over a domain separator and
+// each of its fields, length-prefixed.
+func recordMAC(key []byte, r *record) []byte {
+	m := hmac.New(sha256.New, key)
+	for _, field := range [][]byte{[]byte("oid4vcgo statuscache record v1"), []byte(r.URI), []byte(r.MediaType), []byte(r.ETag), []byte(r.LastModified), r.Token} {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(field)))
+		m.Write(n[:])
+		m.Write(field)
+	}
+	return m.Sum(nil)
 }
 
 func (r *record) validators() Validators {
@@ -652,7 +715,8 @@ func (c *Cache) load(k key) *record {
 		return nil
 	}
 	var r record
-	if json.Unmarshal(data, &r) != nil || r.URI != k.uri || r.MediaType != k.mediaType || len(r.Token) == 0 || r.validators() == (Validators{}) {
+	if json.Unmarshal(data, &r) != nil || r.URI != k.uri || r.MediaType != k.mediaType || len(r.Token) == 0 || r.validators() == (Validators{}) ||
+		(len(c.opts.StoreKey) > 0 && !hmac.Equal(r.MAC, recordMAC(c.opts.StoreKey, &r))) {
 		c.unsave(k)
 		return nil
 	}
@@ -695,6 +759,10 @@ func (c *Cache) resave(k key, digest [sha256.Size]byte, validators Validators) {
 }
 
 func (c *Cache) write(r record) {
+	r.MAC = nil
+	if len(c.opts.StoreKey) > 0 {
+		r.MAC = recordMAC(c.opts.StoreKey, &r)
+	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		return

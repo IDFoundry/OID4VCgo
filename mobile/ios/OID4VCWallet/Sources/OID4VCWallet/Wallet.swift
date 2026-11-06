@@ -206,7 +206,10 @@ public struct WalletConfiguration: Codable, Sendable {
     /// where `checkStatus` keeps the lists it verified across launches: a
     /// launch then asks each list's server whether the list it kept is
     /// current, a `304 Not Modified` rather than the list, and never uses
-    /// one the server hasn't confirmed. Empty keeps them in memory only.
+    /// one the server hasn't confirmed. The lists are authenticated with
+    /// a key the library makes and keeps in the Keychain, so one anyone
+    /// else wrote to the directory is dropped. Empty keeps them in
+    /// memory only.
     public var statusCacheDir: String
 
     /// A trust role whose certificates can be checked for revocation.
@@ -698,7 +701,7 @@ public final class Wallet: @unchecked Sendable {
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
         try OID4VC.checkDevelopment(configuration.development)
-        let json = String(decoding: try JSONEncoder().encode(configuration), as: UTF8.self)
+        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), statusCacheDir: configuration.statusCacheDir)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         // A key store that also agrees keys answers in person with deviceMac
         // under .macPreferred; Go keeps signing without one.

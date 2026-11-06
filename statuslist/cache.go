@@ -54,6 +54,14 @@ type CacheOptions struct {
 	// (NewDirCacheStore keeps them in a directory). Nil keeps them in
 	// memory only.
 	Store CacheStore
+
+	// StoreKey, at least 32 random bytes, authenticates the records
+	// Store keeps (HMAC-SHA256), so that one anyone else wrote is
+	// dropped, not used. Keep it where Store's records aren't, and the
+	// same across processes: the platform's keychain or keystore, say.
+	// Without it, a kept token is used on a 304 only within MaxAge of
+	// its iat (CacheStore). Ignored without Store.
+	StoreKey []byte
 }
 
 // CacheStore keeps a Cache's tokens across processes, as named records:
@@ -66,9 +74,15 @@ type CacheOptions struct {
 // server, with If-None-Match and If-Modified-Since, as an expired cached
 // one is, and on a 304 verifies the token in full, as a fetched one —
 // so a list the server still serves costs a round trip, not its
-// download, and a check never passes on a kept token the server hasn't
-// confirmed in this process. A kept token that doesn't verify is
-// removed, and downloaded again. A store's failures cost a download
+// download. A 304 confirms the validators a record names, though, not
+// the token kept with them, and validators are public: whoever can
+// write the store could pair an older token, validly signed, with the
+// ones the server serves now. So a record is used only when
+// CacheOptions.StoreKey authenticates it, or, without a key, while its
+// token is within the Cache's MaxAge of its iat (and its iat plus ttl,
+// if sooner) — no older than one a fetch just returned could be kept.
+// Otherwise the token is downloaded. A kept token that doesn't verify
+// is removed, and downloaded again. A store's failures cost a download
 // only: they don't fail a check.
 //
 // A CacheStore whose records are bounded should evict the least
@@ -149,6 +163,7 @@ func NewCache(opts CacheOptions) *Cache {
 	return &Cache{engine: statuscache.New(statuscache.Options{
 		MaxEntries: opts.MaxEntries, MaxBytes: opts.MaxBytes, MaxAge: opts.MaxAge,
 		MaxFailureAge: opts.MaxFailureAge, Now: opts.Now, Store: opts.Store,
+		StoreKey: slices.Clone(opts.StoreKey),
 	})}
 }
 

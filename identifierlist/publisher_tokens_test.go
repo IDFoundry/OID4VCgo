@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/listhttp"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/statuslist/statuslisttest"
 )
 
 // oneTokenStore is a statuslist.TokenStore for one list's CWT form:
@@ -131,4 +133,54 @@ func TestPublisher_TokensRotatedSigner(t *testing.T) {
 	if !bytes.Equal(store.token.Signer, listhttp.SignerOf(newLeaf.Raw)) {
 		t.Fatalf("stored token's signer %x, want the new certificate's", store.token.Signer)
 	}
+}
+
+// A replica that holds the lease but can't sign doesn't hold the others
+// to its token until it expires: an identifier list's version doesn't
+// change, so they sign their own once a lease past CacheFor has passed.
+func TestPublisher_TokensFailingHolder(t *testing.T) {
+	pki := newPKI(t)
+	store := statuslisttest.NewMemoryTokenStore()
+	now := time.UnixMilli(time.Now().UnixMilli())
+	var revoked, aBroken atomic.Bool
+	publisher := func(broken *atomic.Bool) *Publisher {
+		return &Publisher{
+			URI: testURI, Signer: pki.key, Chain: []*x509.Certificate{pki.leaf}, TTL: time.Hour, CacheFor: 30 * time.Second, Tokens: store,
+			Identifiers: func(context.Context) ([][]byte, error) {
+				if broken.Load() {
+					return nil, errors.New("this replica's identifiers can't be read")
+				}
+				if revoked.Load() {
+					return [][]byte{{0xcc}}, nil
+				}
+				return nil, nil
+			},
+			Now: func() time.Time { return now },
+		}
+	}
+	var bBroken atomic.Bool
+	a, b := publisher(&aBroken), publisher(&bBroken)
+	get := func(p *Publisher) string {
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/l", nil))
+		return rec.Body.String()
+	}
+	old := get(a)
+	if get(b) != old {
+		t.Fatal("b didn't serve a's token")
+	}
+	revoked.Store(true)
+	aBroken.Store(true)
+	limit := 30*time.Second + listhttp.SignTimeout + listhttp.LeaseSlack + statuslist.DefaultTokensCheck
+	for elapsed := 10 * time.Second; elapsed <= 50*time.Minute; elapsed += 10 * time.Second {
+		now = now.Add(10 * time.Second)
+		get(a)
+		if get(b) != old {
+			if elapsed > limit {
+				t.Errorf("b served a new token only %v after the change", elapsed)
+			}
+			return
+		}
+	}
+	t.Fatal("b served the token from before the change for 50 minutes")
 }

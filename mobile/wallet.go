@@ -148,10 +148,16 @@ type config struct {
 	// StatusCacheDir, an absolute path, keeps the lists CheckStatus
 	// verified across launches (statuslist.DirCacheStore): the app's
 	// cache directory, say. A launch then revalidates each list it kept
-	// with its server, a round trip, rather than downloading it, and
-	// never uses one the server hasn't confirmed. Empty keeps them in
-	// memory only.
+	// with its server, a round trip, rather than downloading it. Empty
+	// keeps them in memory only.
 	StatusCacheDir string `json:"status_cache_dir,omitempty"`
+	// StatusCacheKey, base64 of at least 32 random bytes, authenticates
+	// what StatusCacheDir keeps (statuslist.CacheOptions.StoreKey): a
+	// list anyone else wrote there is dropped. Keep it in the Keychain
+	// or Keystore, the same across launches; the Swift and Kotlin
+	// libraries make one and pass it with statusCacheDir. Without it, a
+	// kept list is used only within the cache's max age of its iat.
+	StatusCacheKey string `json:"status_cache_key,omitempty"`
 	// Locales are the holder's preferred languages (BCP 47, most
 	// preferred first), for issuers' display metadata.
 	Locales []string `json:"locales,omitempty"`
@@ -306,7 +312,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
 	// The process's, which readers share too.
-	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir); err != nil {
+	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir, cfg.StatusCacheKey); err != nil {
 		return nil, err
 	}
 	if deps.HTTP, err = walletHTTP(cfg, &wcfg, deps.HTTP); err != nil {

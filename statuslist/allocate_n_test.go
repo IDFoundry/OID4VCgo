@@ -191,3 +191,26 @@ func TestAllocateN_Concurrent(t *testing.T) {
 	}
 	checkBatch(t, all, nil)
 }
+
+// AllocateN counts a list afresh every 64 indices it reserves in it, so
+// that concurrent batches each pass its FillLimit by at most that many,
+// and a batch of 64 or fewer still counts it once.
+func TestAllocateNCountsPerChunk(t *testing.T) {
+	ctx := context.Background()
+	store := &batchCountingStore{}
+	a := &Allocator{Lists: []AllocatorList{{URI: allocListA, Size: 1 << 12}}, Store: store, Rand: seeded()}
+	if _, err := a.AllocateN(ctx, 64); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.count(allocListA); got != 1 {
+		t.Errorf("a batch of 64 counted the list %d times, want 1", got)
+	}
+	refs, err := a.AllocateN(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkBatch(t, refs, map[string]int{allocListA: 200})
+	if got := store.count(allocListA) - 1; got != 4 {
+		t.Errorf("a batch of 200 counted the list %d times, want 4 (64, 64, 64, 8)", got)
+	}
+}

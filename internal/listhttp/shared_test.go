@@ -210,7 +210,7 @@ func TestGetShared_StoredTokenUnreadable(t *testing.T) {
 // check; a Head that fails serves nothing new.
 func TestGetShared_LeasedAndHeadError(t *testing.T) {
 	f := newSharedFixture(t)
-	f.storeToken("stored", f.now.Add(-2*time.Minute))
+	f.storeToken("stored", f.now.Add(-80*time.Second))
 	f.store.leased = true
 	first, err := f.get(time.Minute)
 	if err != nil || string(first.Bytes) != "stored" || f.signs != 0 {
@@ -278,5 +278,43 @@ func TestGetShared_SignerChecks(t *testing.T) {
 	g.store.tokenOverride = &Stored{Bytes: []byte("theirs"), Version: g.store.token.Version, SignedAt: g.store.token.SignedAt, Exp: g.store.token.Exp, Signer: SignerOf([]byte("other"))}
 	if served, err := g.get(time.Minute); err == nil || !strings.Contains(err.Error(), "another signer") || served.Token != nil {
 		t.Fatalf("GetShared = %v, %v; want the replaced token refused", served.Token, err)
+	}
+}
+
+// While another replica holds the lease, a stored token is served only
+// as long as that replica could be signing its successor: one from the
+// list's version until a lease past fresh, one from an earlier version
+// until fresh. After that this replica signs its own, so a holder that
+// can't sign, and keeps its lease, holds nobody to a stale token.
+func TestGetShared_LeasedWaitIsBounded(t *testing.T) {
+	const fresh = time.Minute
+	lease := SignTimeout + LeaseSlack
+	for _, tc := range []struct {
+		name   string
+		behind bool
+		age    time.Duration
+		served bool
+	}{
+		{"current, within a lease past fresh", false, fresh + lease - time.Second, true},
+		{"current, a lease past fresh", false, fresh + lease, false},
+		{"behind, within fresh", true, fresh - time.Second, true},
+		{"behind, at fresh", true, fresh, false},
+		{"behind, a long while", true, 50 * time.Minute, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSharedFixture(t)
+			f.storeToken("stored", f.now.Add(-tc.age))
+			if tc.behind {
+				f.store.version++
+			}
+			f.store.leased = true
+			served, err := f.get(fresh)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(served.Bytes) == "stored"; got != tc.served {
+				t.Errorf("served %q, %d signatures; want the stored token: %v", served.Bytes, f.signs, tc.served)
+			}
+		})
 	}
 }

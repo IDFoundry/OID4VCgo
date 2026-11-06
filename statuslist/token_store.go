@@ -19,7 +19,10 @@ import (
 // later one) within CacheFor; once there's none, the replica that takes
 // the list's lease (Claim) reads the version, then the statuses, signs a
 // token and stores it with that version (Put), and the others serve it
-// from their next check. A store that keeps no versions — every list
+// from their next check. A replica that can't take the lease serves
+// the stored token only for a bounded time (Publisher.Tokens), then
+// signs its own, so a holder that keeps renewing its lease but can't
+// sign holds no replica to a stale token. A store that keeps no versions — every list
 // at version zero — still shares tokens: a status change is then
 // served once the token's CacheFor has passed, or at once when the
 // replica that made it calls the Publisher's Invalidate, as without a

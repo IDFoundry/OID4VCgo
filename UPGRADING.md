@@ -26,6 +26,35 @@ them.
   new key first in one step makes a replica that hasn't taken it yet
   refuse nonces another issued with it.
 
+### Status lists (`statuslist`)
+
+- **A `Cache` with a `Store` should have a `StoreKey`** (at least 32
+  random bytes, kept elsewhere than the store's records and the same
+  across processes). A 304 confirms the validators a kept record names,
+  not the token kept with them, so without a key anyone able to write
+  the store could bring back a token from before a revocation. Without
+  a key, a kept token is now used on a 304 only within the Cache's
+  `MaxAge` of its iat (and its iat plus ttl, if sooner); an older one is
+  downloaded, which costs a download per list on a launch more than
+  `MaxAge` after its token was issued. Records written before this
+  release carry no MAC: with a key, they're dropped and downloaded once.
+- `NewDirCacheStore` refuses a directory anyone can write to.
+- While another replica holds the lease on signing a shared token
+  (`Publisher.Tokens`), a replica now waits on it only for a bounded
+  time, then signs its own: a holder that can't sign no longer keeps the
+  others serving a token from before a revocation. A custom
+  `TokenStore` needs no change.
+- `AllocateN` counts a list's reserved indices again every 64 indices
+  it reserves there, so a batch larger than 64 makes a count per 64.
+
+### Mobile (`status_cache_key`)
+
+- The Swift and Kotlin libraries authenticate the lists
+  `statusCacheDir` keeps with a key they make and keep (the Keychain;
+  an Android Keystore key wrapping it), and pass it as
+  `status_cache_key`. An app calling the framework directly with
+  `status_cache_dir` should pass one too (ABI.md).
+
 ## v0.68.0 → v0.69.0
 
 ### Status lists (`statuslist`)

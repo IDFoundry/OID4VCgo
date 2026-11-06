@@ -275,3 +275,56 @@ func TestPublisher_TokensRotatedSigner(t *testing.T) {
 	}
 	rs.expectReads(2, 1)
 }
+
+// A replica that holds the lease but can't sign — its statuses can't be
+// read, say — doesn't hold the others to the token signed before a
+// revocation: they sign their own within CacheFor of it, rather than
+// serve it until it expires an hour later.
+func TestPublisher_TokensFailingHolder(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	cert, key := testcert.Leaf(t, "status signer", ca, caKey)
+	store := statuslisttest.NewMemoryTokenStore()
+	now := time.UnixMilli(time.Now().UnixMilli())
+	var revoked, aBroken atomic.Bool
+	publisher := func(broken *atomic.Bool) *statuslist.Publisher {
+		return &statuslist.Publisher{
+			URI: sharedListURI, Signer: key, Chain: []*x509.Certificate{cert},
+			Lifetime: time.Hour, CacheFor: 30 * time.Second, Tokens: store,
+			Statuses: func(context.Context) ([]uint8, error) {
+				if broken.Load() {
+					return nil, errors.New("this replica's statuses can't be read")
+				}
+				if revoked.Load() {
+					return []uint8{0, 1}, nil
+				}
+				return []uint8{0, 0}, nil
+			},
+			Now: func() time.Time { return now },
+		}
+	}
+	var bBroken atomic.Bool
+	a, b := publisher(&aBroken), publisher(&bBroken)
+	get := func(p *statuslist.Publisher) string {
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, sharedListURI, nil))
+		return rec.Body.String()
+	}
+	old := get(a)
+	if get(b) != old {
+		t.Fatal("b didn't serve a's token")
+	}
+	revoked.Store(true)
+	store.Bump(sharedListURI)
+	aBroken.Store(true)
+	for elapsed := 10 * time.Second; elapsed <= 50*time.Minute; elapsed += 10 * time.Second {
+		now = now.Add(10 * time.Second)
+		get(a)
+		if get(b) != old {
+			if elapsed > 30*time.Second+statuslist.DefaultTokensCheck {
+				t.Errorf("b served a new token only %v after the revocation", elapsed)
+			}
+			return
+		}
+	}
+	t.Fatal("b served the token from before the revocation for 50 minutes")
+}

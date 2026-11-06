@@ -86,7 +86,8 @@ type Publisher struct {
 	// as the list's statuslist.FormCWT. An identifier list has no
 	// version a store keeps, so a revocation is served once the token's
 	// CacheFor has passed, or at once by the replica whose Invalidate is
-	// called, and by the others from their next check. As there, a
+	// called, and by the others from their next check; while another
+	// replica holds the lease to sign it, CacheFor and 35 seconds. As there, a
 	// stored token is served only by a replica with the same leaf
 	// certificate in Chain.
 	Tokens statuslist.TokenStore

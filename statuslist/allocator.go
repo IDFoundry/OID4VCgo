@@ -237,14 +237,22 @@ func (a *Allocator) Allocate(ctx context.Context) (StatusListRef, error) {
 // MaxAllocateN is the most indices one AllocateN call hands out.
 const MaxAllocateN = 1024
 
+// allocateChunk is the most indices AllocateN reserves in a list on one
+// count of its reserved indices: concurrent calls each count the list
+// before they reserve, so together they can pass its FillLimit by up
+// to this much each, as concurrent Allocates pass it by one each.
+const allocateChunk = 64
+
 // AllocateN reserves n random, never-before-allocated indices, as n
 // Allocate calls would, and returns their references: one for each
-// Credential of a batch. It counts a list's reserved indices once for
-// the batch rather than once per index, takes from each list no more
+// Credential of a batch. It counts a list's reserved indices once per
+// 64 indices rather than once per index, takes from each list no more
 // than its FillLimit leaves, the rest from the next, and, when Store
-// is a BatchIndexStore, reserves each list's share with one
-// ReserveEach, drawing again for any index already taken. n is from 1
-// to MaxAllocateN. On an error, including one wrapping ErrListsFull
+// is a BatchIndexStore, reserves each 64 with one ReserveEach, drawing
+// again for any index already taken. Concurrent calls can each take a
+// list past its FillLimit by up to 64, as concurrent Allocates can by
+// one each: size FillLimit's margin below a full list for that. n is
+// from 1 to MaxAllocateN. On an error, including one wrapping ErrListsFull
 // when every list has reached FillLimit, the indices it reserved stay
 // reserved, unused, as an issuance that fails after Allocate leaves
 // its index.
@@ -258,7 +266,7 @@ func (a *Allocator) AllocateN(ctx context.Context, n int) ([]StatusListRef, erro
 	}
 	refs := make([]StatusListRef, 0, n)
 	exhausted := false
-	for i := a.fullLists(c); i < len(c.lists) && len(refs) < n; i++ {
+	for i := a.fullLists(c); i < len(c.lists) && len(refs) < n; {
 		list := c.lists[i]
 		reserved, err := a.Store.Reserved(ctx, list.URI)
 		if err != nil {
@@ -269,9 +277,10 @@ func (a *Allocator) AllocateN(ctx context.Context, n int) ([]StatusListRef, erro
 			if !exhausted {
 				a.filled(c, i)
 			}
+			i++
 			continue
 		}
-		want := min(n-len(refs), room)
+		want := min(n-len(refs), room, allocateChunk)
 		got, err := a.reserveEachIn(ctx, list, want)
 		if err != nil {
 			return nil, err
@@ -279,9 +288,14 @@ func (a *Allocator) AllocateN(ctx context.Context, n int) ([]StatusListRef, erro
 		for _, idx := range got {
 			refs = append(refs, StatusListRef{Idx: idx, URI: list.URI})
 		}
-		if len(got) < want {
+		switch {
+		case len(got) < want:
 			exhausted = true
+			i++
+		case want == room:
+			i++ // filled to its limit
 		}
+		// Otherwise the same list again, counted afresh.
 	}
 	switch {
 	case len(refs) == n:
