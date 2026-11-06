@@ -58,15 +58,15 @@ describes the trade-off.
 `FileCredentialStore` encrypts each credential under a Keystore key that
 works only while the device is unlocked, in a directory no backup
 copies. The key is in the TEE; `Options.strongBox` puts it in StrongBox
-where the device has it, falling back to the TEE, at the cost of every
-record read and write: StrongBox is several times slower, which shows
-when the wallet lists credentials. A credential is useless without its
-holder key, which can't leave this device. Its writes lock a file in
-that directory, so
-processes of the app that share it — a credential provider service in
-its own process, say — never both use one copy. A `CredentialStore` of
-your own implements `compareAndSwap` atomically across them too. A
-record the store can't read is left out of the wallet's credentials.
+where the device has it, falling back to the TEE. StrongBox makes every
+record read and write several times slower, which shows when the wallet
+lists credentials. A credential is useless without its holder key,
+which can't leave this device. Its writes lock a file in that
+directory, so processes of the app that share it — a credential
+provider service in its own process, say — never both use one copy.
+A `CredentialStore` of your own implements `compareAndSwap` atomically
+across them too. A record the store can't read is left out of the
+wallet's credentials.
 `unreadableRecordIDs()` names the damaged ones, which can't be
 recovered: delete each and have the holder receive that credential
 again. `unsupportedRecordIDs()` names those a newer version of the app
