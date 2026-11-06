@@ -59,6 +59,24 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertTrue(cancelled.withLock { $0 }, "the body is cancelled")
     }
 
+    /// A timeout in seconds of any value converts without trapping:
+    /// infinite or too long for a `UInt64` waits as long as it can.
+    func testNanoseconds() {
+        XCTAssertEqual(nanoseconds(1.5), 1_500_000_000)
+        XCTAssertEqual(nanoseconds(0), 0)
+        XCTAssertEqual(nanoseconds(-1), 0)
+        XCTAssertEqual(nanoseconds(.nan), 0)
+        XCTAssertEqual(nanoseconds(.infinity), .max)
+        XCTAssertEqual(nanoseconds(1e300), .max)
+        XCTAssertEqual(nanoseconds(Double(UInt64.max) / 1e9), .max)
+    }
+
+    /// An infinite timeout is no timeout: `body` finishes.
+    func testWithTimeoutInfinite() async throws {
+        let got = try await withTimeout(.infinity) { 7 }
+        XCTAssertEqual(got, 7)
+    }
+
     func testOrigin() {
         let cases: [(String, String?)] = [
             ("https://verifier.example", "https://verifier.example"),

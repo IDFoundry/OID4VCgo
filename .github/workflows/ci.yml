@@ -275,6 +275,13 @@ jobs:
       - name: build the XCFramework (release build)
         run: mobile/build-xcframework.sh
 
+      # Built for iOS, the package is checked against its own minimum,
+      # iOS 15: swift test checks only macOS 13, and the demo app
+      # targets later iOS.
+      - name: build the package for iOS
+        working-directory: mobile/ios/OID4VCWallet
+        run: xcodebuild build -scheme OID4VCWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
+
       - name: build the demo wallet app
         working-directory: mobile/ios/DemoWallet
         run: xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
