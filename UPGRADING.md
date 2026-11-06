@@ -20,6 +20,15 @@ them.
   one once used, and use another for another `Store`; a change to
   `Lists`, `Bits` or `FillLimit` is still picked up.
 
+### Issuer (`issuer`)
+
+- **`CredentialRequest.PerCredential` now runs for every Credential of
+  a batch before the first is signed**, not between signings; a hook
+  that relied on the earlier Credentials being signed already must
+  change. The new `PerBatch` (also on `DeferredIssuance`) is called
+  once with the whole batch: with `statuslist.Allocator.AllocateN` it
+  reserves a batch's status indices in one round trip.
+
 ### Wallet Provider (`walletprovider`)
 
 - **Run `SweepStatusLists` periodically** (daily, say, from one

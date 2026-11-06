@@ -19,16 +19,39 @@ type MemoryIndexStore struct {
 	lists map[string]map[uint64]StatusType
 }
 
-var _ IndexStore = (*MemoryIndexStore)(nil)
+var _ BatchIndexStore = (*MemoryIndexStore)(nil)
 
 // Reserve implements IndexStore.
 func (s *MemoryIndexStore) Reserve(_ context.Context, uri string, idx uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := s.lists[uri]
+	list := s.list(uri)
 	if _, ok := list[idx]; ok {
 		return ErrIndexTaken
 	}
+	list[idx] = StatusValid
+	return nil
+}
+
+// ReserveEach implements BatchIndexStore.
+func (s *MemoryIndexStore) ReserveEach(_ context.Context, uri string, idxs []uint64) ([]uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.list(uri)
+	reserved := make([]uint64, 0, len(idxs))
+	for _, idx := range idxs {
+		if _, ok := list[idx]; !ok {
+			list[idx] = StatusValid
+			reserved = append(reserved, idx)
+		}
+	}
+	return reserved, nil
+}
+
+// list returns the reservations of the list at uri, made if need be.
+// s.mu is held.
+func (s *MemoryIndexStore) list(uri string) map[uint64]StatusType {
+	list := s.lists[uri]
 	if list == nil {
 		if s.lists == nil {
 			s.lists = make(map[string]map[uint64]StatusType)
@@ -36,8 +59,7 @@ func (s *MemoryIndexStore) Reserve(_ context.Context, uri string, idx uint64) er
 		list = make(map[uint64]StatusType)
 		s.lists[uri] = list
 	}
-	list[idx] = StatusValid
-	return nil
+	return list
 }
 
 // Reserved implements IndexStore.

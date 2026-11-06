@@ -40,8 +40,10 @@
 // sharing an index share a status, and recommends random indices over
 // sequential ones (§12.4, §12.5.1), which reveal the order and number
 // of tokens issued. Allocate one index per credential copy in batch
-// issuance (§13.2), and never derive one from anything about the
-// holder.
+// issuance (§13.2) — Allocator.AllocateN reserves a batch's in one
+// store round trip, with a BatchIndexStore, as from the issuer
+// package's CredentialRequest.PerBatch — and never derive one from
+// anything about the holder.
 //
 // The Allocator keeps its reservations and statuses in an IndexStore,
 // which must be durable and reserve atomically; MemoryIndexStore is

@@ -137,12 +137,13 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 }
 
 // DeferredIssuance is what IssueDeferredCredential issues: the
-// Credential content, as a CredentialRequest's SDJWTClaims, MdocClaims
-// and PerCredential would give it for an immediate issuance.
+// Credential content, as a CredentialRequest's SDJWTClaims, MdocClaims,
+// PerCredential and PerBatch would give it for an immediate issuance.
 type DeferredIssuance struct {
 	SDJWTClaims   *sdjwtvc.Claims
 	MdocClaims    *mdoc.Claims
 	PerCredential func(ctx context.Context, instance *CredentialInstance) error
+	PerBatch      func(ctx context.Context, batch []*CredentialInstance) error
 }
 
 // IssueDeferredCredential resolves the pending transaction
@@ -178,9 +179,10 @@ type DeferredIssuance struct {
 // ErrDeferredProofKeyTrustUnknown, unless another check denies it.
 //
 // Concurrent calls for one transaction may each build Credentials, and
-// run content.PerCredential for them, but only the first to finish
-// saves them; the others return ErrDeferredTransactionResolved, and
-// anything their PerCredential reserved is unused.
+// run content.PerCredential and PerBatch for them, but only the first
+// to finish saves them; the others return
+// ErrDeferredTransactionResolved, and anything their PerCredential or
+// PerBatch reserved is unused.
 func (iss *Issuer) IssueDeferredCredential(ctx context.Context, transactionID string, content DeferredIssuance) error {
 	clientID, err := iss.issueDeferredCredential(ctx, transactionID, content)
 	iss.audit(ctx, AuditEventIssueDeferredCredential, clientID, err)
@@ -214,7 +216,8 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
 	}
 	credentials, err := iss.issueBatch(ctx, cc, CredentialRequest{
-		SDJWTClaims: content.SDJWTClaims, MdocClaims: content.MdocClaims, PerCredential: content.PerCredential,
+		SDJWTClaims: content.SDJWTClaims, MdocClaims: content.MdocClaims,
+		PerCredential: content.PerCredential, PerBatch: content.PerBatch,
 	}, keys)
 	if err != nil {
 		return record.ClientID, err
