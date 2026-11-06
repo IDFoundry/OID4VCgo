@@ -220,17 +220,33 @@ func (s *Issuance) storeGrant(ctx context.Context) {
 	}
 }
 
+// grantLock serializes the refreshes of one grant; users counts the
+// refreshes holding or waiting for it, and the last to unlock it drops
+// it from Wallet.grantLocks.
+type grantLock struct {
+	sync.Mutex
+	users int
+}
+
 // lockGrant serializes refreshes with grant id, and returns the unlock.
 func (w *Wallet) lockGrant(id string) func() {
 	w.grantMu.Lock()
 	m, ok := w.grantLocks[id]
 	if !ok {
-		m = &sync.Mutex{}
+		m = &grantLock{}
 		w.grantLocks[id] = m
 	}
+	m.users++
 	w.grantMu.Unlock()
 	m.Lock()
-	return m.Unlock
+	return func() {
+		m.Unlock()
+		w.grantMu.Lock()
+		defer w.grantMu.Unlock()
+		if m.users--; m.users == 0 {
+			delete(w.grantLocks, id)
+		}
+	}
 }
 
 // RefreshCredential replaces the copies of the credential id names with
