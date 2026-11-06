@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -216,5 +217,36 @@ func TestErrorCode(t *testing.T) {
 	}
 	if got := (&Error{Code: CodeProtocol, Detail: "invalid_grant", Message: "m"}).Error(); got != "[protocol:invalid_grant] m" {
 		t.Errorf("Error() = %q", got)
+	}
+}
+
+// unlistableStore is a memStore whose List fails.
+type unlistableStore struct{ memStore }
+
+func (unlistableStore) List() ([]byte, error) { return nil, errors.New("listed") }
+
+// Credential reads the one record it's asked for, without listing the
+// store, and a deferred credential's record isn't a credential.
+func TestCredential_ReadsOneRecord(t *testing.T) {
+	store := unlistableStore{memStore{records: map[string][]byte{}}}
+	w, err := NewWallet(`{"development": true}`, newGoKeyStore(), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := walletflow.StoredCredential{ID: "c1", Format: "dc+sd-jwt", Credential: "x", HolderKeyID: "k", Claims: map[string]any{"given_name": "Ana"}}
+	enc, err := encodeCredential(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.records["c1"] = enc
+	store.records["d1"] = []byte(`{"kind":"deferred","id":"d1"}`)
+	got, err := w.Credential("c1")
+	if err != nil || !strings.Contains(got, `"given_name":"Ana"`) {
+		t.Fatalf("Credential = %s, %v", got, err)
+	}
+	for _, id := range []string{"d1", "none"} {
+		if _, err := w.Credential(id); code(err) != CodeNotFound {
+			t.Errorf("Credential(%q) = %v, want not_found", id, err)
+		}
 	}
 }

@@ -237,7 +237,10 @@ var testHTTP atomic.Pointer[http.Client]
 type Wallet struct {
 	w    *walletflow.Wallet
 	keys KeyStore
-	ka   *agreement
+	// creds are the wallet's credentials, in the platform's store, for
+	// Credential to read one without listing them all.
+	creds credentialStore
+	ka    *agreement
 	// crls are the lists the "revocation" roles check against.
 	crls *crlSet
 
@@ -316,7 +319,7 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
 	}
-	return &Wallet{w: w, keys: keys, ka: ka, crls: crls}, nil
+	return &Wallet{w: w, keys: keys, creds: credentialStore{credentials}, ka: ka, crls: crls}, nil
 }
 
 // walletRevocation sets the revocation check of each role cfg's
@@ -691,25 +694,24 @@ func (w *Wallet) Credentials() (string, error) {
 // "claims" — an SD-JWT VC's claims, or an mdoc's namespace → element →
 // value, byte strings in base64 — or not_found.
 func (w *Wallet) Credential(id string) (string, error) {
-	creds, err := w.w.Credentials(context.Background())
+	// One record read, not the whole store listed (and on Android each
+	// record's key unwrapped).
+	c, err := w.creds.Get(context.Background(), id)
+	if errors.Is(err, walletflow.ErrNotFound) {
+		return "", newError(CodeNotFound, fmt.Errorf("no credential %q", id))
+	}
 	if err != nil {
 		return "", classify(err)
 	}
-	for _, c := range creds {
-		if c.ID != id {
-			continue
-		}
-		s, err := w.summary(c)
-		if err != nil {
-			return "", err
-		}
-		return marshal(struct {
-			result
-			credentialSummary
-			Claims any `json:"claims"`
-		}{result{ABIVersion}, s, jsonClaims(c.Claims)})
+	s, err := w.summary(c)
+	if err != nil {
+		return "", err
 	}
-	return "", newError(CodeNotFound, fmt.Errorf("no credential %q", id))
+	return marshal(struct {
+		result
+		credentialSummary
+		Claims any `json:"claims"`
+	}{result{ABIVersion}, s, jsonClaims(c.Claims)})
 }
 
 // summary is c's summary, with whether its holder key is still present.
