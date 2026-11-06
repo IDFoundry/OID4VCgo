@@ -678,6 +678,9 @@ func trustUndecided(err error) bool {
 // Any other store error is the store's, not the Wallet's: a plain
 // error, a 500.
 func (iss *Issuer) consumeNonce(ctx context.Context, nonce string) error {
+	if len(iss.deps.NonceKeys) > 0 && isStatelessNonce(nonce) {
+		return iss.spendStatelessNonce(ctx, nonce)
+	}
 	record, err := iss.deps.Nonces.Consume(ctx, NonceConsumption{Nonce: nonce, Owner: iss.storeOwner()})
 	if errors.Is(err, ErrNonceUnknown) {
 		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)

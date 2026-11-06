@@ -17,6 +17,7 @@ import (
 func TestNonceStoreContract(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return e.db().Nonces() })
+		issuertest.TestNonceSpenderContract(t, func() issuer.NonceSpender { return e.db().Nonces() })
 	})
 }
 
