@@ -250,13 +250,17 @@ type instanceKeyRecord struct {
 // revision = ?, on the readable revision column, as InstanceStore's
 // is. sweep_after is the record's RetainUntil, which Create and Update
 // store: Sweep deletes the record once it has passed, and never one
-// without (zero, NULL), such as a record from before retention until
-// it next moves.
+// without (zero, NULL), such as a record from before retention, until
+// it next moves or walletprovider's Provider.SweepStatusLists gives it
+// one (ListUnretained).
 type InstanceKeyStore struct {
 	t *table[walletprovider.InstanceKey]
 }
 
-var _ walletprovider.InstanceKeyStore = (*InstanceKeyStore)(nil)
+var (
+	_ walletprovider.InstanceKeyStore            = (*InstanceKeyStore)(nil)
+	_ walletprovider.UnretainedInstanceKeyLister = (*InstanceKeyStore)(nil)
+)
 
 // WalletProviderInstanceKeys returns d's walletprovider.InstanceKeyStore.
 func (d *DB) WalletProviderInstanceKeys() *InstanceKeyStore {
@@ -318,35 +322,63 @@ func (s *InstanceKeyStore) Update(ctx context.Context, k walletprovider.Instance
 // bytewise, on the (instance_id, id) index. A record whose instance
 // isn't its row's instance_id is refused with ErrRecordFormat.
 func (s *InstanceKeyStore) List(ctx context.Context, instanceID, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	if !storableKeys(instanceID) {
+		return nil, fmt.Errorf("sqlstore: list instance keys: %w", errUnstorableKey)
+	}
+	return s.list(ctx, "list instance keys", limit, after, func(k walletprovider.InstanceKey) error {
+		if k.InstanceID != instanceID {
+			return fmt.Errorf("%w: instance key %q of instance %q is stored as instance %q's", ErrRecordFormat, k.Thumbprint, k.InstanceID, instanceID)
+		}
+		return nil
+	}, s.t.d.sql.wpInstanceKeyList, instanceID)
+}
+
+// ListUnretained implements walletprovider.UnretainedInstanceKeyLister:
+// one SELECT … WHERE sweep_after IS NULL AND id > ? ORDER BY id LIMIT
+// ?, on the sweep_after index, the rows of records with no RetainUntil
+// being those with a NULL sweep_after. A record with one is refused
+// with ErrRecordFormat.
+func (s *InstanceKeyStore) ListUnretained(ctx context.Context, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	return s.list(ctx, "list instance keys without a RetainUntil", limit, after, func(k walletprovider.InstanceKey) error {
+		if !k.RetainUntil.IsZero() {
+			return fmt.Errorf("%w: instance key %q with RetainUntil %v is stored without one", ErrRecordFormat, k.Thumbprint, k.RetainUntil)
+		}
+		return nil
+	}, s.t.d.sql.wpInstanceKeyNoRetain)
+}
+
+// list runs query, with args then after and limit, returning the
+// records of its id and record columns, each checked by check.
+func (s *InstanceKeyStore) list(ctx context.Context, what string, limit int, after string, check func(walletprovider.InstanceKey) error, query string, args ...any) ([]walletprovider.InstanceKey, error) {
 	out := []walletprovider.InstanceKey{}
 	switch {
 	case limit <= 0:
 		return out, nil
-	case !storableKeys(instanceID, after):
-		return nil, fmt.Errorf("sqlstore: list instance keys: %w", errUnstorableKey)
+	case !storableKeys(after):
+		return nil, fmt.Errorf("sqlstore: %s: %w", what, errUnstorableKey)
 	}
-	rows, err := s.t.d.db.QueryContext(ctx, s.t.d.sql.wpInstanceKeyList, instanceID, after, int64(limit))
+	rows, err := s.t.d.db.QueryContext(ctx, query, append(args, after, int64(limit))...)
 	if err != nil {
-		return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+		return nil, fmt.Errorf("sqlstore: %s: %w", what, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		var data []byte
 		if err := rows.Scan(&id, &data); err != nil {
-			return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+			return nil, fmt.Errorf("sqlstore: %s: %w", what, err)
 		}
 		k, err := s.t.decodeOf(id, data)
 		if err != nil {
-			return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+			return nil, fmt.Errorf("sqlstore: %s: %w", what, err)
 		}
-		if k.InstanceID != instanceID {
-			return nil, fmt.Errorf("sqlstore: list instance keys: %w: instance key %q of instance %q is stored as instance %q's", ErrRecordFormat, id, k.InstanceID, instanceID)
+		if err := check(k); err != nil {
+			return nil, fmt.Errorf("sqlstore: %s: %w", what, err)
 		}
 		out = append(out, k)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("sqlstore: list instance keys: %w", err)
+		return nil, fmt.Errorf("sqlstore: %s: %w", what, err)
 	}
 	return out, nil
 }

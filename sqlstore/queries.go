@@ -53,7 +53,7 @@ type queries struct {
 
 	// oid4vc_walletprovider_instance_keys: walletprovider.InstanceKeyStore.
 	wpInstanceKeyInsert, wpInstanceKeyGet, wpInstanceKeyUpdate, wpInstanceKeyRevision, wpInstanceKeyList string
-	wpInstanceKeySweep                                                                                   string
+	wpInstanceKeySweep, wpInstanceKeyNoRetain                                                            string
 
 	// oid4vc_walletprovider_challenges: walletprovider.ChallengeStore.
 	wpChallengeInsert, wpChallengeConsume, wpChallengeSweep string

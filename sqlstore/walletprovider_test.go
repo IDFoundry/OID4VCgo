@@ -515,8 +515,9 @@ func TestMigrateAddsWalletProviderInstanceKeyRevisions(t *testing.T) {
 
 // A database migrated by an earlier release, to version 8, migrates to
 // the instance keys' sweep index: a row from before, its sweep_after
-// NULL, is never swept until an Update sets its RetainUntil. Until
-// then, CheckSchema fails.
+// NULL, is never swept until an Update sets its RetainUntil, and is
+// listed by ListUnretained, for walletprovider's SweepStatusLists to
+// give it one. Until then, CheckSchema fails.
 func TestMigrateAddsWalletProviderInstanceKeySweep(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		ctx := context.Background()
@@ -545,13 +546,17 @@ func TestMigrateAddsWalletProviderInstanceKeySweep(t *testing.T) {
 		if n, err := d.Sweep(ctx, far); err != nil || n != 0 {
 			t.Fatalf("Sweep of a row from before = %d, %v; want none deleted", n, err)
 		}
-		k, err := keys.Get(ctx, "tp")
-		if err != nil {
-			t.Fatal(err)
+		unretained, err := keys.ListUnretained(ctx, "", 10)
+		if err != nil || len(unretained) != 1 || unretained[0].Thumbprint != "tp" {
+			t.Fatalf("ListUnretained = %+v, %v; want the row from before", unretained, err)
 		}
+		k := unretained[0]
 		k.RetainUntil = time.Now().UTC().Truncate(time.Second)
 		if err := keys.Update(ctx, k); err != nil {
 			t.Fatal(err)
+		}
+		if unretained, err := keys.ListUnretained(ctx, "", 10); err != nil || len(unretained) != 0 {
+			t.Fatalf("ListUnretained after an Update = %+v, %v; want none", unretained, err)
 		}
 		if n, err := d.Sweep(ctx, far); err != nil || n != 1 {
 			t.Fatalf("Sweep after an Update = %d, %v; want 1 deleted", n, err)
