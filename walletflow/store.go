@@ -16,7 +16,9 @@ import (
 
 // StoredCredential is a credential the wallet holds.
 type StoredCredential struct {
-	// ID identifies it in the CredentialStore.
+	// ID identifies it in the CredentialStore. One the wallet makes has
+	// no "-", so a store can keep its other records under prefixes with
+	// one ("grant-", say) and list credentials as the IDs without them.
 	ID string
 	// CredentialIssuer is the Credential Issuer that issued it.
 	CredentialIssuer string
