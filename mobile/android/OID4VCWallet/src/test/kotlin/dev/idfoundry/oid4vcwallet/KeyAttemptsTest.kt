@@ -32,6 +32,18 @@ class KeyAttemptsTest {
         assertEquals(listOf(null), keyAttempts(StrongBox.PREFERRED, agree = false, apiLevel = 26).map { it.strongBox }.distinct())
     }
 
+    /** FileCredentialStore's key tries the same storages, in the same order. */
+    @Test
+    fun storeKeyStorages() {
+        assertEquals(listOf(true, false), keyStorages(StrongBox.PREFERRED, apiLevel = 36))
+        assertEquals(listOf(true), keyStorages(StrongBox.REQUIRED, apiLevel = 36))
+        assertEquals(listOf(false), keyStorages(StrongBox.OFF, apiLevel = 36))
+        assertEquals(listOf(null), keyStorages(StrongBox.PREFERRED, apiLevel = 27))
+        for (strongBox in StrongBox.entries) {
+            assertEquals(keyStorages(strongBox, 36), keyAttempts(strongBox, agree = true, apiLevel = 36).map { it.strongBox }.distinct())
+        }
+    }
+
     @Test
     fun keyAgreementOnlyFromAPI31() {
         assertEquals(listOf(false), keyAttempts(StrongBox.PREFERRED, agree = true, apiLevel = 30).map { it.agree }.distinct())
