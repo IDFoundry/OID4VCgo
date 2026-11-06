@@ -90,9 +90,9 @@ type StoreCapabilities struct {
 	Durable bool
 
 	// AtomicConsume means a consume-once-style operation (a
-	// NonceStore/PreAuthorizedCodeStore's own Consume) is a single atomic
-	// check-and-retire: two concurrent calls for the same key can
-	// never both succeed.
+	// NonceStore/PreAuthorizedCodeStore's own Consume, a NonceSpender's
+	// Spend) is a single atomic check-and-retire: two concurrent calls
+	// for the same key can never both succeed.
 	AtomicConsume bool
 }
 

@@ -17,6 +17,7 @@ import (
 // via these same exported functions.
 func TestContractSuitesAgainstStorage(t *testing.T) {
 	issuertest.TestNonceStoreContract(t, func() issuer.NonceStore { return storage.NewNonceStore() })
+	issuertest.TestNonceSpenderContract(t, func() issuer.NonceSpender { return storage.NewNonceStore() })
 	issuertest.TestPreAuthorizedCodeStoreContract(t, func() issuer.PreAuthorizedCodeStore { return storage.NewPreAuthorizedCodeStore() })
 	issuertest.TestCredentialOfferStoreContract(t, func() issuer.CredentialOfferStore { return storage.NewCredentialOfferStore() })
 	issuertest.TestNotificationStoreContract(t, func() issuer.NotificationStore { return storage.NewNotificationStore() })
