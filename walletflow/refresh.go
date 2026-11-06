@@ -555,7 +555,7 @@ func (s *Issuance) redeem(ctx context.Context, g RefreshGrant) (refreshResult, e
 		// Never a silent switch to no client authentication.
 		return refreshResult{}, fmt.Errorf("walletflow: refresh credential: the authorization server no longer takes a Wallet Attestation: %w", ErrReissueRequired)
 	}
-	s.asMeta = asMeta
+	s.asMeta, s.asMetaFor = asMeta, g.AuthorizationServer
 	if g.ClientAuth == GrantAuthNone {
 		return s.refreshAsPublicClient(ctx, g, asMeta)
 	}
