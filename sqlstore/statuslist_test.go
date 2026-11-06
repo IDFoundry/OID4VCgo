@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/big"
 	mrand "math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +106,15 @@ func TestStatusIndexStoreContract(t *testing.T) {
 				t.Errorf("%s: Reserve = %v, want it refused", name, err)
 			}
 		}
+		if _, err := s.ReserveEach(ctx, statusListA, []uint64{4, math.MaxInt64 + 1}); err == nil {
+			t.Error("ReserveEach of an index above MaxInt64 succeeded")
+		}
+		if _, err := s.ReserveEach(ctx, "https://issuer.example/\x00", []uint64{4}); err == nil {
+			t.Error("ReserveEach of an unstorable uri succeeded")
+		}
+		if got, err := s.ReserveEach(ctx, statusListA, nil); err != nil || len(got) != 0 {
+			t.Errorf("ReserveEach of no indices = %v, %v", got, err)
+		}
 		if n, err := s.Reserved(ctx, "https://issuer.example/\xff"); err != nil || n != 0 {
 			t.Errorf("Reserved of an unstorable uri = %d, %v", n, err)
 		}
@@ -120,6 +130,66 @@ func TestStatusIndexStoreContract(t *testing.T) {
 func TestStatusIndexStoreSharedContract(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		statuslisttest.TestIndexStoreContract(t, func(*testing.T) statuslist.IndexStore { return e.db().StatusIndices() })
+	})
+}
+
+// TestStatusIndexStoreReserveEachContention: concurrent ReserveEach
+// and Reserve calls naming the same indices, several counted in one
+// shard — so Postgres finds some of them deadlocked, and cancels one —
+// all succeed, each index reserved by exactly one, and counted once.
+func TestStatusIndexStoreReserveEachContention(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		s := e.db().StatusIndices()
+		const callers, perShard = 32, 8
+		var all []uint64
+		for shard := range uint64(4) {
+			for k := range uint64(perShard) {
+				all = append(all, shard+32*k)
+			}
+		}
+		var mu sync.Mutex
+		counts := map[uint64]int{}
+		var wg sync.WaitGroup
+		for c := range callers {
+			wg.Go(func() {
+				var got []uint64
+				if c%4 == 3 {
+					for _, idx := range all {
+						switch err := s.Reserve(ctx, statusListA, idx); {
+						case err == nil:
+							got = append(got, idx)
+						case !errors.Is(err, statuslist.ErrIndexTaken):
+							t.Errorf("Reserve: %v", err)
+						}
+					}
+				} else {
+					idxs := slices.Clone(all)
+					mrand.New(mrand.NewPCG(uint64(c), 0)).Shuffle(len(idxs), func(i, j int) { idxs[i], idxs[j] = idxs[j], idxs[i] }) // #nosec G115 G404 -- a test's shuffle
+					var err error
+					if got, err = s.ReserveEach(ctx, statusListA, idxs[:len(idxs)/2+c%3]); err != nil {
+						t.Errorf("ReserveEach: %v", err)
+					}
+				}
+				mu.Lock()
+				for _, idx := range got {
+					counts[idx]++
+				}
+				mu.Unlock()
+			})
+		}
+		wg.Wait()
+		for idx, k := range counts {
+			if k != 1 {
+				t.Fatalf("index %d reserved by %d callers", idx, k)
+			}
+		}
+		if len(counts) != len(all) {
+			t.Fatalf("%d indices reserved, want %d", len(counts), len(all))
+		}
+		if n, err := s.Reserved(ctx, statusListA); err != nil || n != len(all) {
+			t.Fatalf("Reserved = %d, %v; want %d", n, err, len(all))
+		}
 	})
 }
 
