@@ -42,7 +42,8 @@
 //     … WHERE the lease is free.
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
-//     StatusIndices as its StatusIndices. An instance's Create is one
+//     StatusIndices as its StatusIndices and StatusListTokens as its
+//     StatusListTokens. An instance's Create is one
 //     INSERT on the id primary key and the UNIQUE key_thumbprint
 //     column, so one registration key registers one instance across
 //     every process; its Update is one UPDATE … WHERE id = ? AND
