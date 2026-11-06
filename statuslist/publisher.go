@@ -115,7 +115,12 @@ type Publisher struct {
 	// within its exp, and a replica that stops signing is replaced when
 	// its lease ends, 35 seconds after it took it: the 30 seconds a
 	// signature may take, and 5 more. Invalidate has this replica sign
-	// the next token itself. Ignored when CacheFor is negative.
+	// the next token itself. A stored token is served only by a replica
+	// with the same leaf certificate in Chain: after a key or
+	// certificate changes, a replica signs its own rather than serve the
+	// old signer's, and while replicas with different signers serve the
+	// list, as during a rollout, the token stored changes hands about
+	// once per TokensCheck. Ignored when CacheFor is negative.
 	Tokens TokenStore
 
 	// TokensCheck is how often a replica asks Tokens for a newer token:
@@ -281,8 +286,17 @@ func (p *Publisher) shared(form Form) listhttp.Shared {
 	}
 	return listhttp.Shared{
 		Store: listhttp.StoreOf[Form](p.Tokens, p.URI, form), Holder: p.holder.Name(),
-		Fresh: p.cacheWindow(), Check: check,
+		Fresh: p.cacheWindow(), Check: check, Signer: signerOf(p.Chain),
 	}
+}
+
+// signerOf names the signer whose chain is chain to a TokenStore: its
+// leaf certificate's SHA-256.
+func signerOf(chain []*x509.Certificate) []byte {
+	if len(chain) == 0 {
+		return nil
+	}
+	return listhttp.SignerOf(chain[0].Raw)
 }
 
 // cacheWindow is CacheFor's effective value.

@@ -80,6 +80,7 @@ type sharedFixture struct {
 	now     time.Time
 	signs   int
 	signErr error
+	signer  []byte // this replica's signer (Shared.Signer)
 }
 
 func newSharedFixture(t *testing.T) *sharedFixture {
@@ -87,7 +88,7 @@ func newSharedFixture(t *testing.T) *sharedFixture {
 }
 
 func (f *sharedFixture) get(fresh time.Duration) (Served, error) {
-	sh := Shared{Store: f.store, Holder: "me", Fresh: fresh, Check: time.Second}
+	sh := Shared{Store: f.store, Holder: "me", Fresh: fresh, Check: time.Second, Signer: f.signer}
 	return f.cache.GetShared(context.Background(), sh, func() time.Time { return f.now }, func(_ context.Context, now time.Time) ([]byte, time.Time, error) {
 		if f.signErr != nil {
 			return nil, time.Time{}, f.signErr
@@ -223,5 +224,59 @@ func TestGetShared_LeasedAndHeadError(t *testing.T) {
 	f.now = f.now.Add(2 * time.Second)
 	if served, err := f.get(time.Minute); !errors.Is(err, f.store.headErr) || served.Token != first.Token {
 		t.Fatalf("Head failing: %v; want the cached token and the error", err)
+	}
+}
+
+// A stored token another signer signed is never served: current or
+// not, and whether or not another replica holds the lease, this
+// replica signs its own and stores it, its signer with it.
+func TestGetShared_AnotherSignersToken(t *testing.T) {
+	for name, leased := range map[string]bool{"lease free": false, "lease held": true} {
+		t.Run(name, func(t *testing.T) {
+			f := newSharedFixture(t)
+			f.signer = SignerOf([]byte("new certificate"))
+			f.storeToken("old signer's", f.now.Add(-time.Second))
+			f.store.token.Signer = SignerOf([]byte("old certificate"))
+			f.store.leased = leased
+			served, err := f.get(time.Minute)
+			if err != nil || served.Token == nil || string(served.Bytes) != "signed-1" {
+				t.Fatalf("GetShared = %v, %v; want this replica's own token", served.Token, err)
+			}
+			if f.store.puts != 1 || string(f.store.token.Bytes) != "signed-1" || string(f.store.token.Signer) != string(f.signer) {
+				t.Fatalf("stored %q by %x after %d puts; want this replica's, by %x", f.store.token.Bytes, f.store.token.Signer, f.store.puts, f.signer)
+			}
+		})
+	}
+}
+
+// A token stored with no signer, as before signers were kept, is
+// signed anew by a replica that has one.
+func TestGetShared_UnsignedStoredToken(t *testing.T) {
+	f := newSharedFixture(t)
+	f.signer = SignerOf([]byte("certificate"))
+	f.storeToken("from before signers", f.now.Add(-time.Second))
+	if served, err := f.get(time.Minute); err != nil || served.Token == nil || string(served.Bytes) != "signed-1" {
+		t.Fatalf("GetShared = %v, %v; want a token signed here", served.Token, err)
+	}
+}
+
+// A replica serves a stored token its own signer signed, and refuses
+// one another signer stored after Head was read.
+func TestGetShared_SignerChecks(t *testing.T) {
+	f := newSharedFixture(t)
+	f.signer = SignerOf([]byte("certificate"))
+	f.storeToken("mine", f.now.Add(-time.Second))
+	f.store.token.Signer = f.signer
+	if served, err := f.get(time.Minute); err != nil || served.Token == nil || string(served.Bytes) != "mine" || f.signs != 0 {
+		t.Fatalf("GetShared = %v, %v after %d signatures; want the stored token", served.Token, err, f.signs)
+	}
+
+	g := newSharedFixture(t)
+	g.signer = f.signer
+	g.storeToken("mine", g.now.Add(-time.Second))
+	g.store.token.Signer = g.signer
+	g.store.tokenOverride = &Stored{Bytes: []byte("theirs"), Version: g.store.token.Version, SignedAt: g.store.token.SignedAt, Exp: g.store.token.Exp, Signer: SignerOf([]byte("other"))}
+	if served, err := g.get(time.Minute); err == nil || !strings.Contains(err.Error(), "another signer") || served.Token != nil {
+		t.Fatalf("GetShared = %v, %v; want the replaced token refused", served.Token, err)
 	}
 }

@@ -1,8 +1,10 @@
 package listhttp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,11 +18,23 @@ import (
 const LeaseSlack = 5 * time.Second
 
 // Stored is a token in a Store: its bytes (nil in a Head), the list
-// version it was signed from, when it was signed, and when it expires.
+// version it was signed from, when it was signed, when it expires, and
+// who signed it (SignerOf).
 type Stored struct {
 	Bytes         []byte
 	Version       int64
 	SignedAt, Exp time.Time
+	Signer        []byte
+}
+
+// SignerOf names the signer of a token whose chain's leaf certificate
+// is leaf (its DER): the certificate's SHA-256. A stored token is served
+// only by a replica whose signer it names, so a replica with a new key
+// or certificate signs its own rather than serve a token another key
+// signed.
+func SignerOf(leaf []byte) []byte {
+	sum := sha256.Sum256(leaf)
+	return sum[:]
 }
 
 // Head is what a Store holds for one list and form, without the
@@ -107,6 +121,10 @@ type Shared struct {
 	// Check is how often this replica asks Store whether there's a
 	// newer token: at most Fresh.
 	Check time.Duration
+
+	// Signer is this replica's signer (SignerOf): a stored token
+	// another signer signed is never served here.
+	Signer []byte
 }
 
 // GetShared is Get, for a list served by several replicas that share
@@ -115,7 +133,11 @@ type Shared struct {
 // the last sh.Fresh, is served as it is; otherwise this replica takes
 // the Store's lease, signs one and stores it for the others. While
 // another replica holds the lease, the stored token is served until its
-// exp, and signed here only when there's none. A call after Invalidate
+// exp, and signed here only when there's none, or another signer signed
+// it (sh.Signer): replicas whose keys differ, as while a new key is
+// rolled out, each sign their own and the Store keeps the newer, so
+// the token changes hands about once per sh.Check until they agree.
+// A call after Invalidate
 // signs here, whatever the Store holds. With sh.Fresh not positive,
 // it's Get with a token per call.
 func (c *Cache) GetShared(ctx context.Context, sh Shared, clock func() time.Time, sign SignFunc) (Served, error) {
@@ -139,17 +161,18 @@ func (c *Cache) produceShared(ctx context.Context, sh Shared, now time.Time, pre
 		c.reforce(forced)
 		return nil, fmt.Errorf("listhttp: reading the stored token: %w", err)
 	}
-	if !forced && head.Stored && current(head, now, sh.Fresh) {
-		return stored(ctx, sh.Store, head, now, prev)
+	mine := head.Stored && bytes.Equal(head.Token.Signer, sh.Signer)
+	if !forced && mine && current(head, now, sh.Fresh) {
+		return stored(ctx, sh.Store, head, now, prev, sh.Signer)
 	}
 	claimed, err := sh.Store.Claim(ctx, sh.Holder, now, now.Add(SignTimeout+LeaseSlack))
 	if err != nil {
 		c.reforce(forced)
 		return nil, fmt.Errorf("listhttp: taking the lease on signing the token: %w", err)
 	}
-	if !claimed && !forced && head.Stored && now.Before(head.Token.Exp) && !now.Before(head.Token.SignedAt.Add(-sh.Fresh)) {
+	if !claimed && !forced && mine && now.Before(head.Token.Exp) && !now.Before(head.Token.SignedAt.Add(-sh.Fresh)) {
 		// Another replica is signing: its token comes in a later check.
-		return stored(ctx, sh.Store, head, now, prev)
+		return stored(ctx, sh.Store, head, now, prev, sh.Signer)
 	}
 	// The version read before the statuses are: a status set after it
 	// bumps the version again, and the token is signed anew.
@@ -159,7 +182,7 @@ func (c *Cache) produceShared(ctx context.Context, sh Shared, now time.Time, pre
 		return nil, err
 	}
 	token.version = head.Version
-	if err := sh.Store.Put(ctx, sh.Holder, Stored{Bytes: token.Bytes, Version: token.version, SignedAt: token.SignedAt, Exp: token.Exp}); err != nil {
+	if err := sh.Store.Put(ctx, sh.Holder, Stored{Bytes: token.Bytes, Version: token.version, SignedAt: token.SignedAt, Exp: token.Exp, Signer: sh.Signer}); err != nil {
 		// Served here all the same; the others sign their own once
 		// the lease runs out.
 		return token, fmt.Errorf("listhttp: storing the token: %w", err)
@@ -188,8 +211,8 @@ func current(head Head, now time.Time, fresh time.Duration) bool {
 }
 
 // stored returns the token head describes: prev when it's that token,
-// otherwise read from s.
-func stored(ctx context.Context, s Store, head Head, now time.Time, prev *Token) (*Token, error) {
+// otherwise read from s, provided signer signed it.
+func stored(ctx context.Context, s Store, head Head, now time.Time, prev *Token, signer []byte) (*Token, error) {
 	if prev != nil && prev.version == head.Token.Version && prev.SignedAt.Equal(head.Token.SignedAt) && prev.Exp.Equal(head.Token.Exp) {
 		return prev, nil
 	}
@@ -199,6 +222,8 @@ func stored(ctx context.Context, s Store, head Head, now time.Time, prev *Token)
 		return nil, fmt.Errorf("listhttp: reading the stored token: %w", err)
 	case !ok || len(st.Bytes) == 0:
 		return nil, errors.New("listhttp: the stored token is gone")
+	case !bytes.Equal(st.Signer, signer):
+		return nil, errors.New("listhttp: the stored token was replaced by one another signer signed")
 	case !now.Before(st.Exp):
 		return nil, errors.New("listhttp: the stored token has expired")
 	}

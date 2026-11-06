@@ -25,6 +25,16 @@ import (
 // replica that made it calls the Publisher's Invalidate, as without a
 // TokenStore.
 //
+// A token is stored with its signer (StoredToken.Signer: the SHA-256 of
+// its chain's leaf certificate), which a store keeps and returns as it
+// was put, and a replica serves only a token its own signer signed.
+// After a key or certificate changes, then, a replica signs its own
+// token rather than serve one the old signer signed — which a relying
+// party would refuse once the old signer is revoked. While replicas
+// with different signers serve a list, as during a rollout, each signs
+// its own and the newer stays stored: the token changes hands about
+// once per TokensCheck until the rollout ends.
+//
 // A list is named by its uri, and each of its forms has its own token
 // and lease. Times are kept to the millisecond. sqlstore's
 // StatusListTokenStore is one, its versions kept by the status changes
@@ -51,12 +61,13 @@ type TokenStore interface {
 }
 
 // StoredToken is a token in a TokenStore: its bytes, the list version
-// it was signed from, when it was signed, and when it expires.
+// it was signed from, when it was signed, when it expires, and who
+// signed it (the SHA-256 of its chain's leaf certificate).
 type StoredToken = listhttp.Stored
 
 // TokenHead is what a TokenStore holds for one list and form, without
 // the token's bytes: the list's version, and whether a token is stored
-// and, if one is, its Version, SignedAt and Exp (its Bytes nil).
+// and, if one is, its Version, SignedAt, Exp and Signer (its Bytes nil).
 type TokenHead = listhttp.Head
 
 // DefaultTokensCheck is Publisher.TokensCheck's default: how often a

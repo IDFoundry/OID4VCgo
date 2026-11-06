@@ -3,6 +3,7 @@ package statuslisttest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"strconv"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ func TestTokenStoreContract(t *testing.T, newStore func(t *testing.T) (store sta
 		{"OneConcurrentClaim", tokenOneConcurrentClaim},
 		{"FormsAndListsApart", tokenFormsAndListsApart},
 		{"Versions", tokenVersions},
+		{"Signers", tokenSigners},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,7 +47,8 @@ func TestTokenStoreContract(t *testing.T, newStore func(t *testing.T) (store sta
 var tokenTime = time.UnixMilli(1_900_000_000_123)
 
 func storedToken(b string, version int64, signedAt time.Time) statuslist.StoredToken {
-	return statuslist.StoredToken{Bytes: []byte(b), Version: version, SignedAt: signedAt, Exp: signedAt.Add(time.Hour)}
+	signer := sha256.Sum256([]byte("signer of " + b))
+	return statuslist.StoredToken{Bytes: []byte(b), Version: version, SignedAt: signedAt, Exp: signedAt.Add(time.Hour), Signer: signer[:]}
 }
 
 func mustPut(t *testing.T, s statuslist.TokenStore, uri string, form statuslist.Form, holder string, token statuslist.StoredToken) {
@@ -71,12 +74,12 @@ func expectToken(t *testing.T, s statuslist.TokenStore, uri string, form statusl
 	switch {
 	case err != nil:
 		t.Fatalf("Head: %v", err)
-	case !head.Stored || head.Token.Version != want.Version || !head.Token.SignedAt.Equal(want.SignedAt) || !head.Token.Exp.Equal(want.Exp):
-		t.Fatalf("Head = %+v, want the token %d signed at %s", head, want.Version, want.SignedAt)
+	case !head.Stored || head.Token.Version != want.Version || !head.Token.SignedAt.Equal(want.SignedAt) || !head.Token.Exp.Equal(want.Exp) || !bytes.Equal(head.Token.Signer, want.Signer):
+		t.Fatalf("Head = %+v, want the token %d signed at %s by %x", head, want.Version, want.SignedAt, want.Signer)
 	}
 	got, ok, err := s.Token(ctx, uri, form)
-	if err != nil || !ok || !bytes.Equal(got.Bytes, want.Bytes) || got.Version != want.Version || !got.SignedAt.Equal(want.SignedAt) || !got.Exp.Equal(want.Exp) {
-		t.Fatalf("Token = %q %d %s %s, %v, %v; want %q %d %s %s", got.Bytes, got.Version, got.SignedAt, got.Exp, ok, err, want.Bytes, want.Version, want.SignedAt, want.Exp)
+	if err != nil || !ok || !bytes.Equal(got.Bytes, want.Bytes) || got.Version != want.Version || !got.SignedAt.Equal(want.SignedAt) || !got.Exp.Equal(want.Exp) || !bytes.Equal(got.Signer, want.Signer) {
+		t.Fatalf("Token = %q %d %s %s %x, %v, %v; want %q %d %s %s %x", got.Bytes, got.Version, got.SignedAt, got.Exp, got.Signer, ok, err, want.Bytes, want.Version, want.SignedAt, want.Exp, want.Signer)
 	}
 }
 
@@ -219,5 +222,28 @@ func tokenVersions(t *testing.T, s statuslist.TokenStore, bump func(*testing.T, 
 	bump(t, uri)
 	if v := version(uri, statuslist.FormJWT); v <= afterJWT {
 		t.Fatalf("version after a second change = %d, want above %d", v, afterJWT)
+	}
+}
+
+// A token's signer is kept with it, and replaced with it: a newer token
+// another signer signed replaces the stored one, signer and all. A
+// token with no signer reads back with none.
+func tokenSigners(t *testing.T, s statuslist.TokenStore, _ func(*testing.T, string), uri string) {
+	first := storedToken("first signer's", 0, tokenTime)
+	mustPut(t, s, uri, statuslist.FormJWT, "a", first)
+	expectToken(t, s, uri, statuslist.FormJWT, first)
+	rotated := storedToken("second signer's", 0, tokenTime.Add(time.Millisecond))
+	if bytes.Equal(rotated.Signer, first.Signer) {
+		t.Fatal("the two tokens should have different signers")
+	}
+	mustPut(t, s, uri, statuslist.FormJWT, "b", rotated)
+	expectToken(t, s, uri, statuslist.FormJWT, rotated)
+
+	unsigned := storedToken("no signer", 0, tokenTime)
+	unsigned.Signer = nil
+	mustPut(t, s, uri, statuslist.FormCWT, "a", unsigned)
+	got, ok, err := s.Token(context.Background(), uri, statuslist.FormCWT)
+	if err != nil || !ok || len(got.Signer) != 0 {
+		t.Fatalf("Token with no signer = %x, %v, %v; want none", got.Signer, ok, err)
 	}
 }
