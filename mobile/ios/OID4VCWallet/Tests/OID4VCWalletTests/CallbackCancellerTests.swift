@@ -64,7 +64,7 @@ final class PromptingKeyStore: KeyStore, @unchecked Sendable {
 final class CallbackCancellerTests: XCTestCase {
     func testWaitsRunAndCancel() {
         let waits = CancellableWaits()
-        XCTAssertEqual(waits.run("key", cancel: {}) { "signed" }, "signed")
+        XCTAssertEqual(waits.run("key", cancel: { /* Not called: nothing cancels this run. */ }) { "signed" }, "signed")
         XCTAssertEqual(waits.count, 0)
         // Nothing waiting: nothing to cancel.
         waits.cancel("key")
@@ -94,7 +94,9 @@ final class CallbackCancellerTests: XCTestCase {
             func createKey(purpose: KeyPurpose) throws -> String { "id" }
             func publicKey(id: String) throws -> Data? { nil }
             func sign(id: String, digest: Data) throws -> Data { Data() }
-            func deleteKey(id: String) throws {}
+            func deleteKey(id: String) throws {
+                // Nothing to delete: the store holds no keys.
+            }
         }
         Store().cancelKeyUse(id: "id")
         CallbackCancellerAdapter(Store(), nil).cancelProvider(Data("{}".utf8))

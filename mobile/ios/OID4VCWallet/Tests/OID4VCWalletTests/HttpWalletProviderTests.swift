@@ -30,8 +30,9 @@ final class HttpWalletProviderTests: XCTestCase {
     /// after registration is signed with the registration key, over its
     /// path and body.
     func testRegistersOnceAndAttests() async throws {
-        let env = Env()
-        let a = env.instanceKey(), b = env.instanceKey()
+        let env = try Env()
+        let a = try env.instanceKey()
+        let b = try env.instanceKey()
         let jwtA = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: a.json)
         XCTAssertEqual(unverifiedClaims(jwtA)?["sub"] as? String, "wallet")
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: b.json)
@@ -50,8 +51,8 @@ final class HttpWalletProviderTests: XCTestCase {
     /// A known instance key the provider no longer has a record of
     /// (`evidence_required`) is asserted again.
     func testEvidenceRequiredAssertsAgain() async throws {
-        let env = Env()
-        let a = env.instanceKey()
+        let env = try Env()
+        let a = try env.instanceKey()
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: a.json)
         env.server.state.withLock { $0.recorded.removeAll() }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: a.json)
@@ -61,9 +62,9 @@ final class HttpWalletProviderTests: XCTestCase {
     /// A Key Attestation sends one assertion over every holder key, in
     /// order, and is checked to attest only keys sent, over the nonce.
     func testKeyAttestation() async throws {
-        let env = Env()
-        let instance = env.instanceKey()
-        let holders = [env.instanceKey(), env.instanceKey()]
+        let env = try Env()
+        let instance = try env.instanceKey()
+        let holders = [try env.instanceKey(), try env.instanceKey()]
         do {
             _ = try await env.provider.keyAttestation(instanceKey: instance.json, keys: holders.map(\.json), nonce: "n")
             XCTFail("a Key Attestation before any registration")
@@ -87,7 +88,7 @@ final class HttpWalletProviderTests: XCTestCase {
 
     /// Without App Attest there's no registration, and no request.
     func testUnsupported() async throws {
-        let env = Env(supported: false)
+        let env = try Env(supported: false)
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
             XCTFail("registered without App Attest")
@@ -100,7 +101,7 @@ final class HttpWalletProviderTests: XCTestCase {
     /// `instance_revoked` forgets the registration and deletes its key:
     /// the next Wallet Attestation registers again.
     func testRevokedForgets() async throws {
-        let env = Env()
+        let env = try Env()
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         let first = try XCTUnwrap(env.registry.instance())
         env.server.state.withLock { $0.revoked = true }
@@ -122,7 +123,7 @@ final class HttpWalletProviderTests: XCTestCase {
     /// forgotten, and that key deleted: the next Wallet Attestation
     /// registers again, leaving one key.
     func testKeptRegistrationWithAnotherKeyIsForgotten() async throws {
-        let env = Env()
+        let env = try Env()
         let stray = try env.keys.createKey(purpose: .instance)
         try env.registry.put(RegisteredInstance(keyThumbprint: "another key's", keyID: stray, instanceID: "instance-0",
                                                 appAttestKeyID: "attest-key-0"))
@@ -140,7 +141,7 @@ final class HttpWalletProviderTests: XCTestCase {
     func testSweepOrphanedRegistrationKeys() async throws {
         let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false,
                                                     tagPrefix: HttpWalletProvider.registrationKeyTagPrefix))
-        let env = Env(registrationKeys: store)
+        let env = try Env(registrationKeys: store)
         let left = try store.createKey(purpose: .instance)
         let swept = try await env.provider.sweepOrphanedRegistrationKeys()
         XCTAssertEqual(swept, 1)
@@ -156,7 +157,7 @@ final class HttpWalletProviderTests: XCTestCase {
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
 
-        let memory = Env()
+        let memory = try Env()
         _ = try memory.keys.createKey(purpose: .instance)
         let none = try await memory.provider.sweepOrphanedRegistrationKeys()
         XCTAssertEqual(none, 0)
@@ -166,7 +167,7 @@ final class HttpWalletProviderTests: XCTestCase {
     /// A registration key the provider has seen is replaced by another,
     /// once; the refused one is deleted.
     func testInstanceKeyRegisteredRetries() async throws {
-        let env = Env()
+        let env = try Env()
         env.server.state.withLock { $0.refuseRegistrations = 1 }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
@@ -176,7 +177,7 @@ final class HttpWalletProviderTests: XCTestCase {
     /// A lost App Attest key (restore, reinstall) registers the
     /// installation again and attests the instance key under it.
     func testAppAttestKeyLostRegistersAgain() async throws {
-        let env = Env()
+        let env = try Env()
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         env.attest.loseKey.withLock { $0 = true }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
@@ -189,22 +190,23 @@ final class HttpWalletProviderTests: XCTestCase {
     /// used, not the one the first has made since.
     func testAppAttestKeyLostForgetsOnlyTheRegistrationThatFailed() async throws {
         let registry = CountingRegistry()
-        let env = Env(registry: registry)
+        let env = try Env(registry: registry)
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         let reads = registry.reads.withLock { $0 }
         env.attest.lostKeys.withLock { $0 = ["attest-key-1"] }
         // Both calls read the registration before the first finds its
         // key gone; the second finds out once the first has registered
         // again.
-        env.attest.onLost.withLock {
-            $0 = { n in
-                if n == 1 {
-                    await until("both calls read the registration") { registry.reads.withLock { $0 } >= reads + 2 }
-                } else {
-                    await until("the first registered again") { (try? registry.instance())?.appAttestKeyID == "attest-key-2" }
-                }
+        let bothRead: @Sendable () -> Bool = { registry.reads.withLock { $0 } >= reads + 2 }
+        let registeredAgain: @Sendable () -> Bool = { (try? registry.instance())?.appAttestKeyID == "attest-key-2" }
+        let onLost: @Sendable (Int) async -> Void = { n in
+            if n == 1 {
+                await until("both calls read the registration", bothRead)
+            } else {
+                await until("the first registered again", registeredAgain)
             }
         }
+        env.attest.onLost.withLock { $0 = onLost }
         async let a = env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         async let b = env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         _ = try await (a, b)
@@ -221,8 +223,8 @@ final class HttpWalletProviderTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("wp/instance.json")
-        let env = Env(registry: FileInstanceRegistry(url: url))
-        let other = env.provider(over: FileInstanceRegistry(url: dir.appendingPathComponent("wp/./instance.json")))
+        let env = try Env(registry: FileInstanceRegistry(url: url))
+        let other = try env.provider(over: FileInstanceRegistry(url: dir.appendingPathComponent("wp/./instance.json")))
         env.server.state.withLock { $0.registrationDelay = 50_000_000 }
         async let a = env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         async let b = other.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
@@ -235,24 +237,30 @@ final class HttpWalletProviderTests: XCTestCase {
     /// Attest's server, or the provider, unavailable — is tried again by
     /// the next registration; a refusal needs a new one.
     func testUnavailableKeepsTheAppAttestKey() async throws {
-        let env = Env()
+        let env = try Env()
         env.attest.attestFailures.withLock {
             $0 = [WalletProviderUnavailableError(status: nil, error: nil, message: "App Attest's server is unavailable")]
         }
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
             XCTFail("registered without App Attest's server")
-        } catch is WalletProviderUnavailableError {}
+        } catch is WalletProviderUnavailableError {
+            // As expected: a transient failure, which keeps the App Attest key.
+        }
         env.server.state.withLock { $0.registrationError = (503, "server_error") }
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
             XCTFail("registered with the provider unavailable")
-        } catch is WalletProviderUnavailableError {}
+        } catch is WalletProviderUnavailableError {
+            // As expected: a transient failure, which keeps the App Attest key.
+        }
         env.server.state.withLock { $0.registrationError = (403, "evidence_rejected") }
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
             XCTFail("registered with its evidence rejected")
-        } catch is WalletProviderRefusedError {}
+        } catch is WalletProviderRefusedError {
+            // As expected: a refusal, which needs a new App Attest key.
+        }
         env.server.state.withLock { $0.registrationError = nil }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         XCTAssertEqual(env.attest.attested.withLock { $0 }, ["attest-key-1", "attest-key-1", "attest-key-1", "attest-key-2"])
@@ -262,12 +270,14 @@ final class HttpWalletProviderTests: XCTestCase {
 
     /// A kept App Attest key App Attest won't attest again is replaced.
     func testKeptAppAttestKeyAppAttestRefusesIsReplaced() async throws {
-        let env = Env()
+        let env = try Env()
         env.server.state.withLock { $0.registrationError = (503, "server_error") }
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
             XCTFail("registered with the provider unavailable")
-        } catch is WalletProviderUnavailableError {}
+        } catch is WalletProviderUnavailableError {
+            // As expected: a transient failure, which keeps the App Attest key.
+        }
         env.server.state.withLock { $0.registrationError = nil }
         env.attest.refuseReattest.withLock { $0 = true }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
@@ -279,8 +289,8 @@ final class HttpWalletProviderTests: XCTestCase {
     /// provider omits from the Key Attestation; a nonce other than the
     /// one sent, or none for one sent, is refused.
     func testKeyAttestationWithoutNonce() async throws {
-        let env = Env()
-        let instance = env.instanceKey()
+        let env = try Env()
+        let instance = try env.instanceKey()
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: instance.json)
         let jwt = try await env.provider.keyAttestation(instanceKey: instance.json, keys: [env.instanceKey().json], nonce: "")
         XCTAssertNil(unverifiedClaims(jwt)?["nonce"])
@@ -297,7 +307,7 @@ final class HttpWalletProviderTests: XCTestCase {
 
     /// A base URL whose path is percent-encoded signs the path as sent.
     func testEscapedBasePath() async throws {
-        let env = Env(baseURL: "https://wp.example/w%20p")
+        let env = try Env(baseURL: "https://wp.example/w%20p")
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         XCTAssertEqual(env.server.state.withLock { $0.walletAttestations.map(\.path) }, ["/w%20p/v1/wallet-attestation"])
     }
@@ -305,7 +315,7 @@ final class HttpWalletProviderTests: XCTestCase {
     /// 5xx, 429 and `invalid_challenge` are network failures, marked
     /// for Go; other refusals name the protocol's code.
     func testFailures() async throws {
-        let env = Env()
+        let env = try Env()
         env.server.state.withLock { $0.challengeStatus = 503 }
         do {
             _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
@@ -399,26 +409,26 @@ private struct Env {
     private let baseURL: URL
 
     init(supported: Bool = true, registry: any InstanceRegistry = InMemoryInstanceRegistry(),
-         baseURL: String = "https://wp.example/wp", registrationKeys: (any KeyStore)? = nil) {
+         baseURL: String = "https://wp.example/wp", registrationKeys: (any KeyStore)? = nil) throws {
         self.registry = registry
         self.baseURL = URL(string: baseURL)!
         self.registrationKeys = registrationKeys ?? keys
         attest = FakeAppAttest(supported: supported)
         server = FakeServer(keys: keys, prefix: URLComponents(string: baseURL)!.percentEncodedPath)
-        provider = try! HttpWalletProvider(baseURL: self.baseURL, instances: registry, registrationKeys: self.registrationKeys,
-                                           appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
+        provider = try HttpWalletProvider(baseURL: self.baseURL, instances: registry, registrationKeys: self.registrationKeys,
+                                          appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
     }
 
     /// Another provider over `registry`, as an app rebuilding its
     /// wallet makes, with the same keys, App Attest and server.
-    func provider(over registry: any InstanceRegistry) -> HttpWalletProvider {
-        try! HttpWalletProvider(baseURL: baseURL, instances: registry, registrationKeys: registrationKeys,
-                                appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
+    func provider(over registry: any InstanceRegistry) throws -> HttpWalletProvider {
+        try HttpWalletProvider(baseURL: baseURL, instances: registry, registrationKeys: registrationKeys,
+                               appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
     }
 
-    func instanceKey() -> (point: Data, json: Data) {
+    func instanceKey() throws -> (point: Data, json: Data) {
         let point = P256.Signing.PrivateKey().publicKey.x963Representation
-        return (point, try! JSONSerialization.data(withJSONObject: jwk(point: point)))
+        return (point, try JSONSerialization.data(withJSONObject: jwk(point: point)))
     }
 }
 
@@ -576,11 +586,11 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
         switch path.dropFirst(prefix.count) {
         case "/v1/challenge":
             let status = state.withLock { $0.challengeStatus }
-            if status != 200 { return answer(status, ["error": "server_error"]) }
+            if status != 200 { return try answer(status, ["error": "server_error"]) }
             let purpose = try XCTUnwrap(object["purpose"] as? String)
             let value = encodeBase64URL(Data((0..<32).map { _ in UInt8.random(in: 0...255) }))
             state.withLock { $0.challenges[value] = purpose }
-            return answer(200, ["challenge": value, "purpose": purpose, "expires_at": 1_767_225_900])
+            return try answer(200, ["challenge": value, "purpose": purpose, "expires_at": 1_767_225_900])
         case "/v1/instances":
             let delay = state.withLock { $0.registrationDelay }
             if delay > 0 { try await Task.sleep(nanoseconds: delay) }
@@ -590,19 +600,19 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
         case "/v1/key-attestation":
             return try keyAttestation(path, headers, body, object)
         default:
-            return answer(404, [:])
+            return try answer(404, [:])
         }
     }
 
     private func register(_ o: [String: Any]) throws -> WalletProviderAnswer {
-        if let (status, code) = state.withLock({ $0.registrationError }) { return answer(status, ["error": code]) }
+        if let (status, code) = state.withLock({ $0.registrationError }) { return try answer(status, ["error": code]) }
         let challenge = try use(o["challenge"], "registration")
         let key = try jwkPoint(try XCTUnwrap(o["registration_key"] as? [String: Any]))
         let (kind, keyID, hash) = try evidence(o["evidence"], "attestation")
         XCTAssertEqual(kind, "apple-app-attest")
         XCTAssertEqual(hash, AppAttestClientData.hash(purpose: "registration", challenge: challenge, keys: [key]))
         if state.withLock({ s in s.refuseRegistrations > 0 ? { s.refuseRegistrations -= 1; return true }() : false }) {
-            return answer(409, ["error": "instance_key_registered"])
+            return try answer(409, ["error": "instance_key_registered"])
         }
         let id = state.withLock { s in
             s.registrations += 1
@@ -610,12 +620,12 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
             s.instances[id] = (key, keyID)
             return id
         }
-        return answer(201, ["instance_id": id])
+        return try answer(201, ["instance_id": id])
     }
 
     private func walletAttestation(_ path: String, _ headers: [String: String], _ body: Data, _ o: [String: Any]) throws -> WalletProviderAnswer {
         let instance = try verifySigned(path, headers, body)
-        if state.withLock({ $0.revoked }) { return answer(403, ["error": "instance_revoked"]) }
+        if state.withLock({ $0.revoked }) { return try answer(403, ["error": "instance_revoked"]) }
         let key = try jwkPoint(try XCTUnwrap(o["instance_key"] as? [String: Any]))
         let hadEvidence = o["evidence"] != nil
         state.withLock { $0.walletAttestations.append((path, hadEvidence)) }
@@ -626,10 +636,10 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
             XCTAssertEqual(hash, AppAttestClientData.hash(purpose: "instance", challenge: challenge, keys: [key]))
             state.withLock { _ = $0.recorded.insert(key) }
         } else if !state.withLock({ $0.recorded.contains(key) }) {
-            return answer(400, ["error": "evidence_required"])
+            return try answer(400, ["error": "evidence_required"])
         }
         let client = try XCTUnwrap(o["client_id"] as? String)
-        return answer(200, ["wallet_attestation": jwt(["sub": client, "cnf": ["jwk": jwk(point: key)]])])
+        return try answer(200, ["wallet_attestation": jwt(["sub": client, "cnf": ["jwk": jwk(point: key)]])])
     }
 
     private func keyAttestation(_ path: String, _ headers: [String: String], _ body: Data, _ o: [String: Any]) throws -> WalletProviderAnswer {
@@ -649,7 +659,7 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
         case .none: if !sent.isEmpty { claims["nonce"] = sent }
         case .some(let claim): if let claim { claims["nonce"] = claim }
         }
-        return answer(200, ["key_attestation": jwt(claims)])
+        return try answer(200, ["key_attestation": jwt(claims)])
     }
 
     /// Checks the signed request: by the instance's registration key,
@@ -694,13 +704,13 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
         return (try XCTUnwrap(o["kind"] as? String), fields[1], hash)
     }
 
-    private func jwt(_ claims: [String: Any]) -> String {
-        encodeBase64URL(Data(#"{"alg":"ES256"}"#.utf8)) + "." + encodeBase64URL(try! JSONSerialization.data(withJSONObject: claims)) + ".c2ln"
+    private func jwt(_ claims: [String: Any]) throws -> String {
+        try encodeBase64URL(Data(#"{"alg":"ES256"}"#.utf8)) + "." + encodeBase64URL(JSONSerialization.data(withJSONObject: claims)) + ".c2ln"
     }
 
-    private func answer(_ status: Int, _ object: [String: Any]) -> WalletProviderAnswer {
-        WalletProviderAnswer(status: status, contentType: "application/json; charset=utf-8",
-                             body: try! JSONSerialization.data(withJSONObject: object))
+    private func answer(_ status: Int, _ object: [String: Any]) throws -> WalletProviderAnswer {
+        try WalletProviderAnswer(status: status, contentType: "application/json; charset=utf-8",
+                                 body: JSONSerialization.data(withJSONObject: object))
     }
 }
 
@@ -722,5 +732,7 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        // Nothing to stop: startLoading answers at once.
+    }
 }
