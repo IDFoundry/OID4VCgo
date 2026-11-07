@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.72.0 → next
+## v0.72.0 → v0.72.1
 
 ### Wallet Provider (`walletprovider`)
 

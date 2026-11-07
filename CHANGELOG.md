@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.72.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.72.0...v0.72.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **walletprovider:** mount StatusLists with http.StripPrefix in the docs ([e6e1266](https://github.com/IDFoundry/OID4VCgo/commit/e6e12664b9bece42b327d92ff2368885744c6aae))
+* **walletprovider:** store an assertion's counter before recording its instance key, and match evidence Kind ([8cc99d0](https://github.com/IDFoundry/OID4VCgo/commit/8cc99d08d2e18658336ffab5e6113ec2eaebbde8))
+
 ## [0.72.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.71.0...v0.72.0) (2026-11-07)
 
 
