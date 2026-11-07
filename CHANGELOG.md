@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.71.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.70.0...v0.71.0) (2026-11-07)
+
+
+### Features
+
+* **statuslist:** report how full an Allocator's lists are ([4ec0def](https://github.com/IDFoundry/OID4VCgo/commit/4ec0def781b389e854cc8a12abaa25d0ccc2cc21))
+* **walletprovider:** report how full the current period's status lists are ([b28477e](https://github.com/IDFoundry/OID4VCgo/commit/b28477ebd10d7bd496a173f6a37cecc122775435))
+
 ## [0.70.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.69.0...v0.70.0) (2026-11-07)
 
 
