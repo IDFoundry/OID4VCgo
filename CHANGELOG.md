@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.70.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.69.0...v0.70.0) (2026-11-07)
+
+
+### Features
+
+* **mdocdcapi:** name and order the documents Accept gets ([d62c6f1](https://github.com/IDFoundry/OID4VCgo/commit/d62c6f1cb0cd8616312a4f41fa41551ebd812039))
+* **sdjwtvc:** accept vc+sd-jwt when VerifyOptions.AcceptLegacyTyp is set ([7bcc84d](https://github.com/IDFoundry/OID4VCgo/commit/7bcc84defcc0933b3f48ef34a139808ca3dc0d74))
+
+
+### Bug Fixes
+
+* compare JOSE typ values case-insensitively in ASCII only ([bb64509](https://github.com/IDFoundry/OID4VCgo/commit/bb64509796b4a36882c7a12ae439da5211c6b8bc))
+* **issuer:** never consume a spent stateless c_nonce as an issued one ([67d3f38](https://github.com/IDFoundry/OID4VCgo/commit/67d3f38dd7bfd16f65ad79024532c39cbe677270))
+* **sdjwtvc:** check vct#integrity, extends#integrity and uri#integrity ([7eed334](https://github.com/IDFoundry/OID4VCgo/commit/7eed3346ef58a1f3ff448fec09491cef8b78dd72))
+* **sdjwtvc:** refuse a self-signed issuer certificate given alone ([13195ad](https://github.com/IDFoundry/OID4VCgo/commit/13195adf8e4a79c2035f1a63ce1dcb6555d3a7d5))
+* **statuslist:** count a list again every 64 indices AllocateN reserves ([f57e2de](https://github.com/IDFoundry/OID4VCgo/commit/f57e2de02bac43acfbe8460fb9896e892ba6f97a))
+* **statuslist:** don't trust a kept token a 304 can't vouch for ([8aaa388](https://github.com/IDFoundry/OID4VCgo/commit/8aaa38802a5986c8c622c7e4700361598a7b4cc9))
+* **statuslist:** stop waiting on a lease holder that can't sign ([96323f1](https://github.com/IDFoundry/OID4VCgo/commit/96323f1dfff8f22fb65a48b08bcf5fbe6a277899))
+* **verifier:** require a URL-safe state when a query lacks holder binding ([ed6537f](https://github.com/IDFoundry/OID4VCgo/commit/ed6537f030e5aacbbf662f947e742392d36c36a1))
+* **wallet:** refuse a DC API request for another response mode with invalid_request ([f3efeea](https://github.com/IDFoundry/OID4VCgo/commit/f3efeeaeb702700ff731c9a6ffea41cf27fc008c))
+* **wallet:** refuse more Wallet invocation schemes as a Verifier's redirect_uri ([c9dd047](https://github.com/IDFoundry/OID4VCgo/commit/c9dd04756c3b18ae4844ca372c61b252bf4938d4))
+* **wallet:** use the Authorization Server's attestation challenge at the token endpoint ([c066d0b](https://github.com/IDFoundry/OID4VCgo/commit/c066d0b6476f9ee8658eb61dbfd300655bfb7b41))
+
 ## [0.69.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.68.0...v0.69.0) (2026-11-06)
 
 
