@@ -328,6 +328,13 @@ public enum OID4VC {
         if let error { throw WalletError(error) }
         return value
     }
+
+    /// `call`, inside one holder prompt the call's holder keys share
+    /// (`KeychainKeyStore.oneHolderPrompt`). The prompt is scoped to the
+    /// calling thread: inside `cancellable`, call this in its body.
+    static func callSharingHolderPrompt<T>(_ fn: (NSErrorPointer) -> T) throws -> T {
+        try KeychainKeyStore.oneHolderPrompt { try call(fn) }
+    }
 }
 
 /// CheckKeyStore's result.

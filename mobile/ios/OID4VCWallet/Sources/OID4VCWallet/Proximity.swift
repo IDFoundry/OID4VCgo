@@ -418,9 +418,7 @@ public final class ProximityPresentation: @unchecked Sendable {
             // The shared prompt is scoped to the thread making the Go
             // call, so it goes inside cancellable's background work.
             let json = try await OID4VC.cancellable { op in
-                try KeychainKeyStore.oneHolderPrompt {
-                    try OID4VC.call { p.respondDocuments(op, answersJSON: answersJSON, error: $0) }
-                }
+                try OID4VC.callSharingHolderPrompt { p.respondDocuments(op, answersJSON: answersJSON, error: $0) }
             }
             answer = try decode(RespondedJSON.self, json)
         } catch {
