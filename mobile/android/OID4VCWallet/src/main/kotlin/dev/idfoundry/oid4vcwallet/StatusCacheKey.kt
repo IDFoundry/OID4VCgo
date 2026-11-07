@@ -43,20 +43,48 @@ internal object StatusCacheKey {
     /**
      * Where a null `statusCacheDir` keeps lists, unless a test replaced
      * it: [DEFAULT_DIR] in `java.io.tmpdir`, which Android sets to the
-     * app's `context.cacheDir` in each of its processes; null where
-     * that's unset.
+     * app's `context.cacheDir` as each of its processes starts. It's a
+     * process-wide property any code in the app can change, though, and
+     * a process that can't use the app's storage (an isolated one, a
+     * service running under another uid) has it naming a directory not
+     * its own, or nothing; so it's used only when [appCacheDir] finds
+     * it's this app's own cache directory, and is null otherwise.
      */
     @Volatile
     var defaultDir: () -> File? = {
-        System.getProperty("java.io.tmpdir")?.takeIf { it.isNotEmpty() }?.let { File(it, DEFAULT_DIR) }
+        appCacheDir(System.getProperty("java.io.tmpdir"), ::ownerUid, android.os.Process.myUid())?.let { File(it, DEFAULT_DIR) }
     }
+
+    /**
+     * An app's own cache directory's canonical path, in its
+     * credential-encrypted or device-encrypted storage, on internal or
+     * adopted storage: `/data/data/<package>/cache` or
+     * `/data/user/<user>/<package>/cache`, say.
+     */
+    private val appCachePath = Regex("""(/data/data|/data/user(_de)?/\d+|/mnt/expand/[^/]+/user(_de)?/\d+)/[^/]+/cache""")
+
+    /**
+     * [tmpdir], made canonical, when it's an app's cache directory owned
+     * by [uid], this process's ([ownerOf] says whose a directory is):
+     * null otherwise, or when it can't be told.
+     */
+    fun appCacheDir(tmpdir: String?, ownerOf: (File) -> Int?, uid: Int): File? {
+        if (tmpdir.isNullOrEmpty()) return null
+        val dir = runCatching { File(tmpdir).canonicalFile }.getOrNull() ?: return null
+        if (!appCachePath.matches(dir.path)) return null
+        return dir.takeIf { runCatching { ownerOf(it) }.getOrNull() == uid }
+    }
+
+    /** Whose [dir] is: its owner's uid, or null when it can't be told. */
+    private fun ownerUid(dir: File): Int? = runCatching { android.system.Os.stat(dir.path).st_uid }.getOrNull()
 
     /**
      * [encoded], a configuration's JSON, keeping lists in
      * [statusCacheDir] with the `status_cache_key` that authenticates
      * them. Empty keeps them in memory only. Null keeps them in
      * [defaultDir], or in memory only when there's none or its key
-     * can't be had: the default never stops a wallet being made.
+     * can't be had (nor the directory made): the default never stops a
+     * wallet being made.
      */
     fun configuration(encoded: String, statusCacheDir: String?): String {
         if (statusCacheDir?.isEmpty() == true) return encoded
