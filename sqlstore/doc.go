@@ -299,10 +299,13 @@
 //   - SQLite takes one writer at a time: use it for a single process,
 //     such as a wallet or a single-instance server, not for a
 //     deployment scaled out across machines.
-//   - On PostgreSQL, size each process's pool (sql.DB's
-//     SetMaxOpenConns) so the pools of every replica, and FAPIgo's if
-//     separate, stay below the server's max_connections, or put a
-//     pooler such as PgBouncer between them. The stores hold nothing
+//   - On PostgreSQL, size each process's pool: SetMaxOpenConns and
+//     SetMaxIdleConns to the same n (database/sql keeps 2 idle
+//     connections by default, so under load most are closed and
+//     reopened), with SetConnMaxLifetime and SetConnMaxIdleTime set,
+//     so the pools of every replica, and FAPIgo's if separate, stay
+//     below the server's max_connections, or put a pooler such as
+//     PgBouncer between them. The stores hold nothing
 //     on a connection between transactions (Migrate's advisory lock is
 //     a transaction's), so transaction pooling serves them; with
 //     PgBouncer, set max_prepared_statements for pgx's prepared
