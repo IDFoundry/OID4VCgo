@@ -334,12 +334,15 @@ ecosystem, and record why:
   (1 MiB) and identifier list (4 MiB) `checkStatus` reads. A larger
   list fails every check of the credentials on it: raise them only for
   issuers whose lists are larger.
-- `statusCacheDir`: a directory of the app's own, under
-  `context.cacheDir`, where `checkStatus` keeps the lists it verified
+- `statusCacheDir`: where `checkStatus` keeps the lists it verified
   across launches. Each launch then revalidates a kept list with its
   server (a `304 Not Modified`) instead of downloading it again, which
   matters for lists of millions of entries; a list the server doesn't
-  confirm is never used.
+  confirm is never used. Left null, the lists are kept in
+  `oid4vcwallet-status-lists` in `context.cacheDir`, and in memory only
+  when the key authenticating them can't be had. Set a directory of the
+  app's own to keep them elsewhere (a failure to get its key then fails
+  the wallet), or `""` to keep them in memory only.
 - `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
   each document type, must chain to, instead of `issuerRoots`, so an
   SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`

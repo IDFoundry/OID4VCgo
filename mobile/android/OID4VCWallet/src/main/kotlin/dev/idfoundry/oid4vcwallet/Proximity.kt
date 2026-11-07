@@ -671,7 +671,7 @@ public data class ProximityReaderConfiguration(
     /** How long `checkStatus` uses a list it fetched, in seconds, as [WalletConfiguration.statusCacheMaxAgeSeconds]. */
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     /** Where `checkStatus` keeps lists across launches, as [WalletConfiguration.statusCacheDir]. */
-    @SerialName("status_cache_dir") val statusCacheDir: String = "",
+    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
 ) {
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable

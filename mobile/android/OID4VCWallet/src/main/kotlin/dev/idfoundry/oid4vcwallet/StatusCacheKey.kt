@@ -33,19 +33,42 @@ internal object StatusCacheKey {
     private const val TAG_BYTES = 16
     const val KEY_BYTES = 32
 
+    /** The directory a null `statusCacheDir` keeps lists in, in the app's cache directory. */
+    const val DEFAULT_DIR = "oid4vcwallet-status-lists"
+
     /** Where the key for a directory comes from: the Keystore-wrapped file, unless a test replaced it. */
     @Volatile
     var source: (File) -> ByteArray = ::wrappedKey
 
     /**
-     * [encoded], a configuration's JSON, with `status_cache_key` added
-     * when the configuration keeps lists in [statusCacheDir].
+     * Where a null `statusCacheDir` keeps lists, unless a test replaced
+     * it: [DEFAULT_DIR] in `java.io.tmpdir`, which Android sets to the
+     * app's `context.cacheDir` in each of its processes; null where
+     * that's unset.
      */
-    fun configuration(encoded: String, statusCacheDir: String): String {
-        if (statusCacheDir.isEmpty()) return encoded
-        val key = Base64.getEncoder().encodeToString(source(File(statusCacheDir)))
+    @Volatile
+    var defaultDir: () -> File? = {
+        System.getProperty("java.io.tmpdir")?.takeIf { it.isNotEmpty() }?.let { File(it, DEFAULT_DIR) }
+    }
+
+    /**
+     * [encoded], a configuration's JSON, keeping lists in
+     * [statusCacheDir] with the `status_cache_key` that authenticates
+     * them. Empty keeps them in memory only. Null keeps them in
+     * [defaultDir], or in memory only when there's none or its key
+     * can't be had: the default never stops a wallet being made.
+     */
+    fun configuration(encoded: String, statusCacheDir: String?): String {
+        if (statusCacheDir?.isEmpty() == true) return encoded
+        val dir = statusCacheDir?.let(::File) ?: defaultDir() ?: return encoded
+        val key = if (statusCacheDir != null) source(dir) else runCatching { source(dir) }.getOrNull() ?: return encoded
         val config = json.parseToJsonElement(encoded).jsonObject
-        return JsonObject(config + ("status_cache_key" to JsonPrimitive(key))).toString()
+        return JsonObject(
+            config + mapOf(
+                "status_cache_dir" to JsonPrimitive(dir.path),
+                "status_cache_key" to JsonPrimitive(Base64.getEncoder().encodeToString(key)),
+            ),
+        ).toString()
     }
 
     /** The key kept in [dir], made and kept there, wrapped, when there's none it can unwrap. */
