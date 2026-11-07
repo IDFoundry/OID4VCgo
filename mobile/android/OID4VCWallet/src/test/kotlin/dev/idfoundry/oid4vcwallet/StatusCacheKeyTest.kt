@@ -12,6 +12,9 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
+private const val CHOSEN_DIR = "/tmp/x"
+private const val APP_CACHE_DIR = "/data/data/com.example/cache"
+
 /**
  * A configuration keeping status lists in a directory carries the key that authenticates
  * them; with no directory set, the lists are kept in the default one when its key can be had.
@@ -30,9 +33,9 @@ class StatusCacheKeyTest {
     @Test
     fun keyAddedWithADirectory() {
         StatusCacheKey.source = { key }
-        val config = json.parseToJsonElement(StatusCacheKey.configuration("""{"status_cache_dir":"/tmp/x","batch_size":3}""", "/tmp/x")).jsonObject
+        val config = json.parseToJsonElement(StatusCacheKey.configuration("""{"status_cache_dir":"$CHOSEN_DIR","batch_size":3}""", CHOSEN_DIR)).jsonObject
         assertEquals(Base64.getEncoder().encodeToString(key), config["status_cache_key"]!!.jsonPrimitive.content)
-        assertEquals("/tmp/x", config["status_cache_dir"]!!.jsonPrimitive.content)
+        assertEquals(CHOSEN_DIR, config["status_cache_dir"]!!.jsonPrimitive.content)
         assertEquals(3, config["batch_size"]!!.jsonPrimitive.int)
     }
 
@@ -68,29 +71,29 @@ class StatusCacheKeyTest {
     @Test
     fun chosenDirectoryFailsWithoutItsKey() {
         StatusCacheKey.source = { throw StoreException("locked") }
-        assertThrows(StoreException::class.java) { StatusCacheKey.configuration("{}", "/tmp/x") }
+        assertThrows(StoreException::class.java) { StatusCacheKey.configuration("{}", CHOSEN_DIR) }
     }
 
     /** The default directory is `java.io.tmpdir` only while that's this app's own cache directory. */
     @Test
     fun defaultOnlyInTheAppsCacheDirectory() {
         val mine = { _: File -> 10123 }
-        for (path in listOf("/data/data/com.example/cache", "/data/user/10/com.example/cache", "/data/user_de/0/com.example/cache", "/mnt/expand/1234-abcd/user/0/com.example/cache")) {
+        for (path in listOf(APP_CACHE_DIR, "/data/user/10/com.example/cache", "/data/user_de/0/com.example/cache", "/mnt/expand/1234-abcd/user/0/com.example/cache")) {
             assertEquals(path, File(path), StatusCacheKey.appCacheDir(path, mine, 10123))
         }
         for (path in listOf(null, "", "/sdcard/Download", "/data/local/tmp", "/data/data/com.example/files", "/data/data/com.example/cache/sub", "/tmp")) {
             assertEquals(path, null, StatusCacheKey.appCacheDir(path, mine, 10123))
         }
         // Another uid's (an isolated process's, say), or one whose owner can't be told.
-        assertEquals(null, StatusCacheKey.appCacheDir("/data/data/com.example/cache", mine, 99000))
-        assertEquals(null, StatusCacheKey.appCacheDir("/data/data/com.example/cache", { null }, 10123))
-        assertEquals(null, StatusCacheKey.appCacheDir("/data/data/com.example/cache", { throw RuntimeException("Stub!") }, 10123))
+        assertEquals(null, StatusCacheKey.appCacheDir(APP_CACHE_DIR, mine, 99000))
+        assertEquals(null, StatusCacheKey.appCacheDir(APP_CACHE_DIR, { null }, 10123))
+        assertEquals(null, StatusCacheKey.appCacheDir(APP_CACHE_DIR, { throw RuntimeException("Stub!") }, 10123))
     }
 
     /** Made canonical first: a path naming the cache directory through `..` is judged as what it is. */
     @Test
     fun defaultJudgedCanonical() {
-        assertEquals(File("/data/data/com.example/cache"), StatusCacheKey.appCacheDir("/data/data/com.example/files/../cache", { 1 }, 1))
+        assertEquals(File(APP_CACHE_DIR), StatusCacheKey.appCacheDir("/data/data/com.example/files/../cache", { 1 }, 1))
         assertEquals(null, StatusCacheKey.appCacheDir("/data/data/com.example/cache/../files", { 1 }, 1))
     }
 

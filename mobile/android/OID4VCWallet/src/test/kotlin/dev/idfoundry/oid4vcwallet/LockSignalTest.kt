@@ -58,15 +58,24 @@ class LockSignalTest {
         assertEquals(1, listeners.fire())
     }
 
-    /** Kept by the test, as a store keeps its own. */
+    /**
+     * Kept by the test, as a store keeps its own. An object, not a lambda, like [addUnkept]'s:
+     * a lambda capturing nothing can be one shared instance.
+     */
     private val kept: () -> Unit = object : () -> Unit {
-        override fun invoke() {}
+        override fun invoke() {
+            // Never called: only whether it's kept matters.
+        }
     }
 
     /** Adds a listener nothing else keeps, and returns a weak reference to it. */
     private fun addUnkept(listeners: LockListeners): WeakReference<() -> Unit> {
+        // An object, not a lambda: a lambda capturing nothing can be one shared instance,
+        // which the collector never collects.
         val onLock: () -> Unit = object : () -> Unit {
-            override fun invoke() {}
+            override fun invoke() {
+                // Never called: only whether it's collected matters.
+            }
         }
         listeners.add(onLock)
         return WeakReference(onLock)
