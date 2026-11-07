@@ -35,6 +35,11 @@ services on loopback addresses are refused. The rest is the app's.
   several times slower on every record read and write;
   `keySecurityLevel()` says where it is, to check or log.
   `InMemoryCredentialStore` is for tests.
+- Give the store `Options(lockSignal = LockSignal.of(context))` so a
+  record read again needs no Keystore call: it then holds the record
+  keys it unwraps while the device is unlocked, and drops them when the
+  screen turns off. Without it every record read is a Keystore call
+  (about 10 ms in the TEE, 40 ms in StrongBox).
 - Call `Wallet.sweepOrphanedKeys` at launch, before any issuance, so keys
   an interrupted issuance left don't accumulate.
 - Make one `Wallet` per key store and credential store in each process,

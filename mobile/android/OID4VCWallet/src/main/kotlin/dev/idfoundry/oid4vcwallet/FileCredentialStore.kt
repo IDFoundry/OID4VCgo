@@ -86,8 +86,9 @@ public class FileCredentialStore(
          * iOS's "until first user authentication". For an app that must
          * read credentials while locked. The store also holds the record
          * keys it has unwrapped, in memory, so a record read again needs
-         * no Keystore call: under [WHEN_UNLOCKED] it holds none, as one
-         * held would open a record while the device is locked.
+         * no Keystore call: under [WHEN_UNLOCKED] it holds them only with
+         * an [Options.lockSignal], as one held past the device locking
+         * would open a record the Keystore key refuses to.
          */
         AFTER_FIRST_UNLOCK,
     }
@@ -123,6 +124,18 @@ public class FileCredentialStore(
          * presentation, this key on every record.
          */
         val strongBox: AndroidKeystoreKeyStore.StrongBox = AndroidKeystoreKeyStore.StrongBox.OFF,
+        /**
+         * Under [Protection.WHEN_UNLOCKED], what tells the store the device
+         * has locked ([LockSignal.of] for the device's): with it, the store
+         * holds the record keys it unwraps, as under
+         * [Protection.AFTER_FIRST_UNLOCK], while the device is unlocked,
+         * and drops them, zeroed, when the screen turns off; a record read
+         * again then needs no Keystore call. Without it (the default), or
+         * when it can't watch, every read asks the Keystore. A read that
+         * began just before the device locked may still finish with a key
+         * held. Ignored under [Protection.AFTER_FIRST_UNLOCK].
+         */
+        val lockSignal: LockSignal? = null,
     )
 
     /** This process's lock on the directory, shared by every store on it. */
@@ -359,6 +372,7 @@ public class FileCredentialStore(
         val at = 1 + WRAPPED_BYTES
         if (sealed.size < at + IV_BYTES + TAG_BYTES) throw UnreadableRecordException(id, "credential record $id is malformed")
         val wrapped = sealed.copyOfRange(1, at)
+        val drops = lockDropsNow()
         val recordKey = recordKeyHeld(id, wrapped) ?: run {
             val unwrap = Cipher.getInstance(TRANSFORMATION)
             unwrap.initWithKey(Cipher.DECRYPT_MODE, GCMParameterSpec(TAG_BYTES * 8, sealed, 1, IV_BYTES))
@@ -380,7 +394,7 @@ public class FileCredentialStore(
                 throw UnreadableRecordException(id, "credential record $id doesn't decrypt")
             }
             val record = checkedLength(id, opened, sealed.size - at - IV_BYTES - TAG_BYTES)
-            holdRecordKey(id, wrapped, recordKey)
+            holdRecordKey(id, wrapped, recordKey, drops)
             return record
         } finally {
             recordKey.fill(0)
@@ -389,32 +403,76 @@ public class FileCredentialStore(
 
     /**
      * The record keys this store has unwrapped, by record ID, each with
-     * the wrapped key it came from, under [Protection.AFTER_FIRST_UNLOCK]
-     * only: a record read again is opened without asking the Keystore,
-     * and one rewritten (by any process) has another wrapped key, so
-     * isn't. Never under [Protection.WHEN_UNLOCKED]: a key held here would
-     * open a record while the device is locked, when the Keystore key
-     * refuses to. At most [HELD_RECORD_KEYS], the least recently used
-     * dropped; each is zeroed when dropped.
+     * the wrapped key it came from, when [holdsRecordKeys]: a record read
+     * again is opened without asking the Keystore, and one rewritten (by
+     * any process) has another wrapped key, so isn't. Under
+     * [Protection.WHEN_UNLOCKED], only while the [Options.lockSignal] says
+     * the device is unlocked: a key held past it locking would open a
+     * record the Keystore key refuses to. At most [HELD_RECORD_KEYS], the
+     * least recently used dropped; each is zeroed when dropped.
      */
     private val heldRecordKeys = object : LinkedHashMap<String, Pair<ByteArray, ByteArray>>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<ByteArray, ByteArray>>): Boolean =
             (size > HELD_RECORD_KEYS).also { if (it) eldest.value.second.fill(0) }
     }
 
+    /**
+     * How many times the held record keys have been dropped for the device
+     * locking, under [heldRecordKeys]' lock: a key unwrapped before a drop
+     * isn't held after it.
+     */
+    private var lockDrops = 0L
+
+    /**
+     * Whether the store holds record keys: always under
+     * [Protection.AFTER_FIRST_UNLOCK]; under [Protection.WHEN_UNLOCKED],
+     * only when its [Options.lockSignal] watches for the device locking.
+     */
+    private val holdsRecordKeys: Boolean = when (options.protection) {
+        Protection.AFTER_FIRST_UNLOCK -> true
+        Protection.WHEN_UNLOCKED -> options.lockSignal?.let { signal ->
+            // Weakly: the signal outlives the store.
+            val store = java.lang.ref.WeakReference(this)
+            runCatching { signal.watch { store.get()?.dropRecordKeys() } }.getOrDefault(false)
+        } ?: false
+    }
+
+    /** Whether a held record key may be used, or one unwrapped held, now. */
+    private fun mayUseHeldKeys(): Boolean =
+        options.protection == Protection.AFTER_FIRST_UNLOCK ||
+            runCatching { options.lockSignal?.isUnlocked == true }.getOrDefault(false)
+
+    /** [lockDrops] now: taken before a record key is unwrapped, for [holdRecordKey]. */
+    private fun lockDropsNow(): Long = synchronized(heldRecordKeys) { lockDrops }
+
     /** A copy of [id]'s record key, held for the record wrapped as [wrapped]; null when none is. */
     private fun recordKeyHeld(id: String, wrapped: ByteArray): ByteArray? {
-        if (options.protection != Protection.AFTER_FIRST_UNLOCK) return null
+        if (!holdsRecordKeys) return null
+        if (!mayUseHeldKeys()) {
+            dropRecordKeys()
+            return null
+        }
         synchronized(heldRecordKeys) {
             val (w, key) = heldRecordKeys[id] ?: return null
             return if (MessageDigest.isEqual(w, wrapped)) key.copyOf() else null
         }
     }
 
-    private fun holdRecordKey(id: String, wrapped: ByteArray, recordKey: ByteArray) {
-        if (options.protection != Protection.AFTER_FIRST_UNLOCK) return
+    /** Holds [recordKey] for [id], unless the keys were dropped since [drops] was taken, or the device is locked. */
+    private fun holdRecordKey(id: String, wrapped: ByteArray, recordKey: ByteArray, drops: Long) {
+        if (!holdsRecordKeys) return
         synchronized(heldRecordKeys) {
+            if (drops != lockDrops || !mayUseHeldKeys()) return
             heldRecordKeys.put(id, wrapped to recordKey.copyOf())?.second?.fill(0)
+        }
+    }
+
+    /** Drops every held record key, zeroed: the device may have locked. */
+    private fun dropRecordKeys() {
+        synchronized(heldRecordKeys) {
+            lockDrops++
+            heldRecordKeys.values.forEach { it.second.fill(0) }
+            heldRecordKeys.clear()
         }
     }
 
@@ -612,7 +670,7 @@ public class FileCredentialStore(
         private val random = SecureRandom()
         private const val CHUNK_BYTES = 4096
 
-        /** The most record keys a store holds unwrapped ([Protection.AFTER_FIRST_UNLOCK] only). */
+        /** The most record keys a store holds unwrapped. */
         private const val HELD_RECORD_KEYS = 512
 
         /**
