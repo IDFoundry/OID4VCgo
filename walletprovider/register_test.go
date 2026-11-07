@@ -36,7 +36,7 @@ func TestRegister(t *testing.T) {
 		t.Fatalf("registered %+v", in)
 	}
 	want := walletprovider.EvidenceSummary{
-		Kind: kindStrongBox, Platform: walletprovider.PlatformAndroid,
+		Kind: kindAndroid, Platform: walletprovider.PlatformAndroid,
 		SecurityLevel: walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
 		AppID: androidApp, AppVersion: 10, BootState: walletprovider.BootStateVerified, DeviceLocked: true,
 	}

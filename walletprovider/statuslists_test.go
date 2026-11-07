@@ -266,3 +266,20 @@ func TestStatusListsServed(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusListsMountedAtBaseURI: StatusLists mounted as the example
+// and DEPLOYING.md mount it, under the base URI's path with
+// http.StripPrefix, serves the list an attestation names at its uri.
+func TestStatusListsMountedAtBaseURI(t *testing.T) {
+	h := newHarness(t, nil)
+	in, _ := h.register(kindStrongBox)
+	ref := h.instanceKey(&h.newInstanceKey(in.ID, kindTEE).PublicKey).Status
+	base := strings.TrimPrefix(statusBase, identifier)
+	mux := http.NewServeMux()
+	mux.Handle(base+"/", http.StripPrefix(base, h.p.StatusLists()))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ref.URI, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s: %d %s", ref.URI, rec.Code, rec.Body)
+	}
+}

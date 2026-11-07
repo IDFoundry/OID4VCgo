@@ -619,21 +619,55 @@ func TestKeyAttestationCounter(t *testing.T) {
 	}
 }
 
-// misbehavingVerifier reports what its report function returns, after
-// running its before hook.
+// misbehavingVerifier reports what its report function returns.
 type misbehavingVerifier struct {
 	kind   string
-	before func(walletprovider.EvidenceInput)
 	report func(walletprovider.EvidenceInput) walletprovider.VerifiedEvidence
 }
 
 func (v misbehavingVerifier) Kind() string { return v.kind }
 
 func (v misbehavingVerifier) Verify(_ context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
-	if v.before != nil {
-		v.before(in)
-	}
 	return v.report(in), nil
+}
+
+// racingVerifier is the harness's iOS verifier, except that for
+// evidence for purpose it advances the stored instance's counter
+// before reporting an assertion advancing the one it was given: as if
+// a concurrent request used the same assertion meanwhile.
+type racingVerifier struct {
+	walletprovidertest.FakeVerifier
+	purpose   walletprovider.Purpose
+	instances walletprovider.InstanceStore
+}
+
+func (v racingVerifier) Verify(ctx context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
+	ev, err := v.FakeVerifier.Verify(ctx, in)
+	if err != nil || in.Purpose != v.purpose {
+		return ev, err
+	}
+	cur, err := v.instances.Get(ctx, in.Instance.ID)
+	if err != nil {
+		return walletprovider.VerifiedEvidence{}, err
+	}
+	cur.Counter++
+	if err := v.instances.Update(ctx, cur); err != nil {
+		return walletprovider.VerifiedEvidence{}, err
+	}
+	next := in.Instance.Counter + 1
+	ev.Counter = &next
+	return ev, nil
+}
+
+// racing has the harness's iOS evidence for purpose race (racingVerifier).
+func racing(purpose walletprovider.Purpose) func(*walletprovider.Config, *walletprovider.Dependencies) {
+	return func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		for i, v := range d.Evidence {
+			if v.Kind() == kindIOS {
+				d.Evidence[i] = racingVerifier{FakeVerifier: iosVerifier(), purpose: purpose, instances: d.Instances}
+			}
+		}
+	}
 }
 
 // TestVerifierOutputChecked: what a verifier returns is checked, so a
@@ -676,35 +710,50 @@ func TestVerifierOutputChecked(t *testing.T) {
 // counter that changed meanwhile — another request using the same
 // assertion — is refused by the store's compare-and-swap.
 func TestKeyAttestationCounterRace(t *testing.T) {
-	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
-		instances := d.Instances
-		d.Evidence = append(d.Evidence, misbehavingVerifier{
-			kind: "racing",
-			before: func(in walletprovider.EvidenceInput) {
-				cur, err := instances.Get(context.Background(), in.Instance.ID)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				cur.Counter++
-				if err := instances.Update(context.Background(), cur); err != nil {
-					t.Error(err)
-				}
-			},
-			report: func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
-				ev := walletprovider.VerifiedEvidence{Platform: walletprovider.PlatformIOS, AppID: iosApp}
-				for _, k := range in.Keys {
-					ev.Keys = append(ev.Keys, walletprovider.AttestedKey{Key: k, SecurityLevel: walletprovider.SecurityLevelSecureEnclave, Binding: walletprovider.KeyBindingAppAssertion})
-				}
-				next := in.Instance.Counter + 1
-				ev.Counter = &next
-				return ev
-			},
-		})
-	})
+	h := newHarness(t, racing(walletprovider.PurposeHolder))
 	in, _ := h.register(kindIOS)
 	ik := h.newInstanceKey(in.ID, kindIOS)
-	if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, "racing"); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+	if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, kindIOS); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
 		t.Fatalf("KeyAttestation with a counter that changed meanwhile = %v, want ErrEvidenceRejected", err)
+	}
+}
+
+// TestInstanceKeyCounterRace: a first Wallet Attestation for an
+// instance key whose assertion the compare-and-swap refuses leaves the
+// key unrecorded, so asking again without evidence gets nothing.
+func TestInstanceKeyCounterRace(t *testing.T) {
+	h := newHarness(t, racing(walletprovider.PurposeInstance))
+	in, _ := h.register(kindIOS)
+	key := newKey(t)
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, kindIOS); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+		t.Fatalf("WalletAttestation with a counter that changed meanwhile = %v, want ErrEvidenceRejected", err)
+	}
+	if _, err := h.deps.InstanceKeys.Get(context.Background(), h.thumbprint(&key.PublicKey)); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("the refused instance key's record: %v, want ErrNotFound", err)
+	}
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, walletprovider.ErrEvidenceRequired) {
+		t.Fatalf("WalletAttestation again without evidence = %v, want ErrEvidenceRequired", err)
+	}
+}
+
+// TestEvidenceKindMatchesRegistration: later evidence must be of the
+// Kind the instance registered with, not just from its platform and
+// app: another verifier for the platform would skip the instance's
+// own verifier's checks, such as App Attest's counter.
+func TestEvidenceKindMatchesRegistration(t *testing.T) {
+	const kindOtherIOS = "ios-other"
+	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		other := iosVerifier()
+		other.KindName = kindOtherIOS
+		d.Evidence = append(d.Evidence, other)
+	})
+	in, _ := h.register(kindIOS)
+	key := newKey(t)
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, kindOtherIOS); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+		t.Fatalf("WalletAttestation with another iOS verifier's evidence = %v, want ErrEvidenceRejected", err)
+	}
+	ik := h.newInstanceKey(in.ID, kindIOS)
+	if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, kindOtherIOS); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
+		t.Fatalf("KeyAttestation with another iOS verifier's evidence = %v, want ErrEvidenceRejected", err)
 	}
 }
