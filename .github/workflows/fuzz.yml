@@ -277,6 +277,12 @@ jobs:
           - id: androidkey-parse-key-description
             pkg: ./walletprovider/androidkey
             name: FuzzParseKeyDescription
+          - id: appattest-verify-attestation
+            pkg: ./walletprovider/appattest
+            name: FuzzVerifyAttestation
+          - id: appattest-verify-assertion
+            pkg: ./walletprovider/appattest
+            name: FuzzVerifyAssertion
           - id: verifier-default-sdjwt-issuer-leaf-policy
             pkg: ./verifier
             name: FuzzDefaultSDJWTIssuerLeafPolicy
