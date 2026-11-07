@@ -251,13 +251,43 @@ public class HttpWalletProvider internal constructor(
 
     /**
      * The registration kept, if the registration key store still holds
-     * its key; one whose key is gone is forgotten.
+     * its key; one whose key is gone, or another, is forgotten, and that
+     * other key deleted.
      */
     private fun kept(): RegisteredInstance? {
         val kept = instances.instance() ?: return null
-        if (registrationKeys.publicKey(kept.keyID)?.let { jwkThumbprint(it) == kept.keyThumbprint } == true) return kept
+        val point = registrationKeys.publicKey(kept.keyID)
+        if (point != null && jwkThumbprint(point) == kept.keyThumbprint) return kept
+        if (point != null) registrationKeys.deleteKey(kept.keyID)
         instances.remove(kept)
         return null
+    }
+
+    /**
+     * Deletes every key in the registration key store but the kept
+     * registration's, and returns how many it deleted: the keys of
+     * registrations that never finished, as when the app's process ended
+     * in the middle of one, which nothing else deletes. Call it at
+     * launch. It takes its turn with registrations over the same
+     * registry, so it never deletes the key of one in progress.
+     *
+     * Only an [AndroidKeystoreKeyStore] lists its keys: over another
+     * store it deletes nothing, and returns 0. Call it only where this
+     * provider's registration keys are the only ones in that store:
+     * every provider made with the default [registrationKeyStore] shares
+     * it, so an app with more than one Wallet Provider gives each an
+     * [AndroidKeystoreKeyStore] of its own alias prefix (under
+     * [REGISTRATION_KEY_ALIAS_PREFIX], which the wallet's mustn't cover)
+     * before sweeping either.
+     */
+    public suspend fun sweepOrphanedRegistrationKeys(): Int {
+        val store = registrationKeys as? AndroidKeystoreKeyStore ?: return 0
+        return sweepRegistrationKeys(store::deleteKeys)
+    }
+
+    /** [sweepOrphanedRegistrationKeys] over a store that deletes its keys but those given with [deleteKeysExcept]. */
+    internal suspend fun sweepRegistrationKeys(deleteKeysExcept: (Set<String>) -> Int): Int = registering.withLock {
+        withContext(Dispatchers.IO) { deleteKeysExcept(kept()?.let { setOf(it.keyID) }.orEmpty()) }
     }
 
     /**
@@ -298,15 +328,20 @@ public class HttpWalletProvider internal constructor(
             registered = instance
             return instance
         } finally {
-            if (registered == null) registrationKeys.deleteKey(id)
+            // A failure deleting it doesn't hide the registration's.
+            if (registered == null) runCatching { registrationKeys.deleteKey(id) }
         }
     }
 
-    /** Forgets the revoked [instance] and deletes its registration key. */
+    /**
+     * Deletes the revoked [instance]'s registration key and forgets it —
+     * in that order, so a failure leaves no key behind: a registration
+     * whose key is gone is forgotten when next read ([kept]).
+     */
     private suspend fun forget(instance: RegisteredInstance): Unit = registering.withLock {
         withContext(Dispatchers.IO) {
-            instances.remove(instance)
             registrationKeys.deleteKey(instance.keyID)
+            instances.remove(instance)
         }
     }
 

@@ -26,6 +26,8 @@ func TestInstanceStoreContract(t *testing.T, newStore func(t *testing.T) walletp
 		{"CreateThenGet", instanceCreateThenGet},
 		{"CreateDuplicateIsExists", instanceCreateDuplicate},
 		{"CreateDuplicateKeyIsExists", instanceCreateDuplicateKey},
+		{"CreateDuplicateCredentialIsExists", instanceCreateDuplicateCredential},
+		{"ConcurrentCreatesOfOneCredential", instanceConcurrentCreatesOfOneCredential},
 		{"UpdateComparesRevision", instanceUpdateComparesRevision},
 		{"UpdateUnknownIsNotFound", instanceUpdateUnknown},
 		{"ConcurrentUpdatesLoseNothing", instanceConcurrentUpdates},
@@ -48,7 +50,7 @@ func sampleInstance(id string) walletprovider.Instance {
 			SecurityLevel: walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
 			AppID: "com.example.wallet", AppVersion: 42, BootState: walletprovider.BootStateVerified, DeviceLocked: true,
 		},
-		Credential: []byte{1, 2, 3}, Counter: 7,
+		Credential: []byte{1, 2, 3}, CredentialID: "cred-" + id, Counter: 7,
 		State: walletprovider.StateSuspended, Reason: "lost device",
 		CreatedAt: at, LastSeenAt: at.Add(time.Hour),
 		WalletAttestations: 3, KeyAttestations: 5,
@@ -118,6 +120,58 @@ func instanceCreateDuplicateKey(t *testing.T, s walletprovider.InstanceStore) {
 	}
 	if _, err := s.Get(context.Background(), "b"); !errors.Is(err, walletprovider.ErrNotFound) {
 		t.Fatalf("Get after a refused Create = %v, want ErrNotFound", err)
+	}
+}
+
+// instanceCreateDuplicateCredential: an instance whose CredentialID
+// another has isn't stored; instances without one don't conflict.
+func instanceCreateDuplicateCredential(t *testing.T, s walletprovider.InstanceStore) {
+	mustCreate(t, s, sampleInstance("a"))
+	other := sampleInstance("b")
+	other.CredentialID = "cred-a"
+	if err := s.Create(context.Background(), other); !errors.Is(err, walletprovider.ErrExists) {
+		t.Fatalf("Create(another instance with the same credential ID) = %v, want ErrExists", err)
+	}
+	if _, err := s.Get(context.Background(), "b"); !errors.Is(err, walletprovider.ErrNotFound) {
+		t.Fatalf("Get after a refused Create = %v, want ErrNotFound", err)
+	}
+	for _, id := range []string{"c", "d"} {
+		in := sampleInstance(id)
+		in.CredentialID = ""
+		mustCreate(t, s, in)
+		if got := mustGet(t, s, id); got.CredentialID != "" {
+			t.Fatalf("Get(%q).CredentialID = %q, want empty", id, got.CredentialID)
+		}
+	}
+}
+
+// instanceConcurrentCreatesOfOneCredential: of concurrent Creates of
+// instances with one CredentialID, exactly one stores its instance.
+func instanceConcurrentCreatesOfOneCredential(t *testing.T, s walletprovider.InstanceStore) {
+	const workers = 8
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		in := sampleInstance(fmt.Sprintf("id-%d", i))
+		in.CredentialID = "one-credential"
+		wg.Go(func() { errs[i] = s.Create(context.Background(), in) })
+	}
+	wg.Wait()
+	won := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case !errors.Is(err, walletprovider.ErrExists):
+			t.Fatalf("Create(id-%d): %v, want nil or ErrExists", i, err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d of %d concurrent Creates of one credential stored it, want 1", won, workers)
+	}
+	page, err := s.List(context.Background(), "", workers+1)
+	if err != nil || len(page) != 1 {
+		t.Fatalf("List after concurrent Creates = %d instances, %v; want 1", len(page), err)
 	}
 }
 

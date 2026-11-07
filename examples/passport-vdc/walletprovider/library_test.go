@@ -37,7 +37,7 @@ func newLibraryFixture(t *testing.T) *libraryFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewTLSServer(s.handler())
+	srv := httptest.NewTLSServer(s.handler(true))
 	t.Cleanup(srv.Close)
 	return &libraryFixture{p: p, s: s, srv: srv, c: Client{URL: srv.URL, HTTP: srv.Client()}}
 }

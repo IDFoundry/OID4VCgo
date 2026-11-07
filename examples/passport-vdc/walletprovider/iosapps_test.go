@@ -2,7 +2,10 @@ package walletprovider
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
@@ -48,7 +51,7 @@ func TestService_V1TakesAppAttestWithIOSApps(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv := httptest.NewTLSServer(s.handler())
+		srv := httptest.NewTLSServer(s.handler(len(tc.apps) == 0))
 		ctx := context.Background()
 		wc, err := wp.NewClient(srv.URL, wp.ClientOptions{HTTP: srv.Client()})
 		if err != nil {
@@ -66,5 +69,53 @@ func TestService_V1TakesAppAttestWithIOSApps(t *testing.T) {
 			t.Errorf("IOSApps %v: App Attest evidence over /v1: %s, want %s", tc.apps, code, tc.want)
 		}
 		srv.Close()
+	}
+}
+
+// TestService_IOSAppsTurnOffTheDemoProtocol: with IOSApps the older
+// protocol's endpoints answer 403, and attest nothing, while an
+// in-process client still gets attestations from them; without
+// IOSApps the endpoints answer as before.
+func TestService_IOSAppsTurnOffTheDemoProtocol(t *testing.T) {
+	ctx := context.Background()
+	p, err := New(testIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := p.NewService(ServiceConfig{ClientID: "wallet-1", IOSApps: []string{"ABCDE12345.dev.idfoundry.oid4vcgo.demowallet"}, Logf: func(string, ...any) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewTLSServer(s)
+	defer srv.Close()
+	outside := Client{URL: srv.URL, HTTP: srv.Client()}
+	key := &p256(t).PublicKey
+	if _, err := outside.WalletAttestation(ctx, "wallet-1", key); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("Wallet Attestation over the demo protocol with IOSApps: %v, want HTTP 403", err)
+	}
+	if _, err := outside.KeyAttestation(ctx, key, []*ecdsa.PublicKey{key}, "n"); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
+		t.Fatalf("Key Attestation over the demo protocol with IOSApps: %v, want HTTP 403", err)
+	}
+	resp, err := srv.Client().Post(srv.URL+ChallengePath, "application/json", strings.NewReader(`{"purpose":"instance"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("a challenge over the demo protocol with IOSApps: HTTP %d, want 403", resp.StatusCode)
+	}
+
+	inside := Client{URL: "https://127.0.0.1:6443", HTTP: s.InProcessClient()}
+	if _, err := inside.WalletAttestation(ctx, "wallet-1", key); err != nil {
+		t.Fatalf("Wallet Attestation in process: %v", err)
+	}
+	if _, err := inside.KeyAttestation(ctx, key, []*ecdsa.PublicKey{key}, "n"); err != nil {
+		t.Fatalf("Key Attestation in process: %v", err)
+	}
+
+	// Without IOSApps, the endpoints attest as before.
+	_, open := newService(t)
+	if _, err := open.WalletAttestation(ctx, "wallet-1", key); err != nil {
+		t.Fatalf("Wallet Attestation without IOSApps: %v", err)
 	}
 }

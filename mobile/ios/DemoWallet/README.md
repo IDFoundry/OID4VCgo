@@ -221,7 +221,8 @@ login.
    `-ios-app` is the app's App ID, your team ID and its bundle ID
    (`BUNDLE_ID` below, if you set one): the Wallet Provider then attests
    it over the library's protocol, with App Attest evidence from the
-   development environment, as a development build makes.
+   development environment, as a development build makes, and turns
+   off the demo provider's own API, which attests any caller.
 
 3. Install and launch the app on a connected iPhone, signed with your
    team:
@@ -238,7 +239,8 @@ login.
    (Identifiers → the app → Capabilities), as the entitlement
    `com.apple.developer.devicecheck.appattest-environment`
    (`development`) needs. `PROVIDER_PROTOCOL=demo` uses the demo
-   provider's own API instead, without App Attest.
+   provider's own API instead, without App Attest: start the demo
+   without `-ios-app` for it, as `-ios-app` turns that API off (`403`).
 
 4. On the phone, open the issuer's page in Safari, upload a passport (or
    use the sample), and open the offer link. For a presentation, open the

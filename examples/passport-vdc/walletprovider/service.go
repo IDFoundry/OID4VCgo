@@ -16,6 +16,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"time"
@@ -145,7 +146,12 @@ type ServiceConfig struct {
 	// one of these apps, then its assertions over the keys. Development
 	// environment keys are accepted, as a demo build's are; a
 	// production provider leaves appattest.Verifier.AllowDevelopment
-	// unset.
+	// unset. With IOSApps the older protocol's endpoints
+	// (ChallengePath, WalletAttestationPath, KeyAttestationPath), which
+	// attest any caller, answer 403: App Attest over /v1/ is the only
+	// way to an attestation from outside the process. A wallet in the
+	// same process still speaks the older protocol through
+	// Service.InProcessClient.
 	IOSApps []string
 	// Logf logs each attestation and what was made of its evidence; nil
 	// means log.Printf.
@@ -217,13 +223,38 @@ func (p *Provider) NewService(cfg ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Handler: s.handler(), s: s}, nil
+	return &Service{Handler: s.handler(len(cfg.IOSApps) == 0), s: s}, nil
 }
 
 // Service is the provider's service (NewService): an http.Handler.
 type Service struct {
 	http.Handler
 	s *service
+}
+
+// InProcessClient is an HTTP client for a wallet in the service's own
+// process (cmd/demo's web wallet): it serves each request with the
+// service's handler, without a connection, and with the older
+// protocol's endpoints even where Handler refuses them
+// (ServiceConfig.IOSApps). Its requests come from 127.0.0.1, for the
+// rate limits.
+func (s *Service) InProcessClient() *http.Client {
+	return &http.Client{Transport: handlerTransport{s.s.handler(true)}, Timeout: 10 * time.Second}
+}
+
+// handlerTransport is an http.RoundTripper that serves each request
+// with h, in process.
+type handlerTransport struct{ h http.Handler }
+
+func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	req := r.Clone(r.Context())
+	req.RemoteAddr, req.RequestURI = "127.0.0.1:0", r.URL.RequestURI()
+	if req.Body == nil {
+		req.Body = http.NoBody
+	}
+	rec := httptest.NewRecorder()
+	t.h.ServeHTTP(rec, req)
+	return rec.Result(), nil
 }
 
 // Sweep deletes the status lists of the periods the library Wallet
@@ -254,11 +285,19 @@ func (s *Service) SweepEvery(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (s *service) handler() http.Handler {
+// handler serves the library's protocol under /v1/ and, if legacy,
+// the older protocol's endpoints; otherwise they answer 403.
+func (s *service) handler(legacy bool) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+ChallengePath, s.challenge)
-	mux.HandleFunc("POST "+WalletAttestationPath, s.walletAttestation)
-	mux.HandleFunc("POST "+KeyAttestationPath, s.keyAttestation)
+	if legacy {
+		mux.HandleFunc("POST "+ChallengePath, s.challenge)
+		mux.HandleFunc("POST "+WalletAttestationPath, s.walletAttestation)
+		mux.HandleFunc("POST "+KeyAttestationPath, s.keyAttestation)
+	} else {
+		for _, path := range []string{ChallengePath, WalletAttestationPath, KeyAttestationPath} {
+			mux.HandleFunc("POST "+path, refuseUnattested)
+		}
+	}
 	v1 := s.lib.Handler()
 	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.URL.Path == wp.ChallengePath || r.URL.Path == wp.InstancesPath) && !s.challenges.allow(clientAddress(r), s.cfg.Now()) {
@@ -268,6 +307,13 @@ func (s *service) handler() http.Handler {
 		v1.ServeHTTP(w, r)
 	}))
 	return mux
+}
+
+// refuseUnattested answers a request of the older protocol, which
+// attests any caller, when the service attests iOS apps with App
+// Attest (ServiceConfig.IOSApps).
+func refuseUnattested(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusForbidden, "this Wallet Provider attests only over /v1/, with platform evidence: it was started with -ios-app, which turns off the demo protocol that attests any caller")
 }
 
 func (p *Provider) newService(cfg ServiceConfig) (*service, error) {

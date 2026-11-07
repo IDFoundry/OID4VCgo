@@ -509,6 +509,45 @@ class HttpWalletProviderTest {
     }
 
     @Test
+    fun aRegistrationWhoseKeyIDNamesAnotherKeyIsForgotten() = runBlocking {
+        val s = Setup()
+        val stray = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
+        s.registry.put(RegisteredInstance("another key's", stray, "inst-old"))
+        s.walletAttestation(s.newInstanceKey())
+        // The stray key is deleted; the new registration's is kept.
+        assertEquals(setOf(s.registry.instance()!!.keyID), s.registrationKeys.pairs.keys)
+        assertEquals("inst0", s.registry.instance()!!.instanceID)
+    }
+
+    @Test
+    fun theSweepKeepsOnlyTheRegistrationsKey() = runBlocking {
+        val s = Setup()
+        val deleteExcept = { keep: Set<String> ->
+            val gone = s.registrationKeys.pairs.keys - keep
+            gone.forEach(s.registrationKeys::deleteKey)
+            gone.size
+        }
+        // Left by a registration that never finished; nothing registered.
+        val left = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
+        assertEquals(1, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertNull(s.registrationKeys.publicKey(left))
+
+        s.walletAttestation(s.newInstanceKey())
+        val kept = s.registry.instance()!!
+        repeat(2) { s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32)) }
+        assertEquals(2, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertEquals(setOf(kept.keyID), s.registrationKeys.pairs.keys)
+        // The registration still signs: no new one.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals(1, s.provider.count(INSTANCES))
+
+        // A store that can't list its keys: nothing is deleted.
+        s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
+        assertEquals(0, s.wp.sweepOrphanedRegistrationKeys())
+        assertEquals(2, s.registrationKeys.pairs.size)
+    }
+
+    @Test
     fun aRegistrationKeyStoreThatDoesntAttestIsRefused() = runBlocking {
         val s = Setup(registrationKeys = FakeKeyStore(attests = false))
         expectStoreException("didn't attest the registration key") { s.walletAttestation(s.newInstanceKey()) }

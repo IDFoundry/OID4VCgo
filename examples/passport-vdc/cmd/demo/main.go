@@ -216,6 +216,12 @@ func run(ctx context.Context, opts options) error {
 		return err
 	}
 	httpClient := demotls.ClientTrusting(leaf)
+	// The web wallet asks the provider over its TLS server, or, with
+	// -ios-app, which turns off the demo protocol there, in process.
+	providerClient := walletprovider.Client{URL: localProviderURL, HTTP: httpClient}
+	if len(opts.iosApps) > 0 {
+		providerClient.HTTP = providerService.InProcessClient()
+	}
 
 	// The verifier, started below, sees a revocation at once rather
 	// than within the status list's ttl, or, for the document signer,
@@ -267,7 +273,7 @@ func run(ctx context.Context, opts options) error {
 		WalletURL: walletURL,
 		Wallet: walletapp.Config{
 			ClientID: walletClientID, HTTP: httpClient,
-			Provider:    walletprovider.Client{URL: localProviderURL, HTTP: httpClient},
+			Provider:    providerClient,
 			IssuerRoots: pool(issuer.IssuerCACertificate()),
 		},
 		Store:         walletapp.Store{Dir: filepath.Join(state, "wallet-store")},

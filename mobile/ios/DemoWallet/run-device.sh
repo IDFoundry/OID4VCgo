@@ -18,7 +18,8 @@
 # (HttpWalletProvider): start the demo with -ios-app "$TEAM_ID.$BUNDLE_ID"
 # too, and enable App Attest on the App ID in the Apple Developer portal.
 # PROVIDER_PROTOCOL=demo uses the demo provider's own API instead, which
-# attests any caller.
+# attests any caller: -ios-app turns that API off (403), so start that
+# demo without -ios-app.
 #
 # The device is the first connected iPhone unless named (xcrun devicectl
 # list devices). It must be paired with this Mac, in Developer Mode, with
@@ -35,7 +36,7 @@ BUNDLE_ID="${BUNDLE_ID:-dev.idfoundry.oid4vcgo.demowallet}"
 PROVIDER_PROTOCOL="${PROVIDER_PROTOCOL:-v1}"
 case "$PROVIDER_PROTOCOL" in
 v1) echo "the Wallet Provider must be started with -ios-app $TEAM_ID.$BUNDLE_ID" ;;
-demo) ;;
+demo) echo "the Wallet Provider must be started without -ios-app, which turns off the demo provider's own API" ;;
 *) echo "PROVIDER_PROTOCOL is v1 or demo, not $PROVIDER_PROTOCOL" >&2; exit 1 ;;
 esac
 for f in issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem; do

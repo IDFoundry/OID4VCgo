@@ -70,8 +70,10 @@ A `walletprovider.Provider`'s stores are `db.WalletProviderInstances()`,
 `db.WalletProviderInstanceKeys()` and `db.WalletProviderChallenges()`,
 with `db.StatusIndices()` for its status list indices. An instance's
 `Create` is one `INSERT` on the `id` primary key and the `UNIQUE`
-`key_thumbprint` column, so one registration key registers one instance
-across every process; `Update` is one
+`key_thumbprint` and `credential_id` columns, so one registration key,
+and one App Attest key, registers one instance across every process
+(`credential_id` is `NULL` for an instance without one, as Android's
+and those registered before migration 0014 are); `Update` is one
 `UPDATE … WHERE id = ? AND revision = ?`. An instance key's `Create` is
 one `INSERT` on its thumbprint, the primary key, so one key belongs to
 one instance; its `Update` is one

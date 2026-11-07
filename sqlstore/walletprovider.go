@@ -62,10 +62,11 @@ type instanceRecord struct {
 // InstanceStore is a walletprovider.InstanceStore:
 // walletprovider.Dependencies.Instances. Each instance is a row keyed
 // by its ID, its record sealed when the DB has a Sealer, beside the
-// readable key_thumbprint and revision columns: a UNIQUE constraint on
-// key_thumbprint, as the primary key on id, makes Create's check and
-// store one atomic INSERT, and Update is one UPDATE … WHERE id = ? AND
-// revision = ?. The record holds the instance's public keys, its
+// readable key_thumbprint, credential_id and revision columns: a UNIQUE
+// constraint on key_thumbprint and on credential_id (NULL when the
+// instance has no CredentialID), as the primary key on id, makes
+// Create's check and store one atomic INSERT, and Update is one
+// UPDATE … WHERE id = ? AND revision = ?. The record holds the instance's public keys, its
 // registration evidence's summary, its App Attest key and counter, and
 // the operator's Reason for a suspension or revocation: nothing secret,
 // but sealing keeps a database writer from altering it unnoticed —
@@ -85,7 +86,7 @@ func (d *DB) WalletProviderInstances() *InstanceStore {
 	t := &table[walletprovider.Instance]{
 		d: d, name: "walletprovider_instances", sql: tableSQL{insert: d.sql.wpInstanceInsert, get: d.sql.wpInstanceGet},
 		rowOf: func(in walletprovider.Instance) row {
-			return row{extra: []any{in.KeyThumbprint, revisionArg(in.Revision)}}
+			return row{extra: []any{in.KeyThumbprint, revisionArg(in.Revision), credentialIDArg(in.CredentialID)}}
 		},
 	}
 	t.encode = func(id string, in walletprovider.Instance) ([]byte, error) {
@@ -105,6 +106,15 @@ func (d *DB) WalletProviderInstances() *InstanceStore {
 	return &InstanceStore{t}
 }
 
+// credentialIDArg is id as the credential_id argument: NULL when it's
+// empty, which the column's UNIQUE index lets any number of rows hold.
+func credentialIDArg(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
+}
+
 // revisionArg is rev as a BIGINT argument: callers store revisions
 // from 1 up, and Update refuses one that would pass math.MaxInt64.
 func revisionArg(rev uint64) int64 {
@@ -119,7 +129,7 @@ func (s *InstanceStore) Get(ctx context.Context, id string) (walletprovider.Inst
 
 // Create implements walletprovider.InstanceStore: one INSERT … ON
 // CONFLICT DO NOTHING, which inserts nothing, and reports ErrExists, if
-// a row holds the instance's ID or key thumbprint.
+// a row holds the instance's ID, key thumbprint or credential ID.
 func (s *InstanceStore) Create(ctx context.Context, in walletprovider.Instance) error {
 	in.Revision = 1
 	return wpNotFound("create wallet instance", in.ID, insertNew(s.t, ctx, in.ID, in))

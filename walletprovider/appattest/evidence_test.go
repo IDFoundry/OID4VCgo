@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -125,9 +126,22 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	if in.Evidence.Platform != walletprovider.PlatformIOS || in.Evidence.AppID != testAppID || in.Evidence.Kind != EvidenceKind ||
-		in.Evidence.Binding != walletprovider.KeyBindingAppAssertion || in.Counter != 0 || len(in.Credential) != credentialBytes {
+		in.Evidence.Binding != walletprovider.KeyBindingAppAssertion || in.Counter != 0 || len(in.Credential) != credentialBytes ||
+		in.CredentialID != base64.StdEncoding.EncodeToString(KeyID(&a.attestKey.PublicKey)) {
 		t.Fatalf("instance %+v", in)
 	}
+
+	// The App Attest key, attested again for another registration key,
+	// is the instance's: it registers no other.
+	again := newKey(t, elliptic.P256())
+	ch = challenge(walletprovider.PurposeRegistration)
+	hash, err := ClientDataHash(walletprovider.PurposeRegistration, ch, []crypto.PublicKey{&again.PublicKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, _ := apple.attest(t, attSpec{clientDataHash: hash, aaguid: aaguidDevelopment, key: a.attestKey})
+	_, err = client.Register(ctx, walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &again.PublicKey, Evidence: Evidence(obj)})
+	wantRefused("a registered App Attest key", err, "instance_key_registered")
 
 	// An attestation over another key than the registration key isn't
 	// evidence for it.

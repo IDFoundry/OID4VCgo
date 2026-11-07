@@ -68,6 +68,12 @@ type Instance struct {
 	// (VerifiedEvidence.Credential): an App Attest key. Opaque here.
 	Credential []byte
 
+	// CredentialID identifies the credential (VerifiedEvidence.CredentialID):
+	// an App Attest key's key ID, base64, as DCAppAttestService gives
+	// it. Empty when the registration verifier reported none, as an
+	// Android one doesn't. No two instances have the same non-empty one.
+	CredentialID string
+
 	// Counter is the instance's signature counter (App Attest): the last
 	// one a verifier accepted.
 	Counter uint64
@@ -106,10 +112,12 @@ type InstanceStore interface {
 	Get(ctx context.Context, id string) (Instance, error)
 
 	// Create stores in with Revision 1 (whatever in.Revision is), or
-	// returns an error wrapping ErrExists if an instance with its ID, or
-	// with its KeyThumbprint, is stored: one registration key registers
-	// one instance. The check and the store are one atomic step, as a
-	// UNIQUE constraint on each column makes them.
+	// returns an error wrapping ErrExists if an instance with its ID,
+	// with its KeyThumbprint, or with its CredentialID when that isn't
+	// empty, is stored: one registration key, and one App Attest key,
+	// registers one instance. The check and the store are one atomic
+	// step, as a UNIQUE constraint on each column makes them (with
+	// CredentialID's column NULL when it's empty).
 	Create(ctx context.Context, in Instance) error
 
 	// Update replaces the stored instance with in's ID by in, with
@@ -117,7 +125,8 @@ type InstanceStore interface {
 	// in.Revision — one atomic compare-and-swap, as an UPDATE ... WHERE
 	// revision = ? is. It returns an error wrapping ErrConflict, and
 	// changes nothing, if the stored Revision differs, and ErrNotFound
-	// if no instance has the ID.
+	// if no instance has the ID. The provider never changes an
+	// instance's KeyThumbprint or CredentialID.
 	Update(ctx context.Context, in Instance) error
 
 	// List returns up to limit instances whose IDs sort after after
@@ -161,7 +170,7 @@ func (s *MemoryInstanceStore) Create(ctx context.Context, in Instance) error {
 		return ErrExists
 	}
 	for _, stored := range s.instances {
-		if stored.KeyThumbprint == in.KeyThumbprint {
+		if stored.KeyThumbprint == in.KeyThumbprint || in.CredentialID != "" && stored.CredentialID == in.CredentialID {
 			return ErrExists
 		}
 	}

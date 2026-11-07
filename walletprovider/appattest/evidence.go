@@ -31,8 +31,10 @@ func Evidence(data []byte) walletprovider.Evidence {
 //     ClientDataHash of the registration challenge and the registration
 //     key. Verify runs Verifier.VerifyAttestation and returns the
 //     attested App Attest key, and its environment, as
-//     VerifiedEvidence.Credential, with Counter 0, which the provider
-//     stores in the Instance;
+//     VerifiedEvidence.Credential, with Counter 0, and its key ID
+//     (base64, as DCAppAttestService gives it) as CredentialID, which
+//     the provider stores in the Instance: it refuses a key ID another
+//     instance registered with, so one App Attest key is one instance;
 //   - after it — an instance key's first Wallet Attestation
 //     (PurposeInstance), a Key Attestation (PurposeHolder) — the
 //     evidence is an assertion by that App Attest key, over
@@ -86,7 +88,7 @@ func (e EvidenceVerifier) Verify(_ context.Context, in walletprovider.EvidenceIn
 		if out.Credential, err = encodeCredential(att.PublicKey, att.Environment); err != nil {
 			return walletprovider.VerifiedEvidence{}, err
 		}
-		out.AppID = att.AppID
+		out.AppID, out.CredentialID = att.AppID, base64.StdEncoding.EncodeToString(att.KeyID)
 	} else {
 		if in.Purpose == walletprovider.PurposeRegistration {
 			return walletprovider.VerifiedEvidence{}, fail(ErrConfig, "an assertion for registration")

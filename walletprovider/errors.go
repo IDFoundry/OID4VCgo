@@ -30,9 +30,11 @@ var (
 
 	// ErrInstanceKeyRegistered: the key is already another's: a
 	// registration key that's already registered or recorded as an
-	// instance key, or an instance key recorded for another instance
-	// or that is the instance's registration key. A key is one
-	// instance's registration key or one of its instance keys, once.
+	// instance key, registration evidence whose credential (an App
+	// Attest key) another instance registered with, or an instance key
+	// recorded for another instance or that is the instance's
+	// registration key. A key is one instance's registration key or one
+	// of its instance keys, once, and an App Attest key one instance's.
 	ErrInstanceKeyRegistered = errors.New("walletprovider: instance key already registered")
 
 	// ErrUnknownInstanceKey: a Key Attestation request names an

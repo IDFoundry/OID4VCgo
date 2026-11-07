@@ -148,7 +148,8 @@ func (s *fileInstanceStore) Create(ctx context.Context, in wp.Instance) error {
 		return wp.ErrExists
 	}
 	for _, stored := range s.state.Instances {
-		if stored.KeyThumbprint == in.KeyThumbprint {
+		// One registration key, and one App Attest key, is one instance.
+		if stored.KeyThumbprint == in.KeyThumbprint || in.CredentialID != "" && stored.CredentialID == in.CredentialID {
 			return wp.ErrExists
 		}
 	}

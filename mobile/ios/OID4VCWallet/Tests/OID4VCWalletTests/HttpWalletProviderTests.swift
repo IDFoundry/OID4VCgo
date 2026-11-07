@@ -118,6 +118,51 @@ final class HttpWalletProviderTests: XCTestCase {
         XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-2")
     }
 
+    /// A kept registration whose key ID now names another key is
+    /// forgotten, and that key deleted: the next Wallet Attestation
+    /// registers again, leaving one key.
+    func testKeptRegistrationWithAnotherKeyIsForgotten() async throws {
+        let env = Env()
+        let stray = try env.keys.createKey(purpose: .instance)
+        try env.registry.put(RegisteredInstance(keyThumbprint: "another key's", keyID: stray, instanceID: "instance-0",
+                                                appAttestKeyID: "attest-key-0"))
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertNil(try env.keys.publicKey(id: stray))
+        XCTAssertEqual(env.keys.count, 1)
+        XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-1")
+    }
+
+    /// The sweep deletes every registration key a registration didn't
+    /// keep — one an earlier launch left, ending mid-registration — and
+    /// keeps the registration's, which goes on signing; with nothing
+    /// registered it deletes them all. Over a store that can't list its
+    /// keys it deletes nothing.
+    func testSweepOrphanedRegistrationKeys() async throws {
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false,
+                                                    tagPrefix: HttpWalletProvider.registrationKeyTagPrefix))
+        let env = Env(registrationKeys: store)
+        let left = try store.createKey(purpose: .instance)
+        let swept = try await env.provider.sweepOrphanedRegistrationKeys()
+        XCTAssertEqual(swept, 1)
+        XCTAssertNil(try store.publicKey(id: left))
+
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        let kept = try XCTUnwrap(env.registry.instance())
+        let orphans = [try store.createKey(purpose: .instance), try store.createKey(purpose: .instance)]
+        let sweptAgain = try await env.provider.sweepOrphanedRegistrationKeys()
+        XCTAssertEqual(sweptAgain, 2)
+        XCTAssertEqual(try store.keyIDs(), [kept.keyID])
+        for id in orphans { XCTAssertNil(try store.publicKey(id: id)) }
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
+
+        let memory = Env()
+        _ = try memory.keys.createKey(purpose: .instance)
+        let none = try await memory.provider.sweepOrphanedRegistrationKeys()
+        XCTAssertEqual(none, 0)
+        XCTAssertEqual(memory.keys.count, 1)
+    }
+
     /// A registration key the provider has seen is replaced by another,
     /// once; the refused one is deleted.
     func testInstanceKeyRegisteredRetries() async throws {
@@ -346,25 +391,28 @@ private func vectorKey(last: UInt8) throws -> Data {
 private struct Env {
     let registry: any InstanceRegistry
     let keys = MemoryKeys()
+    /// The provider's registration key store: `keys` unless one is given.
+    let registrationKeys: any KeyStore
     let attest: FakeAppAttest
     let server: FakeServer
     let provider: HttpWalletProvider
     private let baseURL: URL
 
     init(supported: Bool = true, registry: any InstanceRegistry = InMemoryInstanceRegistry(),
-         baseURL: String = "https://wp.example/wp") {
+         baseURL: String = "https://wp.example/wp", registrationKeys: (any KeyStore)? = nil) {
         self.registry = registry
         self.baseURL = URL(string: baseURL)!
+        self.registrationKeys = registrationKeys ?? keys
         attest = FakeAppAttest(supported: supported)
         server = FakeServer(keys: keys, prefix: URLComponents(string: baseURL)!.percentEncodedPath)
-        provider = try! HttpWalletProvider(baseURL: self.baseURL, instances: registry, registrationKeys: keys,
+        provider = try! HttpWalletProvider(baseURL: self.baseURL, instances: registry, registrationKeys: self.registrationKeys,
                                            appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
     }
 
     /// Another provider over `registry`, as an app rebuilding its
     /// wallet makes, with the same keys, App Attest and server.
     func provider(over registry: any InstanceRegistry) -> HttpWalletProvider {
-        try! HttpWalletProvider(baseURL: baseURL, instances: registry, registrationKeys: keys,
+        try! HttpWalletProvider(baseURL: baseURL, instances: registry, registrationKeys: registrationKeys,
                                 appAttest: attest, transport: server, clock: { 1_767_225_600 }, allowHTTP: false)
     }
 

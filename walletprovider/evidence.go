@@ -169,6 +169,14 @@ type VerifiedEvidence struct {
 	// ignores it afterwards.
 	Credential []byte
 
+	// CredentialID, if set, identifies the credential Credential holds
+	// (an App Attest key's key ID), which registers one instance only:
+	// the provider stores it in Instance.CredentialID, and refuses a
+	// registration whose CredentialID another instance has with
+	// ErrInstanceKeyRegistered. It's an identifier no other credential,
+	// of any Kind, has. Set only at registration; ignored afterwards.
+	CredentialID string
+
 	// Counter, if set, is the instance's new signature counter (App
 	// Attest). The provider stores it with a compare-and-swap against
 	// the Counter the verifier was given, so two requests can't both
