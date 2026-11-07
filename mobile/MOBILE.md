@@ -1162,8 +1162,14 @@ encryption, readable from the first unlock after a boot. So
   `AFTER_FIRST_UNLOCK` it also holds the record keys it has unwrapped
   (at most 512, by record and wrapped key, so a record another process
   rewrote is unwrapped afresh), and a record read again needs no
-  Keystore call; under `WHEN_UNLOCKED` it holds none, since a key held
-  in memory would open records while the device is locked.
+  Keystore call. Under `WHEN_UNLOCKED` it holds them only with
+  `Options.lockSignal` (`LockSignal.of(context)`): only while
+  `KeyguardManager.isDeviceLocked` is false, checked on each read, and
+  dropped, zeroed, on `ACTION_SCREEN_OFF`, which comes before the device
+  locks. A key unwrapped while they're dropped isn't held. Without a
+  signal it holds none, since a key held in memory would open records
+  while the device is locked. iOS has no such cache: its store reads
+  files under data protection, with no key of its own to hold.
 - **Backups:** the standard store is in `noBackupFilesDir`, which neither
   backups nor device transfer copy, as iOS's store is excluded from
   backups. A restored record without its key wouldn't decrypt anyway,

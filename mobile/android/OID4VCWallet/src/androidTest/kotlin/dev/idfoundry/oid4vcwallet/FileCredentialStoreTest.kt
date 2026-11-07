@@ -443,6 +443,96 @@ class FileCredentialStoreTest {
         assertTrue(s.records().isEmpty())
     }
 
+    /** A lock signal the test locks and unlocks. */
+    private class TestLockSignal(private val watches: Boolean = true) : LockSignal {
+        @Volatile var unlocked = true
+        var onLock: (() -> Unit)? = null
+        override val isUnlocked: Boolean get() = unlocked
+        override fun watch(onLock: () -> Unit): Boolean {
+            if (watches) this.onLock = onLock
+            return watches
+        }
+
+        fun lock() {
+            unlocked = false
+            onLock?.invoke()
+        }
+    }
+
+    private fun storeWith(signal: LockSignal): FileCredentialStore =
+        FileCredentialStore(
+            File(context.cacheDir, "store-${UUID.randomUUID()}").also { dirs += it },
+            FileCredentialStore.Options(keyAlias = alias, lockSignal = signal),
+        )
+
+    /**
+     * Under WHEN_UNLOCKED with a lock signal the store holds the record
+     * keys it unwraps while the device is unlocked, drops them when it
+     * locks, holds none while it's locked, and holds them again once it's
+     * unlocked.
+     */
+    @Test
+    fun whenUnlockedWithALockSignalHoldsRecordKeysUntilLocked() {
+        val signal = TestLockSignal()
+        val s = storeWith(signal)
+        s.put("a", RECORD_A.toByteArray())
+        s.put("b", RECORD_B.toByteArray())
+        assertEquals("read back on put, so held", 0, unwraps { s.records() })
+
+        signal.lock()
+        assertEquals("dropped on locking", 2, unwraps { s.records() })
+        assertEquals("none held while locked", 2, unwraps { s.records() })
+
+        signal.unlocked = true
+        assertEquals(2, unwraps { s.records() })
+        assertEquals(0, unwraps { assertArrayEquals(RECORD_A.toByteArray(), s.record("a")) })
+    }
+
+    /** A device the signal reports locked uses no key held, though it never said it locked. */
+    @Test
+    fun whenUnlockedUsesNoHeldKeyWhileLocked() {
+        val signal = TestLockSignal()
+        val s = storeWith(signal)
+        s.put("a", RECORD_A.toByteArray())
+        signal.unlocked = false
+        assertEquals(1, unwraps { s.record("a") })
+        signal.unlocked = true
+        assertEquals("the held key was dropped", 1, unwraps { s.record("a") })
+        assertEquals(0, unwraps { s.record("a") })
+    }
+
+    /** A signal that can't watch for the device locking leaves the store holding no record key. */
+    @Test
+    fun whenUnlockedWithASignalThatCantWatchHoldsNone() {
+        val s = storeWith(TestLockSignal(watches = false))
+        s.put("a", RECORD_A.toByteArray())
+        assertEquals(1, unwraps { s.records() })
+        assertEquals(1, unwraps { s.records() })
+    }
+
+    /** A key unwrapped while the device locks isn't held after the drop. */
+    @Test
+    fun aKeyUnwrappedAsTheDeviceLocksIsntHeld() {
+        val signal = TestLockSignal()
+        val s = storeWith(signal)
+        s.put("a", RECORD_A.toByteArray())
+        signal.lock()
+        signal.unlocked = true
+        FileCredentialStore.keystoreFault = { signal.onLock?.invoke(); it }
+        assertArrayEquals(RECORD_A.toByteArray(), s.record("a"))
+        FileCredentialStore.keystoreFault = null
+        assertEquals(1, unwraps { s.record("a") })
+        assertEquals(0, unwraps { s.record("a") })
+    }
+
+    /** The device's lock signal is one per process, and watches. */
+    @Test
+    fun theDevicesLockSignal() {
+        val signal = LockSignal.of(context)
+        assertTrue(signal === LockSignal.of(context.applicationContext))
+        assertTrue(signal.watch {})
+    }
+
     /** A store whose key another store made again since it looked it up reads that store's records. */
     @Test
     fun keyMadeAgainElsewhere() {
