@@ -79,9 +79,25 @@ type PreAuthorizedCodeTokenRequest struct {
 // fresh OAuth-Client-Attestation-PoP header value for one request to the
 // Authorization Server; RequestPreAuthorizedCodeToken calls it for each
 // attempt. fapigo/client's (*client.Client).ClientAttestationHeaders
-// implements it.
+// implements it, and its ObserveAttestationChallenge implements
+// AttestationChallengeObserver too.
 type ClientAttestationSource interface {
 	ClientAttestationHeaders(ctx context.Context) (attestation, pop string, err error)
+}
+
+// AttestationChallengeObserver is a ClientAttestationSource that takes
+// the Challenge an Authorization Server sends in an
+// OAuth-Client-Attestation-Challenge response header, for the next PoP
+// it builds to carry (OAuth 2.0 Attestation-Based Client
+// Authentication §6.2: the Client MUST use the most recent Challenge).
+// RequestPreAuthorizedCodeToken passes it the headers of every Token
+// Response, and retries once with a fresh PoP when the server answers
+// use_attestation_challenge (§6.1). A source that isn't one gets no
+// Challenge, and that error is returned as it is.
+// fapigo/client's *client.Client is one.
+type AttestationChallengeObserver interface {
+	ClientAttestationSource
+	ObserveAttestationChallenge(header http.Header)
 }
 
 // PreAuthorizedCodeTokenResult is returned by a successful
@@ -145,7 +161,10 @@ type tokenResponseBody struct {
 // §8, not §9's WWW-Authenticate-header challenge, which only a
 // resource server sends) — the same one-retry behavior
 // (*client.ResourceClient).Do applies for its own resource requests.
-// A non-200 response (after that retry, if any) is returned as a
+// With a ClientAttestation that is an AttestationChallengeObserver, it
+// passes the source every response's headers, and retries once more
+// when the server answers use_attestation_challenge with a Challenge.
+// A non-200 response (after those retries, if any) is returned as a
 // *Error.
 func (w *Wallet) RequestPreAuthorizedCodeToken(
 	ctx context.Context, endpoint fapi.URL, req PreAuthorizedCodeTokenRequest,
@@ -162,8 +181,9 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 
 // postToken POSTs form to the token endpoint, with a DPoP proof when
 // dpopKey is set and the attestation headers when attestation is,
-// retrying once on a DPoP nonce challenge, and returns the 200
-// response's body. op names the call in errors.
+// retrying once on a DPoP nonce challenge and once on an attestation
+// challenge, and returns the 200 response's body. op names the call in
+// errors.
 func (w *Wallet) postToken(
 	ctx context.Context, endpoint fapi.URL, form []byte, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
 ) ([]byte, error) {
@@ -172,24 +192,51 @@ func (w *Wallet) postToken(
 	htu.RawQuery, htu.Fragment = "", ""
 	post := tokenPost{target: target.String(), htu: htu.String(), body: form, dpopKey: dpopKey, attestation: attestation, op: op}
 
-	// At most two attempts: the second only after a DPoP nonce
-	// challenge to the first.
+	observer, _ := attestation.(AttestationChallengeObserver)
+	// At most three attempts: one retry after a DPoP nonce challenge,
+	// and one after an attestation challenge, in either order.
 	var nonce string
-	for attempt := 0; ; attempt++ {
+	var nonceRetried, challengeRetried bool
+	for {
 		res, err := w.postTokenOnce(ctx, post, nonce)
 		if err != nil {
 			return nil, err
 		}
+		if observer != nil {
+			// The most recent Challenge, from any response, goes in
+			// the next PoP (§6.2).
+			observer.ObserveAttestationChallenge(res.header)
+		}
 		if res.status == http.StatusOK {
 			return res.body, nil
 		}
-		if attempt == 0 && dpopKey != nil {
-			if nonce = dpopNonceChallenge(res.status, res.header, res.body); nonce != "" {
+		if dpopKey != nil && !nonceRetried {
+			if next := dpopNonceChallenge(res.status, res.header, res.body); next != "" {
+				nonce, nonceRetried = next, true
 				continue
 			}
 		}
+		if observer != nil && !challengeRetried && attestationChallenge(res.status, res.header, res.body) {
+			// The retry carries a DPoP nonce the response supplies, or
+			// else the one this attempt did.
+			if next := res.header.Get("DPoP-Nonce"); dpopKey != nil && next != "" {
+				nonce = next
+			}
+			challengeRetried = true
+			continue
+		}
 		return nil, parseError(EndpointToken, res.status, res.body)
 	}
+}
+
+// attestationChallenge reports whether a Token Response asks for a retry
+// with the Challenge it carries: a use_attestation_challenge error with
+// an OAuth-Client-Attestation-Challenge header (OAuth 2.0
+// Attestation-Based Client Authentication §6.1), as fapigo/client
+// recognises one for its own requests.
+func attestationChallenge(statusCode int, header http.Header, body []byte) bool {
+	return header.Get("OAuth-Client-Attestation-Challenge") != "" &&
+		parseError(EndpointToken, statusCode, body).Code == "use_attestation_challenge"
 }
 
 func (w *Wallet) checkPreAuthorizedCodeTokenRequest(req PreAuthorizedCodeTokenRequest) error {
