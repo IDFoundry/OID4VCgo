@@ -67,10 +67,10 @@
 // This module ships both verifiers: walletprovider/androidkey for
 // Android Key Attestation and walletprovider/appattest for App Attest,
 // whose client data binds the keys (mobile/WALLET_PROVIDER.md in the
-// repository has its exact bytes). The Swift library has no client for
-// the provider's protocol yet (the Kotlin library's HttpWalletProvider
-// is one, and this package's Client the Go one): an iOS app speaks the
-// protocol itself until it does.
+// repository has its exact bytes). The Swift and Kotlin libraries'
+// HttpWalletProvider are the protocol's native clients, with App
+// Attest and Android Key Attestation evidence, and this package's
+// Client the Go one.
 //
 // DEPLOYING.md in the repository is the checklist for running several
 // replicas: sqlstore's stores, Dependencies.StatusListTokens,

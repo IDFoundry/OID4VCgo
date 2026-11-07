@@ -544,9 +544,8 @@ changes whether *every* bullet below is `(done)`.
     wrong key, used challenge — gets one identical 401. Rate limiting
     is the integrator's: wrap the handler.
     [`mobile/WALLET_PROVIDER.md`](mobile/WALLET_PROVIDER.md) is the
-    protocol's contract: the Kotlin library's `HttpWalletProvider` and
-    this package's `Client` are its clients; a Swift client is still to
-    come.
+    protocol's contract: the Kotlin and Swift libraries'
+    `HttpWalletProvider` and this package's `Client` are its clients.
   - **`walletprovider/androidkey`** verifies Android Key Attestation
     chains (Google's roots and attestation status list, authorization
     lists, root of trust, the calling app with every signing
@@ -564,7 +563,8 @@ changes whether *every* bullet below is `(done)`.
   `walletprovider/appattest` verifies Apple App Attest: the
   attestation object at registration, then assertions over client data
   naming the request's keys, the counter stored by the provider's
-  compare-and-swap. Still to come: a Swift client of the protocol.
+  compare-and-swap. The Swift library's `HttpWalletProvider` is its
+  client.
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no

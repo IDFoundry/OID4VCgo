@@ -188,9 +188,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   register. App Attest proves the app, not where its keys are: claim
   `key_storage` for iOS keys only by a `KeyStorageRule` naming
   `KeyBindingAppAssertion`, and only if you rely on your app keeping
-  them in the Secure Enclave. The Swift library has no Wallet Provider
-  client yet: an iOS app speaks the protocol
-  ([mobile/WALLET_PROVIDER.md](mobile/WALLET_PROVIDER.md)) itself.
+  them in the Secure Enclave. The Swift library's `HttpWalletProvider`
+  is the iOS client of the protocol
+  ([mobile/WALLET_PROVIDER.md](mobile/WALLET_PROVIDER.md)).
 
 ```go
 p, err := walletprovider.New(cfg, walletprovider.Dependencies{
