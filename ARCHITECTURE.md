@@ -561,10 +561,10 @@ changes whether *every* bullet below is `(done)`.
   `DB.StatusIndices` for its status list indices and
   `DB.StatusListTokens` for the lists' tokens its replicas share).
 
-  Still to come, each its own package or PR: `walletprovider/appattest`
-  (Apple App Attest), and a Swift client of the protocol. Until then an
-  iOS wallet has no production attestation path in this repository
-  (the package doc says what an integrator does meanwhile).
+  `walletprovider/appattest` verifies Apple App Attest: the
+  attestation object at registration, then assertions over client data
+  naming the request's keys, the counter stored by the provider's
+  compare-and-swap. Still to come: a Swift client of the protocol.
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no

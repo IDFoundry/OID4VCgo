@@ -51,13 +51,13 @@ loopback addresses are refused. The rest is the app's.
 
 ### The Wallet Provider
 
-> Important: Not yet available for iOS. OID4VCgo's Wallet Provider
-> (`walletprovider`) verifies Android Key Attestation evidence but has
-> no App Attest verifier yet, and this library has no client for the
-> provider's protocol (Kotlin's `HttpWalletProvider` is one). Until
-> they ship, implement ``WalletProvider`` against a provider of your
-> own, with an App Attest verifier of your own on the server — or ship
-> without attestations, for issuers that don't ask for them.
+> Important: This library has no client for OID4VCgo's Wallet
+> Provider protocol yet (Kotlin's `HttpWalletProvider` is one). The
+> provider verifies App Attest evidence (`walletprovider/appattest`):
+> implement ``WalletProvider`` against it, following the protocol's
+> App Attest section (`mobile/WALLET_PROVIDER.md`), or against a
+> provider of your own — or ship without attestations, for issuers
+> that don't ask for them.
 
 Issuers trust the wallet because its Wallet Provider attests it. A
 production Wallet Provider should attest a wallet and its keys only

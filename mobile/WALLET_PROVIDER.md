@@ -150,16 +150,120 @@ Evidence after registration must come from the same platform and app
 as the registration evidence, and is held to the provider's policy as
 that was.
 
-### Apple App Attest
+### `apple-app-attest`: Apple App Attest
 
-Not yet available. Phase 2 of the Wallet Provider adds App Attest
-evidence (`walletprovider/appattest`); its `kind` and format will be
-documented here. The Swift library has no client for this protocol
-either (the Kotlin library's `HttpWalletProvider` is one). Until both
-ship, an iOS deployment either runs a provider of its own, with an
-`EvidenceVerifier` of its own for App Attest, and implements the Swift
-`WalletProvider` protocol against it, or ships without attestations,
-for issuers that don't ask for them.
+App Attest attests the **app**, not the wallet's keys: its key, made
+by `DCAppAttestService`, lives in the Secure Enclave and signs only
+App Attest's own assertions. The wallet's registration, instance and
+holder keys are bound in through the **client data** each
+attestation or assertion is made over. What the provider learns is
+that a genuine copy of the app, on a genuine Apple device, asked for
+those keys; nothing proves where the keys themselves are. The provider
+reports them at security level `secure-enclave` with binding
+`app-assertion`, and a Key Attestation claims `key_storage` for them
+only where the provider's policy says so for that binding
+(`walletprovider.KeyStorageRule`). Make them Secure Enclave keys all
+the same.
+
+The evidence's `data` is the bytes `DCAppAttestService` returned,
+unchanged, base64url without padding: an **attestation object** at
+registration, an **assertion** after it. The provider checks them as
+Apple's "Validating apps that connect to your server" describes
+(`walletprovider/appattest`): the certificates to the Apple App
+Attestation Root CA, the nonce, the key ID, the App ID (team ID and
+bundle ID, `ABCDE12345.com.example.wallet`), the environment, the
+assertion's signature and its counter.
+
+#### The App Attest key
+
+Each instance has one App Attest key, made at registration with
+`generateKey()` and kept, by its key ID, with the registration key for
+the instance's life: every assertion after registration is made with
+it. App Attest keys aren't backed up or moved to another device, so an
+app restored from a backup, or reinstalled, has lost it: register a new
+instance (and registration key). Where `DCAppAttestService.isSupported`
+is false (the Simulator, some older devices) there's no App Attest
+key, and the app can't register.
+
+If `attestKey` fails with `DCError.serverUnavailable`, try again later
+with the same key; on any other error, make a new key. An app built
+for development (the `com.apple.developer.devicecheck.appattest-environment`
+entitlement set to `development`) makes development-environment keys,
+which only a provider configured for them accepts
+(`appattest.Verifier.AllowDevelopment`); a released app's are
+production's.
+
+#### Client data
+
+Every attestation and assertion is made over a `clientDataHash`, the
+SHA-256 of the client data: UTF-8 text of lines, **each ending in
+`\n`** (LF), the last one included:
+
+```
+OID4VCgo-WalletProvider-AppAttest/1
+<purpose>
+<challenge>
+<thumbprint of the first key>
+<thumbprint of the next key>
+...
+```
+
+- `purpose` is the challenge's: `registration`, `instance` or
+  `holder`.
+- `challenge` is the challenge exactly as `POST /v1/challenge`
+  returned it (base64url without padding), not its decoded bytes.
+- Each thumbprint is a key's RFC 7638 JWK SHA-256 thumbprint,
+  base64url without padding (for a P-256 key, the SHA-256 of
+  `{"crv":"P-256","kty":"EC","x":"<x>","y":"<y>"}`), one line per key,
+  in the order the request lists the keys.
+
+| Request | Purpose | Keys | Evidence |
+| --- | --- | --- | --- |
+| `POST /v1/instances` | `registration` | `registration_key` | `attestKey(keyId, clientDataHash)` of the new App Attest key |
+| `POST /v1/wallet-attestation`, a new instance key | `instance` | `instance_key` | `generateAssertion(keyId, clientDataHash)` |
+| `POST /v1/key-attestation` | `holder` | every key of `keys`, in order | **one** `generateAssertion(keyId, clientDataHash)` for all of them: `evidence` holds exactly one entry |
+
+The challenge is the one in the body (`challenge`), never the signed
+request's `request` challenge.
+
+Test vectors. The keys are the P-256 keys whose private scalars are
+the bytes `0x01` to `0x20`, and the same bytes with the last one
+`0x21`:
+
+| Key | `x` | `y` | Thumbprint |
+| --- | --- | --- | --- |
+| 1 | `UVw9brnjlrkE0_7Kf1T9zQzB6Ze_N13KUVrQpsO0A18` | `RTa-OlDzGPv5pUdZAqIhUCvvDVfgjFOyzApW8X2fk1Q` | `6UoWwDCkLjV0J-pQG8c0THxbVhBcpR0AZDift1Yl5DM` |
+| 2 | `rM8BBu-Fj6LZGTMTRoBaeLWLutC4ROXHiSh5FGGH3SY` | `Zq2ngbt_ERNyJRqJEGIfY03xKKxI44H9bvkGBzH2lKQ` | `6rpgUp9sT-ItA87f0SCoStuYFvCFUFrnT9HqUF0sY_8` |
+
+With the challenge `AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8` (the
+bytes `0x00` to `0x1f`):
+
+- `registration`, key 1: the client data is
+  `"OID4VCgo-WalletProvider-AppAttest/1\nregistration\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n6UoWwDCkLjV0J-pQG8c0THxbVhBcpR0AZDift1Yl5DM\n"`,
+  and its `clientDataHash` (hex)
+  `659141d12dbf4b9421adb6a080d4245a01ead653218a6289376baa869a8f477f`;
+- `holder`, keys 1 and 2: the client data is
+  `"OID4VCgo-WalletProvider-AppAttest/1\nholder\nAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n6UoWwDCkLjV0J-pQG8c0THxbVhBcpR0AZDift1Yl5DM\n6rpgUp9sT-ItA87f0SCoStuYFvCFUFrnT9HqUF0sY_8\n"`,
+  and its `clientDataHash`
+  `3ba79d8b12988b5db62d590f308d273093573803711f21315bb2b3e504b1b38c`.
+
+#### The counter
+
+App Attest counts the assertions a key makes, and each one carries the
+count. The provider keeps the last count it accepted for the instance
+and refuses an assertion whose count doesn't exceed it, so an
+assertion is accepted once (`evidence_rejected`, or `no_key_attested`
+for a Key Attestation). Make one assertion at a time and send it
+before making the next: an assertion made after another but sent
+first leaves the earlier one refused. An assertion that never reached
+the provider costs nothing: the next one's count is still larger.
+
+Evidence after registration must come from the same app, and is held
+to the provider's policy as the registration was. Unlike
+`android-key`, an assertion can be made for a key that already
+exists: when the provider has deleted an instance key's record
+(retention), the wallet can send a fresh `instance` challenge and
+assertion for the same key.
 
 ## Signed requests
 
@@ -317,7 +421,8 @@ entry (in a new period, its new one, as for a Wallet Attestation), so
 it's withdrawn with the issuance's Wallet Attestations.
 `keys` are the holder keys, each once, at most the provider's limit
 (by default 10). `evidence` vouches for them over `challenge`: one per
-key for `android-key`, at most one per key. `nonce`, optional, is the
+key for `android-key`, at most one per key; one assertion for all of
+them for `apple-app-attest`. `nonce`, optional, is the
 issuer's `c_nonce`, carried as the attestation's `nonce`. The
 challenge in the body (`holder`) and the one in the signed request
 (`request`) are two different challenges. The answer, `200`:
@@ -350,11 +455,15 @@ Credential Issuer fetches it from every attestation's `status` claim.
 
 1. Once, at installation: `POST /v1/challenge` `{"purpose":
    "registration"}`; generate the registration key in the platform
-   keystore with the challenge's bytes as its attestation challenge,
-   and `POST /v1/instances` with the key and its evidence. Keep the
-   instance ID with the registration key.
+   keystore with the challenge's bytes as its attestation challenge
+   (Android), or generate it and an App Attest key and attest the App
+   Attest key over the client data (iOS), and `POST /v1/instances`
+   with the key and its evidence. Keep the instance ID with the
+   registration key (and, on iOS, the App Attest key ID).
 2. For each issuance (each Credential Issuer): `POST /v1/challenge`
-   `{"purpose": "instance"}`; generate a fresh instance key over it;
+   `{"purpose": "instance"}`; generate a fresh instance key over it
+   (Android), or generate it and make an assertion over the client
+   data (iOS);
    `POST /v1/challenge` `{"purpose": "request"}`; then a signed `POST
    /v1/wallet-attestation` with the instance key and its evidence. Use
    the attestation as the Client Attestation JWT, with a Client
@@ -362,7 +471,9 @@ Credential Issuer fetches it from every attestation's `status` claim.
    the issuance ends, ask again for the same instance key, without
    evidence.
 3. When the issuer asks for key attestation: `POST /v1/challenge`
-   `{"purpose": "holder"}`; generate the holder keys over it; `POST
+   `{"purpose": "holder"}`; generate the holder keys over it
+   (Android), or generate them and make one assertion over the client
+   data (iOS); `POST
    /v1/challenge` `{"purpose": "request"}`; a signed `POST
    /v1/key-attestation` with the issuance's instance key, the holder
    keys, their evidence and the issuer's `c_nonce`.

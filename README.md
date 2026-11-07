@@ -170,8 +170,8 @@ Where to start, by role:
   `HttpWalletProvider` speaks), Android Key Attestation evidence
   (`walletprovider/androidkey`), its own status lists by period
   (`StatusLists`, swept with `SweepStatusLists`), and durable stores in
-  `sqlstore`. Apple App Attest evidence and a Swift client aren't
-  available yet.
+  `sqlstore`. Apple App Attest evidence (`walletprovider/appattest`)
+  is verified too; a Swift client isn't available yet.
 - **Durable stores** — the separate [`sqlstore`](sqlstore) module keeps
   the issuer's, the verifier's, walletflow's and the Wallet Provider's
   stores, and status list indices and tokens, in PostgreSQL or

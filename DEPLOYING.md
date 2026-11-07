@@ -181,10 +181,16 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
 - [ ] **`Config.InstanceKeyRetention`:** at least as long as an
   issuance may go unused and still be refreshed (90 days by default).
 - [ ] **Evidence verifiers:** Android Key Attestation
-  (`walletprovider/androidkey`) is available. **Apple App Attest isn't
-  yet** (`walletprovider/appattest` is pending, and the Swift library
-  has no Wallet Provider client): see the `walletprovider` package
-  documentation for what an iOS deployment can do meanwhile.
+  (`walletprovider/androidkey`) and Apple App Attest
+  (`walletprovider/appattest`). For App Attest, list each app's App ID
+  (team ID and bundle ID) in `appattest.Verifier.Apps`, and leave
+  `AllowDevelopment` unset in production, so only released builds
+  register. App Attest proves the app, not where its keys are: claim
+  `key_storage` for iOS keys only by a `KeyStorageRule` naming
+  `KeyBindingAppAssertion`, and only if you rely on your app keeping
+  them in the Secure Enclave. The Swift library has no Wallet Provider
+  client yet: an iOS app speaks the protocol
+  ([mobile/WALLET_PROVIDER.md](mobile/WALLET_PROVIDER.md)) itself.
 
 ```go
 p, err := walletprovider.New(cfg, walletprovider.Dependencies{
