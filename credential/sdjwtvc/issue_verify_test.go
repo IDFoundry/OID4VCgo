@@ -542,9 +542,20 @@ func TestIssue_DecoysNeedADisclosure(t *testing.T) {
 	}
 }
 
-func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
+// TestIssue_IssuerCertificateSelfSigned: a lone self-signed x5c leaf is
+// refused (HAIP 1.0 §6.1.1), as one with intermediates was.
+func TestIssue_IssuerCertificateSelfSigned(t *testing.T) {
 	issuerKey := testKey(t)
 	cert := testcert.SelfSigned(t, "test-issuer", &issuerKey.PublicKey, issuerKey)
+	_, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type"}, IssueOptions{IssuerCertificate: cert})
+	if err == nil || !strings.Contains(err.Error(), "self-signed") {
+		t.Fatalf("Issue = %v, want a self-signed leaf refused", err)
+	}
+}
+
+func TestIssue_IssuerCertificate_SetsX5CHeader(t *testing.T) {
+	ca, caKey := testcert.CA(t, "test CA")
+	cert, issuerKey := testcert.Leaf(t, "test-issuer", ca, caKey)
 	claims := Claims{VCT: "vc-type"}
 
 	sdjwt, _, err := Issue(issuerKey, jose.ES256, claims, IssueOptions{IssuerCertificate: cert})

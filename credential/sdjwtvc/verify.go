@@ -69,6 +69,12 @@ type VerifyOptions struct {
 	// Issuer JWT is accepted up to MaxClockSkew before its nbf and after
 	// its exp. Zero applies them exactly.
 	MaxClockSkew time.Duration
+
+	// AcceptLegacyTyp, when true, accepts LegacyTypHeader (vc+sd-jwt) as
+	// the Issuer-signed JWT's typ as well as TypHeader (dc+sd-jwt), as
+	// draft-13 §3.2.1 recommended for a transition period. By default
+	// only dc+sd-jwt is accepted (draft-19 §2.2.1).
+	AcceptLegacyTyp bool
 }
 
 // Verify checks a presented SD-JWT or SD-JWT+KB against the Issuer's
@@ -107,7 +113,7 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	if err != nil {
 		return nil, nil, fmt.Errorf("sdjwtvc: verify issuer JWT: %w", err)
 	}
-	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, TypHeader) {
+	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, TypHeader) && (!opts.AcceptLegacyTyp || !jose.TypeIs(typ, LegacyTypHeader)) {
 		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT typ is %q, want %q", typ, TypHeader)
 	}
 

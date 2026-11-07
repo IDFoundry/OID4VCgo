@@ -93,11 +93,25 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 // for a signed request, origin among its expected_origins. An unsigned
 // request's expected_origins is ignored (Appendix A.2).
 func finishDCAPIRequest(wire wireRequestObjectPayload, origin string, cert *x509.Certificate, clientID string, signed bool) (AuthorizationRequest, error) {
+	// A request for another response type or mode: invalid_request,
+	// which the page gets back unencrypted (OID4VP 1.0 Appendix A.4).
+	var refused string
 	switch {
 	case wire.ResponseType != vpTokenResponseType:
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: response_type %q, want %q", wire.ResponseType, vpTokenResponseType)
+		refused = fmt.Sprintf("response_type %q, want %q", wire.ResponseType, vpTokenResponseType)
 	case wire.ResponseMode != dcAPIResponseMode:
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: response_mode %q, want %q", wire.ResponseMode, dcAPIResponseMode)
+		refused = fmt.Sprintf("response_mode %q, want %q", wire.ResponseMode, dcAPIResponseMode)
+	}
+	if refused != "" {
+		return AuthorizationRequest{}, &RequestRejectedError{Code: "invalid_request", Description: refused, op: dcAPIParseOp}
+	}
+	// A request from another origin, perhaps replayed by another page,
+	// is refused with no answer for that page. Appendix A.2 says the
+	// error SHOULD be invalid_request, but the OIDF suite's
+	// wrong-expected-origins fails a wallet that sends one
+	// (conformance/wallet-vp/README.md), so the platform's call fails
+	// instead.
+	switch {
 	case signed && len(wire.ExpectedOrigins) == 0:
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: expected_origins is required for a signed request")
 	case signed && !slices.Contains(wire.ExpectedOrigins, origin):

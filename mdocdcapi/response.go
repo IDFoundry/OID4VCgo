@@ -121,14 +121,17 @@ type Verified struct {
 
 // Credential is v as a verifier.VerifiedCredential — its NameSpaces as
 // Claims, its Status and IssuerChain — for what takes one, such as
-// verifier.StatusPolicy.Check. Its CredentialQueryID is "": an Annex C
-// request has no DCQL query.
+// verifier.StatusPolicy.Check. An Annex C request has no DCQL query, so
+// its CredentialQueryID is the document's type, which names it: a
+// response has at most one document of each type. Namespaces aren't
+// tied to a type, so tell the documents of a response apart by it, not
+// by the namespaces their claims are in.
 func (v Verified) Credential() verifier.VerifiedCredential {
 	claims := make(map[string]any, len(v.NameSpaces))
 	for ns, elements := range v.NameSpaces {
 		claims[ns] = elements
 	}
-	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain}
+	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain}
 }
 
 // encryptedResponseData is Annex C.3's EncryptedResponseData.
@@ -183,12 +186,15 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 // VerifyResponseDocuments is VerifyResponse for a request of several
 // documents (RequestParams.Documents): it verifies each document of
 // the response as VerifyResponse does, against the request for its
-// type, checks each one's Status, then runs Accept once with them all,
-// and returns them in the response's order. The holder may answer any
-// of the requested documents and leave the others out, so check each
-// one you need came back. A document of a type not requested, or one
-// that doesn't verify, refuses the response. It verifies a
-// one-document request's response too.
+// type, checks each one's Status, then runs Accept once with them all.
+// Both Accept and the result have the documents in the order of
+// Pending.Documents, not the holder's; each credential Accept gets has
+// its document's type as its CredentialQueryID (Verified.Credential).
+// The holder may answer any of the requested documents and leave the
+// others out, so check each one you need came back, by its type, not by
+// its position. A document of a type not requested, or one that doesn't
+// verify, refuses the response. It verifies a one-document request's
+// response too.
 func VerifyResponseDocuments(ctx context.Context, p VerifyParams) ([]Verified, error) {
 	transcript, deviceResponse, err := openResponse(p)
 	if err != nil {
@@ -199,8 +205,11 @@ func VerifyResponseDocuments(ctx context.Context, p VerifyParams) ([]Verified, e
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	out := make([]Verified, 0, len(docs))
-	credentials := make([]verifier.VerifiedCredential, 0, len(docs))
+	type answered struct {
+		request  int
+		verified Verified
+	}
+	got := make([]answered, 0, len(docs))
 	for _, doc := range docs {
 		i := slices.IndexFunc(reqs, func(r DocumentRequest) bool { return r.DocType == doc.DocType })
 		if i < 0 {
@@ -210,14 +219,19 @@ func VerifyResponseDocuments(ctx context.Context, p VerifyParams) ([]Verified, e
 		if err != nil {
 			return nil, err
 		}
-		credential := verified.Credential()
 		if p.Status != nil {
-			if err := p.Status.Check(ctx, credential); err != nil {
+			if err := p.Status.Check(ctx, verified.Credential()); err != nil {
 				return nil, err
 			}
 		}
-		out = append(out, verified)
-		credentials = append(credentials, credential)
+		got = append(got, answered{request: i, verified: verified})
+	}
+	slices.SortFunc(got, func(a, b answered) int { return a.request - b.request })
+	out := make([]Verified, 0, len(got))
+	credentials := make([]verifier.VerifiedCredential, 0, len(got))
+	for _, a := range got {
+		out = append(out, a.verified)
+		credentials = append(credentials, a.verified.Credential())
 	}
 	if p.Accept != nil {
 		if err := p.Accept(ctx, "", verifier.VerifyResponseResult{Credentials: credentials}); err != nil {

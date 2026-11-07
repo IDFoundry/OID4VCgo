@@ -14,10 +14,17 @@ import (
 )
 
 // TypHeader is the JOSE "typ" header value for the Issuer-signed JWT
-// component of an SD-JWT VC, and the only one Verify accepts (draft-19
-// §2.2.1: "The typ value MUST use dc+sd-jwt"). Draft-13 §3.2.1's
-// transitional vc+sd-jwt was removed in draft-19.
+// component of an SD-JWT VC: the one Issue sets, and by default the only
+// one Verify accepts. Draft-19 §2.2.1 says "The typ value MUST use
+// dc+sd-jwt".
 const TypHeader = "dc+sd-jwt"
+
+// LegacyTypHeader is the typ SD-JWT VCs carried before dc+sd-jwt.
+// Draft-13 §3.2.1, the version HAIP 1.0 names, recommended that Holders
+// and Verifiers accept it too for a transition period; draft-19 dropped
+// that. Verify accepts it only when VerifyOptions.AcceptLegacyTyp is
+// set.
+const LegacyTypHeader = "vc+sd-jwt"
 
 // MediaType is the SD-JWT VC media type (draft-13 §3.1).
 const MediaType = "application/dc+sd-jwt"
@@ -334,13 +341,20 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 	if claims.VCT == "" {
 		return fmt.Errorf("sdjwtvc: Claims.VCT is required")
 	}
+	if claims.VCTIntegrity != "" {
+		if err := validateIntegrity(claims.VCTIntegrity); err != nil {
+			return fmt.Errorf("sdjwtvc: Claims.VCTIntegrity: %w", err)
+		}
+	}
 	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
 		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
 	}
-	if len(opts.IssuerIntermediates) > 0 {
-		if opts.IssuerCertificate == nil {
-			return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
-		}
+	if len(opts.IssuerIntermediates) > 0 && opts.IssuerCertificate == nil {
+		return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
+	}
+	if opts.IssuerCertificate != nil {
+		// Alone or with intermediates: an x5c leaf mustn't be
+		// self-signed (HAIP 1.0 §6.1.1).
 		if err := certchain.CheckPresentedChain(opts.IssuerCertificate, opts.IssuerIntermediates); err != nil {
 			return fmt.Errorf("sdjwtvc: issuer certificate chain: %w", err)
 		}

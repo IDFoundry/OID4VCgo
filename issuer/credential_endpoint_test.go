@@ -285,8 +285,9 @@ func TestRequestCredential_SDJWT_JWTProof(t *testing.T) {
 
 func TestRequestCredential_SDJWT_IssuerCertificate(t *testing.T) {
 	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
-		key := deps.SDJWTSigner.Signer.(*ecdsa.PrivateKey)
-		deps.SDJWTSigner.IssuerCertificate = testcert.SelfSigned(t, "test-issuer", &key.PublicKey, key)
+		ca, caKey := testcert.CA(t, "test CA")
+		cert, key := testcert.Leaf(t, "test-issuer", ca, caKey)
+		deps.SDJWTSigner.Signer, deps.SDJWTSigner.IssuerCertificate = key, cert
 	})
 	credential := requestOneSDJWTCredential(t, f)
 	testcert.AssertSingleX5CHeader(t, credential)

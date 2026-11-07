@@ -116,6 +116,37 @@ func TestRespondDocuments(t *testing.T) {
 	}
 }
 
+// Documents answered in another order than requested come back, and go
+// to Accept, in the request's order, each named by its type.
+func TestVerifyResponseDocuments_RequestOrder(t *testing.T) {
+	h := newMultiHarness(t)
+	encrypted, err := h.incoming.RespondDocuments(context.Background(), []Answer{h.answer(2), h.answer(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	vs, err := VerifyResponseDocuments(context.Background(), VerifyParams{
+		Pending: h.request.Pending, Response: base64.RawURLEncoding.EncodeToString(encrypted), IssuerKeys: h.keys,
+		Assurance: verifier.AssuranceDevelopment, NoStatusCheck: true,
+		Accept: func(_ context.Context, _ string, r verifier.VerifyResponseResult) error {
+			for _, c := range r.Credentials {
+				ids = append(ids, c.CredentialQueryID)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{multiTypes[0], multiTypes[2]}
+	if len(vs) != 2 || vs[0].DocType != want[0] || vs[1].DocType != want[1] {
+		t.Errorf("verified %s, %s, want %v", vs[0].DocType, vs[1].DocType, want)
+	}
+	if fmt.Sprint(ids) != fmt.Sprint(want) {
+		t.Errorf("Accept got CredentialQueryIDs %v, want %v", ids, want)
+	}
+}
+
 // VerifyResponseDocuments verifies a one-document request's response
 // too, as VerifyResponse does.
 func TestVerifyResponseDocuments_OneDocument(t *testing.T) {
