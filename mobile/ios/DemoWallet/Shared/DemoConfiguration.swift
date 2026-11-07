@@ -17,7 +17,8 @@ struct DemoConfiguration: Codable, Sendable {
     /// protocol with App Attest (`HttpWalletProvider`), which needs a
     /// device and the provider started with `-ios-app`; anything else,
     /// or nil, the passport-vdc demo's own API, which attests any caller
-    /// (the Simulator's).
+    /// (the Simulator's), and which a provider started with `-ios-app`
+    /// refuses.
     var providerProtocol: String?
     /// The reader mode's identity, when the services give one.
     var reader: Reader?
