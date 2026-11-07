@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/idfoundry/fapigo v0.70.0
 	github.com/idfoundry/fapigo/sqlstore v0.6.0
-	github.com/idfoundry/oid4vcgo v0.69.0
+	github.com/idfoundry/oid4vcgo v0.73.0
 	github.com/jackc/pgx/v5 v5.12.0
 	modernc.org/sqlite v1.61.1
 )

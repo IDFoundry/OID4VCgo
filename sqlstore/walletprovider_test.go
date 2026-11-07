@@ -3,6 +3,7 @@ package sqlstore_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -428,16 +429,15 @@ func TestMigrateAddsWalletProviderTables(t *testing.T) {
 func TestMigrateAddsWalletProviderInstanceKeys(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		ctx := context.Background()
-		d, err := sqlstore.New(e.location()(), e.dialect, sqlstore.Options{})
+		raw := e.location()()
+		d, err := sqlstore.New(raw, e.dialect, sqlstore.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := sqlstore.MigrateTo(ctx, d, 5); err != nil {
 			t.Fatal(err)
 		}
-		if err := d.WalletProviderInstances().Create(ctx, testInstance("a")); err != nil {
-			t.Fatal(err)
-		}
+		insertOlderInstance(t, e.dialect, raw, "a")
 		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0006_walletprovider_instance_keys.sql") {
 			t.Errorf("CheckSchema at version 5 = %v, want migration 0006 missing", err)
 		}
@@ -560,6 +560,72 @@ func TestMigrateAddsWalletProviderInstanceKeySweep(t *testing.T) {
 		}
 		if n, err := d.Sweep(ctx, far); err != nil || n != 1 {
 			t.Fatalf("Sweep after an Update = %d, %v; want 1 deleted", n, err)
+		}
+	})
+}
+
+// insertOlderInstance inserts instance id as a release from before
+// migration 0014 did: an unsealed record without a CredentialID, and
+// no credential_id column named.
+func insertOlderInstance(t *testing.T, dialect sqlstore.Dialect, raw *sql.DB, id string) {
+	t.Helper()
+	record := append([]byte{1}, fmt.Sprintf(`{"ID":%q,"KeyThumbprint":"tp-%s","Key":"e30=","State":"active","CreatedAt":"2026-11-05T12:00:00Z","LastSeenAt":"2026-11-05T12:00:00Z","Revision":1}`, id, id)...)
+	insert := inDialect(dialect, "INSERT INTO oid4vc_walletprovider_instances (id, owner, sweep_after, record, key_thumbprint, revision) VALUES (?, '', NULL, ?, ?, 1)")
+	if _, err := raw.ExecContext(context.Background(), insert, id, record, "tp-"+id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A database migrated by an earlier release, to version 13, migrates to
+// the instances' credential IDs with its records kept: the rows from
+// before have none, and conflict with no other, as rows an older
+// release inserts beside this one don't; a credential ID registers one
+// instance. Until then, CheckSchema fails.
+func TestMigrateAddsWalletProviderInstanceCredentialIDs(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		raw := e.location()()
+		d, err := sqlstore.New(raw, e.dialect, sqlstore.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlstore.MigrateTo(ctx, d, 13); err != nil {
+			t.Fatal(err)
+		}
+		insertOlderInstance(t, e.dialect, raw, "a")
+		if err := d.CheckSchema(ctx); err == nil || !strings.Contains(err.Error(), "0014_walletprovider_instance_credential_ids.sql") {
+			t.Errorf("CheckSchema at version 13 = %v, want migration 0014 missing", err)
+		}
+
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchema(ctx); err != nil {
+			t.Errorf("CheckSchema after Migrate: %v", err)
+		}
+		insertOlderInstance(t, e.dialect, raw, "b") // an older release, beside this one
+		s := d.WalletProviderInstances()
+		for _, id := range []string{"a", "b"} {
+			if in, err := s.Get(ctx, id); err != nil || in.CredentialID != "" {
+				t.Fatalf("a record from before: %+v, %v", in, err)
+			}
+		}
+		in := testInstance("c")
+		in.CredentialID = "key-id"
+		if err := s.Create(ctx, in); err != nil {
+			t.Fatalf("Create after migration: %v", err)
+		}
+		other := testInstance("d")
+		other.CredentialID = "key-id"
+		if err := s.Create(ctx, other); !errors.Is(err, walletprovider.ErrExists) {
+			t.Fatalf("Create of another instance with the credential ID = %v, want ErrExists", err)
+		}
+		if err := s.Create(ctx, testInstance("e")); err != nil {
+			t.Fatalf("Create without a credential ID: %v", err)
+		}
+		var stored sql.NullString
+		if err := raw.QueryRowContext(ctx, inDialect(e.dialect, "SELECT credential_id FROM oid4vc_walletprovider_instances WHERE id = ?"), "e").Scan(&stored); err != nil || stored.Valid {
+			t.Fatalf("credential_id of an instance without one = %v, %v; want NULL", stored, err)
 		}
 	})
 }
