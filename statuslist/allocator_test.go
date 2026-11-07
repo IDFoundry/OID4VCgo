@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 	mrand "math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -135,6 +136,55 @@ func TestAllocator_RollsOverAndFills(t *testing.T) {
 	a.Lists = append(a.Lists, AllocatorList{URI: "https://issuer.example/statuslists/3", Size: 8})
 	if ref, err := a.Allocate(ctx); err != nil || ref.URI != "https://issuer.example/statuslists/3" {
 		t.Fatalf("got %+v, %v", ref, err)
+	}
+}
+
+// reservedErrStore fails Reserved.
+type reservedErrStore struct{ MemoryIndexStore }
+
+func (*reservedErrStore) Reserved(context.Context, string) (int, error) { return 0, errStore }
+
+// TestAllocator_Fill: Fill reports each list's limit and reserved
+// indices, in order, as Allocate fills them; a list is Full at its
+// limit, with no Free indices.
+func TestAllocator_Fill(t *testing.T) {
+	ctx := context.Background()
+	a := &Allocator{
+		Lists: []AllocatorList{{URI: allocListA, Size: 16}, {URI: allocListB, Size: 32}},
+		Store: &MemoryIndexStore{}, Rand: seeded(), FillLimit: 0.25,
+	}
+	fill := func() []ListFill {
+		t.Helper()
+		f, err := a.Fill(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	want := []ListFill{{URI: allocListA, Size: 16, Limit: 4}, {URI: allocListB, Size: 32, Limit: 8}}
+	if got := fill(); !slices.Equal(got, want) {
+		t.Fatalf("an unused Allocator's fill = %+v, want %+v", got, want)
+	}
+	for range 4 + 3 {
+		if _, err := a.Allocate(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := fill()
+	if got[0].Reserved != 4 || !got[0].Full() || got[0].Free() != 0 ||
+		got[1].Reserved != 3 || got[1].Full() || got[1].Free() != 5 {
+		t.Fatalf("after 7 allocations, fill = %+v", got)
+	}
+	if f := (ListFill{Limit: 4, Reserved: 6}); !f.Full() || f.Free() != 0 {
+		t.Fatalf("a list past its limit: Full %v, Free %d", f.Full(), f.Free())
+	}
+
+	a.Store = &reservedErrStore{}
+	if _, err := a.Fill(ctx); !errors.Is(err, errStore) {
+		t.Fatalf("Fill with a failing store = %v", err)
+	}
+	if _, err := (&Allocator{}).Fill(ctx); err == nil {
+		t.Fatal("Fill of an Allocator without lists or store succeeded")
 	}
 }
 

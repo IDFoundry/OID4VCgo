@@ -35,7 +35,8 @@
 // Allocator hands each Referenced Token its index: drawn uniformly at
 // random from a list, never handed out twice, moving to the next list
 // once FillLimit of one is taken, and failing with ErrListsFull when
-// every list is, so the issuer can provision another. draft-14 has
+// every list is, so the issuer can provision another; Allocator.Fill
+// reports how full each list is, to provision one in time. draft-14 has
 // the Status Issuer prevent double allocation (§13.3), since tokens
 // sharing an index share a status, and recommends random indices over
 // sequential ones (§12.4, §12.5.1), which reveal the order and number

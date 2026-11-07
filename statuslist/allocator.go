@@ -450,6 +450,51 @@ func (a *Allocator) Statuses(uri string) func(ctx context.Context) ([]uint8, err
 	}
 }
 
+// ListFill is how full one of an Allocator's lists is.
+type ListFill struct {
+	// URI and Size are the list's, as in Allocator.Lists.
+	URI  string
+	Size int
+
+	// Limit is how many of its indices are handed out before Allocate
+	// moves on to the next list: FillLimit of Size.
+	Limit int
+
+	// Reserved is how many of its indices are reserved, as Store
+	// counts them. Concurrent AllocateN calls can take it past Limit
+	// by up to 64 each.
+	Reserved int
+}
+
+// Full reports whether Allocate hands out no more indices of the list.
+func (f ListFill) Full() bool { return f.Reserved >= f.Limit }
+
+// Free is how many more indices Allocate hands out of the list: zero
+// once it's full.
+func (f ListFill) Free() int { return max(f.Limit-f.Reserved, 0) }
+
+// Fill reports how full each of Lists is, in order, counting each
+// one's reserved indices in Store: Allocate fails with ErrListsFull
+// once every one is Full. Watch the Free indices of the lists after
+// the last full one, and append a list to Lists before they run out.
+// It counts every list each time it's called, so call it from
+// monitoring, not on each issuance.
+func (a *Allocator) Fill(ctx context.Context) ([]ListFill, error) {
+	c, err := a.check()
+	if err != nil {
+		return nil, err
+	}
+	fill := make([]ListFill, len(c.lists))
+	for i, list := range c.lists {
+		reserved, err := a.Store.Reserved(ctx, list.URI)
+		if err != nil {
+			return nil, fmt.Errorf("statuslist: counting the reserved indices of %s: %w", list.URI, err)
+		}
+		fill[i] = ListFill{URI: list.URI, Size: list.Size, Limit: a.limit(list), Reserved: reserved}
+	}
+	return fill, nil
+}
+
 // listFor validates a and returns the list ref names, refusing an
 // index outside it.
 func (a *Allocator) listFor(ref StatusListRef) (AllocatorList, error) {

@@ -56,3 +56,32 @@ func ExampleAllocator() {
 	// INVALID
 	// INVALID
 }
+
+// Watching how full an Allocator's lists are, from monitoring: once the
+// lists still taking indices run low, provision another list and append
+// it to Lists, before Allocate fails with ErrListsFull.
+func ExampleAllocator_Fill() {
+	ctx := context.Background()
+	alloc := &statuslist.Allocator{
+		Lists: []statuslist.AllocatorList{
+			{URI: "https://issuer.example/statuslists/1", Size: 64},
+			{URI: "https://issuer.example/statuslists/2", Size: 64},
+		},
+		Store: &statuslist.MemoryIndexStore{},
+	}
+	for range 40 {
+		must(alloc.Allocate(ctx))
+	}
+
+	free := 0
+	for _, list := range must(alloc.Fill(ctx)) {
+		fmt.Printf("%s: %d of %d reserved, full: %v\n", list.URI, list.Reserved, list.Limit, list.Full())
+		free += list.Free()
+	}
+	fmt.Println("free:", free)
+
+	// Output:
+	// https://issuer.example/statuslists/1: 32 of 32 reserved, full: true
+	// https://issuer.example/statuslists/2: 8 of 32 reserved, full: false
+	// free: 24
+}
