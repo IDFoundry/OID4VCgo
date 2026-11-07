@@ -139,8 +139,9 @@ binding its records to additional data of its own. Sweep each. See
   `search_path` (`postgres://…/db?search_path=tenant_a` with pgx);
   on SQLite, a file each.
 - **Sweeping**: stores never delete expired records. Call
-  `db.Sweep(ctx, time.Now())` every few minutes. It sweeps the issuer
-  and verifier tables, never the wallet's. walletflow forgets an expired
+  `db.Sweep(ctx, time.Now())` every few minutes, from every instance
+  (on PostgreSQL, a run that finds another under way stops). It sweeps
+  the issuer and verifier tables, never the wallet's. walletflow forgets an expired
   authorization, with its keys, when `Wallet.KeysInUse` lists the
   authorizations or `ResumeIssuance` is called for it: a wallet should
   call `KeysInUse` periodically, or abandoned authorizations stay.

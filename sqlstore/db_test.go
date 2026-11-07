@@ -161,6 +161,60 @@ func TestSweepBatches(t *testing.T) {
 	})
 }
 
+// A Postgres Sweep that finds another sweeping the same schema stops,
+// deleting nothing, with no error, and sweeps once that one is done; a
+// Sweep of another schema of the same database doesn't stop it.
+func TestSweepStepsAside(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		if e.dialect != sqlstore.Postgres {
+			t.Skip("Sweep's lock is Postgres's")
+		}
+		ctx := context.Background()
+		now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+		// A migrated schema with one expired nonce, and its opener.
+		schema := func() (*sqlstore.DB, func() *sql.DB) {
+			open := e.location()
+			d, err := sqlstore.New(open(), e.dialect, sqlstore.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.Nonces().Issue(ctx, issuer.NonceIssuance{Nonce: "old", ExpiresAt: now.Add(-time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
+			return d, open
+		}
+		d, open := schema()
+		elsewhere, _ := schema()
+		// Another instance's batch, holding the lock until it commits.
+		other, err := open().BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer other.Rollback()
+		var locked bool
+		if err := other.QueryRowContext(ctx, sqlstore.PostgresSweepLock).Scan(&locked); err != nil || !locked {
+			t.Fatalf("taking the sweep lock = %v, %v", locked, err)
+		}
+		// Another schema's sweep lock is its own.
+		if n, err := elsewhere.Sweep(ctx, now); err != nil || n != 1 {
+			t.Errorf("Sweep of another schema = %d, %v; want 1 deleted", n, err)
+		}
+
+		if n, err := d.Sweep(ctx, now); err != nil || n != 0 {
+			t.Errorf("Sweep while another holds the lock = %d, %v; want none deleted, no error", n, err)
+		}
+		if err := other.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := d.Sweep(ctx, now); err != nil || n != 1 {
+			t.Errorf("Sweep after = %d, %v; want 1 deleted", n, err)
+		}
+	})
+}
+
 func TestSweep(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		ctx := context.Background()

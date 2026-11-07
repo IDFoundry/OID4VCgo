@@ -57,7 +57,7 @@ func ExampleNew() {
 	mux.Handle("/", p.Handler()) // behind rate limiting
 	// StatusLists serves /{start}/{n} under StatusListBaseURI.
 	mux.Handle("/statuslists/", http.StripPrefix("/statuslists", p.StatusLists()))
-	// Daily, from one process: p.SweepStatusLists, then sqlstore's
+	// Daily, from any instance: p.SweepStatusLists, then sqlstore's
 	// DB.Sweep deletes instance keys past their retention.
 
 	// From monitoring, every few minutes: raise StatusListSize for the
