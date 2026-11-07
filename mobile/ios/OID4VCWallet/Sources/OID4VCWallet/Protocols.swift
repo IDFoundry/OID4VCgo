@@ -33,10 +33,23 @@ public protocol KeyStore: Sendable {
     /// a durable store unless the configuration is for development; the
     /// default is false.
     var isDurable: Bool { get }
+    /// Ends a ``sign(id:digest:)`` (or ``KeyAgreement/agree(id:peerPublicKey:)``)
+    /// with key `id` that's waiting for the holder, because the call it's
+    /// for was cancelled — the Task that started the presentation,
+    /// issuance or refresh: dismiss the Face ID or passcode sheet, so
+    /// `sign` throws, and the call ends at once. The wallet calls it on
+    /// another thread while `sign` runs, possibly more than once, and
+    /// possibly when nothing for `id` is waiting: ignore it then.
+    /// ``KeychainKeyStore`` invalidates the use's `LAContext`. The
+    /// default does nothing: a cancelled call then ends when the holder
+    /// answers.
+    func cancelKeyUse(id: String)
 }
 
 public extension KeyStore {
     var isDurable: Bool { false }
+
+    func cancelKeyUse(id: String) {}
 }
 
 /// ECDH with the wallet's holder keys inside the key store, for deviceMac
@@ -211,13 +224,22 @@ final class CredentialStoreAdapter: NSObject, MobileCredentialStoreProtocol, @un
 /// off it — and waits; this bridges that wait to the async provider.
 final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unchecked Sendable {
     let provider: any WalletProvider
+    // The calls in progress, by the issuance's instance key, for cancel.
+    let calls = CancellableWaits()
     init(_ provider: any WalletProvider) { self.provider = provider }
 
     func walletAttestation(_ clientID: String?, instanceKeyJWK: Data?) throws -> Data {
         let provider = self.provider
         let id = clientID ?? ""
         let key = instanceKeyJWK ?? Data()
-        return Data(try Self.wait { try await provider.walletAttestation(clientID: id, instanceKey: key) }.utf8)
+        return Data(try Self.wait(calls, key) { try await provider.walletAttestation(clientID: id, instanceKey: key) }.utf8)
+    }
+
+    /// Cancels the calls in progress for the issuance whose instance key
+    /// is `instanceKeyJWK`, which Go no longer waits for: their Tasks are
+    /// cancelled, so a provider awaiting `URLSession` stops its request.
+    func cancel(_ instanceKeyJWK: Data) {
+        calls.cancel(String(decoding: instanceKeyJWK, as: UTF8.self))
     }
 
     func keyAttestation(_ instanceKeyJWK: Data?, keysJWK: Data?, nonce: String?) throws -> Data {
@@ -228,16 +250,19 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
         let provider = self.provider
         let instanceKey = instanceKeyJWK ?? Data()
         let n = nonce ?? ""
-        return Data(try Self.wait { try await provider.keyAttestation(instanceKey: instanceKey, keys: keys, nonce: n) }.utf8)
+        return Data(try Self.wait(calls, instanceKey) { try await provider.keyAttestation(instanceKey: instanceKey, keys: keys, nonce: n) }.utf8)
     }
 
     /// Runs `body` and blocks this (Go's) thread until it finishes. A
     /// URLError is marked as a network failure, which Go reports as
-    /// `.network` (retryable) rather than `.platform`.
-    static func wait<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+    /// `.network` (retryable) rather than `.platform`. With `waits`, it
+    /// runs as the wait for `instanceKey` there, so cancelling that
+    /// cancels its Task.
+    static func wait<T: Sendable>(_ waits: CancellableWaits? = nil, _ instanceKey: Data? = nil,
+                                  _ body: @escaping @Sendable () async throws -> T) throws -> T {
         let done = DispatchSemaphore(value: 0)
         let box = ResultBox<T>()
-        Task.detached {
+        let task = Task.detached {
             do {
                 box.set(.success(try await body()))
             } catch let e as URLError {
@@ -247,9 +272,30 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
             }
             done.signal()
         }
-        done.wait()
+        if let waits, let instanceKey {
+            waits.run(String(decoding: instanceKey, as: UTF8.self), cancel: { task.cancel() }) { done.wait() }
+        } else {
+            done.wait()
+        }
         return try box.get()
     }
+}
+
+/// Gomobile's CallbackCanceller over a wallet's key store and Wallet
+/// Provider: Go calls it when a call waiting on one of them is cancelled,
+/// so the holder's sheet is dismissed (``KeyStore/cancelKeyUse(id:)``) or
+/// the provider's Task cancelled.
+final class CallbackCancellerAdapter: NSObject, MobileCallbackCancellerProtocol, @unchecked Sendable {
+    let store: any KeyStore
+    let provider: WalletProviderAdapter?
+    init(_ store: any KeyStore, _ provider: WalletProviderAdapter?) {
+        self.store = store
+        self.provider = provider
+    }
+
+    func cancelKeyUse(_ id: String?) { store.cancelKeyUse(id: id ?? "") }
+
+    func cancelProvider(_ instanceKeyJWK: Data?) { provider?.cancel(instanceKeyJWK ?? Data()) }
 }
 
 /// A result handed from a Task to the thread waiting for it.

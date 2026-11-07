@@ -721,7 +721,11 @@ public class Wallet(
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)
         agreement?.let(handle::setKeyAgreement)
-        adapters = listOfNotNull(keys, credentials, wp, agreement)
+        // A call cancelled while it waits for the holder or the provider
+        // ends that wait.
+        val canceller = CallbackCancellerAdapter(keyStore, wp)
+        handle.setCallbackCanceller(canceller)
+        adapters = listOfNotNull(keys, credentials, wp, agreement, canceller)
     }
 
     /**

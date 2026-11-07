@@ -15,7 +15,9 @@
 //     main thread; a callback into the app runs on that same thread.
 //   - A call that waits on the network takes an Operation the app can
 //     Cancel from another thread, since no context.Context crosses the
-//     boundary.
+//     boundary. A call cancelled while it waits in a callback — a holder
+//     key's prompt — tells the Wallet's CallbackCanceller, which ends
+//     the wait.
 //   - A callback that can fail returns []byte or nothing besides its
 //     error: one returning a string isn't a throwing Swift method.
 //

@@ -84,4 +84,11 @@ or ``CredentialStatus/Reason/noCurrentCRL``.
 
 Every call that waits on the network or the holder runs in the calling
 task: cancel the task, as the holder leaves the screen, say, and the
-call returns ``WalletError/Code/cancelled`` promptly.
+call returns ``WalletError/Code/cancelled`` promptly. A Face ID or
+passcode sheet a holder key is showing meanwhile is dismissed:
+``KeychainKeyStore`` invalidates the signature's `LAContext`. A
+``KeyStore`` of your own dismisses its prompt in
+``KeyStore/cancelKeyUse(id:)``; one that doesn't implement it holds the
+call until the holder answers. A presentation cancelled so sends
+nothing, and can be answered again. A ``WalletProvider`` call in
+progress has its task cancelled too.

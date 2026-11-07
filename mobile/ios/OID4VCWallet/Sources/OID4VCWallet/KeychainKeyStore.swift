@@ -65,6 +65,8 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
     private let lock = NSLock()
     private var ephemeral: [String: SecKey] = [:]
     private var ephemeralPurposes: [String: KeyPurpose] = [:]
+    // The uses of keys in progress, by key ID, for cancelKeyUse.
+    private let keyUses = CancellableWaits()
 
     /// A store making and keeping keys as `options` say.
     public init(options: Options = Options()) {
@@ -119,7 +121,7 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
     }
 
     public func publicKey(id: String) throws -> Data? {
-        guard let key = try privateKey(id) else { return nil }
+        guard let key = try privateKey(id, context: HolderPrompt.current) else { return nil }
         guard let pub = SecKeyCopyPublicKey(key) else {
             throw StoreError("key \(id) has no public key")
         }
@@ -131,14 +133,44 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
     }
 
     public func sign(id: String, digest: Data) throws -> Data {
-        guard let key = try privateKey(id) else {
-            throw StoreError("no key \(id)")
+        try usingKey(id) { context in
+            guard let key = try privateKey(id, context: context) else {
+                throw StoreError("no key \(id)")
+            }
+            var error: Unmanaged<CFError>?
+            guard let sig = SecKeyCreateSignature(key, .ecdsaSignatureDigestX962SHA256, digest as CFData, &error) else {
+                throw error!.takeRetainedValue() as Error
+            }
+            return sig as Data
         }
-        var error: Unmanaged<CFError>?
-        guard let sig = SecKeyCreateSignature(key, .ecdsaSignatureDigestX962SHA256, digest as CFData, &error) else {
-            throw error!.takeRetainedValue() as Error
+    }
+
+    /// Dismisses the Face ID or passcode sheet a ``sign(id:digest:)`` or
+    /// ``agree(id:peerPublicKey:)`` with key `id` shows, because the call
+    /// it's for was cancelled: it invalidates the use's authentication
+    /// context, so the use throws. The wallet calls it; nothing waiting
+    /// for `id` is fine. In a call whose holder keys share one
+    /// authentication (``ProximityPresentation/respond(answers:)``), it
+    /// ends that call's. A key kept only in memory
+    /// (`Options.persistent` off) can't be cancelled.
+    public func cancelKeyUse(id: String) {
+        keyUses.cancel(id)
+    }
+
+    /// Runs `body`, a use of key `id` that may ask the holder, with the
+    /// authentication context it asks in: this thread's ``HolderPrompt``
+    /// one, inside ``oneHolderPrompt(_:)``, else one of its own,
+    /// invalidated afterwards. ``cancelKeyUse(id:)`` invalidates it
+    /// meanwhile. A key kept only in memory is used without one: its
+    /// SecKey was made with none.
+    private func usingKey<T>(_ id: String, _ body: (LAContext?) throws -> T) throws -> T {
+        guard options.persistent else { return try body(nil) }
+        let shared = HolderPrompt.current
+        let context = ContextBox(shared ?? LAContext())
+        defer {
+            if shared == nil { context.context.invalidate() }
         }
-        return sig as Data
+        return try keyUses.run(id, cancel: { context.context.invalidate() }) { try body(context.context) }
     }
 
     /// ECDH between holder key `id` and `peerPublicKey` (an uncompressed
@@ -146,7 +178,11 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
     /// holder key asking for user presence asks here too, as for `sign`.
     /// Instance and DPoP keys never agree keys.
     public func agree(id: String, peerPublicKey: Data) throws -> Data {
-        guard let key = try privateKey(id) else {
+        try usingKey(id) { context in try agree(id: id, peerPublicKey: peerPublicKey, context: context) }
+    }
+
+    private func agree(id: String, peerPublicKey: Data, context: LAContext?) throws -> Data {
+        guard let key = try privateKey(id, context: context) else {
             throw StoreError("no key \(id)")
         }
         guard try purpose(of: id) == .holder else {
@@ -222,17 +258,18 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         return deleted
     }
 
-    private func privateKey(_ id: String) throws -> SecKey? {
+    /// Key `id`, asking the holder, if it does, in `context`: inside
+    /// ``oneHolderPrompt(_:)``, this thread's ``HolderPrompt`` one, which
+    /// one presentation's holder keys share — the first signature asks
+    /// the holder, and the others don't again (it's this thread's: only
+    /// that presentation's Go call signs on it); else the use's own.
+    private func privateKey(_ id: String, context: LAContext?) throws -> SecKey? {
         if !options.persistent {
             return lock.withLock { ephemeral[id] }
         }
         var q = query(id)
         q[kSecReturnRef as String] = true
-        if let context = HolderPrompt.current {
-            // One presentation's holder keys share it: the first
-            // signature asks the holder, and the others don't again.
-            // It's this thread's: only that presentation's Go call
-            // signs on it.
+        if let context {
             q[kSecUseAuthenticationContext as String] = context
         }
         var item: CFTypeRef?
@@ -321,6 +358,13 @@ extension KeychainKeyStore {
     static func oneHolderPrompt<T>(_ body: () throws -> T) rethrows -> T {
         try HolderPrompt.scoped(body)
     }
+}
+
+/// An authentication context, which `invalidate()` makes safe to end from
+/// any thread.
+final class ContextBox: @unchecked Sendable {
+    let context: LAContext
+    init(_ context: LAContext) { self.context = context }
 }
 
 /// The authentication context holder keys share inside
