@@ -293,14 +293,16 @@ public data class WalletConfiguration(
      */
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     /**
-     * An absolute path, the app's own — under `context.cacheDir`, say — where
-     * [Wallet.checkStatus] keeps the lists it verified across launches: a launch then asks
-     * each list's server whether the list it kept is current, a `304 Not Modified` rather
-     * than the list, and never uses one the server hasn't confirmed. The lists are
+     * Where [Wallet.checkStatus] keeps the lists it verified across launches: a launch then
+     * asks each list's server whether the list it kept is current, a `304 Not Modified`
+     * rather than the list, and never uses one the server hasn't confirmed. The lists are
      * authenticated with a key the library makes, wrapped by an Android Keystore key, so
-     * one anyone else wrote to the directory is dropped. Empty keeps them in memory only.
+     * one anyone else wrote to the directory is dropped. Null, the default, keeps them in
+     * `oid4vcwallet-status-lists` in the app's `context.cacheDir`, or in memory only when
+     * that key can't be had; an absolute path, the app's own, keeps them there; empty keeps
+     * them in memory only.
      */
-    @SerialName("status_cache_dir") val statusCacheDir: String = "",
+    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
 ) {
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable

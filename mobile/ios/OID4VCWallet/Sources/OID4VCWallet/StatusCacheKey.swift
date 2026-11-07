@@ -11,19 +11,55 @@ enum StatusCacheKey {
     static let service = "dev.idfoundry.oid4vcwallet.status-cache-key"
     static let bytes = 32
 
+    /// The directory a nil `statusCacheDir` keeps lists in, in the app's
+    /// Caches directory.
+    static let defaultDirName = "oid4vcwallet-status-lists"
+
     /// Where the key comes from: the Keychain, unless a test replaced it.
     static let source = Locked<@Sendable () throws -> Data>(initialState: keychainKey)
 
-    /// `encoded`, a configuration's JSON, with `status_cache_key` added
-    /// when the configuration keeps lists in `statusCacheDir`.
-    static func configuration(_ encoded: Data, statusCacheDir: String) throws -> String {
-        guard !statusCacheDir.isEmpty else { return String(decoding: encoded, as: UTF8.self) }
+    /// Where a nil `statusCacheDir` keeps lists, unless a test replaced
+    /// it: `defaultDirName` in the app's Caches directory. None on macOS,
+    /// where Caches is every app's of the user's.
+    static let defaultDir = Locked<@Sendable () -> String?>(initialState: cachesDir)
+
+    /// `encoded`, a configuration's JSON, keeping lists in
+    /// `statusCacheDir` with the `status_cache_key` that authenticates
+    /// them. Empty keeps them in memory only. Nil keeps them in
+    /// `defaultDir`, or in memory only when there's none or its key can't
+    /// be had (before the device is first unlocked, say): the default
+    /// never stops a wallet being made.
+    static func configuration(_ encoded: Data, statusCacheDir: String?) throws -> String {
+        let unchanged = String(decoding: encoded, as: UTF8.self)
+        let load = source.withLock { $0 }
+        let dir: String
+        let key: Data
+        switch statusCacheDir {
+        case ""?:
+            return unchanged
+        case let chosen?:
+            dir = chosen
+            key = try load()
+        case nil:
+            guard let fallback = defaultDir.withLock({ $0 })(), let loaded = try? load() else { return unchanged }
+            dir = fallback
+            key = loaded
+        }
         guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
             throw StoreError("the configuration isn't a JSON object")
         }
-        let load = source.withLock { $0 }
-        object["status_cache_key"] = try load().base64EncodedString()
+        object["status_cache_dir"] = dir
+        object["status_cache_key"] = key.base64EncodedString()
         return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    @Sendable static func cachesDir() -> String? {
+        #if os(macOS)
+        return nil
+        #else
+        return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent(defaultDirName, isDirectory: true).path
+        #endif
     }
 
     /// The key the Keychain keeps, made and kept there on first use.

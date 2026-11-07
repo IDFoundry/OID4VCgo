@@ -34,6 +34,12 @@ class StatusCacheKeyTest {
     }
 
     @Test
+    fun defaultInTheAppsCacheDirectory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals(File(context.cacheDir, StatusCacheKey.DEFAULT_DIR).canonicalFile, StatusCacheKey.defaultDir()?.canonicalFile)
+    }
+
+    @Test
     fun replacedKeyMadeAnew() {
         val first = StatusCacheKey.source(dir)
         File(dir, ".status-cache-key").writeBytes(ByteArray(60) { 1 })

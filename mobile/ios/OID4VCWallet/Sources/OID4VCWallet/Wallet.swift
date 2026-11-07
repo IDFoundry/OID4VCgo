@@ -202,15 +202,17 @@ public struct WalletConfiguration: Codable, Sendable {
     /// day, and never past the list's own `ttl` or `exp`. Longer means
     /// fewer requests, and a revocation seen that much later.
     public var statusCacheMaxAgeSeconds: Int
-    /// An absolute path, the app's own — under its Caches directory, say —
-    /// where `checkStatus` keeps the lists it verified across launches: a
+    /// Where `checkStatus` keeps the lists it verified across launches: a
     /// launch then asks each list's server whether the list it kept is
     /// current, a `304 Not Modified` rather than the list, and never uses
     /// one the server hasn't confirmed. The lists are authenticated with
     /// a key the library makes and keeps in the Keychain, so one anyone
-    /// else wrote to the directory is dropped. Empty keeps them in
-    /// memory only.
-    public var statusCacheDir: String
+    /// else wrote to the directory is dropped. Nil, the default, keeps
+    /// them in `oid4vcwallet-status-lists` in the app's Caches directory,
+    /// or in memory only when that key can't be had, and on macOS; an
+    /// absolute path, the app's own, keeps them there; empty keeps them
+    /// in memory only.
+    public var statusCacheDir: String?
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -287,7 +289,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 noRevocationCheck: [RevocationRole] = [], crlDistributionPoints: [CRLDistributionPoint] = [],
                 crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false,
                 statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0,
-                statusCacheDir: String = "") {
+                statusCacheDir: String? = nil) {
         self.clientID = clientID
         self.redirectURI = redirectURI
         self.issuerRoots = issuerRoots
@@ -406,7 +408,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   statusMaxBytes: try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0,
                   identifierListMaxBytes: try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0,
                   statusCacheMaxAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0,
-                  statusCacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir) ?? "")
+                  statusCacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir))
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
