@@ -247,6 +247,7 @@ type Wallet struct {
 	// Credential to read one without listing them all.
 	creds credentialStore
 	ka    *agreement
+	cc    *canceller
 	// crls are the lists the "revocation" roles check against.
 	crls *crlSet
 
@@ -267,6 +268,20 @@ func (w *Wallet) SetKeyAgreement(ka KeyAgreement) {
 		return
 	}
 	w.ka.ka.Store(&ka)
+}
+
+// SetCallbackCanceller gives the wallet c, to end a wait in the
+// KeyStore, KeyAgreement or WalletProvider when the call waiting on it
+// is cancelled: a holder key's prompt, say, is dismissed, and the call
+// returns cancelled at once rather than when the holder answers. nil
+// removes it. It's separate from the KeyStore so a KeyStore stays as it
+// was.
+func (w *Wallet) SetCallbackCanceller(c CallbackCanceller) {
+	if c == nil {
+		w.cc.c.Store(nil)
+		return
+	}
+	w.cc.c.Store(&c)
 }
 
 // NewWallet returns a Wallet configured by configJSON:
@@ -302,8 +317,9 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		return nil, err
 	}
 	ka := &agreement{}
+	cc := &canceller{}
 	deps := walletflow.Dependencies{
-		Keys: keyStore{ks: keys, ka: ka}, Credentials: credentialStore{credentials},
+		Keys: keyStore{ks: keys, ka: ka, cc: cc}, Credentials: credentialStore{credentials},
 		// crypto/rand.Reader itself, which production assurance requires.
 		Random: rand.Reader,
 		// Pending deferred credentials, authorizations in progress and
@@ -319,13 +335,13 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		return nil, err
 	}
 	if provider != nil {
-		deps.Provider = walletProvider{provider}
+		deps.Provider = walletProvider{provider, cc}
 	}
 	w, err := walletflow.New(wcfg, deps)
 	if err != nil {
 		return nil, newError(CodeInvalidInput, err)
 	}
-	return &Wallet{w: w, keys: keys, creds: credentialStore{credentials}, ka: ka, crls: crls}, nil
+	return &Wallet{w: w, keys: keys, creds: credentialStore{credentials}, ka: ka, cc: cc, crls: crls}, nil
 }
 
 // walletRevocation sets the revocation check of each role cfg's

@@ -142,7 +142,10 @@ format or error code below changes incompatibly.
 - **Cancellation:** a call that waits on the network takes an
   `Operation` (`NewOperation(timeoutMillis)`, 0 for no timeout); `Cancel`
   it from any thread, and the call returns `cancelled`. Its timeout,
-  like a request's own, returns `network`.
+  like a request's own, returns `network`. A call waiting in a callback
+  — a holder key's prompt in `KeyStore.Sign` — ends at once only with a
+  CallbackCanceller (see below), which ends the callback's wait;
+  without one, it returns once the callback does.
 
 ## Error codes
 
@@ -248,6 +251,35 @@ agrees keys with any holder key, in the Secure Enclave or not
 (`SecKeyCopyKeyExchangeResult`), and asks for user presence as it
 does to sign. Any other error fails the
 response as `platform`. `CheckKeyAgreement(store, ka)` exercises one.
+
+### CallbackCanceller
+
+Optional, added within ABI 15: ends a wait in another callback when the
+call waiting on it is cancelled — its Operation cancelled, or timed
+out — so the call returns at once. Give one with
+`Wallet.SetCallbackCanceller(c)`; it's separate from the KeyStore and
+WalletProvider, which are unchanged. Go calls it on another thread
+while the callback runs, again every 50 ms for up to a second until
+the callback returns (a callback that hadn't yet begun to wait had
+nothing to end), and possibly after the wait has ended: a call that
+applies to nothing is ignored.
+
+| Method | |
+|---|---|
+| `CancelKeyUse(id)` | a `KeyStore.Sign` or `KeyAgreement.Agree` with key `id`, in progress, is for a cancelled call: dismiss the prompt it shows the holder, so it fails. A use that asks nothing may finish |
+| `CancelProvider(instanceKeyJWK)` | a `WalletProvider` call for the issuance whose instance key is `instanceKeyJWK` (the argument `WalletAttestation` or `KeyAttestation` was given) is for a cancelled call: cancel its request. Go has already returned without it |
+
+A key use that fails after `CancelKeyUse` fails its call as
+`cancelled` (`network` for a timeout), with nothing sent: a
+presentation can be answered again. A call cancelled before a key's
+use begins doesn't ask to cancel it, since a key can outlive the call
+that loaded it (an issuance's DPoP key, across its calls); the wallet
+checks for cancellation between holder keys instead.
+`KeyStore.CreateKey`, which may wait for a Wallet Provider's
+attestation challenge in the Kotlin library, isn't cancelled. The Swift
+and Kotlin libraries' `Wallet` gives one over the app's `KeyStore`
+(their `cancelKeyUse`) and `WalletProvider` (whose Task or coroutine
+they cancel).
 
 ### CredentialStore
 
@@ -358,7 +390,7 @@ nowhere: such an issuance needs `client_id` for a Key Attestation
 (`proof_unsupported` without one), and deletes the key when it ends.
 
 These may wait on the network. A cancelled call returns without waiting
-for them. An error whose message starts with `[network]` is a network
+for them, and tells the CallbackCanceller, if any, to cancel them. An error whose message starts with `[network]` is a network
 failure, reported as `network` (retryable); any other is `platform`.
 The Swift package's adapter marks a `URLError` this way, and the Kotlin
 library's an `IOException`.
@@ -768,6 +800,7 @@ run. Added within ABI 14.
 | `StartIssuance(op, offerURI)` | an `Issuance` |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found` |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
+| `SetCallbackCanceller(c)` | gives the wallet a CallbackCanceller (see above), so a call cancelled while it waits for the holder or the Wallet Provider ends that wait; `nil` removes it. Added within ABI 15 |
 | `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). Added within ABI 12 |
 | `RefreshCRLs(op)` | `{"abi", "results", "crls", "next_refresh"}`: fetches the configured CRL distribution points and keeps each current list its CA signed that isn't older than the one held (see Refreshing CRLs). Network requests. Added within ABI 14 |
 | `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. From OID4VCWallet 0.29.0 (within ABI 15), a list naming a CA the configuration has — in `crl_issuers`, a distribution point's `issuer`, or a CA certificate in the roots of a role `revocation` names — that the CA didn't sign is `invalid_input` too, and is dropped from `crls` when a Wallet or ProximityReader is made (an earlier version may have held, and the app persisted, one); and only lists such a CA signed hold later ones to the older-list rule. Before, a forged list with a CA's name and a huge CRL number, from a plain `http` distribution point say, was taken and refused every genuine list after it. A list from a CA the configuration doesn't have (an intermediate CA met only on a chain) is still taken, verified when a certificate is checked, but neither refused as older nor a floor for a later one: give its CA in `crl_issuers` to have it checked. No network calls. Added within ABI 12 |

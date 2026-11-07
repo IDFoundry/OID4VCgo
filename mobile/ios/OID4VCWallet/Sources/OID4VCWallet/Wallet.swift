@@ -714,7 +714,11 @@ public final class Wallet: @unchecked Sendable {
         // A key store that also agrees keys answers in person with deviceMac
         // under .macPreferred; Go keeps signing without one.
         if let agreement { handle.setKeyAgreement(agreement) }
-        adapters = [keys, credentials] + (provider.map { [$0 as AnyObject] } ?? []) + (agreement.map { [$0 as AnyObject] } ?? [])
+        // A call cancelled while it waits for the holder or the provider
+        // ends that wait.
+        let canceller = CallbackCancellerAdapter(keys.store, provider as? WalletProviderAdapter)
+        handle.setCallbackCanceller(canceller)
+        adapters = [keys, credentials, canceller] + (provider.map { [$0 as AnyObject] } ?? []) + (agreement.map { [$0 as AnyObject] } ?? [])
     }
 
     /// Deletes every key in `keyStore` that none of the wallet's

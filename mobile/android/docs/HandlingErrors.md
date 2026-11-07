@@ -91,4 +91,12 @@ credential's status says the same: `CredentialStatus.reason` is
 
 Every call that waits on the network or the holder is a `suspend`
 function: cancel its coroutine, as the holder leaves the screen, say,
-and the call returns promptly, throwing `CancellationException`.
+and the call returns promptly, throwing `CancellationException`. A
+biometric prompt a holder key is showing meanwhile is dismissed:
+`AndroidKeystoreKeyStore` cancels its `HolderAuthenticator`'s
+coroutine, which `BiometricPromptAuthenticator` answers by cancelling
+the prompt. A `KeyStore` of your own dismisses its prompt in
+`cancelKeyUse`; one that doesn't implement it holds the call until the
+holder answers. A presentation cancelled so sends nothing, and can be
+answered again. A `WalletProvider` call in progress has its coroutine
+cancelled too.

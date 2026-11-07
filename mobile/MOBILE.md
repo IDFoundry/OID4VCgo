@@ -563,7 +563,10 @@ pass on the iOS Simulator.
 - **Cancellation:** an `Operation` made before the call and passed in;
   Swift Task cancellation calls its `cancel()` through
   `withTaskCancellationHandler`, and the blocked Go call returns a
-  `cancelled` error. A timeout works the same way.
+  `cancelled` error. A timeout works the same way. (A call waiting in a
+  callback, such as a holder key's Face ID sheet, waited for it until
+  the CallbackCanceller: see
+  [Cancelling a callback's wait](#cancelling-a-callbacks-wait-abi-15).)
 
 ### Phase 2 findings
 
@@ -925,7 +928,8 @@ Each step either can be retried safely, or says it can't:
 - **Cancellation:**
   - It reaches every HTTP request, through the Operation's context. A
     Wallet Provider callback still waiting on the network no longer
-    holds up a cancelled call.
+    holds up a cancelled call. (A callback's own wait came later:
+    [Cancelling a callback's wait](#cancelling-a-callbacks-wait-abi-15).)
   - Clean-up (deleting a key, settling a deferred credential) runs even
     when the call was cancelled.
   - A provider's `URLError` is a network failure, not a platform one.
@@ -1090,12 +1094,13 @@ on an emulator, in CI too (`mobile-android`).
 - **Cancellation:** the coroutine's cancellation cancels the
   `Operation`, and the blocked Go call returns as soon as Go next checks
   it; Go's `cancelled` answer becomes the coroutine's
-  `CancellationException`. Not while Go is inside a callback, though: a
-  holder key's signature waits in `AndroidKeystoreKeyStore` for the
-  holder, on Go's thread, and cancelling the operation doesn't dismiss
-  the BiometricPrompt showing meanwhile. The call returns once the
-  holder answers or dismisses it. Passing the operation's cancellation
-  into its callbacks is still to do.
+  `CancellationException`. While Go is inside a callback — a holder
+  key's signature waiting in `AndroidKeystoreKeyStore` for the holder,
+  on Go's thread — Go tells the wallet's CallbackCanceller, which
+  dismisses the BiometricPrompt, and the call returns at once (see
+  [Cancelling a callback's wait](#cancelling-a-callbacks-wait-abi-15)).
+  Until then the call returned only once the holder answered or
+  dismissed the prompt.
 - **Threads:** 32 concurrent calls, each calling back into Kotlin on
   Go's thread, work.
 - **TLS:** Go verifies certificates itself, against CA files: on
@@ -1807,6 +1812,66 @@ requires the issuance's `instance_key`.
   instance (`400` for one no Wallet Attestation recorded); without one,
   as an older demo app sends, it issues under its shared holder
   instance, as before.
+
+## Cancelling a callback's wait (ABI 15)
+
+An `Operation` reaches every request Go makes, but not the app's
+callbacks: `crypto.Signer` takes no context, so a holder key's `Sign`
+waiting for the holder — a BiometricPrompt, the Face ID sheet — held a
+cancelled call until the holder answered. And a Wallet Provider call
+Go stopped waiting for ran on in the app.
+
+- **The signal crosses the boundary as a callback:** Go tells a
+  `CallbackCanceller`, set with `Wallet.SetCallbackCanceller`, which
+  use to end: `CancelKeyUse(id)` for a key's `Sign` or `Agree`,
+  `CancelProvider(instanceKeyJWK)` for a provider call. Additive within
+  ABI 15: the KeyStore and WalletProvider are unchanged, and a wallet
+  without one waits as before. The Swift and Kotlin `Wallet`s set
+  theirs, over the app's `KeyStore.cancelKeyUse` (a default that does
+  nothing) and their own provider adapters.
+- **Which call a key is for:** walletflow loads each key with the
+  call's context (`KeyStore.Key(ctx, id)`), and the mobile key keeps
+  it. A key outlives that call when a session keeps it, as an
+  issuance's DPoP key does across its calls, so a context already done
+  when a use begins isn't taken for this call's: only one that ends
+  while the use runs is told. Holder keys are loaded by the call that
+  signs with them, and walletflow checks for cancellation between them.
+- **Keys are named by ID:** a copy's holder key is used by one call at
+  a time (its reservation), and instance and DPoP keys are each
+  issuance's own, so the ID is enough. A provider call is named by its
+  issuance's instance key, which both `WalletAttestation` and
+  `KeyAttestation` are given.
+- **The race:** a cancel that comes before the callback has begun to
+  wait has nothing to end, so Go repeats it every 50 ms for up to a
+  second, until the callback returns.
+- **The error:** a key use that fails once told is `cancelled` (or
+  `network` for the Operation's timeout), not `platform`, and doesn't
+  wrap the context's error: wallet's `RespondSelection` signs the Key
+  Binding JWT inside the call that sends it, and walletflow counts a
+  context error from it as `delivery_unknown`. Nothing was sent, and
+  the holder can answer again.
+- **Kotlin:** `AndroidKeystoreKeyStore` runs its `HolderAuthenticator`
+  in a coroutine it cancels on `cancelKeyUse`, and
+  `BiometricPromptAuthenticator` already cancelled its
+  `CancellationSignal` on its coroutine's cancellation, which dismisses
+  the prompt. The provider adapter cancels the provider's coroutine;
+  `HttpWalletProvider`'s `HttpURLConnection` can't be interrupted, so
+  its request ends when it does, Go long since returned.
+- **Swift:** `KeychainKeyStore` gives each use an `LAContext` of its
+  own (or the presentation's shared one) through
+  `kSecUseAuthenticationContext`, and `cancelKeyUse` invalidates it,
+  which dismisses the sheet. Keys kept only in memory
+  (`persistent: false`) are used without one and can't be cancelled.
+  The provider adapter cancels the provider's Task, which ends a
+  `URLSession` request.
+- **Not cancelled:** `KeyStore.CreateKey`, which in the Kotlin library
+  waits for the provider's attestation challenge, and a proximity
+  session's `Terminate`, which ends a `Respond` between keys but not
+  during a prompt.
+- **Verified** by Go tests with a key store that waits as a prompt
+  does, end to end through a presentation, and by the Swift and
+  Kotlin libraries' unit tests with fakes; the prompts' dismissal on a
+  device is yet to be tried.
 
 ## Open questions
 

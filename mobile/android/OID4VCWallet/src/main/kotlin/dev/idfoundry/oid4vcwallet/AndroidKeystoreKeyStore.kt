@@ -13,8 +13,8 @@ import android.security.keystore.StrongBoxUnavailableException
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.Log
 import androidx.annotation.RequiresApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.math.BigInteger
@@ -43,6 +43,13 @@ import java.security.KeyStore as JavaKeyStore
  * that needs the holder's biometrics or screen lock for each use. The
  * key store calls it on Go's thread, which waits.
  * [BiometricPromptAuthenticator] is the standard one.
+ *
+ * Cancelling the call it's for — the coroutine that started the
+ * presentation, issuance or refresh — cancels the coroutine
+ * [authenticate] runs in: an implementation dismisses its prompt then
+ * (`suspendCancellableCoroutine`'s `invokeOnCancellation`, as
+ * [BiometricPromptAuthenticator] cancels its CancellationSignal), so
+ * the call ends at once.
  */
 public fun interface HolderAuthenticator {
     /**
@@ -71,9 +78,9 @@ public fun interface HolderAuthenticator {
  * (`activity`'s, null when none is showing), allowing a strong biometric
  * or the screen lock, as Face ID or the passcode on iOS.
  *
- * A prompt shown while the wallet signs stays until the holder answers
- * or dismisses it: cancelling the coroutine that started the presentation
- * doesn't dismiss it yet.
+ * Cancelling the coroutine that started the presentation (or issuance,
+ * or refresh) while the prompt shows dismisses it, through the prompt's
+ * CancellationSignal, and the call ends with that cancellation.
  */
 @RequiresApi(Build.VERSION_CODES.R)
 public class BiometricPromptAuthenticator(
@@ -251,6 +258,9 @@ public class AndroidKeystoreKeyStore(
 
     private val keystore: JavaKeyStore = JavaKeyStore.getInstance(PROVIDER).apply { load(null) }
 
+    // The holder authentications in progress, by key ID, for cancelKeyUse.
+    private val holderWaits = CancellableWaits()
+
     /** Keystore keys survive the app quitting. */
     override val isDurable: Boolean get() = true
 
@@ -402,8 +412,7 @@ public class AndroidKeystoreKeyStore(
             Signature.getInstance("NONEwithECDSA").apply { initSign(key) }.also { signature ->
                 if (info.isUserAuthenticationRequired) {
                     val auth = authenticator ?: throw StoreException("holder key $id needs a HolderAuthenticator to sign")
-                    // On Go's thread, never the main one: it waits for the holder.
-                    runBlocking { auth.authenticate(signature) }
+                    authenticating(id) { auth.authenticate(signature) }
                 }
             }
         }
@@ -421,10 +430,32 @@ public class AndroidKeystoreKeyStore(
             use()
         } catch (e: UserNotAuthenticatedException) {
             val auth = authenticator ?: throw StoreException("holder key $id needs a HolderAuthenticator to sign")
-            // On Go's thread, never the main one: it waits for the holder.
-            runBlocking { auth.authenticate() }
+            authenticating(id) { auth.authenticate() }
             use()
         }
+
+    /**
+     * Runs [authenticate] for key [id] on Go's thread — never the main
+     * one — which waits for the holder, until [cancelKeyUse] cancels it:
+     * its prompt is then dismissed, and this throws.
+     */
+    private fun authenticating(id: String, authenticate: suspend () -> Unit) {
+        try {
+            holderWaits.await(id, authenticate)
+        } catch (e: CancellationException) {
+            throw StoreException("the holder's authentication for key $id was cancelled", e)
+        }
+    }
+
+    /**
+     * Dismisses the prompt a [sign] or [agree] with key [id] shows the
+     * holder, because the call it's for was cancelled: that [sign] or
+     * [agree] throws. The wallet calls it; nothing waiting for [id] is
+     * fine.
+     */
+    override fun cancelKeyUse(id: String) {
+        holderWaits.cancel(id)
+    }
 
     /** Whether a key that requires the holder asks for each use: its validity after authentication is zero. */
     @Suppress("DEPRECATION")

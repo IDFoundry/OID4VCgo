@@ -170,11 +170,11 @@ func TestCancellable(t *testing.T) {
 	defer close(release)
 	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 	start := time.Now()
-	_, err := cancellable(ctx, func() ([]byte, error) { <-release; return []byte("jwt"), nil })
+	_, err := cancellable(ctx, func() ([]byte, error) { <-release; return []byte("jwt"), nil }, nil)
 	if !errors.Is(err, context.Canceled) || time.Since(start) > 2*time.Second {
 		t.Errorf("cancellable = %v after %v", err, time.Since(start))
 	}
-	if jwt, err := cancellable(context.Background(), func() ([]byte, error) { return []byte("jwt"), nil }); err != nil || string(jwt) != "jwt" {
+	if jwt, err := cancellable(context.Background(), func() ([]byte, error) { return []byte("jwt"), nil }, nil); err != nil || string(jwt) != "jwt" {
 		t.Errorf("cancellable, not cancelled = %q, %v", jwt, err)
 	}
 }

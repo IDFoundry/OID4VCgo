@@ -85,6 +85,73 @@ type KeyAgreement interface {
 	Agree(id string, peerPublicKey []byte) ([]byte, error)
 }
 
+// CallbackCanceller ends a wait in one of the app's callbacks when the
+// call waiting on it is cancelled — its Operation cancelled — so the
+// call returns at once rather than when the holder answers a prompt or
+// a request completes. An app gives one with Wallet.SetCallbackCanceller;
+// without one, a cancelled call still waits for the callback. Go calls
+// it from another thread while the callback runs, possibly more than
+// once, and possibly when the wait has already ended: ignore a call
+// that applies to nothing.
+type CallbackCanceller interface {
+	// CancelKeyUse: a KeyStore.Sign or KeyAgreement.Agree with key id,
+	// in progress, is for a call that has been cancelled. Dismiss the
+	// prompt it shows (or is about to show) the holder, so it fails; a
+	// use that asks nothing may finish.
+	CancelKeyUse(id string)
+	// CancelProvider: a WalletProvider call in progress for the
+	// issuance whose instance key is instanceKeyJWK — the argument
+	// WalletAttestation or KeyAttestation was given — is for a call that
+	// has been cancelled. Cancel its request: Go no longer waits for it.
+	CancelProvider(instanceKeyJWK []byte)
+}
+
+// canceller holds a Wallet's CallbackCanceller, which
+// SetCallbackCanceller may set after its keys are made.
+type canceller struct {
+	c atomic.Pointer[CallbackCanceller]
+}
+
+func (c *canceller) get() CallbackCanceller {
+	if c == nil {
+		return nil
+	}
+	if p := c.c.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// Telling a CallbackCanceller again: a callback that hadn't yet begun to
+// wait when its call was cancelled — so a cancel had nothing to end — is
+// ended once it has.
+const (
+	cancelRetryInterval = 50 * time.Millisecond
+	cancelRetries       = 20
+)
+
+// tellCancelled calls cancel when ctx is done before finished is
+// closed, and again every cancelRetryInterval, up to cancelRetries
+// times, until it is. It reports whether it called cancel.
+func tellCancelled(ctx context.Context, finished <-chan struct{}, cancel func()) bool {
+	select {
+	case <-finished:
+		return false
+	case <-ctx.Done():
+	}
+	t := time.NewTicker(cancelRetryInterval)
+	defer t.Stop()
+	for range cancelRetries {
+		cancel()
+		select {
+		case <-finished:
+			return true
+		case <-t.C:
+		}
+	}
+	return true
+}
+
 // noKeyAgreementPrefix starts the message of a KeyAgreement's error for
 // a key that can't agree keys.
 const noKeyAgreementPrefix = "[no_key_agreement]"
@@ -107,6 +174,7 @@ func (a *agreement) get() KeyAgreement {
 type keyStore struct {
 	ks KeyStore
 	ka *agreement
+	cc *canceller
 }
 
 // KeyCustody declares the KeyStore's custody to fapigo/client: its keys
@@ -115,7 +183,7 @@ func (k keyStore) KeyCustody() keys.KeyCustody { return keys.KeyCustody{Durable:
 
 var _ walletflow.KeyStore = keyStore{}
 
-func (k keyStore) NewKey(_ context.Context, purpose walletflow.KeyPurpose) (walletflow.Key, error) {
+func (k keyStore) NewKey(ctx context.Context, purpose walletflow.KeyPurpose) (walletflow.Key, error) {
 	id, err := k.ks.CreateKey(string(purpose))
 	if err != nil {
 		// A store that asks the Wallet Provider for a key attestation
@@ -126,7 +194,7 @@ func (k keyStore) NewKey(_ context.Context, purpose walletflow.KeyPurpose) (wall
 	if id == "" {
 		return nil, newError(CodePlatform, fmt.Errorf("new %s key: no key ID", purpose))
 	}
-	key, err := k.load(id)
+	key, err := k.load(ctx, id)
 	if err != nil {
 		// Don't leave behind a key the wallet can't use.
 		_ = k.ks.DeleteKey(id)
@@ -138,7 +206,7 @@ func (k keyStore) NewKey(_ context.Context, purpose walletflow.KeyPurpose) (wall
 	return key, nil
 }
 
-func (k keyStore) Key(_ context.Context, id string) (walletflow.Key, error) { return k.load(id) }
+func (k keyStore) Key(ctx context.Context, id string) (walletflow.Key, error) { return k.load(ctx, id) }
 
 func (k keyStore) DeleteKey(_ context.Context, id string) error {
 	if err := k.ks.DeleteKey(id); err != nil {
@@ -147,8 +215,9 @@ func (k keyStore) DeleteKey(_ context.Context, id string) error {
 	return nil
 }
 
-// load returns key id, or an error wrapping walletflow.ErrNotFound.
-func (k keyStore) load(id string) (*platformKey, error) {
+// load returns key id, for use by the call ctx is for, or an error
+// wrapping walletflow.ErrNotFound.
+func (k keyStore) load(ctx context.Context, id string) (*platformKey, error) {
 	raw, err := k.ks.PublicKey(id)
 	if err != nil {
 		return nil, newError(CodePlatform, fmt.Errorf("key %q: %w", id, err))
@@ -160,7 +229,7 @@ func (k keyStore) load(id string) (*platformKey, error) {
 	if err != nil {
 		return nil, newError(CodePlatform, fmt.Errorf("key %q's public key: %w", id, err))
 	}
-	return &platformKey{ks: k.ks, ka: k.ka, id: id, pub: pub}, nil
+	return &platformKey{ks: k.ks, ka: k.ka, cc: k.cc, ctx: ctx, id: id, pub: pub}, nil
 }
 
 // notFoundError is a missing key: a CodeNotFound Error that is also
@@ -182,12 +251,49 @@ func (e *notFoundError) As(target any) bool {
 }
 
 // platformKey is a key in the app's KeyStore, as a walletflow.Key: a
-// crypto.Signer whose private half stays in the KeyStore.
+// crypto.Signer whose private half stays in the KeyStore. ctx is the
+// call it was loaded for: crypto.Signer takes none, so a use that waits
+// for the holder is ended through cc when ctx ends.
 type platformKey struct {
 	ks  KeyStore
 	ka  *agreement
+	cc  *canceller
+	ctx context.Context
 	id  string
 	pub *ecdsa.PublicKey
+}
+
+// use runs call, a KeyStore or KeyAgreement callback with key p that may
+// wait for the holder. When p's call is cancelled while it runs, use
+// tells the CallbackCanceller, so a prompt call shows is dismissed and
+// call returns; it reports whether it told it. A call already ended when
+// call begins isn't told: the key may have been loaded by an earlier call
+// whose Operation has since ended (an issuance's DPoP key), and the
+// wallet checks for cancellation between holder keys.
+func (p *platformKey) use(call func()) bool {
+	c := p.cc.get()
+	if c == nil || p.ctx == nil || p.ctx.Done() == nil || p.ctx.Err() != nil {
+		call()
+		return false
+	}
+	finished := make(chan struct{})
+	told := make(chan bool, 1)
+	go func() { told <- tellCancelled(p.ctx, finished, func() { c.CancelKeyUse(p.id) }) }()
+	call()
+	close(finished)
+	return <-told
+}
+
+// cancelled is err, from a use of p its call's cancellation ended, as
+// that cancellation: the call returns cancelled (or, for an Operation's
+// timeout, network), not platform. It doesn't wrap ctx's error, which
+// would have a presentation that never reached the network reported as
+// delivery_unknown: nothing was sent.
+func (p *platformKey) cancelled(what string, err error) error {
+	if errors.Is(p.ctx.Err(), context.DeadlineExceeded) {
+		return newError(CodeNetwork, fmt.Errorf("%s with key %q: the call timed out (%v)", what, p.id, err))
+	}
+	return newError(CodeCancelled, fmt.Errorf("%s with key %q: the call was cancelled (%v)", what, p.id, err))
 }
 
 var _ proximity.KeyAgreer = (*platformKey)(nil)
@@ -204,8 +310,11 @@ func (p *platformKey) Agree(peer *ecdsa.PublicKey) ([]byte, error) {
 	if err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("peer key: %w", err))
 	}
-	z, err := ka.Agree(p.id, raw)
+	var z []byte
+	told := p.use(func() { z, err = ka.Agree(p.id, raw) })
 	switch {
+	case err != nil && told:
+		return nil, p.cancelled("agree", err)
 	case err != nil && strings.HasPrefix(err.Error(), noKeyAgreementPrefix):
 		return nil, fmt.Errorf("key %q: %w", p.id, proximity.ErrNoKeyAgreement)
 	case err != nil:
@@ -227,7 +336,12 @@ func (p *platformKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) (
 	if opts.HashFunc() != crypto.SHA256 || len(digest) != sha256.Size {
 		return nil, fmt.Errorf("mobile: platform keys sign SHA-256 digests only")
 	}
-	sig, err := p.ks.Sign(p.id, digest)
+	var sig []byte
+	var err error
+	told := p.use(func() { sig, err = p.ks.Sign(p.id, digest) })
+	if err != nil && told {
+		return nil, p.cancelled("sign", err)
+	}
 	if err != nil {
 		return nil, newError(CodePlatform, fmt.Errorf("sign with key %q: %w", p.id, err))
 	}

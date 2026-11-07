@@ -3,6 +3,7 @@
 package mobile
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -33,7 +34,7 @@ func (e *TestEnv) ProximityReader(keys KeyStore) (string, error) {
 	if err != nil {
 		return "", newError(CodePlatform, err)
 	}
-	key, err := keyStore{ks: keys}.load(id)
+	key, err := keyStore{ks: keys}.load(context.Background(), id)
 	if err != nil {
 		return "", err
 	}

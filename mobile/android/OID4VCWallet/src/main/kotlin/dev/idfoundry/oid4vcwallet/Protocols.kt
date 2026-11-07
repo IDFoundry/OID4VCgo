@@ -1,11 +1,13 @@
 package dev.idfoundry.oid4vcwallet
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.util.Base64
+import dev.idfoundry.oid4vcwallet.gomobile.mobile.CallbackCanceller as MobileCallbackCanceller
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.CredentialStore as MobileCredentialStore
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.KeyAgreement as MobileKeyAgreement
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.KeyStore as MobileKeyStore
@@ -91,6 +93,20 @@ public interface KeyStore {
      * a durable store unless the configuration is for development.
      */
     public val isDurable: Boolean get() = false
+
+    /**
+     * Ends a [sign] (or [KeyAgreement.agree]) with key [id] that's
+     * waiting for the holder, because the call it's for was cancelled —
+     * the coroutine that started the presentation, issuance or refresh:
+     * dismiss the prompt, so [sign] throws, and the call ends at once.
+     * The wallet calls it on another thread while [sign] runs, possibly
+     * more than once, and possibly when nothing for [id] is waiting:
+     * ignore it then. [AndroidKeystoreKeyStore] cancels its
+     * [HolderAuthenticator]'s coroutine. The default does nothing: a
+     * cancelled call then ends when the holder answers. A store
+     * delegating to another (`KeyStore by …`) forwards it.
+     */
+    public fun cancelKeyUse(id: String) {}
 }
 
 /**
@@ -412,9 +428,22 @@ internal class WalletProviderAdapter(
     private val store: KeyStore? = null,
     private val created: CreatedKeys? = null,
 ) : MobileWalletProvider {
+    // The calls in progress, by the issuance's instance key, for cancel.
+    internal val calls = CancellableWaits()
+
     override fun walletAttestation(clientID: String, instanceKeyJWK: ByteArray): ByteArray {
         val request = WalletAttestationRequest(clientID, evidence(instanceKeyJWK))
-        return waitForProvider { provider.walletAttestation(request) }.toByteArray()
+        return waitForProvider(calls, instanceKeyJWK) { provider.walletAttestation(request) }.toByteArray()
+    }
+
+    /**
+     * Cancels the calls in progress for the issuance whose instance key
+     * is [instanceKeyJWK], which Go no longer waits for: a provider
+     * suspended cancellably stops there; one blocked in a request (as
+     * [HttpWalletProvider]'s `HttpURLConnection` is) ends when it does.
+     */
+    fun cancel(instanceKeyJWK: ByteArray) {
+        calls.cancel(instanceKeyJWK.decodeToString())
     }
 
     override fun keyAttestation(instanceKeyJWK: ByteArray, keysJWK: ByteArray, nonce: String): ByteArray {
@@ -424,7 +453,7 @@ internal class WalletProviderAdapter(
             throw StoreException("the keys to attest aren't a JSON array")
         }
         val request = KeyAttestationRequest(evidence(instanceKeyJWK), keys.map { evidence(it.toString().toByteArray()) }, nonce)
-        return waitForProvider { provider.keyAttestation(request) }.toByteArray()
+        return waitForProvider(calls, instanceKeyJWK) { provider.keyAttestation(request) }.toByteArray()
     }
 
     private fun evidence(jwk: ByteArray): KeyEvidence {
@@ -454,14 +483,34 @@ internal fun jwkPoint(jwk: ByteArray): ByteArray? {
 /**
  * Runs a Wallet Provider call on Go's thread, which waits for it; an
  * IOException is marked as a network failure, which Go reports as
- * [WalletException.Code.network] (retryable).
+ * [WalletException.Code.network] (retryable). With [calls], it runs as
+ * the wait for [instanceKeyJWK] there, so cancelling that ends it.
  */
-internal fun <T> waitForProvider(body: suspend () -> T): T =
+internal fun <T> waitForProvider(calls: CancellableWaits? = null, instanceKeyJWK: ByteArray? = null, body: suspend () -> T): T =
     try {
-        runBlocking { body() }
+        if (calls != null && instanceKeyJWK != null) calls.await(instanceKeyJWK.decodeToString(), body) else runBlocking { body() }
     } catch (e: IOException) {
         throw StoreException("[network] " + (e.message ?: e.javaClass.simpleName))
+    } catch (e: CancellationException) {
+        throw StoreException("the Wallet Provider call was cancelled", e)
     }
+
+/**
+ * Gomobile's CallbackCanceller over a wallet's key store and Wallet
+ * Provider: Go calls it when a call waiting on one of them is cancelled,
+ * so the holder's prompt is dismissed ([KeyStore.cancelKeyUse]) or the
+ * provider's request stopped.
+ */
+internal class CallbackCancellerAdapter(
+    private val store: KeyStore,
+    private val provider: WalletProviderAdapter?,
+) : MobileCallbackCanceller {
+    override fun cancelKeyUse(id: String) = store.cancelKeyUse(id)
+
+    override fun cancelProvider(instanceKeyJWK: ByteArray) {
+        provider?.cancel(instanceKeyJWK)
+    }
+}
 
 /** A store's or provider's own failure. */
 public open class StoreException(message: String, cause: Throwable?) : Exception(message, cause) {

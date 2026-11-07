@@ -796,8 +796,13 @@ func pendingAuthorization(raw []byte) (walletflow.PendingAuthorization, error) {
 	}, nil
 }
 
-// walletProvider is a WalletProvider as a walletflow.WalletProvider.
-type walletProvider struct{ p WalletProvider }
+// walletProvider is a WalletProvider as a walletflow.WalletProvider. A
+// call cancelled while one of p's calls runs tells cc's
+// CallbackCanceller.
+type walletProvider struct {
+	p  WalletProvider
+	cc *canceller
+}
 
 var _ walletflow.WalletProvider = walletProvider{}
 
@@ -806,7 +811,7 @@ func (w walletProvider) WalletAttestation(ctx context.Context, clientID string, 
 	if err != nil {
 		return "", newError(CodeInternal, err)
 	}
-	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.WalletAttestation(clientID, jwk) })
+	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.WalletAttestation(clientID, jwk) }, w.cancel(jwk))
 	if err != nil {
 		return "", providerError("wallet attestation", err)
 	}
@@ -833,7 +838,7 @@ func (w walletProvider) KeyAttestation(ctx context.Context, instanceKey crypto.P
 	if err != nil {
 		return "", newError(CodeInternal, err)
 	}
-	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.KeyAttestation(instanceJWK, raw, nonce) })
+	jwt, err := cancellable(ctx, func() ([]byte, error) { return w.p.KeyAttestation(instanceJWK, raw, nonce) }, w.cancel(instanceJWK))
 	if err != nil {
 		return "", providerError("key attestation", err)
 	}
@@ -843,23 +848,39 @@ func (w walletProvider) KeyAttestation(ctx context.Context, instanceKey crypto.P
 	return string(jwt), nil
 }
 
+// cancel tells the CallbackCanceller, if any, that the provider call for
+// the issuance whose instance key is instanceJWK has been cancelled; nil
+// without one.
+func (w walletProvider) cancel(instanceJWK []byte) func() {
+	c := w.cc.get()
+	if c == nil {
+		return nil
+	}
+	return func() { c.CancelProvider(instanceJWK) }
+}
+
 // cancellable runs a Wallet Provider callback, which may wait on the
-// network, and returns early when ctx is done: the callback carries on,
-// and its result is dropped.
-func cancellable(ctx context.Context, call func() ([]byte, error)) ([]byte, error) {
+// network, and returns early when ctx is done, its result dropped:
+// cancel, when not nil, then tells the callback to stop.
+func cancellable(ctx context.Context, call func() ([]byte, error), cancel func()) ([]byte, error) {
 	type answer struct {
 		jwt []byte
 		err error
 	}
 	done := make(chan answer, 1)
+	finished := make(chan struct{})
 	go func() {
 		jwt, err := call()
 		done <- answer{jwt, err}
+		close(finished)
 	}()
 	select {
 	case a := <-done:
 		return a.jwt, a.err
 	case <-ctx.Done():
+		if cancel != nil {
+			go tellCancelled(ctx, finished, cancel)
+		}
 		return nil, ctx.Err()
 	}
 }
