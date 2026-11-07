@@ -2,8 +2,9 @@
 
 The HTTP protocol between a wallet app and a Wallet Provider built
 with `walletprovider` (`Provider.Handler`), version **1**. The Go
-`walletprovider.Client` and the Kotlin library's `HttpWalletProvider`
-speak it; this document is the contract for a native client in Swift
+`walletprovider.Client`, the Kotlin library's `HttpWalletProvider`
+(with `android-key` evidence) and the Swift library's
+`HttpWalletProvider` (with `apple-app-attest`) speak it; this document is the contract for a native client in Swift
 or Kotlin, or any other. The version is in the
 path: a change a version-1 client can't read gets a new one, `/v2/`.
 

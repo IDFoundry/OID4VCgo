@@ -45,6 +45,16 @@ Start with <doc:GettingStarted>, then the article for each task;
 - ``Wallet``
 - ``WalletConfiguration``
 - ``WalletProvider``
+- ``HttpWalletProvider``
+- ``InstanceRegistry``
+- ``FileInstanceRegistry``
+- ``InMemoryInstanceRegistry``
+- ``RegisteredInstance``
+- ``AppAttestService``
+- ``DeviceAppAttestService``
+- ``AppAttestKeyLostError``
+- ``WalletProviderRefusedError``
+- ``WalletProviderUnavailableError``
 
 ### Keys and storage
 

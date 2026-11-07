@@ -326,6 +326,33 @@ that they're in the Secure Enclave. So iOS's `key_storage` claims rest
 on the app's integrity, not on hardware evidence; the Swift guide says
 so.
 
+The Swift library's `HttpWalletProvider` is that client, with
+`apple-app-attest` evidence (WALLET_PROVIDER.md's client data). It
+registers once, at the first Wallet Attestation: a Secure Enclave
+registration key under a Keychain tag prefix of its own
+(`HttpWalletProvider.registrationKeyStore()`, so
+`Wallet.sweepOrphanedKeys` never deletes it) and an App Attest key,
+attested over the client data naming the registration key; the
+`InstanceRegistry` (by default a file in Application Support, excluded
+from backups) keeps the instance ID and both keys' IDs. The Swift
+`WalletProvider` protocol hands it JWKs only — no attestation chains,
+and no challenge at key creation, since an assertion can be made over a
+key that already exists — so no ABI change was needed. A new instance
+key's Wallet Attestation carries an assertion over a fresh `instance`
+challenge and the key; a key the provider recorded in this process goes
+alone, and is asserted again on `evidence_required` (the provider's
+retention deleted it). A Key Attestation carries one assertion over a
+`holder` challenge and every holder key. Assertions are serialised,
+each sent before the next is made, as the provider takes only a larger
+counter than the last. `DCError.invalidKey` (the App Attest key gone:
+restored or reinstalled) registers the installation again for a Wallet
+Attestation, and forgets the registration for a Key Attestation, whose
+instance key is the lost instance's; `serverUnavailable` is `network`.
+Where `DCAppAttestService.isSupported` is false — the Simulator — it
+refuses to register, in development too. Its tests run it against a
+fake provider and a fake App Attest, and check its client data against
+the Go package's test vectors; a real attestation needs a device.
+
 ## Credential storage
 
 A credential store the app implements, from the first release:
