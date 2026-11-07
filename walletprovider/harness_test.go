@@ -9,6 +9,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -67,18 +69,56 @@ func verifiers() []walletprovider.EvidenceVerifier {
 	rooted.BootState, rooted.DeviceLocked = walletprovider.BootStateUnverified, false
 	return []walletprovider.EvidenceVerifier{
 		walletprovidertest.FakeVerifier{},
-		walletprovidertest.FakeVerifier{KindName: kindStrongBox, Result: androidResult(10),
-			SecurityLevel: walletprovider.SecurityLevelStrongBox, UserAuthentication: walletprovider.UserAuthenticationRequired},
-		walletprovidertest.FakeVerifier{KindName: kindTEE, Result: androidResult(10),
-			SecurityLevel: walletprovider.SecurityLevelTEE, UserAuthentication: walletprovider.UserAuthenticationNone},
-		walletprovidertest.FakeVerifier{KindName: kindOldApp, Result: androidResult(3), SecurityLevel: walletprovider.SecurityLevelTEE},
-		walletprovidertest.FakeVerifier{KindName: kindRooted, Result: rooted, SecurityLevel: walletprovider.SecurityLevelTEE},
-		walletprovidertest.FakeVerifier{KindName: kindSoftware, Result: androidResult(10)},
-		walletprovidertest.FakeVerifier{KindName: kindOtherApp, Result: other, SecurityLevel: walletprovider.SecurityLevelTEE},
-		walletprovidertest.FakeVerifier{KindName: kindIOS,
-			Result:        walletprovider.VerifiedEvidence{Platform: walletprovider.PlatformIOS, AppID: iosApp},
-			SecurityLevel: walletprovider.SecurityLevelSecureEnclave, Binding: walletprovider.KeyBindingAppAssertion},
+		androidVerifier{
+			kindStrongBox: {Result: androidResult(10),
+				SecurityLevel: walletprovider.SecurityLevelStrongBox, UserAuthentication: walletprovider.UserAuthenticationRequired},
+			kindTEE: {Result: androidResult(10),
+				SecurityLevel: walletprovider.SecurityLevelTEE, UserAuthentication: walletprovider.UserAuthenticationNone},
+			kindOldApp:   {Result: androidResult(3), SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindRooted:   {Result: rooted, SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindSoftware: {Result: androidResult(10)},
+			kindOtherApp: {Result: other, SecurityLevel: walletprovider.SecurityLevelTEE},
+		},
+		iosVerifier(),
 	}
+}
+
+func iosVerifier() walletprovidertest.FakeVerifier {
+	return walletprovidertest.FakeVerifier{KindName: kindIOS,
+		Result:        walletprovider.VerifiedEvidence{Platform: walletprovider.PlatformIOS, AppID: iosApp},
+		SecurityLevel: walletprovider.SecurityLevelSecureEnclave, Binding: walletprovider.KeyBindingAppAssertion}
+}
+
+// kindAndroid is the one Kind of the harness's Android evidence, as a
+// real Android Key Attestation verifier has one: an instance's later
+// evidence must be of the Kind it registered with. The android-*
+// kinds above name which fake stands in for a device's evidence.
+const kindAndroid = "android"
+
+// androidVerifier verifies kindAndroid evidence with the fake its
+// evidence names (androidEvidence).
+type androidVerifier map[string]walletprovidertest.FakeVerifier
+
+// androidEvidence is kindAndroid evidence's Data: As names the fake
+// that verifies Data.
+type androidEvidence struct {
+	As   string          `json:"as"`
+	Data json.RawMessage `json:"data"`
+}
+
+func (androidVerifier) Kind() string { return kindAndroid }
+
+func (v androidVerifier) Verify(ctx context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
+	var ev androidEvidence
+	if err := json.Unmarshal(in.Evidence.Data, &ev); err != nil {
+		return walletprovider.VerifiedEvidence{}, err
+	}
+	fake, ok := v[ev.As]
+	if !ok {
+		return walletprovider.VerifiedEvidence{}, fmt.Errorf("no %q fake", ev.As)
+	}
+	in.Evidence = walletprovider.Evidence{Kind: ev.As, Data: ev.Data}
+	return fake.Verify(ctx, in)
 }
 
 func policy() walletprovider.Policy {
@@ -202,13 +242,22 @@ func (h *harness) challenge(purpose walletprovider.Purpose) string {
 	return c.Value
 }
 
+// evidence is fake evidence of kind over challenge for keys: for one of
+// the android-* kinds, kindAndroid evidence verified as that kind.
 func evidence(t *testing.T, kind, challenge string, keys ...crypto.PublicKey) walletprovider.Evidence {
 	t.Helper()
 	ev, err := walletprovidertest.FakeEvidence(kind, challenge, keys...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ev
+	if !strings.HasPrefix(kind, kindAndroid+"-") {
+		return ev
+	}
+	data, err := json.Marshal(androidEvidence{As: kind, Data: ev.Data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return walletprovider.Evidence{Kind: kindAndroid, Data: data}
 }
 
 // tryRegister registers an instance with evidence of kind, returning it

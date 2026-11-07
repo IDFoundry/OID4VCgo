@@ -147,8 +147,9 @@ app's own attestation key (`setAttestKeyAlias`) are refused.
 - For a Key Attestation, the evidence is one chain **per holder key**,
   each over the same `holder` challenge.
 
-Evidence after registration must come from the same platform and app
-as the registration evidence, and is held to the provider's policy as
+Evidence after registration must be of the same kind (`android-key`
+or `apple-app-attest`) and come from the same platform and app as the
+registration evidence, and is held to the provider's policy as
 that was.
 
 ### `apple-app-attest`: Apple App Attest
@@ -367,9 +368,9 @@ key:
 
 - The first time the instance asks for `instance_key`, `challenge` and
   `evidence` are required: the evidence must vouch for the key over
-  the challenge (an `instance` challenge), from the instance's
-  platform and app, at a security level the provider's policy
-  accepts. The provider then records the key for the instance, with a
+  the challenge (an `instance` challenge), of the kind the instance
+  registered with, from its platform and app, at a security level the
+  provider's policy accepts. The provider then records the key for the instance, with a
   status list entry of its own; without them the answer is `400
   evidence_required`.
 - Once the key is recorded, `challenge` and `evidence` may be left

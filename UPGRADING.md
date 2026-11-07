@@ -6,6 +6,21 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.72.0 → next
+
+### Wallet Provider (`walletprovider`)
+
+- **Evidence after registration must be of the Kind the instance
+  registered with**, as well as from its platform and app: an
+  instance registered with `apple-app-attest` evidence is refused
+  evidence another iOS verifier reads, which would skip App Attest's
+  assertion and counter checks. A provider whose instances send a
+  different Kind later than at registration has them register again.
+- **Mount `StatusLists` with `http.StripPrefix`** of
+  `StatusListBaseURI`'s path, as the example and DEPLOYING.md now do:
+  it serves `GET /{start}/{n}`, so mounted under a path without
+  stripping it every list answered `404`.
+
 ## v0.71.0 → v0.72.0
 
 ### sqlstore (v0.9.1)
