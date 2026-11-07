@@ -129,11 +129,14 @@ public class FileCredentialStore(
          * has locked ([LockSignal.of] for the device's): with it, the store
          * holds the record keys it unwraps, as under
          * [Protection.AFTER_FIRST_UNLOCK], while the device is unlocked,
-         * and drops them, zeroed, when the screen turns off; a record read
-         * again then needs no Keystore call. Without it (the default), or
-         * when it can't watch, every read asks the Keystore. A read that
-         * began just before the device locked may still finish with a key
-         * held. Ignored under [Protection.AFTER_FIRST_UNLOCK].
+         * and drops them, zeroed, when it may have locked; a record read
+         * again then needs no Keystore call. Each read asks the signal
+         * first, and drops the keys held rather than use them, or hold
+         * one, when it says the device is locked. Without it (the
+         * default), or when it can't watch, every read asks the Keystore.
+         * [LockSignal.of] says how soon after locking the device's drops
+         * them, and when it can't. Ignored under
+         * [Protection.AFTER_FIRST_UNLOCK].
          */
         val lockSignal: LockSignal? = null,
     )
@@ -424,6 +427,13 @@ public class FileCredentialStore(
     private var lockDrops = 0L
 
     /**
+     * What the [Options.lockSignal] calls: kept by the store, for a signal
+     * holding it weakly ([LockSignal.of]'s), and holding the store weakly,
+     * for one holding it strongly, so neither keeps the store alive.
+     */
+    private val onLock: () -> Unit = java.lang.ref.WeakReference(this).let { store -> { store.get()?.dropRecordKeys() } }
+
+    /**
      * Whether the store holds record keys: always under
      * [Protection.AFTER_FIRST_UNLOCK]; under [Protection.WHEN_UNLOCKED],
      * only when its [Options.lockSignal] watches for the device locking.
@@ -431,9 +441,7 @@ public class FileCredentialStore(
     private val holdsRecordKeys: Boolean = when (options.protection) {
         Protection.AFTER_FIRST_UNLOCK -> true
         Protection.WHEN_UNLOCKED -> options.lockSignal?.let { signal ->
-            // Weakly: the signal outlives the store.
-            val store = java.lang.ref.WeakReference(this)
-            runCatching { signal.watch { store.get()?.dropRecordKeys() } }.getOrDefault(false)
+            runCatching { signal.watch(onLock) }.getOrDefault(false)
         } ?: false
     }
 

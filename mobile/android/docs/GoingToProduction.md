@@ -37,9 +37,16 @@ services on loopback addresses are refused. The rest is the app's.
   `InMemoryCredentialStore` is for tests.
 - Give the store `Options(lockSignal = LockSignal.of(context))` so a
   record read again needs no Keystore call: it then holds the record
-  keys it unwraps while the device is unlocked, and drops them when the
-  screen turns off. Without it every record read is a Keystore call
-  (about 10 ms in the TEE, 40 ms in StrongBox).
+  keys it unwraps while the device is unlocked and the screen on, and
+  drops them when the screen turns off, and when a check every 10 s or
+  a read finds the device locked (lockdown and a work profile's own
+  challenge lock it with no screen-off broadcast). Without it every
+  record read is a Keystore call (about 10 ms in the TEE, 40 ms in
+  StrongBox). The signal runs only while the app's process does:
+  Android defers broadcasts to a cached app (from Android 14) and
+  freezes its process, so keys held when the app was cached stay in its
+  memory, unused, until it runs again. An app that must hold no key in
+  memory while the device is locked leaves the signal out.
 - Call `Wallet.sweepOrphanedKeys` at launch, before any issuance, so keys
   an interrupted issuance left don't accumulate.
 - Make one `Wallet` per key store and credential store in each process,
@@ -345,9 +352,17 @@ ecosystem, and record why:
   matters for lists of millions of entries; a list the server doesn't
   confirm is never used. Left null, the lists are kept in
   `oid4vcwallet-status-lists` in `context.cacheDir`, and in memory only
-  when the key authenticating them can't be had. Set a directory of the
-  app's own to keep them elsewhere (a failure to get its key then fails
-  the wallet), or `""` to keep them in memory only.
+  when the key authenticating them can't be had, or when
+  `java.io.tmpdir`, which the library finds the cache directory by, has
+  been changed to a directory that isn't the app's own cache directory
+  (or the process, an isolated one say, doesn't own it). Set a directory
+  of the app's own to keep them elsewhere (a failure to get its key then
+  fails the wallet), or `""` to keep them in memory only. The directory
+  is protected by the app's storage alone, credential-encrypted like
+  `cacheDir`, not by the credential store's Keystore key: it shows
+  whoever can read it which status lists the wallet checks (their URIs,
+  so the issuers of its credentials, not which entries), the lists, and
+  when each was last checked. Use `""` if that's too much.
 - `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
   each document type, must chain to, instead of `issuerRoots`, so an
   SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`
