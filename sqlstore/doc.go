@@ -263,8 +263,11 @@
 // Sweep deletes each table's expired rows in batches of about 10,000,
 // each its own transaction, so a sweep after a long pause neither holds
 // one transaction across millions of rows nor, on SQLite, keeps other
-// writers waiting for all of it. Run it from one process: running it
-// from several at once is safe, but they only delete the same rows.
+// writers waiting for all of it. Run it from every instance: on
+// Postgres, each batch first tries for an advisory lock on the schema
+// it sweeps, and a run that finds another holding it stops, since that
+// one is deleting the same rows. Runs on SQLite, whose writes take
+// turns anyway, only delete the same rows.
 //
 // Sweep deletes a Wallet Provider's challenges after their ExpiresAt,
 // and its instance keys after their RetainUntil. One without, written

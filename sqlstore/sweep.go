@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -12,6 +13,10 @@ import (
 // or refused, by the issuer, verifier or provider once it has expired
 // — so run Sweep periodically (every few minutes, say) to keep the
 // tables, and the personal data in them, from growing without bound.
+// Run it from every instance: on Postgres, a run that finds another
+// sweeping the same schema stops, deleting nothing more, and returns
+// what it deleted with no error. On SQLite, whose writes take turns
+// anyway, runs at once only delete the same rows.
 //
 // What "expired" means for each record:
 //   - a c_nonce, pre-authorized code or Credential Offer: its ExpiresAt;
@@ -53,12 +58,19 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (int64, error) {
 	for _, sw := range sweeps {
 		n, err := d.sweepTable(ctx, sw.statement, now)
 		total += n
+		if errors.Is(err, errSweepLocked) {
+			return total, nil
+		}
 		if err != nil {
 			return total, fmt.Errorf("sqlstore: sweep %s: %w", sw.table, err)
 		}
 	}
 	return total, nil
 }
+
+// errSweepLocked is sweepTable's answer when another Sweep of the same
+// Postgres schema holds the sweep lock.
+var errSweepLocked = errors.New("sqlstore: another Sweep is running")
 
 // sweepBatch is about how many rows each of Sweep's writes deletes.
 var sweepBatch = 10000
@@ -70,13 +82,19 @@ var sweepBatch = 10000
 // sweep_after of the (sweepBatch+1)th, so sweepBatch+1 of them and any
 // expiring in the same second, or every one left when fewer are: a
 // batch reads its rows through the sweep_after index, never the ones
-// before it already deleted. Another Sweep running at the same time
-// deletes some of the same rows first; it only ends this one sooner.
+// before it already deleted.
+//
+// On Postgres, each batch first tries for the schema's sweep lock
+// (postgresSweepLock), held until it commits, and returns
+// errSweepLocked if another Sweep holds it: that one deletes the same
+// rows, so this one would only wait on its row locks. On SQLite,
+// another Sweep running at the same time deletes some of the same rows
+// first; it only ends this one sooner.
 func (d *DB) sweepTable(ctx context.Context, statement string, now time.Time) (int64, error) {
 	var total int64
 	for {
 		var n int64
-		err := d.writeOne(ctx, func(q querier) error {
+		err := d.sweepWrite(ctx, func(q querier) error {
 			res, err := q.ExecContext(ctx, statement, now.Unix(), now.Unix(), sweepBatch, now.Unix())
 			if err != nil {
 				return err
@@ -89,4 +107,22 @@ func (d *DB) sweepTable(ctx context.Context, statement string, now time.Time) (i
 			return total, err
 		}
 	}
+}
+
+// sweepWrite runs one of sweepTable's batches: in a transaction holding
+// the schema's sweep lock on Postgres, as writeOne does on SQLite.
+func (d *DB) sweepWrite(ctx context.Context, fn func(q querier) error) error {
+	if d.dialect == SQLite {
+		return d.writeOne(ctx, fn)
+	}
+	return d.write(ctx, func(q querier) error {
+		var locked bool
+		if err := q.QueryRowContext(ctx, postgresSweepLock).Scan(&locked); err != nil {
+			return err
+		}
+		if !locked {
+			return errSweepLocked
+		}
+		return fn(q)
+	})
 }

@@ -20,3 +20,7 @@ func SetSweepBatch(n int) (restore func()) {
 	sweepBatch = n
 	return func() { sweepBatch = old }
 }
+
+// PostgresSweepLock is the statement taking Sweep's lock on the
+// current schema.
+const PostgresSweepLock = postgresSweepLock
