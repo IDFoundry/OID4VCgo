@@ -274,9 +274,8 @@ const maxEmptyPeriods = 8
 // stops after maxEmptyPeriods periods in a row with no list: a
 // period's lists fill one after another, so one whose first list has
 // no index reserved has none. Run it periodically — daily, say — from
-// one process, as sqlstore's DB.Sweep is run; it's safe to run from
-// several at once, or again after a failure, which leaves what it
-// didn't delete for the next run.
+// any instance; it's safe to run from several at once, or again after
+// a failure, which leaves what it didn't delete for the next run.
 //
 // First, when the InstanceKeyStore is an UnretainedInstanceKeyLister,
 // it gives each instance key with no RetainUntil, one recorded or last

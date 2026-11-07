@@ -52,13 +52,14 @@ each, not a deployment template" says what it does differently.
   serves both; count each separate pool otherwise. sqlstore's
   doc ("Production") and FAPIgo sqlstore's ("Performance and
   scaling") cover it.
-- [ ] **Sweep from one process.** `db.Sweep(ctx, time.Now())` deletes,
+- [ ] **Sweep from every instance.** `db.Sweep(ctx, time.Now())` deletes,
   in bounded batches, what has expired: the issuer's nonces,
   pre-authorized codes, credential offers, deferred transactions and
   notifications, the verifier's transactions, the Wallet Provider's
   challenges, and its instance keys past their `RetainUntil`. Run it
-  periodically (every few minutes) from one process; a second one
-  running at the same time is safe but wasted.
+  periodically (every few minutes) from every instance, so no one
+  process has to: on PostgreSQL, a run that finds another sweeping the
+  same schema stops at once.
 - [ ] **Rate-limit unauthenticated endpoints** in front of the
   service: the Nonce Endpoint and the Credential Offer endpoints, the
   Wallet Provider's challenge and registration endpoints
@@ -128,7 +129,7 @@ iss, err := issuer.New(cfg, issuer.Dependencies{
 	Notifications: db.Notifications(), CredentialOffers: db.CredentialOffers(),
 	// …
 })
-go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // from one process only
+go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
 ```
 
 ## Verifier
@@ -184,7 +185,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   `Provider.StatusListFill` from monitoring: alert when its `Free`
   won't last until its `End` at the current rate, and raise
   `StatusListSize` for the next period.
-- [ ] **Run `SweepStatusLists` daily, from one process:** it deletes
+- [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
+  runs at once are safe): it deletes
   retired periods' list indices and gives instance keys recorded
   before retention existed their `RetainUntil`. `db.Sweep` then
   deletes keys past it.
@@ -214,5 +216,5 @@ mux.Handle("/", p.Handler()) // behind rate limiting
 // StatusListBaseURI is https://<host>/statuslists: StatusLists serves
 // /{start}/{n} under it, so strip the base path.
 mux.Handle("/statuslists/", http.StripPrefix("/statuslists", p.StatusLists()))
-go daily(func() { p.SweepStatusLists(ctx) }) // from one process only
+go daily(func() { p.SweepStatusLists(ctx) })
 ```
