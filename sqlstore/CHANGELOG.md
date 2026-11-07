@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.9.1...sqlstore/v0.10.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** OID4VCgo now requires FAPIgo v0.71.0. Code calling IsAnyRevoked or RecordIssuedTokens on a memstore store calls IsRevoked per key, or RecordIssuedAccessToken then RecordIssuedRefreshToken, instead. A deployment wiring fapigo/sqlstore's Grants() and Revocation() into server.Dependencies wires Grants().Batching() and Revocation().Batching() to keep the batched queries; without them every answer is the same, from a query per key.
+
+### Features
+
+* **sqlstore:** let Sweep run from every instance ([0e53ccb](https://github.com/IDFoundry/OID4VCgo/commit/0e53ccb0062ab6b8fd37730560103a6c43f0f0aa))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.71.0 and FAPIgo sqlstore v0.7.0 ([6ccddf9](https://github.com/IDFoundry/OID4VCgo/commit/6ccddf97c3ab9a18ea8b0f9e34ba59039b420034))
+* **sqlstore:** register one wallet instance per App Attest key ([351b106](https://github.com/IDFoundry/OID4VCgo/commit/351b10635d90317688da662ef41a9a85ee1df961))
+
 ## [0.9.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.9.0...sqlstore/v0.9.1) (2026-11-07)
 
 
