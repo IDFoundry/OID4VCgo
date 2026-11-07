@@ -28,6 +28,13 @@ import (
 // client sets no Timeout.
 const DefaultClientTimeout = 30 * time.Second
 
+// headerContentType and mediaTypeJSON are the Content-Type header and
+// the JSON media type the Wallet Provider API sends and expects.
+const (
+	headerContentType = "Content-Type"
+	mediaTypeJSON     = "application/json"
+)
+
 // ErrRefused is wrapped by the error a Client returns when the provider
 // answers with one of the protocol's refusals; errors.As finds the
 // *RefusedError with its code.
@@ -277,8 +284,8 @@ func (c *Client) post(ctx context.Context, path string, body any, sign func(*url
 	if err != nil {
 		return fmt.Errorf("walletprovider: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set(headerContentType, mediaTypeJSON)
+	req.Header.Set("Accept", mediaTypeJSON)
 	if sign != nil {
 		jwt, err := sign(&target, payload)
 		if err != nil {
@@ -298,8 +305,8 @@ func (c *Client) post(ctx context.Context, path string, body any, sign func(*url
 	if len(data) > maxResponseBytes {
 		return fmt.Errorf("walletprovider: %s: the response is larger than %d bytes", path, maxResponseBytes)
 	}
-	if mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		return fmt.Errorf("walletprovider: %s: HTTP %d with content type %q", path, resp.StatusCode, resp.Header.Get("Content-Type"))
+	if mt, _, err := mime.ParseMediaType(resp.Header.Get(headerContentType)); err != nil || mt != mediaTypeJSON {
+		return fmt.Errorf("walletprovider: %s: HTTP %d with content type %q", path, resp.StatusCode, resp.Header.Get(headerContentType))
 	}
 	if resp.StatusCode != want {
 		var e errorBody

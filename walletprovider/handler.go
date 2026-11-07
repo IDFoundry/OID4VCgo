@@ -251,8 +251,8 @@ func (p *Provider) readJSON(w http.ResponseWriter, r *http.Request, v any) bool 
 // MaxRequestBytes; it answers the refusal itself and reports false if
 // it can't.
 func (p *Provider) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-		p.fail(r, w, errMediaType, fmt.Errorf("%w: content type %q", errDecoding, r.Header.Get("Content-Type")))
+	if mt, _, err := mime.ParseMediaType(r.Header.Get(headerContentType)); err != nil || mt != mediaTypeJSON {
+		p.fail(r, w, errMediaType, fmt.Errorf("%w: content type %q", errDecoding, r.Header.Get(headerContentType)))
 		return nil, false
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBytes))
@@ -351,7 +351,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 		status, body = http.StatusInternalServerError, []byte(`{"error":"server_error"}`)
 	}
 	h := w.Header()
-	h.Set("Content-Type", "application/json")
+	h.Set(headerContentType, mediaTypeJSON)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)

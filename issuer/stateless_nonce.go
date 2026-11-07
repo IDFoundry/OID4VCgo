@@ -134,7 +134,7 @@ const maxUnixSeconds = 253402300799
 func (iss *Issuer) spendStatelessNonce(ctx context.Context, nonce string) error {
 	exp, err := openStatelessNonce(iss.deps.NonceKeys, iss.storeOwner(), nonce)
 	if err != nil {
-		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)
+		return newError(ErrorInvalidNonce, 400, unknownNonce, err)
 	}
 	now := iss.deps.Clock.Now()
 	if now.After(exp) {
@@ -147,7 +147,7 @@ func (iss *Issuer) spendStatelessNonce(ctx context.Context, nonce string) error 
 	spender := iss.deps.Nonces.(NonceSpender) // validateNonceKeys
 	err = spender.Spend(ctx, NonceIssuance{Nonce: nonce, Owner: spentNonceOwner(iss.storeOwner()), ExpiresAt: exp.Add(spentNonceMargin)})
 	if errors.Is(err, ErrNonceUnknown) {
-		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)
+		return newError(ErrorInvalidNonce, 400, unknownNonce, err)
 	}
 	if err != nil {
 		return fmt.Errorf("issuer: spend c_nonce: %w", err)
