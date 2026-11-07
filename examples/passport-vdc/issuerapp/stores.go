@@ -93,7 +93,9 @@ func databaseStores(ctx context.Context, db *sql.DB, sealer sqlstore.Sealer) (st
 		}
 	}
 	return stores{
-		transactions: asDB.Transactions(), grants: asDB.Grants(), replay: asDB.Replay(), revocation: asDB.Revocation(),
+		// Batching: a token's revocation keys checked in one query, a
+		// code exchange's tokens recorded in one write.
+		transactions: asDB.Transactions(), grants: asDB.Grants().Batching(), replay: asDB.Replay(), revocation: asDB.Revocation().Batching(),
 		dpopNonces:    rsDB.Nonces(),
 		nonces:        issuerDB.Nonces(),
 		preAuthCodes:  issuerDB.PreAuthorizedCodes(),

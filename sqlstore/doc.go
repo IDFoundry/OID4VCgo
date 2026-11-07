@@ -101,8 +101,8 @@
 //	// Migrate (or CheckSchema) each of issuerDB, asDB and rsDB.
 //
 //	asDeps := server.Dependencies{
-//		Clients: asDB.Clients(), Transactions: asDB.Transactions(), Grants: asDB.Grants(),
-//		Replay: asDB.Replay(), Nonces: asDB.Nonces(), Revocation: asDB.Revocation(),
+//		Clients: asDB.Clients(), Transactions: asDB.Transactions(), Grants: asDB.Grants().Batching(),
+//		Replay: asDB.Replay(), Nonces: asDB.Nonces(), Revocation: asDB.Revocation().Batching(),
 //		// ...
 //	}
 //	tokens, err := serverresource.NewVerifier(asCfg, asDeps, serverresource.Options{
@@ -120,8 +120,12 @@
 // A Credential Endpoint that runs apart from the Authorization Server
 // can't use the server's Dependencies: it takes its stores from
 // fapisqlstore.ResourceServer(asDB, rsDB), which gives it the server's
-// revocations, replay records and access tokens, and its own DPoP
-// nonces.
+// revocations (take them as Revocation.Batching()), replay records and
+// access tokens, and its own DPoP nonces.
+//
+// Grants().Batching() and Revocation().Batching() check a token's
+// revocation keys in one query and record a code exchange's tokens in
+// one write; the stores without them answer the same, a query per key.
 //
 // They keep apart:
 //

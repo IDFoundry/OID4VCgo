@@ -8,6 +8,24 @@ them.
 
 ## v0.72.1 → next
 
+### FAPIgo v0.71.0 and fapigo/sqlstore v0.7.0
+
+OID4VCgo now requires FAPIgo v0.71.0, and its `sqlstore` tests and
+passport-vdc fapigo/sqlstore v0.7.0; see FAPIgo's UPGRADING.md.
+
+- **Wire FAPIgo's sqlstore through `Batching()`** to keep the batched
+  revocation checks and token records fapigo/sqlstore v0.6.0 gave
+  without it: `Grants: asDB.Grants().Batching()` and
+  `Revocation: asDB.Revocation().Batching()` in
+  `server.Dependencies`, and `Revocation.Batching()` from
+  `fapisqlstore.ResourceServer` for a separate Credential Endpoint.
+  `serverresource` takes its revocations from the server's
+  `Dependencies`, so it batches with them. Without the adapters every
+  answer is the same, from a query per key.
+- **memstore's `RevocationStore` and `GrantStore` lose `IsAnyRevoked`
+  and `RecordIssuedTokens`:** call `IsRevoked` per key, or
+  `RecordIssuedAccessToken` then `RecordIssuedRefreshToken`.
+
 ### Wallet Provider (`walletprovider`)
 
 - **An App Attest key registers one instance.** `Register` refuses
