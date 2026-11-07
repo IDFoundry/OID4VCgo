@@ -36,12 +36,22 @@ each, not a deployment template" says what it does differently.
   registered instances never expire — so keep each retired key in the
   `RotatingSealer` until no record needs it.
   sqlstore's doc ("Secrets at rest") has the details.
-- [ ] **Size the connection pool.** `sqlDB.SetMaxOpenConns(n)` with `n`
-  × replicas below the server's `max_connections` (less what other
+- [ ] **Size the connection pool.** On every replica set
+  `sqlDB.SetMaxOpenConns(n)` and `sqlDB.SetMaxIdleConns(n)` to the same
+  `n`, with `SetConnMaxLifetime(30 * time.Minute)` and
+  `SetConnMaxIdleTime(5 * time.Minute)`: `database/sql` keeps only 2
+  idle connections by default, so under load most connections close
+  as they're handed back and are opened again, which FAPIgo measured
+  as cutting logins from 214 to 47 a second. Keep `n` × replicas, plus
+  headroom, below the server's `max_connections` (less what other
   clients use), or put PgBouncer in transaction mode in front: the
   stores hold nothing on a connection between transactions (with pgx,
-  set PgBouncer's `max_prepared_statements`). sqlstore's doc
-  ("Production") covers it.
+  set PgBouncer's `max_prepared_statements`, or
+  `default_query_exec_mode=exec` in the DSN). When OID4VCgo's and
+  FAPIgo's stores share one `*sql.DB`, as in sqlstore's doc, one pool
+  serves both; count each separate pool otherwise. sqlstore's
+  doc ("Production") and FAPIgo sqlstore's ("Performance and
+  scaling") cover it.
 - [ ] **Sweep from one process.** `db.Sweep(ctx, time.Now())` deletes,
   in bounded batches, what has expired: the issuer's nonces,
   pre-authorized codes, credential offers, deferred transactions and
