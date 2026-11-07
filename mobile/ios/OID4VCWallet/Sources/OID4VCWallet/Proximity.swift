@@ -668,7 +668,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public var statusCacheMaxAgeSeconds: Int
     /// Where `checkStatus` keeps lists across launches, as
     /// ``WalletConfiguration/statusCacheDir``.
-    public var statusCacheDir: String
+    public var statusCacheDir: String?
     /// The roles that decline checking revocation, for where something
     /// else stands in for it. Outside `development`, each role must be in
     /// `revocation` or here; a role can't be in both.
@@ -734,7 +734,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
                 crlDistributionPoints: [CRLDistributionPoint] = [], crlDistributionPointsFromRoots: Bool = false,
                 crlRequireHTTPS: Bool = false, developmentRoots: String = "",
                 statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0,
-                statusCacheDir: String = "") {
+                statusCacheDir: String? = nil) {
         self.issuerRoots = issuerRoots
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
@@ -797,7 +797,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         statusMaxBytes = try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0
         identifierListMaxBytes = try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0
         statusCacheMaxAgeSeconds = try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0
-        statusCacheDir = try c.decodeIfPresent(String.self, forKey: .statusCacheDir) ?? ""
+        statusCacheDir = try c.decodeIfPresent(String.self, forKey: .statusCacheDir)
     }
 }
 

@@ -282,12 +282,17 @@ ecosystem, and record why:
   list (1 MiB) and identifier list (4 MiB) `checkStatus` reads. A
   larger list fails every check of the credentials on it: raise them
   only for issuers whose lists are larger.
-- ``WalletConfiguration/statusCacheDir``: a directory of the app's
-  own, under its Caches directory, where `checkStatus` keeps the lists
-  it verified across launches. Each launch then revalidates a kept
-  list with its server (a `304 Not Modified`) instead of downloading it
-  again, which matters for lists of millions of entries; a list the
-  server doesn't confirm is never used.
+- ``WalletConfiguration/statusCacheDir``: where `checkStatus` keeps
+  the lists it verified across launches. Each launch then revalidates a
+  kept list with its server (a `304 Not Modified`) instead of
+  downloading it again, which matters for lists of millions of entries;
+  a list the server doesn't confirm is never used. Left nil, the lists
+  are kept in `oid4vcwallet-status-lists` in the app's Caches
+  directory, and in memory only when the Keychain key authenticating
+  them can't be had (before the device's first unlock) and on macOS.
+  Set a directory of the app's own to keep them elsewhere (a failure to
+  get its key then fails the wallet), or `""` to keep them in memory
+  only.
 - ``WalletConfiguration/mdocIssuerRoots`` and
   ``WalletConfiguration/mdocIssuerRootsByDocType``: the IACAs mdocs, or
   each document type, must chain to, instead of
