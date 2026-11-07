@@ -85,7 +85,11 @@ each, not a deployment template" says what it does differently.
   relying parties' token limit (1 MiB by default,
   `statuslist.DefaultMaxTokenBytes`): 2^20 to 2^22 one-bit entries.
   Allocate a batch's indices at once with `CredentialRequest.PerBatch`
-  and `Allocator.AllocateN`.
+  and `Allocator.AllocateN`. Keep list URIs short (a Wallet Provider's
+  `Config.StatusListBaseURI` too): every reserved index's row holds
+  its list's URI, about 2 bytes per character with its index, so a
+  25-character URI in place of a 51-character one makes the status
+  index table about a quarter smaller.
 - [ ] **Publish with `statuslist.Publisher`, sharing tokens:**
   `Publisher.Tokens = db.StatusListTokens()` (and
   `identifierlist.Publisher.Tokens`), so one replica signs each list's
