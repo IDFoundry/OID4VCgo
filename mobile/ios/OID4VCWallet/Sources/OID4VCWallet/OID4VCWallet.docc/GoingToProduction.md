@@ -51,13 +51,37 @@ loopback addresses are refused. The rest is the app's.
 
 ### The Wallet Provider
 
-> Important: This library has no client for OID4VCgo's Wallet
-> Provider protocol yet (Kotlin's `HttpWalletProvider` is one). The
-> provider verifies App Attest evidence (`walletprovider/appattest`):
-> implement ``WalletProvider`` against it, following the protocol's
-> App Attest section (`mobile/WALLET_PROVIDER.md`), or against a
-> provider of your own — or ship without attestations, for issuers
-> that don't ask for them.
+For a Wallet Provider built with OID4VCgo's `walletprovider`,
+``HttpWalletProvider`` is the client: it speaks the provider's
+protocol (`mobile/WALLET_PROVIDER.md`) with App Attest evidence, which
+the provider verifies (`walletprovider/appattest`). It registers the
+installation once, at its first Wallet Attestation — a registration
+key in a Keychain prefix of its own (``HttpWalletProvider/registrationKeyStore()``)
+and an App Attest key Apple attests — and asserts with the App Attest
+key over each new instance key and each Key Attestation's holder keys.
+Give it a registry that survives launches:
+
+```swift
+import Foundation
+import OID4VCWallet
+
+func makeProductionWalletProvider() throws -> HttpWalletProvider {
+    try HttpWalletProvider(baseURL: URL(string: "https://wallet-provider.example.com")!,
+                           instances: FileInstanceRegistry.standard())
+}
+```
+
+Add the App Attest capability to the app, whose
+`com.apple.developer.devicecheck.appattest-environment` entitlement
+names the environment its keys are made in: `development` while you
+develop, against a provider that accepts it
+(`appattest.Verifier.AllowDevelopment`), and `production` — what a
+distributed build gets — for release, against a provider that doesn't.
+App Attest isn't available in the Simulator or on some older devices:
+there the wallet can't register, and every attestation fails as
+``WalletError/Code/platform``. Test on a device. An app restored from a
+backup or reinstalled has lost its App Attest key: the client
+registers it again, as a new instance.
 
 Issuers trust the wallet because its Wallet Provider attests it. A
 production Wallet Provider should attest a wallet and its keys only

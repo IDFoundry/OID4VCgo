@@ -12,8 +12,8 @@ separate Go module (it needs `golang.org/x/mobile`).
 
 The API is described in [ABI.md](ABI.md). The HTTP protocol between a
 wallet and a Wallet Provider built with `walletprovider` is described
-in [WALLET_PROVIDER.md](WALLET_PROVIDER.md); the Kotlin library's
-`HttpWalletProvider` is a client of it.
+in [WALLET_PROVIDER.md](WALLET_PROVIDER.md); the Kotlin and Swift
+libraries' `HttpWalletProvider`s are clients of it.
 
 The libraries' documentation, for app developers, is published with
 each release:
@@ -36,7 +36,7 @@ each release:
 | In person by NFC tap, as the reader (`ProximityReader.startFromNfc`) | — | ✓ |
 | Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
-| Wallet Provider client (OID4VCgo's `walletprovider` protocol) | — not yet: implement `WalletProvider` against the protocol (the provider verifies App Attest, `walletprovider/appattest`) | ✓ `HttpWalletProvider`, with Android Key Attestation |
+| Wallet Provider client (OID4VCgo's `walletprovider` protocol) | ✓ `HttpWalletProvider`, with App Attest | ✓ `HttpWalletProvider`, with Android Key Attestation |
 | Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
