@@ -353,7 +353,21 @@ Attestation, forgetting only the registration whose key failed, and
 forgets the registration for a Key Attestation, whose
 instance key is the lost instance's; `serverUnavailable` is `network`,
 and the App Attest key it left unregistered is attested again by the
-next registration, as Apple asks.
+next registration, as Apple asks. The provider registers an App Attest
+key once (`409 instance_key_registered` for another instance, on its
+key ID): a registration whose answer was lost, tried again with the
+kept key, is refused, and registers again with new keys.
+A registration key is deleted when its registration fails, and before
+a revoked registration is forgotten, so a failure leaves no key a
+registry doesn't name; the keys a registration the app quit in the
+middle of left, or a reinstall (which keeps Keychain items but not the
+registry file), are deleted by
+`HttpWalletProvider.sweepOrphanedRegistrationKeys()`, which the app
+calls at launch. It isn't automatic: it deletes every key in its store
+but its registration's, and every provider made with
+`registrationKeyStore()` shares that store, so it's safe only with one
+Wallet Provider, or with each provider's keys under a prefix of its
+own. The Kotlin client has the same call.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against

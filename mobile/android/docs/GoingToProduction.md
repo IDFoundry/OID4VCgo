@@ -140,6 +140,13 @@ protocol, version 1
   `InstanceRegistry`: `FileInstanceRegistry.standard(context)`, out of
   backups, since an instance ID is useless without its key. If either
   is lost, the next Wallet Attestation registers again, with a new key.
+  A registration that fails deletes its key, but one the app's process
+  ended in the middle of leaves it: call
+  `HttpWalletProvider.sweepOrphanedRegistrationKeys()` at launch to
+  delete such keys, as `Wallet.sweepOrphanedKeys` does the wallet's —
+  with one Wallet Provider, or with each provider's registration keys
+  under an alias prefix of its own, since it deletes every key in its
+  store but its registration's.
 - Every request after registration is signed with the registration key.
 - Each issuance's instance key is made over an `instance` challenge.
   Its first Wallet Attestation sends its chain; the provider records the

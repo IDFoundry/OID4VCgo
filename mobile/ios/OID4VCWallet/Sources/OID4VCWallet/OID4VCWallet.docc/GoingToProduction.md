@@ -78,6 +78,15 @@ group, the first of its `keychain-access-groups` entitlement: keep a
 group only the app has first, and list one it shares with an extension
 after it (``HttpWalletProvider/registrationKeyStore()``).
 
+A registration that fails deletes its registration key, but one the app
+quit in the middle of leaves it, and so does deleting and reinstalling
+the app, which keeps its Keychain items but not its registry. Call
+``HttpWalletProvider/sweepOrphanedRegistrationKeys()`` at launch to
+delete them, as ``Wallet/sweepOrphanedKeys(in:)`` does the wallet's:
+with one Wallet Provider, or with each provider's registration keys
+under a Keychain tag prefix of its own, since it deletes every key in
+its store but its registration's.
+
 Add the App Attest capability to the app, whose
 `com.apple.developer.devicecheck.appattest-environment` entitlement
 names the environment its keys are made in: `development` while you

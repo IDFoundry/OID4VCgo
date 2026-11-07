@@ -249,14 +249,43 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     }
 
     /// The registration kept, if the registration key store still holds
-    /// its key; one whose key is gone is forgotten.
+    /// its key; one whose key is gone, or another, is forgotten, and that
+    /// other key deleted.
     private func kept() throws -> RegisteredInstance? {
         guard let kept = try instances.instance() else { return nil }
-        if let point = try registrationKeys.publicKey(id: kept.keyID), jwkThumbprint(point: point) == kept.keyThumbprint {
+        let point = try registrationKeys.publicKey(id: kept.keyID)
+        if let point, jwkThumbprint(point: point) == kept.keyThumbprint {
             return kept
         }
+        if point != nil { try registrationKeys.deleteKey(id: kept.keyID) }
         try instances.remove(kept)
         return nil
+    }
+
+    /// Deletes every key in the registration key store but the kept
+    /// registration's, and returns how many it deleted: the keys of
+    /// registrations that never finished — the app ended in the middle
+    /// of one, or was deleted and installed again, which keeps its
+    /// Keychain items but not its registry — which nothing else
+    /// deletes. Call it at launch. It takes its turn with registrations
+    /// over the same registry, so it never deletes the key of one in
+    /// progress.
+    ///
+    /// Only a ``KeychainKeyStore`` lists its keys: over another store it
+    /// deletes nothing, and returns 0. Call it only where this provider's
+    /// registration keys are the only ones in that store: every
+    /// provider made with the default ``registrationKeyStore()`` shares
+    /// it, so an app with more than one Wallet Provider gives each a
+    /// ``KeychainKeyStore`` of its own tag prefix (under
+    /// ``registrationKeyTagPrefix``, which the wallet's mustn't cover)
+    /// before sweeping either.
+    @discardableResult
+    public func sweepOrphanedRegistrationKeys() async throws -> Int {
+        guard let store = registrationKeys as? KeychainKeyStore else { return 0 }
+        return try await state.registering.locked {
+            let keep = try self.kept().map { Set([$0.keyID]) } ?? []
+            return try store.deleteKeys(except: keep)
+        }
     }
 
     /// Registers the installation with a new registration key — and with
@@ -325,12 +354,14 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         return (key, try await appAttest.attestKey(key, clientDataHash: clientDataHash))
     }
 
-    /// Forgets `instance` and deletes its registration key. (An App
+    /// Deletes `instance`'s registration key and forgets it — in that
+    /// order, so a failure leaves no key behind: a registration whose
+    /// key is gone is forgotten when next read (``kept()``). (An App
     /// Attest key can't be deleted; it's simply never used again.)
     private func forget(_ instance: RegisteredInstance) async throws {
         try await state.registering.locked {
-            try self.instances.remove(instance)
             try self.registrationKeys.deleteKey(id: instance.keyID)
+            try self.instances.remove(instance)
             self.state.recorded.withLock { $0.removeAll() }
         }
     }
