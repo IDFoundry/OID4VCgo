@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.72.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.71.0...v0.72.0) (2026-11-07)
+
+
+### Features
+
+* **walletprovider:** verify Apple App Attest evidence ([63220b2](https://github.com/IDFoundry/OID4VCgo/commit/63220b20d8139010aec3d374e712028f533a8cfe))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.70.0 and FAPIgo sqlstore v0.6.0 ([a8796a5](https://github.com/IDFoundry/OID4VCgo/commit/a8796a536a8227cf3e9bff570f74dce86caeb518))
+
 ## [0.71.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.70.0...v0.71.0) (2026-11-07)
 
 
