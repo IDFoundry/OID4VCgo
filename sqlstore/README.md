@@ -115,13 +115,16 @@ issuerDB, err := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer:
 asDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{Sealer: sealer})
 // The Credential Endpoint's DPoP nonces, never the Authorization Server's:
 rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer})
-// Migrate each; take server.Dependencies' stores from asDB,
+// Migrate each; take server.Dependencies' stores from asDB (Grants and
+// Revocation as asDB.Grants().Batching() and asDB.Revocation().Batching(),
+// which batch revocation checks and token records),
 // serverresource.Options.Nonces from rsDB, issuer.Dependencies' from issuerDB.
 ```
 
 A Credential Endpoint running apart from the Authorization Server takes
 its stores from `fapisqlstore.ResourceServer(asDB, rsDB)`: the server's
-revocations, replay records and access tokens, and its own DPoP nonces.
+revocations (as `Revocation.Batching()`), replay records and access
+tokens, and its own DPoP nonces.
 
 Their tables don't collide (`oid4vc_…` here, FAPIgo's `TablePrefix`,
 `fapigo_` by default — never one starting `oid4vc_`), each migrates its
