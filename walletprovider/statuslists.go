@@ -368,7 +368,8 @@ func (p *Provider) deleteLists(ctx context.Context, start int64) (int, error) {
 }
 
 // StatusLists serves the provider's status lists: an http.Handler to
-// mount at Config.StatusListBaseURI, answering GET /{start}/{n} with
+// mount at Config.StatusListBaseURI, with http.StripPrefix of the base
+// URI's path unless that's empty, answering GET /{start}/{n} with
 // the list at StatusListBaseURI/{start}/{n}, in the JWT form
 // (application/statuslist+jwt) by default and the CWT form when the
 // request's Accept header asks for it (draft-ietf-oauth-status-list-14

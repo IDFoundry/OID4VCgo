@@ -210,7 +210,9 @@ p, err := walletprovider.New(cfg, walletprovider.Dependencies{
 	StatusListTokens: db.StatusListTokens(),
 	Evidence: []walletprovider.EvidenceVerifier{androidVerifier},
 })
-mux.Handle("/", p.Handler())                    // behind rate limiting
-mux.Handle("/statuslists/", p.StatusLists())
-go daily(func() { p.SweepStatusLists(ctx) })   // from one process only
+mux.Handle("/", p.Handler()) // behind rate limiting
+// StatusListBaseURI is https://<host>/statuslists: StatusLists serves
+// /{start}/{n} under it, so strip the base path.
+mux.Handle("/statuslists/", http.StripPrefix("/statuslists", p.StatusLists()))
+go daily(func() { p.SweepStatusLists(ctx) }) // from one process only
 ```
