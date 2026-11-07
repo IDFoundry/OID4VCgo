@@ -5,7 +5,7 @@
 > (all four OIDF conformance-suite binaries built and each
 > confirmed live against a real, locally-run OIDF conformance suite
 > instance — see its own bullet below for the one deliberate, permanent
-> gap). See "Planned package layout" below for the per-package detail;
+> gap). See "Package layout" below for the per-package detail;
 > don't re-list packages here — that list drifted stale once before
 > (it kept claiming packages were still unbuilt long after they
 > individually landed) precisely because it duplicated what the
@@ -99,7 +99,7 @@ reader in this repo because FAPIgo's `clientattestation.VerifiedAttestation`
 only exposes `ClientID`/`ExpiresAt`/`ConfirmationJWK` — it discards every
 claim it doesn't itself model, the OID4VCI-specific ones included.
 
-## Planned package layout
+## Package layout
 
 Every package below is marked `(done)` once it's actually implemented
 and tested, `(started)` once work has begun but isn't finished, or left
@@ -544,7 +544,9 @@ changes whether *every* bullet below is `(done)`.
     wrong key, used challenge — gets one identical 401. Rate limiting
     is the integrator's: wrap the handler.
     [`mobile/WALLET_PROVIDER.md`](mobile/WALLET_PROVIDER.md) is the
-    protocol's contract, for the Swift and Kotlin clients to come.
+    protocol's contract: the Kotlin library's `HttpWalletProvider` and
+    this package's `Client` are its clients; a Swift client is still to
+    come.
   - **`walletprovider/androidkey`** verifies Android Key Attestation
     chains (Google's roots and attestation status list, authorization
     lists, root of trust, the calling app with every signing
@@ -560,7 +562,9 @@ changes whether *every* bullet below is `(done)`.
   `DB.StatusListTokens` for the lists' tokens its replicas share).
 
   Still to come, each its own package or PR: `walletprovider/appattest`
-  (Apple App Attest).
+  (Apple App Attest), and a Swift client of the protocol. Until then an
+  iOS wallet has no production attestation path in this repository
+  (the package doc says what an integrator does meanwhile).
 - **`issuer`** (done) — the OID4VCI Credential Issuer role (server
   side). Done so far: `Config`/`Dependencies`/`New` (mirrors
   `fapigo/server.Config`/`server.New`'s own shape — required fields, no

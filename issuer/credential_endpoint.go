@@ -247,8 +247,9 @@ type CredentialRequest struct {
 	MdocClaims *mdoc.Claims
 
 	// PerCredential, if set, is called once for each Credential
-	// RequestCredential issues, before it's signed, to vary what each
-	// one carries. A batch's Credentials (one per binding key) are
+	// RequestCredential issues, in batch order, to vary what each one
+	// carries: for every Credential of the batch before the first is
+	// signed (since v0.69.0; before, it ran between signings). A batch's Credentials (one per binding key) are
 	// otherwise all built from the same SDJWTClaims or MdocClaims, so a
 	// value there repeats across the batch. For a status reference that
 	// breaks HAIP 1.0 §6.1 ("Each Credential MUST have its own unique,

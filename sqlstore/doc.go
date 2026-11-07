@@ -286,6 +286,9 @@
 //
 // # Production
 //
+// DEPLOYING.md in the repository is the per-role checklist for a
+// deployment of several replicas; these are the database's parts of it.
+//
 //   - Use one schema (PostgreSQL) or file (SQLite) per deployment, and
 //     the same one in every process that shares its records. Credential
 //     Issuers may share the issuer tables: every record keeps its Owner

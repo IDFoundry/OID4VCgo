@@ -152,8 +152,14 @@ that was.
 
 ### Apple App Attest
 
-Phase 2 of the Wallet Provider adds App Attest evidence; its `kind`
-and format will be documented here.
+Not yet available. Phase 2 of the Wallet Provider adds App Attest
+evidence (`walletprovider/appattest`); its `kind` and format will be
+documented here. The Swift library has no client for this protocol
+either (the Kotlin library's `HttpWalletProvider` is one). Until both
+ship, an iOS deployment either runs a provider of its own, with an
+`EvidenceVerifier` of its own for App Attest, and implements the Swift
+`WalletProvider` protocol against it, or ships without attestations,
+for issuers that don't ask for them.
 
 ## Signed requests
 

@@ -63,14 +63,26 @@ type TokenStore interface {
 	Put(ctx context.Context, uri string, form Form, holder string, token StoredToken) error
 }
 
-// StoredToken is a token in a TokenStore: its bytes, the list version
-// it was signed from, when it was signed, when it expires, and who
-// signed it (the SHA-256 of its chain's leaf certificate).
+// StoredToken is a token in a TokenStore. Its fields:
+//
+//   - Bytes []byte: the signed token, as served.
+//   - Version int64: the list's version it was signed from.
+//   - SignedAt, Exp time.Time: when it was signed (its iat) and when it
+//     expires (its exp), kept to the millisecond.
+//   - Signer []byte: who signed it, the SHA-256 of its chain's leaf
+//     certificate (as the Publisher puts it; a store keeps it as is).
+//
+// A TokenStore returns each field as Put stored it.
 type StoredToken = listhttp.Stored
 
 // TokenHead is what a TokenStore holds for one list and form, without
-// the token's bytes: the list's version, and whether a token is stored
-// and, if one is, its Version, SignedAt, Exp and Signer (its Bytes nil).
+// the token's bytes. Its fields:
+//
+//   - Version int64: the list's version, zero when the store keeps none
+//     or no status of the list has changed.
+//   - Stored bool: whether a token is stored for the form.
+//   - Token StoredToken: when Stored, that token's Version, SignedAt,
+//     Exp and Signer, its Bytes nil.
 type TokenHead = listhttp.Head
 
 // DefaultTokensCheck is Publisher.TokensCheck's default: how often a

@@ -36,6 +36,7 @@ each release:
 | In person by NFC tap, as the reader (`ProximityReader.startFromNfc`) | — | ✓ |
 | Keys | `KeychainKeyStore` (Secure Enclave) | `AndroidKeystoreKeyStore` (StrongBox or TEE) |
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
+| Wallet Provider client (OID4VCgo's `walletprovider` protocol) | — not yet: implement `WalletProvider` (and an App Attest verifier server-side) | ✓ `HttpWalletProvider`, with Android Key Attestation |
 | Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
 | Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |

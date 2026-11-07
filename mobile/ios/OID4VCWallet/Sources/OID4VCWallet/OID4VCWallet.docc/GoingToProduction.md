@@ -51,6 +51,14 @@ loopback addresses are refused. The rest is the app's.
 
 ### The Wallet Provider
 
+> Important: Not yet available for iOS. OID4VCgo's Wallet Provider
+> (`walletprovider`) verifies Android Key Attestation evidence but has
+> no App Attest verifier yet, and this library has no client for the
+> provider's protocol (Kotlin's `HttpWalletProvider` is one). Until
+> they ship, implement ``WalletProvider`` against a provider of your
+> own, with an App Attest verifier of your own on the server — or ship
+> without attestations, for issuers that don't ask for them.
+
 Issuers trust the wallet because its Wallet Provider attests it. A
 production Wallet Provider should attest a wallet and its keys only
 after checking App Attest evidence that it's talking to your genuine
@@ -312,6 +320,12 @@ ecosystem, and record why:
 Ship the release build of `Mobile`, which the package links by default.
 Refuse to run on the test build, which carries an in-process issuer and
 Verifier: check ``OID4VC/isTestBuild`` at launch.
+
+Check the framework you ship: Swift Package Manager checks
+`Mobile.xcframework.zip` against the checksum in the release's
+`Package.swift`; check that against the release's `SHA256SUMS`, and its
+provenance with `gh attestation verify Mobile.xcframework.zip --repo
+IDFoundry/OID4VCgo`.
 
 ### A document provider extension
 

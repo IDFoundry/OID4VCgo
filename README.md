@@ -64,7 +64,7 @@ overrides of FAPI 2.0.
 > `wallet`, `verifier`, `walletflow`, `credential/sdjwtvc`,
 > `credential/mdoc`, `statuslist`, `identifierlist`, `certrevocation`, `attestation`,
 > `dcql`, `oid4vpmdoc`, `mdocdcapi`, `proximity`, `registration`,
-> `haip`, `storage` — and the
+> `haip`, `storage`, `walletprovider` — and the
 > separate `mobile` module are implemented and tested. All four roles
 > were OpenID Certified as 0.12.0 (see above), and every later release
 > is checked against the same OIDF test plans by the daily conformance
@@ -163,8 +163,18 @@ Where to start, by role:
   library), each with its documentation: [Swift](https://idfoundry.github.io/OID4VCgo-wallet-swift/latest/documentation/oid4vcwallet/) and
   [Kotlin](https://idfoundry.github.io/OID4VCgo-wallet-kotlin/latest/) ([guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs)). See also
   [mobile/MOBILE.md](mobile/MOBILE.md) and [`mobile/`](mobile).
+- **Wallet Provider** — package `walletprovider` is the service that
+  registers a wallet app's instances and issues their Wallet
+  Attestations and Key Attestations (HAIP 1.0): `walletprovider.New`
+  and its `Handler` (the signed-request protocol the Kotlin library's
+  `HttpWalletProvider` speaks), Android Key Attestation evidence
+  (`walletprovider/androidkey`), its own status lists by period
+  (`StatusLists`, swept with `SweepStatusLists`), and durable stores in
+  `sqlstore`. Apple App Attest evidence and a Swift client aren't
+  available yet.
 - **Durable stores** — the separate [`sqlstore`](sqlstore) module keeps
-  the issuer's, the verifier's and walletflow's stores in PostgreSQL or
+  the issuer's, the verifier's, walletflow's and the Wallet Provider's
+  stores, and status list indices and tokens, in PostgreSQL or
   SQLite through `database/sql`: versioned migrations, atomic consumes
   and updates across processes, records optionally sealed, and a
   `Sweep` for expired ones. For a whole issuer deployment it shares one
@@ -174,6 +184,10 @@ Where to start, by role:
   `verifier/verifiertest`, `walletflow/storetest`,
   `walletprovider/walletprovidertest` and `statuslist/statuslisttest`
   hold contract tests to run against them.
+
+Deploying several replicas of a role in production? [DEPLOYING.md](DEPLOYING.md)
+is the checklist: the database, migrations, sealing, sweeping, shared
+status list tokens, stateless c_nonces and sizing, per role.
 
 For an end-to-end application — a gmrtd passport turned into both
 credential formats, a browser and a command-line wallet, and a verifier

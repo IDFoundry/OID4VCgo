@@ -64,6 +64,21 @@
 //     provider stores with a compare-and-swap (InstanceStore.Update),
 //     so an assertion is accepted once.
 //
+// Not yet available: this module ships the Android Key Attestation
+// verifier (walletprovider/androidkey) but no App Attest verifier yet
+// (walletprovider/appattest is to come), and the Swift library has no
+// client for the provider's protocol (the Kotlin library's
+// HttpWalletProvider is one, and this package's Client the Go one).
+// Until they ship, an iOS app's attestations need an EvidenceVerifier of
+// the integrator's own for "apple-app-attest" evidence, written to the
+// contract above, and a Swift client of its own for the protocol
+// (protocol.go); or the iOS app runs without a Wallet Provider, against
+// issuers that don't ask for attestations.
+//
+// DEPLOYING.md in the repository is the checklist for running several
+// replicas: sqlstore's stores, Dependencies.StatusListTokens,
+// SweepStatusLists and sizing Config.StatusListSize.
+//
 // # Policy
 //
 // Policy decides what verified evidence is good enough: per platform,

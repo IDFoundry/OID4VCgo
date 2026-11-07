@@ -182,6 +182,59 @@ trust check.
   Digital Credentials API's HPKE suite (Annex C) is DHKEM(P-256) as
   specified. JOSE (SD-JWT VC, JWT status lists) stays ES256 and EdDSA.
 
+## Known strictness
+
+Where this library refuses input a specification allows, or requires
+more than it asks, deliberately. Each can stop an exchange with another
+implementation that relies on the latitude; none is needed for the
+security of an exchange both sides run as this library does.
+
+- **A key attestation attesting more keys than `batch_size`** is
+  refused (`invalid_proof`), though OpenID4VCI 1.0 Appendix F.3 only
+  asks the Issuer to issue for each attested key, which `batch_size`
+  (§12.2.4) bounds as a `proofs` array. `batch_size` then bounds what
+  one request has the Issuer sign, whichever way the keys arrive.
+- **A key attestation's `nonce` must be the proof's own c_nonce.**
+  OpenID4VCI 1.0 Appendix F.1 asks for "a" c_nonce the server provided.
+  Tying it to the one the request spends makes the attestation as
+  single-use as the proof.
+- **A presentation may disclose only what its own Credential Query
+  selected.** OpenID4VP 1.0 §6.4 lets a presentation carry claims
+  another query of the same request selected for the same credential;
+  the Verifier checks each presentation against its own query.
+- **An empty `vp_token`** (every credential set optional, nothing
+  matched; OpenID4VP 1.0 §6.4.2, §8.1) is neither built by the wallet
+  nor accepted by the Verifier: a request that can be answered with
+  nothing is answered with an error.
+- **Answering more than one option of a credential set** is refused
+  (`dcql`): §6.4.2 has the wallet return one option.
+- **Two claim queries on the same path that differ otherwise** fail
+  the request, where OpenID4VP 1.0 §6.1 has wallets ignore duplicates;
+  the wallet drops only exact duplicates.
+- **`trusted_authorities` by authority key identifier** matches an
+  intermediate only by the key identifiers derived from its own key
+  (RFC 5280 §4.2.1.2 method 1, RFC 7093 method 1), where OpenID4VP 1.0
+  §6.1.1.1 compares the raw bytes: a declared `subjectKeyIdentifier`
+  is something an attacker can copy into a certificate of their own.
+  A CA whose key identifiers come from another method is matched only
+  as an anchor.
+- **An SD-JWT VC with the transitional `vc+sd-jwt` typ** is refused
+  unless `sdjwtvc.VerifyOptions.AcceptLegacyTyp` is set, where SD-JWT
+  VC draft-13 §3.2.1, the version HAIP 1.0 names, recommends that
+  Holders and Verifiers accept it for a transition period. Draft-19
+  dropped that; only `dc+sd-jwt` is accepted by default, by the
+  verifier and wallet too.
+- **A Status List Token without `exp`** issued more than a day ago
+  (`statuslist.DefaultMaxAgeWithoutExp`) is refused unless
+  `VerifyOptions.MaxAge` says otherwise. `exp` is optional (Token
+  Status List draft-14 §5.1) and freshness is the Relying Party's
+  policy (§8.3); a list signed before a revocation and replayed from a
+  cache would otherwise be accepted for ever.
+- **Two documents of the same docType in one DeviceResponse** are
+  refused (proximity and ISO/IEC 18013-7 Annex C): documents are
+  matched to the reader's requests by docType, so a request can't ask
+  for one docType twice.
+
 ## HAIP's deviations from plain FAPI 2.0
 
 Confirmed directly against HAIP 1.0's text (not paraphrased from memory):
