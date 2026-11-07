@@ -298,9 +298,13 @@ public data class WalletConfiguration(
      * rather than the list, and never uses one the server hasn't confirmed. The lists are
      * authenticated with a key the library makes, wrapped by an Android Keystore key, so
      * one anyone else wrote to the directory is dropped. Null, the default, keeps them in
-     * `oid4vcwallet-status-lists` in the app's `context.cacheDir`, or in memory only when
-     * that key can't be had; an absolute path, the app's own, keeps them there; empty keeps
-     * them in memory only.
+     * `oid4vcwallet-status-lists` in the app's `context.cacheDir` (found from `java.io.tmpdir`,
+     * and used only when that is the app's own cache directory), or in memory only when it
+     * isn't, or that key can't be had; an absolute path, the app's own, keeps them there;
+     * empty keeps them in memory only. The directory isn't encrypted beyond the app's
+     * storage: it shows whoever can read it which status lists the wallet checks (their
+     * URIs, so the issuers of its credentials, not which entries), the lists themselves, and
+     * when each was last checked.
      */
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
 ) {

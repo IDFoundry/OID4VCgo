@@ -1191,9 +1191,17 @@ encryption, readable from the first unlock after a boot. So
   rewrote is unwrapped afresh), and a record read again needs no
   Keystore call. Under `WHEN_UNLOCKED` it holds them only with
   `Options.lockSignal` (`LockSignal.of(context)`): only while
-  `KeyguardManager.isDeviceLocked` is false, checked on each read, and
-  dropped, zeroed, on `ACTION_SCREEN_OFF`, which comes before the device
-  locks. A key unwrapped while they're dropped isn't held. Without a
+  `KeyguardManager.isDeviceLocked` is false and the screen is on
+  (`PowerManager.isInteractive`), checked on each read, and dropped,
+  zeroed, on `ACTION_SCREEN_OFF`, which comes before the device locks
+  (up to its lock-after-timeout delay later), and whenever a poll every
+  10 s finds the device locked or the screen off: lockdown and a work
+  profile's own challenge lock with no screen-off broadcast. A key
+  unwrapped while they're dropped isn't held. The signal holds each
+  store's listener weakly, and stops its receiver and poll once no store
+  watches. What it can't do: a cached app gets broadcasts late (Android
+  14) and a frozen one runs no poll, so keys held when the app was
+  cached stay in memory, unused, until it runs again. Without a
   signal it holds none, since a key held in memory would open records
   while the device is locked. iOS has no such cache: its store reads
   files under data protection, with no key of its own to hold.

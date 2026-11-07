@@ -23,12 +23,17 @@ enum StatusCacheKey {
     /// where Caches is every app's of the user's.
     static let defaultDir = Locked<@Sendable () -> String?>(initialState: cachesDir)
 
+    /// What makes `defaultDir` ready, unless a test replaced it:
+    /// `protectedDir`.
+    static let prepareDefault = Locked<@Sendable (String) throws -> Void>(initialState: protectedDir)
+
     /// `encoded`, a configuration's JSON, keeping lists in
     /// `statusCacheDir` with the `status_cache_key` that authenticates
     /// them. Empty keeps them in memory only. Nil keeps them in
-    /// `defaultDir`, or in memory only when there's none or its key can't
-    /// be had (before the device is first unlocked, say): the default
-    /// never stops a wallet being made.
+    /// `defaultDir`, made with complete file protection, or in memory
+    /// only when there's none, it can't be made, or its key can't be had
+    /// (before the device is first unlocked, say): the default never
+    /// stops a wallet being made.
     static func configuration(_ encoded: Data, statusCacheDir: String?) throws -> String {
         let unchanged = String(decoding: encoded, as: UTF8.self)
         let load = source.withLock { $0 }
@@ -41,7 +46,9 @@ enum StatusCacheKey {
             dir = chosen
             key = try load()
         case nil:
-            guard let fallback = defaultDir.withLock({ $0 })(), let loaded = try? load() else { return unchanged }
+            let prepare = prepareDefault.withLock { $0 }
+            guard let fallback = defaultDir.withLock({ $0 })(), let loaded = try? load(),
+                  (try? prepare(fallback)) != nil else { return unchanged }
             dir = fallback
             key = loaded
         }
@@ -59,6 +66,31 @@ enum StatusCacheKey {
         #else
         return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent(defaultDirName, isDirectory: true).path
+        #endif
+    }
+
+    /// Makes `path` if need be, with complete file protection, as the
+    /// credentials have: what the lists there show (which lists the
+    /// wallet checks, so its credentials' issuers, and when) is then
+    /// readable only while the device is unlocked. Lists made in it
+    /// inherit its protection; one an earlier version made, with the
+    /// Caches directory's, is given it, the lists in it too. While the
+    /// device is locked the lists can't be read or written, which costs
+    /// a download, not a check. On macOS, which has no data protection
+    /// (and no default directory), it only makes `path`.
+    @Sendable static func protectedDir(_ path: String) throws {
+        let fm = FileManager.default
+        #if os(macOS)
+        try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        #else
+        let complete = [FileAttributeKey.protectionKey: FileProtectionType.complete]
+        try fm.createDirectory(atPath: path, withIntermediateDirectories: true, attributes: complete)
+        let protection = try fm.attributesOfItem(atPath: path)[.protectionKey] as? FileProtectionType
+        guard protection != .complete else { return }
+        try fm.setAttributes(complete, ofItemAtPath: path)
+        for name in (try? fm.contentsOfDirectory(atPath: path)) ?? [] {
+            try? fm.setAttributes(complete, ofItemAtPath: (path as NSString).appendingPathComponent(name))
+        }
         #endif
     }
 
