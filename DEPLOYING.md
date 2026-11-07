@@ -4,7 +4,10 @@ What a production deployment that runs several replicas on PostgreSQL
 configures, role by role: the Credential Issuer, the Verifier and the
 Wallet Provider. Each item names the field, the scheduled job or the
 migration, and where its reference documentation is. The package
-documentation stays the reference; this page is the checklist.
+documentation stays the reference; this page is the checklist. The
+snippets below are sketches; sqlstore's `Example` (one database's
+stores handed to every role, run by `go test`) and walletprovider's
+`ExampleNew` are the same wiring as code that compiles.
 
 [`examples/passport-vdc`](examples/passport-vdc) runs every role as one
 process and isn't a deployment template: its README's "One process
