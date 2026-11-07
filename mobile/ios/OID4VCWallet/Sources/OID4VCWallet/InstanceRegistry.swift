@@ -40,7 +40,10 @@ public struct RegisteredInstance: Codable, Equatable, Sendable {
 /// with a new registration key and App Attest key, and the instance keys
 /// the lost instance recorded can't be attested again.
 /// ``FileInstanceRegistry`` keeps it in a file;
-/// ``InMemoryInstanceRegistry`` is for tests.
+/// ``InMemoryInstanceRegistry`` is for tests. Over either, every
+/// ``HttpWalletProvider`` in the process registering or asserting for
+/// the same registration takes turns; over a registry of another type,
+/// a provider takes turns only with itself: keep one provider for it.
 ///
 /// Called off the main thread; an error it throws fails the attestation
 /// as a `.platform` WalletError.
@@ -55,9 +58,11 @@ public protocol InstanceRegistry: Sendable {
 }
 
 /// An ``InstanceRegistry`` in memory, lost when the app quits: for tests.
-public final class InMemoryInstanceRegistry: InstanceRegistry, @unchecked Sendable {
+/// Every ``HttpWalletProvider`` over the same registry shares its locks.
+public final class InMemoryInstanceRegistry: InstanceRegistry, SharesWalletProviderState, @unchecked Sendable {
     private let lock = NSLock()
     private var kept: RegisteredInstance?
+    let walletProviderState = WalletProviderState()
 
     /// An empty registry.
     public init() {}
@@ -75,16 +80,30 @@ public final class InMemoryInstanceRegistry: InstanceRegistry, @unchecked Sendab
 /// atomically, so a reader never sees part of it, and kept out of
 /// backups: a restored instance ID is useless without its registration
 /// key and App Attest key, which never leave this device. Keep one
-/// wallet process writing it.
-public final class FileInstanceRegistry: InstanceRegistry, @unchecked Sendable {
+/// wallet process writing it. Every ``HttpWalletProvider`` over a
+/// registry in the same file, in this process, shares its locks, so it
+/// registers once and makes its assertions in order however many
+/// providers the app makes.
+public final class FileInstanceRegistry: InstanceRegistry, SharesWalletProviderState, @unchecked Sendable {
     /// The file the registration is kept in; its directory is made if
     /// missing.
     public let url: URL
     private let lock = NSLock()
+    let walletProviderState: WalletProviderState
+
+    /// The state of every registry file in this process, by its path.
+    private static let states = Locked<[String: WalletProviderState]>(initialState: [:])
 
     /// A registry in `url`.
     public init(url: URL) {
         self.url = url
+        let path = url.standardizedFileURL.path
+        walletProviderState = Self.states.withLock { states in
+            if let s = states[path] { return s }
+            let s = WalletProviderState()
+            states[path] = s
+            return s
+        }
     }
 
     /// A registry in `walletprovider/instance.json` under the app's
@@ -109,8 +128,11 @@ public final class FileInstanceRegistry: InstanceRegistry, @unchecked Sendable {
             try dir.setResourceValues(values)
             var options: Data.WritingOptions = [.atomic]
             #if os(iOS)
-            // Readable in the background after the first unlock, as the
-            // registration key is: a refresh may need it.
+            // Readable after the first unlock, in the background too.
+            // The registration key it names signs only while the device
+            // is unlocked (kSecAttrAccessibleWhenUnlockedThisDeviceOnly),
+            // so a request to the provider needs the device unlocked
+            // all the same.
             options.insert(.completeFileProtectionUntilFirstUserAuthentication)
             #endif
             try JSONEncoder().encode(Contents(instance: instance)).write(to: url, options: options)

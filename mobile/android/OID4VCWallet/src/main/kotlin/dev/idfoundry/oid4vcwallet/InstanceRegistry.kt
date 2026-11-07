@@ -35,7 +35,10 @@ public data class RegisteredInstance(
  * but losing it loses the instance: the wallet then registers again,
  * with a new registration key, and the instance keys the lost instance
  * recorded can't be attested again. [FileInstanceRegistry] keeps it in
- * a file; [InMemoryInstanceRegistry] is for tests.
+ * a file; [InMemoryInstanceRegistry] is for tests. Over either, every
+ * [HttpWalletProvider] in the process registering for the same
+ * registration takes turns; over a registry of another type, a provider
+ * takes turns only with itself: keep one provider for it.
  *
  * Called on Go's thread, never the main one; an exception it throws
  * fails the attestation as [WalletException.Code.platform].
@@ -54,9 +57,15 @@ public interface InstanceRegistry {
     public fun remove(instance: RegisteredInstance)
 }
 
-/** An [InstanceRegistry] in memory, lost when the app quits: for tests. */
+/**
+ * An [InstanceRegistry] in memory, lost when the app quits: for tests.
+ * Every [HttpWalletProvider] over the same registry shares its locks and
+ * challenges.
+ */
 public class InMemoryInstanceRegistry : InstanceRegistry {
     private var kept: RegisteredInstance? = null
+
+    internal val walletProviderState = WalletProviderState()
 
     @Synchronized
     override fun instance(): RegisteredInstance? = kept
@@ -78,13 +87,17 @@ public class InMemoryInstanceRegistry : InstanceRegistry {
  * are serialised per file; keep one wallet process writing it. Put it
  * where no backup copies it ([standard]: `noBackupFilesDir`): a restored
  * instance ID is useless without its registration key, which stays in
- * this device's Keystore.
+ * this device's Keystore. Every [HttpWalletProvider] over a registry in
+ * the same file, in this process, shares its locks and challenges, so it
+ * registers once however many providers the app makes.
  */
 public class FileInstanceRegistry(
     /** The file the registration is kept in; its directory is made if missing. */
     public val file: File,
 ) : InstanceRegistry {
     private val lock: Any = locks.computeIfAbsent(file.absoluteFile.normalize().path) { Any() }
+
+    internal val walletProviderState: WalletProviderState = states.computeIfAbsent(file.absoluteFile.normalize().path) { WalletProviderState() }
 
     override fun instance(): RegisteredInstance? = synchronized(lock) { read() }
 
@@ -128,6 +141,7 @@ public class FileInstanceRegistry(
     /** Registries in the app's standard place. */
     public companion object {
         private val locks = ConcurrentHashMap<String, Any>()
+        private val states = ConcurrentHashMap<String, WalletProviderState>()
 
         /** A registry in `noBackupFilesDir/walletprovider/instance.json`, which no backup or device transfer copies. */
         public fun standard(context: Context): FileInstanceRegistry =

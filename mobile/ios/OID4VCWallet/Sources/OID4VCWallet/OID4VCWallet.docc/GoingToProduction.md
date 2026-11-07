@@ -71,6 +71,13 @@ func makeProductionWalletProvider() throws -> HttpWalletProvider {
 }
 ```
 
+Every provider over that registry file in the process takes turns with
+the others, so the app may make a new one whenever it rebuilds its
+wallet. The registration key goes in the app's default Keychain access
+group, the first of its `keychain-access-groups` entitlement: keep a
+group only the app has first, and list one it shares with an extension
+after it (``HttpWalletProvider/registrationKeyStore()``).
+
 Add the App Attest capability to the app, whose
 `com.apple.developer.devicecheck.appattest-environment` entitlement
 names the environment its keys are made in: `development` while you
