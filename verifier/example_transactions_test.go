@@ -78,9 +78,11 @@ func ExampleNewTransactions() {
 		// Each credential's status list, signed by its issuer under
 		// issuerRoots (this example's credential carries none, so
 		// there's nothing to fetch). Under AssuranceProduction, Status
-		// or NoStatusCheck is required.
+		// or NoStatusCheck is required. One Cache per process, shared by
+		// every Checker, so a list is fetched and verified once.
 		Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
 			Roots: issuerRoots, Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+			Cache: statuslist.NewCache(statuslist.CacheOptions{}),
 		}},
 	})
 	if err != nil {

@@ -42,10 +42,11 @@ func exampleURL(parse func(string, ...fapi.URLOption) (fapi.URL, error), raw str
 
 // A Credential Issuer of one SD-JWT VC, with the endpoints it publishes
 // and the stores it keeps, making a Credential Offer for the
-// authorization code flow. In production, set Assurance to
-// AssuranceProduction, which also requires durable stores (sqlstore's),
-// a signer certificate issued by a CA, an Audit sink, and a status
-// check on key attestations.
+// authorization code flow, its c_nonces stateless (NonceKeys). In
+// production, set Assurance to AssuranceProduction, which also requires
+// durable stores (sqlstore's), a signer certificate issued by a CA, an
+// Audit sink, and a status check on key attestations; DEPLOYING.md has
+// the checklist for several replicas.
 func ExampleNew() {
 	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -56,6 +57,11 @@ func ExampleNew() {
 	// consent step authenticates the holder and checks it's this one.
 	issuerState, err := randomState()
 	if err != nil {
+		panic(err)
+	}
+	// From a secret manager, the same on every replica.
+	nonceKey := make([]byte, issuer.MinNonceKeyBytes)
+	if _, err := rand.Read(nonceKey); err != nil {
 		panic(err)
 	}
 	iss, err := issuer.New(issuer.Config{
@@ -79,7 +85,7 @@ func ExampleNew() {
 	}, issuer.Dependencies{
 		Random:      rand.Reader, // and a nil Clock, the system's
 		SDJWTSigner: &issuer.SDJWTSigner{Signer: signer, Alg: oid4vci.ES256},
-		Nonces:      storage.NewNonceStore(), CredentialOffers: storage.NewCredentialOfferStore(),
+		Nonces:      storage.NewNonceStore(), NonceKeys: [][]byte{nonceKey}, CredentialOffers: storage.NewCredentialOfferStore(),
 		DeferredTransactions: storage.NewDeferredTransactionStore(), Notifications: storage.NewNotificationStore(),
 	})
 	if err != nil {
