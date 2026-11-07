@@ -18,9 +18,11 @@ For a request, it shows who's asking, which credentials can answer and
 exactly what sharing them discloses. Then it shares them, with holder
 keys signing (Face ID or the passcode on a device), or declines. Its keys are
 Secure Enclave keys kept in the Keychain. It gets Wallet and Key
-Attestations from a Wallet Provider over HTTPS (the passport-vdc demo's
-API), and keeps credentials in Application Support with complete file
-protection.
+Attestations from a Wallet Provider over HTTPS: on a device, over the
+library's protocol with App Attest (`HttpWalletProvider`); in the
+Simulator, which has no App Attest, over the passport-vdc demo's own
+API, which attests any caller. It keeps credentials in Application
+Support with complete file protection.
 
 The Xcode project is generated from `project.yml` with
 [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`xcodegen`); the
@@ -212,8 +214,14 @@ login.
    go run ./cmd/demo -state .demo-state-device \
      -issuer-url https://issuer.example.com \
      -verifier-url https://verifier.example.com \
-     -provider-url https://provider.example.com
+     -provider-url https://provider.example.com \
+     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet
    ```
+
+   `-ios-app` is the app's App ID, your team ID and its bundle ID
+   (`BUNDLE_ID` below, if you set one): the Wallet Provider then attests
+   it over the library's protocol, with App Attest evidence from the
+   development environment, as a development build makes.
 
 3. Install and launch the app on a connected iPhone, signed with your
    team:
@@ -222,6 +230,15 @@ login.
    TEAM_ID=ABCDE12345 PROVIDER_URL=https://provider.example.com \
      STATE=../../../examples/passport-vdc/.demo-state-device ./run-device.sh
    ```
+
+   The app registers with the Wallet Provider at its first issuance: a
+   registration key in the Secure Enclave and an App Attest key Apple
+   attests (the provider logs the instance). Before the first build,
+   enable **App Attest** on the App ID in the Apple Developer portal
+   (Identifiers → the app → Capabilities), as the entitlement
+   `com.apple.developer.devicecheck.appattest-environment`
+   (`development`) needs. `PROVIDER_PROTOCOL=demo` uses the demo
+   provider's own API instead, without App Attest.
 
 4. On the phone, open the issuer's page in Safari, upload a passport (or
    use the sample), and open the offer link. For a presentation, open the

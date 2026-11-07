@@ -2,9 +2,11 @@ import Foundation
 import OID4VCWallet
 
 /// The Wallet Provider's backend, over the passport-vdc demo Wallet
-/// Provider's HTTP API: POST /wallet-attestation and /key-attestation,
-/// answered with {"attestation"}. A production provider would first
-/// prove the app genuine with App Attest.
+/// Provider's own HTTP API: POST /wallet-attestation and
+/// /key-attestation, answered with {"attestation"}, with no evidence: it
+/// attests any caller, as the Simulator needs. On a device,
+/// `provider_protocol` `v1` uses the library's `HttpWalletProvider`
+/// instead, which proves the app genuine with App Attest.
 struct HTTPWalletProvider: WalletProvider {
     let baseURL: URL
 
