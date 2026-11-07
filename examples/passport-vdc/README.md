@@ -664,8 +664,15 @@ repeatable), it attests that iOS app with App Attest evidence
 (`walletprovider/appattest`: Apple's App Attestation root, the App ID,
 then assertions over the keys), development environment included, as a
 development build makes: the iOS demo wallet uses it on a device
-(`mobile/ios/DemoWallet/run-device.sh`). The Android demo app doesn't
-use it yet.
+(`mobile/ios/DemoWallet/run-device.sh`). `-ios-app` also turns off the
+demo protocol outside `/v1/` (`/attestation-challenge`,
+`/wallet-attestation`, `/key-attestation`), which attests any caller:
+each answers `403`, so App Attest over `/v1/` is the only way to an
+attestation from outside. `cmd/demo`'s web wallet still gets its
+attestations from the demo protocol, in process; the CLI wallet
+(`cmd/wallet`), the Android demo app and the iOS demo app with
+`PROVIDER_PROTOCOL=demo` need a provider started without `-ios-app`.
+The Android demo app doesn't use `/v1/` yet.
 
 It attests only the demo wallet's `client_id`, without checking who's
 asking: a real Wallet Provider would check platform evidence (app

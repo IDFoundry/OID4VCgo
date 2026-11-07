@@ -192,7 +192,7 @@ func TestService_KeepsInstancesAcrossRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv := httptest.NewTLSServer(s.handler())
+		srv := httptest.NewTLSServer(s.handler(true))
 		t.Cleanup(srv.Close)
 		return s, Client{URL: srv.URL, HTTP: srv.Client()}
 	}

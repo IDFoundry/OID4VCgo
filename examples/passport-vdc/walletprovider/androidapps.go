@@ -51,7 +51,7 @@ func (f *AndroidAppsFlag) Set(v string) error {
 type IOSAppsFlag []string
 
 // IOSAppsUsage is IOSAppsFlag's usage text.
-const IOSAppsUsage = "TEAMID.bundle.id — an iOS app (its App ID: team ID and bundle ID) whose keys the library's own /v1/ protocol attests with App Attest, development environment included; repeatable"
+const IOSAppsUsage = "TEAMID.bundle.id — an iOS app (its App ID: team ID and bundle ID) whose keys the library's own /v1/ protocol attests with App Attest, development environment included; repeatable. Turns off the demo protocol outside /v1/, which attests any caller"
 
 // String implements flag.Value.
 func (f *IOSAppsFlag) String() string { return strings.Join(*f, " ") }
