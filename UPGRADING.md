@@ -6,6 +6,31 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.72.1 → next
+
+### Wallet Provider (`walletprovider`)
+
+- **An App Attest key registers one instance.** `Register` refuses
+  evidence whose credential another instance registered with
+  (`VerifiedEvidence.CredentialID`, which `appattest.EvidenceVerifier`
+  sets to the App Attest key ID) with `ErrInstanceKeyRegistered`
+  (`409 instance_key_registered`), as Apple asks a server to refuse a
+  key ID it has seen. `InstanceStore.Create` enforces it, atomically,
+  through the new `Instance.CredentialID`: a custom store keeps the
+  field and returns `ErrExists` for a non-empty one another instance
+  has (a `UNIQUE` column, `NULL` when empty), as
+  `walletprovidertest.TestInstanceStoreContract` now checks; sqlstore's
+  and the in-memory store do. A store that doesn't still works, without
+  the check. Instances registered before have no `CredentialID`: a
+  new registration with one of their App Attest keys isn't refused.
+
+### sqlstore
+
+- **Migration 0014 adds `oid4vc_walletprovider_instances.credential_id`**
+  with a `UNIQUE` index. Run `Migrate` before deploying: `CheckSchema`
+  fails without it. A replica from before, running beside, inserts
+  `NULL` and so skips the check for the instances it registers.
+
 ## v0.72.0 → v0.72.1
 
 ### Wallet Provider (`walletprovider`)

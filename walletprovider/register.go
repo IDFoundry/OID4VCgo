@@ -36,8 +36,12 @@ type RegisterRequest struct {
 // and stores the instance, active. The instance has no status list
 // index of its own: each of its instance keys gets one
 // (WalletAttestation). It refuses a registration key that's already
-// registered, or recorded as an instance key, with
-// ErrInstanceKeyRegistered (InstanceStore.Create enforces the first).
+// registered, or recorded as an instance key, and evidence whose
+// credential (VerifiedEvidence.CredentialID: an App Attest key) another
+// instance registered with, with ErrInstanceKeyRegistered
+// (InstanceStore.Create enforces both registrations, atomically): one
+// App Attest key is one instance, as Apple asks a server to refuse a
+// key ID it has seen.
 func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance, error) {
 	key, err := marshalKey(req.RegistrationKey)
 	if err != nil {
@@ -76,8 +80,8 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 			SecurityLevel: attested.SecurityLevel, Binding: attested.Binding,
 			AppID: ev.AppID, AppVersion: ev.AppVersion, BootState: ev.BootState, DeviceLocked: ev.DeviceLocked,
 		},
-		Credential: slices.Clone(ev.Credential),
-		State:      StateActive, CreatedAt: now, LastSeenAt: now,
+		Credential: slices.Clone(ev.Credential), CredentialID: ev.CredentialID,
+		State: StateActive, CreatedAt: now, LastSeenAt: now,
 	}
 	if ev.Counter != nil {
 		in.Counter = *ev.Counter
@@ -90,9 +94,9 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 	}
 	if err := p.deps.Instances.Create(ctx, in); err != nil {
 		// A random 128-bit ID doesn't collide: an existing record is
-		// one with the same registration key.
+		// one with the same registration key or credential.
 		if errors.Is(err, ErrExists) {
-			return Instance{}, ErrInstanceKeyRegistered
+			return Instance{}, fmt.Errorf("%w: the registration key, or the evidence's credential, is another instance's", ErrInstanceKeyRegistered)
 		}
 		return Instance{}, fmt.Errorf("walletprovider: storing the instance: %w", err)
 	}

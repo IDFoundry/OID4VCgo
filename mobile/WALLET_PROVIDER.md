@@ -109,7 +109,7 @@ Clients decide on `error` and the status code, never the description.
 | 400 | `unsupported_evidence` | The provider takes no evidence of that `kind`. |
 | 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should. |
 | 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, or the security level its instance key was recorded at, since the policy is applied again at every attestation. |
-| 409 | `instance_key_registered` | The key is already another's: a registration key that's already registered or is an instance key, or an instance key that's another instance's or is this instance's registration key. Make a new key. |
+| 409 | `instance_key_registered` | The key is already another's: a registration key that's already registered or is an instance key, an App Attest key another instance registered with, or an instance key that's another instance's or is this instance's registration key. Make a new key. |
 | 400 | `unknown_instance_key` | A Key Attestation request's `instance_key` isn't one a Wallet Attestation recorded for this instance, or the provider has deleted its record (retention). |
 | 400 | `unknown_client` | The provider doesn't attest that client ID. |
 | 401 | `invalid_signed_request` | The signed request didn't verify (see below). It carries `WWW-Authenticate: Wallet-Provider-Request`. |
@@ -200,7 +200,11 @@ provider or the network couldn't answer (5xx, 429,
 `invalid_challenge`, no connection), and attests it again over the
 next registration's challenge, making a new key only if App Attest
 then refuses it (`DCError.invalidKey`) or the provider refused the
-registration. An app built
+registration. The provider registers an App Attest key once, refusing
+its key ID for any other instance with `409 instance_key_registered`,
+as Apple asks: a registration whose answer was lost, tried again with
+the same App Attest key, is refused that way, and the client
+registers again with new keys. An app built
 for development (the `com.apple.developer.devicecheck.appattest-environment`
 entitlement set to `development`) makes development-environment keys,
 which only a provider configured for them accepts
@@ -367,7 +371,8 @@ answer, `201`:
 ```
 
 Not signed (the evidence proves the key). Keep the instance ID with
-the registration key; registering the same key again is `409
+the registration key; registering the same key again, or an App
+Attest key another instance registered with, is `409
 instance_key_registered`. Registering takes no status list entry: each
 instance key gets its own.
 

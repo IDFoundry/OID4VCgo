@@ -55,14 +55,16 @@
 //     the attestation object's client data hash covers the challenge
 //     and the registration key, and the verifier returns the
 //     registration key with KeyBindingAppAssertion, plus
-//     VerifiedEvidence.Credential (the App Attest key) and Counter,
-//     which the provider stores in the Instance. A later request — an
-//     instance key's first Wallet Attestation, or a Key Attestation —
-//     carries an assertion over the challenge and the keys it names;
-//     the verifier checks it against EvidenceInput.Instance's
-//     Credential and Counter and returns the new Counter, which the
-//     provider stores with a compare-and-swap (InstanceStore.Update),
-//     so an assertion is accepted once.
+//     VerifiedEvidence.Credential (the App Attest key), its
+//     CredentialID (the key ID) and Counter, which the provider stores
+//     in the Instance: a key ID another instance registered with is
+//     refused, so one App Attest key registers one instance. A later
+//     request — an instance key's first Wallet Attestation, or a Key
+//     Attestation — carries an assertion over the challenge and the
+//     keys it names; the verifier checks it against
+//     EvidenceInput.Instance's Credential and Counter and returns the
+//     new Counter, which the provider stores with a compare-and-swap
+//     (InstanceStore.Update), so an assertion is accepted once.
 //
 // This module ships both verifiers: walletprovider/androidkey for
 // Android Key Attestation and walletprovider/appattest for App Attest,

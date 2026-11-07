@@ -1781,7 +1781,8 @@ changes whether *every* bullet below is `(done)`.
   `sweep_after`, `record` — plus the few a store looks rows up by (a
   pre-authorized code's `tx_code_hash` and `wrong_attempts`, a
   transaction's `key_id` and `response_code_hash`, a wallet instance's
-  `UNIQUE` `key_thumbprint` and the `revision` its `Update` compares, an
+  `UNIQUE` `key_thumbprint` and `credential_id` (an App Attest key ID,
+  `NULL` without one) and the `revision` its `Update` compares, an
   instance key's `instance_id`, indexed with its thumbprint for `List`, its
   `sweep_after` its `RetainUntil`); `record` is the
   record as JSON, sealed with an optional `Sealer` (the
