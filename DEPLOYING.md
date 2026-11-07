@@ -71,7 +71,8 @@ each, not a deployment template" says what it does differently.
   `[old, new]` everywhere (new accepted, not yet used), then `[new,
   old]` (new used), then, after `Config.NonceLifetime`, `[new]`.
   Enable `NonceKeys` itself the same way: every replica must have it
-  before any issues a stateless c_nonce.
+  before any issues a stateless c_nonce, as a replica without it
+  refuses one.
 - [ ] **Status lists: one `statuslist.Allocator` per process**, with
   `Store: db.StatusIndices()` and several `Lists` (each `Size` indices,
   filled to `FillLimit`, half by default): add lists before they fill,
@@ -86,7 +87,9 @@ each, not a deployment template" says what it does differently.
   token after a status changes and the others serve it within
   `TokensCheck` (5 s by default). Without it every replica signs its
   own, and a revocation reaches another replica's readers only after
-  that replica's `CacheFor`.
+  that replica's `CacheFor`. A replica waits on another's lease to sign
+  only for a bounded time, then signs its own, so one that can't sign
+  doesn't hold the others back.
 - [ ] **Key Attestation and Wallet Attestation status:** under
   `AssuranceProduction` the issuer checks attestations' status
   (`AttestationStatus`); give it a `statuslist.Checker` with a shared
@@ -128,7 +131,10 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // from one process onl
   live attestations alone can name 128 (64 lists in each of the current
   and previous periods) — and `MaxBytes` (64
   MiB by default) for their decompressed size: a 2^24-entry one-bit
-  list takes about 2 to 3 MiB.
+  list takes about 2 to 3 MiB. A `CacheOptions.Store` that keeps lists
+  across restarts needs a `StoreKey` (at least 32 random bytes, kept
+  apart from the store, the same on every process sharing it), or a
+  kept token is reused only within `MaxAge` of its iat.
 
 ```go
 crls, _ := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: crlURLs, Issuers: cas})

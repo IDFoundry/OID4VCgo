@@ -218,6 +218,12 @@ security of an exchange both sides run as this library does.
   is something an attacker can copy into a certificate of their own.
   A CA whose key identifiers come from another method is matched only
   as an anchor.
+- **An SD-JWT VC with the transitional `vc+sd-jwt` typ** is refused
+  unless `sdjwtvc.VerifyOptions.AcceptLegacyTyp` is set, where SD-JWT
+  VC draft-13 §3.2.1, the version HAIP 1.0 names, recommends that
+  Holders and Verifiers accept it for a transition period. Draft-19
+  dropped that; only `dc+sd-jwt` is accepted by default, by the
+  verifier and wallet too.
 - **A Status List Token without `exp`** issued more than a day ago
   (`statuslist.DefaultMaxAgeWithoutExp`) is refused unless
   `VerifyOptions.MaxAge` says otherwise. `exp` is optional (Token
