@@ -608,7 +608,8 @@ func TestMigrateShardsReservedCounts(t *testing.T) {
 			t.Errorf("CheckSchema at version 9 = %v, want migration 0010 missing", err)
 		}
 
-		if err := d.Migrate(ctx); err != nil {
+		// Up to 0012, the last migration an older release could run beside.
+		if err := sqlstore.MigrateTo(ctx, d, 12); err != nil {
 			t.Fatal(err)
 		}
 		reserved := func(uri string, want int) {
@@ -642,6 +643,16 @@ func TestMigrateShardsReservedCounts(t *testing.T) {
 		if _, err := raw.ExecContext(ctx, inDialect(e.dialect, "DELETE FROM oid4vc_status_list_counts WHERE uri = ?"), statusListB); err == nil {
 			t.Error("an older release's Delete of a list's count succeeded")
 		}
+		reserved(statusListB, 1)
+
+		// 0013 drops the view; the counts stay in the shards.
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, "SELECT reserved FROM oid4vc_status_list_counts"); err == nil {
+			t.Error("oid4vc_status_list_counts is still there after 0013")
+		}
+		reserved(statusListA, 6)
 		reserved(statusListB, 1)
 
 		if err := s.Delete(ctx, statusListA); err != nil {
