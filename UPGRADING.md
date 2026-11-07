@@ -6,6 +6,19 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.71.0 → next
+
+### sqlstore
+
+- **Migration 0013 drops the `oid4vc_status_list_counts` view**, which
+  0010 left so that a replica from before v0.69.0 still counted a
+  list's reserved indices. Finish upgrading every replica to v0.69.0
+  or later before running `Migrate`: once the view is gone, an older
+  one can no longer count a list's reserved indices, so its Allocator
+  fails. A query of your own that read the
+  view reads `SUM(reserved)` from `oid4vc_status_list_count_shards`
+  grouped by `uri` instead, or calls `StatusIndices().Reserved`.
+
 ## v0.69.0 → v0.70.0
 
 ### Issuer (`issuer`)
