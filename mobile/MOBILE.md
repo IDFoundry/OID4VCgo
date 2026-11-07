@@ -344,10 +344,16 @@ alone, and is asserted again on `evidence_required` (the provider's
 retention deleted it). A Key Attestation carries one assertion over a
 `holder` challenge and every holder key. Assertions are serialised,
 each sent before the next is made, as the provider takes only a larger
-counter than the last. `DCError.invalidKey` (the App Attest key gone:
+counter than the last — by every provider over the same
+`FileInstanceRegistry` file in the process, not just one, since the
+demo rebuilds its wallet (and provider) when the holder changes the
+copy policy. `DCError.invalidKey` (the App Attest key gone:
 restored or reinstalled) registers the installation again for a Wallet
-Attestation, and forgets the registration for a Key Attestation, whose
-instance key is the lost instance's; `serverUnavailable` is `network`.
+Attestation, forgetting only the registration whose key failed, and
+forgets the registration for a Key Attestation, whose
+instance key is the lost instance's; `serverUnavailable` is `network`,
+and the App Attest key it left unregistered is attested again by the
+next registration, as Apple asks.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against

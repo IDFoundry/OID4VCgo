@@ -165,7 +165,12 @@ reports them at security level `secure-enclave` with binding
 `app-assertion`, and a Key Attestation claims `key_storage` for them
 only where the provider's policy says so for that binding
 (`walletprovider.KeyStorageRule`). Make them Secure Enclave keys all
-the same.
+the same, and keep the registration key in a Keychain access group
+only the app has: any app or extension in its group can sign requests
+as the instance. The Swift `HttpWalletProvider.registrationKeyStore()`
+makes it in the app's default group, the first of its
+`keychain-access-groups` entitlement (or its App ID's when it has
+none), so list a group shared with an extension after the app's own.
 
 The evidence's `data` is the bytes `DCAppAttestService` returned,
 unchanged, base64url without padding: an **attestation object** at
@@ -188,7 +193,14 @@ is false (the Simulator, some older devices) there's no App Attest
 key, and the app can't register.
 
 If `attestKey` fails with `DCError.serverUnavailable`, try again later
-with the same key; on any other error, make a new key. An app built
+with the same key; on any other error, make a new key. The Swift
+`HttpWalletProvider` keeps that key, for as long as the app's process
+runs, after `serverUnavailable` and after any registration the
+provider or the network couldn't answer (5xx, 429,
+`invalid_challenge`, no connection), and attests it again over the
+next registration's challenge, making a new key only if App Attest
+then refuses it (`DCError.invalidKey`) or the provider refused the
+registration. An app built
 for development (the `com.apple.developer.devicecheck.appattest-environment`
 entitlement set to `development`) makes development-environment keys,
 which only a provider configured for them accepts
@@ -259,6 +271,13 @@ for a Key Attestation). Make one assertion at a time and send it
 before making the next: an assertion made after another but sent
 first leaves the earlier one refused. An assertion that never reached
 the provider costs nothing: the next one's count is still larger.
+The order is the app's, not one client object's: every client in the
+process asserting for the instance must take turns, and register it
+only once. The Swift and Kotlin `HttpWalletProvider`s take turns with
+every other over the same `FileInstanceRegistry` file (or
+`InMemoryInstanceRegistry`), so an app may make a new one when it
+rebuilds its wallet; over a registry type of the app's own, keep one
+provider.
 
 Evidence after registration must come from the same app, and is held
 to the provider's policy as the registration was. Unlike

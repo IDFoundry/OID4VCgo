@@ -75,6 +75,13 @@ import java.util.Base64
  * it, so of two issuances making holder keys at once only the first
  * Key Attestation can use it: the other fails as
  * [WalletException.Code.network], and succeeds when tried again.
+ *
+ * The installation registers once, and the challenges handed out are
+ * remembered, for every `HttpWalletProvider` over the same
+ * [FileInstanceRegistry] file (or the same [InMemoryInstanceRegistry])
+ * in the process, so a wallet rebuilt mid-issuance with a new provider
+ * carries on with the old one's. Over a registry of its own type, a
+ * provider shares them with no other: keep one provider for it.
  */
 public class HttpWalletProvider internal constructor(
     baseURL: String,
@@ -115,20 +122,31 @@ public class HttpWalletProvider internal constructor(
 
     private val base: URI = parseBaseURL(baseURL, allowHttp)
 
+    /** The locks and challenges this provider shares with every other over the same registry. */
+    private val state: WalletProviderState = when (instances) {
+        is FileInstanceRegistry -> instances.walletProviderState
+        is InMemoryInstanceRegistry -> instances.walletProviderState
+        else -> WalletProviderState()
+    }
+
     /** Guards the challenges below. */
-    private val lock = Mutex()
+    private val lock: Mutex get() = state.lock
 
     /** Held while the installation registers or forgets its registration, so it registers once. */
-    private val registering = Mutex()
+    private val registering: Mutex get() = state.registering
 
     /** `instance` challenges handed out, most recent last, until they expire. */
-    private val instanceChallenges = ArrayDeque<IssuedChallenge>()
+    private val instanceChallenges: ArrayDeque<IssuedChallenge> get() = state.instanceChallenges
 
     /** `holder` challenges handed out, most recent last, until they expire. */
-    private val holderChallenges = ArrayDeque<IssuedChallenge>()
+    private val holderChallenges: ArrayDeque<IssuedChallenge> get() = state.holderChallenges
 
     /** The holder challenge each new holder key is made over, until it's used or near its expiry. */
-    private var holderChallenge: IssuedChallenge? = null
+    private var holderChallenge: IssuedChallenge?
+        get() = state.holderChallenge
+        set(value) {
+            state.holderChallenge = value
+        }
 
     /**
      * An `instance` challenge for each [KeyPurpose.INSTANCE] key; for
@@ -432,11 +450,16 @@ public class HttpWalletProvider internal constructor(
     }
 }
 
-/** Fails unless [jwt] is a Key Attestation over [nonce] attesting at least one of [points], and nothing else. */
+/**
+ * Fails unless [jwt] is a Key Attestation over [nonce] attesting at least
+ * one of [points], and nothing else. An empty [nonce] (an issuer without
+ * a Nonce Endpoint) is one the provider omits.
+ */
 private fun checkKeyAttestation(jwt: String, points: List<ByteArray>, nonce: String) {
     val claims = unverifiedClaims(jwt) ?: throw StoreException("the Key Attestation isn't a JWT")
     val attested = claims["attested_keys"] as? JsonArray
-    if (claims.stringOrNull("nonce") != nonce || attested.isNullOrEmpty()) {
+    val overNonce = if (claims["nonce"] == null) nonce.isEmpty() else claims.stringOrNull("nonce") == nonce
+    if (!overNonce || attested.isNullOrEmpty()) {
         throw StoreException("the Key Attestation isn't over the nonce sent, or attests no key")
     }
     for (k in attested) {
@@ -477,6 +500,20 @@ public class WalletProviderUnavailableException(
     public val error: String?,
     message: String,
 ) : IOException(message)
+
+/**
+ * What every [HttpWalletProvider] over one registry shares in the
+ * process: its locks, and the challenges it handed out, so a wallet
+ * rebuilt mid-issuance with a new provider registers once and still
+ * finds the challenge its keys were made over.
+ */
+internal class WalletProviderState {
+    val lock = Mutex()
+    val registering = Mutex()
+    val instanceChallenges = ArrayDeque<IssuedChallenge>()
+    val holderChallenges = ArrayDeque<IssuedChallenge>()
+    var holderChallenge: IssuedChallenge? = null
+}
 
 /** A challenge the provider issued. */
 internal class IssuedChallenge(val value: String, val bytes: ByteArray, val expiresAt: Long)

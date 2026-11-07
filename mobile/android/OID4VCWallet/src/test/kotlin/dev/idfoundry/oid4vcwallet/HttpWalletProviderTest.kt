@@ -1,5 +1,8 @@
 package dev.idfoundry.oid4vcwallet
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -111,8 +114,13 @@ class HttpWalletProviderTest {
         /** Changes the claims of the attestations issued. */
         var tamper: (MutableMap<String, JsonElement>) -> Unit = {}
 
+        /** How long a registration takes. */
+        var registrationDelayMillis = 0L
+
         private val random = SecureRandom()
 
+        // One request at a time, as providers may post from several threads.
+        @Synchronized
         override fun post(url: URI, headers: Map<String, String>, body: ByteArray): WalletProviderAnswer {
             assertEquals(JSON, headers["Content-Type"])
             val path = url.rawPath.removePrefix(prefix)
@@ -140,6 +148,7 @@ class HttpWalletProviderTest {
         }
 
         private fun register(o: JsonObject): WalletProviderAnswer {
+            if (registrationDelayMillis > 0) Thread.sleep(registrationDelayMillis)
             assertEquals(setOf("challenge", "registration_key", EVIDENCE), o.keys)
             val challenge = o.getValue("challenge").jsonPrimitive.content
             val point = jwkPoint(o.getValue("registration_key").toString().toByteArray())!!
@@ -175,7 +184,8 @@ class HttpWalletProviderTest {
             if (instanceKeys[hex(point)] != instance) return error(400, "unknown_instance_key")
             if (!consume(o.getValue("challenge").jsonPrimitive.content, "holder")) return error(400, "invalid_challenge")
             val claims = mutableMapOf<String, JsonElement>("attested_keys" to o.getValue("keys"))
-            o["nonce"]?.let { claims["nonce"] = it }
+            // An empty nonce is omitted, as the Go provider's omitempty does.
+            o["nonce"]?.takeIf { it.jsonPrimitive.content.isNotEmpty() }?.let { claims["nonce"] = it }
             return jwt(claims, "key_attestation")
         }
 
@@ -584,6 +594,52 @@ class HttpWalletProviderTest {
         expectStoreException("wasn't sent") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
         s.provider.tamper = { it["attested_keys"] = JsonArray(emptyList()) }
         expectStoreException("attests no key") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
+    }
+
+    @Test
+    fun keyAttestationWithoutANonce() = runBlocking {
+        // An issuer without a Nonce Endpoint gives an empty nonce, which
+        // the provider omits from the Key Attestation.
+        val s = Setup()
+        val id = s.newInstanceKey()
+        s.walletAttestation(id)
+        val ka = s.keyAttestation(id, listOf(s.newHolderKey()), "")
+        assertNull(unverifiedClaims(ka)!!["nonce"])
+        // A nonce where none was sent, or none where one was, is refused.
+        s.provider.tamper = { it["nonce"] = JsonPrimitive("n") }
+        expectStoreException("nonce") { s.keyAttestation(id, listOf(s.newHolderKey()), "") }
+        s.provider.tamper = { it.remove("nonce") }
+        expectStoreException("nonce") { s.keyAttestation(id, listOf(s.newHolderKey()), "n") }
+    }
+
+    @Test
+    fun anEscapedBasePathIsSignedAsSent() = runBlocking {
+        val s = Setup(FakeProvider("/w%20p"))
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals("/w%20p/v1/wallet-attestation", s.provider.signedClaims.last()["path"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun providersOverOneRegistryFileRegisterOnce() = runBlocking {
+        // An app rebuilding its wallet mid-issuance: a second provider over the same file.
+        val dir = Files.createTempDirectory("instances").toFile()
+        val s = Setup(registry = FileInstanceRegistry(File(dir, "wp/instance.json")))
+        val other = s.client(FileInstanceRegistry(File(dir, "wp/./instance.json")))
+        val a = s.newInstanceKey()
+        val b = s.keys.createKey(KeyPurpose.INSTANCE, other.attestationChallenge(KeyPurpose.INSTANCE))
+        s.provider.registrationDelayMillis = 50
+        coroutineScope {
+            val first = async(Dispatchers.IO) { s.walletAttestation(a) }
+            val second = async(Dispatchers.IO) { s.walletAttestation(b, other) }
+            first.await()
+            second.await()
+        }
+        assertEquals(1, s.provider.count(INSTANCES))
+        assertEquals(1, s.registrationKeys.pairs.size)
+        // The second provider knows the challenge the first handed out.
+        val c = s.newInstanceKey()
+        s.walletAttestation(c, other)
+        assertEquals(3, s.provider.instanceKeys.size)
     }
 
     private suspend fun expectStoreException(text: String, body: suspend () -> Unit) {

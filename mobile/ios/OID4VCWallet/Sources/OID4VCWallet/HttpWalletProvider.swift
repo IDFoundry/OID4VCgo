@@ -15,7 +15,11 @@ import Foundation
 ///   ``InstanceRegistry``. The registration key signs every later
 ///   request (`Wallet-Provider-Request`); no attestation names it. If
 ///   the registration, its key or the App Attest key is lost, the next
-///   Wallet Attestation registers again, with new keys.
+///   Wallet Attestation registers again, with new keys. An App Attest
+///   key a registration made but couldn't register — App Attest's
+///   server or the provider unavailable, or no connection — is kept, in
+///   this process, and tried again by the next registration, as Apple
+///   asks; it's dropped when the provider or App Attest refuses it.
 /// - ``walletAttestation(clientID:instanceKey:)`` asks for a Wallet
 ///   Attestation for the instance key (`instance_key`). The first time,
 ///   it sends an App Attest assertion over a fresh `instance` challenge
@@ -40,7 +44,12 @@ import Foundation
 ///
 /// Assertions are made one at a time, each sent before the next is made,
 /// as the provider accepts only an assertion whose counter exceeds the
-/// last it took.
+/// last it took, and the installation registers once. Every
+/// `HttpWalletProvider` over the same ``FileInstanceRegistry`` file (or
+/// the same ``InMemoryInstanceRegistry``) in the process shares that
+/// order, so a wallet rebuilt mid-issuance with a new provider is still
+/// serialised with the old one. Over a registry of its own type, a
+/// provider serialises only its own calls: keep one provider for it.
 ///
 /// It sends nothing but to its base URL, over https, following no
 /// redirect, with its timeout for each request, and reads at most
@@ -73,8 +82,18 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
 
     /// The registration key's store: Secure Enclave keys in the Keychain
     /// under ``registrationKeyTagPrefix``, apart from the wallet's keys,
-    /// in the app's default access group, signing without the holder, as
-    /// instance keys do.
+    /// signing without the holder, as instance keys do, and usable only
+    /// while the device is unlocked
+    /// (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`).
+    ///
+    /// The key is made in the app's default Keychain access group: the
+    /// first group of its `keychain-access-groups` entitlement, or its
+    /// App ID's when it has none. Every app and extension that lists
+    /// that group can sign with the key, and so speak for the instance:
+    /// list a group only the app has first, and one it shares with an
+    /// extension (a document provider's, for holder keys:
+    /// ``KeychainKeyStore/Options/holderAccessGroup``) after it. There's
+    /// no option to choose another group.
     public static func registrationKeyStore() -> KeychainKeyStore {
         KeychainKeyStore(options: KeychainKeyStore.Options(tagPrefix: registrationKeyTagPrefix))
     }
@@ -83,22 +102,17 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     public static let defaultTimeout: TimeInterval = 30
 
     private let base: URL
+    /// The base URL's path, percent-encoded.
+    private let basePath: String
     private let instances: any InstanceRegistry
     private let registrationKeys: any KeyStore
     private let appAttest: any AppAttestService
     private let transport: any WalletProviderTransport
     private let clock: @Sendable () -> Int64
 
-    /// Held while the installation registers or forgets its registration,
-    /// so it registers once.
-    private let registering = AsyncMutex()
-    /// Held from making an assertion until the request carrying it is
-    /// answered, so assertions reach the provider in the order made.
-    private let asserting = AsyncMutex()
-
-    /// Thumbprints of the instance keys the provider recorded for this
-    /// instance, in this process.
-    private let recorded = Locked<Set<String>>(initialState: [])
+    /// The locks and memory this provider shares with every other over
+    /// the same registry.
+    private let state: WalletProviderState
 
     /// A client of the provider at `baseURL`.
     ///
@@ -133,7 +147,9 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     init(baseURL: URL, instances: any InstanceRegistry, registrationKeys: any KeyStore, appAttest: any AppAttestService,
          transport: any WalletProviderTransport, clock: @escaping @Sendable () -> Int64, allowHTTP: Bool) throws {
         self.base = try Self.parseBaseURL(baseURL, allowHTTP: allowHTTP)
+        self.basePath = URLComponents(url: base, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? ""
         self.instances = instances
+        self.state = (instances as? SharesWalletProviderState)?.walletProviderState ?? WalletProviderState()
         self.registrationKeys = registrationKeys
         self.appAttest = appAttest
         self.transport = transport
@@ -145,22 +161,24 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// key unless the provider recorded it already.
     public func walletAttestation(clientID: String, instanceKey: Data) async throws -> String {
         let point = try jwkPoint(instanceKey, what: "the instance key")
+        let instance = try await registered()
         do {
-            return try await walletAttestation(clientID: clientID, point: point)
+            return try await walletAttestation(clientID: clientID, point: point, instance: instance)
         } catch is AppAttestKeyLostError {
-            // Restored or reinstalled: register again, with a new App
-            // Attest key, and attest the (new) instance key under it.
-            if let kept = try instances.instance() { try await forget(kept) }
-            return try await walletAttestation(clientID: clientID, point: point)
+            // Restored or reinstalled: forget the registration whose App
+            // Attest key is gone — not one another call has made since —
+            // register again, with a new App Attest key, and attest the
+            // (new) instance key under it.
+            try await forget(instance)
+            return try await walletAttestation(clientID: clientID, point: point, instance: try await registered())
         }
     }
 
-    private func walletAttestation(clientID: String, point: Data) async throws -> String {
-        let instance = try await registered()
+    private func walletAttestation(clientID: String, point: Data, instance: RegisteredInstance) async throws -> String {
         let thumbprint = jwkThumbprint(point: point)
         var body: [String: Any] = ["client_id": clientID, "instance_key": jwk(point: point)]
         var jwt: String?
-        if recorded.withLock({ $0.contains(thumbprint) }) {
+        if state.recorded.withLock({ $0.contains(thumbprint) }) {
             do {
                 jwt = try await signed(instance, Self.walletAttestationPath, body).string("wallet_attestation")
             } catch let e as WalletProviderRefusedError where e.error == "evidence_required" {
@@ -168,7 +186,7 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
             }
         }
         if jwt == nil {
-            jwt = try await asserting.locked {
+            jwt = try await state.asserting.locked {
                 let challenge = try await self.challenge(Self.purposeInstance)
                 let hash = AppAttestClientData.hash(purpose: Self.purposeInstance, challenge: challenge.value, keys: [point])
                 let assertion = try await self.appAttest.generateAssertion(instance.appAttestKeyID, clientDataHash: hash)
@@ -176,7 +194,7 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
                 body["evidence"] = appAttestEvidence(assertion)
                 return try await self.signed(instance, Self.walletAttestationPath, body).string("wallet_attestation")
             }
-            recorded.withLock { _ = $0.insert(thumbprint) }
+            state.recorded.withLock { _ = $0.insert(thumbprint) }
         }
         guard let jwt, let claims = unverifiedClaims(jwt) else { throw StoreError("the Wallet Attestation isn't a JWT") }
         let cnf = ((claims["cnf"] as? [String: Any])?["jwk"] as? [String: Any]).flatMap { try? jwkPoint($0) }
@@ -198,7 +216,7 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         }
         let jwt: String
         do {
-            jwt = try await asserting.locked {
+            jwt = try await state.asserting.locked {
                 let challenge = try await self.challenge(Self.purposeHolder)
                 let hash = AppAttestClientData.hash(purpose: Self.purposeHolder, challenge: challenge.value, keys: points)
                 let assertion = try await self.appAttest.generateAssertion(instance.appAttestKeyID, clientDataHash: hash)
@@ -224,7 +242,7 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// The registration kept, after registering the installation if it
     /// has none.
     private func registered() async throws -> RegisteredInstance {
-        try await registering.locked {
+        try await state.registering.locked {
             if let kept = try self.kept() { return kept }
             return try await self.register()
         }
@@ -255,7 +273,9 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// Makes a registration key and an App Attest key over a fresh
     /// `registration` challenge, registers them and keeps the
     /// registration; the registration key is deleted if it isn't
-    /// registered.
+    /// registered. The App Attest key is the one a transient failure
+    /// left unregistered, if there is one (WALLET_PROVIDER.md, The App
+    /// Attest key), and is kept for the next registration after another.
     private func registerKey() async throws -> RegisteredInstance {
         let challenge = try await challenge(Self.purposeRegistration)
         let id = try registrationKeys.createKey(purpose: .instance)
@@ -264,30 +284,54 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         guard let point = try registrationKeys.publicKey(id: id) else {
             throw StoreError("the registration key store lost the key it made")
         }
-        let appAttestKeyID = try await appAttest.generateKey()
         let hash = AppAttestClientData.hash(purpose: Self.purposeRegistration, challenge: challenge.value, keys: [point])
-        let attestation = try await appAttest.attestKey(appAttestKeyID, clientDataHash: hash)
-        let body: [String: Any] = [
-            "challenge": challenge.value,
-            "registration_key": jwk(point: point),
-            "evidence": appAttestEvidence(attestation),
-        ]
-        let instanceID = try await post(Self.instancesPath, body, sign: nil, want: 201).string("instance_id")
-        let instance = RegisteredInstance(keyThumbprint: jwkThumbprint(point: point), keyID: id,
-                                          instanceID: instanceID, appAttestKeyID: appAttestKeyID)
-        try instances.put(instance)
-        recorded.withLock { $0.removeAll() }
-        registered = true
-        return instance
+        do {
+            let (appAttestKeyID, attestation) = try await attestedAppAttestKey(hash)
+            let body: [String: Any] = [
+                "challenge": challenge.value,
+                "registration_key": jwk(point: point),
+                "evidence": appAttestEvidence(attestation),
+            ]
+            let instanceID = try await post(Self.instancesPath, body, sign: nil, want: 201).string("instance_id")
+            let instance = RegisteredInstance(keyThumbprint: jwkThumbprint(point: point), keyID: id,
+                                              instanceID: instanceID, appAttestKeyID: appAttestKeyID)
+            try instances.put(instance)
+            state.unregisteredAppAttestKeyID.withLock { $0 = nil }
+            state.recorded.withLock { $0.removeAll() }
+            registered = true
+            return instance
+        } catch {
+            // The App Attest key is kept for the next registration after
+            // a failure that may pass; any other needs a new key.
+            if !isTransient(error) { state.unregisteredAppAttestKeyID.withLock { $0 = nil } }
+            throw error
+        }
+    }
+
+    /// An App Attest key and Apple's attestation of it over
+    /// `clientDataHash`: the key a registration left unregistered, if
+    /// App Attest attests it again, or a new one, kept as unregistered
+    /// until ``registerKey()`` registers it.
+    private func attestedAppAttestKey(_ clientDataHash: Data) async throws -> (String, Data) {
+        if let kept = state.unregisteredAppAttestKeyID.withLock({ $0 }) {
+            do {
+                return (kept, try await appAttest.attestKey(kept, clientDataHash: clientDataHash))
+            } catch is AppAttestKeyLostError {
+                // App Attest won't attest it again: a new one.
+            }
+        }
+        let key = try await appAttest.generateKey()
+        state.unregisteredAppAttestKeyID.withLock { $0 = key }
+        return (key, try await appAttest.attestKey(key, clientDataHash: clientDataHash))
     }
 
     /// Forgets `instance` and deletes its registration key. (An App
     /// Attest key can't be deleted; it's simply never used again.)
     private func forget(_ instance: RegisteredInstance) async throws {
-        try await registering.locked {
+        try await state.registering.locked {
             try self.instances.remove(instance)
             try self.registrationKeys.deleteKey(id: instance.keyID)
-            self.recorded.withLock { $0.removeAll() }
+            self.state.recorded.withLock { $0.removeAll() }
         }
     }
 
@@ -336,7 +380,8 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// must have status `want`.
     private func post(_ path: String, _ body: [String: Any], sign: ((String, Data) throws -> String)?,
                       want: Int) async throws -> [String: Any] {
-        let targetPath = base.path + path
+        // The path as sent, percent-encoded, as the provider checks it.
+        let targetPath = basePath + path
         let bytes = try JSONSerialization.data(withJSONObject: body, options: [.withoutEscapingSlashes])
         var headers = ["Content-Type": Self.jsonType, "Accept": Self.jsonType]
         if let sign { headers[Self.requestHeader] = try sign(targetPath, bytes) }
@@ -497,10 +542,12 @@ final class URLSessionTransport: NSObject, WalletProviderTransport, URLSessionTa
 }
 
 /// Fails unless `jwt` is a Key Attestation over `nonce` attesting at
-/// least one of `points`, and nothing else.
+/// least one of `points`, and nothing else. An empty `nonce` (an issuer
+/// without a Nonce Endpoint) is one the provider omits.
 private func checkKeyAttestation(_ jwt: String, points: [Data], nonce: String) throws {
     guard let claims = unverifiedClaims(jwt) else { throw StoreError("the Key Attestation isn't a JWT") }
-    guard claims["nonce"] as? String == nonce, let attested = claims["attested_keys"] as? [Any], !attested.isEmpty else {
+    let overNonce = claims["nonce"] == nil ? nonce.isEmpty : claims["nonce"] as? String == nonce
+    guard overNonce, let attested = claims["attested_keys"] as? [Any], !attested.isEmpty else {
         throw StoreError("the Key Attestation isn't over the nonce sent, or attests no key")
     }
     for k in attested {
@@ -508,6 +555,34 @@ private func checkKeyAttestation(_ jwt: String, points: [Data], nonce: String) t
             throw StoreError("the Key Attestation attests a key that wasn't sent")
         }
     }
+}
+
+/// Whether `error` may pass: the network, the provider's availability
+/// or App Attest's server.
+private func isTransient(_ error: Error) -> Bool {
+    error is WalletProviderUnavailableError || error is URLError
+}
+
+/// What every ``HttpWalletProvider`` over one registry shares in the
+/// process: its locks, and what it remembers of the registration.
+final class WalletProviderState: @unchecked Sendable {
+    /// Held while the installation registers or forgets its
+    /// registration, so it registers once.
+    let registering = AsyncMutex()
+    /// Held from making an assertion until the request carrying it is
+    /// answered, so assertions reach the provider in the order made.
+    let asserting = AsyncMutex()
+    /// Thumbprints of the instance keys the provider recorded for the
+    /// registration, in this process.
+    let recorded = Locked<Set<String>>(initialState: [])
+    /// The App Attest key a registration made but a transient failure
+    /// left unregistered: the next registration tries it again.
+    let unregisteredAppAttestKeyID = Locked<String?>(initialState: nil)
+}
+
+/// A registry whose providers share a ``WalletProviderState``.
+protocol SharesWalletProviderState {
+    var walletProviderState: WalletProviderState { get }
 }
 
 /// An `apple-app-attest` evidence object for `data`, an attestation
