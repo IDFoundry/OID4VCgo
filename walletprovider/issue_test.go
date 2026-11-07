@@ -251,11 +251,32 @@ func TestStatusIndexPerInstanceKey(t *testing.T) {
 	if n, err := h.deps.StatusIndices.Reserved(context.Background(), listURI(h.periodStart(), 0)); err != nil || n != 0 {
 		t.Fatalf("registering reserved %d status indices (%v)", n, err)
 	}
+	fill := func() walletprovider.StatusListFill {
+		t.Helper()
+		f, err := h.p.StatusListFill(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	if f := fill(); len(f.Lists) != walletprovider.MaxStatusListsPerPeriod || f.Free() != walletprovider.MaxStatusListsPerPeriod*2 ||
+		f.Start.Unix() != h.periodStart() || f.End.Sub(f.Start) != walletprovider.DefaultStatusListPeriod ||
+		f.Lists[1].URI != listURI(h.periodStart(), 1) || f.Lists[1].Size != 4 || f.Lists[1].Limit != 2 {
+		t.Fatalf("an unused period's fill = %+v", f)
+	}
 	for i := range 2 * walletprovider.MaxStatusListsPerPeriod {
 		key := h.newInstanceKey(in.ID, kindStrongBox)
 		if got, want := h.instanceKey(&key.PublicKey).Status.URI, listURI(h.periodStart(), i/2); got != want {
 			t.Fatalf("instance key %d is on %s, want %s", i, got, want)
 		}
+		if i == 2 {
+			if f := fill(); f.Free() != 2*walletprovider.MaxStatusListsPerPeriod-3 || !f.Lists[0].Full() || f.Lists[1].Reserved != 1 {
+				t.Fatalf("after 3 instance keys, fill = %+v", f)
+			}
+		}
+	}
+	if f := fill(); f.Free() != 0 {
+		t.Fatalf("a full period's lists have %d free", f.Free())
 	}
 	_, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindStrongBox)
 	if !errors.Is(err, statuslist.ErrListsFull) || !strings.Contains(err.Error(), "the status lists of the current period are full") {
@@ -264,6 +285,27 @@ func TestStatusIndexPerInstanceKey(t *testing.T) {
 	// The next period has room again.
 	h.clock.advance(walletprovider.DefaultStatusListPeriod)
 	h.newInstanceKey(in.ID, kindStrongBox)
+	if f := fill(); f.Start.Unix() != h.periodStart() || f.Free() != 2*walletprovider.MaxStatusListsPerPeriod-1 {
+		t.Fatalf("the next period's fill = %+v", f)
+	}
+}
+
+// reservedErrIndices fails Reserved.
+type reservedErrIndices struct{ statuslist.MemoryIndexStore }
+
+func (*reservedErrIndices) Reserved(context.Context, string) (int, error) {
+	return 0, errors.New("store down")
+}
+
+// TestStatusListFillStoreError: StatusListFill reports a store that
+// can't count.
+func TestStatusListFillStoreError(t *testing.T) {
+	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		d.StatusIndices = &reservedErrIndices{}
+	})
+	if _, err := h.p.StatusListFill(context.Background()); err == nil || !strings.Contains(err.Error(), "store down") {
+		t.Fatalf("StatusListFill with a failing store = %v", err)
+	}
 }
 
 // TestInstanceKeyAssertionCounter: instance key evidence that advances

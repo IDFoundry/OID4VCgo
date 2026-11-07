@@ -118,6 +118,46 @@ func (p *Provider) allocateStatus(ctx context.Context, now time.Time) (statuslis
 	return ref, nil
 }
 
+// StatusListFill is how full the status lists of a period are.
+type StatusListFill struct {
+	// Start and End are when the period starts and ends.
+	Start, End time.Time
+
+	// Lists are its MaxStatusListsPerPeriod lists, in the order they
+	// fill.
+	Lists []statuslist.ListFill
+}
+
+// Free is how many more instance keys the period's lists take: an
+// attestation for one more fails until End.
+func (f StatusListFill) Free() int {
+	free := 0
+	for _, list := range f.Lists {
+		free += list.Free()
+	}
+	return free
+}
+
+// StatusListFill reports how full the current period's status lists
+// are: they take every instance key first used, or used again, in the
+// period, and once they're full, a Wallet or Key Attestation for one
+// more fails until the next period. Compare Free with the instance keys
+// the rest of the period will use; if they won't fit, raise
+// Config.StatusListSize, which the next period's lists take. It counts
+// the reserved indices of every list of the period, so call it from
+// monitoring, not on each request.
+func (p *Provider) StatusListFill(ctx context.Context) (StatusListFill, error) {
+	start := p.periodStart(p.now())
+	lists, err := p.allocator(start, 0).Fill(ctx)
+	if err != nil {
+		return StatusListFill{}, fmt.Errorf("walletprovider: reading how full the status lists are: %w", err)
+	}
+	return StatusListFill{
+		Start: time.Unix(start, 0), End: time.Unix(start+p.period(), 0),
+		Lists: lists,
+	}, nil
+}
+
 // firstWithRoom is the first list of the period starting at start that
 // isn't known to be full, so Allocate needn't count the reserved
 // indices of every list before it.

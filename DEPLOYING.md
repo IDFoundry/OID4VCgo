@@ -76,7 +76,9 @@ each, not a deployment template" says what it does differently.
 - [ ] **Status lists: one `statuslist.Allocator` per process**, with
   `Store: db.StatusIndices()` and several `Lists` (each `Size` indices,
   filled to `FillLimit`, half by default): add lists before they fill,
-  as an issuance fails once every list is full. Size each list for
+  as an issuance fails once every list is full. Watch
+  `Allocator.Fill` from monitoring, and alert while the free indices
+  of the lists not yet full still cover a few days of issuance. Size each list for
   relying parties' token limit (1 MiB by default,
   `statuslist.DefaultMaxTokenBytes`): 2^20 to 2^22 one-bit entries.
   Allocate a batch's indices at once with `CredentialRequest.PerBatch`
@@ -161,7 +163,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   for your fleet's issuances and refreshes per period — 2^19 or more
   for millions of wallets — and at most 2^22 unless the issuers
   checking the lists raise their token limit. The
-  `walletprovider.Config.StatusListSize` doc has the formula.
+  `walletprovider.Config.StatusListSize` doc has the formula. Watch
+  `Provider.StatusListFill` from monitoring: alert when its `Free`
+  won't last until its `End` at the current rate, and raise
+  `StatusListSize` for the next period.
 - [ ] **Run `SweepStatusLists` daily, from one process:** it deletes
   retired periods' list indices and gives instance keys recorded
   before retention existed their `RetainUntil`. `db.Sweep` then
