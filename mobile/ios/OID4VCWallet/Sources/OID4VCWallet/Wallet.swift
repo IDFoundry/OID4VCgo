@@ -209,9 +209,15 @@ public struct WalletConfiguration: Codable, Sendable {
     /// a key the library makes and keeps in the Keychain, so one anyone
     /// else wrote to the directory is dropped. Nil, the default, keeps
     /// them in `oid4vcwallet-status-lists` in the app's Caches directory,
-    /// or in memory only when that key can't be had, and on macOS; an
-    /// absolute path, the app's own, keeps them there; empty keeps them
-    /// in memory only.
+    /// with complete file protection, or in memory only when that key
+    /// can't be had or the directory made, and on macOS; an absolute
+    /// path, the app's own, keeps them there, with the protection the
+    /// app gives it; empty keeps them in memory only. The directory shows
+    /// whoever can read it which status lists the wallet checks (their
+    /// URIs, so the issuers of its credentials, not which entries), the
+    /// lists themselves, and when each was last checked. Under complete
+    /// protection, a check while the device is locked reads and keeps no
+    /// list there: it downloads instead.
     public var statusCacheDir: String?
 
     /// A trust role whose certificates can be checked for revocation.
