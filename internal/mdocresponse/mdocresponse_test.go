@@ -117,11 +117,11 @@ func TestDecode(t *testing.T) {
 		t.Errorf("Decode of status 20 = %+v, %v", resp, err)
 	}
 	for name, data := range map[string][]byte{"not CBOR": {0xa2, 0x67}, "too large": onlyErrors} {
-		max := 1 << 20
+		maxBytes := 1 << 20
 		if name == "too large" {
-			max = 8
+			maxBytes = 8
 		}
-		if _, err := mdocresponse.Decode(data, max, 2); !errors.Is(err, mdocresponse.ErrDecoding) {
+		if _, err := mdocresponse.Decode(data, maxBytes, 2); !errors.Is(err, mdocresponse.ErrDecoding) {
 			t.Errorf("%s: Decode = %v, want ErrDecoding", name, err)
 		}
 	}

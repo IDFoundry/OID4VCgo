@@ -57,7 +57,7 @@ func TestStatelessNonce_IssuedWithoutWritingAndSpentOnce(t *testing.T) {
 	store := &countingSpender{NonceStore: storage.NewNonceStore()}
 	f := statelessFixture(t, store, &mutableClock{now: time.Now()}, nonceKey(1))
 	nonce := requestNonce(t, f.iss)
-	if second := requestNonce(t, f.iss); second == nonce {
+	if requestNonce(t, f.iss) == nonce {
 		t.Fatalf("two nonces were identical: %q", nonce)
 	}
 	if n := store.issued.Load(); n != 0 {

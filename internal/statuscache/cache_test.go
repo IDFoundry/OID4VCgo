@@ -241,7 +241,7 @@ func TestCheck_RefusedTokenKept(t *testing.T) {
 	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(Verified{}, refused), n.rechecks(refused)); !errors.Is(err, refused) {
 		t.Errorf("Check = %v, want the recheck's error", err)
 	}
-	if got := fetches.Load(); got != before {
+	if fetches.Load() != before {
 		t.Errorf("the entry's refused bytes were fetched again")
 	}
 
@@ -256,7 +256,7 @@ func TestCheck_RefusedTokenKept(t *testing.T) {
 	if err := c.Check(ctx, "u", "m", "", plain(fetch), n.verify(short, nil), nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := fetches.Load(); got != before+1 {
+	if fetches.Load() != before+1 {
 		t.Errorf("kept bytes past their ttl weren't fetched afresh")
 	}
 }

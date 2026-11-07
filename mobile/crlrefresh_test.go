@@ -98,7 +98,7 @@ func TestRefreshCRLs_Outcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refresh := func(name string, want string) crlRefreshJSON {
+	refresh := func(name, want string) crlRefreshJSON {
 		t.Helper()
 		out, err := w.RefreshCRLs(nil)
 		if err != nil {

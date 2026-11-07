@@ -312,7 +312,7 @@ func TestGetShared_LeasedWaitIsBounded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := string(served.Bytes) == "stored"; got != tc.served {
+			if (string(served.Bytes) == "stored") != tc.served {
 				t.Errorf("served %q, %d signatures; want the stored token: %v", served.Bytes, f.signs, tc.served)
 			}
 		})
