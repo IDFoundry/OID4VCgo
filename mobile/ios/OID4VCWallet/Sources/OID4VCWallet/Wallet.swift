@@ -1444,9 +1444,7 @@ public final class MdocPresentation: @unchecked Sendable {
         // The shared prompt is scoped to the thread making the Go call,
         // so it goes inside cancellable's background work.
         let out = try await OID4VC.cancellable { op in
-            try KeychainKeyStore.oneHolderPrompt {
-                try OID4VC.call { p.respondDocuments(op, answersJSON: json, error: $0) }
-            }
+            try OID4VC.callSharingHolderPrompt { p.respondDocuments(op, answersJSON: json, error: $0) }
         }
         return try decode(Response.self, out)
     }

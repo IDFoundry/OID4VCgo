@@ -32,7 +32,8 @@ final class StatusCacheKeyTests: XCTestCase {
         let prepared = Locked<[String]>(initialState: [])
         StatusCacheKey.source.withLock { $0 = { key } }
         StatusCacheKey.defaultDir.withLock { $0 = { "/caches/oid4vcwallet-status-lists" } }
-        StatusCacheKey.prepareDefault.withLock { $0 = { path in prepared.withLock { $0.append(path) } } }
+        let record: @Sendable (String) -> Void = { path in prepared.withLock { $0.append(path) } }
+        StatusCacheKey.prepareDefault.withLock { $0 = record }
         defer {
             StatusCacheKey.source.withLock { $0 = source }
             StatusCacheKey.defaultDir.withLock { $0 = dir }

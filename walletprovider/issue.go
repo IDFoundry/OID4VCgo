@@ -165,7 +165,9 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 	// key then not recorded leaves the counter advanced, which costs
 	// the wallet only a fresh assertion.
 	if ev.Counter != nil {
-		if err := p.recordUse(ctx, in, ev.Counter, func(*Instance) {}); err != nil {
+		if err := p.recordUse(ctx, in, ev.Counter, func(*Instance) {
+			// Only the counter is stored: the instance is otherwise unchanged.
+		}); err != nil {
 			return InstanceKey{}, err
 		}
 	}

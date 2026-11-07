@@ -50,7 +50,7 @@ func TestIssuerKeepsItsOwnConfig(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "key_attestation") {
 				t.Fatalf("RequestCredential = %v, want a jwt proof without a key attestation refused", err)
 			}
-			if got := f.iss.Metadata().CredentialConfigurationsSupported[testSDJWTConfigID].ProofTypesSupported[oid4vci.ProofTypeJWT].KeyAttestationsRequired; got == nil {
+			if f.iss.Metadata().CredentialConfigurationsSupported[testSDJWTConfigID].ProofTypesSupported[oid4vci.ProofTypeJWT].KeyAttestationsRequired == nil {
 				t.Fatal("Metadata no longer advertises key_attestations_required")
 			}
 		})

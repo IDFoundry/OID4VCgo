@@ -49,7 +49,9 @@ public protocol KeyStore: Sendable {
 public extension KeyStore {
     var isDurable: Bool { false }
 
-    func cancelKeyUse(id: String) {}
+    func cancelKeyUse(id: String) {
+        // No-op by default: the call ends when the holder answers.
+    }
 }
 
 /// ECDH with the wallet's holder keys inside the key store, for deviceMac

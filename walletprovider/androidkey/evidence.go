@@ -149,9 +149,9 @@ func (e EvidenceVerifier) maxAuthTimeout() time.Duration {
 }
 
 // userAuthentication is what l shows gates the key's use: none, the
-// user for each use or each use within max of an authentication, or
+// user for each use or each use within maxTimeout of an authentication, or
 // unreported.
-func userAuthentication(l *AuthorizationList, max time.Duration) walletprovider.UserAuthentication {
+func userAuthentication(l *AuthorizationList, maxTimeout time.Duration) walletprovider.UserAuthentication {
 	switch {
 	case l.NoAuthRequired:
 		return walletprovider.UserAuthenticationNone
@@ -160,7 +160,7 @@ func userAuthentication(l *AuthorizationList, max time.Duration) walletprovider.
 	// Without authTimeout, every use needs an authentication.
 	case l.AuthTimeout == nil || *l.AuthTimeout <= 0:
 		return walletprovider.UserAuthenticationRequired
-	case max > 0 && *l.AuthTimeout <= int64(max/time.Second):
+	case maxTimeout > 0 && *l.AuthTimeout <= int64(maxTimeout/time.Second):
 		return walletprovider.UserAuthenticationRequired
 	}
 	return ""

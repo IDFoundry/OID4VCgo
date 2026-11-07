@@ -670,6 +670,10 @@ func trustUndecided(err error) bool {
 		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
+// unknownNonce is the invalid_nonce error_description for a c_nonce
+// that is unknown, already spent, expired or another issuer's.
+const unknownNonce = "nonce is unknown or already used"
+
 // consumeNonce consumes nonce via NonceStore and checks it hasn't
 // expired, translating an unknown or used nonce (ErrNonceUnknown) and
 // an expired one into the invalid_nonce error code §8.3.1.2 defines,
@@ -683,20 +687,20 @@ func (iss *Issuer) consumeNonce(ctx context.Context, nonce string) error {
 			// Another replica's, issued with NonceKeys, or forged: this
 			// one can't check it, and a record the store holds under it
 			// marks it spent, never issued.
-			return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", errors.New("a stateless c_nonce, and no nonce_keys to check it"))
+			return newError(ErrorInvalidNonce, 400, unknownNonce, errors.New("a stateless c_nonce, and no nonce_keys to check it"))
 		}
 		return iss.spendStatelessNonce(ctx, nonce)
 	}
 	record, err := iss.deps.Nonces.Consume(ctx, NonceConsumption{Nonce: nonce, Owner: iss.storeOwner()})
 	if errors.Is(err, ErrNonceUnknown) {
-		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", err)
+		return newError(ErrorInvalidNonce, 400, unknownNonce, err)
 	}
 	if err != nil {
 		return fmt.Errorf("issuer: consume c_nonce: %w", err)
 	}
 	if !iss.owns(record.Owner) {
 		// A store that ignored consumption.Owner, or dropped Owner.
-		return newError(ErrorInvalidNonce, 400, "nonce is unknown or already used", errors.New("the c_nonce isn't this Credential Issuer's"))
+		return newError(ErrorInvalidNonce, 400, unknownNonce, errors.New("the c_nonce isn't this Credential Issuer's"))
 	}
 	if iss.deps.Clock.Now().After(record.ExpiresAt) {
 		return newError(ErrorInvalidNonce, 400, "nonce has expired", nil)

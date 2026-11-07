@@ -67,6 +67,9 @@ const demoOrganization = "IDFoundry demo"
 // Config.StateDir.
 const identityFile = "verifier-identity.pem"
 
+// pemECPrivateKey is the PEM block type of a key in identityFile.
+const pemECPrivateKey = "EC PRIVATE KEY"
+
 // PEM block roles in identityFile: the CAs, and "signer:" + a scenario.
 const (
 	roleHeader      = "Role"
@@ -302,7 +305,7 @@ func (ids identities) encode() ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("verifierapp: encode %s key: %w", ca.role, err)
 		}
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: map[string]string{roleHeader: ca.role}, Bytes: der})...)
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: pemECPrivateKey, Headers: map[string]string{roleHeader: ca.role}, Bytes: der})...)
 	}
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleCA}, Bytes: ids.ca.Raw})...)
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleUntrustedCA}, Bytes: ids.untrustedCA.Raw})...)
@@ -327,7 +330,7 @@ func (ids identities) encode() ([]byte, error) {
 			return nil, fmt.Errorf("verifierapp: encode %s key: %w", e.role, err)
 		}
 		role := map[string]string{roleHeader: e.role}
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: role, Bytes: der})...)
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: pemECPrivateKey, Headers: role, Bytes: der})...)
 		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: role, Bytes: e.sg.cert.Raw})...)
 	}
 	return out, nil
@@ -417,7 +420,7 @@ func decodeBlocks(data []byte) (map[string]*x509.Certificate, map[string]*ecdsa.
 				return nil, nil, fmt.Errorf("%s certificate: %w", role, err)
 			}
 			certs[role] = c
-		case "EC PRIVATE KEY":
+		case pemECPrivateKey:
 			k, err := x509.ParseECPrivateKey(block.Bytes)
 			if err != nil {
 				return nil, nil, fmt.Errorf("%s key: %w", role, err)

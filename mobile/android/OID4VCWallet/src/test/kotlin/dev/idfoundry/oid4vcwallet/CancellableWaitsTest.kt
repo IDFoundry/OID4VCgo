@@ -74,7 +74,9 @@ class CancellableWaitsTest {
             override fun createKey(purpose: KeyPurpose): String = "id"
             override fun publicKey(id: String): ByteArray? = null
             override fun sign(id: String, digest: ByteArray): ByteArray = ByteArray(0)
-            override fun deleteKey(id: String) {}
+            override fun deleteKey(id: String) {
+                // Nothing to delete: the store holds no keys.
+            }
             override fun cancelKeyUse(id: String) {
                 cancelled += id
             }
@@ -93,7 +95,9 @@ class CancellableWaitsTest {
             override fun createKey(purpose: KeyPurpose): String = "id"
             override fun publicKey(id: String): ByteArray? = null
             override fun sign(id: String, digest: ByteArray): ByteArray = ByteArray(0)
-            override fun deleteKey(id: String) {}
+            override fun deleteKey(id: String) {
+                // Nothing to delete: the store holds no keys.
+            }
         }
         store.cancelKeyUse("id")
     }
@@ -114,7 +118,9 @@ class CancellableWaitsTest {
             override fun createKey(purpose: KeyPurpose): String = "id"
             override fun publicKey(id: String): ByteArray? = null
             override fun sign(id: String, digest: ByteArray): ByteArray = ByteArray(0)
-            override fun deleteKey(id: String) {}
+            override fun deleteKey(id: String) {
+                // Nothing to delete: the store holds no keys.
+            }
         }, wp)
         thread {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)

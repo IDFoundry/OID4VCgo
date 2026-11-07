@@ -130,7 +130,7 @@ class AndroidKeystoreKeyStoreTest {
     @Test
     @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
     fun holderKeyNeedsAuthentication() {
-        assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
+        assumeTrue(NEEDS_LOCK_SCREEN, context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
         val digest = sha256().digest("presentation".toByteArray())
 
         // Without an authenticator, holder keys could never sign: refused up front.
@@ -161,7 +161,7 @@ class AndroidKeystoreKeyStoreTest {
     @Test
     @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
     fun timeBoundHolderKeyAsksWithoutASignature() {
-        assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
+        assumeTrue(NEEDS_LOCK_SCREEN, context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
         val asks = object : HolderAuthenticator {
             var withoutSignature = 0
             override suspend fun authenticate(signature: java.security.Signature) = fail("asked over one signature")
@@ -248,7 +248,7 @@ class AndroidKeystoreKeyStoreTest {
     @Test
     @SdkSuppress(minSdkVersion = Build.VERSION_CODES.S)
     fun timeBoundHolderKeyAgreesKeys() {
-        assumeTrue("needs a secure lock screen", context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
+        assumeTrue(NEEDS_LOCK_SCREEN, context.getSystemService(KeyguardManager::class.java).isDeviceSecure)
         val asks = object : HolderAuthenticator {
             var withoutSignature = 0
             override suspend fun authenticate(signature: java.security.Signature) = fail("asked over one signature")
@@ -335,5 +335,7 @@ class AndroidKeystoreKeyStoreTest {
         }
     }
 }
+
+private const val NEEDS_LOCK_SCREEN = "needs a secure lock screen"
 
 private fun sha256(): MessageDigest = MessageDigest.getInstance("SHA-256")

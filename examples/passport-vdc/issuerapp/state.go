@@ -30,6 +30,9 @@ const (
 	crlFile = "issuer-crl.json"
 )
 
+// pemECPrivateKey is the PEM block type of a key in identityFile.
+const pemECPrivateKey = "EC PRIVATE KEY"
+
 // PEM block roles in identityFile.
 const (
 	roleHeader         = "Role"
@@ -112,7 +115,7 @@ func encodeIdentity(id issuerIdentity) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("issuerapp: encode CA key: %w", err)
 		}
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: map[string]string{roleHeader: roleCA}, Bytes: der})...)
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: pemECPrivateKey, Headers: map[string]string{roleHeader: roleCA}, Bytes: der})...)
 	}
 	out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: roleCA}, Bytes: id.caCert.Raw})...)
 	for _, s := range []struct {
@@ -127,7 +130,7 @@ func encodeIdentity(id issuerIdentity) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("issuerapp: encode %s key: %w", s.role, err)
 		}
-		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Headers: map[string]string{roleHeader: s.role}, Bytes: der})...)
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: pemECPrivateKey, Headers: map[string]string{roleHeader: s.role}, Bytes: der})...)
 		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Headers: map[string]string{roleHeader: s.role}, Bytes: s.cert.Raw})...)
 	}
 	return out, nil
@@ -154,7 +157,7 @@ func parseIdentity(data []byte) (issuerIdentity, error) {
 			case roleMetadataSigner:
 				id.metadataSignerCert = cert
 			}
-		case "EC PRIVATE KEY":
+		case pemECPrivateKey:
 			key, err := x509.ParseECPrivateKey(block.Bytes)
 			if err != nil {
 				return issuerIdentity{}, fmt.Errorf("%s key: %w", role, err)

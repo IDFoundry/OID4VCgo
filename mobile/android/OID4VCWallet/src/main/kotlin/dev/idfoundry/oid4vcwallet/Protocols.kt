@@ -106,7 +106,9 @@ public interface KeyStore {
      * cancelled call then ends when the holder answers. A store
      * delegating to another (`KeyStore by …`) forwards it.
      */
-    public fun cancelKeyUse(id: String) {}
+    public fun cancelKeyUse(id: String) {
+        // No-op by default: the call ends when the holder answers.
+    }
 }
 
 /**
