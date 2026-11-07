@@ -13,6 +13,12 @@ struct DemoConfiguration: Codable, Sendable {
     /// The Wallet Provider, for issuers that ask for attestations; nil
     /// for a wallet that receives only from issuers that don't.
     var providerURL: URL?
+    /// How the app talks to the Wallet Provider: `v1`, the library's own
+    /// protocol with App Attest (`HttpWalletProvider`), which needs a
+    /// device and the provider started with `-ios-app`; anything else,
+    /// or nil, the passport-vdc demo's own API, which attests any caller
+    /// (the Simulator's).
+    var providerProtocol: String?
     /// The reader mode's identity, when the services give one.
     var reader: Reader?
 
@@ -44,7 +50,7 @@ struct DemoConfiguration: Codable, Sendable {
         }
     }
 
-    enum CodingKeys: String, CodingKey { case wallet, providerURL = "provider_url", reader }
+    enum CodingKeys: String, CodingKey { case wallet, providerURL = "provider_url", providerProtocol = "provider_protocol", reader }
 
     private static let defaultsKey = "demo-configuration"
 

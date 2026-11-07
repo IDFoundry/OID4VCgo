@@ -26,6 +26,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
+	"github.com/idfoundry/oid4vcgo/walletprovider/appattest"
 )
 
 // The service's paths, relative to its URL: the demo wallets' own
@@ -134,9 +135,18 @@ type ServiceConfig struct {
 	// androidkey.EvidenceVerifier: chains to Google's roots, checked
 	// against Google's attestation status list, from a locked device
 	// with verified boot, made by one of these apps, signed with every
-	// certificate listed. Without it /v1/ attests nothing; the demo
-	// wallets don't use it yet.
+	// certificate listed. Without it or IOSApps /v1/ attests nothing
+	// but the demo-only evidence.
 	AndroidApps []androidkey.AllowedApp
+	// IOSApps, if set, are the iOS apps — App IDs, team ID and bundle
+	// ID, "ABCDE12345.dev.idfoundry.oid4vcgo.demowallet" — whose keys
+	// /v1/ attests with App Attest evidence, through
+	// appattest.EvidenceVerifier: an App Attest key Apple attested for
+	// one of these apps, then its assertions over the keys. Development
+	// environment keys are accepted, as a demo build's are; a
+	// production provider leaves appattest.Verifier.AllowDevelopment
+	// unset.
+	IOSApps []string
 	// Logf logs each attestation and what was made of its evidence; nil
 	// means log.Printf.
 	Logf func(format string, args ...any)
@@ -317,13 +327,21 @@ type service struct {
 // library is the library Wallet Provider p's service issues with:
 // signed with p's key and certificate, attesting cfg.ClientID, taking
 // the demo-only evidence and, with cfg.AndroidApps, Android Key
-// Attestation.
+// Attestation and, with cfg.IOSApps, App Attest.
 func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileInstanceStore, indices statuslist.IndexStore) (*wp.Provider, error) {
 	verifiers := []wp.EvidenceVerifier{demo}
 	platforms := map[wp.Platform]wp.PlatformPolicy{
 		// Whatever the older protocol's checks found, from a software
 		// key to StrongBox, as before.
 		DemoPlatform: {SecurityLevels: []wp.SecurityLevel{wp.SecurityLevelSoftware, wp.SecurityLevelTEE, wp.SecurityLevelStrongBox}},
+	}
+	if len(cfg.IOSApps) > 0 {
+		verifiers = append(verifiers, appattest.EvidenceVerifier{Verifier: &appattest.Verifier{
+			Apps: cfg.IOSApps, AllowDevelopment: true, Now: cfg.Now,
+		}})
+		// App Attest vouches for the app, not where its keys are: no
+		// key_storage is claimed for them (no KeyStorageRule).
+		platforms[wp.PlatformIOS] = wp.PlatformPolicy{SecurityLevels: []wp.SecurityLevel{wp.SecurityLevelSecureEnclave}}
 	}
 	if len(cfg.AndroidApps) > 0 {
 		verifiers = append(verifiers, androidkey.EvidenceVerifier{Verifier: &androidkey.Verifier{

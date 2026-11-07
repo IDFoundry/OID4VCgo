@@ -659,7 +659,13 @@ served under `/v1/` too. With `-android-app package:sha256[,...]` (on
 `cmd/wallet-provider` or `cmd/demo`, repeatable), it attests that
 app's Android Key Attestation chains there (`walletprovider/androidkey`:
 Google's roots and revocation list, locked and verified boot, every
-signing certificate allowed). The demo apps don't use it yet.
+signing certificate allowed). With `-ios-app TEAMID.bundle.id` (also
+repeatable), it attests that iOS app with App Attest evidence
+(`walletprovider/appattest`: Apple's App Attestation root, the App ID,
+then assertions over the keys), development environment included, as a
+development build makes: the iOS demo wallet uses it on a device
+(`mobile/ios/DemoWallet/run-device.sh`). The Android demo app doesn't
+use it yet.
 
 It attests only the demo wallet's `client_id`, without checking who's
 asking: a real Wallet Provider would check platform evidence (app

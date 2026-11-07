@@ -57,14 +57,24 @@ final class WalletModel {
     /// Not configured: there's no wallet to make.
     private struct NotConfigured: Error {}
 
+    /// The Wallet Provider client `config` names: the library's
+    /// protocol with App Attest (`provider_protocol` `v1`), its
+    /// registration kept in Application Support, or the demo's own API.
+    private static func walletProvider(_ config: DemoConfiguration) throws -> (any WalletProvider)? {
+        guard let url = config.providerURL else { return nil }
+        guard config.providerProtocol == "v1" else { return HTTPWalletProvider(baseURL: url) }
+        return try HttpWalletProvider(baseURL: url, instances: FileInstanceRegistry.standard())
+    }
+
     private func makeWallet() throws -> Wallet {
         guard let config, let keys else { throw NotConfigured() }
         // With the revocation lists last fetched (SharedWallet.crlsKey).
         var configuration = SharedWallet.applyingHolderChoices(to: config.wallet)
         configuration.copyPolicy = copyPolicy
+        let provider = try Self.walletProvider(config)
         let make = {
             try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
-                       provider: config.providerURL.map { HTTPWalletProvider(baseURL: $0) })
+                       provider: provider)
         }
         do {
             return try make()

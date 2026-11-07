@@ -63,6 +63,8 @@ func main() {
 	statusIndices := flag.String("status-indices", "wallet-provider-status-indices.json", "file keeping the instance keys' status list indices and statuses, so a restart neither forgets a revocation nor reuses an index")
 	var androidApps walletprovider.AndroidAppsFlag
 	flag.Var(&androidApps, "android-app", walletprovider.AndroidAppsUsage)
+	var iosApps walletprovider.IOSAppsFlag
+	flag.Var(&iosApps, "ios-app", walletprovider.IOSAppsUsage)
 	flag.Parse()
 	if *publicURL == "" {
 		*publicURL = "https://" + *addr
@@ -88,7 +90,7 @@ func main() {
 	}
 	service, err := provider.NewService(walletprovider.ServiceConfig{
 		ClientID: *clientID, RequireHardwareKeyAttestation: *requireHardware, VerifiedKeysPath: *verifiedKeys,
-		URL: *publicURL, AndroidApps: androidApps,
+		URL: *publicURL, AndroidApps: androidApps, IOSApps: iosApps,
 		InstancesPath: *instances, StatusIndicesPath: *statusIndices,
 	})
 	if err != nil {

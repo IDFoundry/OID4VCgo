@@ -6,12 +6,19 @@
 #   go run ./cmd/demo -state .demo-state-device \
 #     -issuer-url https://issuer.example.com \
 #     -verifier-url https://verifier.example.com \
-#     -provider-url https://provider.example.com
+#     -provider-url https://provider.example.com \
+#     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet
 #
 # then, with your Apple developer team ID and that Wallet Provider URL:
 #
 #   TEAM_ID=ABCDE12345 PROVIDER_URL=https://provider.example.com \
 #     STATE=../../../examples/passport-vdc/.demo-state-device ./run-device.sh [device-id]
+#
+# The app speaks the library's Wallet Provider protocol with App Attest
+# (HttpWalletProvider): start the demo with -ios-app "$TEAM_ID.$BUNDLE_ID"
+# too, and enable App Attest on the App ID in the Apple Developer portal.
+# PROVIDER_PROTOCOL=demo uses the demo provider's own API instead, which
+# attests any caller.
 #
 # The device is the first connected iPhone unless named (xcrun devicectl
 # list devices). It must be paired with this Mac, in Developer Mode, with
@@ -25,6 +32,12 @@ cd "$(dirname "$0")"
 : "${PROVIDER_URL:?set PROVIDER_URL to the Wallet Provider public https URL, cmd/demo -provider-url}"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
 BUNDLE_ID="${BUNDLE_ID:-dev.idfoundry.oid4vcgo.demowallet}"
+PROVIDER_PROTOCOL="${PROVIDER_PROTOCOL:-v1}"
+case "$PROVIDER_PROTOCOL" in
+v1) echo "the Wallet Provider must be started with -ios-app $TEAM_ID.$BUNDLE_ID" ;;
+demo) ;;
+*) echo "PROVIDER_PROTOCOL is v1 or demo, not $PROVIDER_PROTOCOL" >&2; exit 1 ;;
+esac
 for f in issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
@@ -57,9 +70,9 @@ xcrun devicectl device install app --device "$DEVICE" "$BUILD/Build/Products/Deb
 # The demo's registration of its wallet (examples/passport-vdc/cmd/demo),
 # with the Wallet Provider at its public URL. The issuer and verifier
 # are found from the offer and request links.
-ENVIRONMENT="$(python3 - "$STATE" "$PROVIDER_URL" <<'PY'
+ENVIRONMENT="$(python3 - "$STATE" "$PROVIDER_URL" "$PROVIDER_PROTOCOL" <<'PY'
 import json, pathlib, sys
-state, provider = pathlib.Path(sys.argv[1]), sys.argv[2]
+state, provider, protocol = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 # The trust roles checked against the demo's CRLs: the issuer CA's
 # (credentials and their status lists), the verifier CA's, the mdoc
 # reader CA's and the registrar CA's.
@@ -95,6 +108,8 @@ config = {
         "crl_require_https": True,
     },
     "provider_url": provider,
+    # v1: the library's protocol with App Attest; demo: the demo's own API.
+    "provider_protocol": protocol,
 }
 # Reader mode identity: the in-person reader of the verifier, its key
 # then its chain (a demo shortcut: a real reader keeps its key on the device).
