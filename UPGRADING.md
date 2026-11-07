@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.72.1 → next
+## v0.72.1 → v0.73.0
 
 ### FAPIgo v0.71.0 and fapigo/sqlstore v0.7.0
 
@@ -42,7 +42,7 @@ passport-vdc fapigo/sqlstore v0.7.0; see FAPIgo's UPGRADING.md.
   the check. Instances registered before have no `CredentialID`: a
   new registration with one of their App Attest keys isn't refused.
 
-### sqlstore
+### sqlstore (v0.10.0)
 
 - **Migration 0014 adds `oid4vc_walletprovider_instances.credential_id`**
   with a `UNIQUE` index. Run `Migrate` before deploying: `CheckSchema`
