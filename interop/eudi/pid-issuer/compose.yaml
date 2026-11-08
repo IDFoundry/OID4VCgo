@@ -141,6 +141,14 @@ services:
 
   haproxy:
     image: ${HAPROXY_IMAGE:?}
+    # HAProxy sizes its file descriptors from its maxconn, which EUDI's
+    # haproxy.conf leaves at the default, and refuses to start when it
+    # can't raise its limit to that (100035): a GitHub runner's
+    # containers start with 65536.
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
     ports:
       - 127.0.0.1:${PORT:?}:443
     depends_on:
