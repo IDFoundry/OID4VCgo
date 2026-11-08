@@ -21,6 +21,13 @@
 # verified, and controls refused. Its version is pinned exactly, its
 # dependencies locked and checksum-verified, so it also runs with the
 # pinned image's runs only.
+#
+# And OID4VCgo's wallet against the EUDI reference PID Issuer
+# (eudi-srv-pid-issuer, the pid-issuer job), run as its own
+# docker-compose stack by interop/eudi/run-pid-issuer.sh: PIDs in both
+# formats must be issued and pass the wallet's own checks, and controls
+# refused. Its images are pinned by digest too, and the weekly run tests
+# the PID Issuer's latest image as well.
 name: EUDI interop
 
 on:
@@ -37,6 +44,9 @@ on:
     inputs:
       verifier_image:
         description: Verifier image to test (empty for the pinned one)
+        default: ''
+      pid_issuer_image:
+        description: PID Issuer image to test (empty for the pinned one)
         default: ''
 
 permissions:
@@ -86,9 +96,9 @@ jobs:
           retention-days: 14
 
   wallet:
-    # The weekly run and a dispatch naming an image test a newer
-    # verifier image, which this job doesn't use.
-    if: github.event.schedule != '15 7 * * 1' && !inputs.verifier_image
+    # The weekly run and a dispatch naming an image test a newer EUDI
+    # image, which this job doesn't use.
+    if: github.event.schedule != '15 7 * * 1' && !inputs.verifier_image && !inputs.pid_issuer_image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -136,9 +146,9 @@ jobs:
           retention-days: 14
 
   issuer:
-    # The weekly run and a dispatch naming a verifier image test that
-    # image, not this pinned library.
-    if: github.event.schedule != '15 7 * * 1' && inputs.verifier_image == ''
+    # The weekly run and a dispatch naming an image test that image,
+    # not this pinned library.
+    if: github.event.schedule != '15 7 * * 1' && inputs.verifier_image == '' && inputs.pid_issuer_image == ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -182,6 +192,46 @@ jobs:
             ${{ runner.temp }}/eudi-issuer-work/*.log
           retention-days: 14
 
+  pid-issuer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      # The runner's own JDK supplies keytool, which builds the issuer's
+      # keystore.
+      - name: Run the interop script
+        env:
+          PID_ISSUER_IMAGE: ${{ inputs.pid_issuer_image || (github.event.schedule == '15 7 * * 1' && 'ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest') || '' }}
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/eudi-pid-work"
+          mkdir -p "$WORK"
+          [ -n "$PID_ISSUER_IMAGE" ] || unset PID_ISSUER_IMAGE
+          bash interop/eudi/run-pid-issuer.sh 2>&1 | tee "$RUNNER_TEMP/eudi-pid-interop.log"
+
+      # The work dir also holds the run's throwaway keys, and the stack's
+      # its keystore and passwords: only the logs (their passwords
+      # redacted) and the wallet's results are uploaded.
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eudi-pid-interop
+          path: |
+            ${{ runner.temp }}/eudi-pid-interop.log
+            ${{ runner.temp }}/eudi-pid-work/*.log
+            ${{ runner.temp }}/eudi-pid-work/result-*.json
+          retention-days: 14
+
   # Report each scheduled (or dispatched) default-branch run on an
   # issue, opened when the run fails and closed when one passes
   # (.github/scripts/scheduled-alert.sh): nothing else alerts on it.
@@ -189,7 +239,7 @@ jobs:
   # a dispatch naming one) has its own label, so a pinned run passing
   # doesn't close its issue.
   alert:
-    needs: [verifier, wallet, issuer]
+    needs: [verifier, wallet, issuer, pid-issuer]
     if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -197,7 +247,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/scheduled-alert.yml
     with:
-      # A skipped wallet or issuer job (the weekly run's) doesn't count.
+      # A skipped job (the wallet's or issuer's, on the weekly run) doesn't count.
       result: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
-      label: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '') && 'interop-eudi-latest' || 'interop-eudi' }}
-      title: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '') && 'EUDI interop failure against a newer verifier image' || 'Scheduled EUDI interop failure' }}
+      label: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '' || inputs.pid_issuer_image != '') && 'interop-eudi-latest' || 'interop-eudi' }}
+      title: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '' || inputs.pid_issuer_image != '') && 'EUDI interop failure against a newer EUDI image' || 'Scheduled EUDI interop failure' }}

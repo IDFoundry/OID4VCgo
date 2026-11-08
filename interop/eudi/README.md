@@ -6,7 +6,8 @@ libraries. They run in CI from [`.github/workflows/eudi-interop.yml`](../../.git
 the verifier from its image ([below](#wallet--eudi-verifier-endpoint)),
 the wallet library against `cmd/conformance-verifier`
 ([further down](#eudi-wallet-library--verifier)) and against
-`cmd/conformance-issuer` ([after that](#eudi-wallet-library--issuer)).
+`cmd/conformance-issuer` ([after that](#eudi-wallet-library--issuer)),
+and our wallet against the PID Issuer ([last](#wallet--eudi-pid-issuer)).
 
 ## Wallet ↔ EUDI Verifier Endpoint
 
@@ -476,3 +477,226 @@ GRADLE_USER_HOME="$(mktemp -d)" ./gradlew --write-verification-metadata sha256 -
 ```
 
 and review the new checksums: Gradle records what Maven Central serves.
+
+## Wallet ↔ EUDI PID Issuer
+
+[`run-pid-issuer.sh`](run-pid-issuer.sh) has OID4VCgo's wallet obtain
+PIDs from
+[eudi-srv-pid-issuer](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer)
+v0.11.2, run as the stack its own `docker-compose/` defines:
+[`pid-issuer/compose.yaml`](pid-issuer/compose.yaml) is that file, with
+Keycloak 26 and its attestation-based client authentication extension
+(`abca-keycloak-ext` 0.2.0), the status list service
+(`eudi-srv-statuslist-py` v0.9.0), Postgres and HAProxy. The wallet is
+[`scripts/pidwallet`](scripts/pidwallet): the `wallet` package and
+`fapigo/client`, used as walletflow uses them (engine `core`), or
+walletflow itself (engine `walletflow`). It stands in for the holder's
+browser too, signing the test user in on Keycloak's login page.
+
+Every issuance runs the authorization code flow: PAR with PKCE, a
+Wallet Attestation at the PAR and token endpoints (its PoP carrying a
+challenge from Keycloak's challenge endpoint), a DPoP-bound access
+token, the Nonce Endpoint's c_nonce (and its DPoP-Nonce, for the
+Credential Request), and a Credential Request and Response both
+encrypted, as the issuer requires. The wallet asks for signed metadata
+only, and verifies it under the Access Certificate's CA, its signer
+naming the issuer. It verifies each credential as walletflow does on
+receipt (`wallet.VerifyIssuedCredential`: signature under the issuer's
+IACA, the signer's role, the SD-JWT VC's iss named by its certificate,
+validity, holder binding to one of its keys), checks its Token Status
+List entry as walletflow's `CheckStatus` does (`statuslist.Checker`),
+and acknowledges it at the Notification Endpoint.
+
+| Case | Expected |
+|---|---|
+| Wallet-initiated, SD-JWT VC PID, `attestation` proof | issued and verified, status `VALID` |
+| Wallet-initiated, SD-JWT VC PID, `jwt` proof with `key_attestation` | issued and verified, status `VALID` |
+| Wallet-initiated, mdoc PID, each proof type | issued and verified; the wallet refuses its status list (see Findings) |
+| The issuer's own Credential Offer, each format | issued and verified, the offer's configuration requested |
+| A batch: three PIDs for three keys in one Key Attestation, each format | three credentials, each bound to its own key |
+| Deferred, each format | deferred, then fetched from the Deferred Credential Endpoint |
+| An SD-JWT VC revoked at the status list service (its `/set`) | the wallet reads it as `INVALID` |
+| Metadata signed under a CA the wallet doesn't trust | the wallet refuses the metadata |
+| Credentials under an IACA the wallet doesn't trust, each format | the wallet refuses them |
+| A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR |
+| A Key Attestation whose `key_storage_status` is revoked | the issuer refuses the proof |
+| A `jwt` proof naming its key in `jwk`, as `wallet` and walletflow make it | refused (a note, not a failure: see Findings) |
+| walletflow, under `ProfileHAIP` | refused (a note: see Findings) |
+| A batch of one `jwt` proof per key | refused (a note: see Findings) |
+
+A Wallet Attestation and a Key Attestation are each other's controls'
+twins: the same Wallet Provider, the same status list, another index.
+The run also checks Keycloak and the issuer fetched that list from
+[`scripts/serve`](scripts/serve), so a run in which they skipped the
+check fails.
+
+The issuer is run as strictly as it can be configured:
+
+- Its `insecure` profile, which the stack sets and which makes every
+  outbound client trust any certificate, is off: it trusts the run's
+  TLS CA, through the image's `ca-certificates` binding, for Keycloak's
+  own listener (introspection, admin API) and for the Wallet Provider's
+  status list. Keycloak trusts it through `KC_TRUSTSTORE_PATHS`.
+- Its PIDs carry a Token Status List entry. It allocates one only under
+  a Credential Reuse Policy, which the stack leaves unset, so its PIDs
+  carry none; the run sets `once_only` for both formats.
+- Keycloak's realm is the stack's, with two changes: the introspection
+  client's secret is the run's own, and the wallet's redirect URI,
+  `dev.idfoundry.oid4vcgo.interop:/callback`, is registered for
+  `eudiw-abca` (see Findings).
+
+Every key, certificate and password is the run's own, made by
+[`scripts/pidsetup`](scripts/pidsetup) and the script: the TLS CA and
+the stack's listeners' certificates; the issuer's IACA, its Document
+Signer, its SD-JWT VC signer, its Access Certificate (under a CA of its
+own), its request and nonce encryption keys, the status list service's
+signer, and a Wallet Relying Party Registration Certificate; the Wallet
+Provider's CA, Wallet Attestation and Key Attestation signers, and its
+status list. The stack's own keystore, certificates and passwords,
+which are in its public repository, aren't used. The fetched files
+(the realm, the status list service, the Keycloak extension) are pinned
+by SHA-256, and the images by digest. Only the stack's logs, with the
+run's passwords redacted, and the wallet's results are uploaded.
+
+The Wallet Provider is a stand-in: package `attestation` issues only
+OpenID4VCI 1.0 Appendix D's and E's claims, and the EUDI stack requires
+those the EUDI Wallet Unit Attestation specification (TS3) adds —
+`wallet_name`, `wallet_version`,
+`wallet_solution_certification_information` and `client_status` in the
+Wallet Attestation, `key_storage` and `user_authentication`
+(`iso_18045_high`), `certification` and `key_storage_status` in the Key
+Attestation, each status valid for more than the issuer's 31-day
+preferred period. HAIP 1.0 §4.4.1 leaves an ecosystem room for such
+claims, and walletflow takes them through its `WalletProvider`, which
+`pidwallet`'s implements.
+
+### Findings
+
+Against OpenID4VCI 1.0 Final and HAIP 1.0 Final, from the live run and
+the issuer's v0.11.2 source:
+
+1. **The issuer refuses a `jwt` proof that names its key in `jwk`.**
+   With a `key_attestation`, it requires `kid` `"0"`, the key's index in
+   `attested_keys` (ETSI TS 119 472-3; `ValidateJwtProofWithKeyAttestation.kt`,
+   `"JWT Proof with key_attestation must contain header kid with value 0"`).
+   Appendix F.1 allows any of three: "The Credential Issuer MUST
+   validate that the JWT used as a proof is actually signed by a key
+   identified in the JOSE Header through either kid, jwk or x5c
+   element", and of `jwk`, "It MUST NOT be present if kid or x5c is
+   present"; Appendix D.1 adds only "If used with the jwt proof type,
+   the Credential Issuer MUST validate that the JWT used as a proof is
+   signed by a key contained in the attestation in the JOSE Header".
+   `wallet.Wallet.GenerateProofWithKeyAttestation` conveys the key in
+   `jwk`, so does walletflow, and walletflow prefers the `jwt` proof
+   type, so **walletflow can't receive a PID from this issuer**. The
+   `pidwallet` `jwt` proof (kid `"0"`, no `jwk`) is also valid under
+   F.1, and is accepted.
+2. **It advertises batch issuance but refuses more than one proof.**
+   Its metadata has `batch_credential_issuance.batch_size` 20, and a
+   Credential Request with two `jwt` proofs is refused: `"You can
+   provide at most 1 proof"` (`IssueCredential.kt`,
+   `ProofsTO.toDomain`). §12.2.4: "The presence of this parameter means
+   that the issuer supports more than one key proof in the proofs
+   parameter in the Credential Request so can issue more than one
+   Verifiable Credential for the same Credential Dataset in a single
+   request/response", and `batch_size` is "the maximum array size for
+   the proofs parameter in a Credential Request". It issues a batch
+   only for the keys of one Key Attestation (which HAIP 1.0 §4.5.1
+   recommends: "all public keys used in Credential Request SHOULD be
+   attested within a single key attestation").
+3. **The status list service's CWT Status List Tokens can't be
+   verified.** v0.9.0 signs them (`app/status_list_format.py`,
+   `cwt_format`) with a DER-encoded ECDSA signature, where COSE's is
+   the fixed-length `r || s` (RFC 9053 §2.1), over the protected header
+   and the claims concatenated, where COSE_Sign1 signs its
+   `Sig_structure` (RFC 9052 §4.4); and with no `exp`, which ISO/IEC
+   18013-5 §12.3.6.3 has an mdoc's list carry. An mdoc PID's status is
+   therefore refused (`ecdsafixed: signature has length 71, want 64`),
+   and the run's mdoc cases expect that; revocation is shown with the
+   SD-JWT VC, whose JWT form verifies. Its JWT tokens carry neither
+   `exp` nor `ttl`, which the status list draft recommends; the wallet
+   accepts one while it's fresh.
+4. **Its Credential Offer names an `authorization_server` though its
+   metadata lists one.** §4.1.1, of `authorization_server`: "OPTIONAL
+   string that the Wallet can use to identify the Authorization Server
+   to use with this grant type when authorization_servers parameter in
+   the Credential Issuer metadata has multiple entries. It MUST NOT be
+   used otherwise." (`CreateCredentialsOffer.kt`,
+   `authorizationCodeGrantOffer`). The wallet accepts it, since it
+   matches the one listed.
+5. **Its shipped keystore signs metadata with a self-signed
+   certificate.** The stack's `issuer-keys.jks`, alias
+   `access-certificate`, is self-signed (`CN=pid-issuer, C=GR`), where
+   HAIP 1.0 §4.1 has "The X.509 certificate signing the request MUST
+   NOT be self-signed"; the wallet would refuse it. Its
+   `request-encryption` certificate expired on 2026-08-26. The run uses
+   its own keys.
+6. **With no Credential Reuse Policy, its PIDs carry no status.**
+   `allocateStatusWithPolicy` (`AttestationIssuer.kt`) allocates none
+   for `CredentialReusePolicy.None`, though `shouldIncludeStatusList`
+   is `true` for it. HAIP 1.0 §6.1 has an SD-JWT VC carry "an exp
+   claim, a status claim, or both", and these have `exp`, so this isn't
+   a deviation, only why the run sets a policy.
+7. **The Key Attestation's `exp` is required for the `attestation`
+   proof type too** (`KeyAttestationClaims`, `@Required`), where
+   Appendix D.1 has it "OPTIONAL ... MUST be present if the attestation
+   is used with the JWT proof type". From the source; the run's
+   attestations always carry one.
+8. **Keycloak's registered redirect URIs for the wallet clients are
+   private-use URIs with an authority**, such as
+   `eu.europa.ec.euidi://authorization`, which `fapigo/client` refuses:
+   RFC 8252 §7.1 has "only a single slash" after the scheme. The run
+   registers its own. The issuer's introspection client
+   (`pid-issuer-srv`) also introspects "without audience check", as
+   Keycloak logs, so it takes an access token issued for any client.
+
+The wallet's own checks held throughout, and caught one thing while the
+run was set up: an mdoc whose `issuing_country` doesn't match its
+Document Signer's `countryName` (ISO/IEC 18013-5 Annex B) is refused,
+so the run's certificates are issued for the issuer's default, `GR`.
+
+What isn't covered:
+
+- The pre-authorized code flow: the issuer has none.
+- An mdoc's status and its revocation: see Finding 3.
+- walletflow end to end: see Finding 1. Its offer, metadata, PAR,
+  Wallet Attestation and token steps do run, and succeed, before the
+  Credential Request is refused.
+- A `use_dpop_nonce` challenge: the wallet uses the Nonce Endpoint's
+  DPoP-Nonce for its Credential Request, so the issuer never has to
+  challenge it, and Keycloak issues no DPoP nonces.
+- Refresh tokens and credential refresh, the `credential_failure` and
+  `credential_deleted` notifications, plaintext requests (the issuer
+  requires encryption), and the issuer's mDL and Learning Credential.
+- Attester trust: with no `trustValidator.serviceUrl` (Keycloak) or
+  `ISSUER_TRUST_SERVICE_URL` (issuer), both trust every Wallet
+  Provider, so no control shows them refusing an unknown one.
+
+Run it locally (Docker with compose, Go, jq, curl, openssl and
+keytool; the issuer image is amd64 only):
+
+```sh
+interop/eudi/run-pid-issuer.sh
+PID_ISSUER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest interop/eudi/run-pid-issuer.sh
+```
+
+`PORT` and `SERVE_PORT` (19443 and 19445) move HAProxy's and serve's
+listeners, `WORK` keeps the run's files, and `COMPOSE_PROJECT_NAME`
+(`oid4vcgo-eudi-pid`) names the stack. `PID_STOP_AFTER_UP=1` leaves the
+stack and serve running once the issuer is up, for working on the cases
+with `pidwallet` by hand.
+
+### Moving the pins
+
+The issuer image is pinned by digest in `run-pid-issuer.sh`, with the
+commit of its tag, whose `docker-compose/` files the run fetches by
+SHA-256, and the versions that compose file names: Keycloak, Postgres,
+HAProxy and Python by digest, the Keycloak extension and the status
+list service by SHA-256. The weekly run tests EUDI's `latest` issuer
+image against the pinned stack. To move the pins, read the release's
+changes and its `docker-compose/`, then take the new digests and hashes:
+
+```sh
+docker buildx imagetools inspect ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:vX.Y.Z
+curl -sSfL https://raw.githubusercontent.com/eu-digital-identity-wallet/eudi-srv-pid-issuer/COMMIT/docker-compose/PATH | openssl dgst -sha256
+```
