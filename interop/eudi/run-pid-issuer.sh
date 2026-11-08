@@ -357,7 +357,9 @@ for c in "1 walletflow-sdjwt" "3 walletflow-batch-sdjwt"; do
   if ! jq -e '.ok' "result-$name.json" >/dev/null; then bad "issued ($(why "$name"))"; continue; fi
   ok "issued"
   check "$name" "$count credential(s), each verified by walletflow" "(.credentials | length == $count) and all(.credentials[]; .verified)"
-  check "$name" "walletflow reads its status list entry: $SDJWT_STATUS" "all(.credentials[]; .status == \"$SDJWT_STATUS\")"
+  # walletflow names a status in lower case (statuslist.Status).
+  check "$name" "walletflow reads its status list entry: $SDJWT_STATUS" \
+    "all(.credentials[]; (.status // \"\" | ascii_upcase) == \"$SDJWT_STATUS\")"
 done
 
 echo "== an SD-JWT VC PID revoked at the status list service"
