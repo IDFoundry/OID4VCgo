@@ -1,9 +1,10 @@
 name: Scheduled run alert
 
 # Called by the workflows that run unattended (fuzz, conformance,
-# Polaris interop and vectors) as their last job, to report the run on
-# an issue carrying the caller's own label: opened (or commented on) when
-# the run fails, closed when it passes, left alone when it's cancelled.
+# Polaris interop and vectors, EUDI interop) as their last job, to
+# report the run on an issue carrying the caller's own label: opened (or
+# commented on) when the run fails, closed when it passes, left alone
+# when it's cancelled.
 # See .github/scripts/scheduled-alert.sh. The caller decides which runs
 # are reported (its default branch's, not a PR's) and grants this job
 # issues: write and actions: read; its own top-level permissions stay
