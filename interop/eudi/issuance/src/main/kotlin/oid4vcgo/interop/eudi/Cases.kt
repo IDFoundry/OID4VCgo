@@ -10,6 +10,9 @@ import eu.europa.ec.eudi.openid4vci.SubmissionOutcome
 import kotlinx.coroutines.delay
 
 private const val PRE_AUTHORIZED = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+private const val PRE_AUTHORIZED_CODE = "pre-authorized_code"
+private const val TOKEN_PATH = "/token"
+private const val CREDENTIAL_PATH = "/credential"
 private const val TX_CODE = "493817"
 private const val WRONG_TX_CODE = "000000"
 
@@ -17,9 +20,9 @@ private const val WRONG_TX_CODE = "000000"
 
 /** The pre-authorized code Token Request: DPoP-bound and Wallet-attested. */
 private fun Run.checkPreAuthorizedTokenRequest() {
-    val t = wallet.recorder.to("/token").lastOrNull { it.status == 200 }
+    val t = wallet.recorder.to(TOKEN_PATH).lastOrNull { it.status == 200 }
     expect(
-        t != null && t.form["grant_type"] == PRE_AUTHORIZED && t.dpop && t.clientAttestation && "pre-authorized_code" in t.form,
+        t != null && t.form["grant_type"] == PRE_AUTHORIZED && t.dpop && t.clientAttestation && PRE_AUTHORIZED_CODE in t.form,
         "token request: pre-authorized code grant, DPoP proof, Wallet Attestation and PoP",
     ) { t.toString() }
 }
@@ -32,7 +35,7 @@ private fun Run.checkAuthorizationCodeRequests() {
             par.form["code_challenge_method"] == "S256" && "code_challenge" in par.form,
         "PAR: PKCE S256, DPoP proof (binding the code), Wallet Attestation and PoP",
     ) { par.toString() }
-    val t = wallet.recorder.to("/token").lastOrNull { it.status == 200 }
+    val t = wallet.recorder.to(TOKEN_PATH).lastOrNull { it.status == 200 }
     expect(
         t != null && t.form["grant_type"] == "authorization_code" && t.dpop && t.clientAttestation && "code_verifier" in t.form,
         "token request: authorization code, PKCE verifier, DPoP proof, Wallet Attestation and PoP",
@@ -41,7 +44,7 @@ private fun Run.checkAuthorizationCodeRequests() {
 
 /** Every Credential Request used a fresh c_nonce, a DPoP-bound token, and (un)encrypted bodies as asked. */
 private fun Run.checkCredentialRequests(
-    path: String = "/credential",
+    path: String = CREDENTIAL_PATH,
     encrypted: Boolean = false,
 ) {
     val requests = wallet.recorder.to(path).filter { it.status in 200..299 }
@@ -49,7 +52,7 @@ private fun Run.checkCredentialRequests(
         requests.isNotEmpty() && requests.all { it.authorizationScheme == "DPoP" && it.dpop },
         "$path: DPoP access token with a DPoP proof",
     ) { requests.toString() }
-    if (path == "/credential") {
+    if (path == CREDENTIAL_PATH) {
         expect(wallet.recorder.to("/nonce").any { it.status == 200 }, "c_nonce from the Nonce Endpoint")
     }
     val want = if (encrypted) "application/jwt" else "application/json"
@@ -122,7 +125,7 @@ suspend fun baseCases(run: Run) {
 
     var replayOffer = ""
     run.case("pre-authorized code, SD-JWT VC, jwt proof, offer by value") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         replayOffer = uri
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
@@ -139,7 +142,7 @@ suspend fun baseCases(run: Run) {
 
     var txOffer = ""
     run.control("a wrong tx_code", "the issuer refuses it", { isOAuthError(it, "invalid_grant") }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc), txCode = TX_CODE, byReference = true)
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc), txCode = TX_CODE, byReference = true)
         txOffer = uri
         val issuer = fromOffer(uri)
         with(this) { issuer.authorizeByPreAuthorizedCode(WRONG_TX_CODE) }
@@ -156,7 +159,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("pre-authorized code granting credential_identifiers, both formats") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt, mdoc), credentialIdentifiers = true)
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt, mdoc), credentialIdentifiers = true)
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val ids = authorized.credentialIdentifiers.orEmpty()
@@ -167,10 +170,10 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("pre-authorized code, the wallet asking for authorization_details at the Token Endpoint") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val attempt = runCatching { with(this) { issuer.authorizeByPreAuthorizedCode(requestAuthorizationDetails = true) } }
-        val sent = recorder.to("/token").lastOrNull()?.form?.get("authorization_details").orEmpty()
+        val sent = recorder.to(TOKEN_PATH).lastOrNull()?.form?.get("authorization_details").orEmpty()
         if (sent.startsWith("%5B")) {
             // README finding 2: the library form-encodes the JSON array
             // itself, and the form encoding then encodes it again.
@@ -237,7 +240,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("batch issuance: three jwt proofs, SD-JWT VC") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt(3))
@@ -245,7 +248,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("attestation proof, a key attestation of two keys, SD-JWT VC") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, sdjwt, Proofs.attestation(cfg.keyAttestationKey, 2))
@@ -253,7 +256,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("attestation proof, mdoc") {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, mdoc, Proofs.attestation(cfg.keyAttestationKey, 1))
@@ -270,7 +273,7 @@ suspend fun baseCases(run: Run) {
 
     run.case("signed Credential Issuer Metadata required") {
         val options = WalletOptions(signedMetadataTrust = cfg.issuerCa)
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri, options)
         val md = recorder.to("/.well-known/openid-credential-issuer").lastOrNull()
         run.expect(md?.responseContentType == "application/jwt", "the issuer answered with signed metadata (application/jwt), which the wallet verified") { md.toString() }
@@ -283,13 +286,13 @@ suspend fun baseCases(run: Run) {
         "the wallet refuses the metadata",
         { it.toString().contains("InvalidSignedMetadata") && it.toString().contains("not trusted") },
     ) {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         fromOffer(uri, WalletOptions(signedMetadataTrust = cfg.otherCa))
     }
 
-    run.control("a Wallet Attestation from an attester the issuer doesn't trust, pre-authorized code", "the Token Endpoint refuses it with 401", { refusedWith401("/token") }) {
+    run.control("a Wallet Attestation from an attester the issuer doesn't trust, pre-authorized code", "the Token Endpoint refuses it with 401", { refusedWith401(TOKEN_PATH) }) {
         val client = walletAttestation(cfg.clientId, cfg.attesterIssuer, cfg.otherAttesterKey, cfg.otherAttesterX5c)
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri, WalletOptions(client = client))
         with(this) { issuer.authorizeByPreAuthorizedCode() }
     }
@@ -301,7 +304,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.control("a key attestation from a signer the issuer doesn't trust", "the Credential Endpoint refuses the proof", { it is CredentialIssuanceError.InvalidProof }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val (_, outcome) = with(this) { issuer.issue(authorized, sdjwt, Proofs.attestation(cfg.otherKeyAttestationKey).spec) }
@@ -315,7 +318,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.control("an SD-JWT VC checked against an unrelated CA", "EUDI's SD-JWT VC verifier refuses it", { it::class.simpleName.orEmpty().contains("SdJwtVerification") }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val (_, outcome) = with(this) { issuer.issue(authorized, sdjwt, Proofs.jwt().spec) }
@@ -324,7 +327,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.control("an mdoc checked against an unrelated IACA", "the mdoc check refuses it", { it.message?.contains("IACA") == true }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val (_, outcome) = with(this) { issuer.issue(authorized, mdoc, Proofs.jwt().spec) }
@@ -344,13 +347,13 @@ suspend fun keyAttestationCases(run: Run) {
         run.checkCredentialRequests()
     }
     run.case("jwt proof with a key attestation, mdoc, pre-authorized code") {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, mdoc, Proofs.jwtWithKeyAttestation(cfg.keyAttestationKey))
     }
     run.control("a jwt proof's key attestation from a signer the issuer doesn't trust", "the Credential Endpoint refuses the proof", { it is CredentialIssuanceError.InvalidProof }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val (_, outcome) = with(this) { issuer.issue(authorized, sdjwt, Proofs.jwtWithKeyAttestation(cfg.otherKeyAttestationKey).spec) }
@@ -391,19 +394,19 @@ suspend fun deferredCases(run: Run) {
         run.deferred(issuer, authorized, sdjwt, Proofs.jwt(), later = false)
     }
     run.case("deferred, mdoc batch, pre-authorized code, polled after the interval") {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.deferred(issuer, authorized, mdoc, Proofs.jwt(2), later = true)
     }
     run.case("deferred, with request and response encryption") {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri, WalletOptions(encryption = true))
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.deferred(issuer, authorized, sdjwt, Proofs.jwt(), later = false, encrypted = true)
     }
     run.control("a transaction_id polled again once issued", "the Deferred Credential Endpoint refuses it", { isOAuthError(it, "invalid_transaction_id") }) {
-        val (uri, _) = offer("pre-authorized_code", listOf(sdjwt))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         val (updated, outcome) = with(this) { issuer.issue(authorized, sdjwt, Proofs.jwt().spec) }
@@ -438,13 +441,13 @@ suspend fun dpopNonceCases(run: Run) {
         run.checkAuthorizationCodeRequests()
         val (updated, success) = run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
         run.notifyAccepted(issuer, updated, success.notificationId)
-        run.checkNonceChallenges(listOf("/par", "/credential"))
+        run.checkNonceChallenges(listOf("/par", CREDENTIAL_PATH))
     }
     run.case("pre-authorized code with DPoP nonces, mdoc") {
-        val (uri, _) = offer("pre-authorized_code", listOf(mdoc))
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, mdoc, Proofs.jwt())
-        run.checkNonceChallenges(listOf("/token", "/credential"))
+        run.checkNonceChallenges(listOf(TOKEN_PATH, CREDENTIAL_PATH))
     }
 }

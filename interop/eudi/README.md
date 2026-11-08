@@ -464,13 +464,15 @@ driver's stack traces and the library's logging go to
 
 ### Moving the library's pin
 
-The library's version is in [`issuance/build.gradle.kts`](issuance/build.gradle.kts),
+The library's version is in [`issuance/gradle/libs.versions.toml`](issuance/gradle/libs.versions.toml),
 every resolved dependency locked in `gradle.lockfile`, and each one's
 checksum in `gradle/verification-metadata.xml`. To move it, read the
-release's changes, change the version, then, in `issuance/`:
+release's changes, change the version, then, in `issuance/`, with an
+empty Gradle cache so that Gradle fetches, and records, every artifact
+and POM a clean runner does:
 
 ```sh
-./gradlew --write-verification-metadata sha256 --write-locks resolveAndLockAll installDist
+GRADLE_USER_HOME="$(mktemp -d)" ./gradlew --write-verification-metadata sha256 --write-locks resolveAndLockAll installDist
 ```
 
 and review the new checksums: Gradle records what Maven Central serves.

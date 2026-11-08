@@ -42,7 +42,7 @@ trap stop_issuer EXIT
 
 echo "work dir  $WORK"
 echo "issuer    $SRC, commit $(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
-echo "wallet    eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:$(grep -o 'openid4vci-kt:[0-9.]*' "$HERE/issuance/build.gradle.kts" | cut -d: -f2)"
+echo "wallet    eu.europa.ec.eudi:eudi-lib-jvm-openid4vci-kt:$(sed -n 's/^openid4vci = "\(.*\)"/\1/p' "$HERE/issuance/gradle/libs.versions.toml")"
 
 (cd "$SRC" && go build -o "$WORK/issuer" ./cmd/conformance-issuer \
   && go run ./interop/eudi/scripts/setup-issuer -out "$WORK" -port "$PORT" -offers-port "$OFFERS_PORT")
@@ -52,15 +52,16 @@ DRIVER="$HERE/issuance/build/install/eudi-issuance-interop/bin/eudi-issuance-int
 # start_issuer runs the issuer with issuer.json changed by the jq filter
 # $1, its profile.
 start_issuer() {  # $1 the profile's name, $2 a jq filter
+  local name="$1" filter="$2"
   stop_issuer
-  jq "$2" "$WORK/issuer.json" > "$WORK/issuer-$1.json"
-  "$WORK/issuer" -config "$WORK/issuer-$1.json" >> "$WORK/issuer-$1.log" 2>&1 &
+  jq "$filter" "$WORK/issuer.json" > "$WORK/issuer-$name.json"
+  "$WORK/issuer" -config "$WORK/issuer-$name.json" >> "$WORK/issuer-$name.log" 2>&1 &
   ISSUER_PID=$!
   for _ in $(seq 1 50); do
     if curl -s -o /dev/null --max-time 1 --cacert "$WORK/tls-ca.pem" "$ISSUER/.well-known/openid-credential-issuer"; then return 0; fi
     sleep 0.2
   done
-  echo "the issuer did not start; see $WORK/issuer-$1.log" >&2
+  echo "the issuer did not start; see $WORK/issuer-$name.log" >&2
   exit 2
 }
 

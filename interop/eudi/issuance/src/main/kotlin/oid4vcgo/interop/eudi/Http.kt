@@ -19,6 +19,8 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import java.net.http.HttpClient as JdkHttpClient
 
+private const val CONTENT_TYPE = "Content-Type"
+
 /** One HTTP exchange the wallet made, as the issuer saw it. */
 data class Exchange(
     val method: String,
@@ -52,7 +54,7 @@ fun sslContext(anchors: List<X509Certificate>): SSLContext {
     val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
     anchors.forEachIndexed { i, c -> ks.setCertificateEntry("anchor-$i", c) }
     val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(ks) }
-    return SSLContext.getInstance("TLS").apply { init(null, tmf.trustManagers, null) }
+    return SSLContext.getInstance("TLSv1.3").apply { init(null, tmf.trustManagers, null) }
 }
 
 /** The ktor client the library uses, recording every exchange into [recorder]. */
@@ -73,7 +75,7 @@ fun walletHttpClient(
                         clientAttestation = request.headers["OAuth-Client-Attestation"] != null && request.headers["OAuth-Client-Attestation-PoP"] != null,
                         authorizationScheme = request.headers["Authorization"]?.substringBefore(' '),
                         status = response.status.value,
-                        responseContentType = response.headers["Content-Type"]?.substringBefore(';')?.trim(),
+                        responseContentType = response.headers[CONTENT_TYPE]?.substringBefore(';')?.trim(),
                         dpopNonce = response.headers["DPoP-Nonce"] != null,
                         wwwAuthenticate = response.headers["WWW-Authenticate"],
                         form =
@@ -130,7 +132,7 @@ fun consent(
         browser.send(
             HttpRequest
                 .newBuilder(action)
-                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
@@ -157,7 +159,7 @@ fun mintOffer(
         client.send(
             HttpRequest
                 .newBuilder(URI(offersUrl))
-                .header("Content-Type", "application/json")
+                .header(CONTENT_TYPE, "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(request))
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
