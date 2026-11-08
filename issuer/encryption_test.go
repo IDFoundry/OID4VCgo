@@ -178,6 +178,11 @@ func checkRequestEncryptionMetadata(t *testing.T, md oid4vci.Metadata) {
 		if k.Alg != jwe.ECDHES {
 			t.Errorf("JWK %+v has alg = %q, want %q", k, k.Alg, jwe.ECDHES)
 		}
+		// OPTIONAL in §10, but eudi-lib-jvm-openid4vci-kt refuses the
+		// whole metadata without it (interop/eudi/README.md).
+		if k.Use != "enc" {
+			t.Errorf("JWK %+v has use = %q, want enc", k, k.Use)
+		}
 	}
 	if !kids["req-1"] || !kids["req-2"] {
 		t.Errorf("kids = %v, want req-1 and req-2", kids)

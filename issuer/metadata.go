@@ -200,7 +200,9 @@ func (iss *Issuer) Metadata() oid4vci.Metadata {
 			// New already validated every key is P-256, so this can't
 			// fail.
 			wireJWK, _ := jwk.Marshal(&k.PrivateKey.PublicKey)
-			jwks[i] = oid4vci.JWK{JWK: wireJWK, Kid: k.KeyID, Alg: jwe.ECDHES}
+			// "use" is OPTIONAL (§10 lets a Wallet choose a key by it),
+			// but some Wallets refuse a key without it.
+			jwks[i] = oid4vci.JWK{JWK: wireJWK, Kid: k.KeyID, Alg: jwe.ECDHES, Use: "enc"}
 		}
 		md.CredentialRequestEncryption = &oid4vci.RequestEncryptionMetadata{
 			JWKS: oid4vci.JWKSet{Keys: jwks}, EncValuesSupported: slices.Clone(rs.EncValuesSupported),
