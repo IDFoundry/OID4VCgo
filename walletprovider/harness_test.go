@@ -221,7 +221,14 @@ func newHarness(t *testing.T, mutate func(*walletprovider.Config, *walletprovide
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return &harness{t: t, p: p, clock: c, signer: deps.Signer.(*ecdsa.PrivateKey), chain: deps.Chain, cfg: cfg, deps: deps}
+	h := &harness{t: t, p: p, clock: c, signer: deps.Signer.(*ecdsa.PrivateKey), chain: deps.Chain, cfg: cfg, deps: deps}
+	// Near the end of a status list period, start in the next one, so a
+	// test that expects to stay within a period doesn't cross into the
+	// next one.
+	if end := time.Unix(h.periodStart(), 0).Add(h.period()); end.Sub(c.now()) < 10*time.Minute {
+		c.advance(end.Add(time.Minute).Sub(c.now()))
+	}
+	return h
 }
 
 func newKey(t *testing.T) *ecdsa.PrivateKey {
