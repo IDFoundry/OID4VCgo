@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.74.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.1...v0.74.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **issuer:** publish use "enc" on the Credential Request encryption keys ([fc487ab](https://github.com/IDFoundry/OID4VCgo/commit/fc487abae9583b5db46dc60a133a9653edbae90c))
+
 ## [0.74.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.0...v0.74.1) (2026-11-08)
 
 
