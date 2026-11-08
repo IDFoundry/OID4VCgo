@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.74.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.0...v0.74.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **credential/mdoc:** refuse a received status_list uri that isn't https ([ff3c037](https://github.com/IDFoundry/OID4VCgo/commit/ff3c037f66c3133887ca72b9d59dda64b913f0bf))
+* **credential/mdoc:** refuse a received status_list without idx or uri ([f472e4c](https://github.com/IDFoundry/OID4VCgo/commit/f472e4c73e60502a185eb2984a403c43c43013d9))
+* **mdocdcapi:** refuse an EncryptedResponse with members or tags Annex C doesn't define ([1f5f79f](https://github.com/IDFoundry/OID4VCgo/commit/1f5f79fd6e42c6822d20965ecd6c52347863b7a3))
+* **mdocdcapi:** report why a ReaderAuthAll failed when the per-document fallback fails too ([bbea70d](https://github.com/IDFoundry/OID4VCgo/commit/bbea70d0c9102da9a2a9b1ae18a87c4f76696c73))
+* **mdocdcapi:** require a P-256 recipient key ([1e868aa](https://github.com/IDFoundry/OID4VCgo/commit/1e868aa516f80c32d5761611127e467de1208888))
+
 ## [0.74.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.73.0...v0.74.0) (2026-11-08)
 
 
