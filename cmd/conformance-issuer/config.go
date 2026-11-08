@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -116,6 +117,59 @@ type Config struct {
 	// comment. Optional: nil leaves today's "jwt"-only behavior
 	// unchanged.
 	KeyAttestation *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
+
+	// Offers, when set, adds the Pre-Authorized Code Flow (OID4VCI 1.0
+	// §3.5) and Credential Offers (§4.1), for a harness driving a Wallet
+	// (interop/eudi/run-issuer.sh): the Token Endpoint redeems
+	// pre-authorized codes, authenticating the Wallet by its Wallet
+	// Attestation as for the authorization code (HAIP 1.0 §4.4.1), the
+	// Credential Offer Endpoint serves offers by reference, and a
+	// separate plain-HTTP listener on loopback mints offers on request
+	// (see offersHandler). The OIDF suite's HAIP issuer plan needs none
+	// of this: it tests only the authorization code flow. Optional: nil
+	// leaves all of it off.
+	Offers *OffersConfig `json:"offers,omitempty"`
+
+	// DPoPNonces has the Authorization Server (PAR and Token Endpoints)
+	// and the Credential Issuer's protected endpoints each require a
+	// DPoP nonce of their own issuing (RFC 9449 §8, §9), challenging a
+	// proof without a valid one with use_dpop_nonce. Off, neither uses
+	// nonces.
+	DPoPNonces bool `json:"dpop_nonces,omitempty"`
+
+	// AuthorizationDetails has PAR accept openid_credential
+	// authorization_details (OpenID4VCI 1.0 §5.1.1, RFC 9396) as well as
+	// scopes, and the consent grant each with a credential_identifier it
+	// mints (§6.2). Off, the authorization code flow is scope-based.
+	AuthorizationDetails bool `json:"authorization_details,omitempty"`
+}
+
+// usesAuthorizationDetails reports whether any token carries
+// openid_credential authorization_details: a pre-authorized code's
+// (Offers), or an authorization code's (AuthorizationDetails).
+func (c Config) usesAuthorizationDetails() bool { return c.Offers != nil || c.AuthorizationDetails }
+
+// OffersConfig is Config.Offers.
+type OffersConfig struct {
+	// ListenAddr is the offer-minting listener's address: plain HTTP,
+	// and so loopback only (loadConfig refuses any other host). Anyone
+	// who can reach it can mint a redeemable offer.
+	ListenAddr string `json:"listen_addr"`
+}
+
+// validateOffers checks Offers, when set, listens on loopback only.
+func validateOffers(o *OffersConfig) error {
+	if o == nil {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(o.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("config: offers.listen_addr: %w", err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("config: offers.listen_addr must be a loopback IP address and port, not %q: it mints offers for anyone who reaches it", o.ListenAddr)
+	}
+	return nil
 }
 
 // ConfigClient is Config.Client's own shape: everything needed to
@@ -226,6 +280,9 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: vct, claims, scope and credential_configuration_id are all required")
 	}
 	if err := validateMdoc(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateOffers(cfg.Offers); err != nil {
 		return Config{}, err
 	}
 	if cfg.KeyAttestation != nil && len(cfg.KeyAttestation.TrustedJWK) == 0 {

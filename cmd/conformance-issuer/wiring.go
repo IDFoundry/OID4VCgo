@@ -102,9 +102,30 @@ func jwtProofCredentialConfiguration(scope, bindingMethod string, proofSigningAl
 // (here, main itself, kept small) — see README's own "Status" section
 // for how far this has actually been exercised.
 func newServerMux(cfg Config) (*http.ServeMux, error) {
-	endpoints, err := resolveIssuerEndpoints(cfg)
+	s, err := newServers(cfg)
 	if err != nil {
 		return nil, err
+	}
+	return s.public, nil
+}
+
+// servers is what newServers builds: the Credential Issuer and
+// Authorization Server's endpoints, and, when Config.Offers is set, the
+// offer-minting handler for its own loopback listener.
+type servers struct {
+	public *http.ServeMux
+	offers http.Handler
+}
+
+// dpopNonceLifetime is how long a DPoP nonce stays valid under
+// Config.DPoPNonces (RFC 9449 §8.2).
+const dpopNonceLifetime = 5 * time.Minute
+
+// newServers is newServerMux, also returning the offers handler.
+func newServers(cfg Config) (servers, error) {
+	endpoints, err := resolveIssuerEndpoints(cfg)
+	if err != nil {
+		return servers{}, err
 	}
 	issuerURL, parURL, authorizationURL, tokenURL, jwksURL, credentialURL, nonceURL :=
 		endpoints.issuer, endpoints.par, endpoints.authorization, endpoints.token, endpoints.jwks, endpoints.credential, endpoints.nonce
@@ -113,11 +134,11 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		keys.AccessTokenSigning: fapi.ES256,
 	})
 	if err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	clientRepo, clientKeys, err := buildClientRegistration(cfg)
 	if err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	replayStore := memstore.NewReplayStore()
 	// revocationStore is both the AS's revocation sink (it revokes on
@@ -133,7 +154,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	// Credential Offer relies on the Wallet echoing back through PAR.
 	srvCfg, err := haip.RecommendedAuthorizationServerConfig()
 	if err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	srvCfg.Issuer = issuerURL
 	srvCfg.Endpoints = server.Endpoints{
@@ -142,11 +163,27 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 	}
 	srvCfg.Assurance = server.AssuranceDevelopment
 	srvCfg.Limits.MaxClientAttestationLifetime = clientAttestationLifetime
+	if cfg.Offers != nil {
+		// The Token Endpoint also serves the pre-authorized code grant,
+		// so its metadata lists it.
+		srvCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
+	}
+	if cfg.usesAuthorizationDetails() {
+		// The authorization_details its tokens may carry.
+		if srvCfg.RAR, err = credentialAuthorizationDetails(); err != nil {
+			return servers{}, err
+		}
+	}
+	var resourceNonces storage.NonceStore
+	if cfg.DPoPNonces {
+		srvCfg.Limits.DPoPNonceLifetime = dpopNonceLifetime
+		resourceNonces = memstore.NewNonceStore()
+	}
 	limits := srvCfg.Limits
 
 	accessTokens, err := server.NewJWTAccessTokens(keyManager, fapi.ES256)
 	if err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	srvDeps := server.Dependencies{
 		Clients:                clientRepo,
@@ -161,12 +198,20 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		Random:                 rand.Reader,
 		ClientCertificateTrust: server.NoPKIClientAuthentication{},
 	}
+	if cfg.DPoPNonces {
+		// Its own store: never shared with the resource side's.
+		srvDeps.Nonces = memstore.NewNonceStore()
+	}
+	if cfg.AuthorizationDetails {
+		// PAR takes them; the consent adds the credential_identifiers.
+		srvDeps.AuthorizationCodeRARPolicy = server.AllowRequestedAuthorizationDetails{}
+	}
 	if srvDeps.AttesterTrust, err = attesterTrust(cfg); err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	srv, err := server.New(srvCfg, srvDeps)
 	if err != nil {
-		return nil, fmt.Errorf("server.New: %w", err)
+		return servers{}, fmt.Errorf("server.New: %w", err)
 	}
 
 	// The Credential Endpoint's access-token verifier, built from the
@@ -177,29 +222,30 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		// The Credential, Nonce, Notification and Deferred Credential
 		// Endpoints are all under the issuer.
 		ResourceURLs: []fapi.URL{srvCfg.Issuer},
+		Nonces:       resourceNonces, NonceLifetime: dpopNonceLifetime,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("serverresource.NewVerifier: %w", err)
+		return servers{}, fmt.Errorf("serverresource.NewVerifier: %w", err)
 	}
 
 	issuerSigningKey, err := cfg.credentialIssuerSigningKey()
 	if err != nil {
-		return nil, fmt.Errorf("credential issuer signing key: %w", err)
+		return servers{}, fmt.Errorf("credential issuer signing key: %w", err)
 	}
 	issuerCertificate, err := cfg.credentialIssuerCertificate()
 	if err != nil {
-		return nil, fmt.Errorf("credential issuer certificate: %w", err)
+		return servers{}, fmt.Errorf("credential issuer certificate: %w", err)
 	}
 	requestDecryptionKey, err := cfg.credentialRequestDecryptionKey()
 	if err != nil {
-		return nil, fmt.Errorf("credential request decryption key: %w", err)
+		return servers{}, fmt.Errorf("credential request decryption key: %w", err)
 	}
 	issProofAlgs := []string{"ES256"}
 	sdjwtConfig := jwtProofCredentialConfiguration(cfg.Scope, "jwk", issProofAlgs)
 	sdjwtConfig.Format, sdjwtConfig.VCT = sdjwtvc.CredentialFormat, cfg.VCT
 	nonceKey := make([]byte, issuer.MinNonceKeyBytes)
 	if _, err := rand.Read(nonceKey); err != nil {
-		return nil, fmt.Errorf("nonce key: %w", err)
+		return servers{}, fmt.Errorf("nonce key: %w", err)
 	}
 	issDeps := issuer.Dependencies{
 		// The Notification Endpoint (§11) accepts events and records
@@ -235,14 +281,14 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		attestationTargets = append(attestationTargets, &mdocConfig)
 		mdocSigner, err := buildMdocSigner(cfg, issuerSigningKey, issuerCertificate)
 		if err != nil {
-			return nil, err
+			return servers{}, err
 		}
 		issDeps.MdocSigner = mdocSigner
 	}
 
 	attestationVerifier, err := addKeyAttestationProofType(cfg, attestationTargets...)
 	if err != nil {
-		return nil, err
+		return servers{}, err
 	}
 	issDeps.AttestationVerifier = attestationVerifier
 
@@ -253,7 +299,7 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 		credentialConfigs[cfg.Mdoc.CredentialConfigurationID] = mdocConfig
 	}
 
-	iss, err := issuer.New(issuer.Config{
+	issCfg := issuer.Config{
 		Assurance: issuer.AssuranceDevelopment,
 		Issuer:    issuerURL,
 		Endpoints: issuer.Endpoints{
@@ -276,20 +322,45 @@ func newServerMux(cfg Config) (*http.ServeMux, error) {
 			ZipValuesSupported: credentialZipValuesSupported,
 		},
 		CredentialConfigurationsSupported: credentialConfigs,
-	}, issDeps)
+	}
+	if cfg.Offers != nil {
+		addOffers(&issCfg, &issDeps, endpoints.credentialOffer, limits.AccessTokenLifetime)
+	}
+	iss, err := issuer.New(issCfg, issDeps)
 	if err != nil {
-		return nil, fmt.Errorf("issuer.New: %w", err)
+		return servers{}, fmt.Errorf("issuer.New: %w", err)
 	}
 
 	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
-	return newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, metadataSigningIdentity{Signer: issuerSigningKey, Cert: issuerCertificate})
+	public, err := newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, metadataSigningIdentity{Signer: issuerSigningKey, Cert: issuerCertificate})
+	if err != nil {
+		return servers{}, err
+	}
+	s := servers{public: public}
+	if cfg.Offers != nil {
+		s.offers = offersHandler(iss, cfg)
+	}
+	return s, nil
+}
+
+// addOffers turns on the pre-authorized code grant, redeemed by an
+// attested Wallet (HAIP 1.0 §4.4.1), and Credential Offers by
+// reference, for Config.Offers.
+func addOffers(cfg *issuer.Config, deps *issuer.Dependencies, offerEndpoint fapi.URL, accessTokenLifetime time.Duration) {
+	cfg.CredentialOfferEndpoint = offerEndpoint
+	cfg.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
+	cfg.Limits.CredentialOfferLifetime = offerLifetime
+	cfg.Limits.AccessTokenLifetime = accessTokenLifetime
+	cfg.Limits.MaxTxCodeAttempts = maxTxCodeAttempts
+	deps.PreAuthorizedCodes = oid4vcgostorage.NewPreAuthorizedCodeStore()
+	deps.CredentialOffers = oid4vcgostorage.NewCredentialOfferStore()
 }
 
 // issuerEndpoints bundles every fapi.URL newServerMux's own router and
 // server config need, parsed once up front by resolveIssuerEndpoints.
 type issuerEndpoints struct {
-	issuer, par, authorization, token, jwks, credential, nonce, notification, deferredCredential fapi.URL
+	issuer, par, authorization, token, jwks, credential, nonce, notification, deferredCredential, credentialOffer fapi.URL
 }
 
 // resolveIssuerEndpoints parses cfg.Issuer's own well-known sub-paths —
@@ -333,8 +404,13 @@ func resolveIssuerEndpoints(cfg Config) (issuerEndpoints, error) {
 	if err != nil {
 		return issuerEndpoints{}, err
 	}
+	credentialOfferURL, err := fapi.ParseEndpointURL(cfg.Issuer + credentialOfferPath)
+	if err != nil {
+		return issuerEndpoints{}, err
+	}
 	return issuerEndpoints{
-		issuer: issuerURL, par: parURL, authorization: authorizationURL,
+		credentialOffer: credentialOfferURL,
+		issuer:          issuerURL, par: parURL, authorization: authorizationURL,
 		token: tokenURL, jwks: jwksURL, credential: credentialURL, nonce: nonceURL, notification: notificationURL,
 		deferredCredential: deferredCredentialURL,
 	}, nil
@@ -368,6 +444,9 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 		}
 		clientCfg := haip.RecommendedWalletClient(fapi.ClientID(cc.ID), cc.ExpectedAttesterIssuer)
 		clientCfg.RedirectURIs, clientCfg.AllowedScopes = registeredRedirectURIs(cc.RedirectURIs), allowedScopes
+		if cfg.usesAuthorizationDetails() {
+			clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
+		}
 		c, regErr := storage.NewRegisteredClient(clientCfg)
 		if regErr != nil {
 			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
@@ -432,6 +511,9 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 	}
 	for _, c := range credConfigs {
 		c.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
+		if cfg.KeyAttestation.JWTProofRequiresKeyAttestation {
+			c.ProofTypesSupported[oid4vci.ProofTypeJWT] = haip.RecommendedJWTKeyAttestationProofType()
+		}
 	}
 	return fixedKeyAttestationVerifier{pub: trustedKey, alg: jose.ES256}, nil
 }

@@ -63,9 +63,7 @@ and run anywhere in this repo, not just documented.
 AS side (FAPIgo, `server.Server`): `GET /.well-known/openid-configuration`,
 `GET /jwks`, `POST /par`, `GET /authorize` + `POST /authorize/decision`
 (a real HTML consent form, auto-filled — mirrors `cmd/conformance-as`'s
-own `consentHandler`, trimmed of Rich Authorization Requests support,
-which this binary's one CredentialConfiguration doesn't need), `POST
-/token` (`authorization_code`/`refresh_token` only).
+own `consentHandler`), `POST /token` (`authorization_code`/`refresh_token`).
 
 OID4VCI side (`issuer.Issuer`): `GET
 /.well-known/openid-credential-issuer`, `POST /nonce`, `POST
@@ -73,7 +71,21 @@ OID4VCI side (`issuer.Issuer`): `GET
 via `resource.Verifier`, then calls `RequestCredential` with this
 binary's own fixed, static claim content — `issuer.Issuer` has no user
 database of its own, per `CredentialRequest.SDJWTClaims`'s own doc
-comment).
+comment), `POST /deferred_credential`, `POST /notification`.
+
+Options the HAIP plan doesn't use, for
+[`interop/eudi/run-issuer.sh`](../../interop/eudi/run-issuer.sh), whose
+wallet needs more than the plan tests: `offers` adds the
+pre-authorized code grant at `/token` (the Wallet authenticated by its
+Wallet Attestation, as for the authorization code), `GET
+/credential-offer/{reference}`, and a plain-HTTP, loopback-only
+listener whose `POST /offers` mints Credential Offers;
+`authorization_details` has PAR take openid_credential
+`authorization_details` and the consent grant each with a
+`credential_identifier` it mints; `dpop_nonces` has PAR, `/token` and
+the protected endpoints require DPoP nonces; and
+`key_attestation.jwt_proof_requires_key_attestation` has the jwt proof
+type require a key attestation.
 
 ## Status
 

@@ -327,7 +327,10 @@ func driveConsentToCallback(t *testing.T, httpClient *http.Client, issuer, autho
 		Transport:     httpClient.Transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	decisionForm := url.Values{"handle": {handle}, "subject": {subject}, "decision": {"approve"}, "scope": {scope}}
+	decisionForm := url.Values{"handle": {handle}, "subject": {subject}, "decision": {"approve"}}
+	if scope != "" {
+		decisionForm.Set("scope", scope)
+	}
 	decisionReq, err := http.NewRequest(http.MethodPost, issuer+"/authorize/decision", strings.NewReader(decisionForm.Encode()))
 	if err != nil {
 		t.Fatalf("new decision request: %v", err)
