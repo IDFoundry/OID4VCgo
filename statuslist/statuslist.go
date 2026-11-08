@@ -17,6 +17,11 @@ type StatusList struct {
 	// §4.1). Build it with New rather than by hand.
 	Lst string `json:"lst"`
 
+	// AggregationURI is the OPTIONAL URI of a Status List Aggregation
+	// (draft-14), listing an issuer's Status List Tokens so a
+	// verifier can fetch them ahead of time. A publisher sets it with
+	// New; a check carries it but never reads or fetches it, as a
+	// token's status doesn't depend on it.
 	AggregationURI string `json:"aggregation_uri,omitempty"`
 }
 

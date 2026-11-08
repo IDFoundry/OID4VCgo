@@ -305,7 +305,7 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 	for i, d := range in.Documents {
 		items[i] = d.itemsRequestBytes
 	}
-	var lastErr error
+	var allErr error
 	if len(in.readerAuthAll) > 0 {
 		// Every ReaderAuthAll signs the same structure: encode it once.
 		detached, err := wrapTag24(readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo))
@@ -317,37 +317,56 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 			if err == nil {
 				return leaf, nil
 			}
-			lastErr = err
+			allErr = err
 		}
 	}
 	// An mdoc reader of the first edition signs each DocRequest instead.
-	var reader *x509.Certificate
+	reader, signed, docErr := in.verifyDocumentReaderAuth(t)
+	if docErr == nil {
+		return reader, nil
+	}
+	switch {
+	case allErr != nil && !signed:
+		// A request signed only as a whole: its reason is the one.
+		docErr = allErr
+	case allErr != nil:
+		docErr = fmt.Errorf("%w; signed per document: %w", allErr, docErr)
+	case !signed:
+		docErr = errors.New("the request carries no reader signature")
+	}
+	return nil, fmt.Errorf("%w: %w", ErrUntrustedReader, docErr)
+}
+
+// verifyDocumentReaderAuth verifies the ReaderAuth on every DocRequest,
+// returning their one reader. signed reports whether any DocRequest
+// carries a ReaderAuth at all.
+func (in Incoming) verifyDocumentReaderAuth(t ReaderTrust) (reader *x509.Certificate, signed bool, err error) {
+	for _, d := range in.Documents {
+		if d.readerAuth != nil {
+			signed = true
+		}
+	}
 	for _, d := range in.Documents {
 		if d.readerAuth == nil {
-			reader, lastErr = nil, errors.New("a document request isn't signed")
-			break
+			return nil, signed, errors.New("a document request isn't signed")
 		}
 		detached, err := wrapTag24(readerAuthentication(in.transcript, d.itemsRequestBytes))
 		if err != nil {
-			return nil, fmt.Errorf("mdocdcapi: encode ReaderAuthentication: %w", err)
+			return nil, signed, fmt.Errorf("mdocdcapi: encode ReaderAuthentication: %w", err)
 		}
 		leaf, err := verifyReaderAuth(d.readerAuth, detached, t)
 		if err == nil && reader != nil && !reader.Equal(leaf) {
 			err = errors.New("the documents are signed by different readers")
 		}
 		if err != nil {
-			reader, lastErr = nil, err
-			break
+			return nil, signed, err
 		}
 		reader = leaf
 	}
-	if reader != nil {
-		return reader, nil
+	if reader == nil {
+		return nil, signed, errors.New("the request carries no reader signature")
 	}
-	if lastErr == nil {
-		lastErr = errors.New("the request carries no reader signature")
-	}
-	return nil, fmt.Errorf("%w: %w", ErrUntrustedReader, lastErr)
+	return reader, signed, nil
 }
 
 // verifyReaderAuth verifies one ReaderAuth or ReaderAuthAll over
