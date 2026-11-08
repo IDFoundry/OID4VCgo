@@ -24,8 +24,8 @@ WORK="${WORK:-$(mktemp -d)}"
 CONTAINER=oid4vcgo-eudi-verifier
 VERIFIER="https://localhost:$PORT"
 WALLET="https://localhost:$WALLET_PORT"
-# The keystore holds throwaway, per-run keys.
-KEYSTORE_PASSWORD=interop
+# The keystore holds throwaway, per-run keys, under a per-run password.
+KEYSTORE_PASSWORD="$(openssl rand -hex 16)"
 
 for p in "$PORT" "$WALLET_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
@@ -36,7 +36,7 @@ done
 
 WALLET_PID=""
 stop_wallet() {
-  if [ -n "$WALLET_PID" ]; then
+  if [[ -n "$WALLET_PID" ]]; then
     kill "$WALLET_PID" 2>/dev/null || true
     wait "$WALLET_PID" 2>/dev/null || true
     WALLET_PID=""
@@ -83,7 +83,7 @@ docker run -d --name "$CONTAINER" --platform linux/amd64 -p "127.0.0.1:$PORT:844
   "$VERIFIER_IMAGE" >/dev/null
 for _ in $(seq 1 150); do
   if docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then break; fi
-  if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != true ]; then break; fi
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != true ]]; then break; fi
   sleep 2
 done
 if ! docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then
@@ -93,9 +93,10 @@ if ! docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplicatio
 fi
 
 start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier
+  local config="$1" verifier_ca="$2"
   stop_wallet
-  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$2" \
-    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca' "$1" > wallet.json
+  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" \
+    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca' "$config" > wallet.json
   ./wallet -config wallet.json >> wallet.log 2>&1 &
   WALLET_PID=$!
   for _ in $(seq 1 50); do
@@ -113,12 +114,13 @@ MDOC_QUERY='{"credentials":[{"id":"pid","format":"mso_mdoc","meta":{"doctype_val
 UNHELD_QUERY='{"credentials":[{"id":"mdl","format":"mso_mdoc","meta":{"doctype_value":"org.iso.18013.5.1.mDL"},"claims":[{"path":["org.iso.18013.5.1","family_name"]}]}]}'
 
 fail=0
-ok() { echo "  ok    $1"; }
-bad() { echo "  FAIL  $1"; fail=1; }
+ok() { local what="$1"; echo "  ok    $what"; }
+bad() { local what="$1"; echo "  FAIL  $what"; fail=1; }
 
 # init_transaction writes the verifier's answer to init.json and sets TID.
 init_transaction() {  # $1 dcql, $2 profile, $3 issuer chain file, $4 request_uri_method
-  jq -n --argjson q "$1" --arg profile "$2" --rawfile chain "$3" --arg method "$4" \
+  local dcql="$1" profile="$2" chain="$3" method="$4"
+  jq -n --argjson q "$dcql" --arg profile "$profile" --rawfile chain "$chain" --arg method "$method" \
     --rawfile rc registration-certificate.jws --arg redirect "$VERIFIER/public/css/style.css?response_code={RESPONSE_CODE}" \
     '{dcql_query: $q, nonce: ("n-" + (now | tostring)), jar_mode: "by_reference", request_uri_method: $method,
       response_mode: "direct_post.jwt", profile: $profile, issuer_chain: $chain,
@@ -126,19 +128,20 @@ init_transaction() {  # $1 dcql, $2 profile, $3 issuer chain file, $4 request_ur
   curl -sk --max-time 30 -X POST -H 'Content-Type: application/json' -d @init-request.json \
     "$VERIFIER/ui/presentations" > init.json
   TID="$(jq -r '.transaction_id // empty' init.json)"
-  [ -n "$TID" ] || { echo "        the verifier refused the transaction: $(cat init.json)"; return 1; }
+  [[ -n "$TID" ]] || { echo "        the verifier refused the transaction: $(cat init.json)"; return 1; }
 }
 
 # authorize hands the wallet the request, as a same-device launch would.
 authorize() {  # $1 output file, $2 optional client_id
-  local q
-  q="$(jq -r --arg cid "${2:-}" \
+  local out="$1" client_id="${2:-}" q
+  q="$(jq -r --arg cid "$client_id" \
     '"client_id=" + ((if $cid == "" then .client_id else $cid end) | @uri) + "&request_uri=" + (.request_uri | @uri) + "&request_uri_method=" + .request_uri_method' init.json)"
-  curl -sk --max-time 60 -o "$1" "$WALLET/authorize?$q" || true
+  curl -sk --max-time 60 -o "$out" "$WALLET/authorize?$q" || true
 }
 
 result() {  # $1 output file, $2 optional response_code
-  curl -sk --max-time 30 -o "$1" "$VERIFIER/ui/presentations/$TID${2:+?response_code=$2}" || true
+  local out="$1" code="${2:-}"
+  curl -sk --max-time 30 -o "$out" "$VERIFIER/ui/presentations/$TID${code:+?response_code=$code}" || true
 }
 
 events() {
@@ -150,13 +153,13 @@ events() {
 # follows the redirect, and the verifier releases the vp_token for its
 # response_code.
 present() {  # $1 label, $2 dcql, $3 profile, $4 issuer chain file, $5 request_uri_method
-  local name="$1"
+  local name="$1" dcql="$2" profile="$3" chain="$4" method="$5"
   echo "== $name"
-  init_transaction "$2" "$3" "$4" "$5" || { bad "$name: transaction initialized"; return; }
+  init_transaction "$dcql" "$profile" "$chain" "$method" || { bad "$name: transaction initialized"; return; }
   authorize "wallet-$name.txt"
   local code
   code="$(grep -oE 'response_code=[A-Za-z0-9-]+' "wallet-$name.txt" | head -1 | cut -d= -f2 || true)"
-  if [ -n "$code" ]; then ok "the wallet presented and followed the redirect"
+  if [[ -n "$code" ]]; then ok "the wallet presented and followed the redirect"
   else bad "the wallet presented ($(head -c 300 "wallet-$name.txt"))"; events; return; fi
   result "result-$name.json" "$code"
   if jq -e '.vp_token.pid | length == 1' "result-$name.json" >/dev/null 2>&1; then ok "the verifier accepted the vp_token"
@@ -216,7 +219,7 @@ jq -n --argjson q "$MDOC_QUERY" --rawfile chain iaca.pem --rawfile rc registrati
 curl -sk --max-time 30 -X POST -H 'Content-Type: application/json' -d @init-request.json \
   "$VERIFIER/ui/presentations/dc-api" > init.json
 TID="$(jq -r '.transaction_id // empty' init.json)"
-if [ -z "$TID" ]; then
+if [[ -z "$TID" ]]; then
   bad "transaction initialized ($(head -c 300 init.json))"
 else
   jq --arg origin "$ORIGIN" '{protocol: "openid4vp-v1-signed", data: {request: .request}, origin: $origin}' init.json > dcapi-request.json
@@ -234,5 +237,5 @@ else
   fi
 fi
 
-[ "$fail" -eq 0 ] && echo "RESULT: every presentation accepted, and every control refused" || echo "RESULT: FAILED"
+if [[ "$fail" -eq 0 ]]; then echo "RESULT: every presentation accepted, and every control refused"; else echo "RESULT: FAILED"; fi
 exit "$fail"
