@@ -8,7 +8,8 @@
 //
 // Usage: go run ./interop/eudi/scripts/serve -dir DIR -addr ADDR
 //
-// Each request is logged, so a run shows what the verifier fetched.
+// Each document served is logged, so a run shows what the verifier
+// fetched.
 package main
 
 import (
@@ -40,14 +41,15 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("served %s %s to %s", r.Method, r.URL.Path, r.RemoteAddr)
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+			log.Printf("served %s", path)
 			w.Header().Set("Content-Type", doc.contentType)
 			_, _ = w.Write(body)
 		})
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("not found: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		// Only the fact: request data stays out of the log.
+		log.Print("not found: a request for another path")
 		http.NotFound(w, r)
 	})
 

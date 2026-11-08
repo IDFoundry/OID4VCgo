@@ -317,7 +317,7 @@ fi
 # which it fetched nothing didn't check status or Type Metadata at all.
 echo "== the verifier fetched the status lists and the Type Metadata"
 for path in /statuslists/jwt /statuslists/cwt /type-metadata/pid; do
-  if grep -q "served GET $path " serve.log; then ok "fetched $path"; else bad "fetched $path"; fi
+  if grep -q "served GET $path\$" serve.log; then ok "fetched $path"; else bad "fetched $path"; fi
 done
 if grep -q 'not found' serve.log; then bad "asked serve for something else: $(grep 'not found' serve.log | head -3)"; fi
 
