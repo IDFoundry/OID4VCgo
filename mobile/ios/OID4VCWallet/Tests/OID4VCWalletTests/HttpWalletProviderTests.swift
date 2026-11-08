@@ -483,7 +483,7 @@ private final class FakeAppAttest: AppAttestService, @unchecked Sendable {
     /// Keys gone for good: every assertion by one is refused as lost,
     /// after `onLost` returns, given how many have been.
     let lostKeys = Locked<Set<String>>(initialState: [])
-    let onLost = Locked<@Sendable (Int) async -> Void>(initialState: { _ in })
+    let onLost = Locked<@Sendable (Int) async -> Void>(initialState: { _ in /* Nothing by default: a test sets what a lost key does. */ })
     private let lostCount = Locked(initialState: 0)
     private let keys = Locked(initialState: 0)
 
