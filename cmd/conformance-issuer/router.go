@@ -49,7 +49,12 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 	mux.HandleFunc("POST /par", parHandler(srv))
 	mux.HandleFunc("GET /authorize", consent.handleBegin)
 	mux.HandleFunc("POST /authorize/decision", consent.handleDecision)
-	mux.HandleFunc("POST /token", tokenHandler(srv))
+	var preAuthorized func(http.ResponseWriter, *http.Request, server.TokenEndpointRequest)
+	if cfg.Offers != nil {
+		preAuthorized = preAuthorizedTokenHandler(srv, iss)
+		mux.HandleFunc("GET "+credentialOfferPath+"/{reference}", credentialOfferHandler(iss))
+	}
+	mux.HandleFunc("POST /token", tokenHandler(srv, preAuthorized))
 
 	metadata, err := issuer.NewMetadataHandler(iss, &issuer.MetadataSigner{Signer: metadataKey.Signer, Alg: jose.ES256, Certificate: metadataKey.Cert})
 	if err != nil {

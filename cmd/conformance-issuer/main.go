@@ -31,9 +31,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	mux, err := newServerMux(cfg)
+	built, err := newServers(cfg)
 	if err != nil {
 		log.Fatalf("build server: %v", err)
+	}
+	if built.offers != nil {
+		go func() {
+			log.Fatal(offersServer(cfg.Offers.ListenAddr, built.offers).ListenAndServe())
+		}()
+		log.Printf("minting credential offers on http://%s/offers", cfg.Offers.ListenAddr)
 	}
 
 	// The CRL distribution point of the mdoc Document Signer
@@ -56,7 +62,7 @@ func main() {
 	}
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: mux,
+		Handler: built.public,
 		// MinVersion/CipherSuites match FAPIgo's own OpenID-Certified
 		// cmd/conformance-as (server/tls.go's own doc comment): without
 		// them, Go negotiates TLS 1.3 by default, whose three built-in
@@ -76,4 +82,11 @@ func main() {
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+}
+
+// offersServer serves the offer-minting handler on addr, a loopback
+// address (validateOffers): plain HTTP, never the Credential Issuer's
+// TLS listener.
+func offersServer(addr string, h http.Handler) *http.Server {
+	return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
 }

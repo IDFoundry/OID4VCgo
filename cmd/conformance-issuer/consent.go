@@ -6,6 +6,7 @@ import (
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 )
@@ -17,22 +18,29 @@ const consentPendingTTL = 5 * time.Minute
 
 // consentHandler serves the browser-facing authorization endpoint with
 // a genuine HTML consent form — mirrors FAPIgo's own
-// cmd/conformance-as consentHandler, trimmed: this binary's one
-// CredentialConfiguration needs no Rich Authorization Requests
-// support, so there's no AuthorizationDetails plumbing to carry
-// through the pending set.
+// cmd/conformance-as consentHandler, trimmed. The openid_credential
+// authorization_details a request carries (Config.AuthorizationDetails)
+// are granted as requested, each with a credential_identifier the
+// consent mints (OpenID4VCI 1.0 §6.2).
 type consentHandler struct {
 	srv            *server.Server
 	clients        storage.ClientRepository
 	clock          server.Clock
 	defaultSubject string
-	pending        *pendingSet[string, server.InteractionHandle]
+	pending        *pendingSet[string, pendingInteraction]
+}
+
+// pendingInteraction is what the consent form's decision completes: the
+// interaction, and the authorization_details it requested.
+type pendingInteraction struct {
+	handle  server.InteractionHandle
+	details extension.RARValues
 }
 
 func newConsentHandler(srv *server.Server, clients storage.ClientRepository, clock server.Clock, defaultSubject string) *consentHandler {
 	return &consentHandler{
 		srv: srv, clients: clients, clock: clock, defaultSubject: defaultSubject,
-		pending: newPendingSet[string, server.InteractionHandle](clock),
+		pending: newPendingSet[string, pendingInteraction](clock),
 	}
 }
 
@@ -53,7 +61,7 @@ func (h *consentHandler) handleBegin(w http.ResponseWriter, r *http.Request) {
 
 	switch action := action.(type) {
 	case server.InteractionRequired:
-		h.pending.Put(action.Handle.String(), action.Handle, consentPendingTTL)
+		h.pending.Put(action.Handle.String(), pendingInteraction{handle: action.Handle, details: action.Interaction.AuthorizationDetails}, consentPendingTTL)
 		// Debug/test-support only, not security-relevant — mirrors
 		// FAPIgo's own cmd/conformance-as identically: lets a smoke
 		// test correlate a GET response with its interaction handle
@@ -96,7 +104,7 @@ func (h *consentHandler) handleDecision(w http.ResponseWriter, r *http.Request) 
 		writeLocalHTMLErrorRaw(w, http.StatusBadRequest, "invalid_request", "malformed form")
 		return
 	}
-	handle, ok := h.pending.TakeOnce(r.FormValue("handle"))
+	pending, ok := h.pending.TakeOnce(r.FormValue("handle"))
 	if !ok {
 		writeLocalHTMLErrorRaw(w, http.StatusBadRequest, "invalid_request", "interaction handle is unknown, expired, or already used")
 		return
@@ -123,7 +131,12 @@ func (h *consentHandler) handleDecision(w http.ResponseWriter, r *http.Request) 
 	var result server.InteractionResult
 	switch r.FormValue("decision") {
 	case "approve":
-		result = server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: r.Form["scope"]})
+		details, err := grantCredentialAuthorizationDetails(pending.details)
+		if err != nil {
+			writeLocalHTMLErrorRaw(w, http.StatusBadRequest, "invalid_request", "malformed authorization_details")
+			return
+		}
+		result = server.Authorize(subject, authCtx, server.GrantedAuthorization{Scope: r.Form["scope"], AuthorizationDetails: details})
 	case "deny":
 		result = server.Deny("user denied the request")
 	default:
@@ -131,7 +144,7 @@ func (h *consentHandler) handleDecision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	authResult, err := h.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: handle, Result: result})
+	authResult, err := h.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: pending.handle, Result: result})
 	if err != nil {
 		writeLocalHTMLErrorRaw(w, http.StatusInternalServerError, "server_error", "failed to complete authorization")
 		return

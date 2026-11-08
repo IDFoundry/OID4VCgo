@@ -1,8 +1,12 @@
 # EUDI interop
 
 Interop runs against the [EUDI Wallet reference implementation](https://github.com/eu-digital-identity-wallet)'s
-own components, run locally from their published images and libraries.
-They run in CI from [`.github/workflows/eudi-interop.yml`](../../.github/workflows/eudi-interop.yml).
+own components, run locally from their published images and
+libraries. They run in CI from [`.github/workflows/eudi-interop.yml`](../../.github/workflows/eudi-interop.yml):
+the verifier from its image ([below](#wallet--eudi-verifier-endpoint)),
+the wallet library against `cmd/conformance-verifier`
+([further down](#eudi-wallet-library--verifier)) and against
+`cmd/conformance-issuer` ([after that](#eudi-wallet-library--issuer)).
 
 ## Wallet ↔ EUDI Verifier Endpoint
 
@@ -287,3 +291,188 @@ its lockfiles pin the transitive ones. To move one, read the release's
 changes, set the version, then `./gradlew dependencies --write-locks`
 in `presentation/`. Nothing moves them automatically, and the weekly
 run doesn't test the libraries' newest releases.
+
+## EUDI wallet library ↔ Issuer
+
+[`run-issuer.sh`](run-issuer.sh) has the EUDI wallet library,
+[eudi-lib-jvm-openid4vci-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vci-kt)
+0.16.0, obtain credentials from `cmd/conformance-issuer`, the
+Credential Issuer and Authorization Server the OIDF HAIP issuer plan
+certifies, through a small Kotlin driver, [`issuance/`](issuance). The
+driver uses the library's own API for everything a wallet does
+(resolving the offer and the metadata, PAR, the Token Request, nonces,
+proofs, the Credential, Deferred Credential and Notification
+Endpoints), and stands in for the browser only at the issuer's consent
+page, whose form it submits.
+
+The wallet is configured as strictly as the issuer allows: PAR and
+DPoP required (DPoP binding the authorization code at PAR), the
+authorization response's `iss` required, Wallet Attestation client
+authentication (draft-ietf-oauth-attestation-based-client-auth-07)
+with an attestation the issuer trusts by its `x5c` chain, every proof
+type, and a TLS client trusting only the issuer's CA. What's issued is
+checked on the wallet side: each SD-JWT VC by EUDI's own verifier,
+[eudi-lib-jvm-sdjwt-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-sdjwt-kt)
+0.21.0 (its signature by the `x5c` leaf, the chain to the issuer's CA,
+`vct`, every claim disclosed), and each mdoc by the driver itself,
+EUDI having no JVM mdoc verifier (the `issuerAuth` signature, the
+`x5chain` to the IACA, every item's digest in the MSO, docType,
+validity, claims); and every credential must be bound to a different
+one of the keys its proofs named. The driver records each request the
+library makes, so a case also checks how it was made: DPoP proof and
+token, attestation headers, PKCE S256, `issuer_state`, the Nonce
+Endpoint, encrypted bodies, DPoP nonce retries.
+
+The issuer runs in four configurations in turn, its profiles:
+
+| Profile | Case | Expected |
+|---|---|---|
+| base | pre-authorized code, SD-JWT VC, jwt proof, offer by value; then a notification | issued, verified |
+| base | the same pre-authorized code redeemed again | refused, `invalid_grant` |
+| base | a wrong `tx_code` | refused, `invalid_grant` |
+| base | pre-authorized code with `tx_code`, mdoc, offer by reference, after the wrong `tx_code` | issued, verified: the wrong one didn't spend the code |
+| base | pre-authorized code granting `credential_identifiers`, both formats, requested by identifier | issued, verified |
+| base | pre-authorized code, the wallet asking for `authorization_details` in the Token Request | known deviation, finding 2: refused as `invalid_authorization_details`; the code then redeems without them |
+| base | authorization code, wallet-initiated, SD-JWT VC; then a notification | issued, verified |
+| base | authorization code from an offer with `issuer_state`, by reference, both formats on one token | issued, verified |
+| base | authorization code by `authorization_details`, both formats, by `credential_identifier`; then a `credential_deleted` notification | issued, verified |
+| base | batch issuance, three jwt proofs | three credentials, one per key |
+| base | attestation proof: a key attestation of two keys, SD-JWT VC; of one, mdoc | one credential per attested key |
+| base | Credential Request and Response encryption (ECDH-ES, A128GCM/A256GCM, DEF), both formats | issued, verified, both bodies `application/jwt` |
+| base | signed Credential Issuer Metadata required, trusted by the issuer's CA | issued, verified |
+| base | signed metadata, the wallet trusting an unrelated CA | the wallet refuses the metadata |
+| base | a Wallet Attestation under an untrusted attester CA, at the Token Endpoint and at PAR | refused with 401 |
+| base | an attestation proof whose key attestation an untrusted key signed | refused, `invalid_proof` |
+| base | the End-User denies consent | `access_denied` |
+| base | an SD-JWT VC checked against an unrelated CA; an mdoc against an unrelated IACA | the wallet side refuses each |
+| key-attestation | jwt proof with a key attestation of two keys, SD-JWT VC, authorization code; of one, mdoc, pre-authorized code | one credential per attested key |
+| key-attestation | a jwt proof whose key attestation an untrusted key signed | refused, `invalid_proof` |
+| deferred | SD-JWT VC, polled at once | deferred, then issued with a `notification_id` |
+| deferred | mdoc batch, polled after the interval the issuer asked for | deferred, then issued |
+| deferred | with Request and Response encryption | deferred, then issued, encrypted |
+| deferred | a `transaction_id` polled again once issued | refused, `invalid_transaction_id` |
+| dpop-nonces | authorization code, SD-JWT VC; pre-authorized code, mdoc | PAR, the Token and the Credential Endpoints each challenge with `use_dpop_nonce`, and the wallet retries |
+
+`base` is the issuer as the OIDF plan runs it, plus `offers` (the
+pre-authorized code grant, Credential Offers, and a loopback-only
+endpoint minting offers for the driver) and `authorization_details`
+(PAR taking openid_credential `authorization_details`, the consent
+minting a `credential_identifier` for each). `key-attestation` also
+has the jwt proof type require a key attestation
+(`key_attestation.jwt_proof_requires_key_attestation`, HAIP 1.0
+§4.5.1's "jwt proof type using key_attestation"): the library adds a
+key attestation to a jwt proof only when the issuer requires one.
+`deferred` defers every request, and `dpop-nonces` has the
+Authorization Server and the Credential Issuer each require their own
+DPoP nonce.
+
+Every key and certificate is throwaway, made per run by
+[`scripts/setup-issuer`](scripts/setup-issuer): the issuer's TLS
+certificate under its own CA, its SD-JWT VC signer under an issuer CA,
+its mdoc Document Signer under an IACA, its request decryption key, the
+Wallet Provider's attester CA and key, a key attestation key, and the
+unrelated CAs and keys of the controls.
+
+### Findings
+
+1. **The library refuses Credential Issuer Metadata whose
+   `credential_request_encryption.jwks` keys have no `use`.**
+   OpenID4VCI 1.0 §12.2.4 requires only a `kid` on each key: "jwks:
+   REQUIRED. A JSON Web Key Set, as defined in [RFC7591], that contains
+   one or more public keys, to be used by the Wallet as an input to a
+   key agreement for encryption of the Credential Request. Each JWK in
+   the set MUST have a kid (Key ID) parameter that uniquely identifies
+   the key." §10 makes `alg` the other required member and `use` a
+   hint: "any may be selected based on the information about each key,
+   such as the kty (Key Type), use (Public Key Use), alg (Algorithm),
+   and other JWK parameters. The alg parameter MUST be present." (`use`
+   is OPTIONAL in RFC 7517 §4.2.) The library's
+   `SupportedRequestEncryptionParameters` (`CredentialIssuerMetadataResolver.kt`)
+   requires `it.keyUse == KeyUse.ENCRYPTION` of every key
+   (`CredentialRequestEncryptionKeysMustHaveEncryptionUsage`), and the
+   issuer is then unusable, whether the wallet encrypts or not.
+   OID4VCgo's `issuer` now publishes `"use": "enc"` on these keys, as
+   the spec's own example does, so the run proceeds.
+2. **The library URL-encodes `authorization_details` in the Token
+   Request twice.** OpenID4VCI 1.0 §6.1.1: "The Wallet can use
+   authorization_details in the Token Request to request a specific
+   Credential Configuration in both the Authorization Code Flow and the
+   Pre-Authorized Code Flow. The value of the authorization_details
+   parameter is defined in Section 5.1.1", a JSON array (RFC 9396 §2),
+   in an `application/x-www-form-urlencoded` body (the section's example:
+   `authorization_details=%5B%7B%22type%22...`). The library's
+   `TokenEndpointClient.authorizationDetailsFormParam` returns
+   `toFormParamString()` (`internal/http/AuthorizationDetailsOps.kt`),
+   which already applies `URLEncoder.encode` to the JSON, and hands it
+   to ktor's `submitForm`, which form-encodes it again: the issuer
+   receives `%5B%7B...`, not JSON, and refuses it as
+   `invalid_authorization_details`. Every `AccessTokenOption.Limited`
+   Token Request, in either flow, is affected. The run notes it
+   (`known`) without failing, and says so once a release fixes it. The
+   refusal doesn't spend the pre-authorized code: OID4VCgo checks
+   `authorization_details` before consuming it.
+3. **The library doesn't read an error response that isn't a 400.**
+   RFC 6749 §5.2 lets the Token Endpoint answer `invalid_client` with a
+   401 ("The authorization server MAY return an HTTP 401 (Unauthorized)
+   status code"), and RFC 9126 §2.3 gives PAR the same error format.
+   `TokenEndpointClient` and `AuthorizationEndpointClient` parse the
+   error object only for a 400; any other status becomes
+   `AccessTokenRequestFailed("Token request failed with 401 Unauthorized", "N/A")`,
+   for PAR as well, so the wallet can't tell an untrusted attestation
+   from any other failure. The request is refused either way; the
+   controls read the 401 from the exchange itself.
+
+The run found nothing to fix in OID4VCgo's issuer beyond the `use` of
+finding 1.
+
+### What isn't covered
+
+- Refreshing the access token: FAPIgo's Authorization Server issues a
+  refresh token only when the grant includes `offline_access`, as
+  OpenID Connect does, and the library requests only the scopes of the
+  configurations it asks for.
+- A Wallet Attestation challenge (attestation-based client auth's
+  challenge endpoint or `OAuth-Client-Attestation-Challenge`): the
+  issuer issues none.
+- `authorization_details` in the Token Request, beyond the refusal:
+  finding 2.
+- Status lists in issued credentials: `cmd/conformance-issuer` issues
+  none.
+- Key attestations trusted by `x5c` or a trust chain: the issuer trusts
+  one configured key. Several key-attested proofs in one request: the
+  library sends one (ETSI TS 119 472-3).
+- RSA request or response encryption: the issuer supports ECDH-ES only.
+- Credential reuse policies and registration certificates (ETSI TS
+  119 472-3, the ARF): not part of OpenID4VCI or HAIP, and the issuer
+  publishes neither.
+- A newer library than the pinned one: unlike the verifier's image, the
+  library is pinned with its dependencies locked and checksum-verified,
+  so the weekly run doesn't try `latest`.
+
+Run it locally (Go, a JDK 17 or later, curl and jq; the driver's
+dependencies come from Maven Central):
+
+```sh
+interop/eudi/run-issuer.sh
+PROFILES="base deferred" interop/eudi/run-issuer.sh
+```
+
+`PORT` and `OFFERS_PORT` (18446 and 18447) move the issuer's
+listeners, and `WORK` keeps the run's files, its keys among them. The
+driver's stack traces and the library's logging go to
+`driver-<profile>.log`, the issuer's to `issuer-<profile>.log`.
+
+### Moving the library's pin
+
+The library's version is in [`issuance/gradle/libs.versions.toml`](issuance/gradle/libs.versions.toml),
+every resolved dependency locked in `gradle.lockfile`, and each one's
+checksum in `gradle/verification-metadata.xml`. To move it, read the
+release's changes, change the version, then, in `issuance/`, with an
+empty Gradle cache so that Gradle fetches, and records, every artifact
+and POM a clean runner does:
+
+```sh
+GRADLE_USER_HOME="$(mktemp -d)" ./gradlew --write-verification-metadata sha256 --write-locks resolveAndLockAll installDist
+```
+
+and review the new checksums: Gradle records what Maven Central serves.

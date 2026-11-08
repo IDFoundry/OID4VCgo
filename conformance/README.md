@@ -83,6 +83,15 @@ release against the pinned image, and weekly against EUDI's `latest`
 image. See [`interop/eudi/README.md`](../interop/eudi/README.md) for
 the cases, what the verifier doesn't check, and moving the pin.
 
+The same workflow has the EUDI wallet library,
+[eudi-lib-jvm-openid4vci-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vci-kt),
+obtain credentials from `cmd/conformance-issuer`: both formats, by the
+pre-authorized code and the authorization code flows, with every proof
+type, batches, encryption, signed metadata, deferral, notifications
+and DPoP nonces, each credential verified on the wallet side, and
+controls refused. Its cases and the library's deviations from the
+specifications are in the same README.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`

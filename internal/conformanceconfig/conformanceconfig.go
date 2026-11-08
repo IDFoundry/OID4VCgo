@@ -32,6 +32,13 @@ type KeyAttestationConfig struct {
 	// (see issuer.AttestationVerifier's own doc comment: "entirely this
 	// issuer's own trust policy").
 	TrustedJWK json.RawMessage `json:"trusted_jwk"`
+
+	// JWTProofRequiresKeyAttestation makes every advertised
+	// CredentialConfiguration's "jwt" proof type require a Key
+	// Attestation in its key_attestation header too (OID4VCI 1.0
+	// §12.2.4's key_attestations_required; HAIP 1.0 §4.5.1's "jwt proof
+	// type using key_attestation"). Off, "jwt" requires none.
+	JWTProofRequiresKeyAttestation bool `json:"jwt_proof_requires_key_attestation,omitempty"`
 }
 
 // MdocConfig is the mso_mdoc-format analog of a Credential Issuer's own
