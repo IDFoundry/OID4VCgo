@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.74.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.73.0...v0.74.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** OID4VCgo requires FAPIgo v0.72.0, and the sqlstore tests and passport-vdc fapigo/sqlstore v0.8.0. Replace asDB.Grants().Batching() with asDB.BatchingGrants(), asDB.Revocation().Batching() with asDB.BatchingRevocation(), and a ResourceServer's Revocation.Batching() with its BatchingRevocation field. A wrapper embedding server.JWTAccessTokens, server.NoBackchannelNotifications or resource.NoRevocationUntilExpiry must follow FAPIgo's UPGRADING.md.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.72.0 and fapigo/sqlstore v0.8.0 ([86deaa9](https://github.com/IDFoundry/OID4VCgo/commit/86deaa9208e0aea4e0b32e2d214cd4b5c4ab2b40))
+
 ## [0.73.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.72.1...v0.73.0) (2026-11-07)
 
 
