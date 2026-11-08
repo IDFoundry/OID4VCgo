@@ -614,9 +614,12 @@ the issuer's v0.11.2 source:
    the fixed-length `r || s` (RFC 9053 §2.1), over the protected header
    and the claims concatenated, where COSE_Sign1 signs its
    `Sig_structure` (RFC 9052 §4.4); and with no `exp`, which ISO/IEC
-   18013-5 §12.3.6.3 has an mdoc's list carry. An mdoc PID's status is
-   therefore refused (`ecdsafixed: signature has length 71, want 64`),
-   and the run's mdoc cases expect that; revocation is shown with the
+   18013-5 §12.3.6.3 has an mdoc's list carry. Some of its tokens
+   aren't even well-formed CBOR: they carry bytes after the COSE_Sign1
+   (seen in CI: `cbor: 2 bytes of extraneous data`), so they fail
+   before the signature is reached. An mdoc PID's status is therefore
+   refused (`ecdsafixed: signature has length 71, want 64`, or the CBOR
+   error), and the run's mdoc cases expect either, printing which; revocation is shown with the
    SD-JWT VC, whose JWT form verifies. Its JWT tokens carry neither
    `exp` nor `ttl`, which the status list draft recommends; the wallet
    accepts one while it's fresh.
