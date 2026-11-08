@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -30,7 +31,7 @@ const preAuthorizedCodeGrantType = "urn:ietf:params:oauth:grant-type:pre-authori
 // credentialOfferPath is the Credential Offer Endpoint (§4.1.3) under
 // the Credential Issuer's identifier: a by-reference offer's
 // credential_offer_uri is this plus the offer's reference.
-const credentialOfferPath = "/credential-offer"
+const credentialOfferPath = "/credential-offer" //nolint:gosec // G101 false positive: an endpoint path, not a credential
 
 // offerLifetime bounds both an offer's pre-authorized code and how long
 // a by-reference offer stays fetchable.
@@ -109,18 +110,9 @@ func preAuthorizedTokenHandler(srv *server.Server, iss *issuer.Issuer) func(http
 			writeOAuthJSONError(w, err)
 			return
 		}
-		attested, err := srv.AuthenticateAttestedClient(ctx, req.AttestedClientAuthentication())
+		attested, binding, err := verifyPreAuthorizedClient(ctx, srv, req)
 		if err != nil {
 			writeOAuthJSONError(w, err)
-			return
-		}
-		binding, err := srv.VerifyTokenRequestBinding(ctx, attested.Client, req)
-		if err != nil {
-			writeOAuthJSONError(w, err)
-			return
-		}
-		if binding.SenderConstrain != storage.SenderConstrainDPoP {
-			writeRawOAuthError(w, http.StatusBadRequest, server.ErrorInvalidRequest, "this grant issues DPoP-bound tokens only")
 			return
 		}
 		details, err := issuer.ParseAuthorizationDetails(params["authorization_details"])
@@ -148,6 +140,24 @@ func preAuthorizedTokenHandler(srv *server.Server, iss *issuer.Issuer) func(http
 		}
 		result.WriteJSON(w)
 	}
+}
+
+// verifyPreAuthorizedClient has the Authorization Server authenticate
+// the Token Request's client by its Wallet Attestation and verify its
+// DPoP proof, which must bind the token.
+func verifyPreAuthorizedClient(ctx context.Context, srv *server.Server, req server.TokenEndpointRequest) (server.AttestedClient, server.TokenBinding, error) {
+	attested, err := srv.AuthenticateAttestedClient(ctx, req.AttestedClientAuthentication())
+	if err != nil {
+		return server.AttestedClient{}, server.TokenBinding{}, err
+	}
+	binding, err := srv.VerifyTokenRequestBinding(ctx, attested.Client, req)
+	if err != nil {
+		return server.AttestedClient{}, server.TokenBinding{}, err
+	}
+	if binding.SenderConstrain != storage.SenderConstrainDPoP {
+		return server.AttestedClient{}, server.TokenBinding{}, server.NewError(server.ErrorInvalidRequest, http.StatusBadRequest, "this grant issues DPoP-bound tokens only")
+	}
+	return attested, binding, nil
 }
 
 // preAuthorizedGrant is a redeemed pre-authorized code's grant: what the

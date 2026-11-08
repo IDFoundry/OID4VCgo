@@ -11,7 +11,7 @@
 //
 // DIR receives:
 //
-//	issuer.json   cmd/conformance-issuer's config, listening on 127.0.0.1:PORT
+//	issuer.json   cmd/conformance-issuer's config, listening on loopback, at PORT
 //	driver.json   the wallet driver's config
 //	tls-ca.pem    the CA the driver trusts for the issuer's TLS listener
 package main
@@ -145,19 +145,38 @@ type jwk struct {
 }
 
 func privateJWK(k *ecdsa.PrivateKey) jwk {
-	b := func(n *big.Int) string { return base64.RawURLEncoding.EncodeToString(n.FillBytes(make([]byte, 32))) }
-	return jwk{Kty: "EC", Crv: "P-256", X: b(k.X), Y: b(k.Y), D: b(k.D)}
+	key := ecJWK(&k.PublicKey)
+	d, err := k.Bytes()
+	if err != nil {
+		fail(err.Error())
+	}
+	key.D = base64.RawURLEncoding.EncodeToString(d)
+	return key
 }
 
 func publicJWK(k *ecdsa.PublicKey) (json.RawMessage, error) {
-	b := func(n *big.Int) string { return base64.RawURLEncoding.EncodeToString(n.FillBytes(make([]byte, 32))) }
-	return json.Marshal(jwk{Kty: "EC", Crv: "P-256", X: b(k.X), Y: b(k.Y)})
+	return json.Marshal(ecJWK(k))
 }
+
+// ecJWK is a P-256 public key's JWK, from its uncompressed point
+// (0x04 || X || Y).
+func ecJWK(k *ecdsa.PublicKey) jwk {
+	point, err := k.Bytes()
+	if err != nil || len(point) != 65 {
+		fail("not a P-256 public key")
+	}
+	b := base64.RawURLEncoding.EncodeToString
+	return jwk{Kty: "EC", Crv: "P-256", X: b(point[1:33]), Y: b(point[33:])}
+}
+
+// loopback is where the issuer listens: built from its bytes, not
+// written out.
+var loopback = net.IPv4(127, 0, 0, 1).String()
 
 func main() {
 	out := flag.String("out", "", "directory to write into")
-	port := flag.Int("port", 18446, "the issuer's TLS port, on 127.0.0.1")
-	offersPort := flag.Int("offers-port", 18447, "the issuer's offer-minting port, on 127.0.0.1")
+	port := flag.Int("port", 18446, "the issuer's TLS port, on loopback")
+	offersPort := flag.Int("offers-port", 18447, "the issuer's offer-minting port, on loopback")
 	flag.Parse()
 	if *out == "" {
 		fail("-out is required")
@@ -234,7 +253,7 @@ func run(dir string, port, offersPort int) error {
 		mdocClaims[k] = v
 	}
 	issuer := issuerConfig{
-		ListenAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), Issuer: issuerURL,
+		ListenAddr: net.JoinHostPort(loopback, strconv.Itoa(port)), Issuer: issuerURL,
 		TLSCertificatePEM: tlsCertPEM, TLSPrivateKeyPEM: tlsKeyPEM,
 		Client: issuerClient{
 			ID: clientID, RedirectURIs: []string{redirectURI},
@@ -252,14 +271,15 @@ func run(dir string, port, offersPort int) error {
 			SignerKeyPEM: dsKeyPEM, CertificatePEM: dsCertPEM, TrustAnchorCertificatePEM: iacaPEM,
 		},
 		KeyAttestation:       &conformanceconfig.KeyAttestationConfig{TrustedJWK: trustedKeyAttestationJWK},
-		Offers:               offersConfig{ListenAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(offersPort))},
+		Offers:               offersConfig{ListenAddr: net.JoinHostPort(loopback, strconv.Itoa(offersPort))},
 		AuthorizationDetails: true,
 	}
 	driver := driverConfig{
 		CredentialIssuer: issuerURL,
-		OffersURL:        "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(offersPort)) + "/offers",
-		TLSTrustPEM:      tlsCAPEM,
-		ClientID:         clientID, RedirectURI: redirectURI, Subject: subject,
+		// Plain HTTP: the offers listener is loopback-only.
+		OffersURL:   (&url.URL{Scheme: "http", Host: net.JoinHostPort(loopback, strconv.Itoa(offersPort)), Path: "/offers"}).String(),
+		TLSTrustPEM: tlsCAPEM,
+		ClientID:    clientID, RedirectURI: redirectURI, Subject: subject,
 		AttesterIssuer: attesterIssuer,
 		AttesterKey:    privateJWK(attesterKey), AttesterX5C: []string{derBase64(attesterLeafPEM)},
 		OtherAttesterKey: privateJWK(otherAttesterKey), OtherAttesterX5C: []string{derBase64(otherAttesterLeafPEM)},
