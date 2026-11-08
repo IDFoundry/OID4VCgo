@@ -26,7 +26,7 @@ standing in for the same-device launch and the browser:
 | A query for a credential the wallet doesn't hold | the verifier receives `access_denied` |
 | The wallet trusts an unrelated CA for the verifier | the wallet refuses |
 | A revoked SD-JWT VC (its status list entry invalid) | the verifier refuses it |
-| An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata | the verifier refuses it |
+| An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata, before the verifier has the metadata cached | the verifier refuses it |
 | A revoked mdoc | the verifier refuses it |
 
 Each accepted case also completes the same-device return: the wallet
@@ -52,10 +52,18 @@ The verifier is run as strictly as it can be configured:
 The run also checks the verifier fetched each status list and the Type
 Metadata, so a run in which it silently skipped a check fails.
 
-One thing the verifier doesn't check, whatever its configuration: a
-Status List Token's signature. v0.12.0 passes statium a signature check
-that always succeeds (`StatusListTokenValidator`), so the run can show
-that it reads the list, but not that it would refuse a forged one.
+What v0.12.0 doesn't check, whatever its configuration:
+
+- A Status List Token's signature: it passes statium a signature check
+  that always succeeds (`StatusListTokenValidator`), so the run shows
+  that it reads the list, but not that it would refuse a forged one.
+- `vct#integrity`, once it has resolved the Type Metadata: it caches the
+  resolved metadata by `vct` alone (`VerifierContext`, the
+  `ResolveTypeMetadata` it registers), and checks the integrity only on
+  a cache miss. So the mismatched-integrity control runs first, on a
+  cold cache, and the run presents the same credential again once the
+  cache is warm: that is accepted, and the run notes it without failing,
+  and says so if a later image refuses it.
 
 Every key, certificate and document is throwaway, made per run by
 [`scripts/setup`](scripts/setup):

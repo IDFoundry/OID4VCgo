@@ -202,6 +202,24 @@ present() {  # $1 label, $2 dcql, $3 profile, $4 issuer chain file, $5 request_u
   else bad "the verifier accepted the vp_token ($(head -c 300 "result-$name.json"))"; events; fi
 }
 
+# refused runs one presentation the verifier must refuse, and shows why.
+refused() {  # $1 label, $2 dcql, $3 issuer chain file
+  local name="$1" dcql="$2" chain="$3"
+  if init_transaction "$dcql" haip "$chain" get; then
+    authorize "wallet-$name.txt"
+    result "result-$name.json"
+    if jq -e '.vp_token' "result-$name.json" >/dev/null 2>&1; then bad "the verifier accepted it"
+    else ok "the verifier refused it"; events | grep -i 'failed' || true; fi
+  else bad "transaction initialized"; fi
+}
+
+# This control runs first, while the verifier has no Type Metadata
+# cached: it checks vct#integrity only when it resolves it (see below).
+echo "== control: an SD-JWT VC whose vct#integrity doesn't match its Type Metadata"
+jq '.vct_integrity = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="' wallet-sdjwt.json > wallet-sdjwt-integrity.json
+start_wallet wallet-sdjwt-integrity.json verifier-ca.pem
+refused sdjwt-integrity "$SDJWT_QUERY" issuer-ca.pem
+
 start_wallet wallet-sdjwt.json verifier-ca.pem
 present sdjwt-haip "$SDJWT_QUERY" haip issuer-ca.pem get
 present sdjwt-openid4vp "$SDJWT_QUERY" openid4vp issuer-ca.pem get
@@ -243,25 +261,23 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   else ok "the wallet refused: $(head -c 200 untrusted-verifier.txt | tr -s '\n' ' ')"; fi
 else bad "transaction initialized"; fi
 
-# refused runs one presentation the verifier must refuse, and shows why.
-refused() {  # $1 label, $2 dcql, $3 issuer chain file
-  local name="$1" dcql="$2" chain="$3"
-  if init_transaction "$dcql" haip "$chain" get; then
-    authorize "wallet-$name.txt"
-    result "result-$name.json"
-    if jq -e '.vp_token' "result-$name.json" >/dev/null 2>&1; then bad "the verifier accepted it"
-    else ok "the verifier refused it"; events | grep -i 'failed' || true; fi
-  else bad "transaction initialized"; fi
-}
-
 echo "== control: a revoked SD-JWT VC (status list index 1)"
 start_wallet wallet-sdjwt.json verifier-ca.pem 1
 refused sdjwt-revoked "$SDJWT_QUERY" issuer-ca.pem
 
-echo "== control: an SD-JWT VC whose vct#integrity doesn't match its Type Metadata"
-jq '.vct_integrity = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="' wallet-sdjwt.json > wallet-sdjwt-integrity.json
+echo "== an SD-JWT VC whose vct#integrity doesn't match, once the verifier has the Type Metadata cached"
+# Not a control: v0.12.0 caches resolved Type Metadata by vct alone and
+# checks vct#integrity only on a miss, so it's expected to accept this.
 start_wallet wallet-sdjwt-integrity.json verifier-ca.pem
-refused sdjwt-integrity "$SDJWT_QUERY" issuer-ca.pem
+if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+  authorize wallet-sdjwt-integrity-cached.txt
+  result result-sdjwt-integrity-cached.json
+  if jq -e '.vp_token' result-sdjwt-integrity-cached.json >/dev/null 2>&1; then
+    echo "  note  accepted, as expected of v0.12.0 (see README.md)"
+  else
+    echo "  note  refused: the verifier now checks vct#integrity on a cache hit; make this a control"
+  fi
+else bad "transaction initialized"; fi
 
 echo "== control: a revoked mdoc (status list index 1)"
 start_wallet wallet-mdoc.json verifier-ca.pem 1
