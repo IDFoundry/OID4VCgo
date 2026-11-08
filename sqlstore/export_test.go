@@ -21,6 +21,13 @@ func SetSweepBatch(n int) (restore func()) {
 	return func() { sweepBatch = old }
 }
 
+// PostgresMigrationLocks are the locks Migrate takes on the current
+// schema, in order; PostgresLegacyMigrationLockExclusive is the one an
+// earlier release's Migrate took.
+var PostgresMigrationLocks = []string{postgresLegacyMigrationLock, postgresMigrationLock}
+
+const PostgresLegacyMigrationLockExclusive = "SELECT pg_advisory_xact_lock(8028057987251922799)"
+
 // PostgresSweepLock is the statement taking Sweep's lock on the
 // current schema.
 const PostgresSweepLock = postgresSweepLock

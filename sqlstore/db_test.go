@@ -215,6 +215,108 @@ func TestSweepStepsAside(t *testing.T) {
 	})
 }
 
+// TestMigrateLocksTheSchema: a Migrate waits for another of the same
+// schema, not for one of another schema, and for an earlier release's,
+// which held one lock for the whole database.
+func TestMigrateLocksTheSchema(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		if e.dialect != sqlstore.Postgres {
+			t.Skip("Migrate's locks are Postgres's")
+		}
+		ctx := context.Background()
+		// A migrated schema: Migrate again takes the locks, then finds
+		// every migration applied, quickly.
+		fresh := func() (*sqlstore.DB, func() *sql.DB) {
+			open := e.location()
+			d, err := sqlstore.New(open(), e.dialect, sqlstore.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.Migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			return d, open
+		}
+		// holding takes locks in a transaction of its own, open until
+		// release ends it; waits reports whether a Migrate queues
+		// behind it, from pg_locks, or else runs to the end.
+		var holder int
+		holding := func(open func() *sql.DB, locks ...string) (release func()) {
+			tx, err := open().BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&holder); err != nil {
+				t.Fatal(err)
+			}
+			for _, lock := range locks {
+				if _, err := tx.ExecContext(ctx, lock); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return func() { _ = tx.Rollback() }
+		}
+		observer := e.location()()
+		waits := func(d *sqlstore.DB) bool {
+			t.Helper()
+			running, cancel := context.WithCancel(ctx)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- d.Migrate(running) }()
+			for {
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("Migrate = %v", err)
+					}
+					return false
+				case <-time.After(10 * time.Millisecond):
+				}
+				var queued bool
+				if err := observer.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks w
+					JOIN pg_locks h USING (locktype, database, classid, objid, objsubid)
+					WHERE w.locktype = 'advisory' AND NOT w.granted AND h.granted AND h.pid = $1)`, holder).Scan(&queued); err != nil {
+					t.Fatal(err)
+				}
+				if queued {
+					cancel()
+					<-done
+					return true
+				}
+			}
+		}
+
+		d, open := fresh()
+		elsewhere, _ := fresh()
+		later, _ := fresh()
+		release := holding(open, sqlstore.PostgresMigrationLocks...) // another Migrate of the schema
+		if !waits(d) {
+			t.Error("Migrate didn't wait for another Migrate of its schema")
+		}
+		if waits(elsewhere) {
+			t.Error("Migrate waited for a Migrate of another schema")
+		}
+		var free bool
+		if err := observer.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock(8028057987251922799)").Scan(&free); err != nil || free {
+			t.Errorf("an earlier release's lock, during a Migrate = %v, %v; want held off", free, err)
+		}
+		release()
+		if waits(d) {
+			t.Error("Migrate waited once the other had ended")
+		}
+
+		// An earlier release's Migrate, of another schema.
+		release = holding(open, sqlstore.PostgresLegacyMigrationLockExclusive)
+		if !waits(later) {
+			t.Error("Migrate didn't wait for an earlier release's Migrate")
+		}
+		release()
+		if waits(later) {
+			t.Error("Migrate waited once the earlier release's had ended")
+		}
+	})
+}
+
 func TestSweep(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, e *env) {
 		ctx := context.Background()
