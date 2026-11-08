@@ -3,6 +3,7 @@ package mdoc
 import (
 	"crypto/x509"
 	"fmt"
+	"net/url"
 	"time"
 )
 
@@ -126,10 +127,40 @@ func (r *IdentifierListRef) validate() error {
 // per status (bits = 1). Neither Issue, which sees only this reference,
 // nor statuslist enforces it, and a list with another bits value is
 // still read correctly.
+//
+// Decoding refuses a status_list with no idx or no uri, both of which
+// §12.3.6.2 requires: read as idx 0, a reference without one would
+// report the status of whichever credential holds entry 0. It refuses
+// a uri that isn't an https URL too, which no status check could fetch,
+// so a verifier that reads the reference itself learns of it as well.
 type StatusListRef struct {
 	Idx         uint64 `cbor:"idx"`
 	URI         string `cbor:"uri"`
 	Certificate []byte `cbor:"certificate,omitempty"`
+}
+
+// UnmarshalCBOR decodes a status_list element, refusing one without
+// its required idx, or without an https uri.
+func (r *StatusListRef) UnmarshalCBOR(data []byte) error {
+	var wire struct {
+		Idx         *uint64 `cbor:"idx"`
+		URI         *string `cbor:"uri"`
+		Certificate []byte  `cbor:"certificate,omitempty"`
+	}
+	if err := decMode.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Idx == nil {
+		return fmt.Errorf("mdoc: the MSO's status_list has no idx")
+	}
+	if wire.URI == nil || *wire.URI == "" {
+		return fmt.Errorf("mdoc: the MSO's status_list has no uri")
+	}
+	if u, err := url.Parse(*wire.URI); err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("mdoc: the MSO's status_list uri %q isn't an https URL", *wire.URI)
+	}
+	*r = StatusListRef{Idx: *wire.Idx, URI: *wire.URI, Certificate: wire.Certificate}
+	return nil
 }
 
 // DigestIDs maps a DigestID (§12.3.4: an unsigned integer smaller than
