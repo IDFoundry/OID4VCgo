@@ -112,6 +112,18 @@ type Config struct {
 	MdocDocType   string         `json:"mdoc_doc_type,omitempty"`
 	MdocNamespace string         `json:"mdoc_namespace,omitempty"`
 	MdocClaims    map[string]any `json:"mdoc_claims,omitempty"`
+
+	// StatusListURI/StatusListIdx, when both set, give the fixture
+	// credential, in either format, a Token Status List reference:
+	// the SD-JWT VC's "status" claim, or the mdoc MSO's
+	// status.status_list. Whoever runs this binary serves the list.
+	StatusListURI string  `json:"status_list_uri,omitempty"`
+	StatusListIdx *uint64 `json:"status_list_idx,omitempty"`
+
+	// VCTIntegrity, when set, is the fixture SD-JWT VC's
+	// "vct#integrity" claim: the integrity of the Type Metadata its
+	// vct resolves to. Only used for the SD-JWT VC fixture.
+	VCTIntegrity string `json:"vct_integrity,omitempty"`
 }
 
 // isMdoc reports whether c is configured for the "mso_mdoc" fixture
@@ -134,6 +146,9 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.HolderPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
+	}
+	if (cfg.StatusListURI == "") != (cfg.StatusListIdx == nil) {
+		return Config{}, fmt.Errorf("config: status_list_uri and status_list_idx must be set together")
 	}
 	if cfg.isMdoc() {
 		if err := cfg.checkMdoc(); err != nil {

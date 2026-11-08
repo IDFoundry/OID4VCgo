@@ -46,6 +46,55 @@ func TestIssueFixtureCredential_SetsExp(t *testing.T) {
 	}
 }
 
+// TestIssueFixtureCredential_StatusAndIntegrity checks the optional
+// status_list_uri/status_list_idx and vct_integrity settings reach the
+// issued SD-JWT VC as its plaintext "status" and "vct#integrity"
+// claims.
+func TestIssueFixtureCredential_StatusAndIntegrity(t *testing.T) {
+	cfg := baseTestConfig(t)
+	idx := uint64(7)
+	cfg.StatusListURI, cfg.StatusListIdx = "https://status.example.com/1", &idx
+	cfg.VCTIntegrity = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	// Issue refuses a self-signed issuer certificate.
+	issuerKey, _, issuerCertPEM, _, err := conformancecert.GenerateSignerAndCert("test-issuer", "test-issuer-ca")
+	if err != nil {
+		t.Fatalf("GenerateSignerAndCert: %v", err)
+	}
+	cfg.CredentialIssuerCertificatePEM = issuerCertPEM
+	holderKey, err := cfg.holderPrivateKey()
+	if err != nil {
+		t.Fatalf("holderPrivateKey: %v", err)
+	}
+
+	held, err := issueFixtureCredential(cfg, issuerKey, holderKey)
+	if err != nil {
+		t.Fatalf("issueFixtureCredential: %v", err)
+	}
+	issuerJWT, _, _ := strings.Cut(held.Credential, "~")
+	_, rawPayload, err := jose.DecodeUnverified(issuerJWT)
+	if err != nil {
+		t.Fatalf("DecodeUnverified: %v", err)
+	}
+	var payload struct {
+		VCTIntegrity string `json:"vct#integrity"`
+		Status       struct {
+			StatusList struct {
+				Idx uint64 `json:"idx"`
+				URI string `json:"uri"`
+			} `json:"status_list"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.Status.StatusList.Idx != idx || payload.Status.StatusList.URI != cfg.StatusListURI {
+		t.Errorf("status = %+v, want idx %d at %s", payload.Status.StatusList, idx, cfg.StatusListURI)
+	}
+	if payload.VCTIntegrity != cfg.VCTIntegrity {
+		t.Errorf("vct#integrity = %q, want %q", payload.VCTIntegrity, cfg.VCTIntegrity)
+	}
+}
+
 // mdocFixtureIssuerConfig generates a throwaway ISO/IEC 18013-5 IACA +
 // Document Signer identity and returns the Config fields
 // issueFixtureMdocCredential needs, mirroring
@@ -127,6 +176,43 @@ func TestIssueFixtureMdocCredential_AllMandatoryClaimTypes(t *testing.T) {
 		if !got[name] {
 			t.Errorf("issued mdoc is missing data element %q", name)
 		}
+	}
+}
+
+// TestIssueFixtureMdocCredential_Status checks the optional
+// status_list_uri/status_list_idx settings reach the issued mdoc's MSO
+// as its status.status_list.
+func TestIssueFixtureMdocCredential_Status(t *testing.T) {
+	cfg := mdocFixtureIssuerConfig(t)
+	cfg.MdocClaims = map[string]any{"family_name": "Dupont"}
+	idx := uint64(9)
+	cfg.StatusListURI, cfg.StatusListIdx = "https://status.example.com/2", &idx
+	deviceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate device key: %v", err)
+	}
+
+	held, err := issueFixtureMdocCredential(cfg, deviceKey)
+	if err != nil {
+		t.Fatalf("issueFixtureMdocCredential: %v", err)
+	}
+	wire, err := base64.RawURLEncoding.DecodeString(held.Credential)
+	if err != nil {
+		t.Fatalf("decode held.Credential: %v", err)
+	}
+	issuerSigned, err := mdoc.UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatalf("UnmarshalIssuerSigned: %v", err)
+	}
+	mso, err := mdoc.IssuerAuthMSO(issuerSigned)
+	if err != nil {
+		t.Fatalf("IssuerAuthMSO: %v", err)
+	}
+	if mso.Status == nil || mso.Status.StatusList == nil {
+		t.Fatal("issued mdoc's MSO has no status_list")
+	}
+	if got := mso.Status.StatusList; got.Idx != idx || got.URI != cfg.StatusListURI {
+		t.Errorf("status_list = %+v, want idx %d at %s", got, idx, cfg.StatusListURI)
 	}
 }
 

@@ -95,6 +95,28 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_StatusListSetTogether(t *testing.T) {
+	idx := uint64(3)
+	cases := map[string]func(*Config){
+		"uri without idx": func(c *Config) { c.StatusListURI = "https://status.example.com/1" },
+		"idx without uri": func(c *Config) { c.StatusListIdx = &idx },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := baseTestConfig(t)
+			mutate(&cfg)
+			if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+				t.Fatal("loadConfig = nil error, want error")
+			}
+		})
+	}
+	cfg := baseTestConfig(t)
+	cfg.StatusListURI, cfg.StatusListIdx = "https://status.example.com/1", &idx
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err != nil {
+		t.Fatalf("loadConfig with both set: %v", err)
+	}
+}
+
 func TestLoadConfig_MdocCRL(t *testing.T) {
 	iacaCert, iacaKey, _, _, err := conformancecert.GenerateMdocIACA("test-mdoc-iaca", "FR", "https://example.com/contact")
 	if err != nil {
