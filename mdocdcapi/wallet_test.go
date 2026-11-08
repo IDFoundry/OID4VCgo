@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -422,5 +424,266 @@ func TestParseRequestRefusesOverLimits(t *testing.T) {
 	}
 	if _, err := ParseRequest(repeat("readerAuthAll", MaxReaderSignatures), testOrigin); err != nil {
 		t.Errorf("%d reader signatures: %v", MaxReaderSignatures, err)
+	}
+}
+
+// editDocRequests applies edit to the DocRequests of dr, a decoded
+// DeviceRequest.
+func editDocRequests(t *testing.T, dr map[string]cbor.RawMessage, edit func([]map[string]cbor.RawMessage)) {
+	t.Helper()
+	var docs []map[string]cbor.RawMessage
+	if err := cbor.Unmarshal(dr["docRequests"], &docs); err != nil {
+		t.Fatal(err)
+	}
+	edit(docs)
+	dr["docRequests"] = mustCBOR(t, docs)
+}
+
+// tamperSignature flips a bit of sig's last byte, which, sig being a
+// COSE_Sign1, is its signature's.
+func tamperSignature(sig cbor.RawMessage) cbor.RawMessage {
+	out := slices.Clone(sig)
+	out[len(out)-1] ^= 1
+	return out
+}
+
+// A reader signature whose certificate chains to a trusted root, but
+// whose signature doesn't verify, recognizes no reader: as a
+// ReaderAuthAll, and as a first-edition ReaderAuth, each the request's
+// only signature.
+func TestVerifyReaderRefusesTamperedSignature(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	var good RequestData
+	if err := json.Unmarshal(h.data, &good); err != nil {
+		t.Fatal(err)
+	}
+	with := func(edit func(dr map[string]cbor.RawMessage)) []byte {
+		d := good
+		d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, edit)
+		return marshalData(t, d)
+	}
+	onlyAll := func(tamper bool) []byte {
+		return with(func(dr map[string]cbor.RawMessage) {
+			editDocRequests(t, dr, func(docs []map[string]cbor.RawMessage) { delete(docs[0], "readerAuth") })
+			if tamper {
+				var all []cbor.RawMessage
+				if err := cbor.Unmarshal(dr["readerAuthAll"], &all); err != nil {
+					t.Fatal(err)
+				}
+				all[0] = tamperSignature(all[0])
+				dr["readerAuthAll"] = mustCBOR(t, all)
+			}
+		})
+	}
+	onlyDocument := func(tamper bool) []byte {
+		return with(func(dr map[string]cbor.RawMessage) {
+			delete(dr, "readerAuthAll")
+			dr["version"] = mustCBOR(t, "1.0")
+			if tamper {
+				editDocRequests(t, dr, func(docs []map[string]cbor.RawMessage) {
+					docs[0]["readerAuth"] = tamperSignature(docs[0]["readerAuth"])
+				})
+			}
+		})
+	}
+	for name, data := range map[string]struct{ good, tampered []byte }{
+		"ReaderAuthAll": {onlyAll(false), onlyAll(true)},
+		"ReaderAuth":    {onlyDocument(false), onlyDocument(true)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in, err := ParseRequest(data.good, testOrigin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := in.VerifyReader(h.roots, time.Time{}); err != nil {
+				t.Fatalf("untampered: %v", err)
+			}
+			if in, err = ParseRequest(data.tampered, testOrigin); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := in.VerifyReader(h.roots, time.Time{}); !errors.Is(err, ErrUntrustedReader) {
+				t.Errorf("VerifyReader = %v, want ErrUntrustedReader", err)
+			}
+		})
+	}
+}
+
+// A first-edition request is signed by one reader on every DocRequest
+// (VerifyReaderTrust): one whose DocRequests two trusted readers
+// signed, or one with a DocRequest unsigned, recognizes no reader.
+func TestVerifyReaderPerDocumentRefusesMixedSigners(t *testing.T) {
+	ca, caKey := testcert.CA(t, "mdocdcapi test reader CA")
+	certA, keyA := testcert.Leaf(t, "mdocdcapi test reader A", ca, caKey)
+	certB, keyB := testcert.Leaf(t, "mdocdcapi test reader B", ca, caKey)
+	readerB := ReaderKey{Signer: keyB, Chain: []*x509.Certificate{certB, ca}}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	req, err := BuildRequest(RequestParams{Origin: testOrigin, Documents: []DocumentRequest{
+		{DocType: testmdoc.DocType, Elements: bothNames()},
+		{DocType: "org.iso.23220.photoid.1", Elements: map[string]map[string]bool{"org.iso.23220.1": {"family_name": false}}},
+	}, Readers: []ReaderKey{{Signer: keyA, Chain: []*x509.Certificate{certA, ca}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := sessionTranscript(req.Data.EncryptionInfo, testOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perDocument := func(edit func(docs []map[string]cbor.RawMessage)) Incoming {
+		d := req.Data
+		d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, func(dr map[string]cbor.RawMessage) {
+			delete(dr, "readerAuthAll")
+			dr["version"] = mustCBOR(t, "1.0")
+			editDocRequests(t, dr, edit)
+		})
+		in, err := ParseRequest(marshalData(t, d), testOrigin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in
+	}
+
+	if reader, err := perDocument(func([]map[string]cbor.RawMessage) {}).VerifyReader(roots, time.Time{}); err != nil || !reader.Equal(certA) {
+		t.Fatalf("both DocRequests signed by one reader: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		edit func(docs []map[string]cbor.RawMessage)
+		want string
+	}{
+		"another reader signs the second": {func(docs []map[string]cbor.RawMessage) {
+			sig, err := signReaderAuth(readerB, readerAuthentication(transcript, docs[1]["itemsRequest"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			docs[1]["readerAuth"] = sig
+		}, "different readers"},
+		"the second unsigned": {func(docs []map[string]cbor.RawMessage) { delete(docs[1], "readerAuth") }, "a document request isn't signed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := perDocument(tc.edit).VerifyReader(roots, time.Time{})
+			if !errors.Is(err, ErrUntrustedReader) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("VerifyReader = %v, want ErrUntrustedReader: %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// A DeviceRequest that isn't CBOR, an itemsRequest that isn't
+// #6.24(bstr .cbor ItemsRequest), and an EncryptionInfo without a
+// nonce are refused.
+func TestParseRequestRefusesMalformedStructures(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	var good RequestData
+	if err := json.Unmarshal(h.data, &good); err != nil {
+		t.Fatal(err)
+	}
+	withItemsRequest := func(itemsRequest any) []byte {
+		d := good
+		d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, func(dr map[string]cbor.RawMessage) {
+			editDocRequests(t, dr, func(docs []map[string]cbor.RawMessage) { docs[0]["itemsRequest"] = mustCBOR(t, itemsRequest) })
+		})
+		return marshalData(t, d)
+	}
+	items := itemsRequest{DocType: testmdoc.DocType, NameSpaces: bothNames()}
+	inner := mustCBOR(t, items)
+	params := decodeEncryptionInfo(t, good.EncryptionInfo)
+	noNonce := good
+	noNonce.EncryptionInfo = base64.RawURLEncoding.EncodeToString(mustCBOR(t, []any{"dcapi", map[string]any{"recipientPublicKey": params.RecipientPublicKey}}))
+	notCBOR := good
+	notCBOR.DeviceRequest = base64.RawURLEncoding.EncodeToString([]byte{0xa3, 0x67, 'v', 'e', 'r'}) // a map cut short
+
+	if _, err := ParseRequest(withItemsRequest(cbor.Tag{Number: tag24, Content: inner}), testOrigin); err != nil {
+		t.Fatalf("itemsRequest re-encoded: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		data []byte
+		want string
+	}{
+		"deviceRequest not CBOR":         {marshalData(t, notCBOR), "decode DeviceRequest"},
+		"itemsRequest under another tag": {withItemsRequest(cbor.Tag{Number: 100, Content: inner}), "itemsRequest must be #6.24"},
+		"itemsRequest #6.24 of a map":    {withItemsRequest(cbor.Tag{Number: tag24, Content: items}), "itemsRequest must be #6.24"},
+		"itemsRequest untagged":          {withItemsRequest(inner), "itemsRequest must be #6.24"},
+		"no nonce":                       {marshalData(t, noNonce), "nonce must be at least 16 bytes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseRequest(tc.data, testOrigin); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ParseRequest = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// nested is v inside n arrays.
+func nested(n int, v any) any {
+	for range n {
+		v = []any{v}
+	}
+	return v
+}
+
+// withDuplicateKey is m, a CBOR map of fewer than 23 entries, encoded
+// with its entry key a second time, at the end.
+func withDuplicateKey(t testing.TB, m map[string]cbor.RawMessage, key string) []byte {
+	t.Helper()
+	if len(m) >= 23 {
+		t.Fatalf("a map of %d entries", len(m))
+	}
+	out := []byte{0xa0 | byte(len(m)+1)}
+	for _, k := range append(slices.Sorted(maps.Keys(m)), key) {
+		out = append(out, mustCBOR(t, k)...)
+		out = append(out, m[k]...)
+	}
+	return out
+}
+
+// The DeviceRequest and EncryptionInfo decoder refuses nesting past
+// its MaxNestedLevels (16), and a map with a key twice, even where
+// both values are the same.
+func TestParseRequestRefusesCBORPastLimits(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	var good RequestData
+	if err := json.Unmarshal(h.data, &good); err != nil {
+		t.Fatal(err)
+	}
+	// The DeviceRequest is the first level: a deviceRequestInfo of n-1
+	// arrays makes n.
+	levels := func(n int) []byte {
+		d := good
+		d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, func(dr map[string]cbor.RawMessage) {
+			dr["deviceRequestInfo"] = mustCBOR(t, nested(n-1, 0))
+		})
+		return marshalData(t, d)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(good.DeviceRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dr map[string]cbor.RawMessage
+	if err := cbor.Unmarshal(raw, &dr); err != nil {
+		t.Fatal(err)
+	}
+	versionTwice := good
+	versionTwice.DeviceRequest = base64.RawURLEncoding.EncodeToString(withDuplicateKey(t, dr, "version"))
+	params := decodeEncryptionInfo(t, good.EncryptionInfo)
+	nonceTwice := good
+	nonceTwice.EncryptionInfo = base64.RawURLEncoding.EncodeToString(slices.Concat([]byte{0x82}, mustCBOR(t, "dcapi"),
+		withDuplicateKey(t, map[string]cbor.RawMessage{"nonce": mustCBOR(t, params.Nonce), "recipientPublicKey": mustCBOR(t, params.RecipientPublicKey)}, "nonce")))
+
+	if _, err := ParseRequest(levels(16), testOrigin); err != nil {
+		t.Fatalf("16 levels: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		data []byte
+		want string
+	}{
+		"17 levels":                   {levels(17), "max nested level"},
+		"DeviceRequest version twice": {marshalData(t, versionTwice), "duplicate map key"},
+		"EncryptionInfo nonce twice":  {marshalData(t, nonceTwice), "duplicate map key"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseRequest(tc.data, testOrigin); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ParseRequest = %v, want an error containing %q", err, tc.want)
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package mdocdcapi
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,6 +48,40 @@ func TestVerifyResponseRefusesLooseEncryptedResponse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := verify(t, h, response, nil); err == nil || !strings.Contains(err.Error(), "decode EncryptedResponse") {
 				t.Errorf("verify = %v, want the EncryptedResponse refused", err)
+			}
+		})
+	}
+}
+
+// The EncryptedResponse decoder refuses, before decryption, a member
+// twice, even with the same value, and nesting past its
+// MaxNestedLevels (4). No EncryptedResponse nests that deep, so the
+// nesting is refused by its own error, not as the wrong structure.
+func TestVerifyResponseRefusesCBORPastLimits(t *testing.T) {
+	h := newHarness(t, bothNames())
+	raw, err := base64.RawURLEncoding.DecodeString(respond(t, h.request.Data, testOrigin, h.f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		_        struct{} `cbor:",toarray"`
+		Protocol string
+		Data     map[string]cbor.RawMessage
+	}
+	if err := cbor.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		response []byte
+		want     string
+	}{
+		"enc twice":        {slices.Concat([]byte{0x82}, mustCBOR(t, "dcapi"), withDuplicateKey(t, wire.Data, "enc")), "duplicate map key"},
+		"cipherText twice": {slices.Concat([]byte{0x82}, mustCBOR(t, "dcapi"), withDuplicateKey(t, wire.Data, "cipherText")), "duplicate map key"},
+		"5 levels":         {mustCBOR(t, []any{nested(4, "dcapi"), wire.Data}), "max nested level"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := verify(t, h, base64.RawURLEncoding.EncodeToString(tc.response), nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("verify = %v, want an error containing %q", err, tc.want)
 			}
 		})
 	}

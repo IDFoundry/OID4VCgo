@@ -146,6 +146,35 @@ func TestFetcher_RedirectsAndContentType(t *testing.T) {
 	}
 }
 
+// A response in the other token format than the one asked for is
+// refused by its media type, before its body is read as a token: a JWT
+// where a CWT was asked for, and a CWT where a JWT was.
+func TestFetcher_RefusesTheOtherFormat(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Served whatever the Accept header asks for.
+		switch r.URL.Path {
+		case "/jwt":
+			w.Header().Set("Content-Type", TokenMediaType)
+		case "/cwt":
+			w.Header().Set("Content-Type", CWTTokenMediaType)
+		}
+		_, _ = w.Write([]byte("token"))
+	}))
+	defer srv.Close()
+	f := Fetcher{HTTP: srv.Client(), AllowLoopback: true}
+	for _, tc := range []struct{ path, asked, other string }{
+		{"/jwt", TokenMediaType, CWTTokenMediaType},
+		{"/cwt", CWTTokenMediaType, TokenMediaType},
+	} {
+		if _, err := f.Fetch(context.Background(), srv.URL+tc.path, tc.asked); err != nil {
+			t.Errorf("%s asking for %s: %v", tc.path, tc.asked, err)
+		}
+		if _, err := f.Fetch(context.Background(), srv.URL+tc.path, tc.other); err == nil || !strings.Contains(err.Error(), "content type") {
+			t.Errorf("%s asking for %s: %v, want the content type refused", tc.path, tc.other, err)
+		}
+	}
+}
+
 // TestFetcher_AddressPolicy: without AllowLoopback a loopback status
 // list is refused when dialled — whichever client is passed — and the
 // policy classifies the other address ranges.
