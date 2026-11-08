@@ -8,6 +8,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // jwtProofTyp is the required JOSE "typ" header of a jwt-type key
@@ -96,7 +97,7 @@ func (w *Wallet) GenerateProofWithAttestedKeyIndex(signer crypto.Signer, credent
 	var claims struct {
 		AttestedKeys []json.RawMessage `json:"attested_keys"`
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if err := strictjson.Unmarshal(payload, &claims); err != nil {
 		return "", fmt.Errorf("wallet: generate proof: key attestation: %w", err)
 	}
 	if index < 0 || index >= len(claims.AttestedKeys) {

@@ -56,7 +56,10 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		IssuerMetadataRevocation: certrevocation.NoCheck{},
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
-		Provider: env.provider, HTTP: env.http,
+		// A plain *http.Transport, not the recorder: CheckStatus's
+		// fetches apply an address policy that needs one, and this
+		// engine's result records no exchanges.
+		Provider: env.provider, HTTP: env.statusHTTP,
 	})
 	if err != nil {
 		res.fail("setup", err)
