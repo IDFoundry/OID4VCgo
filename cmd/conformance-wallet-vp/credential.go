@@ -12,6 +12,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -55,12 +56,17 @@ func issueFixtureCredential(cfg Config, issuerKey, holderKey *ecdsa.PrivateKey) 
 	}
 	exp := sdjwtvc.RoundedExp(time.Now(), fixtureCredentialLifetime)
 
-	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{
-		VCT:        cfg.VCT,
-		CNF:        map[string]any{"jwk": holderJWK},
-		Exp:        &exp,
-		Additional: additional,
-	}, sdjwtvc.IssueOptions{IssuerCertificate: issuerCert})
+	claims := sdjwtvc.Claims{
+		VCT:          cfg.VCT,
+		VCTIntegrity: cfg.VCTIntegrity,
+		CNF:          map[string]any{"jwk": holderJWK},
+		Exp:          &exp,
+		Additional:   additional,
+	}
+	if cfg.StatusListIdx != nil {
+		claims.Status = statuslist.StatusListRef{Idx: *cfg.StatusListIdx, URI: cfg.StatusListURI}.Claim()
+	}
+	sdjwt, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, claims, sdjwtvc.IssueOptions{IssuerCertificate: issuerCert})
 	if err != nil {
 		return wallet.HeldCredential{}, fmt.Errorf("issue fixture sd-jwt vc: %w", err)
 	}
@@ -104,14 +110,18 @@ func issueFixtureMdocCredential(cfg Config, deviceKey *ecdsa.PrivateKey) (wallet
 	}
 	now := time.Now()
 
-	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{
+	claims := mdoc.Claims{
 		DocType:    cfg.MdocDocType,
 		NameSpaces: nameSpaces,
 		DeviceKey:  &deviceKey.PublicKey,
 		Signed:     now,
 		ValidFrom:  now,
 		ValidUntil: now.Add(fixtureCredentialLifetime),
-	}, mdoc.IssueOptions{X5Chain: [][]byte{issuerCert.Raw}})
+	}
+	if cfg.StatusListIdx != nil {
+		claims.Status = &mdoc.StatusListRef{Idx: *cfg.StatusListIdx, URI: cfg.StatusListURI}
+	}
+	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, claims, mdoc.IssueOptions{X5Chain: [][]byte{issuerCert.Raw}})
 	if err != nil {
 		return wallet.HeldCredential{}, fmt.Errorf("issue fixture mdoc: %w", err)
 	}

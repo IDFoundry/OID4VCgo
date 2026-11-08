@@ -1,7 +1,9 @@
 # Interop: OID4VCgo's conformance-wallet-vp against the EUDI reference
 # Verifier Endpoint (eu-digital-identity-wallet/eudi-srv-verifier-endpoint),
 # run from its published image by interop/eudi/run-verifier.sh: SD-JWT
-# VC and mdoc presentations must be accepted, and controls refused. The
+# VC and mdoc presentations must be accepted, with the verifier checking
+# their status lists and the SD-JWT VC's Type Metadata, and controls
+# (revoked credentials among them) refused. The
 # image is pinned by digest and runs here, on a disposable runner with a
 # read-only token and no secrets. Pull requests, the daily run and each
 # release test the pinned image; the weekly run tests EUDI's newest
