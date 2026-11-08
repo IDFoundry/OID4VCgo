@@ -36,6 +36,36 @@ type session struct {
 	done          bool
 	result        []verifier.VerifiedCredential
 	failErr       error
+
+	// fetch records how the Wallet fetched the Request Object, on the
+	// fetch that built it: an interop run checks it against the
+	// request_uri_method it was told (§5.10).
+	fetch requestFetch
+
+	// responseCode is the response_code handleResponse appended to the
+	// redirect_uri it returned (§8.2): handleRedeem releases the
+	// result once, to its bearer. redeemed is set once it has.
+	responseCode string
+	redeemed     bool
+
+	// dcapi marks a Digital Credentials API request
+	// (handleDCAPIRequest): answered at /dcapi/response/{id}, never at
+	// the response_uri. origin is the origin it was made for, one of
+	// expectedOrigins, the request's expected_origins.
+	dcapi           bool
+	origin          string
+	expectedOrigins []string
+}
+
+// requestFetch is one fetch of a session's request_uri: its HTTP
+// method, Accept and Content-Type headers, and the wallet_nonce and
+// wallet_metadata a POST carried (§5.10).
+type requestFetch struct {
+	Method         string `json:"method"`
+	Accept         string `json:"accept,omitempty"`
+	ContentType    string `json:"content_type,omitempty"`
+	WalletNonce    string `json:"wallet_nonce,omitempty"`
+	WalletMetadata string `json:"wallet_metadata,omitempty"`
 }
 
 // ensureBuilt lazily builds and signs this session's own Authorization
@@ -50,14 +80,15 @@ type session struct {
 // regardless of a later wallet_nonce, since the nonce/response-
 // encryption key embedded in it must stay stable for handleResponse's
 // own later matching/decryption.
-func (sess *session) ensureBuilt(v *verifier.Verifier, walletNonce string) (string, error) {
+func (sess *session) ensureBuilt(v *verifier.Verifier, fetch requestFetch) (string, error) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if sess.built {
 		return sess.requestObject, nil
 	}
+	sess.fetch = fetch
 	result, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{
-		Query: sess.query, WalletNonce: walletNonce,
+		Query: sess.query, WalletNonce: fetch.WalletNonce,
 	})
 	if err != nil {
 		return "", err
@@ -125,7 +156,7 @@ func (s *sessionStore) pendingDecryptionKeys() []*session {
 	pending := make([]*session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
 		sess.mu.Lock()
-		stillPending := !sess.done && sess.built
+		stillPending := !sess.done && sess.built && !sess.dcapi
 		sess.mu.Unlock()
 		if stillPending {
 			pending = append(pending, sess)

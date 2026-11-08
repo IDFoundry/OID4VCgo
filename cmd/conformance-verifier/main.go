@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -36,19 +37,46 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	srv, err := newServer(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("verifier client_id: %s", srv.v.ClientID())
+	mux := srv.routes()
+
+	tlsCert, err := cfg.tlsCertificate()
+	if err != nil {
+		log.Fatalf("tls certificate: %v", err)
+	}
+	httpServer := &http.Server{
+		Addr:              cfg.ListenAddr,
+		Handler:           mux,
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{tlsCert}},
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Printf("listening on %s", cfg.ListenAddr)
+	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+}
+
+// newServer builds the Verifier and the server cfg describes.
+func newServer(cfg Config) (*server, error) {
 	clientCert, clientKey, err := cfg.clientCertificateAndKey()
 	if err != nil {
-		log.Fatalf("client certificate: %v", err)
+		return nil, fmt.Errorf("client certificate: %w", err)
 	}
-	issuerKeys, err := newStaticIssuerKeyResolver(cfg.CredentialIssuerJWK)
+	issuerKeys, err := cfg.sdJWTVCIssuerKeys()
 	if err != nil {
-		log.Fatalf("credential issuer jwk: %v", err)
+		return nil, fmt.Errorf("credential issuer: %w", err)
+	}
+	status, err := cfg.statusPolicy()
+	if err != nil {
+		return nil, fmt.Errorf("status: %w", err)
 	}
 	var mdocIssuerKeys verifier.MdocIssuerKeyResolver
 	if cfg.CredentialFormat == "mso_mdoc" {
-		mdocTrustAnchorPool, poolErr := cfg.mdocTrustAnchorPool()
-		if poolErr != nil {
-			log.Fatalf("mdoc trust anchor: %v", poolErr)
+		mdocTrustAnchorPool, err := cfg.mdocTrustAnchorPool()
+		if err != nil {
+			return nil, fmt.Errorf("mdoc trust anchor: %w", err)
 		}
 		// No revocation check: the OIDF suite generates its own IACA
 		// and document signer for each run, and publishes no CRL for
@@ -57,7 +85,7 @@ func main() {
 	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.BaseURL + "/response")
 	if err != nil {
-		log.Fatalf("response_uri: %v", err)
+		return nil, fmt.Errorf("response_uri: %w", err)
 	}
 
 	v, err := verifier.New(verifier.Config{
@@ -72,31 +100,9 @@ func main() {
 		Random: rand.Reader,
 	})
 	if err != nil {
-		log.Fatalf("verifier.New: %v", err)
+		return nil, fmt.Errorf("verifier.New: %w", err)
 	}
-	log.Printf("verifier client_id: %s", v.ClientID())
-
-	srv := &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys, mdocIssuerKeys: mdocIssuerKeys}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
-	mux.HandleFunc("GET /request/{id}", srv.handleRequestObject)
-	mux.HandleFunc("POST /request/{id}", srv.handleRequestObject)
-	mux.HandleFunc("POST /response", srv.handleResponse)
-	mux.HandleFunc("GET /result/{id}", srv.handleResult)
-
-	tlsCert, err := cfg.tlsCertificate()
-	if err != nil {
-		log.Fatalf("tls certificate: %v", err)
-	}
-	httpServer := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           mux,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{tlsCert}},
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	log.Printf("listening on %s", cfg.ListenAddr)
-	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+	return &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys, mdocIssuerKeys: mdocIssuerKeys, status: status}, nil
 }
 
 // vpFormatsSupported builds this Verifier's own "client_metadata" >
