@@ -7,12 +7,16 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
+	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
+	"github.com/idfoundry/oid4vcgo/internal/testverify"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -132,6 +136,65 @@ func TestRequireValidStatus(t *testing.T) {
 	}, verifier.AnyStatusListSigner)
 	if err := anySigner(ctx, "id", verifier.VerifyResponseResult{Credentials: []verifier.VerifiedCredential{unbound}}); err != nil {
 		t.Errorf("no issuer to bind to, with AnyStatusListSigner: %v", err)
+	}
+}
+
+// An mdoc whose MSO status_list (ISO/IEC 18013-5 §12.3.6.2) isn't
+// {idx: uint, uri: tstr} is refused by VerifyResponse, not read as some
+// other index or as no status; one whose uri isn't https decodes, but
+// its list is never fetched, so RequireValidStatus refuses it.
+func TestVerifyResponse_RefusesMalformedMdocStatusList(t *testing.T) {
+	ca, caKey := testcert.CA(t, "status CA")
+	leaf, leafKey := testcert.Leaf(t, "status signer", ca, caKey)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	// A list over plain http, which would otherwise check VALID.
+	var uri string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sl, err := statuslist.New(statuslist.Bits1, []uint8{0}, "")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		exp := time.Now().Add(time.Hour).Unix()
+		token, err := statuslist.IssueTokenCWTX5Chain(leafKey, cose.ES256, statuslist.TokenClaims{Sub: uri, Iat: time.Now().Unix(), Exp: &exp, StatusList: sl}, []*x509.Certificate{leaf})
+		if err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", statuslist.CWTTokenMediaType)
+		_, _ = w.Write(token)
+	}))
+	defer srv.Close()
+	uri = srv.URL + "/statuslists/1"
+	const httpsURI = "https://issuer.example/statuslists/1"
+
+	for name, status := range map[string]any{
+		"a negative idx":        map[string]any{"status_list": map[string]any{"idx": -1, "uri": httpsURI}},
+		"a text idx":            map[string]any{"status_list": map[string]any{"idx": "7", "uri": httpsURI}},
+		"status_list not a map": map[string]any{"status_list": httpsURI + "#7"},
+		"status_list an array":  map[string]any{"status_list": []any{7, httpsURI}},
+		"a uri that isn't text": map[string]any{"status_list": map[string]any{"idx": 7, "uri": []byte(httpsURI)}},
+		"status not a map":      []any{map[string]any{"idx": 7, "uri": httpsURI}},
+	} {
+		mf := newMdocVerifyFixture(t)
+		mf.f = testmdoc.WithMSOStatus(t, mf.f, status)
+		if _, err := mf.verify(t, mf.nonce); err == nil || !strings.Contains(err.Error(), "MobileSecurityObject.status") {
+			t.Errorf("%s: %v, want the MSO status refused", name, err)
+		}
+	}
+
+	mf := newMdocVerifyFixture(t)
+	mf.f = testmdoc.WithMSOStatus(t, mf.f, map[string]any{"status_list": map[string]any{"idx": 0, "uri": uri}})
+	result, err := mf.verify(t, mf.nonce)
+	vc := testverify.RequireOneCredential(t, result, err, "mdl")
+	if vc.MdocStatus == nil || vc.MdocStatus.StatusList == nil || vc.MdocStatus.StatusList.URI != uri {
+		t.Fatalf("MdocStatus = %+v, want status_list at %s", vc.MdocStatus, uri)
+	}
+	accept := verifier.RequireValidStatusFrom(statuslist.Checker{
+		Fetcher: statuslist.Fetcher{HTTP: srv.Client(), AllowLoopback: true}, Roots: roots,
+	}, verifier.AnyStatusListSigner)
+	if err := accept(context.Background(), "id", result); err == nil || !strings.Contains(err.Error(), "isn't an https URL") {
+		t.Errorf("an http status list uri: %v, want it refused as not https", err)
 	}
 }
 
