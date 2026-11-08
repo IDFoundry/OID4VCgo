@@ -1,0 +1,30 @@
+# eudi-srv-statuslist-py v0.9.0's app/requirements.txt, resolved in the
+# pinned python:3.14.6-alpine3.24 image to binary wheels only (pip
+# download --only-binary :all:), every dependency pinned by SHA-256.
+asn1crypto==1.5.1 --hash=sha256:db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67
+blinker==1.9.0 --hash=sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc
+cbor2==5.6.4 --hash=sha256:fe411c4bf464f5976605103ebcd0f60b893ac3e4c7c8d8bc8f4a0cb456e33c60
+certifi==2026.10.23 --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
+certvalidator==0.11.1 --hash=sha256:77520b269f516d4fb0902998d5bd0eb3727fe153b659aa1cb828dcf12ea6b8de
+cffi==2.1.1 --hash=sha256:5c58fe613dc5e5336357eff555824a314d8e43282600435c8d1cb6a7a2fedd13
+charset_normalizer==3.5.2 --hash=sha256:ddc7dacc8ece3a182e7f15cb862d1fd616b46d076cb1ae9dd232b2c38b655874
+click==8.5.1 --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37
+cryptography==41.0.7 --hash=sha256:49f0805fc0b2ac8d4882dd52f4a3b935b210935d500b6b805f321addc8177406
+cwt==2.3.2 --hash=sha256:63dfada5611d41f28d2fd5913940378db606457cccda88dae6990cb7bd4b7d6d
+flask==2.3.3 --hash=sha256:f69fcd559dc907ed196ab9df0e48471709175e696d6e698dd4dbe940f96ce66b
+Flask_API==3.1 --hash=sha256:08cb377412ff1b6bea47e8a5ffefc592a149f8686045038df6e116d12ab5d4e9
+Flask_Cors==5.0.0 --hash=sha256:b9e307d082a9261c100d8fb0ba909eec6a228ed1b60a8315fd85f783d61910bc
+flask_swagger_ui==4.11.1 --hash=sha256:c951928fe4592d3561b543e0e1ca32703f55d3474de86c894a9d27f795d96c83
+idna==3.20 --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
+itsdangerous==2.2.0 --hash=sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef
+jinja2==3.1.6 --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+markupsafe==3.0.4 --hash=sha256:0d9c47709875fdb321452056622e930c52afbc07a7d780762fbb8b4d91ce6fa4
+oscrypto==1.3.0 --hash=sha256:2b2f1d2d42ec152ca90ccb5682f3e051fb55986e1b170ebde472b133713e7085
+pycparser==3.12 --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e
+pyhpke==0.5.2 --hash=sha256:d8e7e5a97a8d6480bce28573f5be986eebaf03c0c0783d046f29effe5087e263
+PyJWT==2.8.0 --hash=sha256:59127c392cc44c2da5bb3192169a91f429924e17aff6534d70fdc02ab3e04320
+python_dotenv==1.0.1 --hash=sha256:f7b63ef50f1b690dddf550d03497b66d609393b40b564ed0d674909a68ebf16a
+requests==2.31.0 --hash=sha256:58cd2187c01e70e6e26505bca751777aa9f2ee0b7f4300988b709f44e013003f
+token_status_list==0.1.0a2.dev1 --hash=sha256:ecbd4bc44ad7e2c3fbb777607a6491d972daef9cf4a2e8bcceb7b43f732a9808
+urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+werkzeug==2.3.7 --hash=sha256:effc12dba7f3bd72e605ce49807bbe692bd729c3bb122a3b91747a6ae77df528
