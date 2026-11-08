@@ -159,6 +159,8 @@ cp "$STACK/eudi/postgresql/schema/V1.sql" "$STACK/schema/"
 # with the run's status list signer.
 tar -xzf "$STACK/status-list.tar.gz" -C "$STACK/status-list" --strip-components 1
 cp "$STACK/eudi/status-list/endpoints/get_status_list.py" "$STACK/status-list/"
+cp "$HERE/pid-issuer/status-list.Dockerfile" "$STACK/status-list/Dockerfile"
+cp "$HERE/pid-issuer/status-list-requirements.txt" "$STACK/status-list/requirements.txt"
 sed "s|service_url = \"https://localhost/\"|service_url = \"https://localhost:$PORT/\"|" \
   "$STACK/eudi/status-list/config/config_service.py" > "$STACK/config_service.py"
 grep -q "service_url = \"https://localhost:$PORT/\"" "$STACK/config_service.py" || { echo "config_service.py: no service_url to set" >&2; exit 2; }
@@ -195,7 +197,6 @@ KEYCLOAK_IMAGE=$KEYCLOAK_IMAGE
 POSTGRES_IMAGE=$POSTGRES_IMAGE
 HAPROXY_IMAGE=$HAPROXY_IMAGE
 PYTHON_IMAGE=$PYTHON_IMAGE
-STATUS_LIST_DOCKERFILE=$HERE/pid-issuer/status-list.Dockerfile
 KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD
 DB_PASSWORD=$DB_PASSWORD
 KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD
@@ -239,13 +240,14 @@ if [[ -n "${PID_STOP_AFTER_UP:-}" ]]; then
 fi
 
 fail=0
-ok() { echo "  ok    $1"; }
-bad() { echo "  FAIL  $1"; fail=1; }
-note() { echo "  note  $1"; }
+ok() { local what="$1"; echo "  ok    $what"; }
+bad() { local what="$1"; echo "  FAIL  $what"; fail=1; }
+note() { local what="$1"; echo "  note  $what"; }
 
 # check NAME DESCRIPTION JQ: ok if result-NAME.json satisfies JQ.
 check() {
-  if jq -e "$3" "result-$1.json" >/dev/null 2>&1; then ok "$2"; else bad "$2"; fi
+  local name="$1" what="$2" filter="$3"
+  if jq -e "$filter" "result-$name.json" >/dev/null 2>&1; then ok "$what"; else bad "$what"; fi
 }
 
 # wallet NAME ARGS...: runs the wallet, its result in result-NAME.json.
@@ -257,12 +259,13 @@ wallet() {
 }
 
 # why NAME: the step a run stopped at, and why.
-why() { jq -r '"\(.step // "-"): \(.error // "" | .[0:240])"' "result-$1.json"; }
+why() { local name="$1"; jq -r '"\(.step // "-"): \(.error // "" | .[0:240])"' "result-$name.json"; }
 
 # offer CONFIG: a Credential Offer from the issuer's own offer endpoint.
 offer() {
+  local config="$1"
   curl -sf --max-time 30 --cacert tls-ca.pem -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' \
-    -d "{\"credentialIds\":[\"$1\"]}" "$ISSUER/issuer/credentialsOffer/create" | jq -r '.credentialsOffer // empty'
+    -d "{\"credentialIds\":[\"$config\"]}" "$ISSUER/issuer/credentialsOffer/create" | jq -r '.credentialsOffer // empty'
 }
 
 # issued NAME COUNT STATUS: the checks every issuance must pass —

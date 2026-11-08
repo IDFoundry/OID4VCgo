@@ -185,7 +185,7 @@ func (s *issuance) oauthClient(ctx context.Context, asMeta wallet.AuthorizationS
 	if err != nil {
 		return nil, err
 	}
-	var attestation client.AttestationSource = client.StaticAttestation(walletAttestation)
+	attestation := client.StaticAttestation(walletAttestation)
 	if asMeta.ChallengeEndpoint != "" {
 		endpoint, err := fapi.ParseEndpointURL(asMeta.ChallengeEndpoint)
 		if err != nil {

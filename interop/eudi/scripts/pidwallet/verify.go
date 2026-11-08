@@ -43,34 +43,37 @@ func verifyAll(ctx context.Context, env *environment, conf oid4vci.CredentialCon
 			ok = false
 			continue
 		}
-		report.Verified = true
-		if verified.IssuerCertificate != nil {
-			report.Signer = verified.IssuerCertificate.Subject.CommonName
-		}
-		if iss, _ := verified.Claims["iss"].(string); iss != "" {
-			report.Issuer = iss
-		}
-		report.Claims = claimNames(verified.Claims)
-		if !verified.ValidUntil.IsZero() {
-			report.ValidUntil = verified.ValidUntil.UTC().Format(time.RFC3339)
-		}
-		if ref := verified.StatusList; ref != nil {
-			report.StatusURI, report.StatusIdx = ref.URI, ref.Idx
-			status, err := checkStatus(ctx, env, conf, ic.Credential, verified)
-			if err != nil {
-				report.StatusError = err.Error()
-			} else {
-				report.Status = status.String()
-			}
-		}
-		if verified.StatusList == nil {
-			report.Status = "absent"
-		}
 		// The script decides whether the status is what the case
 		// expects.
-		res.Credentials = append(res.Credentials, report)
+		res.Credentials = append(res.Credentials, verifiedReport(ctx, env, conf, ic.Credential, verified))
 	}
 	return ok
+}
+
+// verifiedReport is what the wallet found of a verified credential,
+// its status list entry checked.
+func verifiedReport(ctx context.Context, env *environment, conf oid4vci.CredentialConfigurationMetadata, credential string,
+	verified wallet.VerifiedIssuedCredential) credentialReport {
+	report := credentialReport{Format: conf.Format, Verified: true, Claims: claimNames(verified.Claims), Status: "absent"}
+	if verified.IssuerCertificate != nil {
+		report.Signer = verified.IssuerCertificate.Subject.CommonName
+	}
+	report.Issuer, _ = verified.Claims["iss"].(string)
+	if !verified.ValidUntil.IsZero() {
+		report.ValidUntil = verified.ValidUntil.UTC().Format(time.RFC3339)
+	}
+	ref := verified.StatusList
+	if ref == nil {
+		return report
+	}
+	report.StatusURI, report.StatusIdx, report.Status = ref.URI, ref.Idx, ""
+	status, err := checkStatus(ctx, env, conf, credential, verified)
+	if err != nil {
+		report.StatusError = err.Error()
+	} else {
+		report.Status = status.String()
+	}
+	return report
 }
 
 // verifyOne verifies credential against each of holders until one

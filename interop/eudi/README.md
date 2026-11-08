@@ -555,7 +555,11 @@ Provider's CA, Wallet Attestation and Key Attestation signers, and its
 status list. The stack's own keystore, certificates and passwords,
 which are in its public repository, aren't used. The fetched files
 (the realm, the status list service, the Keycloak extension) are pinned
-by SHA-256, and the images by digest. Only the stack's logs, with the
+by SHA-256, and the images by digest; the status list service's Python
+dependencies are binary wheels, each pinned by SHA-256 in
+[`pid-issuer/status-list-requirements.txt`](pid-issuer/status-list-requirements.txt)
+(regenerate it with `pip download --only-binary :all:` in the pinned
+Python image when its version moves). Only the stack's logs, with the
 run's passwords redacted, and the wallet's results are uploaded.
 
 The Wallet Provider is a stand-in: package `attestation` issues only

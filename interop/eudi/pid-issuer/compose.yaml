@@ -55,7 +55,9 @@ services:
   status-list:
     build:
       context: ${STACK:?}/status-list
-      dockerfile: ${STATUS_LIST_DOCKERFILE:?}
+      # status-list.Dockerfile, which the script copies in: compose
+      # builds only from a Dockerfile inside the context.
+      dockerfile: Dockerfile
       args:
         PYTHON_IMAGE: ${PYTHON_IMAGE:?}
     image: ${COMPOSE_PROJECT_NAME:?}-status-list

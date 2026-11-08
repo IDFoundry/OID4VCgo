@@ -67,6 +67,10 @@ const issuingCountry = "GR"
 // List Token.
 const statusListPath = "/statuslists/jwt"
 
+// walletAttestationEntry names the Wallet Attestation signer's files,
+// which also signs the Wallet Provider's status list.
+const walletAttestationEntry = "wallet-attestation"
+
 // tlsLifetime bounds the TLS certificates and the Wallet Provider's
 // Status List Token: a run takes minutes.
 const tlsLifetime = 48 * time.Hour
@@ -367,7 +371,7 @@ func walletProviderFiles(f files, statusListURI string) error {
 	provider := &url.URL{Scheme: "https", Host: "wallet-provider.oid4vcgo.example"}
 	keys := map[string]*ecdsa.PrivateKey{}
 	certs := map[string]*x509.Certificate{}
-	for _, name := range []string{"wallet-attestation", "key-attestation"} {
+	for _, name := range []string{walletAttestationEntry, "key-attestation"} {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return err
@@ -393,9 +397,9 @@ func walletProviderFiles(f files, statusListURI string) error {
 	now := time.Now()
 	exp := now.Add(tlsLifetime).Unix()
 	ttl := int64(300)
-	token, err := statuslist.IssueTokenX5C(keys["wallet-attestation"], oid4vci.ES256,
+	token, err := statuslist.IssueTokenX5C(keys[walletAttestationEntry], oid4vci.ES256,
 		statuslist.TokenClaims{Sub: statusListURI, Iat: now.Unix(), Exp: &exp, TTL: &ttl, StatusList: list},
-		[]*x509.Certificate{certs["wallet-attestation"]})
+		[]*x509.Certificate{certs[walletAttestationEntry]})
 	if err != nil {
 		return fmt.Errorf("status list token: %w", err)
 	}

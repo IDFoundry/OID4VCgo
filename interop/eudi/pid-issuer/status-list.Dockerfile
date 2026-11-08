@@ -3,14 +3,17 @@
 # digest and the source run-pid-issuer.sh fetched and checked by
 # SHA-256 into the build context: the release's app/, and the PID
 # Issuer's get_status_list.py, which serves each list by its Accept
-# header. Its requirements.txt pins every direct dependency's version.
+# header. Its dependencies are installed from
+# status-list-requirements.txt, binary wheels each pinned by SHA-256,
+# so no package's setup script runs. run-pid-issuer.sh copies this file
+# and that one into the build context.
 ARG PYTHON_IMAGE
 FROM ${PYTHON_IMAGE}
 WORKDIR /status-list
 COPY app/ app/
-COPY get_status_list.py /tmp/get_status_list.py
+COPY get_status_list.py requirements.txt /tmp/
 RUN cat /tmp/get_status_list.py >> app/status_list_endpoints.py \
-    && rm /tmp/get_status_list.py \
-    && pip install --no-cache-dir -r app/requirements.txt
+    && pip install --no-cache-dir --no-deps --only-binary :all: --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/get_status_list.py /tmp/requirements.txt
 EXPOSE 5000
 CMD ["flask", "--app", "app", "run", "--host=0.0.0.0"]
