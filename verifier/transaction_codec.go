@@ -94,7 +94,10 @@ type TransactionSealer interface {
 // one unreadable; to rotate it, open with both until those records
 // expire, with a TransactionSealer of your own or
 // github.com/idfoundry/fapigo/sqlstore's RotatingSealer, which seals
-// with the first sealer it's given and opens with any of them.
+// with the first sealer it's given and opens with any of them. Under a
+// rolling deploy, give every instance RotatingSealer(old, new) before
+// any gets RotatingSealer(new, old), so none is handed a transaction
+// sealed under a key it can't open.
 //
 // Each value it seals is the 12-byte random nonce followed by the
 // AES-GCM ciphertext and its 16-byte tag, sealed with the

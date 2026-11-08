@@ -30,11 +30,15 @@ each, not a deployment template" says what it does differently.
   `TransactionCodec` takes the same Sealer). Keep the key in a secret
   manager or KMS, never in the database. An AES-GCM key seals about
   2^32 records safely: rotate before then with fapigo/sqlstore's
-  `RotatingSealer` (the new key seals, every listed key opens). A
-  record sealed under an old key needs it until the record is written
-  again or deleted, and some are kept for long — a Wallet Provider's
-  registered instances never expire — so keep each retired key in the
-  `RotatingSealer` until no record needs it.
+  `RotatingSealer`, which seals with its first sealer and opens with
+  any. **Rotate in two phases**, so no replica reads a record sealed
+  under a key it doesn't hold: first deploy `RotatingSealer(old, new)`
+  everywhere (new opened, not yet used), then `RotatingSealer(new,
+  old)` (new used). A record sealed under the old key needs it until
+  the record is written again or deleted, and some are kept for long —
+  a Wallet Provider's registered instances, a wallet's credentials and
+  keys never expire — so keep the old key in the `RotatingSealer`
+  until no record needs it.
   sqlstore's doc ("Secrets at rest") has the details.
 - [ ] **Size the connection pool.** On every replica set
   `sqlDB.SetMaxOpenConns(n)` and `sqlDB.SetMaxIdleConns(n)` to the same
