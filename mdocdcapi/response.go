@@ -433,7 +433,7 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 		Protocol string
 		Data     encryptedResponseData
 	}
-	if err := decMode.Unmarshal(raw, &wire); err != nil {
+	if err := encryptedResponseDecMode.Unmarshal(raw, &wire); err != nil {
 		return nil, fmt.Errorf("mdocdcapi: decode EncryptedResponse: %w", err)
 	}
 	if wire.Protocol != "dcapi" {

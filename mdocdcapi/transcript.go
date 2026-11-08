@@ -41,6 +41,27 @@ var decMode = func() strictcbor.DecMode {
 	return strictcbor.Wrap(mode)
 }()
 
+// encryptedResponseDecMode decodes an EncryptedResponse as decMode
+// does, but refuses members Annex C.3 doesn't define and any tag: it
+// holds only a text string and two byte strings, so either means it
+// isn't one, and a tag decMode would drop could make another text
+// read as "dcapi".
+var encryptedResponseDecMode = func() strictcbor.DecMode {
+	mode, err := cbor.DecOptions{
+		DupMapKey:         cbor.DupMapKeyEnforcedAPF,
+		FieldNameMatching: cbor.FieldNameMatchingCaseSensitive,
+		MaxNestedLevels:   4,
+		MaxArrayElements:  16, // the library's least; toarray takes exactly two
+		MaxMapPairs:       16,
+		ExtraReturnErrors: cbor.ExtraDecErrorUnknownField,
+		TagsMd:            cbor.TagsForbidden,
+	}.DecMode()
+	if err != nil {
+		panic(fmt.Sprintf("mdocdcapi: build CBOR decoder: %v", err))
+	}
+	return strictcbor.Wrap(mode)
+}()
+
 // wrapTag24 is #6.24(bstr .cbor v).
 func wrapTag24(v any) ([]byte, error) {
 	inner, err := encMode.Marshal(v)
