@@ -109,9 +109,13 @@ func (d *DB) migrate(ctx context.Context, q querier, m migration) error {
 	statements := m.sqlite
 	if d.dialect == Postgres {
 		statements = m.postgres
-		// Serializes concurrent Migrates, before either creates a table.
-		if _, err := q.ExecContext(ctx, postgresMigrationLock); err != nil {
-			return err
+		// Serializes concurrent Migrates of the schema, before either
+		// creates a table, always taking the two locks in this order so
+		// none deadlocks.
+		for _, lock := range []string{postgresLegacyMigrationLock, postgresMigrationLock} {
+			if _, err := q.ExecContext(ctx, lock); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := q.ExecContext(ctx, d.sql.migrationsCreate); err != nil {

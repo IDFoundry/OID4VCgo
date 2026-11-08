@@ -88,11 +88,23 @@ var postgresQueries = queries{ //nolint:gosec // G101: field names such as keyGe
 	migrationVersions:        "SELECT version FROM oid4vc_schema_migrations",
 }
 
-// postgresMigrationLock serializes concurrent Migrates: a transaction
-// advisory lock, its key "oid4vcgo" as a big-endian int64. Advisory
-// locks are per database, so Migrates in different schemas of one
-// database wait for each other too.
-const postgresMigrationLock = "SELECT pg_advisory_xact_lock(8028057987251922799)"
+// postgresLegacyMigrationLock is the transaction advisory lock
+// earlier releases took, exclusively, to serialize Migrates in every
+// schema of the database: its key "oid4vcgo" as a big-endian int64.
+// Migrate now holds it shared, before postgresMigrationLock, so a
+// Migrate of an earlier release, during a rolling upgrade, still waits
+// for this one's and holds it off, while two of this release's never
+// wait for each other on it.
+const postgresLegacyMigrationLock = "SELECT pg_advisory_xact_lock_shared(8028057987251922799)"
+
+// postgresMigrationLock serializes concurrent Migrates of one schema:
+// a transaction advisory lock, its keys "migr" as a big-endian int32
+// and a hash of the schema's name. That schema is current_schema(),
+// where Migrate's unqualified CREATE TABLE IF NOT EXISTS creates the
+// tables. Advisory locks are per database, so the schema's name keeps
+// Migrates of different schemas of one database from waiting for each
+// other (but for the hash's collisions, which only make them wait).
+const postgresMigrationLock = "SELECT pg_advisory_xact_lock(1835624306, hashtext(COALESCE(current_schema(), '')))"
 
 // postgresSweepLock is Sweep's lock on the schema it sweeps: a
 // transaction advisory lock, tried rather than waited for, its keys
@@ -100,5 +112,6 @@ const postgresMigrationLock = "SELECT pg_advisory_xact_lock(8028057987251922799)
 // Advisory locks are per database, so the schema's name keeps
 // deployments in different schemas of one database from stopping each
 // other's sweeps; the two-key form keeps it apart from
-// postgresMigrationLock's one key, and from FAPIgo sqlstore's.
+// postgresLegacyMigrationLock's one key, from postgresMigrationLock's
+// first, and from FAPIgo sqlstore's.
 const postgresSweepLock = "SELECT pg_try_advisory_xact_lock(1937204581, hashtext(COALESCE(current_schema(), '')))"

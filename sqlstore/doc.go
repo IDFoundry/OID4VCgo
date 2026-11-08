@@ -162,7 +162,11 @@
 // The schema is versioned, its migrations embedded in the package.
 // Nothing migrates implicitly: Migrate applies the ones the database
 // lacks, each in a transaction, once between any number of processes
-// running it at once (a Postgres advisory lock; SQLite's write lock).
+// running it at once (a Postgres advisory lock on the schema; SQLite's
+// write lock). On Postgres, Migrates of different schemas of one
+// database don't wait for each other, but each waits for, and holds
+// off, an earlier release's Migrate of any schema, which locked the
+// whole database, so a rolling upgrade still migrates once.
 // Run it from a deployment step with a role that may create tables, or
 // at startup; CheckSchema, at startup, fails fast where the schema is
 // behind.
