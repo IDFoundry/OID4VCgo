@@ -6,9 +6,14 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // Config is this binary's own configuration — loaded from a single
@@ -50,7 +55,8 @@ type Config struct {
 	// AbstractCreateSdJwtCredential.createSdJwt in the suite's own
 	// source): this binary trusts exactly this key to verify a
 	// presented credential's Issuer signature, no dynamic trust
-	// resolution. REQUIRED.
+	// resolution. REQUIRED for "dc+sd-jwt", unless
+	// CredentialIssuerTrustAnchorsPEM is set instead.
 	CredentialIssuerJWK json.RawMessage `json:"credential_issuer_jwk"`
 
 	// CredentialFormat selects which DCQL Credential Format buildQuery
@@ -90,6 +96,42 @@ type Config struct {
 	// generating this config), never a per-run/per-candidate value.
 	// REQUIRED when CredentialFormat is "mso_mdoc"; ignored otherwise.
 	MdocTrustAnchorPEM string `json:"mdoc_trust_anchor_pem"`
+
+	// The fields below are for interop runs against other wallets
+	// (interop/eudi/run-wallet.sh), not the OIDF suite, whose
+	// configuration leaves them unset.
+
+	// CredentialIssuerTrustAnchorsPEM, when set, trusts a "dc+sd-jwt"
+	// Credential Issuer by its x5c chain to one of these CA
+	// certificates (verifier.X5CIssuerKeyResolver) instead of by
+	// CredentialIssuerJWK: exactly one of the two is REQUIRED for
+	// "dc+sd-jwt".
+	CredentialIssuerTrustAnchorsPEM string `json:"credential_issuer_trust_anchors_pem"`
+
+	// StatusListTrustAnchorsPEM, when set, turns on the Token Status
+	// List check (verifier.StatusPolicy): every presented credential
+	// must carry a status reference, its Status List Token must be
+	// signed by the credential's own issuer, chaining to one of these
+	// CA certificates, and its status must be valid. Unset, no status
+	// is checked: the OIDF suite's per-run issuer publishes no status
+	// list.
+	StatusListTrustAnchorsPEM string `json:"status_list_trust_anchors_pem"`
+
+	// StatusListTLSTrustAnchorsPEM, if set, are the CA certificates
+	// the status list fetch trusts for TLS, in place of the system
+	// roots.
+	StatusListTLSTrustAnchorsPEM string `json:"status_list_tls_trust_anchors_pem"`
+
+	// StatusListAllowLoopback lets the status list fetch reach a
+	// loopback address, as a local run's status lists are served on
+	// localhost.
+	StatusListAllowLoopback bool `json:"status_list_allow_loopback"`
+
+	// DCAPIOrigins, when set, enables the Digital Credentials API
+	// endpoints (POST /dcapi/request, POST /dcapi/response/{id}): each
+	// request is for one of these origins, and lists them all as its
+	// expected_origins.
+	DCAPIOrigins []string `json:"dc_api_origins"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -107,34 +149,109 @@ func loadConfig(path string) (Config, error) {
 	if cfg.BaseURL == "" {
 		return Config{}, fmt.Errorf("config: base_url is required")
 	}
-	if len(cfg.CredentialIssuerJWK) == 0 || string(cfg.CredentialIssuerJWK) == "null" {
-		return Config{}, fmt.Errorf("config: credential_issuer_jwk is required")
+	if err := cfg.checkFormat(); err != nil {
+		return Config{}, err
 	}
-	switch cfg.CredentialFormat {
-	case "", "dc+sd-jwt":
-		if cfg.VCT == "" {
-			return Config{}, fmt.Errorf("config: vct is required")
-		}
-		if len(cfg.Claims) == 0 {
-			return Config{}, fmt.Errorf("config: claims must be non-empty")
-		}
-	case "mso_mdoc":
-		if cfg.Doctype == "" {
-			return Config{}, fmt.Errorf("config: doctype is required")
-		}
-		if cfg.Namespace == "" {
-			return Config{}, fmt.Errorf("config: namespace is required")
-		}
-		if len(cfg.MdocClaims) == 0 {
-			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
-		}
-		if err := conformancecert.RequireNonEmpty("mdoc_trust_anchor_pem", cfg.MdocTrustAnchorPEM); err != nil {
-			return Config{}, err
-		}
-	default:
-		return Config{}, fmt.Errorf("config: unsupported credential_format %q", cfg.CredentialFormat)
+	if cfg.StatusListTrustAnchorsPEM == "" && (cfg.StatusListTLSTrustAnchorsPEM != "" || cfg.StatusListAllowLoopback) {
+		return Config{}, fmt.Errorf("config: status_list_tls_trust_anchors_pem and status_list_allow_loopback need status_list_trust_anchors_pem")
 	}
 	return cfg, nil
+}
+
+// checkFormat checks the settings CredentialFormat's credential needs.
+func (c Config) checkFormat() error {
+	switch c.CredentialFormat {
+	case "", "dc+sd-jwt":
+		if c.hasCredentialIssuerJWK() == (c.CredentialIssuerTrustAnchorsPEM != "") {
+			return fmt.Errorf("config: exactly one of credential_issuer_jwk and credential_issuer_trust_anchors_pem is required")
+		}
+		if c.VCT == "" {
+			return fmt.Errorf("config: vct is required")
+		}
+		if len(c.Claims) == 0 {
+			return fmt.Errorf("config: claims must be non-empty")
+		}
+	case "mso_mdoc":
+		if c.Doctype == "" {
+			return fmt.Errorf("config: doctype is required")
+		}
+		if c.Namespace == "" {
+			return fmt.Errorf("config: namespace is required")
+		}
+		if len(c.MdocClaims) == 0 {
+			return fmt.Errorf("config: mdoc_claims must be non-empty")
+		}
+		return conformancecert.RequireNonEmpty("mdoc_trust_anchor_pem", c.MdocTrustAnchorPEM)
+	default:
+		return fmt.Errorf("config: unsupported credential_format %q", c.CredentialFormat)
+	}
+	return nil
+}
+
+// hasCredentialIssuerJWK reports whether CredentialIssuerJWK is set.
+func (c Config) hasCredentialIssuerJWK() bool {
+	return len(c.CredentialIssuerJWK) != 0 && string(c.CredentialIssuerJWK) != "null"
+}
+
+// sdJWTVCIssuerKeys is the "dc+sd-jwt" Credential Issuer trust that
+// CredentialIssuerTrustAnchorsPEM or CredentialIssuerJWK configures:
+// nil when neither is set, as an "mso_mdoc" configuration may leave
+// them.
+func (c Config) sdJWTVCIssuerKeys() (verifier.SDJWTVCIssuerKeyResolver, error) {
+	if c.CredentialIssuerTrustAnchorsPEM != "" {
+		roots, err := certPool("credential_issuer_trust_anchors_pem", c.CredentialIssuerTrustAnchorsPEM)
+		if err != nil {
+			return nil, err
+		}
+		// No revocation check of the issuer's certificate: an interop
+		// run's throwaway CA publishes no CRL. The credential's own
+		// revocation is its status list's.
+		return verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, nil
+	}
+	if !c.hasCredentialIssuerJWK() {
+		return nil, nil
+	}
+	return newStaticIssuerKeyResolver(c.CredentialIssuerJWK)
+}
+
+// statusListFetchTimeout bounds one status list fetch.
+const statusListFetchTimeout = 30 * time.Second
+
+// statusPolicy is the Token Status List check StatusListTrustAnchorsPEM
+// turns on: nil when it's unset.
+func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
+	if c.StatusListTrustAnchorsPEM == "" {
+		return nil, nil
+	}
+	roots, err := certPool("status_list_trust_anchors_pem", c.StatusListTrustAnchorsPEM)
+	if err != nil {
+		return nil, err
+	}
+	fetcher := statuslist.Fetcher{AllowLoopback: c.StatusListAllowLoopback}
+	if c.StatusListTLSTrustAnchorsPEM != "" {
+		tlsRoots, err := certPool("status_list_tls_trust_anchors_pem", c.StatusListTLSTrustAnchorsPEM)
+		if err != nil {
+			return nil, err
+		}
+		fetcher.HTTP = &http.Client{
+			Timeout:   statusListFetchTimeout,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12}},
+		}
+	}
+	return &verifier.StatusPolicy{
+		Checker:          statuslist.Checker{Fetcher: fetcher, Roots: roots},
+		RequireReference: true,
+	}, nil
+}
+
+// certPool parses pemStr, the value of the config field named field,
+// into an *x509.CertPool.
+func certPool(field, pemStr string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(pemStr)) {
+		return nil, fmt.Errorf("%s: no certificate found", field)
+	}
+	return pool, nil
 }
 
 // tlsCertificate parses Config.TLSCertificatePEM/TLSPrivateKeyPEM into
@@ -161,9 +278,5 @@ func (c Config) clientCertificateAndKey() (*x509.Certificate, *ecdsa.PrivateKey,
 // mdocTrustAnchorPool parses MdocTrustAnchorPEM into the *x509.CertPool
 // verifier.X5ChainIssuerKeyResolver needs as its own Roots.
 func (c Config) mdocTrustAnchorPool() (*x509.CertPool, error) {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM([]byte(c.MdocTrustAnchorPEM)) {
-		return nil, fmt.Errorf("mdoc_trust_anchor_pem: no certificate found")
-	}
-	return pool, nil
+	return certPool("mdoc_trust_anchor_pem", c.MdocTrustAnchorPEM)
 }

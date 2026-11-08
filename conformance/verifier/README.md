@@ -26,16 +26,18 @@ them:
 - **No session binding.** It keeps its own in-memory session map rather
   than a `verifier.Transactions`. The `redirect_uri` it returns names
   `/result/{id}`, which shows the verified claims to anyone who has the
-  id, and the id is also in the public `request_uri`. There is no
-  single-use `response_code` bound to the browser that started the
-  request (OpenID4VP §8.2, HAIP 1.0 §5.1).
+  id, and the id is also in the public `request_uri`. Its
+  `response_code` is single-use at `/result/{id}/redeem`, but bound to
+  no browser that started the request (OpenID4VP §8.2, HAIP 1.0 §5.1),
+  and the HTML page doesn't need it.
 - **No atomic completion.** A session's `done` flag is checked and set
   by the handler under a per-session lock, not by a store's atomic
   update, and only one process's memory holds it.
 - **Development assurance, no status check, no revocation.** It runs
-  under `verifier.AssuranceDevelopment`, sets `NoStatusCheck`, and
-  declines certificate revocation (`certrevocation.NoCheck{}`) for the
-  suite's per-run issuers.
+  under `verifier.AssuranceDevelopment`, sets `NoStatusCheck` (unless
+  an interop run's `status_list_trust_anchors_pem` turns the Token
+  Status List check on), and declines certificate revocation
+  (`certrevocation.NoCheck{}`) for the suite's per-run issuers.
 
 A Verifier uses `verifier.Transactions` with a durable
 `verifier.TransactionStore` (encoded with `verifier.TransactionCodec`),
@@ -48,7 +50,9 @@ A Verifier uses `verifier.Transactions` with a durable
 - `GET /authorize` — creates a session (the DCQL query to ask for) and
   redirects to
   `openid4vp://?client_id=...&request_uri=...&request_uri_method=post`
-  — what the suite's own browser (playing Wallet) navigates to.
+  — what the suite's own browser (playing Wallet) navigates to. A
+  `request_uri_method` query parameter (`get`, or `none` to leave it
+  out) changes the launch's, for an interop run.
   Building and signing the actual Authorization Request is deferred to
   the first `/request/{id}` fetch below, not done here — see
   `session.go`'s `ensureBuilt` for why.
@@ -69,11 +73,25 @@ A Verifier uses `verifier.Transactions` with a durable
   decryption key in turn (JWE's authenticated encryption rejects a
   wrong key rather than silently misdecoding — see `session.go`'s own
   doc comment), calls `VerifyResponse`, and replies with
-  `{"redirect_uri": ".../result/{id}"}` — HAIP's own requirement on top
-  of plain OID4VP §8.3.
+  `{"redirect_uri": ".../result/{id}?response_code=..."}` — HAIP's own
+  requirement on top of plain OID4VP §8.3. A response for no pending
+  session (a replayed one among them) is refused with 400.
 - `GET /result/{id}` — a plain HTML page reporting that session's
   outcome, for the suite's own "verifier_verification_result_screenshot"
   evidence capture.
+- `GET /result/{id}/redeem?response_code=...` — the outcome as JSON,
+  once, for the `response_code`, with how the Wallet fetched the
+  Request Object: what an interop run checks.
+- `POST /dcapi/request?origin=...` and `POST /dcapi/response/{id}` —
+  with `dc_api_origins` configured, a signed Digital Credentials API
+  request (`openid4vp-v1-signed`, `dc_api.jwt`) for one of those
+  origins, and the page's post-back of the answer, verified against
+  that origin; the outcome is the reply.
+
+The interop runs' fields (`credential_issuer_trust_anchors_pem`, the
+`status_list_*` fields, `dc_api_origins`) are documented in
+`cmd/conformance-verifier/config.go`; the suite's configuration leaves
+them unset. `interop/eudi/run-wallet.sh` uses them.
 
 ## Status
 
