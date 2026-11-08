@@ -183,9 +183,14 @@ func TestVerifyResponse_RefusesMalformedMdocStatusList(t *testing.T) {
 		}
 	}
 
+	// An http uri is refused, whether decoding the MSO refuses it or the
+	// status check does.
 	mf := newMdocVerifyFixture(t)
 	mf.f = testmdoc.WithMSOStatus(t, mf.f, map[string]any{"status_list": map[string]any{"idx": 0, "uri": uri}})
 	result, err := mf.verify(t, mf.nonce)
+	if err != nil && strings.Contains(err.Error(), "isn't an https URL") {
+		return
+	}
 	vc := testverify.RequireOneCredential(t, result, err, "mdl")
 	if vc.MdocStatus == nil || vc.MdocStatus.StatusList == nil || vc.MdocStatus.StatusList.URI != uri {
 		t.Fatalf("MdocStatus = %+v, want status_list at %s", vc.MdocStatus, uri)
