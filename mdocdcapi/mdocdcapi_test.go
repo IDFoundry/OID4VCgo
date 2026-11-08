@@ -68,9 +68,16 @@ func bothNames() map[string]map[string]bool {
 // sealed to the request's key (Annex C.4).
 func respond(t testing.TB, data RequestData, origin string, f testmdoc.Fixture) string {
 	t.Helper()
-	params := decodeEncryptionInfo(t, data.EncryptionInfo)
 	transcript := annexCTranscript(t, data.EncryptionInfo, origin)
-	stBytes, err := cbor.Marshal(cbor.Tag{Number: 24, Content: transcript})
+	return respondSignedOver(t, data, transcript, transcript, f)
+}
+
+// respondSignedOver is respond with the DeviceResponse HPKE sealed under
+// sealTranscript and the device signing over signTranscript, where a
+// document provider uses one session transcript for both.
+func respondSignedOver(t testing.TB, data RequestData, sealTranscript, signTranscript []byte, f testmdoc.Fixture) string {
+	t.Helper()
+	stBytes, err := cbor.Marshal(cbor.Tag{Number: 24, Content: signTranscript})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,10 +85,26 @@ func respond(t testing.TB, data RequestData, origin string, f testmdoc.Fixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	return respondWith(t, data, sealTranscript, f, deviceSigned)
+}
+
+// respondWith seals a DeviceResponse of f's IssuerSigned and
+// deviceSigned under transcript, as respond does.
+func respondWith(t testing.TB, data RequestData, transcript []byte, f testmdoc.Fixture, deviceSigned mdoc.DeviceSigned) string {
+	t.Helper()
 	deviceResponse, err := oid4vpmdoc.MarshalDeviceResponse(oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: f.IssuerSigned, DeviceSigned: deviceSigned})
 	if err != nil {
 		t.Fatal(err)
 	}
+	enc, ct := seal(t, data, transcript, deviceResponse)
+	return encodeResponse(t, []any{"dcapi", map[string][]byte{"enc": enc, "cipherText": ct}})
+}
+
+// seal HPKE seals plaintext to data's recipient key with transcript as
+// info (Annex C.4), returning the encapsulated key and the ciphertext.
+func seal(t testing.TB, data RequestData, transcript, plaintext []byte) (enc, ct []byte) {
+	t.Helper()
+	params := decodeEncryptionInfo(t, data.EncryptionInfo)
 	pub, err := params.RecipientPublicKey.PublicKey()
 	if err != nil {
 		t.Fatal(err)
@@ -98,11 +121,17 @@ func respond(t testing.TB, data RequestData, origin string, f testmdoc.Fixture) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ct, err := sender.Seal(nil, deviceResponse)
+	ct, err = sender.Seal(nil, plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cbor.Marshal([]any{"dcapi", map[string][]byte{"enc": enc, "cipherText": ct}})
+	return enc, ct
+}
+
+// encodeResponse is v, CBOR encoded and base64url, as data.response is.
+func encodeResponse(t testing.TB, v any) string {
+	t.Helper()
+	raw, err := cbor.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,6 +415,93 @@ func TestBuildRequestRefuses(t *testing.T) {
 	} {
 		if _, err := BuildRequest(p); err == nil {
 			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// verifyBoth is verify's error, and VerifyResponseDocuments' for the
+// same parameters: the two share their decryption and document checks.
+func verifyBoth(t *testing.T, h harness, response string) (single, documents error) {
+	t.Helper()
+	_, single = verify(t, h, response, nil)
+	_, documents = VerifyResponseDocuments(context.Background(), VerifyParams{
+		Pending: h.request.Pending, Response: response, IssuerKeys: fixedIssuerKey{pub: h.f.IssuerKey.Public()},
+		Assurance: verifier.AssuranceDevelopment,
+	})
+	return single, documents
+}
+
+// A response sealed under this request's session transcript decrypts,
+// but a device signature over another one, for another origin or for
+// another request's EncryptionInfo, doesn't bind the document to this
+// request: it's refused.
+func TestDeviceSignatureBoundToSessionTranscript(t *testing.T) {
+	h := newHarness(t, bothNames())
+	other := newHarness(t, bothNames())
+	sealed := annexCTranscript(t, h.request.Data.EncryptionInfo, testOrigin)
+	for name, signed := range map[string][]byte{
+		"another origin":  annexCTranscript(t, h.request.Data.EncryptionInfo, "https://attacker.example"),
+		"another request": annexCTranscript(t, other.request.Data.EncryptionInfo, testOrigin),
+	} {
+		single, documents := verifyBoth(t, h, respondSignedOver(t, h.request.Data, sealed, signed, h.f))
+		for fn, err := range map[string]error{"VerifyResponse": single, "VerifyResponseDocuments": documents} {
+			if err == nil || !strings.Contains(err.Error(), "verify DeviceSignature") {
+				t.Errorf("%s: %s: %v, want a DeviceSignature error", name, fn, err)
+			}
+		}
+	}
+}
+
+// No reader key is exchanged over the Digital Credentials API, so a
+// document authenticated by a deviceMac (ISO/IEC 18013-5 §12.4.5) isn't
+// bound to the request, and is refused.
+func TestVerifyResponseRefusesDeviceMac(t *testing.T) {
+	h := newHarness(t, bothNames())
+	transcript := annexCTranscript(t, h.request.Data.EncryptionInfo, testOrigin)
+	stBytes, err := cbor.Marshal(cbor.Tag{Number: 24, Content: transcript})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceSigned, err := mdoc.ComputeDeviceMACFromSharedSecret(make([]byte, 32), stBytes, testmdoc.DocType, map[string]map[string]interface{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, documents := verifyBoth(t, h, respondWith(t, h.request.Data, transcript, h.f, deviceSigned))
+	for fn, err := range map[string]error{"VerifyResponse": single, "VerifyResponseDocuments": documents} {
+		if err == nil || !strings.Contains(err.Error(), "must be authenticated by a device signature") {
+			t.Errorf("%s: %v, want a refusal of the deviceMac", fn, err)
+		}
+	}
+}
+
+// An EncryptedResponse (Annex C.3) that isn't ["dcapi", {"enc": bstr,
+// "cipherText": bstr}], with a whole encapsulated key and a ciphertext,
+// is refused.
+func TestVerifyResponseRefusesMalformedEncryptedResponse(t *testing.T) {
+	h := newHarness(t, bothNames())
+	enc, ct := seal(t, h.request.Data, annexCTranscript(t, h.request.Data.EncryptionInfo, testOrigin), []byte("not reached"))
+	for name, tc := range map[string]struct {
+		wire any
+		want string
+	}{
+		"another protocol":       {[]any{"openid4vp", map[string][]byte{"enc": enc, "cipherText": ct}}, `protocol "openid4vp"`},
+		"an empty protocol":      {[]any{"", map[string][]byte{"enc": enc, "cipherText": ct}}, `protocol ""`},
+		"no enc":                 {[]any{"dcapi", map[string][]byte{"cipherText": ct}}, "HPKE"},
+		"no cipherText":          {[]any{"dcapi", map[string][]byte{"enc": enc}}, "decrypt the response"},
+		"an empty cipherText":    {[]any{"dcapi", map[string][]byte{"enc": enc, "cipherText": {}}}, "decrypt the response"},
+		"a short enc":            {[]any{"dcapi", map[string][]byte{"enc": enc[:len(enc)-1], "cipherText": ct}}, "HPKE"},
+		"a long enc":             {[]any{"dcapi", map[string][]byte{"enc": append(slices.Clone(enc), 0), "cipherText": ct}}, "HPKE"},
+		"a compressed enc":       {[]any{"dcapi", map[string][]byte{"enc": append([]byte{2 + enc[64]&1}, enc[1:33]...), "cipherText": ct}}, "HPKE"},
+		"a protocol number":      {[]any{1, map[string][]byte{"enc": enc, "cipherText": ct}}, "decode EncryptedResponse"},
+		"enc as text":            {[]any{"dcapi", map[string]any{"enc": string(enc), "cipherText": ct}}, "decode EncryptedResponse"},
+		"cipherText as an array": {[]any{"dcapi", map[string]any{"enc": enc, "cipherText": []any{ct}}}, "decode EncryptedResponse"},
+		"data as an array":       {[]any{"dcapi", []any{enc, ct}}, "decode EncryptedResponse"},
+		"a map":                  {map[string]any{"dcapi": map[string][]byte{"enc": enc, "cipherText": ct}}, "decode EncryptedResponse"},
+		"a third element":        {[]any{"dcapi", map[string][]byte{"enc": enc, "cipherText": ct}, nil}, "decode EncryptedResponse"},
+		"no data":                {[]any{"dcapi"}, "decode EncryptedResponse"},
+	} {
+		if _, err := verify(t, h, encodeResponse(t, tc.wire), nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)
 		}
 	}
 }

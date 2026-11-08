@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +114,64 @@ func TestVerifyTokenCWT_TypAndTTL(t *testing.T) {
 		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// A signed CWT Status List Token is refused without the claims
+// draft-14 §5.2 requires (sub, iat, status_list with bits 1, 2, 4 or
+// 8), with an iat beyond the clock skew in the future, or without its
+// typ in the protected header.
+func TestVerifyTokenCWT_RefusesClaims(t *testing.T) {
+	key := testKey(t)
+	now := time.Now()
+	valid := func() map[int]any {
+		return map[int]any{
+			cwtClaimSub:        "https://example.com/statuslists/1",
+			cwtClaimIat:        now.Unix(),
+			cwtClaimStatusList: cwtStatusList{Bits: Bits1, Lst: []byte{0}},
+		}
+	}
+	// Signed without IssueTokenCWT's checks, which refuse some of these.
+	sign := func(protected, unprotected cose.Headers, mutate func(map[int]any)) []byte {
+		t.Helper()
+		payload := valid()
+		if mutate != nil {
+			mutate(payload)
+		}
+		raw, err := cbor.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		sign1, err := cose.SignTagged(cose.ES256, key, protected, unprotected, raw, nil)
+		if err != nil {
+			t.Fatalf("SignTagged: %v", err)
+		}
+		return sign1
+	}
+	typ := cose.Headers{Typ: CWTTokenMediaType}
+	for name, tc := range map[string]struct {
+		token []byte
+		opts  VerifyOptions
+		want  string
+	}{
+		"no sub":               {sign(typ, cose.Headers{}, func(c map[int]any) { delete(c, cwtClaimSub) }), VerifyOptions{}, "sub claim"},
+		"an empty sub":         {sign(typ, cose.Headers{}, func(c map[int]any) { c[cwtClaimSub] = "" }), VerifyOptions{}, "sub claim"},
+		"no iat":               {sign(typ, cose.Headers{}, func(c map[int]any) { delete(c, cwtClaimIat) }), VerifyOptions{}, "iat claim"},
+		"iat beyond a skew":    {sign(typ, cose.Headers{}, func(c map[int]any) { c[cwtClaimIat] = now.Add(10 * time.Second).Unix() }), VerifyOptions{MaxClockSkew: time.Second}, "in the future"},
+		"iat an hour ahead":    {sign(typ, cose.Headers{}, func(c map[int]any) { c[cwtClaimIat] = now.Add(time.Hour).Unix() }), VerifyOptions{}, "in the future"},
+		"no typ":               {sign(cose.Headers{}, cose.Headers{}, nil), VerifyOptions{}, "CWT typ"},
+		"typ only unprotected": {sign(cose.Headers{}, typ, nil), VerifyOptions{}, "CWT typ"},
+		"bits 3":               {sign(typ, cose.Headers{}, func(c map[int]any) { c[cwtClaimStatusList] = cwtStatusList{Bits: 3, Lst: []byte{0}} }), VerifyOptions{}, "bits is invalid"},
+		"bits 0":               {sign(typ, cose.Headers{}, func(c map[int]any) { c[cwtClaimStatusList] = cwtStatusList{Lst: []byte{0}} }), VerifyOptions{}, "bits is invalid"},
+		"no status_list":       {sign(typ, cose.Headers{}, func(c map[int]any) { delete(c, cwtClaimStatusList) }), VerifyOptions{}, "status_list claim"},
+	} {
+		tc.opts.UnboundSigner = AnyListSigner
+		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, tc.opts); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)
+		}
+	}
+	if _, err := VerifyTokenCWT(sign(typ, cose.Headers{}, nil), &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); err != nil {
+		t.Errorf("the valid token: refused: %v", err)
 	}
 }
 
