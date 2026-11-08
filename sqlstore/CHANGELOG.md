@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.10.0...sqlstore/v0.11.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** OID4VCgo requires FAPIgo v0.72.0, and the sqlstore tests and passport-vdc fapigo/sqlstore v0.8.0. Replace asDB.Grants().Batching() with asDB.BatchingGrants(), asDB.Revocation().Batching() with asDB.BatchingRevocation(), and a ResourceServer's Revocation.Batching() with its BatchingRevocation field. A wrapper embedding server.JWTAccessTokens, server.NoBackchannelNotifications or resource.NoRevocationUntilExpiry must follow FAPIgo's UPGRADING.md.
+
+### Features
+
+* **sqlstore:** lock Migrate per schema on Postgres ([73c29ee](https://github.com/IDFoundry/OID4VCgo/commit/73c29ee891b07f0a5a0145c2435c3d6c1cb0ca2b))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.72.0 and fapigo/sqlstore v0.8.0 ([86deaa9](https://github.com/IDFoundry/OID4VCgo/commit/86deaa9208e0aea4e0b32e2d214cd4b5c4ab2b40))
+
 ## [0.10.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.9.1...sqlstore/v0.10.0) (2026-11-07)
 
 
