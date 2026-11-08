@@ -1,10 +1,14 @@
-// Command serve serves the documents interop/eudi/scripts/setup wrote
-// to DIR, over TLS with its serve-cert.pem, for the EUDI verifier to
-// fetch during interop/eudi/run-verifier.sh:
+// Command serve serves the documents interop/eudi/scripts/setup (or
+// pidsetup) wrote to DIR, over TLS with its serve-cert.pem, for the
+// EUDI verifier (interop/eudi/run-verifier.sh), or the EUDI PID Issuer
+// and its Keycloak (run-pid-issuer.sh), to fetch:
 //
 //	/statuslists/jwt    statuslist.jwt      application/statuslist+jwt
 //	/statuslists/cwt    statuslist.cwt      application/statuslist+cwt
 //	/type-metadata/pid  type-metadata.json  application/json
+//
+// A document DIR doesn't hold isn't served: pidsetup writes only the
+// first.
 //
 // Usage: go run ./interop/eudi/scripts/serve -dir DIR -addr ADDR
 //
@@ -13,7 +17,9 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +44,10 @@ func main() {
 		"GET /type-metadata/pid": {"type-metadata.json", "application/json"},
 	} {
 		body, err := os.ReadFile(filepath.Join(*dir, doc.file)) // #nosec G304 -- the operator's own -dir
+		if errors.Is(err, fs.ErrNotExist) {
+			log.Printf("not serving %s: no %s", path, doc.file)
+			continue
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
