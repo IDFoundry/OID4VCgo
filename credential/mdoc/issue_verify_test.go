@@ -624,9 +624,9 @@ func TestIssueRefusesStatusWithoutURI(t *testing.T) {
 	}
 }
 
-// A received MSO's status_list without an idx or a uri is refused
-// rather than read as entry 0, or as a uri nothing can fetch; idx 0
-// itself is an ordinary index.
+// A received MSO's status_list without an idx, or without an https
+// uri, is refused rather than read as entry 0, or as a uri nothing can
+// fetch; idx 0 itself is an ordinary index.
 func TestDecodeRefusesStatusListWithoutIdxOrURI(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -637,6 +637,8 @@ func TestDecodeRefusesStatusListWithoutIdxOrURI(t *testing.T) {
 		{"no idx", map[string]any{"uri": "https://issuer.example/sl"}, false},
 		{"no uri", map[string]any{"idx": 7}, false},
 		{"empty uri", map[string]any{"idx": 7, "uri": ""}, false},
+		{"http uri", map[string]any{"idx": 7, "uri": "http://issuer.example/sl"}, false},
+		{"relative uri", map[string]any{"idx": 7, "uri": "/sl"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := encMode.Marshal(map[string]any{"status_list": tc.ref})
