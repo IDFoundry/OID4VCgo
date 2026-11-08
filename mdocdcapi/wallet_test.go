@@ -486,6 +486,23 @@ func TestVerifyReaderRefusesTamperedSignature(t *testing.T) {
 			}
 		})
 	}
+	// Both kinds present and both bad: each reason is reported.
+	both := with(func(dr map[string]cbor.RawMessage) {
+		var all []cbor.RawMessage
+		if err := cbor.Unmarshal(dr["readerAuthAll"], &all); err != nil {
+			t.Fatal(err)
+		}
+		all[0] = tamperSignature(all[0])
+		dr["readerAuthAll"] = mustCBOR(t, all)
+		editDocRequests(t, dr, func(docs []map[string]cbor.RawMessage) {
+			docs[0]["readerAuth"] = tamperSignature(docs[0]["readerAuth"])
+		})
+	})
+	if in, err := ParseRequest(both, testOrigin); err != nil {
+		t.Fatal(err)
+	} else if _, err := in.VerifyReader(h.roots, time.Time{}); err == nil || strings.Count(err.Error(), "signature verification failed") != 2 || !strings.Contains(err.Error(), "signed per document") {
+		t.Errorf("both tampered: %v, want both reasons", err)
+	}
 	for name, data := range map[string]struct{ good, tampered []byte }{
 		"ReaderAuthAll": {onlyAll(false), onlyAll(true)},
 		"ReaderAuth":    {onlyDocument(false), onlyDocument(true)},
@@ -501,8 +518,13 @@ func TestVerifyReaderRefusesTamperedSignature(t *testing.T) {
 			if in, err = ParseRequest(data.tampered, testOrigin); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := in.VerifyReader(h.roots, time.Time{}); !errors.Is(err, ErrUntrustedReader) {
+			_, err = in.VerifyReader(h.roots, time.Time{})
+			if !errors.Is(err, ErrUntrustedReader) {
 				t.Errorf("VerifyReader = %v, want ErrUntrustedReader", err)
+			}
+			// The signature's reason, not the absence of another kind.
+			if err != nil && !strings.Contains(err.Error(), "signature verification failed") {
+				t.Errorf("VerifyReader = %v, want the bad signature reported", err)
 			}
 		})
 	}
