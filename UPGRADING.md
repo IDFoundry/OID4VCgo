@@ -6,7 +6,7 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
-## v0.73.0 → next
+## v0.73.0 → v0.74.0
 
 ### FAPIgo v0.72.0 and fapigo/sqlstore v0.8.0
 
@@ -27,6 +27,15 @@ passport-vdc fapigo/sqlstore v0.8.0; see FAPIgo's UPGRADING.md.
   made the new key current in one deploy, which leaves the instances
   not yet redeployed unable to open what the others seal. Keep the old
   key while records it sealed exist.
+
+### sqlstore (v0.11.0)
+
+- **Requires FAPIgo v0.72.0, and fapigo/sqlstore v0.8.0 in its
+  tests:** wire FAPIgo's stores with the batching accessors and rotate
+  a Sealer in two deploys, as above.
+- **Migrate locks per schema on Postgres:** nothing to change. A
+  rolling upgrade from an earlier release still migrates once: the
+  earlier release's Migrate and this one's wait for each other.
 
 ## v0.72.1 → v0.73.0
 
