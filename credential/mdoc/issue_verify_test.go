@@ -624,6 +624,37 @@ func TestIssueRefusesStatusWithoutURI(t *testing.T) {
 	}
 }
 
+// A received MSO's status_list without an idx or a uri is refused
+// rather than read as entry 0, or as a uri nothing can fetch; idx 0
+// itself is an ordinary index.
+func TestDecodeRefusesStatusListWithoutIdxOrURI(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ref  map[string]any
+		ok   bool
+	}{
+		{"idx 0", map[string]any{"idx": 0, "uri": "https://issuer.example/sl"}, true},
+		{"no idx", map[string]any{"uri": "https://issuer.example/sl"}, false},
+		{"no uri", map[string]any{"idx": 7}, false},
+		{"empty uri", map[string]any{"idx": 7, "uri": ""}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := encMode.Marshal(map[string]any{"status_list": tc.ref})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var status Status
+			err = decMode.Unmarshal(raw, &status)
+			if tc.ok != (err == nil) {
+				t.Fatalf("decode = %+v, %v; want ok %v", status.StatusList, err, tc.ok)
+			}
+			if tc.ok && (status.StatusList == nil || status.StatusList.Idx != 0) {
+				t.Fatalf("decoded %+v, want idx 0", status.StatusList)
+			}
+		})
+	}
+}
+
 // Verify returns the values that were digested: editing NameSpaces
 // after unmarshalling changes nothing verified, and removing an item
 // is refused rather than misaligning values and digests.
