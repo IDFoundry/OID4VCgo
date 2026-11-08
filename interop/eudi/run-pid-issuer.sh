@@ -291,8 +291,11 @@ issued() {
     "(.credentials | length == $count) and all(.credentials[]; .verified)"
   if [[ "$status" = cwt-der ]]; then
     # Not a pass: the wallet can't read the list (README.md, "Findings").
-    check "$name" "the wallet refuses the mdoc's CWT Status List Token: its signature is DER, not COSE's r || s" \
-      'all(.credentials[]; .status_uri != null and (.status_error // "" | test("ecdsafixed: signature has length")))'
+    # Most tokens fail on their DER signature; some aren't even
+    # well-formed CBOR, and fail before that.
+    check "$name" "the wallet refuses the mdoc's CWT Status List Token: a DER signature, or not well-formed CBOR" \
+      'all(.credentials[]; .status_uri != null and (.status_error // "" | test("ecdsafixed: signature has length|cbor: [0-9]+ bytes of extraneous data")))'
+    echo "        refused for: $(jq -r '[.credentials[].status_error // empty] | unique | join("; ")' "result-$name.json" | cut -c1-200)"
   else
     check "$name" "the wallet reads its status list entry: $status" "all(.credentials[]; .status == \"$status\")"
   fi
