@@ -86,7 +86,7 @@ private fun certificate(
 fun untrustedIssuer(): Pair<KeyPair, List<X509Certificate>> {
     val caKey = newP256KeyPair()
     val leafKey = newP256KeyPair()
-    val ca = certificate("an issuer CA no one trusts", caKey, "an issuer CA no one trusts", caKey, ca = true, serial = 1)
+    // Only the CA's key is needed: its certificate is never presented.
     val leaf = certificate("an issuer no one trusts", leafKey, "an issuer CA no one trusts", caKey, ca = false, serial = 2)
     return leafKey to listOf(leaf)
 }
@@ -114,5 +114,5 @@ fun sslContextTrusting(anchors: List<X509Certificate>): SSLContext {
             anchors.forEachIndexed { i, cert -> setCertificateEntry("anchor-$i", cert) }
         }
     val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
-    return SSLContext.getInstance("TLS").apply { init(null, tmf.trustManagers, null) }
+    return SSLContext.getInstance("TLSv1.3").apply { init(null, tmf.trustManagers, null) }
 }

@@ -149,37 +149,43 @@ func loadConfig(path string) (Config, error) {
 	if cfg.BaseURL == "" {
 		return Config{}, fmt.Errorf("config: base_url is required")
 	}
-	switch cfg.CredentialFormat {
-	case "", "dc+sd-jwt":
-		if cfg.hasCredentialIssuerJWK() == (cfg.CredentialIssuerTrustAnchorsPEM != "") {
-			return Config{}, fmt.Errorf("config: exactly one of credential_issuer_jwk and credential_issuer_trust_anchors_pem is required")
-		}
-		if cfg.VCT == "" {
-			return Config{}, fmt.Errorf("config: vct is required")
-		}
-		if len(cfg.Claims) == 0 {
-			return Config{}, fmt.Errorf("config: claims must be non-empty")
-		}
-	case "mso_mdoc":
-		if cfg.Doctype == "" {
-			return Config{}, fmt.Errorf("config: doctype is required")
-		}
-		if cfg.Namespace == "" {
-			return Config{}, fmt.Errorf("config: namespace is required")
-		}
-		if len(cfg.MdocClaims) == 0 {
-			return Config{}, fmt.Errorf("config: mdoc_claims must be non-empty")
-		}
-		if err := conformancecert.RequireNonEmpty("mdoc_trust_anchor_pem", cfg.MdocTrustAnchorPEM); err != nil {
-			return Config{}, err
-		}
-	default:
-		return Config{}, fmt.Errorf("config: unsupported credential_format %q", cfg.CredentialFormat)
+	if err := cfg.checkFormat(); err != nil {
+		return Config{}, err
 	}
 	if cfg.StatusListTrustAnchorsPEM == "" && (cfg.StatusListTLSTrustAnchorsPEM != "" || cfg.StatusListAllowLoopback) {
 		return Config{}, fmt.Errorf("config: status_list_tls_trust_anchors_pem and status_list_allow_loopback need status_list_trust_anchors_pem")
 	}
 	return cfg, nil
+}
+
+// checkFormat checks the settings CredentialFormat's credential needs.
+func (c Config) checkFormat() error {
+	switch c.CredentialFormat {
+	case "", "dc+sd-jwt":
+		if c.hasCredentialIssuerJWK() == (c.CredentialIssuerTrustAnchorsPEM != "") {
+			return fmt.Errorf("config: exactly one of credential_issuer_jwk and credential_issuer_trust_anchors_pem is required")
+		}
+		if c.VCT == "" {
+			return fmt.Errorf("config: vct is required")
+		}
+		if len(c.Claims) == 0 {
+			return fmt.Errorf("config: claims must be non-empty")
+		}
+	case "mso_mdoc":
+		if c.Doctype == "" {
+			return fmt.Errorf("config: doctype is required")
+		}
+		if c.Namespace == "" {
+			return fmt.Errorf("config: namespace is required")
+		}
+		if len(c.MdocClaims) == 0 {
+			return fmt.Errorf("config: mdoc_claims must be non-empty")
+		}
+		return conformancecert.RequireNonEmpty("mdoc_trust_anchor_pem", c.MdocTrustAnchorPEM)
+	default:
+		return fmt.Errorf("config: unsupported credential_format %q", c.CredentialFormat)
+	}
+	return nil
 }
 
 // hasCredentialIssuerJWK reports whether CredentialIssuerJWK is set.

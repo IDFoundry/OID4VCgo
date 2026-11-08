@@ -101,7 +101,8 @@ bad() { echo "  FAIL  $1"; fail=1; }
 # authorize starts a session on verifier $1, as a same-device page
 # would, and prints the openid4vp:// launch it redirects to.
 authorize() {  # $1 verifier, $2 request_uri_method (post, get or none)
-  curl -sk --max-time 30 -o /dev/null -w '%{redirect_url}' "$1/authorize?request_uri_method=$2"
+  local verifier="$1" method="$2"
+  curl -sk --max-time 30 -o /dev/null -w '%{redirect_url}' "$verifier/authorize?request_uri_method=$method"
 }
 
 # drive runs the driver; its outcome is in $1.json.
@@ -123,19 +124,22 @@ redeem() {  # $1 name
 }
 
 why() {  # $1 file
-  jq -c '{status, error} | with_entries(select(.value != null))' "$1" 2>/dev/null | cut -c1-300 || head -c 300 "$1"
+  local file="$1"
+  jq -c '{status, error} | with_entries(select(.value != null))' "$file" 2>/dev/null | cut -c1-300 || head -c 300 "$file"
 }
 explain() {  # $1 driver outcome
-  jq -r '"\(.stage // "-"): \(.error // "-")"' "$1" | cut -c1-300
+  local outcome="$1"
+  jq -r '"\(.stage // "-"): \(.error // "-")"' "$outcome" | cut -c1-300
 }
 
 # released checks the claims the verifier released in $1: the two the
 # query asks for, and none of the PID's others (an mdoc's are under its
 # namespace).
 released() {  # $1 file
+  local file="$1"
   jq -e '.credentials.cred1 | (.["eu.europa.ec.eudi.pid.1"] // .)
     | .family_name == "Dupont" and .given_name == "Jean"
-      and ([keys[] | select(IN("birth_date", "nationalities", "issuing_country", "issuing_authority"))] | length == 0)' "$1" >/dev/null
+      and ([keys[] | select(IN("birth_date", "nationalities", "issuing_country", "issuing_authority"))] | length == 0)' "$file" >/dev/null
 }
 
 # present runs a redirect-flow presentation that must be accepted, and

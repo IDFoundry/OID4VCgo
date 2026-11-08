@@ -425,7 +425,8 @@ func (s *server) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		requestObject: built.RequestObject, nonce: built.Nonce, decryptionKey: built.ResponseDecryptionKey,
 		dcapi: true, origin: origin, expectedOrigins: built.ExpectedOrigins,
 	})
-	log.Printf("session %s: created, Digital Credentials API, origin %s", id, origin)
+	// The origin isn't logged: it's the caller's.
+	log.Printf("session %s: created, Digital Credentials API", id)
 	answer := dcAPIRequest{ID: id, Protocol: "openid4vp-v1-signed"}
 	answer.Data.Request = built.RequestObject
 	writeJSON(w, http.StatusOK, answer)
