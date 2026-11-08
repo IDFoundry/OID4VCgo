@@ -67,6 +67,22 @@ commit (polaris-oid4vp v1.0.0), since its verifier runs from source on
 the runner (a read-only token, no secrets). Move the pin only after
 reading the change. A run takes about a minute.
 
+## Interop with the EUDI reference verifier
+
+`.github/workflows/eudi-interop.yml` runs `cmd/conformance-wallet-vp`
+against the EUDI Wallet reference implementation's
+[Verifier Endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint),
+from its published image pinned by digest, configured as strictly as it
+allows: SD-JWT VC and mdoc presentations under its `haip` and
+`openid4vp` profiles and over the DC API, with their status lists and
+the SD-JWT VC's Type Metadata checked, must be accepted, and controls
+(revoked credentials, a mismatched `vct#integrity`, untrusted CAs on
+either side, a replayed request, a mismatched `client_id`, an unheld
+credential) refused. It runs on each pull request, daily and on each
+release against the pinned image, and weekly against EUDI's `latest`
+image. See [`interop/eudi/README.md`](../interop/eudi/README.md) for
+the cases, what the verifier doesn't check, and moving the pin.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`
