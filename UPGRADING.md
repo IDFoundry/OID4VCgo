@@ -6,6 +6,28 @@ everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them.
 
+## v0.73.0 → next
+
+### FAPIgo v0.72.0 and fapigo/sqlstore v0.8.0
+
+OID4VCgo now requires FAPIgo v0.72.0, and its `sqlstore` tests and
+passport-vdc fapigo/sqlstore v0.8.0; see FAPIgo's UPGRADING.md.
+
+- **fapigo/sqlstore's `Batching()` methods are gone:** take
+  `Grants: asDB.BatchingGrants()` and
+  `Revocation: asDB.BatchingRevocation()` in `server.Dependencies`,
+  and `BatchingRevocation` from `fapisqlstore.ResourceServer` for a
+  separate Credential Endpoint.
+- **Only a wrapper that embeds `server.JWTAccessTokens`,
+  `server.NoBackchannelNotifications` or
+  `resource.NoRevocationUntilExpiry` changes:** see FAPIgo's
+  UPGRADING.md for what each must now declare.
+- **Rotate a Sealer's key in two deploys:** `RotatingSealer(old, new)`
+  on every instance, then `RotatingSealer(new, old)`. The earlier docs
+  made the new key current in one deploy, which leaves the instances
+  not yet redeployed unable to open what the others seal. Keep the old
+  key while records it sealed exist.
+
 ## v0.72.1 → v0.73.0
 
 ### FAPIgo v0.71.0 and fapigo/sqlstore v0.7.0

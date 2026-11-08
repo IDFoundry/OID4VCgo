@@ -116,14 +116,14 @@ asDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options
 // The Credential Endpoint's DPoP nonces, never the Authorization Server's:
 rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer})
 // Migrate each; take server.Dependencies' stores from asDB (Grants and
-// Revocation as asDB.Grants().Batching() and asDB.Revocation().Batching(),
+// Revocation as asDB.BatchingGrants() and asDB.BatchingRevocation(),
 // which batch revocation checks and token records),
 // serverresource.Options.Nonces from rsDB, issuer.Dependencies' from issuerDB.
 ```
 
 A Credential Endpoint running apart from the Authorization Server takes
 its stores from `fapisqlstore.ResourceServer(asDB, rsDB)`: the server's
-revocations (as `Revocation.Batching()`), replay records and access
+revocations (as `BatchingRevocation`), replay records and access
 tokens, and its own DPoP nonces.
 
 Their tables don't collide (`oid4vc_…` here, FAPIgo's `TablePrefix`,
@@ -164,9 +164,11 @@ binding its records to additional data of its own. Sweep each. See
   DB's, seals only the response decryption key and the verified claims,
   bound to the owner, same-device flag, browser binding hash, origin and
   query, which stay readable. Its status, expiry and response_code hash
-  are unprotected, so the database must be trusted for their integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`,
-  and keep the previous key while records it sealed exist: a wallet's
-  credentials and keys never expire.
+  are unprotected, so the database must be trusted for their integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`
+  in two deploys, `RotatingSealer(old, new)` everywhere and then
+  `RotatingSealer(new, old)`, so every instance opens the new key
+  before any seals with it, and keep the previous key while records it
+  sealed exist: a wallet's credentials and keys never expire.
 - **Sharing**: Credential Issuers may share the issuer tables (every
   record but a Credential Offer, found by its reference alone, keeps
   its Owner). A wallet's tables belong to one user.

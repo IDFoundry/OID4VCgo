@@ -101,8 +101,8 @@
 //	// Migrate (or CheckSchema) each of issuerDB, asDB and rsDB.
 //
 //	asDeps := server.Dependencies{
-//		Clients: asDB.Clients(), Transactions: asDB.Transactions(), Grants: asDB.Grants().Batching(),
-//		Replay: asDB.Replay(), Nonces: asDB.Nonces(), Revocation: asDB.Revocation().Batching(),
+//		Clients: asDB.Clients(), Transactions: asDB.Transactions(), Grants: asDB.BatchingGrants(),
+//		Replay: asDB.Replay(), Nonces: asDB.Nonces(), Revocation: asDB.BatchingRevocation(),
 //		// ...
 //	}
 //	tokens, err := serverresource.NewVerifier(asCfg, asDeps, serverresource.Options{
@@ -120,10 +120,10 @@
 // A Credential Endpoint that runs apart from the Authorization Server
 // can't use the server's Dependencies: it takes its stores from
 // fapisqlstore.ResourceServer(asDB, rsDB), which gives it the server's
-// revocations (take them as Revocation.Batching()), replay records and
+// revocations (take them as BatchingRevocation), replay records and
 // access tokens, and its own DPoP nonces.
 //
-// Grants().Batching() and Revocation().Batching() check a token's
+// BatchingGrants and BatchingRevocation check a token's
 // revocation keys in one query and record a code exchange's tokens in
 // one write; the stores without them answer the same, a query per key.
 //
@@ -242,12 +242,16 @@
 //
 // A DB reads only records written as it would write them, sealed under
 // its key or not sealed at all (ErrRecordFormat otherwise): to start
-// sealing, start from empty tables. To change the key, wrap the new
-// Sealer and the previous one with fapigo/sqlstore's RotatingSealer,
-// which takes this package's Sealer: it seals with the new key and
-// opens with either. There is no pass here that re-seals records under
-// the new key, so keep the previous one for as long as records it
-// sealed exist. Issuer records expire and are swept, but a wallet's
+// sealing, start from empty tables. To change the key, use
+// fapigo/sqlstore's RotatingSealer, which takes this package's Sealer:
+// it seals with the first sealer it's given and opens with any. Under
+// a rolling deploy, rotate in two phases: first RotatingSealer(old,
+// new) on every instance, so all of them open the new key, then
+// RotatingSealer(new, old), which seals with it. Making the new key
+// current in one deploy leaves the instances not yet redeployed unable
+// to open what the redeployed ones seal. There is no pass here that
+// re-seals records under the new key, so keep the previous one for as
+// long as records it sealed exist. Issuer records expire and are swept, but a wallet's
 // credentials, refresh grants and keys never expire: while a wallet
 // keeps any sealed under the previous key, dropping that key makes
 // them unreadable, the keys and credentials lost.
