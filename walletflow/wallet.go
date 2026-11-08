@@ -292,6 +292,15 @@ type Config struct {
 	// one copy.
 	BatchSize int
 
+	// ProofKeyByIndex names the key of a jwt proof carrying a Key
+	// Attestation by its index in the attestation's attested_keys, as
+	// kid "0", rather than in jwk (wallet.Wallet's
+	// GenerateProofWithAttestedKeyIndex). OpenID4VCI 1.0 Appendix F.1
+	// allows either, but ETSI TS 119 472-3 has issuers require the
+	// index, and the EUDI reference PID issuer refuses a jwk; an issuer
+	// accepting only jwk refuses the index. It changes no other proof.
+	ProofKeyByIndex bool
+
 	// Development relaxes what production requires, for a wallet
 	// talking to services on this machine. Never set it in a wallet
 	// that holders use, nor just to use memory stores: it also drops

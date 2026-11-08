@@ -16,8 +16,11 @@
 //	jwt          a jwt proof whose key_attestation header carries one, its key named by kid "0",
 //	             the index of its key among attested_keys, as ETSI TS 119 472-3 has it
 //	jwk          the same, its key in jwk, as wallet.Wallet.GenerateProofWithKeyAttestation and
-//	             walletflow make it
+//	             walletflow by default make it
 //	jwt-each     one jwt proof (kid "0") per key, each with a Key Attestation of its key alone
+//
+// The walletflow engine takes -proof jwt or jwk, for the conveyance of
+// the key of a jwt proof it makes with a Key Attestation.
 //
 // -batch keys are attested, so the issuer issues one credential per
 // key; a deferred credential is polled at the Deferred Credential

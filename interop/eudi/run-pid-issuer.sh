@@ -346,6 +346,20 @@ for c in "${SDJWT}_deferred attestation sdjwt $SDJWT_STATUS" "${MDOC}_deferred j
   check "deferred-$format" "deferred, then fetched from the Deferred Credential Endpoint" '.deferred and .deferred_polls >= 1'
 done
 
+# walletflow negotiates the proof itself; -proof jwt has it name the
+# jwt proof's key by index (Config.ProofKeyByIndex), as the issuer
+# requires. Its result records no exchanges, so issued's protocol
+# checks don't apply: walletflow's own tests make those.
+for c in "1 walletflow-sdjwt" "3 walletflow-batch-sdjwt"; do
+  read -r count name <<< "$c"
+  echo "== walletflow, under ProfileHAIP, ProofKeyByIndex: $count SD-JWT VC PID(s)"
+  wallet "$name" -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -proof jwt -batch "$count"
+  if ! jq -e '.ok' "result-$name.json" >/dev/null; then bad "issued ($(why "$name"))"; continue; fi
+  ok "issued"
+  check "$name" "$count credential(s), each verified by walletflow" "(.credentials | length == $count) and all(.credentials[]; .verified)"
+  check "$name" "walletflow reads its status list entry: $SDJWT_STATUS" "all(.credentials[]; .status == \"$SDJWT_STATUS\")"
+done
+
 echo "== an SD-JWT VC PID revoked at the status list service"
 wallet revoked-sdjwt -issuer "$ISSUER" -config "$SDJWT" -proof attestation -revoke-api-key "$STATUS_LIST_API_KEY"
 issued revoked-sdjwt 1 "$SDJWT_STATUS"
@@ -385,10 +399,10 @@ wallet jwk-proof -issuer "$ISSUER" -config "$SDJWT" -proof jwk
 if jq -e '.ok' result-jwk-proof.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
 else note "refused, as expected of v0.11.2 ($(why jwk-proof))"; fi
 
-echo "== walletflow, under ProfileHAIP"
-wallet walletflow-sdjwt -engine walletflow -issuer "$ISSUER" -config "$SDJWT"
-if jq -e '.ok' result-walletflow-sdjwt.json >/dev/null; then note "accepted: walletflow now receives the PID; make this a case"
-else note "refused, as expected of v0.11.2 ($(why walletflow-sdjwt))"; fi
+echo "== walletflow, under ProfileHAIP, naming the proof's key in jwk (its default)"
+wallet walletflow-jwk -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -proof jwk
+if jq -e '.ok' result-walletflow-jwk.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
+else note "refused, as expected of v0.11.2 ($(why walletflow-jwk))"; fi
 
 echo "== a batch of one key proof per credential (OpenID4VCI 1.0 §8.2, §12.2.4)"
 wallet proof-per-key -issuer "$ISSUER" -config "$SDJWT" -proof jwt-each -batch 2

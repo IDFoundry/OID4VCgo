@@ -1168,7 +1168,13 @@ func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string
 	if err != nil {
 		return nil, wallet.CredentialRequest{}, err
 	}
-	proof, err := s.w.core.GenerateProofWithKeyAttestation(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation)
+	var proof string
+	if s.w.cfg.ProofKeyByIndex {
+		// The first key attestedHolders attested is holders[0]'s.
+		proof, err = s.w.core.GenerateProofWithAttestedKeyIndex(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation, 0)
+	} else {
+		proof, err = s.w.core.GenerateProofWithKeyAttestation(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation)
+	}
 	if err != nil {
 		s.w.deleteKeys(context.WithoutCancel(ctx), holders)
 		return nil, wallet.CredentialRequest{}, fmt.Errorf("walletflow: proof: %w", err)
