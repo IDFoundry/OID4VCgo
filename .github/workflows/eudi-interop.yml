@@ -8,6 +8,12 @@
 # read-only token and no secrets. Pull requests, the daily run and each
 # release test the pinned image; the weekly run tests EUDI's newest
 # release (latest), to show a break before the pin moves.
+#
+# And the other way round (the wallet job): the EUDI reference wallet
+# library, eudi-lib-jvm-openid4vp-kt, presents to OID4VCgo's
+# conformance-verifier, by interop/eudi/run-wallet.sh, from a JVM driver
+# (interop/eudi/presentation) whose every dependency is pinned. It runs
+# with the pinned image's runs, not the weekly one.
 name: EUDI interop
 
 on:
@@ -72,6 +78,56 @@ jobs:
             ${{ runner.temp }}/eudi-work/result-*.json
           retention-days: 14
 
+  wallet:
+    # The weekly run and a dispatch naming an image test a newer
+    # verifier image, which this job doesn't use.
+    if: github.event.schedule != '15 7 * * 1' && !inputs.verifier_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # The committed gradle-wrapper.jar must be one Gradle published
+      # (its checksum among Gradle's), before anything runs it.
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Run the interop script
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/eudi-wallet-work"
+          mkdir -p "$WORK"
+          bash interop/eudi/run-wallet.sh 2>&1 | tee "$RUNNER_TEMP/eudi-wallet-interop.log"
+
+      # The work dir also holds the run's throwaway keys (the verifiers'
+      # and wallet's configs): only the logs and the verifiers' answers
+      # are uploaded.
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eudi-wallet-interop
+          path: |
+            ${{ runner.temp }}/eudi-wallet-interop.log
+            ${{ runner.temp }}/eudi-wallet-work/*.log
+            ${{ runner.temp }}/eudi-wallet-work/result-*.json
+            ${{ runner.temp }}/eudi-wallet-work/wallet-metadata.json
+          retention-days: 14
+
   # Report each scheduled (or dispatched) default-branch run on an
   # issue, opened when the run fails and closed when one passes
   # (.github/scripts/scheduled-alert.sh): nothing else alerts on it.
@@ -79,7 +135,7 @@ jobs:
   # a dispatch naming one) has its own label, so a pinned run passing
   # doesn't close its issue.
   alert:
-    needs: verifier
+    needs: [verifier, wallet]
     if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -87,6 +143,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/scheduled-alert.yml
     with:
-      result: ${{ needs.verifier.result }}
+      # A skipped wallet job (the weekly run's) doesn't count.
+      result: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
       label: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '') && 'interop-eudi-latest' || 'interop-eudi' }}
       title: ${{ (github.event.schedule == '15 7 * * 1' || inputs.verifier_image != '') && 'EUDI interop failure against a newer verifier image' || 'Scheduled EUDI interop failure' }}
