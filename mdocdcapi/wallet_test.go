@@ -18,6 +18,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 )
@@ -277,6 +278,14 @@ func TestParseRequestRefuses(t *testing.T) {
 	otherProtocol := base64.RawURLEncoding.EncodeToString(mustCBOR(t, []any{"other", decodeEncryptionInfo(t, good.EncryptionInfo)}))
 	shortNonce := decodeEncryptionInfo(t, good.EncryptionInfo)
 	shortNonce.Nonce = shortNonce.Nonce[:8]
+	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCurve := decodeEncryptionInfo(t, good.EncryptionInfo)
+	if otherCurve.RecipientPublicKey, err = mdoc.NewCoseKey(&p384.PublicKey); err != nil {
+		t.Fatal(err)
+	}
 
 	cases := map[string]struct {
 		data   []byte
@@ -291,6 +300,10 @@ func TestParseRequestRefuses(t *testing.T) {
 		"other protocol":        {with(func(d *RequestData) { d.EncryptionInfo = otherProtocol }), testOrigin},
 		"short nonce": {with(func(d *RequestData) {
 			d.EncryptionInfo = base64.RawURLEncoding.EncodeToString(mustCBOR(t, []any{"dcapi", shortNonce}))
+		}), testOrigin},
+		// Annex C's suite is DHKEM(P-256), so a P-384 key isn't sealed to.
+		"P-384 recipient key": {with(func(d *RequestData) {
+			d.EncryptionInfo = base64.RawURLEncoding.EncodeToString(mustCBOR(t, []any{"dcapi", otherCurve}))
 		}), testOrigin},
 		"version 2": {with(func(d *RequestData) {
 			d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, func(dr map[string]cbor.RawMessage) { dr["version"] = mustCBOR(t, "2.0") })

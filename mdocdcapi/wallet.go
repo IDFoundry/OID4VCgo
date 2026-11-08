@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hpke"
 	"crypto/x509"
 	"encoding/base64"
@@ -146,9 +147,14 @@ func parseEncryptionInfo(encryptionInfo string) (*ecdh.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: recipientPublicKey: %w", err)
 	}
+	// Annex C's HPKE suite is DHKEM(P-256): a key on another curve would
+	// make NewDHKEMPublicKey seal with another KEM.
 	ec, ok := pub.(*ecdsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("mdocdcapi: recipientPublicKey must be P-256, not %T", pub)
+	}
+	if ec.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("mdocdcapi: recipientPublicKey must be P-256, not %s", ec.Curve.Params().Name)
 	}
 	recipient, err := ec.ECDH()
 	if err != nil {
