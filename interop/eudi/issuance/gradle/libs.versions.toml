@@ -6,7 +6,7 @@ kotlin = "2.4.20"
 openid4vci = "0.16.0"
 sdjwt = "0.21.0"
 ktor = "3.6.0"
-bouncycastle = "1.83"
+bouncycastle = "1.85"
 cbor = "0.9"
 slf4j = "2.0.17"
 
