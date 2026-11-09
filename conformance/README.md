@@ -92,6 +92,23 @@ and DPoP nonces, each credential verified on the wallet side, and
 controls refused. Its cases and the library's deviations from the
 specifications are in the same README.
 
+## Interop with walt.id
+
+`.github/workflows/waltid-interop.yml` runs OID4VCgo against walt.id's
+Community Stack v2 (Issuer2, Verifier2 and Wallet2, from
+[walt-id/waltid-identity](https://github.com/walt-id/waltid-identity)),
+from its published images pinned by digest, in all four directions:
+`walletflow` obtaining SD-JWT VC and mdoc credentials from Issuer2 and
+presenting them to Verifier2 (a signed `x509_hash` request, the
+response encrypted), and walt.id's Wallet obtaining PIDs from
+`cmd/conformance-issuer` (HAIP, with a Wallet Attestation and DPoP) and
+presenting them to `cmd/conformance-verifier`; controls (untrusted
+issuers, Verifiers and attesters, an unsigned request) refused. It runs
+on each pull request, daily and on each release against the pinned
+images, and weekly against walt.id's `latest` images. See
+[`interop/waltid/README.md`](../interop/waltid/README.md) for the cases,
+walt.id's deviations, and moving the pins.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`

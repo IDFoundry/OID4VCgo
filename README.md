@@ -7,6 +7,7 @@
 [![Polaris interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-interop.yml)
 [![Polaris vectors](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-vectors.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-vectors.yml)
 [![EUDI interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudi-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudi-interop.yml)
+[![walt.id interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/IDFoundry/OID4VCgo/badge)](https://securityscorecards.dev/viewer/?uri=github.com/IDFoundry/OID4VCgo)
 [![Go Reference](https://pkg.go.dev/badge/github.com/idfoundry/oid4vcgo.svg)](https://pkg.go.dev/github.com/idfoundry/oid4vcgo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
