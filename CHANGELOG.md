@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.0...v0.75.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **proximity:** make RequireMDLDocumentSignerEKU no looser than the default ([1acbcfa](https://github.com/IDFoundry/OID4VCgo/commit/1acbcfa0b5e120fbc6f1219776044fa1061ec19a))
+
 ## [0.75.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.2...v0.75.0) (2026-11-09)
 
 
