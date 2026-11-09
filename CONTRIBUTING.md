@@ -68,6 +68,13 @@ by role.
   `govulncheck.yml` enforce on every PR. `examples/passport-vdc` is its
   own Go module: run `go vet`, `go test` and `golangci-lint` there too
   (CI's `examples` job).
+- `.github/scripts/lint.sh` runs CI's gofmt and golangci-lint checks in
+  every module (root, `mobile`, `sqlstore`, `examples/passport-vdc`)
+  under the Go version in their `go.mod` and the golangci-lint version
+  `ci.yml` pins, building that linter once into a cache. Use it rather
+  than a locally installed golangci-lint or gofmt: one built for, or
+  run under, another Go release can disagree with CI or fail to load
+  packages at all.
 - Run `govulncheck ./...` in the root, `mobile` and `examples/passport-vdc`
   modules under the Go version in their `go.mod`
   (`GOTOOLCHAIN=go<version from go.mod> govulncheck ./...`), as CI does:
