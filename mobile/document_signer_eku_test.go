@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -84,6 +85,12 @@ func TestProximityReader_AcceptMDLSignerWithoutEKU(t *testing.T) {
 	strict, err := readerDocumentSignerPolicy(proximityReaderConfig{RequireMDLSignerEKU: true})
 	if err != nil || strict(noEKU, nil) == nil || strict(mdl, nil) != nil {
 		t.Errorf("require_mdl_signer_eku: %v", err)
+	}
+	// It refuses all the default does: an OCSP signer's certificate,
+	// though it carries the mDL document signer's extended key usage.
+	ocsp := ekuCert(t, []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning}, []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU})
+	if proximity.DefaultDocumentSignerPolicy(ocsp, nil) == nil || strict(ocsp, nil) == nil {
+		t.Error("require_mdl_signer_eku accepted an OCSP signer's certificate")
 	}
 	if _, err := readerDocumentSignerPolicy(proximityReaderConfig{RequireMDLSignerEKU: true, AcceptMDLSignerWithoutEKU: true}); err == nil {
 		t.Error("require_mdl_signer_eku with accept_mdl_signer_without_eku accepted")

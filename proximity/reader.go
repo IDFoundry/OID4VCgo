@@ -213,14 +213,12 @@ var MDLDocumentSignerEKU = mdoc.MDLDocumentSignerEKU
 // RequireMDLDocumentSignerEKU is a WithDocumentSignerPolicy policy
 // refusing a document signer certificate without MDLDocumentSignerEKU,
 // or whose every verified path has an intermediate CA whose own
-// extended key usage excludes it. DefaultDocumentSignerPolicy requires
-// it too, and refuses an OCSP signer's certificate or one whose key
-// usage doesn't allow digital signatures besides.
+// extended key usage excludes it. It is DefaultDocumentSignerPolicy,
+// which requires the same: a policy named for requiring the extended
+// key usage mustn't accept what the default refuses, an OCSP signer's
+// certificate or one whose key usage doesn't allow digital signatures.
 func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-	if err := certchain.EKUInPath(leaf, chains, MDLDocumentSignerEKU); err != nil {
-		return fmt.Errorf("the document signer certificate isn't an mDL document signer's (1.0.18013.5.1.2): %w", err)
-	}
-	return nil
+	return DefaultDocumentSignerPolicy(leaf, chains)
 }
 
 // NewReaderSession decodes the mdoc's QR code (§8.2.2.3), checks its

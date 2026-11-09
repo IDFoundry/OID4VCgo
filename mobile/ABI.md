@@ -1178,8 +1178,9 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   Added within ABI 15 (`status_cache_key` after OID4VCWallet 0.28.0).
 - `require_mdl_signer_eku` accepts only document signers with the mDL
   document signer extended key usage. The default check requires it
-  too, so a document signer certificate without one is refused either
-  way.
+  too, and is the check it makes, so it accepts nothing the default
+  refuses: a document signer certificate without the extended key
+  usage, or one that is an OCSP signer's, is refused either way.
 - `accept_mdl_signer_without_eku` also accepts a document signer
   certificate with no extended key usage extension, as a Wallet's; it
   can't be set with `require_mdl_signer_eku` (`invalid_input`). Added
