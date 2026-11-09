@@ -35,6 +35,11 @@ reads only the kind asked for; the Swift and Kotlin `CredentialStore`s
 gain `records(where:)` and `records(idFilter)`, which by default return
 every record, so an app's own store needs no change.
 
+Within version 15, without bumping it (an optional configuration key,
+so an older wrapper is unaffected), a Wallet's `proof_key_by_index`
+names a key-attested jwt proof's key by its index; check a library's
+release notes for it.
+
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
 `"status"` is `"check"` or `"decline"`, and outside development one is
@@ -409,6 +414,7 @@ library's an `IOException`.
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
+ "proof_key_by_index": false,
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
@@ -432,7 +438,10 @@ a key attestation where the issuer requires one
 the issuer has a nonce endpoint; a DPoP-bound access token, or a Bearer
 one where the server issues that. `"haip"` also refuses an issuer that
 doesn't follow HAIP 1.0 §4 (`profile_violation`), and needs a provider
-and `client_id`. A Wallet Attestation needs a provider and `client_id`,
+and `client_id`. A jwt proof with a key attestation names its key in
+`jwk`; `proof_key_by_index` names it by its index in the attestation
+(`kid` `"0"`) instead, as issuers following ETSI TS 119 472-3 require,
+and an issuer taking only `jwk` refuses. A Wallet Attestation needs a provider and `client_id`,
 and the authorization code grant a `redirect_uri`: a wallet receiving
 credentials only from pre-authorized codes redeemed with no client
 authentication needs none of them. Outside `development`, a

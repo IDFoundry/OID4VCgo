@@ -119,6 +119,11 @@ type config struct {
 	// IssuanceProfile is "openid4vci" (the default) or "haip"
 	// (walletflow.Config.IssuanceProfile).
 	IssuanceProfile string `json:"issuance_profile,omitempty"`
+	// ProofKeyByIndex names the key of a jwt proof carrying a Key
+	// Attestation by its index in the attestation (kid "0"), not in
+	// jwk, as issuers following ETSI TS 119 472-3 require
+	// (walletflow.Config.ProofKeyByIndex).
+	ProofKeyByIndex bool `json:"proof_key_by_index,omitempty"`
 	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
 	// trust besides the system's: a development service's own CA, where
 	// the platform's trust store can't be given it (Go on Android reads
@@ -482,7 +487,7 @@ func (w *Wallet) SetCRLs(pemText string) error {
 func walletConfig(cfg config) (walletflow.Config, error) {
 	wcfg := walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
-		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
+		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh, ProofKeyByIndex: cfg.ProofKeyByIndex,
 		RequireTrustedMdocReader: cfg.RequireTrustedMdocReader, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
 	}
 	switch cfg.IssuanceProfile {
