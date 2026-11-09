@@ -36,6 +36,19 @@ kotlin {
     jvmToolchain(17)
 }
 
+// Guava, which the app's dependencies and lint bring in, raised past
+// versions with published vulnerabilities (OSV, via the OpenSSF
+// Scorecard) on every classpath; remove it once they require 33.7.2 or
+// later themselves.
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "com.google.guava" && requested.name == "guava") {
+            useVersion("33.7.2-android")
+            because("GHSA-xxph-c9ww-hj94")
+        }
+    }
+}
+
 dependencies {
     implementation(project(":OID4VCWallet"))
     implementation(platform(libs.androidx.compose.bom))
