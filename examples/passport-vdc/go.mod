@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
-	github.com/gmrtd/gmrtd v1.7.1
+	github.com/gmrtd/gmrtd v1.8.0
 	github.com/idfoundry/fapigo v0.72.0
 	github.com/idfoundry/fapigo/sqlstore v0.8.0
 	github.com/idfoundry/oid4vcgo v0.73.0
