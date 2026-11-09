@@ -1,12 +1,18 @@
 package walletflow_test
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -495,4 +501,75 @@ func TestCopiesCorrelated_DistinctBatch(t *testing.T) {
 			t.Errorf("%s: %d copies, CopiesCorrelated %v; want 2, false", c.Format, len(c.Copies), c.CopiesCorrelated)
 		}
 	}
+}
+
+// Under ProofKeyByIndex, the one jwt proof names its key by its index in
+// the Key Attestation's attested_keys, kid "0", with no jwk (as ETSI TS
+// 119 472-3 issuers require), and the issuer still binds a copy to each
+// attested key.
+func TestBatch_JWTProofsWithKeyAttestation_KeyByIndex(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3, JWTKeyAttestation: true})
+	headers := &proofHeaders{base: f.env.HTTP.Transport}
+	httpClient := *f.env.HTTP
+	httpClient.Transport = headers
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ProofKeyByIndex: true,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+	if len(c.Copies) != 3 {
+		t.Fatalf("copies = %d, want 3", len(c.Copies))
+	}
+	assertDistinct(t, c.Copies)
+	got := headers.all()
+	if len(got) != 1 {
+		t.Fatalf("jwt proofs = %d, want one", len(got))
+	}
+	if h := got[0]; h["kid"] != "0" || h["jwk"] != nil || h["key_attestation"] == nil {
+		t.Errorf("proof header = %v, want kid 0 beside a key_attestation and no jwk", h)
+	}
+}
+
+// proofHeaders records the headers of the jwt proofs Credential
+// Requests carry.
+type proofHeaders struct {
+	base http.RoundTripper
+	mu   sync.Mutex
+	got  []map[string]any
+}
+
+func (p *proofHeaders) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil && strings.HasSuffix(req.URL.Path, "/credential") {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		var cr struct {
+			Proofs struct {
+				JWT []string `json:"jwt"`
+			} `json:"proofs"`
+		}
+		if json.Unmarshal(body, &cr) == nil {
+			for _, proof := range cr.Proofs.JWT {
+				raw, _, _ := strings.Cut(proof, ".")
+				var h map[string]any
+				if b, err := base64.RawURLEncoding.DecodeString(raw); err == nil && json.Unmarshal(b, &h) == nil {
+					p.mu.Lock()
+					p.got = append(p.got, h)
+					p.mu.Unlock()
+				}
+			}
+		}
+	}
+	return p.base.RoundTrip(req)
+}
+
+func (p *proofHeaders) all() []map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.got)
 }

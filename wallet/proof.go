@@ -4,9 +4,11 @@ import (
 	"crypto"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // jwtProofTyp is the required JOSE "typ" header of a jwt-type key
@@ -70,6 +72,41 @@ func (w *Wallet) GenerateProofWithKeyAttestation(signer crypto.Signer, credentia
 		return "", fmt.Errorf("wallet: generate proof: marshal jwk: %w", err)
 	}
 	return w.signJWTProof(signer, map[string]any{"jwk": pub, "key_attestation": keyAttestationJWT}, credentialIssuer, nonce)
+}
+
+// GenerateProofWithAttestedKeyIndex signs a jwt-type key proof
+// (Appendix F.1) carrying keyAttestationJWT in its "key_attestation"
+// header, as GenerateProofWithKeyAttestation does, but naming signer's
+// key by its index in the attestation's attested_keys, as a "kid" of
+// that index in decimal ("0" for the first), with no "jwk": Appendix
+// F.1 has the key identified "through either kid, jwk or x5c", and of
+// jwk, "It MUST NOT be present if kid or x5c is present". ETSI TS 119
+// 472-3 has issuers require this form, so an issuer following it
+// refuses GenerateProofWithKeyAttestation's. It refuses an index whose
+// attested key isn't signer's, reading attested_keys without verifying
+// the attestation, which is the issuer's to verify.
+// credentialIssuer/nonce are as GenerateProof's own.
+func (w *Wallet) GenerateProofWithAttestedKeyIndex(signer crypto.Signer, credentialIssuer, nonce, keyAttestationJWT string, index int) (string, error) {
+	if keyAttestationJWT == "" {
+		return "", fmt.Errorf("wallet: generate proof: key attestation jwt is required")
+	}
+	_, payload, err := jose.DecodeUnverified(keyAttestationJWT)
+	if err != nil {
+		return "", fmt.Errorf("wallet: generate proof: key attestation: %w", err)
+	}
+	var claims struct {
+		AttestedKeys []json.RawMessage `json:"attested_keys"`
+	}
+	if err := strictjson.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("wallet: generate proof: key attestation: %w", err)
+	}
+	if index < 0 || index >= len(claims.AttestedKeys) {
+		return "", fmt.Errorf("wallet: generate proof: key attestation attests %d keys, so has no index %d", len(claims.AttestedKeys), index)
+	}
+	if ok, err := jwk.Matches(claims.AttestedKeys[index], signer.Public()); err != nil || !ok {
+		return "", fmt.Errorf("wallet: generate proof: the key attestation's attested_keys[%d] isn't the signer's key", index)
+	}
+	return w.signJWTProof(signer, map[string]any{"kid": strconv.Itoa(index), "key_attestation": keyAttestationJWT}, credentialIssuer, nonce)
 }
 
 // GenerateProofWithX5C signs a jwt-type key proof (Appendix F.1),

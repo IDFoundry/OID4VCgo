@@ -17,6 +17,9 @@ import (
 // list. A wallet-initiated issuance is an offer the wallet makes
 // itself, naming no grant, which walletflow redeems with the
 // authorization code grant (OpenID4VCI 1.0 §4.1.1).
+//
+// -proof jwt or jwk is the jwt proof's key conveyance, should walletflow
+// choose a jwt proof with a Key Attestation (Config.ProofKeyByIndex).
 func runWalletflow(ctx context.Context, env *environment, res *result) {
 	o := env.o
 	offer := o.offer
@@ -41,6 +44,10 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		RequireIssuerMetadataName:   true,
 		IssuanceProfile:             walletflow.ProfileHAIP,
 		BatchSize:                   max(1, o.batch),
+		// -proof jwt names the proof's key by its index among the
+		// Key Attestation's attested_keys, as the issuer requires;
+		// -proof jwk in jwk, walletflow's default.
+		ProofKeyByIndex: o.proof != "jwk",
 		// Development only for the stack's loopback address; the run's
 		// certificates publish no CRLs.
 		Development:              true,
@@ -49,7 +56,10 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		IssuerMetadataRevocation: certrevocation.NoCheck{},
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
-		Provider: env.provider, HTTP: env.http,
+		// A plain *http.Transport, not the recorder: CheckStatus's
+		// fetches apply an address policy that needs one, and this
+		// engine's result records no exchanges.
+		Provider: env.provider, HTTP: env.statusHTTP,
 	})
 	if err != nil {
 		res.fail("setup", err)

@@ -520,8 +520,9 @@ and acknowledges it at the Notification Endpoint.
 | Credentials under an IACA the wallet doesn't trust, each format | the wallet refuses them |
 | A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR |
 | A Key Attestation whose `key_storage_status` is revoked | the issuer refuses the proof |
-| A `jwt` proof naming its key in `jwk`, as `wallet` and walletflow make it | refused (a note, not a failure: see Findings) |
-| walletflow, under `ProfileHAIP` | refused (a note: see Findings) |
+| walletflow, under `ProfileHAIP` with `ProofKeyByIndex`: one PID, then a batch of three | issued and verified, status `VALID` |
+| A `jwt` proof naming its key in `jwk`, as `GenerateProofWithKeyAttestation` makes it | refused (a note, not a failure: see Findings) |
+| walletflow naming the proof's key in `jwk`, its default | refused (a note: see Findings) |
 | A batch of one `jwt` proof per key | refused (a note: see Findings) |
 
 A Wallet Attestation and a Key Attestation are each other's controls'
@@ -591,10 +592,11 @@ the issuer's v0.11.2 source:
    the Credential Issuer MUST validate that the JWT used as a proof is
    signed by a key contained in the attestation in the JOSE Header".
    `wallet.Wallet.GenerateProofWithKeyAttestation` conveys the key in
-   `jwk`, so does walletflow, and walletflow prefers the `jwt` proof
-   type, so **walletflow can't receive a PID from this issuer**. The
-   `pidwallet` `jwt` proof (kid `"0"`, no `jwk`) is also valid under
-   F.1, and is accepted.
+   `jwk`, and so, by default, does walletflow, which prefers the `jwt`
+   proof type. `wallet.Wallet.GenerateProofWithAttestedKeyIndex` names
+   it by kid `"0"` with no `jwk`, also valid under F.1, which the
+   issuer accepts; walletflow uses it under `Config.ProofKeyByIndex`,
+   which the run sets.
 2. **It advertises batch issuance but refuses more than one proof.**
    Its metadata has `batch_credential_issuance.batch_size` 20, and a
    Credential Request with two `jwt` proofs is refused: `"You can
@@ -666,9 +668,9 @@ What isn't covered:
 
 - The pre-authorized code flow: the issuer has none.
 - An mdoc's status and its revocation: see Finding 3.
-- walletflow end to end: see Finding 1. Its offer, metadata, PAR,
-  Wallet Attestation and token steps do run, and succeed, before the
-  Credential Request is refused.
+- walletflow's protocol steps: its runs record no exchanges, so the
+  run checks only what it receives; walletflow's own tests check the
+  steps.
 - A `use_dpop_nonce` challenge: the wallet uses the Nonce Endpoint's
   DPoP-Nonce for its Credential Request, so the issuer never has to
   challenge it, and Keycloak issues no DPoP nonces.
