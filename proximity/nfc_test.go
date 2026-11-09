@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/idfoundry/oid4vcgo/internal/testbounds"
 )
 
 func TestNFCStaticPresentation(t *testing.T) {
@@ -166,5 +168,5 @@ func FuzzNFCSelect(f *testing.F) {
 	f.Add(h.HandoverSelect())
 	f.Add([]byte{})
 	f.Add([]byte{0xd1, 2, 0, 'H', 's'})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _, _, _ = parseNFCSelect(b) })
+	f.Fuzz(func(t *testing.T, b []byte) { _, _, _, _ = parseNFCSelect(testbounds.Exact(b)) })
 }

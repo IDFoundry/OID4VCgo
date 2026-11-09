@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/testbounds"
 )
 
 func TestNFCDataPresentation(t *testing.T) {
@@ -182,7 +184,7 @@ func FuzzNFCDataHandover(f *testing.F) {
 		f.Fatal(err)
 	}
 	f.Add(h.HandoverSelect())
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = ParseNFCDataHandover(b) })
+	f.Fuzz(func(t *testing.T, b []byte) { _, _ = ParseNFCDataHandover(testbounds.Exact(b)) })
 }
 
 func FuzzNFCDataRequest(f *testing.F) {
@@ -192,7 +194,7 @@ func FuzzNFCDataRequest(f *testing.F) {
 	}
 	f.Add(hr)
 	f.Fuzz(func(t *testing.T, b []byte) {
-		carriers, err := parseNFCRequestCarriers(b)
+		carriers, err := parseNFCRequestCarriers(testbounds.Exact(b))
 		if err == nil {
 			_, _ = parseNFCDataCarriers(carriers, false)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/internal/testbounds"
 	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
@@ -12,7 +13,9 @@ func splitAPDUs(b []byte) [][]byte {
 	var out [][]byte
 	for len(b) > 0 {
 		n := min(int(b[0]), len(b)-1)
-		out = append(out, b[1:1+n])
+		// Each APDU has no spare capacity, as one read off the radio
+		// doesn't: the next APDU's bytes would hide a read past its end.
+		out = append(out, testbounds.Exact(b[1:1+n]))
 		b = b[1+n:]
 	}
 	return out
@@ -22,6 +25,7 @@ func FuzzParseCommand(f *testing.F) {
 	f.Add([]byte{0, insGetResponse, 0, 0, 0})
 	f.Add([]byte{0, insEnvelope, 0, 0, 0, 0, 2, 4, 5, 0, 0})
 	f.Fuzz(func(t *testing.T, b []byte) {
+		b = testbounds.Exact(b)
 		c, ok := ParseCommand(b)
 		if ok && (len(c.Data) > len(b) || c.Le < 0 || c.Le > 65536) {
 			t.Fatalf("ParseCommand(%X) = %+v", b, c)
@@ -35,6 +39,7 @@ func FuzzUnwrapDO53(f *testing.F) {
 	f.Add(encoded)
 	f.Add([]byte{0x53, 0x81, 1, 7})
 	f.Fuzz(func(t *testing.T, b []byte) {
+		b = testbounds.Exact(b)
 		m, err := UnwrapDO53(b)
 		if err != nil {
 			return
@@ -50,6 +55,7 @@ func FuzzTNEPRecords(f *testing.F) {
 	f.Add(tnepParameters)
 	f.Add(concat(shortRecord("Tp", []byte{0x10, 1, 'x', 0, 16, 15, 1, 0}), tnepParameters))
 	f.Fuzz(func(t *testing.T, b []byte) {
+		b = testbounds.Exact(b)
 		_, _, _ = tnepServiceParameters(b)
 		_, _ = tnepPayload(b, "Ts")
 	})
