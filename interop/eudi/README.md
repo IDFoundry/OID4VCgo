@@ -699,9 +699,11 @@ with `pidwallet` by hand.
 
 The issuer image is pinned by digest in `run-pid-issuer.sh`, with the
 commit of its tag, whose `docker-compose/` files the run fetches by
-SHA-256, and the versions that compose file names: Keycloak, Postgres,
-HAProxy and Python by digest, the Keycloak extension and the status
-list service by SHA-256. The weekly run tests EUDI's `latest` issuer
+SHA-256, and the versions that compose file names: Keycloak, Postgres
+and HAProxy by digest, the Keycloak extension and the status list
+service by SHA-256. The status list service's Python base image is
+pinned by digest in [`pid-issuer/status-list.Dockerfile`](pid-issuer/status-list.Dockerfile),
+and its wheels in `pid-issuer/status-list-requirements.txt`. The weekly run tests EUDI's `latest` issuer
 image against the pinned stack. To move the pins, read the release's
 changes and its `docker-compose/`, then take the new digests and hashes:
 

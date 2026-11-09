@@ -1,30 +1,33 @@
 # eudi-srv-statuslist-py v0.9.0's app/requirements.txt, resolved in the
-# pinned python:3.14.6-alpine3.24 image to binary wheels only (pip
-# download --only-binary :all:), every dependency pinned by SHA-256.
-asn1crypto==1.5.1 --hash=sha256:db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67
+# status-list.Dockerfile's python:3.14.6-alpine3.24 image for
+# linux/amd64 to binary wheels only (pip download --only-binary :all:),
+# every dependency pinned by SHA-256. Each release's own pin is raised
+# to its first version without a known vulnerability (OSV): Flask 3.1,
+# Werkzeug 3.1, flask-cors 6, PyJWT 2.15, requests 2.33, cbor2 5.9,
+# python-dotenv 1.2.2 and cryptography 49, so cwt to 4.0, which the app
+# lists but doesn't import. The interop run is what tests the service
+# still works with them.
 blinker==1.9.0 --hash=sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc
-cbor2==5.6.4 --hash=sha256:fe411c4bf464f5976605103ebcd0f60b893ac3e4c7c8d8bc8f4a0cb456e33c60
+cbor2==6.2.1 --hash=sha256:2773c2d4ca770259718a27a28b33d410761d278f52e203209558c74bcf9fb208
 certifi==2026.10.23 --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
-certvalidator==0.11.1 --hash=sha256:77520b269f516d4fb0902998d5bd0eb3727fe153b659aa1cb828dcf12ea6b8de
 cffi==2.1.1 --hash=sha256:5c58fe613dc5e5336357eff555824a314d8e43282600435c8d1cb6a7a2fedd13
 charset_normalizer==3.5.2 --hash=sha256:ddc7dacc8ece3a182e7f15cb862d1fd616b46d076cb1ae9dd232b2c38b655874
 click==8.5.1 --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37
-cryptography==41.0.7 --hash=sha256:49f0805fc0b2ac8d4882dd52f4a3b935b210935d500b6b805f321addc8177406
-cwt==2.3.2 --hash=sha256:63dfada5611d41f28d2fd5913940378db606457cccda88dae6990cb7bd4b7d6d
-flask==2.3.3 --hash=sha256:f69fcd559dc907ed196ab9df0e48471709175e696d6e698dd4dbe940f96ce66b
+cryptography==50.0.2 --hash=sha256:85d0d9a31b9098e98534226d5686b47264b95e62ce459dc2e62fdfc809f9fe93
+cwt==4.0.0 --hash=sha256:9758cb6c483a2a5fa6dde18ec5331e699349c30e13ed097be204f98b76723bae
+flask==3.1.3 --hash=sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c
 Flask_API==3.1 --hash=sha256:08cb377412ff1b6bea47e8a5ffefc592a149f8686045038df6e116d12ab5d4e9
-Flask_Cors==5.0.0 --hash=sha256:b9e307d082a9261c100d8fb0ba909eec6a228ed1b60a8315fd85f783d61910bc
+flask_cors==6.0.5 --hash=sha256:68fcf75693e961f3af26683b23c4b9a8fb6b64de17d20d0c37b95e8de7ab2ed8
 flask_swagger_ui==4.11.1 --hash=sha256:c951928fe4592d3561b543e0e1ca32703f55d3474de86c894a9d27f795d96c83
 idna==3.20 --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
 itsdangerous==2.2.0 --hash=sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef
 jinja2==3.1.6 --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
 markupsafe==3.0.4 --hash=sha256:0d9c47709875fdb321452056622e930c52afbc07a7d780762fbb8b4d91ce6fa4
-oscrypto==1.3.0 --hash=sha256:2b2f1d2d42ec152ca90ccb5682f3e051fb55986e1b170ebde472b133713e7085
 pycparser==3.12 --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e
-pyhpke==0.5.2 --hash=sha256:d8e7e5a97a8d6480bce28573f5be986eebaf03c0c0783d046f29effe5087e263
-PyJWT==2.8.0 --hash=sha256:59127c392cc44c2da5bb3192169a91f429924e17aff6534d70fdc02ab3e04320
-python_dotenv==1.0.1 --hash=sha256:f7b63ef50f1b690dddf550d03497b66d609393b40b564ed0d674909a68ebf16a
-requests==2.31.0 --hash=sha256:58cd2187c01e70e6e26505bca751777aa9f2ee0b7f4300988b709f44e013003f
+pyhpke==0.6.5 --hash=sha256:e8d794724e43053fe04e8971be55033225d6da904effc748b303cece763a3f3c
+pyjwt==2.15.1 --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193
+python_dotenv==1.2.4 --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc
+requests==2.34.2 --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
 token_status_list==0.1.0a2.dev1 --hash=sha256:ecbd4bc44ad7e2c3fbb777607a6491d972daef9cf4a2e8bcceb7b43f732a9808
 urllib3==2.8.0 --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
-werkzeug==2.3.7 --hash=sha256:effc12dba7f3bd72e605ce49807bbe692bd729c3bb122a3b91747a6ae77df528
+werkzeug==3.1.9 --hash=sha256:6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab

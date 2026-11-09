@@ -7,8 +7,7 @@
 # status-list-requirements.txt, binary wheels each pinned by SHA-256,
 # so no package's setup script runs. run-pid-issuer.sh copies this file
 # and that one into the build context.
-ARG PYTHON_IMAGE
-FROM ${PYTHON_IMAGE}
+FROM python:3.14.6-alpine3.24@sha256:26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92
 WORKDIR /status-list
 COPY app/ app/
 COPY get_status_list.py requirements.txt /tmp/

@@ -58,8 +58,6 @@ services:
       # status-list.Dockerfile, which the script copies in: compose
       # builds only from a Dockerfile inside the context.
       dockerfile: Dockerfile
-      args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:?}
     image: ${COMPOSE_PROJECT_NAME:?}-status-list
     environment:
       API_key: ${STATUS_LIST_API_KEY:?}
