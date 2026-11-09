@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.2...v0.75.0) (2026-11-09)
+
+
+### Features
+
+* name a jwt proof's key by its index in the Key Attestation ([4205d63](https://github.com/IDFoundry/OID4VCgo/commit/4205d63e894b8304faf45642b58d18c698b361a0))
+
 ## [0.74.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.74.1...v0.74.2) (2026-11-08)
 
 
