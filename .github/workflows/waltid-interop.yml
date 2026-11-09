@@ -1,0 +1,99 @@
+# Interop: OID4VCgo against walt.id's Community Stack v2 (Issuer2,
+# Verifier2 and Wallet2), run from their published images by
+# interop/waltid/run.sh, in all four directions: OID4VCgo's wallet
+# obtaining credentials from Issuer2 and presenting to Verifier2, and
+# walt.id's Wallet obtaining PIDs from OID4VCgo's issuer (HAIP, with a
+# Wallet Attestation) and presenting them to OID4VCgo's verifier; then
+# controls (untrusted issuers, Verifiers and attesters, an unsigned
+# request) refused. The images are pinned by digest and run here, on a
+# disposable runner with a read-only token and no secrets. Pull
+# requests, the daily run and each release test the pinned images; the
+# weekly run tests walt.id's newest release (latest), to show a break
+# before the pin moves.
+name: walt.id interop
+
+on:
+  pull_request:
+    # The Kotlin and Swift libraries aren't the wallet this runs.
+    paths-ignore:
+      - 'mobile/**'
+  schedule:
+    - cron: '15 6 * * *' # daily, 6:15am UTC: the pinned images
+    - cron: '45 7 * * 1' # Mondays, 7:45am UTC: walt.id's latest images
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      waltid_tag:
+        description: walt.id image tag to test (empty for the pinned images)
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: waltid-interop-${{ github.ref }}-${{ github.event.schedule || 'run' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.mod
+
+      # The runner's own JDK supplies keytool, which builds Wallet2's
+      # truststore.
+      - name: Run the interop script
+        env:
+          WALTID_TAG: ${{ inputs.waltid_tag || (github.event.schedule == '45 7 * * 1' && 'latest') || '' }}
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/waltid-work"
+          mkdir -p "$WORK"
+          [ -n "$WALTID_TAG" ] || unset WALTID_TAG
+          bash interop/waltid/run.sh 2>&1 | tee "$RUNNER_TEMP/waltid-interop.log"
+
+      # The work dir also holds the run's throwaway keys and walt.id's
+      # configs with them: only the logs and the parties' answers are
+      # uploaded.
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: waltid-interop
+          path: |
+            ${{ runner.temp }}/waltid-interop.log
+            ${{ runner.temp }}/waltid-work/*.log
+            ${{ runner.temp }}/waltid-work/result-*.json
+            ${{ runner.temp }}/waltid-work/receive-*.json
+            ${{ runner.temp }}/waltid-work/present-*.json
+            ${{ runner.temp }}/waltid-work/wallet2-*.json
+          retention-days: 14
+
+  # Report each scheduled (or dispatched) default-branch run on an
+  # issue, opened when the run fails and closed when one passes
+  # (.github/scripts/scheduled-alert.sh): nothing else alerts on it.
+  # A run against other images than the pinned ones (the weekly run, or
+  # a dispatch naming a tag) has its own label, so a pinned run passing
+  # doesn't close its issue.
+  alert:
+    needs: [interop]
+    if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    uses: ./.github/workflows/scheduled-alert.yml
+    with:
+      result: ${{ needs.interop.result }}
+      label: ${{ (github.event.schedule == '45 7 * * 1' || inputs.waltid_tag != '') && 'interop-waltid-latest' || 'interop-waltid' }}
+      title: ${{ (github.event.schedule == '45 7 * * 1' || inputs.waltid_tag != '') && 'walt.id interop failure against newer walt.id images' || 'Scheduled walt.id interop failure' }}

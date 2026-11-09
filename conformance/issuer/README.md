@@ -74,8 +74,9 @@ database of its own, per `CredentialRequest.SDJWTClaims`'s own doc
 comment), `POST /deferred_credential`, `POST /notification`.
 
 Options the HAIP plan doesn't use, for
-[`interop/eudi/run-issuer.sh`](../../interop/eudi/run-issuer.sh), whose
-wallet needs more than the plan tests: `offers` adds the
+[`interop/eudi/run-issuer.sh`](../../interop/eudi/run-issuer.sh) and
+[`interop/waltid/run.sh`](../../interop/waltid/run.sh), whose
+wallets need more than the plan tests: `offers` adds the
 pre-authorized code grant at `/token` (the Wallet authenticated by its
 Wallet Attestation, as for the authorization code), `GET
 /credential-offer/{reference}`, and a plain-HTTP, loopback-only

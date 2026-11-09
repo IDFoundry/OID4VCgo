@@ -91,7 +91,8 @@ A Verifier uses `verifier.Transactions` with a durable
 The interop runs' fields (`credential_issuer_trust_anchors_pem`, the
 `status_list_*` fields, `dc_api_origins`) are documented in
 `cmd/conformance-verifier/config.go`; the suite's configuration leaves
-them unset. `interop/eudi/run-wallet.sh` uses them.
+them unset. `interop/eudi/run-wallet.sh` and `interop/waltid/run.sh`
+use them.
 
 ## Status
 
