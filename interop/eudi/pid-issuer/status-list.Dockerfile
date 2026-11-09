@@ -13,6 +13,12 @@ COPY app/ app/
 COPY get_status_list.py requirements.txt /tmp/
 RUN cat /tmp/get_status_list.py >> app/status_list_endpoints.py \
     && pip install --no-cache-dir --no-deps --only-binary :all: --require-hashes -r /tmp/requirements.txt \
-    && rm /tmp/get_status_list.py /tmp/requirements.txt
+    && rm /tmp/get_status_list.py /tmp/requirements.txt \
+    && adduser -D -H -u 10001 statuslist \
+    && install -d -o statuslist /var/opt/status_lists /var/opt/status_list_backup
+# The service writes its lists under /var/opt and its log under /tmp,
+# and reads the mounted signer key (world-readable: a throwaway,
+# per-run key), so it needs no root.
+USER 10001
 EXPOSE 5000
 CMD ["flask", "--app", "app", "run", "--host=0.0.0.0"]
