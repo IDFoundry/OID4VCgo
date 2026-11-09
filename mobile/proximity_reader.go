@@ -89,7 +89,8 @@ type proximityReaderConfig struct {
 	StatusCacheKey           string `json:"status_cache_key,omitempty"`
 	// RequireMDLSignerEKU accepts only document signer certificates
 	// with the mDL document signer extended key usage. The default
-	// check (proximity.DefaultDocumentSignerPolicy) requires it too.
+	// check (proximity.DefaultDocumentSignerPolicy) requires it too, and
+	// is the check this makes: it accepts nothing the default refuses.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
 	// AcceptMDLSignerWithoutEKU also accepts a document signer
 	// certificate with no extended key usage extension, which the
