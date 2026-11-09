@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/idfoundry/oid4vcgo/internal/testbounds"
 )
 
 // Reader/writer TNEP already assigns requester/selector roles. An Hr may
@@ -317,5 +319,5 @@ func FuzzNFCRequest(f *testing.F) {
 	}
 	f.Add(hr)
 	f.Add([]byte{})
-	f.Fuzz(func(t *testing.T, b []byte) { _, _ = parseNFCRequest(b) })
+	f.Fuzz(func(t *testing.T, b []byte) { _, _ = parseNFCRequest(testbounds.Exact(b)) })
 }
