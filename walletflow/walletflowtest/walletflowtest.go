@@ -195,6 +195,10 @@ type Options struct {
 	// credential_identifier it mints (OpenID4VCI 1.0 §6.2). With
 	// MdocUnscoped, a wallet requests the mdoc configuration that way.
 	CredentialAuthorizationDetails bool
+	// AlterBatch, if set, changes each batch's credentials once they have
+	// their status list entries, before they're signed: to issue copies
+	// that differ, which a wallet must refuse.
+	AlterBatch func(batch []*issuer.CredentialInstance)
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -227,6 +231,7 @@ type Env struct {
 	plainClaims  map[string]any
 	sdjwtIss     string
 	vct          string
+	alterBatch   func([]*issuer.CredentialInstance)
 
 	mu            sync.Mutex
 	grantIDs      []string // every authorization code grant's, for RevokeGrants
@@ -264,7 +269,7 @@ func New(opts Options) (env *Env, err error) {
 		return nil, errors.New("walletflowtest: BearerTokens and AnonymousRefresh need Anonymous")
 	}
 	ts := httptest.NewUnstartedServer(nil)
-	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore(), plainClaims: opts.PlainClaims, sdjwtIss: opts.SDJWTIss}
+	e := &Env{IssuerURL: "https://" + ts.Listener.Addr().String(), preAuthCodes: oid4vcgostorage.NewPreAuthorizedCodeStore(), plainClaims: opts.PlainClaims, sdjwtIss: opts.SDJWTIss, alterBatch: opts.AlterBatch}
 	e.vct = e.IssuerURL + "/vct/test"
 	e.deferAll = opts.Defer
 	e.Provider = newProvider()
@@ -652,6 +657,9 @@ func (e *Env) withStatus(_ context.Context, batch []*issuer.CredentialInstance) 
 		if c.MdocClaims != nil {
 			c.MdocClaims.Status = &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI}
 		}
+	}
+	if e.alterBatch != nil {
+		e.alterBatch(batch)
 	}
 	return nil
 }
