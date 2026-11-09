@@ -154,6 +154,11 @@ public struct WalletConfiguration: Codable, Sendable {
     public var allowForeignIss: Bool
     /// The profile issuance follows.
     public var issuanceProfile: IssuanceProfile
+    /// Names the key of a jwt proof carrying a key attestation by its
+    /// index in the attestation (`kid` `"0"`) rather than in `jwk`, as
+    /// issuers following ETSI TS 119 472-3, such as the EUDI reference
+    /// PID issuer, require. An issuer taking only `jwk` refuses it.
+    public var proofKeyByIndex: Bool
     /// How an in-person response authenticates the mdoc. `.macPreferred`
     /// needs a key store that is also a `KeyAgreement`.
     public var proximityDeviceAuth: ProximityDeviceAuth
@@ -282,7 +287,7 @@ public struct WalletConfiguration: Codable, Sendable {
     public init(clientID: String = "", redirectURI: String = "", issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, developmentRoots: String = "", locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
-                copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI,
+                copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI, proofKeyByIndex: Bool = false,
                 tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
                 issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
@@ -312,6 +317,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.copyPolicy = copyPolicy
         self.tlsPins = tlsPins
         self.issuanceProfile = issuanceProfile
+        self.proofKeyByIndex = proofKeyByIndex
         self.proximityDeviceAuth = proximityDeviceAuth
         self.verifierRequireEKU = verifierRequireEKU
         self.registrarRequireEKU = registrarRequireEKU
@@ -347,6 +353,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, developmentRoots = "development_roots", locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
+        case proofKeyByIndex = "proof_key_by_index"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
         case issuerRequireEKU = "issuer_require_eku", issuerMetadataRequireEKU = "issuer_metadata_require_eku"
@@ -387,6 +394,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
                   copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
                   issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
+                  proofKeyByIndex: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByIndex) ?? false,
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",

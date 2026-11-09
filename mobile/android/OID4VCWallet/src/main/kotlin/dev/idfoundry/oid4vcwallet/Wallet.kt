@@ -141,6 +141,13 @@ public data class WalletConfiguration(
     /** The profile issuance follows. */
     @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
     /**
+     * Names the key of a jwt proof carrying a key attestation by its
+     * index in the attestation (`kid` `"0"`) rather than in `jwk`, as
+     * issuers following ETSI TS 119 472-3, such as the EUDI reference PID
+     * issuer, require. An issuer taking only `jwk` refuses it.
+     */
+    @SerialName("proof_key_by_index") val proofKeyByIndex: Boolean = false,
+    /**
      * How an in-person response authenticates the mdoc. [ProximityDeviceAuth.MAC_PREFERRED]
      * needs a key store that is also a [KeyAgreement].
      */
