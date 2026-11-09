@@ -123,7 +123,7 @@ for entry in "${WALTID_FILES[@]}"; do
   read -r path sum <<< "$entry"
   out="$WORK/waltid/$path"
   mkdir -p "$(dirname "$out")"
-  curl -sSfL --max-time 60 -o "$out" "https://raw.githubusercontent.com/walt-id/waltid-identity/$WALTID_COMMIT/docker-compose/$path"
+  curl -sSfL --proto '=https' --max-time 60 -o "$out" "https://raw.githubusercontent.com/walt-id/waltid-identity/$WALTID_COMMIT/docker-compose/$path"
   if [[ "$(openssl dgst -sha256 -r "$out" | cut -d' ' -f1)" != "$sum" ]]; then
     echo "$path doesn't have the pinned SHA-256" >&2
     exit 2
@@ -215,19 +215,22 @@ done
 fail=0
 ok() { echo "  ok    $1"; }
 bad() { echo "  FAIL  $1"; fail=1; }
+JSON='Content-Type: application/json'
 
 # issuer2_offer is a pre-authorized code offer of Issuer2's profile $1.
 issuer2_offer() {
-  curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
-    --data "$(jq -cn --arg p "$1" '{profileId: $p, authMethod: "PRE_AUTHORIZED"}')" \
+  local profile="$1"
+  curl -sS --max-time 30 -X POST -H "$JSON" \
+    --data "$(jq -cn --arg p "$profile" '{profileId: $p, authMethod: "PRE_AUTHORIZED"}')" \
     "http://127.0.0.1:$ISSUER2_HTTP/issuer2/credential-offers" | jq -r '.credentialOffer'
 }
 
 # our_offer is a pre-authorized code offer of OID4VCgo's issuer's
 # configuration $1, by reference.
 our_offer() {
-  curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
-    --data "$(jq -cn --arg c "$1" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}')" \
+  local config="$1"
+  curl -sS --max-time 30 -X POST -H "$JSON" \
+    --data "$(jq -cn --arg c "$config" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}')" \
     "http://127.0.0.1:$OFFERS_PORT/offers" | jq -r '.uri'
 }
 
@@ -239,7 +242,8 @@ wallet() {  # $1 name; then the wallet's options
 }
 
 why() {  # $1 file
-  jq -c '{stage, status, error} | with_entries(select(.value != null))' "$1" 2>/dev/null | cut -c1-300 || head -c 300 "$1"
+  local file="$1"
+  jq -c '{stage, status, error} | with_entries(select(.value != null))' "$file" 2>/dev/null | cut -c1-300 || head -c 300 "$file"
 }
 
 echo "### OID4VCgo's wallet ← walt.id Issuer2"
@@ -258,14 +262,17 @@ echo "### OID4VCgo's wallet → walt.id Verifier2"
 # session creates a Verifier2 session for DCQL query $2, signed and
 # encrypted unless $1 is "plain"; it prints the session's id and link.
 session() {  # $1 signed or plain, $2 the DCQL query
-  local signed=true
-  if [[ "$1" = plain ]]; then signed=false; fi
-  curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' \
-    --data "$(jq -cn --argjson q "$2" --argjson s "$signed" \
+  local mode="$1" query="$2" signed=true
+  if [[ "$mode" = plain ]]; then signed=false; fi
+  curl -sS --max-time 30 -X POST -H "$JSON" \
+    --data "$(jq -cn --argjson q "$query" --argjson s "$signed" \
       '{flow_type: "cross_device", core_flow: {signed_request: $s, encrypted_response: $s, dcql_query: $q}}')" \
     "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/create" | jq -r '"\(.sessionId) \(.bootstrapAuthorizationRequestUrl)"'
 }
-session_status() { curl -sS --max-time 30 "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/$1/info" | jq -r '.status'; }
+session_status() {
+  local id="$1"
+  curl -sS --max-time 30 "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/$id/info" | jq -r '.status'
+}
 PID_QUERY='{"credentials": [{"id": "pid", "format": "dc+sd-jwt", "meta": {"vct_values": ["urn:eudi:pid:1"]}, "claims": [{"path": ["family_name"]}]}]}'
 MDL_QUERY='{"credentials": [{"id": "mdl", "format": "mso_mdoc", "meta": {"doctype_value": "org.iso.18013.5.1.mDL"}, "claims": [{"path": ["org.iso.18013.5.1", "family_name"]}]}]}'
 for case in "pid eudiPidSdJwt $PID_QUERY" "mdl isoMdl $MDL_QUERY"; do
@@ -292,32 +299,37 @@ W="http://127.0.0.1:$WALLET2_HTTP"
 # wallet2 creates a Wallet2 wallet with a P-256 key, printing its id.
 wallet2() {
   local id
-  id="$(curl -sS --max-time 30 -X POST -H 'Content-Type: application/json' --data '{}' "$W/wallet" | jq -r '.walletId')"
-  curl -sS --max-time 30 -o /dev/null -X POST -H 'Content-Type: application/json' \
+  id="$(curl -sS --max-time 30 -X POST -H "$JSON" --data '{}' "$W/wallet" | jq -r '.walletId')"
+  curl -sS --max-time 30 -o /dev/null -X POST -H "$JSON" \
     --data '{"backend": "jwk", "keyType": "secp256r1"}' "$W/wallet/$id/keys/generate"
   echo "$id"
 }
 receive2() {  # $1 wallet, $2 offer; then a client_id: Wallet2's answer to stdout
-  curl -sS --max-time 90 -X POST -H 'Content-Type: application/json' \
-    --data "$(jq -cn --arg o "$2" --arg c "${3:-}" '{offerUrl: $o} + (if $c == "" then {} else {clientId: $c} end)')" \
-    "$W/wallet/$1/credentials/receive"
+  local id="$1" offer="$2" client="${3:-}"
+  curl -sS --max-time 90 -X POST -H "$JSON" \
+    --data "$(jq -cn --arg o "$offer" --arg c "$client" '{offerUrl: $o} + (if $c == "" then {} else {clientId: $c} end)')" \
+    "$W/wallet/$id/credentials/receive"
 }
 present2() {  # $1 wallet, $2 request: Wallet2's answer to stdout
-  curl -sS --max-time 90 -X POST -H 'Content-Type: application/json' \
-    --data "$(jq -cn --arg r "$2" '{requestUrl: $r}')" "$W/wallet/$1/credentials/present"
+  local id="$1" request="$2"
+  curl -sS --max-time 90 -X POST -H "$JSON" \
+    --data "$(jq -cn --arg r "$request" '{requestUrl: $r}')" "$W/wallet/$id/credentials/present"
 }
 # authorize starts a session on the verifier at port $1, as a
 # same-device page would, and prints the openid4vp:// launch.
-authorize() { tls "$1" -o /dev/null -w '%{redirect_url}' "https://$HOST:$1/authorize?request_uri_method=$2"; }
+authorize() {
+  local port="$1" method="$2"
+  tls "$port" -o /dev/null -w '%{redirect_url}' "https://$HOST:$port/authorize?request_uri_method=$method"
+}
 # redeem follows Wallet2's redirect_to in $1 and redeems its
 # response_code: the verifier's outcome is in $2.
 redeem() {
-  local redirect port
-  redirect="$(jq -r '.redirect_to // .verifier_response.redirect_uri // empty' "$1" 2>/dev/null || true)"
-  if [[ -z "$redirect" ]]; then echo '{"status": "no redirect_to"}' > "$2"; return; fi
+  local answer="$1" outcome="$2" redirect port
+  redirect="$(jq -r '.redirect_to // .verifier_response.redirect_uri // empty' "$answer" 2>/dev/null || true)"
+  if [[ -z "$redirect" ]]; then echo '{"status": "no redirect_to"}' > "$outcome"; return; fi
   port="$(sed -E 's|https://[^:/]+:([0-9]+).*|\1|' <<< "$redirect")"
   tls "$port" -o /dev/null "$redirect" || true
-  tls "$port" -o "$2" "${redirect/\?response_code=//redeem?response_code=}" || true
+  tls "$port" -o "$outcome" "${redirect/\?response_code=//redeem?response_code=}" || true
 }
 
 echo "### walt.id Wallet2 ← OID4VCgo's issuer"

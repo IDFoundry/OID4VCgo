@@ -59,6 +59,14 @@ import (
 // its IACA's country (ISO/IEC 18013-5 Annex B).
 const country = "AT"
 
+// authority is a CA: its certificate, its key and the certificate as
+// PEM.
+type authority struct {
+	cert *x509.Certificate
+	key  *ecdsa.PrivateKey
+	pem  string
+}
+
 // ports are where each party listens; HOST names them all.
 type ports struct {
 	issuer2, verifier2, attester, verifier int
@@ -108,18 +116,18 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 	files := map[string]string{}
 	put := func(name, content string) { files[name] = content }
 
-	ca, caKey, caPEM, err := newCA("OID4VCgo walt.id interop CA")
+	ca, err := newCA("OID4VCgo walt.id interop CA")
 	if err != nil {
 		return err
 	}
-	other, otherKey, otherPEM, err := newCA("OID4VCgo walt.id interop other CA")
+	other, err := newCA("OID4VCgo walt.id interop other CA")
 	if err != nil {
 		return err
 	}
-	put("ca.pem", caPEM)
-	put("other-ca.pem", otherPEM)
+	put("ca.pem", ca.pem)
+	put("other-ca.pem", other.pem)
 
-	tlsKey, tlsCert, err := leaf(ca, caKey, &x509.Certificate{
+	tlsKey, tlsCert, err := leaf(ca, &x509.Certificate{
 		Subject: pkix.Name{CommonName: host}, DNSNames: []string{host, "localhost"},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
@@ -131,20 +139,23 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 		return err
 	}
 
-	if err := issuer2Files(put, ca, caKey, p); err != nil {
+	if err := issuer2Files(put, ca, p); err != nil {
 		return err
 	}
-	if err := verifier2File(put, ca, caKey, p); err != nil {
+	if err := verifier2File(put, ca, p); err != nil {
 		return err
 	}
 	put("wallet2-service.conf", hocon(
-		"attestationConfig.attesterUrl", "https://"+net.JoinHostPort(host, strconv.Itoa(p.attester))+"/attest",
-	)+"clientIdTrust.x509TrustAnchors = ["+quote(caPEM)+"]\n")
+		"attestationConfig.attesterUrl", httpsURL(host, p.attester)+"/attest",
+	)+"clientIdTrust.x509TrustAnchors = ["+quote(ca.pem)+"]\n")
 	// Wallet2 keeps its wallets in memory and needs no login: the run's
 	// wallets are its own, for minutes.
 	put("wallet2-features.conf", "enabledFeatures = []\ndisabledFeatures = [auth, wallet2-persistence]\n")
 
-	if err := verifierFiles(put, ca, caKey, other, otherKey, trust, otherPEM, files["tls-cert.pem"], files["tls-key.pem"], host, bind, p.verifier); err != nil {
+	at := func(i int) (string, string) {
+		return net.JoinHostPort(bind, strconv.Itoa(p.verifier+i)), httpsURL(host, p.verifier+i)
+	}
+	if err := verifierFiles(put, ca, other, trust, files["tls-cert.pem"], files["tls-key.pem"], at); err != nil {
 		return err
 	}
 
@@ -163,16 +174,16 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 // its mdoc document signer chain under the CA, which every profile
 // takes by substitution; its base URL; and the pre-authorized code
 // redeemable with no client authentication.
-func issuer2Files(put func(name, content string), ca *x509.Certificate, caKey *ecdsa.PrivateKey, p ports) error {
+func issuer2Files(put func(name, content string), ca authority, p ports) error {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
-	sdjwt, err := leafFor(ca, caKey, &key.PublicKey, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Issuer2", Country: []string{country}}})
+	sdjwt, err := leafFor(ca, &key.PublicKey, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Issuer2", Country: []string{country}}})
 	if err != nil {
 		return err
 	}
-	ds, err := leafFor(ca, caKey, &key.PublicKey, &x509.Certificate{
+	ds, err := leafFor(ca, &key.PublicKey, &x509.Certificate{
 		Subject:            pkix.Name{CommonName: "walt.id Issuer2 document signer", Country: []string{country}},
 		UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
 	})
@@ -188,15 +199,15 @@ func issuer2Files(put func(name, content string), ca *x509.Certificate, caKey *e
 	put("issuer2-profiles.conf", "defaultIssuerKey = null\ndefaultIssuerKey = "+string(keyJSON)+"\n"+
 		"defaultIssuerX5chain = ["+quote(sdjwt)+"]\n"+
 		"defaultMdocIssuerX5chain = ["+quote(ds)+"]\n")
-	put("issuer2-service.conf", hocon("baseUrl", "https://"+net.JoinHostPort("localhost", strconv.Itoa(p.issuer2)))+
+	put("issuer2-service.conf", hocon("baseUrl", httpsURL("localhost", p.issuer2))+
 		"clientAuthenticationConfig = null\nclientAuthenticationConfig { supportedMethods = [{ type = \"preauth-anonymous\" }] }\n")
 	return nil
 }
 
 // verifier2File is Verifier2's: an Access Certificate under the CA, its
 // x509_hash Client Identifier, and its base URL.
-func verifier2File(put func(name, content string), ca *x509.Certificate, caKey *ecdsa.PrivateKey, p ports) error {
-	key, cert, err := leaf(ca, caKey, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Verifier2"}})
+func verifier2File(put func(name, content string), ca authority, p ports) error {
+	key, cert, err := leaf(ca, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Verifier2"}})
 	if err != nil {
 		return err
 	}
@@ -208,7 +219,7 @@ func verifier2File(put func(name, content string), ca *x509.Certificate, caKey *
 	}
 	put("verifier2-service.conf", hocon(
 		"clientId", "x509_hash:"+base64.RawURLEncoding.EncodeToString(hash[:]),
-		"urlPrefix", "https://"+net.JoinHostPort("localhost", strconv.Itoa(p.verifier2))+"/verification-session",
+		"urlPrefix", httpsURL("localhost", p.verifier2)+"/verification-session",
 	)+"key = null\nkey = "+string(keyJSON)+"\n"+
 		"x5c = ["+quote(base64.StdEncoding.EncodeToString(block.Bytes))+"]\n")
 	return nil
@@ -233,18 +244,18 @@ type verifierConfig struct {
 	MdocTrustAnchorPEM              string   `json:"mdoc_trust_anchor_pem,omitempty"`
 }
 
-// verifierFiles are the four cmd/conformance-verifier configs, on
-// consecutive ports from first, for OID4VCgo's issuer's PIDs: the SD-JWT
+// verifierFiles are the four cmd/conformance-verifier configs, the ith
+// listening and reached at at(i), for OID4VCgo's issuer's PIDs: the SD-JWT
 // VC's, the mdoc's, and two controls, the first with an Access
 // Certificate walt.id's Wallet doesn't trust, the second trusting no
 // issuer of the run's.
-func verifierFiles(put func(name, content string), ca *x509.Certificate, caKey *ecdsa.PrivateKey, other *x509.Certificate, otherKey *ecdsa.PrivateKey,
-	trust anchors, otherPEM, tlsCert, tlsKey, host, bind string, first int) error {
-	accessKey, accessCert, err := leaf(ca, caKey, &x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo verifier"}})
+func verifierFiles(put func(name, content string), ca, other authority, trust anchors, tlsCert, tlsKey string,
+	at func(i int) (addr, baseURL string)) error {
+	accessKey, accessCert, err := leaf(ca, &x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo verifier"}})
 	if err != nil {
 		return err
 	}
-	untrustedKey, untrustedCert, err := leaf(other, otherKey, &x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo untrusted verifier"}})
+	untrustedKey, untrustedCert, err := leaf(other, &x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo untrusted verifier"}})
 	if err != nil {
 		return err
 	}
@@ -254,10 +265,6 @@ func verifierFiles(put func(name, content string), ca *x509.Certificate, caKey *
 			fail(err.Error())
 		}
 		return s
-	}
-	at := func(i int) (string, string) {
-		port := strconv.Itoa(first + i)
-		return net.JoinHostPort(bind, port), "https://" + net.JoinHostPort(host, port)
 	}
 	sdjwt := func(i int) verifierConfig {
 		addr, base := at(i)
@@ -277,7 +284,7 @@ func verifierFiles(put func(name, content string), ca *x509.Certificate, caKey *
 	untrustedAccess := sdjwt(2)
 	untrustedAccess.ClientCertificatePEM, untrustedAccess.ClientPrivateKeyPEM = untrustedCert, keyPEM(untrustedKey)
 	untrustedIssuer := sdjwt(3)
-	untrustedIssuer.CredentialIssuerTrustAnchorsPEM = otherPEM
+	untrustedIssuer.CredentialIssuerTrustAnchorsPEM = other.pem
 	for name, cfg := range map[string]verifierConfig{
 		"verifier-sdjwt.json": sdjwt(0), "verifier-mdoc.json": mdl,
 		"verifier-untrusted-access.json": untrustedAccess, "verifier-untrusted-issuer.json": untrustedIssuer,
@@ -293,10 +300,10 @@ func verifierFiles(put func(name, content string), ca *x509.Certificate, caKey *
 
 // newCA is a self-signed P-256 CA naming country, as an mdoc IACA must
 // (ISO/IEC 18013-5 Annex B), valid for a day.
-func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey, string, error) {
+func newCA(commonName string) (authority, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, "", err
+		return authority{}, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: commonName, Country: []string{country}},
@@ -305,29 +312,34 @@ func newCA(commonName string) (*x509.Certificate, *ecdsa.PrivateKey, string, err
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, "", err
+		return authority{}, err
 	}
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, nil, "", err
+		return authority{}, err
 	}
-	return cert, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), nil
+	return authority{cert: cert, key: key, pem: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))}, nil
+}
+
+// httpsURL is the https origin of host and port.
+func httpsURL(host string, port int) string {
+	return "https://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // leaf is a fresh P-256 key and its certificate from tmpl under ca, as
 // PEM.
-func leaf(ca *x509.Certificate, caKey *ecdsa.PrivateKey, tmpl *x509.Certificate) (*ecdsa.PrivateKey, string, error) {
+func leaf(ca authority, tmpl *x509.Certificate) (*ecdsa.PrivateKey, string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, "", err
 	}
-	cert, err := leafFor(ca, caKey, &key.PublicKey, tmpl)
+	cert, err := leafFor(ca, &key.PublicKey, tmpl)
 	return key, cert, err
 }
 
 // leafFor is pub's certificate from tmpl under ca, for a day, as PEM:
 // a signing key, never a CA.
-func leafFor(ca *x509.Certificate, caKey *ecdsa.PrivateKey, pub *ecdsa.PublicKey, tmpl *x509.Certificate) (string, error) {
+func leafFor(ca authority, pub *ecdsa.PublicKey, tmpl *x509.Certificate) (string, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 64))
 	if err != nil {
 		return "", err
@@ -335,7 +347,7 @@ func leafFor(ca *x509.Certificate, caKey *ecdsa.PrivateKey, pub *ecdsa.PublicKey
 	tmpl.SerialNumber = serial
 	tmpl.NotBefore, tmpl.NotAfter = time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour)
 	tmpl.KeyUsage = x509.KeyUsageDigitalSignature
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, pub, caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, pub, ca.key)
 	if err != nil {
 		return "", fmt.Errorf("certificate %q: %w", tmpl.Subject.CommonName, err)
 	}

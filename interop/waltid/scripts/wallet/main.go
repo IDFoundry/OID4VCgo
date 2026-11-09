@@ -122,35 +122,8 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 	}
 
 	for _, offer := range offered {
-		res.Stage = "offer"
-		s, err := w.StartIssuance(ctx, offer)
-		if err != nil {
+		if err := redeem(ctx, w, offer, &res); err != nil {
 			return fail(err)
-		}
-		res.Stage = "token"
-		if err := s.RedeemPreAuthorizedCode(ctx, ""); err != nil {
-			_ = s.Close(ctx)
-			return fail(err)
-		}
-		res.Stage = "credential"
-		got, err := s.RequestCredentials(ctx)
-		_ = s.Close(ctx)
-		if err != nil {
-			return fail(err)
-		}
-		for _, c := range got.Credentials {
-			names := make([]string, 0, len(c.Claims))
-			for name := range c.Claims {
-				names = append(names, name)
-			}
-			slices.Sort(names)
-			res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names})
-		}
-		for _, f := range got.Failed {
-			res.Failed = append(res.Failed, f.ConfigurationID+": "+f.Err.Error())
-		}
-		if len(got.Failed) > 0 {
-			return fail(errors.New("a credential was refused"))
 		}
 	}
 	if request == "" {
@@ -176,6 +149,41 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 	res.QueryIDs = presented.QueryIDs
 	res.Stage = "done"
 	return res
+}
+
+// redeem redeems offer's pre-authorized code, recording in res how far
+// it got and the credentials it received or refused.
+func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result) error {
+	res.Stage = "offer"
+	s, err := w.StartIssuance(ctx, offer)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.Close(ctx) }()
+	res.Stage = "token"
+	if err := s.RedeemPreAuthorizedCode(ctx, ""); err != nil {
+		return err
+	}
+	res.Stage = "credential"
+	got, err := s.RequestCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range got.Credentials {
+		names := make([]string, 0, len(c.Claims))
+		for name := range c.Claims {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names})
+	}
+	for _, f := range got.Failed {
+		res.Failed = append(res.Failed, f.ConfigurationID+": "+f.Err.Error())
+	}
+	if len(got.Failed) > 0 {
+		return errors.New("a credential was refused")
+	}
+	return nil
 }
 
 // pool is a PEM file's certificates.
