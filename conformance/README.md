@@ -121,11 +121,14 @@ Credentials API (ISO/IEC TS 18013-7 Annex C, `org-iso-mdoc`),
 `walletflow` as wallet and `mdocdcapi` as verifier; and OpenID4VP 1.0,
 Multipaz's wallet presenting SD-JWT VC PIDs and mDLs to
 `cmd/conformance-verifier` and `walletflow` presenting them to Multipaz's
-Verifier, cross-device and over the Digital Credentials API. The
-messages pass whole between the two programs, with no radio. Controls
-(untrusted readers, Verifiers and issuers, a DeviceResponse over another
-session transcript, an answer for another origin, a mismatched
-`x509_hash` client_id) are refused. It runs on each pull request,
+Verifier, cross-device and over the Digital Credentials API; and
+OpenID4VCI 1.0, Multipaz's wallet obtaining PIDs from
+`cmd/conformance-issuer` and `walletflow` obtaining an mDL and PIDs from
+Multipaz's issuer (Wallet Attestation, DPoP, Key Attestation proofs).
+The messages pass whole between the two programs, with no radio.
+Controls (untrusted readers, Verifiers, issuers and attesters, a
+DeviceResponse over another session transcript, an answer for another
+origin, a mismatched `x509_hash` client_id) are refused. It runs on each pull request,
 daily and on each release. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the
 cases, Multipaz's deviations, and moving the pin.

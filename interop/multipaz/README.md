@@ -3,8 +3,8 @@
 Interop with [Multipaz](https://github.com/openwallet-foundation/multipaz),
 the OpenWallet Foundation's identity library (formerly Google's
 identity-credential), from its published JVM library: its mdoc reader,
-holder, Annex C verifier and wallet, and OpenID4VP wallet and Verifier,
-against OID4VCgo's.
+holder, Annex C verifier and wallet, OpenID4VP wallet and Verifier, and
+OpenID4VCI wallet and issuer, against OID4VCgo's.
 [`run.sh`](run.sh) runs every case, from
 [`.github/workflows/multipaz-interop.yml`](../../.github/workflows/multipaz-interop.yml).
 
@@ -32,6 +32,12 @@ against OID4VCgo's.
 | | PID and mDL over the Digital Credentials API | Multipaz verifies it |
 | | The Verifier under a CA the wallet doesn't trust | the wallet refuses it |
 | | An `x509_hash` client_id naming another certificate than the one signing the request | the wallet refuses it |
+| Multipaz wallet ← `cmd/conformance-issuer`, OpenID4VCI 1.0 | SD-JWT VC PID and mdoc PID, authorization code (PAR, PKCE, `scope`), Wallet Attestation and PoP, DPoP, Key Attestation proof | issued, under OID4VCgo's CAs |
+| | A pre-authorized code: Multipaz asks for the configuration by `authorization_details`, then requests it by `credential_configuration_id` | the issuer refuses it (§8.2: use `credential_identifier`) |
+| | A Wallet Attestation from an attester the issuer doesn't trust | the issuer refuses it (`invalid_client`) |
+| | A Wallet Attestation valid for 2000 days, as Multipaz's local backend makes them | the issuer refuses it (at most a day) |
+| `walletflow` ← Multipaz issuer, OpenID4VCI 1.0 | mDL and PID (mdoc and SD-JWT VC), pre-authorized code, Wallet Attestation and PoP, DPoP, Key Attestation proof | issued, and pass the wallet's checks |
+| | A Wallet Attestation from an attester Multipaz's issuer doesn't trust | Multipaz's issuer refuses it |
 
 Each control is checked for its reason, not just for a failure.
 
@@ -67,6 +73,20 @@ Each control is checked for its reason, not just for a failure.
   as an `x509_hash` client with its reader certificate. Both serve the
   peer's certificate for `localhost`, which `walletflow`'s development
   fetcher reaches by name.
+- **OpenID4VCI.** OID4VCgo's issuer is `cmd/conformance-issuer` as
+  [`../eudi/scripts/setup-issuer`](../eudi/scripts/setup-issuer)
+  configures it, which the peer starts, trusting an attester the peer
+  makes: Multipaz names a Wallet Attestation's `iss` after its
+  certificate's common name, so the attester's certificate is named for
+  its issuer, and Multipaz's local wallet backend signs Key Attestations
+  with the same key, so the issuer trusts that key for them too.
+  Multipaz's wallet is `OpenID4VCI.createClientFromOffer` with that
+  backend, its Wallet Attestations valid for an hour (the backend is the
+  Wallet Provider's side; its own are valid for 2000 days, a control).
+  Multipaz's issuer runs in the driver from its published libraries
+  (`multipaz-openid4vci`'s routes on Netty, over TLS), signing with the
+  driver's document signer and trusting the peer's Wallet Provider, which
+  attests `walletflow`'s instance and keys.
 
 ## What it found
 
@@ -89,6 +109,23 @@ Seen running Multipaz 0.102.0; none reported upstream.
 3. **Multipaz's wallet always encrypts with `A128GCM`**, whatever
    `encrypted_response_enc_values_supported` lists; OID4VCgo's Verifier
    lists both `A128GCM` and `A256GCM`, as HAIP requires, so it agrees.
+4. **Multipaz's wallet can't redeem a pre-authorized code at an issuer
+   that follows OpenID4VCI 1.0 §6.2 and §8.2.** Its Token Request always
+   names the configuration in `authorization_details`, which the issuer
+   must grant with `credential_identifiers`, but it never reads them, and
+   requests the credential by `credential_configuration_id`, which §8.2
+   forbids once they were granted. Its authorization code flow asks by
+   `scope`, and works.
+5. **Multipaz's Wallet Attestations are valid for 2000 days**
+   (`OpenID4VCIBackendUtil.createWalletAttestation`): an issuer that
+   bounds their lifetime refuses them, as OID4VCgo's does past a day. A
+   policy difference, not a protocol one, but one a Wallet Provider on
+   Multipaz's backend meets.
+6. **Multipaz's issuer requires `client_id` in a Token Request** of a
+   client that authenticates by Wallet Attestation, whose `sub` already
+   names it, though OpenID4VCI 1.0 §6.1 makes it optional; `walletflow`
+   sends none, so the run's HTTP client adds it to the issuer's token
+   requests (`scripts/peer`'s `withClientID`).
 
 Every in-person and Annex C case agreed with ISO/IEC 18013-5 and TS
 18013-7 on both sides. One behaviour worth knowing: Multipaz's wallet
@@ -100,10 +137,13 @@ session transcript; so the origin control uses an unsigned request.
 
 - The radio transports (BLE, NFC) and NFC engagement: only QR
   engagement.
-- OpenID4VCI with Multipaz, and Multipaz's servers (its Verifier here is
-  the library's `VerificationSession`).
+- Multipaz's servers as deployed: its Verifier here is the library's
+  `VerificationSession`, and its issuer the library's routes, without
+  its records server or consent pages (so only its pre-authorized
+  codes).
 - Requests for several documents, transaction data, zero-knowledge
-  proofs, and status lists.
+  proofs, status lists, and OpenID4VCI's refresh tokens, deferred
+  issuance, Transaction Codes, batches, and encryption.
 
 ## Running it
 
@@ -129,5 +169,8 @@ GRADLE_USER_HOME=$(mktemp -d) ./gradlew --write-verification-metadata sha256 --w
 Multipaz's API changes between releases, so expect the driver to need
 changes with it. Its JVM library also depends on Google's Android Key
 Attestation verifier and androidx's annotations, from Google's Maven
-repository: the driver leaves them out ([`build.gradle.kts`](driver/build.gradle.kts)).
+repository, and its server library on JDBC drivers: the driver leaves
+them out, and raises Netty and logback past known vulnerabilities
+([`build.gradle.kts`](driver/build.gradle.kts)); check those again when
+the pin moves.
 `interop/eudi/presentation` uses the same Multipaz release.

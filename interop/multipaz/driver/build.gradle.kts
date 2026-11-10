@@ -28,13 +28,29 @@ dependencyLocking {
 configurations.configureEach {
     exclude(group = "com.android.keyattestation")
     exclude(group = "androidx.annotation")
+    // Multipaz's server library also brings JDBC drivers (and MySQL's
+    // protobuf); its issuer here keeps its database in memory.
+    exclude(group = "com.mysql")
+    exclude(group = "mysql")
+    exclude(group = "org.postgresql")
+    exclude(group = "org.xerial")
+    exclude(group = "org.hsqldb")
+    exclude(group = "com.google.protobuf")
 }
 
 dependencies {
     implementation(libs.multipaz)
     implementation(libs.multipaz.doctypes)
+    implementation(libs.multipaz.openid4vci)
+    implementation(libs.multipaz.server)
     implementation(libs.ktor.client.java)
+    implementation(libs.ktor.server.netty)
+    implementation(platform(libs.netty.bom))
     runtimeOnly(libs.slf4j.simple)
+    constraints {
+        implementation(libs.logback.classic)
+        implementation(libs.logback.core)
+    }
 }
 
 // Multipaz's JVM library targets Java 21.

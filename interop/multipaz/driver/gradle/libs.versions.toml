@@ -5,14 +5,25 @@ kotlin = "2.4.20"
 # The library under test: its mdoc reader, holder and Annex C verifier
 # and wallet.
 multipaz = "0.102.0"
-# Multipaz's own Ktor client engine, which its wallet takes as a factory.
+# Multipaz's own Ktor: the client engine its wallet takes as a factory,
+# and the server engine its issuer runs on.
 ktor = "3.3.3"
 slf4j = "2.0.17"
+# Multipaz's issuer server brings Netty 4.2.7 and logback 1.5.21, which
+# have known vulnerabilities: raised to fixed releases.
+netty = "4.2.20.Final"
+logback = "1.5.38"
 
 [libraries]
 multipaz = { module = "org.multipaz:multipaz", version.ref = "multipaz" }
 multipaz-doctypes = { module = "org.multipaz:multipaz-doctypes", version.ref = "multipaz" }
+multipaz-openid4vci = { module = "org.multipaz:multipaz-openid4vci", version.ref = "multipaz" }
+multipaz-server = { module = "org.multipaz:multipaz-server", version.ref = "multipaz" }
 ktor-client-java = { module = "io.ktor:ktor-client-java", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+netty-bom = { module = "io.netty:netty-bom", version.ref = "netty" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 [plugins]
