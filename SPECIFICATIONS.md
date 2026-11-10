@@ -57,7 +57,8 @@ redirect flow.
 
 | Spec | Used by | Version |
 |---|---|---|
-| [ISO/IEC 18013-5:2021][iso18013-5] §8.2–§8.3 (device engagement, BLE GATT), §9.1 (session encryption, §9.1.4 reader authentication), Annex B (reader authentication EKU 1.0.18013.5.1.6), Annex D (test vectors) | `proximity`, `internal/readerauth` | First edition |
+| [ISO/IEC 18013-5:2021][iso18013-5] §8.2–§8.3 (device engagement by QR or NFC, §8.2.2; BLE GATT and NFC data retrieval, §8.3.3.1.2), §9.1 (session encryption, §9.1.4 reader authentication), Annex B (reader authentication EKU 1.0.18013.5.1.6), Annex D (test vectors) | `proximity`, `proximity/nfcapdu`, `internal/readerauth` | First edition |
+| ISO/IEC 7816-4 command APDUs, and the NFC Forum's Type 4 Tag NDEF application, Connection Handover and TNEP, as ISO/IEC 18013-5 §8.2.2 and §8.3.3.1.2 use them | `proximity/nfcapdu` | As ISO/IEC 18013-5 references them |
 | OpenID4VP 1.0 Appendix A — the Digital Credentials API | `verifier`, `wallet`, `walletflow` (HAIP §5.2 profiles it: unsigned, signed and multi-signed requests) | Final |
 | [W3C Digital Credentials][dcapi] | The browser API the DC API flows run over; this library builds and answers the requests, the platform invokes the API | Not pinned: what Safari and Chrome ship |
 | [RFC 9180 — HPKE][hpke] | `mdocdcapi` (ISO/IEC TS 18013-7 Annex C's response encryption) | Informational |

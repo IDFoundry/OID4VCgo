@@ -192,8 +192,10 @@ run_issuer() {
 	# run-fapi2sp-battery's own flags when needed, not as part of the
 	# daily certification-profile report.
 	#
-	# 1 SKIPPED (refresh-token — HAIP's pre-authorized_code grant
-	# doesn't issue refresh tokens), 1 REVIEW
+	# 1 SKIPPED (refresh-token — the suite skips it when the
+	# authorization_code exchange returns no refresh token, and
+	# fapigo/server issues one only for an offline_access grant, which
+	# cmd/conformance-issuer's clients aren't registered for), 1 REVIEW
 	# (par-attempt-to-use-request_uri-for-different-client — a
 	# screenshot-gated module, see conformance/issuer/README.md).
 	# attempt-reuse-authorization-code-after-one-second used to be a

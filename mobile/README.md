@@ -38,7 +38,7 @@ each release:
 | Credential store | `FileCredentialStore` | `FileCredentialStore` |
 | Wallet Provider client (OID4VCgo's `walletprovider` protocol) | ✓ `HttpWalletProvider`, with App Attest | ✓ `HttpWalletProvider`, with Android Key Attestation |
 | Certificate pinning for the SDK's requests (`tlsPins`) | ✓ | ✓ |
-| Extra development CAs (`developmentRoots`) | — the system trust store's | ✓ |
+| Extra development CAs (`developmentRoots`) | ✓ | ✓ |
 | Bluetooth permissions | asked by iOS on first use | `ProximityPermissions`, for the app to request |
 
 The Swift library runs on iOS 15 and macOS 13 and later. Presenting to
@@ -99,10 +99,13 @@ has the setup, the lifecycle and the routing rules.
   IACAs whose mdocs it accepts and, to sign its requests, its key and
   certificate chain (with the reader authentication extended key
   usage, 1.0.18013.5.1.6). `start` takes the holder's QR code, the
-  doctype and the elements to ask for. It connects in whichever mode
+  doctype and the elements to ask for, or several documents at once (a
+  `DocumentRequest` each, at most eight), of which the holder may answer
+  any. It connects in whichever mode
   the holder offers, preferring central client mode (`mode` says
   which), and ends in
-  `verified` with the issuer-verified elements, or another final state.
+  `verified` with the issuer-verified elements (each document's, for
+  several), or another final state.
 - **States** are an `AsyncStream` (`states`) in Swift and a `StateFlow`
   (`state`) in Kotlin; `isFinal` says when a session is over, and
   `cancel()` ends one.
@@ -178,22 +181,28 @@ and trust policy.
 
 App developers take `oid4vcwallet-<version>.aar` from a release of
 [OID4VCgo-wallet-kotlin](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin),
-into their app module's `libs/`, with the libraries it uses, which that
-repository's README lists:
+into their app module's `libs/`, with the libraries it uses (its POM's
+dependencies), at the versions that repository's README lists:
 
 ```kotlin
 dependencies {
     implementation(files("libs/oid4vcwallet-<version>.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:…")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:…")
+    implementation("androidx.annotation:annotation:…")
+    implementation("androidx.credentials:credentials:…")
+    implementation("androidx.credentials.registry:registry-provider:…")
+    implementation("androidx.credentials.registry:registry-provider-play-services:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-openid:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-mdoc:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-sdjwtvc:…")
 }
 ```
 
-To publish a version, run the `wallet-kotlin-release` workflow from the
-commit to publish, with the version: the Swift package's, from the same
-commit. A Kotlin release therefore goes with a Swift release from that
-commit: the first one, too, since OID4VCWallet 0.7.0 predates the Kotlin
-library. It runs `android/package-kotlin-release.sh`, which:
+To publish a version, run the `wallet-kotlin-release` workflow, with
+the version: the Swift package's. The workflow runs only from `main`
+and publishes `main`'s head, so a Kotlin release goes with a Swift
+release from the same commit. It runs `android/package-kotlin-release.sh`, which:
 1. builds the release AAR, and the library's AAR and sources jar
 2. builds an app on the AAR as the README says: the file, and the
    libraries the library's POM names
@@ -232,15 +241,13 @@ Integrators add the package from
 which SwiftPM can fetch:
 
 ```swift
-.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "0.9.0")
+.package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "<version>")
 ```
 
-0.7.0 is the first with `org-iso-mdoc`; in-person presentation comes in
-the release after it.
-
-To publish a version, run the `wallet-swift-release` workflow from
-the commit to publish, with the version (`1.2.3`, versioned apart from
-the Go module). It runs `ios/package-swift-release.sh`, which:
+To publish a version, run the `wallet-swift-release` workflow, with the
+version (`1.2.3`, versioned apart from the Go module). The workflow runs
+only from `main` and publishes `main`'s head. It runs
+`ios/package-swift-release.sh`, which:
 1. builds the release framework and zips it as the release asset
 2. copies `ios/OID4VCWallet/Sources` across
 3. builds the package against the zipped framework, for macOS and the
@@ -248,6 +255,14 @@ the Go module). It runs `ios/package-swift-release.sh`, which:
 4. writes a `Package.swift` naming the asset by URL and checksum, and
    the README, whose example is `ios/ReadmeExample.swift`: edit the
    README there, not in the package repository
+
+The workflow then commits the result there and creates the tagged
+release, carrying the framework, its `SHA256SUMS` and a build
+provenance attestation, and checks that the published framework is the
+one it built. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained
+token with Contents read and write on OID4VCgo-wallet-swift only, which
+only the publishing steps see. CI runs the same script on every change,
+without publishing.
 
 The package's documentation is a DocC catalog,
 `ios/OID4VCWallet/Sources/OID4VCWallet/OID4VCWallet.docc`, so it ships
@@ -262,14 +277,6 @@ If publishing the documentation fails after the release is made, run
 the workflow again from `main` with the same version and
 `documentation_only`: it builds and publishes only the latest
 release's documentation, from the commit that release was built from.
-
-The workflow then commits the result there and creates the tagged
-release, carrying the framework, its `SHA256SUMS` and a build
-provenance attestation, and checks that the published framework is the
-one it built. It needs the `WALLET_SWIFT_TOKEN` secret: a fine-grained
-token with Contents read and write on OID4VCgo-wallet-swift only, which
-only the publishing steps see. CI runs the same script on every change,
-without publishing.
 
 Both release workflows run only from `main`, in the `mobile-release`
 environment. In the repository's settings (Environments →

@@ -93,6 +93,14 @@ by role.
   locally. A change to the gomobile API updates
   [`mobile/ABI.md`](mobile/ABI.md), and an incompatible one bumps
   `ABIVersion`.
+- `sqlstore` is its own module as well: run `go vet ./...` and
+  `go test -race ./...` there, with `SQLSTORE_POSTGRES_DSN` set to
+  test against PostgreSQL too (see [`sqlstore/README.md`](sqlstore/README.md);
+  CI's `sqlstore` job).
+- A protocol change also runs the interop workflows on its PR
+  (`polaris-interop.yml`, `eudi-interop.yml`, `waltid-interop.yml`,
+  `multipaz-interop.yml`); run `interop/*/run.sh` locally to see a
+  failure before CI does.
 - Include tests for the behavior you're changing, not just the happy path.
 
 ## Reporting a security issue

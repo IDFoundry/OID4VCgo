@@ -354,6 +354,31 @@ Confirmed live, twice for stability: all 9 previously-failing battery
 modules `FINISHED`/`PASSED`, zero regressions on the 4 VCIWalletTest*
 modules that already worked.
 
+## Runs
+
+`-issuer-initiated` takes `-credential-offer-variant`, the plan's
+`vci_credential_offer_variant`: `by_value` (the default, the offer's
+JSON inline in the redirect URL) or `by_reference` (a
+`credential_offer_uri`, which `wallet.Wallet.ResolveCredentialOffer`
+fetches from the module's own endpoint).
+
+`conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
+through `run_wallet` in `conformance/scripts/lib.sh`: six runs of
+`cmd/conformance-wallet`, one per certification profile, each all 22
+module instances, with no expected exceptions:
+
+| Run | Flags |
+| --- | --- |
+| Wallet default (jwt, sd_jwt_vc) | none |
+| Wallet issuer-initiated | `-issuer-initiated` |
+| Wallet issuer-initiated (by_reference) | `-issuer-initiated -credential-offer-variant by_reference` |
+| Wallet mdoc | `-credential-format mdoc -credential-configuration-id eu.europa.ec.eudi.pid.mdoc.1 -scope eudi.pid.mdoc.1` |
+| Wallet mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` |
+| Wallet mdoc issuer-initiated (by_reference) | `-credential-format mdoc -issuer-initiated -credential-offer-variant by_reference` |
+
+`-proof-type` and `-base-plan` aren't certification profiles and are
+run by hand.
+
 ## Debugging
 
 `-dump-config` prints the generated suite-side plan configuration JSON

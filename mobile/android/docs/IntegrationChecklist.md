@@ -120,7 +120,41 @@ is a complete, working app on this library to compare against.
   anything is shown; the Verifier receives exactly the claims the
   holder chose. ([Presenting from a link](PresentingFromALink.md))
 
-## 4. In person, QR code (holder)
+## 4. Presenting to Chrome
+
+- [ ] An exported provider activity with an intent filter for
+  `androidx.credentials.registry.provider.action.GET_CREDENTIAL` (and
+  the `DEFAULT` category). Launched by Credential Manager, it skips the
+  app's launch work, a key sweep included.
+- [ ] `DigitalCredentials.register(context, wallet)` whenever the
+  credentials change: after an issuance, a deletion or a restore. A
+  failure (no Google Play services, say) is logged, not fatal. Set
+  `RegistrationOptions(claimValues = false)` if claim values shouldn't
+  be held by the system's registry before consent.
+- [ ] A privileged-browsers allowlist (Credential Manager's JSON) in the
+  app, with the browsers whose origins it trusts: Chrome's entries
+  from Google's list, as the demo's `res/raw/privileged_browsers.json`.
+- [ ] In the activity, `DigitalCredentials.request(activity,
+  privilegedBrowsers)`; null, or `isMdoc`, answers
+  `DigitalCredentials.failure()`. Then `request.startPresentation(wallet)`:
+  an error (`untrustedVerifier`, `requestRefused`) is a failure to the
+  page, and the holder is told the request wasn't answered.
+- [ ] The consent screen shows `request.origin` alongside the Verifier,
+  starts from `request.selectedCredentialID`, and shows what `preview`
+  says the selection would disclose. Respond with that selection, or
+  `decline()`; return `DigitalCredentials.response(request,
+  dcapiResponse)` with `setResult(RESULT_OK, …)`, and finish.
+- [ ] Decide `WalletConfiguration.requireSignedDCAPIRequests`: on, an
+  unsigned request is refused before the holder sees it; set it only
+  where every Verifier must be a known one.
+- [ ] *Check:* on a device with Google Play services, a page in Chrome
+  asking over the Digital Credentials API offers the wallet's matching
+  credentials in the system's chooser, the consent screen names the
+  page's origin, and the page receives exactly the claims the holder
+  chose; the activity started by another app returns a failure.
+  ([Presenting to Chrome](PresentingToChrome.md))
+
+## 5. In person, QR code (holder)
 
 - [ ] Request `ProximityPermissions.holder(modes)` at runtime before
   `Wallet.startProximityPresentation(context, modes = modes)`. Pass
@@ -134,7 +168,7 @@ is a complete, working app on this library to compare against.
 - [ ] *Check:* on two phones, a reader scanning the code gets the
   elements the holder chose, and nothing else.
 
-## 5. In person, NFC tap (holder)
+## 6. In person, NFC tap (holder)
 
 - [ ] A subclass `class IdentityNfcService : NfcEngagementService()` in
   the app, declared in the app's manifest:
@@ -196,7 +230,7 @@ is a complete, working app on this library to compare against.
     the preferred foreground service while presenting, and not after
     the outcome is shown.
 
-## 6. In person, reader (verifier)
+## 7. In person, reader (verifier)
 
 - [ ] `ProximityReader(ProximityReaderConfiguration(issuerRoots = …))`,
   plus a reader key and chain with the reader-authentication EKU if
@@ -221,7 +255,7 @@ is a complete, working app on this library to compare against.
 - [ ] *Check:* both a QR holder and an NFC holder verify; an mdoc from
   an issuer outside `issuerRoots` is refused.
 
-## 7. Before shipping
+## 8. Before shipping
 
 - [ ] [Going to production](GoingToProduction.md) is done, and no
   `ProximityReaderConfiguration` sets `development`.

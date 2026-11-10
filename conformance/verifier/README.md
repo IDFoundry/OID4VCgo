@@ -91,7 +91,8 @@ A Verifier uses `verifier.Transactions` with a durable
 The interop runs' fields (`credential_issuer_trust_anchors_pem`, the
 `status_list_*` fields, `dc_api_origins`) are documented in
 `cmd/conformance-verifier/config.go`; the suite's configuration leaves
-them unset. `interop/eudi/run-wallet.sh` and `interop/waltid/run.sh`
+them unset. `interop/eudi/run-wallet.sh`, `interop/waltid/run.sh` and
+the Multipaz interop's peer (`interop/multipaz/scripts/peer/vp.go`)
 use them.
 
 ## Status
@@ -109,10 +110,16 @@ driven by a dedicated tool,
 `conformance/verifier/scripts/run-sdjwt-modules`, plus the plan's own
 twelfth module, `-invalid-session-transcript` — `iso_mdl`-only
 (confirmed directly against the suite's own `/api/runner/available`:
-its `credential_format` variant offers no `sd_jwt_vc` value at all) —
-under `credential_format=iso_mdl` via a second binary code path
-(`cmd/conformance-verifier`'s own `buildMdocQuery`) and its own
-dedicated driver, `conformance/verifier/scripts/run-mdoc-module`.
+its `credential_format` variant offers no `sd_jwt_vc` value at all).
+Under `credential_format=iso_mdl`, via a second binary code path
+(`cmd/conformance-verifier`'s own `buildMdocQuery`), its own driver,
+`conformance/verifier/scripts/run-mdoc-module`, drives the 4 modules
+that apply to `iso_mdl`: `happy-flow`, `request-uri-method-post`,
+`request-uri-fetched-twice` and `invalid-session-transcript` (the
+other 8 carry `@VariantNotApplicable(credential_format=iso_mdl)`; it
+used to drive only `invalid-session-transcript`). So the plan's 12
+modules are 6 positive-behavior and 6 negative-test modules, 15 module
+instances across the two formats.
 Confirmed live, twice for stability, via each tool:
 
 - **6 positive-behavior modules** (`happy-flow`, `minimal-cnf-jwk`,
@@ -134,6 +141,9 @@ Confirmed live, twice for stability, via each tool:
   `FINISHED`/`REVIEW`**, confirmed via `run-mdoc-module`. The suite's
   own module log confirms this repo's own `verifier.VerifyResponse`
   correctly detected and rejected the tampered `SessionTranscript`.
+  `run-mdoc-module` drives `happy-flow`, `request-uri-method-post` and
+  `request-uri-fetched-twice` under `iso_mdl` too, graded the same way
+  as under `sd_jwt_vc`.
 
 Every module in this plan — positive and negative alike, `sd_jwt_vc`
 and `iso_mdl` alike — reaches `REVIEW` this same way, never a clean

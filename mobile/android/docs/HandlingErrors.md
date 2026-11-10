@@ -60,6 +60,7 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `untrustedVerifier` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
 | `tlsPin` | A pinned host's certificate matched none of its `tlsPins`: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
 | `requestRefused` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; `protocolError` is the code it sent. Nothing was shown | From a link, open `Wallet.takeRefusalRedirect()` if it returns one; over the DC API, return a failure to the page. Tell the holder the request wasn't answered |
+| `documentNotValid` | A `ProximityReader` checking status (`StatusCheck.CHECK`) verified a document whose revocation status isn't valid; `protocolError` is the status (`invalid`, `suspended`, `unknown`, or `0x` and a value) | Don't accept the document, and show its `description` |
 | `noMatchingCredential` | No held credential answers the request | Decline |
 | `invalidSelection` | The selection doesn't answer the request | Choose again |
 | `deliveryUnknown` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |

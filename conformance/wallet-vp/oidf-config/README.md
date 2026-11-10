@@ -9,6 +9,6 @@ go run ./conformance/wallet-vp/scripts/generate-config \
 ```
 
 Every value it produces is throwaway and safe to discard/regenerate.
-See `../README.md`'s own "Open questions" for what's still unconfirmed
-about what to paste into the OIDF suite's own credential-trust
-test-configuration field.
+The OIDF suite's own `credential.trust_anchor_pem` field takes the CA
+certificate the credential-issuer key's certificate was issued under,
+not that leaf (see `../README.md`).

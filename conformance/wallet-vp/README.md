@@ -166,9 +166,9 @@ passing `client.verifier_info: []` rather than omitting the field
 entirely — the suite falls back to a valid default immediately after,
 so this never blocked the flow.
 
-This first live run also resolved the "Open questions" below:
-`credential.trust_anchor_pem` is indeed a PEM X.509 certificate — a CA
-certificate, specifically, per the self-signed-leaf finding above. The
+This first live run also settled two questions about the suite's plan
+configuration: `credential.trust_anchor_pem` is indeed a PEM X.509
+certificate — a CA certificate, specifically, per the self-signed-leaf finding above. The
 suite's own DCQL query was driven via `client.dcql` (a `dc+sd-jwt` /
 `vct_values: ["urn:eudi:pid:1"]` / `given_name`+`family_name` claims
 query, matching this binary's own fixture credential) rather than a
@@ -263,26 +263,43 @@ clean `FINISHED`/`PASSED` with zero log entries at `WARNING` or worse,
 not just zero `FAILURE`s — every "same soft `exp`-claim note" mention
 below predates this fix.
 
-All 14 modules reachable by this binary's own scope (`direct_post.jwt`
-+ `x509_hash` + `request_uri_signed`) have now been run live. The
-plan's other 2 modules (`negative-test-wrong-expected-origins`,
+Every module of this binary's own scope (`direct_post.jwt` +
+`x509_hash` + `request_uri_signed`) is run live. The plan's DC
+API-only modules (`negative-test-wrong-expected-origins`,
 `multisigned-one-invalid-signature`) 404 when requested against this
-variant: they're DC API only, and run under `dc_api.jwt` (see
-"dc_api.jwt").
+variant, and run under `dc_api.jwt` (see "dc_api.jwt").
 
-**Update: all 14 of these are now driven by a committed, repeatable
-tool**, `conformance/wallet-vp/scripts/run-modules`, closing this
-role's own "driven by hand" gap (the same gap
-`conformance/verifier/scripts/run-sdjwt-modules`/`run-mdoc-module`
-closed for the Verifier role). Confirmed live, twice for stability: all
-7 positive-behavior modules `FINISHED`/`PASSED` (`alternate-happy-flow`
-included — see below); all 7 negative-test modules correctly rejected
-at this binary's own `/authorize` call (a non-200 local response,
-before ever reaching `response_uri`) and `FINISHED`/`REVIEW` once the
-script fills the suite's own required screenshot placeholder —
-matching this section's own "the real pass/fail signal... is whether
-this binary's own `/authorize` call errored out" finding below
-exactly, now automated rather than eyeballed per run.
+They're driven by a committed, repeatable tool,
+`conformance/wallet-vp/scripts/run-modules` (the same tool
+`conformance/verifier/scripts/run-sdjwt-modules`/`run-mdoc-module` are
+for the Verifier role), which creates two plans per credential format:
+
+- **The main plan, 15 modules.** 7 positive-behavior modules
+  (`happy-flow`, `alternate-happy-flow`, `request-uri-method-post`,
+  `ignores-unusable-encryption-key`, `fewer-claims-than-available`,
+  `optional-credential-set`, `no-claims-in-dcql-query`) must answer
+  locally with a 200 and end `FINISHED`/`PASSED` (or `WARNING`).
+  8 negative-test modules: 5 (`redirect-uri-with-direct-post`,
+  `missing-nonce`, `unknown-transaction-data-type`,
+  `required-non-matching-credential`, `claim-not-in-credential`) must
+  send an OID4VP error response with the exact code
+  `negativeTestExpectedErrorCode` names (`invalid_request`,
+  `invalid_request`, `invalid_transaction_data`, `access_denied`,
+  `access_denied`), which the suite grades `PASSED`; 3
+  (`invalid-request-object-signature`, `mismatched-client-id`,
+  `invalid-client-id-prefix`) must be refused at this binary's own
+  `/authorize` call, before `response_uri` (a non-200 local response),
+  and end `FINISHED`/`REVIEW` once the script fills the suite's
+  screenshot placeholder.
+- **A second plan for `all-mandatory-claims`** (`allMandatoryClaimsTest`).
+  The module is `@VariantNotApplicable` for `credential_type=custom`,
+  the main plan's implicit value, so it needs a plan with a real
+  `credential_type` — `eudi_pid` under `sd_jwt_vc`, `mdl` under
+  `iso_mdl` — in which the suite uses its own built-in DCQL query for
+  that type. It's graded as a positive module. It was missed until a
+  run against the hosted suite found it.
+
+The script exits non-zero on any other outcome.
 
 **`alternate-happy-flow`'s fragment relay is now automated too.** Its
 own fragment-carrying `redirect_uri` needs relaying real fragment
@@ -345,7 +362,8 @@ across this module list, beyond the plain query-string callback
   the expected-code check) and, on finishing, marks that placeholder
   `"image_no_longer_required": true` and grades the module `PASSED`
   (`AbstractTestModule.fireTestFinishedInternal`). Confirmed live
-  against the local suite (`release-v5.3.1`), 2026-09-26: all four
+  against the local suite (`release-v5.3.1`), 2026-09-26: the four
+  then driven (`claim-not-in-credential` was added later)
   `FINISHED`/`PASSED`, zero images uploaded. The placeholder briefly
   visible in the suite's UI is not a real requirement — uploading into
   it anyway downgrades the result to `REVIEW`, which is exactly what
@@ -418,7 +436,7 @@ alongside `dc_api.jwt`'s two profiles — since covered, see
 "dc_api.jwt"). Confirmed live via
 `GET /api/plan/{id}` before writing any driving code that the plan's
 own module list under `credential_format=iso_mdl` is exactly the same
-14 modules `sd_jwt_vc` already reaches — no additional exclusions —
+module list `sd_jwt_vc` reaches — no additional exclusions —
 learned the hard way from a real mistake made on the Verifier role's
 own equivalent gap (`conformance/verifier/README.md`), where one
 module (`minimal-cnf-jwk`) turned out to be `sd_jwt_vc`-only despite
@@ -465,15 +483,18 @@ directly, matching how `verifier.VerifyResponseRequest.ResponseEncryptionKey`
 already worked on the verifying side.
 
 **Confirmed live, twice for stability, via `conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl`**:
-the exact same 14/14 result shape `sd_jwt_vc` already has — all 7
+the 14/14 result shape `sd_jwt_vc` had at the time, before the
+error-response negative tests and `all-mandatory-claims` — all 7
 positive-behavior modules `localOK=true FINISHED=PASSED`, all 7
-negative-test modules correctly rejected locally before ever calling
-`response_uri` (`localOK=false`, suite-side `FINISHED=REVIEW`) — proving
+negative-test modules then rejected locally (`localOK=false`,
+suite-side `FINISHED=REVIEW`) — proving
 the full mdoc cryptographic chain end to end: `mdoc.Issue` →
 `PresentMdocSelective`'s own `SessionTranscriptBytes`/`DeviceSigned`
 construction → the suite's own independent mdoc verification, including
 its own IACA-chain validation of this binary's freshly generated
-Document Signer certificate.
+Document Signer certificate. `run-modules -credential-format iso_mdl`
+now drives and grades the same modules as `sd_jwt_vc` (see "Status"
+above), with `all-mandatory-claims` under `credential_type=mdl`.
 
 ### The Document Signer's CRL
 

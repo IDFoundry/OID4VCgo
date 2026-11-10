@@ -114,10 +114,18 @@ each, not a deployment template" says what it does differently.
   that replica's `CacheFor`. A replica waits on another's lease to sign
   only for a bounded time, then signs its own, so one that can't sign
   doesn't hold the others back.
-- [ ] **Key Attestation and Wallet Attestation status:** under
-  `AssuranceProduction` the issuer checks attestations' status
-  (`AttestationStatus`); give it a `statuslist.Checker` with a shared
-  `statuslist.Cache` (below).
+- [ ] **Key Attestation and Wallet Attestation status:** the issuer
+  checks key attestations' status (`Dependencies.AttestationStatus`,
+  `issuer.StatusListAttestationStatus`; required under
+  `AssuranceProduction` with an `AttestationVerifier`), and the
+  Authorization Server Wallet Attestations' (fapigo's
+  `server.Dependencies.ClientAttestationStatus`,
+  `haip.WalletAttestationStatusList`). Give both a `statuslist.Checker`
+  sharing one `statuslist.Cache` (below).
+- [ ] **Authorization Server stores:** a Credential Issuer's
+  Authorization Server keeps its grants and tokens in fapigo/sqlstore,
+  on the same `*sql.DB` (see [sqlstore/README.md](sqlstore/README.md)'s
+  "A whole issuer deployment").
 
 ```go
 db, _ := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer})
