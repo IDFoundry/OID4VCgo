@@ -37,7 +37,7 @@ echo "oid4vcgo  $SRC, commit $(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo 
 GRADLE_ARGS=()
 if [[ -n "${MULTIPAZ_VERSION:-}" ]]; then
   if [[ "$MULTIPAZ_VERSION" == latest ]]; then
-    MULTIPAZ_VERSION="$(curl -sSfL https://repo1.maven.org/maven2/org/multipaz/multipaz/maven-metadata.xml \
+    MULTIPAZ_VERSION="$(curl -sSfL --proto '=https' --tlsv1.2 https://repo1.maven.org/maven2/org/multipaz/multipaz/maven-metadata.xml \
       | sed -nE 's|.*<release>([^<]+)</release>.*|\1|p')"
   fi
   [[ "$MULTIPAZ_VERSION" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo "bad MULTIPAZ_VERSION: '$MULTIPAZ_VERSION'" >&2; exit 2; }
