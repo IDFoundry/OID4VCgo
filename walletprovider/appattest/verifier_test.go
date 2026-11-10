@@ -1,8 +1,10 @@
 package appattest
 
 import (
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -74,6 +76,21 @@ func TestVerifyAttestationRefuses(t *testing.T) {
 			return o
 		}, target: ErrNonce},
 		{name: "checked against other client data", obj: func() []byte { o, _ := f.attest(t, attSpec{clientDataHash: hash}); return o }, hash: hashOf("other"), target: ErrNonce},
+		{name: "bytes after the nonce", obj: func() []byte {
+			o, _ := f.attest(t, attSpec{clientDataHash: hash, nonceTrailer: []byte{0x00}})
+			return o
+		}, target: ErrMalformed},
+		{name: "too large, well-formed", obj: func() []byte { return withReceiptTo(t, f, hash, MaxAttestationBytes+1) }, target: ErrMalformed},
+		{name: "one certificate, anchored", obj: func() []byte {
+			o, _ := f.attest(t, attSpec{clientDataHash: hash})
+			var obj attestationObject
+			if err := cbor.Unmarshal(o, &obj); err != nil {
+				t.Fatal(err)
+			}
+			obj.AttStmt.X5C = obj.AttStmt.X5C[:1]
+			return mustCBOR(t, obj)
+		}, v: func(v *Verifier) { v.Roots = []*x509.Certificate{f.inter} }, target: ErrMalformed},
+		{name: "App ID without a bundle", obj: func() []byte { o, _ := f.attest(t, attSpec{clientDataHash: hash}); return o }, v: func(v *Verifier) { v.Apps = []string{"ABCDE12345."} }, target: ErrConfig},
 		{name: "no nonce", obj: func() []byte { o, _ := f.attest(t, attSpec{clientDataHash: hash, noNonce: true}); return o }, target: ErrMalformed},
 		{name: "another app", obj: func() []byte {
 			o, _ := f.attest(t, attSpec{clientDataHash: hash, appID: "ABCDE12345.dev.example.other"})
@@ -134,6 +151,44 @@ func TestVerifyAttestationRefuses(t *testing.T) {
 	}
 }
 
+// TestVerifyAttestationBounds: an attestation of exactly
+// MaxAttestationBytes is accepted, and one whose credential
+// certificate is anchored at the intermediate verifies with both
+// certificates in x5c: what refuses one alone is x5c's bound.
+func TestVerifyAttestationBounds(t *testing.T) {
+	f := newFakeApple(t)
+	hash := hashOf("client data")
+	if _, err := f.verifier().VerifyAttestation(withReceiptTo(t, f, hash, MaxAttestationBytes), hash); err != nil {
+		t.Fatalf("a %d-byte attestation: %v", MaxAttestationBytes, err)
+	}
+	o, _ := f.attest(t, attSpec{clientDataHash: hash})
+	v := f.verifier()
+	v.Roots = []*x509.Certificate{f.inter}
+	if _, err := v.VerifyAttestation(o, hash); err != nil {
+		t.Fatalf("anchored at the intermediate: %v", err)
+	}
+}
+
+// withReceiptTo is a good attestation over hash, its receipt sized so
+// the object is size bytes.
+func withReceiptTo(t testing.TB, f *fakeApple, hash []byte, size int) []byte {
+	t.Helper()
+	o, _ := f.attest(t, attSpec{clientDataHash: hash})
+	var obj attestationObject
+	if err := cbor.Unmarshal(o, &obj); err != nil {
+		t.Fatal(err)
+	}
+	// The receipt's length header is three bytes for any length from
+	// 256 to 65535, so one adjustment lands on size.
+	obj.AttStmt.Receipt = make([]byte, 1000)
+	obj.AttStmt.Receipt = make([]byte, 1000+size-len(mustCBOR(t, obj)))
+	out := mustCBOR(t, obj)
+	if len(out) != size {
+		t.Fatalf("a %d-byte attestation, want %d", len(out), size)
+	}
+	return out
+}
+
 func TestParseAuthData(t *testing.T) {
 	base := make([]byte, authDataMinBytes)
 	if _, err := parseAuthData(base, true); !errors.Is(err, ErrMalformed) {
@@ -143,6 +198,11 @@ func TestParseAuthData(t *testing.T) {
 	withLen := append(append(base, make([]byte, 16)...), 0x00, 0x20)
 	if _, err := parseAuthData(withLen, true); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("a credential ID longer than the data: %v", err)
+	}
+	// Attested credential data without the flag that says it's there.
+	unflagged := append(make([]byte, authDataMinBytes), make([]byte, 18)...)
+	if _, err := parseAuthData(unflagged, true); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("attested credential data without its flag: %v", err)
 	}
 }
 
@@ -189,6 +249,32 @@ func TestVerifyAssertion(t *testing.T) {
 	if _, err := f.verifier().VerifyAssertion(assert(t, key, testAppID, 5, hash), hash, nil, 0); !errors.Is(err, ErrConfig) {
 		t.Fatalf("no key: %v", err)
 	}
+
+	// The size bound, on assertions that are otherwise good.
+	if _, err := f.verifier().VerifyAssertion(assertSized(t, key, hash, MaxAssertionBytes), hash, &key.PublicKey, 4); err != nil {
+		t.Fatalf("a %d-byte assertion: %v", MaxAssertionBytes, err)
+	}
+	if _, err := f.verifier().VerifyAssertion(assertSized(t, key, hash, MaxAssertionBytes+1), hash, &key.PublicKey, 4); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("a %d-byte assertion: %v, want ErrMalformed", MaxAssertionBytes+1, err)
+	}
+}
+
+// assertSized is a good assertion with counter 5 over hash, padded to
+// size bytes.
+func assertSized(t testing.TB, key *ecdsa.PrivateKey, hash []byte, size int) []byte {
+	t.Helper()
+	pad := size - 200
+	// A signature's length varies by a byte or two: adjust the padding
+	// until the assertion comes out at size.
+	for range 50 {
+		a := assertPadded(t, key, testAppID, 5, hash, pad)
+		if len(a) == size {
+			return a
+		}
+		pad += size - len(a)
+	}
+	t.Fatalf("no %d-byte assertion", size)
+	return nil
 }
 
 func mustCBOR(t testing.TB, v any) []byte {

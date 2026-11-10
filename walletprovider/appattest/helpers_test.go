@@ -88,6 +88,7 @@ type attSpec struct {
 	nonceHash    []byte // the client data hash the nonce covers; nil means clientDataHash
 	credentialID []byte // nil means the key's ID
 	noNonce      bool
+	nonceTrailer []byte            // appended to the nonce extension's value
 	key          *ecdsa.PrivateKey // nil means a new P-256 key
 	notAfter     time.Time
 }
@@ -126,7 +127,7 @@ func (f *fakeApple) attest(t testing.TB, s attSpec) ([]byte, *ecdsa.PrivateKey) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		tmpl.ExtraExtensions = []pkix.Extension{{Id: NonceExtensionOID, Value: ext}}
+		tmpl.ExtraExtensions = []pkix.Extension{{Id: NonceExtensionOID, Value: append(ext, s.nonceTrailer...)}}
 	}
 	cred := createCert(t, tmpl, f.inter, &key.PublicKey, f.interKey)
 	format := s.format
@@ -167,8 +168,15 @@ func attAuthData(t testing.TB, appID string, counter uint32, aaguid, credID []by
 // signature over SHA-256(authenticatorData ‖ clientDataHash).
 func assert(t testing.TB, key *ecdsa.PrivateKey, appID string, counter uint32, clientDataHash []byte) []byte {
 	t.Helper()
+	return assertPadded(t, key, appID, counter, clientDataHash, 0)
+}
+
+// assertPadded is assert with pad bytes of extensions after the
+// authenticator data's fixed part, which the signature covers.
+func assertPadded(t testing.TB, key *ecdsa.PrivateKey, appID string, counter uint32, clientDataHash []byte, pad int) []byte {
+	t.Helper()
 	rp := sha256.Sum256([]byte(appID))
-	authData := slices.Concat(rp[:], []byte{0x00}, binary.BigEndian.AppendUint32(nil, counter))
+	authData := slices.Concat(rp[:], []byte{0x00}, binary.BigEndian.AppendUint32(nil, counter), make([]byte, pad))
 	nonce := sha256.Sum256(slices.Concat(authData, clientDataHash))
 	digest := sha256.Sum256(nonce[:])
 	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])

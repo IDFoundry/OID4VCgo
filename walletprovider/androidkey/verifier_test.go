@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
 	"errors"
 	"math/big"
@@ -179,6 +182,9 @@ func TestVerify_Synthetic(t *testing.T) {
 		"software key": {spec: func(s *spec) { s.keyLevel = androidkey.Software }, want: androidkey.ErrSoftwareLevel},
 		"software attestation": {
 			spec: func(s *spec) { s.attLevel = androidkey.Software }, want: androidkey.ErrSoftwareLevel},
+		"StrongBox key, TEE attestation, when StrongBox required": {
+			spec:   func(s *spec) { s.keyLevel = androidkey.StrongBox },
+			policy: func(v *androidkey.Verifier) { v.RequireStrongBox = true }, want: androidkey.ErrSoftwareLevel},
 		"TEE when StrongBox required": {policy: func(v *androidkey.Verifier) { v.RequireStrongBox = true }, want: androidkey.ErrSoftwareLevel},
 		"StrongBox": {
 			spec:   func(s *spec) { s.keyLevel, s.attLevel = androidkey.StrongBox, androidkey.StrongBox },
@@ -200,6 +206,14 @@ func TestVerify_Synthetic(t *testing.T) {
 		"version 500": {spec: func(s *spec) { s.version = 500; s.hw = append(slices.Clone(hw), field{11, derInt(t, 1)}) }},
 		"unlocked bootloader": {
 			spec: func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], false, androidkey.Unverified)) }, want: androidkey.ErrBootState},
+		"verified, unlocked": {
+			spec: func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], false, androidkey.Verified)) }, want: androidkey.ErrBootState},
+		"self-signed boot, another key trusted": {
+			spec: func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], true, androidkey.SelfSigned)) },
+			policy: func(v *androidkey.Verifier) {
+				other := sha256.Sum256([]byte("another verified boot key"))
+				v.TrustedBootKeys = [][]byte{other[:]}
+			}, want: androidkey.ErrBootState},
 		"locked, unverified": {
 			spec: func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], true, androidkey.Unverified)) }, want: androidkey.ErrBootState},
 		"locked, failed": {
@@ -267,6 +281,11 @@ func TestVerify_Synthetic(t *testing.T) {
 			}, want: androidkey.ErrAppNotAllowed},
 		"no signer": {
 			spec: func(s *spec) { s.sw = replace(sw, 709, appID(t, []pkg{{appPackage, 1}})) }, want: androidkey.ErrAppNotAllowed},
+		"another package in the hardware-enforced list": {
+			spec: func(s *spec) {
+				s.hw = append(slices.Clone(hw), field{709, appID(t, []pkg{{"com.example.other", 42}}, appDigest[:])})
+			},
+			want: androidkey.ErrAppNotAllowed},
 		"no application ID": {spec: func(s *spec) { s.sw = replace(sw, 709, nil) }, want: androidkey.ErrAppNotAllowed},
 		"old app version": {
 			policy: func(v *androidkey.Verifier) {
@@ -293,6 +312,15 @@ func TestVerify_Synthetic(t *testing.T) {
 			want: androidkey.ErrCertificateValidity},
 		"intermediate not yet valid": {
 			opts: chainOpts{interValidity: [2]time.Time{time.Now().Add(time.Hour), time.Now().Add(48 * time.Hour)}},
+			want: androidkey.ErrCertificateValidity},
+		"expired leaf": {
+			opts: chainOpts{leafValidity: [2]time.Time{time.Now().Add(-48 * time.Hour), time.Now().Add(-24 * time.Hour)}},
+			want: androidkey.ErrCertificateValidity},
+		"leaf not yet valid": {
+			opts: chainOpts{leafValidity: [2]time.Time{time.Now().Add(time.Hour), time.Now().Add(48 * time.Hour)}},
+			want: androidkey.ErrCertificateValidity},
+		"configured root expired, the rest valid": {
+			opts: chainOpts{rootValidity: [2]time.Time{time.Now().Add(-48 * time.Hour), time.Now().Add(-24 * time.Hour)}},
 			want: androidkey.ErrCertificateValidity},
 		"root expired": {
 			policy: func(v *androidkey.Verifier) { v.Now = func() time.Time { return time.Now().Add(48 * time.Hour) } },
@@ -376,6 +404,11 @@ func TestVerify_MalformedChains(t *testing.T) {
 	bigRSA := makeLeaf(t, good.inter, good.interKey, &rsa.PublicKey{N: modulus, E: 65537}, ext, 9)
 	huge := slices.Clone(good.der[0])
 	huge = append(huge, make([]byte, androidkey.MaxCertificateBytes)...)
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallExponent := makeLeaf(t, good.inter, good.interKey, &rsa.PublicKey{N: rsaKey.N, E: 3}, ext, 9)
 
 	for name, tc := range map[string]struct {
 		chain [][]byte
@@ -386,6 +419,8 @@ func TestVerify_MalformedChains(t *testing.T) {
 		"not DER":                   {[][]byte{[]byte("certificate")}, androidkey.ErrMalformed},
 		"oversized certificate":     {[][]byte{huge, good.der[1], good.der[2]}, androidkey.ErrMalformed},
 		"oversized RSA key":         {[][]byte{bigRSA.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},
+		"RSA exponent 3":            {[][]byte{smallExponent.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},
+		"oversized, well-formed":    {[][]byte{paddedLeaf(t, good, androidkey.MaxCertificateBytes+1), good.der[1], good.der[2]}, androidkey.ErrMalformed},
 		"another chain's root":      {[][]byte{good.der[0], good.der[1], other.der[2]}, androidkey.ErrChainSignature},
 		"tampered signature":        {[][]byte{tampered, good.der[1], good.der[2]}, androidkey.ErrChainSignature},
 		"intermediate out of order": {[][]byte{good.der[0], good.der[2], good.der[1]}, androidkey.ErrChainSignature},
@@ -399,6 +434,37 @@ func TestVerify_MalformedChains(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestVerify_CertificateAtMaxBytes: a certificate of exactly
+// MaxCertificateBytes is accepted.
+func TestVerify_CertificateAtMaxBytes(t *testing.T) {
+	good := newChain(t, goodSpec(t), chainOpts{})
+	chain := [][]byte{paddedLeaf(t, good, androidkey.MaxCertificateBytes), good.der[1], good.der[2]}
+	if _, err := verifierFor(t, good).Verify(context.Background(), chain, testChallenge); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// paddedLeaf is c's leaf again, padded with an unknown extension to
+// size bytes.
+func paddedLeaf(t testing.TB, c testChain, size int) []byte {
+	t.Helper()
+	ext := goodSpec(t).encode(t)
+	pad := size - 1000
+	// An ECDSA signature's length varies by a byte or two: adjust the
+	// padding until the certificate comes out at size.
+	for range 50 {
+		tmpl := leafTemplate(ext, 9)
+		tmpl.ExtraExtensions = append(tmpl.ExtraExtensions, pkix.Extension{Id: asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1}, Value: make([]byte, pad)})
+		der := issue(t, tmpl, c.inter, c.interKey, &c.leafKey.PublicKey).Raw
+		if len(der) == size {
+			return der
+		}
+		pad += size - len(der)
+	}
+	t.Fatalf("no %d-byte certificate", size)
+	return nil
 }
 
 // TestVerify_Config: a misconfigured Verifier refuses every chain.

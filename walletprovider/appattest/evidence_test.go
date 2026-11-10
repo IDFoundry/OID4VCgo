@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/attestation"
@@ -267,11 +268,67 @@ func TestEvidenceVerifierRefuses(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a good assertion for registration", func(t *testing.T) {
+		credential, err := encodeCredential(&attestKey.PublicKey, EnvironmentProduction)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash, err := ClientDataHash(walletprovider.PurposeRegistration, base64.RawURLEncoding.EncodeToString(challenge), keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = EvidenceVerifier{Verifier: apple.verifier()}.Verify(ctx, walletprovider.EvidenceInput{
+			Evidence: Evidence(assert(t, attestKey, testAppID, 1, hash)), Challenge: challenge, Purpose: walletprovider.PurposeRegistration,
+			Keys: keys, Instance: &walletprovider.Instance{Credential: credential},
+		})
+		if !errors.Is(err, ErrConfig) {
+			t.Fatalf("got %v, want ErrConfig", err)
+		}
+	})
 	if (EvidenceVerifier{}).Kind() != EvidenceKind {
 		t.Fatal("Kind")
 	}
 	bad := append([]byte{credentialVersion, credentialProduction}, make([]byte, 65)...)
 	if _, _, err := decodeCredential(bad); !errors.Is(err, ErrConfig) {
 		t.Fatalf("a credential that's no point: %v", err)
+	}
+	good, err := encodeCredential(&attestKey.PublicKey, EnvironmentProduction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, at := range map[string]int{"another version": 0, "another environment": 1} {
+		c := slices.Clone(good)
+		c[at] = credentialDevelopment + 1
+		if _, _, err := decodeCredential(c); !errors.Is(err, ErrConfig) {
+			t.Fatalf("a credential of %s: %v", name, err)
+		}
+	}
+}
+
+// TestEvidenceVerifierCounter: an assertion's counter is what the
+// provider stores, however far past the instance's it is.
+func TestEvidenceVerifierCounter(t *testing.T) {
+	apple := newFakeApple(t)
+	attestKey := newKey(t, elliptic.P256())
+	credential, err := encodeCredential(&attestKey.PublicKey, EnvironmentProduction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := newKey(t, elliptic.P256())
+	keys := []crypto.PublicKey{&key.PublicKey}
+	challenge := make([]byte, 32)
+	hash, err := ClientDataHash(walletprovider.PurposeHolder, base64.RawURLEncoding.EncodeToString(challenge), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev, err := EvidenceVerifier{Verifier: apple.verifier()}.Verify(context.Background(), walletprovider.EvidenceInput{
+		Evidence: Evidence(assert(t, attestKey, testAppID, 7, hash)), Challenge: challenge, Purpose: walletprovider.PurposeHolder,
+		Keys: keys, Instance: &walletprovider.Instance{Credential: credential},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Counter == nil || *ev.Counter != 7 || ev.AppID != testAppID {
+		t.Fatalf("evidence %+v, want counter 7", ev)
 	}
 }

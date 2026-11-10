@@ -123,6 +123,8 @@ func TestRegisterPolicy(t *testing.T) {
 	for name, kind := range map[string]string{
 		"app version below the minimum": kindOldApp,
 		"unverified boot":               kindRooted,
+		"verified boot, unlocked":       kindUnlocked,
+		"unverified boot, locked":       kindLockedUnverified,
 		"software key on android":       kindSoftware,
 		"platform not accepted":         kindIOS,
 	} {

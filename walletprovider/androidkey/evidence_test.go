@@ -9,11 +9,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +42,9 @@ func TestEvidenceVerifier(t *testing.T) {
 		auth  walletprovider.UserAuthentication
 		boot  walletprovider.BootState
 		max   time.Duration // EvidenceVerifier.MaxAuthTimeout
+
+		policy   func(v *androidkey.Verifier)
+		unlocked bool // the evidence reports an unlocked bootloader
 	}{
 		"TEE, no user authentication": {
 			level: walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationNone, boot: walletprovider.BootStateVerified},
@@ -76,6 +81,26 @@ func TestEvidenceVerifier(t *testing.T) {
 			},
 			max:   -1,
 			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
+		"user authentication one second past the default timeout unreported": {
+			spec: func(s *spec) {
+				s.hw = replace(replace(replace(hw, 503, nil), 504, derInt(t, int64(androidkey.AuthenticatorFingerprint))), 505, derInt(t, 31))
+			},
+			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
+		"no authenticator type unreported": {
+			spec:  func(s *spec) { s.hw = replace(replace(hw, 503, nil), 504, derInt(t, 0)) },
+			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
+		"software attestation of a TEE key": {
+			spec:   func(s *spec) { s.attLevel = androidkey.Software },
+			policy: func(v *androidkey.Verifier) { v.AllowSoftware = true },
+			level:  walletprovider.SecurityLevelSoftware, auth: walletprovider.UserAuthenticationNone, boot: walletprovider.BootStateVerified},
+		"unlocked bootloader, allowed": {
+			spec:   func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], false, androidkey.Verified)) },
+			policy: func(v *androidkey.Verifier) { v.AllowUntrustedBoot = true },
+			level:  walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationNone, boot: walletprovider.BootStateVerified, unlocked: true},
+		"unverified boot, allowed": {
+			spec:   func(s *spec) { s.hw = replace(hw, 704, rootOfTrust(t, bootKey[:], true, androidkey.Unverified)) },
+			policy: func(v *androidkey.Verifier) { v.AllowUntrustedBoot = true },
+			level:  walletprovider.SecurityLevelTEE, auth: walletprovider.UserAuthenticationNone, boot: walletprovider.BootStateUnverified},
 		"user authentication unreported": {
 			spec:  func(s *spec) { s.hw = replace(hw, 503, nil) },
 			level: walletprovider.SecurityLevelTEE, boot: walletprovider.BootStateVerified},
@@ -92,6 +117,9 @@ func TestEvidenceVerifier(t *testing.T) {
 			c := newChain(t, s, chainOpts{})
 			v := verifierFor(t, c)
 			v.TrustedBootKeys = [][]byte{bootKey[:]}
+			if tc.policy != nil {
+				tc.policy(v)
+			}
 			other := newKey(t, c.leafKey.Curve)
 			ev, err := androidkey.EvidenceVerifier{Verifier: v, MaxAuthTimeout: tc.max}.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey, &c.leafKey.PublicKey))
 			if err != nil {
@@ -99,7 +127,7 @@ func TestEvidenceVerifier(t *testing.T) {
 			}
 			want := walletprovider.VerifiedEvidence{
 				Platform: walletprovider.PlatformAndroid, AppID: appPackage, AppVersion: 42,
-				BootState: tc.boot, DeviceLocked: true,
+				BootState: tc.boot, DeviceLocked: !tc.unlocked,
 			}
 			if len(ev.Keys) != 1 {
 				t.Fatalf("keys = %+v", ev.Keys)
@@ -156,6 +184,15 @@ func TestEvidenceVerifierRefuses(t *testing.T) {
 			}
 		})
 	}
+	t.Run("too many, refused before they're all parsed", func(t *testing.T) {
+		// Verify bounds the chain too: the adapter's own bound shows in
+		// that it stops splitting at MaxChainLength.
+		data := append(slices.Concat(slices.Repeat(c.der[:1], androidkey.MaxChainLength+1)...), "not DER"...)
+		_, err := ev.Verify(ctx, walletprovider.EvidenceInput{Evidence: walletprovider.Evidence{Kind: androidkey.EvidenceKind, Data: data}, Challenge: testChallenge, Keys: []crypto.PublicKey{leaf}})
+		if !errors.Is(err, androidkey.ErrMalformed) || !strings.Contains(err.Error(), fmt.Sprintf("more than %d certificates", androidkey.MaxChainLength)) {
+			t.Fatalf("Verify = %v, want ErrMalformed for more than %d certificates", err, androidkey.MaxChainLength)
+		}
+	})
 	t.Run("a key the request doesn't name", func(t *testing.T) {
 		if _, err := ev.Verify(ctx, evidenceInput(c.der, testChallenge, &other.PublicKey)); !errors.Is(err, androidkey.ErrKeyNotRequested) {
 			t.Fatalf("Verify = %v, want %v", err, androidkey.ErrKeyNotRequested)

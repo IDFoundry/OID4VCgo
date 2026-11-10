@@ -44,14 +44,16 @@ const (
 
 // The evidence kinds the harness's fake verifiers read.
 const (
-	kindFake      = walletprovidertest.FakeKind
-	kindStrongBox = "android-strongbox"
-	kindTEE       = "android-tee"
-	kindOldApp    = "android-old-app"
-	kindRooted    = "android-unverified-boot"
-	kindSoftware  = "android-software"
-	kindIOS       = "ios-app-attest"
-	kindOtherApp  = "android-other-app"
+	kindFake             = walletprovidertest.FakeKind
+	kindStrongBox        = "android-strongbox"
+	kindTEE              = "android-tee"
+	kindOldApp           = "android-old-app"
+	kindRooted           = "android-unverified-boot"
+	kindUnlocked         = "android-unlocked"
+	kindLockedUnverified = "android-locked-unverified"
+	kindSoftware         = "android-software"
+	kindIOS              = "ios-app-attest"
+	kindOtherApp         = "android-other-app"
 )
 
 func androidResult(version uint64) walletprovider.VerifiedEvidence {
@@ -67,6 +69,10 @@ func verifiers() []walletprovider.EvidenceVerifier {
 	other.AppID = "com.example.other"
 	rooted := androidResult(10)
 	rooted.BootState, rooted.DeviceLocked = walletprovider.BootStateUnverified, false
+	unlocked := androidResult(10)
+	unlocked.DeviceLocked = false
+	unverifiedLocked := androidResult(10)
+	unverifiedLocked.BootState = walletprovider.BootStateUnverified
 	return []walletprovider.EvidenceVerifier{
 		walletprovidertest.FakeVerifier{},
 		androidVerifier{
@@ -74,10 +80,12 @@ func verifiers() []walletprovider.EvidenceVerifier {
 				SecurityLevel: walletprovider.SecurityLevelStrongBox, UserAuthentication: walletprovider.UserAuthenticationRequired},
 			kindTEE: {Result: androidResult(10),
 				SecurityLevel: walletprovider.SecurityLevelTEE, UserAuthentication: walletprovider.UserAuthenticationNone},
-			kindOldApp:   {Result: androidResult(3), SecurityLevel: walletprovider.SecurityLevelTEE},
-			kindRooted:   {Result: rooted, SecurityLevel: walletprovider.SecurityLevelTEE},
-			kindSoftware: {Result: androidResult(10)},
-			kindOtherApp: {Result: other, SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindOldApp:           {Result: androidResult(3), SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindRooted:           {Result: rooted, SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindUnlocked:         {Result: unlocked, SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindLockedUnverified: {Result: unverifiedLocked, SecurityLevel: walletprovider.SecurityLevelTEE},
+			kindSoftware:         {Result: androidResult(10)},
+			kindOtherApp:         {Result: other, SecurityLevel: walletprovider.SecurityLevelTEE},
 		},
 		iosVerifier(),
 	}
