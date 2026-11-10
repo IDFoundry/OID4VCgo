@@ -84,34 +84,57 @@ func (c AKITrustedAuthoritiesChecker) Validate() error {
 	if c.Roots != nil && len(c.Anchors) > 0 {
 		return errors.New("dcql: AKITrustedAuthoritiesChecker: set Roots or Anchors, not both")
 	}
-	type claim struct {
-		cert     *x509.Certificate
-		declared bool
-	}
-	claims := map[string][]claim{}
-	for i, anchor := range c.Anchors {
-		if anchor == nil {
-			return fmt.Errorf("dcql: AKITrustedAuthoritiesChecker: Anchors[%d] is nil", i)
-		}
-		for _, id := range derivedKeyIdentifiers(anchor) {
-			claims[string(id)] = append(claims[string(id)], claim{anchor, false})
-		}
-		if len(anchor.SubjectKeyId) > 0 && !slices.ContainsFunc(derivedKeyIdentifiers(anchor), func(id []byte) bool { return bytes.Equal(id, anchor.SubjectKeyId) }) {
-			claims[string(anchor.SubjectKeyId)] = append(claims[string(anchor.SubjectKeyId)], claim{anchor, true})
-		}
+	claims, err := anchorKeyIdentifierClaims(c.Anchors)
+	if err != nil {
+		return err
 	}
 	// Sorted, so the conflict reported is the same every time.
 	for _, id := range slices.Sorted(maps.Keys(claims)) {
-		cs := claims[id]
-		for i, a := range cs {
-			for _, b := range cs[i+1:] {
-				if (a.declared || b.declared) && !bytes.Equal(a.cert.RawSubjectPublicKeyInfo, b.cert.RawSubjectPublicKeyInfo) {
-					return fmt.Errorf("dcql: AKITrustedAuthoritiesChecker: anchors %q and %q, with different keys, both claim the key identifier %s", a.cert.Subject, b.cert.Subject, base64.RawURLEncoding.EncodeToString([]byte(id)))
-				}
+		if err := checkKeyIdentifierClaims(id, claims[id]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkKeyIdentifierClaims refuses two anchors with different keys
+// claiming the key identifier id when either declares it.
+func checkKeyIdentifierClaims(id string, cs []keyIdentifierClaim) error {
+	for i, a := range cs {
+		for _, b := range cs[i+1:] {
+			if (a.declared || b.declared) && !bytes.Equal(a.cert.RawSubjectPublicKeyInfo, b.cert.RawSubjectPublicKeyInfo) {
+				return fmt.Errorf("dcql: AKITrustedAuthoritiesChecker: anchors %q and %q, with different keys, both claim the key identifier %s", a.cert.Subject, b.cert.Subject, base64.RawURLEncoding.EncodeToString([]byte(id)))
 			}
 		}
 	}
 	return nil
+}
+
+// keyIdentifierClaim is an anchor's claim to a key identifier: one
+// derived from its key, or, declared, its own Subject Key Identifier
+// when that's none of those.
+type keyIdentifierClaim struct {
+	cert     *x509.Certificate
+	declared bool
+}
+
+// anchorKeyIdentifierClaims maps each key identifier anchors claim to
+// the claims to it.
+func anchorKeyIdentifierClaims(anchors []*x509.Certificate) (map[string][]keyIdentifierClaim, error) {
+	claims := map[string][]keyIdentifierClaim{}
+	for i, anchor := range anchors {
+		if anchor == nil {
+			return nil, fmt.Errorf("dcql: AKITrustedAuthoritiesChecker: Anchors[%d] is nil", i)
+		}
+		derived := derivedKeyIdentifiers(anchor)
+		for _, id := range derived {
+			claims[string(id)] = append(claims[string(id)], keyIdentifierClaim{anchor, false})
+		}
+		if len(anchor.SubjectKeyId) > 0 && !slices.ContainsFunc(derived, func(id []byte) bool { return bytes.Equal(id, anchor.SubjectKeyId) }) {
+			claims[string(anchor.SubjectKeyId)] = append(claims[string(anchor.SubjectKeyId)], keyIdentifierClaim{anchor, true})
+		}
+	}
+	return claims, nil
 }
 
 // CheckTrustedAuthorities implements TrustedAuthoritiesChecker.
@@ -141,12 +164,17 @@ func (c AKITrustedAuthoritiesChecker) CheckTrustedAuthorities(ctx context.Contex
 		}
 		return c.checkVerifiedChainAKI(ctx, issuerChain, roots, wantAKIs)
 	}
-	// OpenID4VP §6.1.1.1: the value "MUST match with the
-	// AuthorityKeyIdentifier element of an X.509 certificate in the
-	// certificate chain", which may carry intermediates but omit the
-	// anchor. Any certificate's authority key identifier counts, and the
-	// topmost one's own subject key identifier, when it's the authority
-	// asked for. Unverified: this only chooses what to present.
+	return checkUnverifiedChainAKI(issuerChain, wantAKIs)
+}
+
+// checkUnverifiedChainAKI checks issuerChain, unverified, against
+// wantAKIs. OpenID4VP §6.1.1.1: the value "MUST match with the
+// AuthorityKeyIdentifier element of an X.509 certificate in the
+// certificate chain", which may carry intermediates but omit the
+// anchor. Any certificate's authority key identifier counts, and the
+// topmost one's own subject key identifier, when it's the authority
+// asked for. Unverified: this only chooses what to present.
+func checkUnverifiedChainAKI(issuerChain [][]byte, wantAKIs []string) error {
 	for i, der := range issuerChain {
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {

@@ -311,58 +311,87 @@ func (a *Allocator) AllocateN(ctx context.Context, n int) ([]StatusListRef, erro
 // rounds; it returns fewer only if every draw of the last round landed
 // on a reserved index.
 func (a *Allocator) reserveEachIn(ctx context.Context, list AllocatorList, want int) ([]uint64, error) {
-	batch, _ := a.Store.(BatchIndexStore)
 	got := make([]uint64, 0, want)
 	tried := make(map[uint64]bool, want)
 	for range maxAllocateAttempts {
-		draw := make([]uint64, 0, want-len(got))
-		for len(draw) < want-len(got) {
-			idx, err := randomIndex(a.rand(), list.size())
-			if err != nil {
-				return nil, fmt.Errorf("statuslist: drawing a random index: %w", err)
-			}
-			if !tried[idx] {
-				tried[idx] = true
-				draw = append(draw, idx)
-			}
-			if len(tried) == list.Size {
-				break
-			}
+		draw, err := a.drawUntried(list, want-len(got), tried)
+		if err != nil {
+			return nil, err
 		}
 		if len(draw) == 0 {
 			break
 		}
-		if batch != nil {
-			reserved, err := batch.ReserveEach(ctx, list.URI, draw)
-			if err != nil {
-				return nil, fmt.Errorf("statuslist: reserving indices of %s: %w", list.URI, err)
-			}
-			asked := make(map[uint64]bool, len(draw))
-			for _, idx := range draw {
-				asked[idx] = true
-			}
-			for _, idx := range reserved {
-				if !asked[idx] {
-					return nil, fmt.Errorf("statuslist: the store reported reserving index %d of %s, which wasn't asked for or was reported twice", idx, list.URI)
-				}
-				asked[idx] = false
-			}
-			got = append(got, reserved...)
-		} else {
-			for _, idx := range draw {
-				switch err := a.Store.Reserve(ctx, list.URI, idx); {
-				case err == nil:
-					got = append(got, idx)
-				case !errors.Is(err, ErrIndexTaken):
-					return nil, fmt.Errorf("statuslist: reserving an index of %s: %w", list.URI, err)
-				}
-			}
+		reserved, err := a.reserveDraw(ctx, list, draw)
+		if err != nil {
+			return nil, err
 		}
+		got = append(got, reserved...)
 		if len(got) == want {
 			break
 		}
 	}
 	return got, nil
+}
+
+// drawUntried draws up to n random indices of list not in tried, adding
+// each to tried; fewer only once every index has been tried.
+func (a *Allocator) drawUntried(list AllocatorList, n int, tried map[uint64]bool) ([]uint64, error) {
+	draw := make([]uint64, 0, n)
+	for len(draw) < n {
+		idx, err := randomIndex(a.rand(), list.size())
+		if err != nil {
+			return nil, fmt.Errorf("statuslist: drawing a random index: %w", err)
+		}
+		if !tried[idx] {
+			tried[idx] = true
+			draw = append(draw, idx)
+		}
+		if len(tried) == list.Size {
+			break
+		}
+	}
+	return draw, nil
+}
+
+// reserveDraw reserves what it can of draw, in one call when the store
+// is a BatchIndexStore, and returns the indices reserved.
+func (a *Allocator) reserveDraw(ctx context.Context, list AllocatorList, draw []uint64) ([]uint64, error) {
+	if batch, ok := a.Store.(BatchIndexStore); ok {
+		reserved, err := batch.ReserveEach(ctx, list.URI, draw)
+		if err != nil {
+			return nil, fmt.Errorf("statuslist: reserving indices of %s: %w", list.URI, err)
+		}
+		if err := checkReservedFromDraw(list, draw, reserved); err != nil {
+			return nil, err
+		}
+		return reserved, nil
+	}
+	var reserved []uint64
+	for _, idx := range draw {
+		switch err := a.Store.Reserve(ctx, list.URI, idx); {
+		case err == nil:
+			reserved = append(reserved, idx)
+		case !errors.Is(err, ErrIndexTaken):
+			return nil, fmt.Errorf("statuslist: reserving an index of %s: %w", list.URI, err)
+		}
+	}
+	return reserved, nil
+}
+
+// checkReservedFromDraw refuses a BatchIndexStore's report of an index
+// it wasn't asked for, or of one twice.
+func checkReservedFromDraw(list AllocatorList, draw, reserved []uint64) error {
+	asked := make(map[uint64]bool, len(draw))
+	for _, idx := range draw {
+		asked[idx] = true
+	}
+	for _, idx := range reserved {
+		if !asked[idx] {
+			return fmt.Errorf("statuslist: the store reported reserving index %d of %s, which wasn't asked for or was reported twice", idx, list.URI)
+		}
+		asked[idx] = false
+	}
+	return nil
 }
 
 // fullLists is how many of c's lists, from the first, are known to be
