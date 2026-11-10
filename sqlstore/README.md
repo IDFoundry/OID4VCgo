@@ -146,7 +146,7 @@ binding its records to additional data of its own. Sweep each. See
 - **Sweeping**: stores never delete expired records. Call
   `db.Sweep(ctx, time.Now())` every few minutes, from every instance
   (on PostgreSQL, a run that finds another under way stops). It sweeps
-  the issuer and verifier tables, never the wallet's. walletflow forgets an expired
+  the issuer, verifier and Wallet Provider tables, never the wallet's. walletflow forgets an expired
   authorization, with its keys, when `Wallet.KeysInUse` lists the
   authorizations or `ResumeIssuance` is called for it: a wallet should
   call `KeysInUse` periodically, or abandoned authorizations stay.
@@ -180,6 +180,9 @@ together, then run `Migrate` once (see [UPGRADING.md](../UPGRADING.md)).
 
 | sqlstore | Released with | Requires oid4vcgo | Migrations |
 |---|---|---|---|
+| v0.11.0 | v0.74.0 | v0.73.0 | 0001–0014 |
+| v0.10.0 | v0.73.0 | v0.73.0 | 0001–0014 |
+| v0.9.1 | v0.72.0 | v0.69.0 | 0001–0013 |
 | v0.9.0 | v0.69.0 | v0.69.0 | 0001–0012 |
 | v0.8.0 | v0.68.0 | v0.68.0 | 0001–0008 |
 | v0.7.1 | — (a patch) | v0.66.0 | 0001–0007 |
@@ -195,8 +198,8 @@ together, then run `Migrate` once (see [UPGRADING.md](../UPGRADING.md)).
 ## Tests
 
 The tests run every contract suite — `issuer/issuertest`,
-`verifier/verifiertest`, `walletflow/storetest` and
-`walletprovider/walletprovidertest`, the shared-store
+`verifier/verifiertest`, `walletflow/storetest`,
+`walletprovider/walletprovidertest` and `statuslist/statuslisttest`, the shared-store
 ones with a separate `*sql.DB` per goroutine — against SQLite, and
 against PostgreSQL too when `SQLSTORE_POSTGRES_DSN` is set:
 

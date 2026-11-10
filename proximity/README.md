@@ -154,6 +154,10 @@ notifications.
    against the MSO's status list or identifier list, or
    `WithNoStatusCheck`). `Verified.Credential()` is the document as a
    `verifier.VerifiedCredential`, for checking its status after `Verify`.
+   To ask for several documents at once, a reader sends
+   `EstablishmentDocuments` (at most `MaxDocRequests`, each of a
+   different type) and passes the answer to `VerifyDocuments`: the
+   holder may answer any of them, so check each one needed came back.
    A reader can pass `NewReaderSession`
    `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of
    the reader's isn't refused as not yet valid. By default only document
@@ -284,4 +288,5 @@ verify signed round trips and reject device authentication with wrong handovers.
 Native Android serializes QR cleanup before NFC BLE creation and preserves the
 complete-Hs-read gate. `walletflow.StartCombinedProximityPresentation` and the
 additive gomobile/Kotlin APIs share one consent flow. See Android's
-`docs/PresentingInPerson.md` for lifecycle integration and `STATUS.md` for gates.
+[`PresentingInPerson.md`](../mobile/android/docs/PresentingInPerson.md)
+for lifecycle integration.

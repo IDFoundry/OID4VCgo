@@ -152,21 +152,55 @@ carries but this specific HAIP variant selection may not actually
 exercise. All of these were later closed — see the "Update:" notes
 below.
 
-**Notification Endpoint and Deferred Credential Endpoint, resolved
-differently**: the Notification Endpoint has real suite coverage —
+**Notification Endpoint and Deferred Credential Endpoint**: the
+Notification Endpoint has its own suite module —
 `oid4vci-1_0-issuer-happy-flow-skip-notification` — confirmed live
 under `fapi_profile=vci_haip` specifically (not just the base,
 non-HAIP profile it was first driven under) via
 `run-fapi2sp-battery`'s own `haipBattery` list. The Deferred Credential
-Endpoint has **no dedicated suite module for the Issuer role at all** —
-confirmed directly against the suite's own `/api/runner/available`
-(all 21 `oid4vci-1_0-issuer-*` module names, and every variant
-dimension on `happy-flow`, checked): this test plan only exercises
-deferred/notification behavior from the Wallet side (see
-`wallet/README.md`'s own `[deferred+plain]` crossing coverage), not by
-testing this binary's own Deferred Credential Endpoint independently.
-This isn't a gap to close — it's a limit of what this particular suite
-plan tests for this role.
+Endpoint has no module of its own among the plan's
+`oid4vci-1_0-issuer-*` modules; it's covered by the "Issuer deferred"
+run instead (`run-fapi2sp-battery -deferred`, see "Runs" below):
+`cmd/conformance-issuer` defers every Credential Request, and the
+suite's `happy-flow` follows the 202 to the Deferred Credential
+Endpoint and validates what it returns.
+
+## Runs
+
+`conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
+through `run_issuer` in `conformance/scripts/lib.sh`: five runs of
+`run-fapi2sp-battery`, each regenerating the keys and config,
+restarting `cmd/conformance-issuer` and creating its own plan.
+
+| Run | Flags | Modules |
+| --- | --- | --- |
+| Issuer haip-battery | none | `haipBattery`, 60 |
+| Issuer issuer-initiated | `-issuer-initiated` | `haipBattery`, 60 |
+| Issuer mdoc | `-credential-format mdoc` | `mdocBattery`: `metadata-test`, `happy-flow` |
+| Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `mdocBattery` |
+| Issuer deferred | `-deferred` | `deferredBattery`: `metadata-test`, `happy-flow` |
+
+The first four are the role's four certification profiles
+(`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
+deferred run is extra coverage of the Deferred Credential Endpoint.
+Every module must end `PASSED`, except in the two `haipBattery` runs
+`refresh-token` (`SKIPPED`) and
+`par-attempt-to-use-request_uri-for-different-client` (`REVIEW`), both
+explained under "Status: the generic FAPI2SP battery" below.
+
+`-issuer-initiated` selects the plan's
+`vci_authorization_code_flow_variant=issuer_initiated`. For each
+`oid4vci-1_0-issuer-*` module that goes through the authorization flow
+(not the two metadata modules) the script plays the Credential
+Issuer's side of the offer: it reads the module's exposed
+`credential_offer_endpoint` and sends it a by-value Credential Offer
+with a fresh `issuer_state` (`submitCredentialOffer`; a second one for
+`happy-flow-multiple-clients`). The `fapi2-security-profile-final-*`
+modules ignore the variant and run as they do without it.
+
+`-base-plan`, `-credential-encryption encrypted` and
+`-credential-proof-type-hint attestation` aren't certification
+profiles and are run by hand (see the sections below).
 
 ## Status: live run against the real OIDF suite
 
@@ -517,7 +551,7 @@ a genuine encryption-aware client would have hit. Re-verified
 `happy-flow`, `batch-issuance`, `metadata-test`, and
 `metadata-test-signed` all still pass with no regression.
 
-## Status: the generic FAPI2SP battery (42 modules) run live
+## Status: the generic FAPI2SP battery run live
 
 `VCIIssuerTestPlanHaip.java`'s own 5th `ModuleListEntry` reuses
 `FAPI2MessageSigningFinalTestPlan.testModules` minus
@@ -531,7 +565,13 @@ guessed), plus Discovery as its own entry: 40 total. Driven via a new
 tool, `conformance/issuer/scripts/run-fapi2sp-battery`, which also
 runs 2 already-known-working modules first as a sanity check that the
 freshly generated config is behavior-preserving — 42 modules driven in
-total.
+total at the time. `haipBattery` has since grown to 60 modules: the
+40 above, plus all 20 of the plan's OID4VCI-specific modules except
+`fail-invalid-key-attestation-signature` (2 metadata, `happy-flow`
+and 17 more happy-flow/negative-test modules, among them
+`happy-flow-skip-notification` and the encrypted-only
+`fail-unsupported-encryption-algorithm`), so one run covers the whole
+plan bar that one module.
 
 **Architecturally, this role needs no custom flow-driving Go code at
 all** — unlike `cmd/conformance-wallet`, where the suite plays server
@@ -633,10 +673,12 @@ on both sides; this was purely a "two stores instead of one" wiring
 bug, not a missing feature.
 
 **Final result, 42/42 modules run live, twice for stability — identical
-outcomes both times:** every module `PASSED` except one expected
-`SKIPPED` (`refresh-token` — this plan's own fixed
-`VCIGrantType=authorization_code` selection issues no refresh token to
-reuse), and one expected `REVIEW`
+outcomes both times** (and what `lib.sh` expects of today's
+60-module `haipBattery`): every module `PASSED` except one expected
+`SKIPPED` (`refresh-token` — the suite skips it when the authorization
+code exchange returns no refresh token, and `fapigo/server` issues one
+only for a grant whose scope includes `offline_access`, which the
+clients here aren't registered for), and one expected `REVIEW`
 (`par-attempt-to-use-request_uri-for-different-client` — a negative
 test the suite grades via human-review screenshot upload, which
 `unblock.go`'s own placeholder-fill path resolves to `REVIEW` rather
@@ -688,15 +730,14 @@ legitimate before (see the spec analysis a few paragraphs up — the
 HAIP §4.5.1 MUST falls on Wallets, not Issuers), so this is a genuine
 coverage improvement, not a bug fix: the Issuer role now proves both
 conveyance methods work, matching the Wallet role's own long-standing
-coverage. Confirmed live, twice for stability: the suite auto-selects
+coverage. Confirmed live at the time: the suite auto-selects
 `attestation` for this one module whenever it's available in
-metadata, regardless of `credential_proof_type_hint` — so it now
-passes even under the default `jwt`-hint battery run, no special
-invocation needed. A dedicated `run-fapi2sp-battery
--credential-proof-type-hint=attestation` invocation
+metadata, regardless of `credential_proof_type_hint`. The default
+battery (`haipBattery`) now leaves the module out, as its own comment
+says; `run-fapi2sp-battery -credential-proof-type-hint=attestation`
 (`keyAttestationBattery`: `metadata-test`, `happy-flow`,
-`fail-invalid-key-attestation-signature`) also exists and is driven by
-`run-all.sh` — `happy-flow` under it is a positive sanity check that
+`fail-invalid-key-attestation-signature`) drives it, run by hand
+(`run-all.sh` doesn't drive it) — `happy-flow` under it is a positive sanity check that
 genuine, validly-signed Key Attestation JWTs actually issue a
 credential, not just that an invalid one is correctly rejected.
 
@@ -803,8 +844,8 @@ discipline:**
   `issue_date`/`expiry_date` in a `cbor.Tag` full-date and
   base64-decoding `portrait`) needed to change.
 
-**Confirmed regression-free**: the full 42-module `sd_jwt_vc` HAIP
-battery re-run clean after `buildServerConfig` started always
+**Confirmed regression-free**: the full `sd_jwt_vc` HAIP battery (42
+modules at the time) re-run clean after `buildServerConfig` started always
 including the mdoc `CredentialConfiguration` alongside the SD-JWT
 one — identical outcome to before this work (same one `WARNING`, one
 `SKIPPED`, one `REVIEW`, rest `PASSED`).

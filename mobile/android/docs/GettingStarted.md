@@ -14,7 +14,8 @@ Download `oid4vcwallet-<version>.aar` from a
 [release](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/releases)
 into your app module's `libs/`, check it (the release's `SHA256SUMS`,
 and `gh attestation verify oid4vcwallet-<version>.aar --repo IDFoundry/OID4VCgo`),
-and add it with the libraries it uses, which the README lists:
+and add it with the libraries it uses, at the versions the release's
+README lists (its POM's dependencies):
 
 ```
 dependencies {
@@ -22,6 +23,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:…")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:…")
     implementation("androidx.annotation:annotation:…")
+    implementation("androidx.credentials:credentials:…")
+    implementation("androidx.credentials.registry:registry-provider:…")
+    implementation("androidx.credentials.registry:registry-provider-play-services:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-openid:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-mdoc:…")
+    implementation("androidx.credentials.registry:registry-digitalcredentials-sdjwtvc:…")
 }
 ```
 

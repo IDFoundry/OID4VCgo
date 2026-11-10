@@ -37,8 +37,8 @@ every record, so an app's own store needs no change.
 
 Within version 15, without bumping it (an optional configuration key,
 so an older wrapper is unaffected), a Wallet's `proof_key_by_index`
-names a key-attested jwt proof's key by its index; check a library's
-release notes for it.
+names a key-attested jwt proof's key by its index; the Swift and Kotlin
+libraries have it from OID4VCWallet 0.33.0, as `proofKeyByIndex`.
 
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
@@ -1334,8 +1334,13 @@ ProximityReader was added within ABI version 12, and later within it
 Built with `-tags mobiletest` (into `build/test/`, apart from the
 release build in `build/release/`), the framework adds `StartTestEnv`
 and `StartBatchTestEnv`: an in-process HAIP issuer, Wallet Provider and
-Verifier, for the Swift and Kotlin libraries' end-to-end tests. A
-`TestEnv` makes offers, approves or denies authorizations and deferred
+Verifier, for the Swift and Kotlin libraries' end-to-end tests.
+`StartAnonymousTestEnv` starts one whose issuer is outside HAIP: a
+pre-authorized code redeemed with no client authentication. A
+`TestEnv` gives a wallet its configuration (`ConfigJSON`) and Wallet
+Provider (`Provider`), makes offers (`AuthorizationCodeOffer`,
+`PreAuthorizedOffer(pin)`, `AnonymousOffer`, and `MultiDocumentOffer`
+for mdocs of two document types), approves or denies authorizations and deferred
 credentials (`Approve`, `Decide`), revokes (`Revoke`, `RevokeGrants`),
 and plays a Verifier: `Request`, `RegisteredRequest` and
 `RequestResult` for a link, `DCAPIRequest` and `DCAPIResult` over the
@@ -1347,14 +1352,15 @@ a `NewProximityReader` configuration and the CA to recognize the reader
 by. `IssuerCRL(revokeSigner)` returns a PEM CRL from the issuer's CA,
 current for an hour, listing the credentials' signing certificate when
 `revokeSigner` is set, for testing `revocation`. `IsTestBuild` is true
-in it. An app never ships that build.
+in it. `Close` stops a `TestEnv`. An app never ships that build.
 
 ## Swift
 
 The Swift package (`ios/OID4VCWallet`) doesn't expose these gomobile
 shapes: an app implements its own `KeyStore`, `CredentialStore` and
 `WalletProvider` protocols — throwing, non-optional, the provider
-`async` — which it adapts, and `WalletError` carries `code`,
+`async` — which it adapts, or uses `KeychainKeyStore`,
+`FileCredentialStore` and `HttpWalletProvider`, and `WalletError` carries `code`,
 `protocolError`, `isRetryable` and a user-facing
 `localizedDescription`.
 
@@ -1363,7 +1369,8 @@ shapes: an app implements its own `KeyStore`, `CredentialStore` and
 The Kotlin library (`android/OID4VCWallet`) does the same: an app
 implements its `KeyStore`, `CredentialStore` and `WalletProvider`
 interfaces (the provider's calls `suspend`), or uses
-`AndroidKeystoreKeyStore` and `FileCredentialStore`. Calls that can
+`AndroidKeystoreKeyStore`, `FileCredentialStore` and
+`HttpWalletProvider`. Calls that can
 wait on the network or the holder are `suspend` functions run on
 `Dispatchers.IO` and cancelled with their coroutine, and failures are `WalletException`s with the same `code`,
 `protocolError` and `isRetryable`. In-person sessions add

@@ -4,7 +4,46 @@ What to change when upgrading OID4VCgo, release by release. Each entry
 covers the breaking changes a caller has to act on; CHANGELOG.md lists
 everything else. A release that pins a new FAPIgo release passes on
 that release's own breaking changes: see FAPIgo's UPGRADING.md for
-them.
+them. Entries start at v0.55.0; for earlier releases see
+CHANGELOG.md's BREAKING CHANGES sections.
+
+## v0.74.0 → v0.75.2
+
+No API changes a caller has to act on; v0.75.0 adds one opt-in.
+
+### Behaviour that changes without a code change
+
+- **`mdocdcapi` refuses an `EncryptionInfo` recipient key that isn't
+  P-256** (v0.74.1). A key on another curve used to be accepted and
+  the response sealed with DHKEM(P-384) or DHKEM(P-521) instead of
+  Annex C's DHKEM(P-256) suite.
+- **`mdocdcapi` refuses an `EncryptedResponse` with members or tags
+  Annex C doesn't define** (v0.74.1), rather than ignoring an unknown
+  member or dropping a tag on the protocol.
+- **`credential/mdoc` refuses a received `status_list` without `idx`
+  or `uri`, or with a `uri` that isn't https, when decoding**
+  (v0.74.1). A missing `idx` used to decode as 0, so a status check
+  read another credential's entry; an http `uri` was refused only by a
+  status check, when it fetched the list.
+- **`proximity.RequireMDLDocumentSignerEKU` is now
+  `DefaultDocumentSignerPolicy`** (v0.75.1): a reader using it refuses
+  everything the default refuses, such as an OCSP signer's certificate
+  carrying the mDL document signer extended key usage, which it used
+  to accept. The mobile reader's `require_mdl_signer_eku` uses it.
+- **`walletflow` refuses a copy with no holder key left** (v0.75.2),
+  as invalid, instead of panicking, as when a `KeyStore` gives two
+  keys one ID. Such a `KeyStore` needs fixing: each key needs its own
+  ID.
+
+### Wallet (`wallet`, `walletflow`)
+
+- **Opt-in: `walletflow.Config.ProofKeyByIndex`** (v0.75.0) names a
+  jwt proof's key by its index in the Key Attestation's
+  `attested_keys` (`kid` `"0"`, no `jwk`), through
+  `wallet.Wallet.GenerateProofWithAttestedKeyIndex`, for an issuer that
+  requires that form (ETSI TS 119 472-3; the EUDI reference PID
+  issuer). It's off by default, since an issuer taking only `jwk`
+  refuses the index.
 
 ## v0.73.0 → v0.74.0
 

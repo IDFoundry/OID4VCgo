@@ -4,12 +4,12 @@ Answer a web page's OpenID4VP request over the Digital Credentials API,
 as a Credential Manager provider.
 
 > **Status:** this has run end to end in Chrome on the Android emulator
-> (API 37, with Google Play), not yet on a device. The check that the
-> request really comes through Credential Manager from the browser it
-> names is still open: until it's settled, treat the reported origin as
-> what the platform says, not as proven. Watch OID4VCgo's
+> (API 37, with Google Play), not yet on a device: watch OID4VCgo's
 > [MOBILE.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/MOBILE.md)
-> for both.
+> for that run. `DigitalCredentials.request` takes a request only from
+> Credential Manager (a caller signed with the platform's key, or one of
+> its `credentialManagerApps`), and a browser's origin only from the
+> privileged browsers it's given.
 
 A page in Chrome can ask for a credential with the W3C Digital
 Credentials API, using OpenID4VP (OpenID4VP 1.0 Appendix A). Android's

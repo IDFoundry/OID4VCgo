@@ -91,8 +91,10 @@ ID and a payment credential, say, each a
 ``ProximityPresentation/Request/documents`` entry. Answer any of them in
 one response with ``ProximityPresentation/respond(answers:)``, a
 ``MdocPresentation/Answer`` each; a document left out isn't in the
-response. It returns ``ProximityPresentation/Responded``: whether any
-copy shared had been seen by another Verifier, and which. The same call
+response. It returns ``ProximityPresentation/Responded``:
+``ProximityPresentation/Responded/linkable`` whether any copy shared
+had been seen by another Verifier, and
+``ProximityPresentation/Responded/linkableCredentials`` which. The same call
 is on ``MdocPresentation`` for the Digital Credentials API.
 
 Each answer's holder key signs in turn, and a ``KeychainKeyStore``
@@ -173,3 +175,32 @@ the session with ``WalletError`` `.documentNotValid`, its
 `protocolError` the status. With `.decline`, nothing checks it:
 for a reader where something else stands in, which then calls
 ``ProximityReaderSession/checkStatus()`` itself or checks otherwise.
+
+### Reading several documents
+
+``ProximityReader/start(qrCode:documents:timeouts:)`` asks for several
+documents in one request, a ``ProximityReader/DocumentRequest`` each,
+of different types and at most eight. The holder may answer any of
+them: once the session is `.verified`, whose mdoc is the first,
+``ProximityReaderSession/documents`` has every document it answered, in
+the response's order. Check that each one needed came back. With
+`statusCheck: .check`, each document's status is checked, and any one
+that isn't valid fails the session with `.documentNotValid`.
+
+```swift
+/// Asks the holder whose QR code was scanned for an mDL and a photo ID,
+/// and returns the documents the holder chose to share.
+func readTwo(reader: ProximityReader, qrCode: String) async throws -> [VerifiedMdoc] {
+    let session = try reader.start(qrCode: qrCode, documents: [
+        ProximityReader.DocumentRequest(docType: "org.iso.18013.5.1.mDL",
+                                        elements: ["org.iso.18013.5.1": ["family_name", "portrait"]]),
+        ProximityReader.DocumentRequest(docType: "org.iso.23220.photoid.1",
+                                        elements: ["org.iso.23220.1": ["family_name", "portrait"]]),
+    ])
+    for await state in session.states where state.isFinal {
+        if case .failed(let error) = state { throw error }
+        return session.documents
+    }
+    return []
+}
+```

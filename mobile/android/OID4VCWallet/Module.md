@@ -3,7 +3,7 @@
 Receive verifiable credentials and present them from an Android app:
 over OpenID4VCI and OpenID4VP under HAIP, to Chrome's Digital
 Credentials API through Credential Manager, and in person over
-Bluetooth.
+Bluetooth, engaged by a QR code or an NFC tap.
 
 OID4VCWallet is the wallet side of [OID4VCgo](https://github.com/IDFoundry/OID4VCgo),
 for Android 8.0 (API 26) and later. It handles SD-JWT VC and ISO mdoc
@@ -16,8 +16,10 @@ credentials:
   (OpenID4VP 1.0, HAIP 1.0): [Wallet.startPresentation][dev.idfoundry.oid4vcwallet.Wallet.startPresentation]; to a page's
   Digital Credentials API request, which Credential Manager hands the
   app: [Wallet.startDCAPIPresentation][dev.idfoundry.oid4vcwallet.Wallet.startDCAPIPresentation]; and in person over Bluetooth
-  (ISO/IEC 18013-5): [Wallet.startProximityPresentation][dev.idfoundry.oid4vcwallet.Wallet.startProximityPresentation], where the app
-  can also be the reader: [ProximityReader][dev.idfoundry.oid4vcwallet.ProximityReader].
+  (ISO/IEC 18013-5), engaged by a QR code: [Wallet.startProximityPresentation][dev.idfoundry.oid4vcwallet.Wallet.startProximityPresentation],
+  by an NFC tap: [Wallet.startNfcPresentation][dev.idfoundry.oid4vcwallet.Wallet.startNfcPresentation], or by either:
+  [Wallet.startCombinedPresentation][dev.idfoundry.oid4vcwallet.Wallet.startCombinedPresentation]. The app can also be the reader:
+  [ProximityReader][dev.idfoundry.oid4vcwallet.ProximityReader], from a QR code or, with [ProximityReader.startFromNfc][dev.idfoundry.oid4vcwallet.ProximityReader.startFromNfc], a tap.
 
 The protocols run in OID4VCgo's Go code, compiled into this library:
 every network request, every protocol message and every check on what
@@ -38,7 +40,7 @@ presentation aren't covered by that certification.
 
 Start with [the guides](https://github.com/IDFoundry/OID4VCgo-wallet-kotlin/tree/main/docs): getting started, receiving
 credentials, presenting from a link, to Chrome and in person, handling
-errors, and going to production.
+errors, going to production, and an integration checklist.
 
 See also [OID4VCgo's mobile README](https://github.com/IDFoundry/OID4VCgo/tree/main/mobile),
 for what each platform supports and the in-person guide, and

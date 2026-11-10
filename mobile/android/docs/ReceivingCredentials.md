@@ -194,7 +194,7 @@ suspend fun waitFor(deferred: DeferredCredential, wallet: Wallet): CredentialSum
 ```
 
 `Wallet.abandonDeferred` gives one up, deleting its keys: once its
-access token has expired, say.
+access token has expired, say (`DeferredCredential.accessTokenExpiresAt`).
 
 ## Look after held credentials
 

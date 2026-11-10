@@ -167,3 +167,13 @@ FAPI2SP battery, the base non-HAIP plan, and `mso_mdoc`; see
 "Status" section for current per-role numbers rather than trusting a
 specific module count repeated here — they change as coverage grows,
 and this file isn't the place they're kept in sync.
+
+Besides the OIDF suite, `polaris-interop.yml`, `eudi-interop.yml`,
+`waltid-interop.yml` and `multipaz-interop.yml` run OID4VCgo against
+independent implementations on each pull request, daily and on each
+release, with negative controls asserted by their reasons.
+`conformance/README.md`'s "Interop with …" sections and
+`interop/<implementation>/README.md` hold their cases, the other
+side's deviations (found by these runs, and reported upstream only
+when the user says so), and how to move each pin, which is done by
+hand after reading the release.

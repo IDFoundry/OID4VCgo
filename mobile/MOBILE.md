@@ -1,15 +1,17 @@
 # OID4VCgo Mobile — design
 
-Status: **iOS done; Android built, with checks on a device open
-(Phase 8, [#461](https://github.com/IDFoundry/OID4VCgo/issues/461));
-the DC API done on both (Phase 9); proximity in both SDKs, with the
-demos and iPhone ↔ Android runs to come (Phase 10, [#482](https://github.com/IDFoundry/OID4VCgo/issues/482)).**
-Phases 0 to 7 are done: the SDK is published as the OID4VCWallet Swift
-package, and the demo app has issued and presented on a device, against
-the passport-vdc demo through a tunnel, and presented to Safari as a
-document provider. The Android library, the Android demo and the
-Kotlin library's release are built; the Kotlin library has no release
-yet. Later work is recorded after Phase 7. This is
+Status: **Phases 0 to 10 are done: iOS, Android
+([#461](https://github.com/IDFoundry/OID4VCgo/issues/461)), the DC API
+on both, and proximity in both libraries and both demos
+([#482](https://github.com/IDFoundry/OID4VCgo/issues/482)).** The SDK
+is published as the OID4VCWallet Swift package and Kotlin library,
+released together from one commit with one version. The iOS demo has
+issued and presented on a device, against the passport-vdc demo
+through a tunnel, and presented to Safari as a document provider. Still
+open: in-person runs between an iPhone and an Android phone, in both
+directions, and the DC API in Chrome on a physical Android device (it
+has run on the emulator); Phase 8's open items list the other checks on
+an Android device. Later work is recorded after Phase 7. This is
 the design for a mobile wallet SDK built on OID4VCgo, delivered in the
 phases below. It records the decisions taken so far, what each phase
 found, and the questions still open; update it as phases land.
@@ -524,9 +526,9 @@ CRLs it holds, through `certrevocation.CRLs`.
 | 5 ✓ | Storage | The native credential store, with key references |
 | 6 ✓ | OID4VP slice | Request parsing, candidates, consent and presentation from the iOS demo app |
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
-| 8 ✓ | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below); checks on a device are open items |
+| 8 ✓ | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below); some checks on a device are open items (Phase 8) |
 | 9 ✓ | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
-| 10 | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions. The SDKs are done; the demos and the runs between devices aren't |
+| 10 ✓ | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions. The SDKs and the demos are done; the runs between an iPhone and an Android phone are open |
 
 ### Phase 1 findings
 
@@ -1876,27 +1878,31 @@ Go stopped waiting for ran on in the app.
 ## Open questions
 
 - The Wallet Provider's production design, and whether it belongs in
-  this repository. Before it attests, it should check platform evidence
-  that it's talking to the genuine app — App Attest on iOS; on Android,
-  the Android Key Attestation chains the Kotlin library now hands it
-  ([Platform evidence for keys](#platform-evidence-for-keys)) — and key
-  attestation formats. The passport-vdc demo's provider gives the
-  Android demo attestation challenges and verifies its keys' chains
-  (signatures, the key, the challenge), logging whether they're
-  hardware Google vouches for (an emulator's aren't) and refusing
-  them only with `-require-hardware-key-attestation`; it doesn't
-  read the chains' authorizations or the app that made the key. It
-  attests the iOS demo's keys, which come without evidence, unchecked.
+  this repository: settled. `walletprovider` is a Wallet Provider that
+  attests only after checking platform evidence that it's talking to
+  the genuine app: App Attest on iOS (`walletprovider/appattest`), and
+  on Android the Android Key Attestation chains the Kotlin library
+  hands it (`walletprovider/androidkey`;
+  [Platform evidence for keys](#platform-evidence-for-keys)). Both
+  libraries' `HttpWalletProvider` is its client. The passport-vdc
+  demo's provider attests over that protocol for the apps it's started
+  with: `-ios-app` for the iOS demo on a device, with App Attest
+  evidence (development environment keys accepted, as a development
+  build's are; see [ios/DemoWallet](ios/DemoWallet/README.md)), and
+  `-android-app` for an Android app, with Android Key Attestation. Its older API, which the iOS
+  demo uses in the Simulator (which has no App Attest), attests any
+  caller, and answers `403` once `-ios-app` is set; for Android keys it
+  verifies their chains (signatures, the key, the challenge), refusing
+  an emulator's only with `-require-hardware-key-attestation`.
 
 ## Combined engagement preview
 
-Android adds `startCombinedPresentation` without changing existing public API
-signatures or ABI 12. It reuses the serialized NFC owner registry and proximity
+Android added `startCombinedPresentation` as an addition within ABI
+version 12 (before version 13), changing no existing public API signature. It reuses the serialized NFC owner registry and proximity
 consent state machine. Independent ephemeral keys prevent cross-offer transcript
 reuse; the native arbiter claims QR at BLE State-start or NFC at application
 SELECT. QR resources stop before gated NFC BLE starts. NFC data can omit QR when
-Bluetooth permissions are absent. Tests and local validation gates are tracked
-in the root `STATUS.md`. On phones at 6aef12e, combined engagement passed
+Bluetooth permissions are absent. On phones at 6aef12e, combined engagement passed
 with Multipaz (the tap won and QR was withdrawn), and with a second wallet
 registered for the same AID the presenting app held foreground preference
 and released it once the session ended.

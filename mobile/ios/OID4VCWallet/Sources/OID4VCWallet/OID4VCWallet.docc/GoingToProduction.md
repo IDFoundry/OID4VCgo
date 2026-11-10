@@ -352,6 +352,20 @@ ecosystem, and record why:
   needs a key store that is also a ``KeyAgreement``.
   ``WalletConfiguration/ProximityDeviceAuth/signature``, the default,
   signs.
+- ``WalletConfiguration/proofKeyByIndex``: names a key-attested jwt
+  proof's key by its index in the key attestation (`kid` `"0"`) instead
+  of in `jwk`, as issuers following ETSI TS 119 472-3 require; an
+  issuer taking only `jwk` refuses it. Set it only for such issuers.
+- ``WalletConfiguration/acceptMDLSignerWithoutEKU`` and
+  ``ProximityReaderConfiguration/acceptMDLSignerWithoutEKU``: also
+  accept a document signer certificate with no extended key usage,
+  which the default check refuses for lacking the mDL document
+  signer's. Any end-entity certificate without one under the same IACAs
+  can then sign mdocs that are accepted. Leave it off unless an
+  issuer's document signers carry no extended key usage.
+- For a ``ProximityReader``:
+  ``ProximityReaderConfiguration/issuerRootsByDocType`` confines each
+  document type to its own IACAs.
 
 ### Privacy
 

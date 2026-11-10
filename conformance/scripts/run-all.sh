@@ -9,7 +9,7 @@
 # containers driven by the suite's own Python run-test-plan.py: this
 # repo's four roles are each a single container reconfigured and
 # restarted in place per variant (immediate/deferred, sd_jwt_vc/mdoc,
-# HAIP/base plan — see each role's own conformance/*/scripts/README
+# HAIP/base plan — see each role's own conformance/*/README.md
 # for why), driven by this repo's own all-Go tooling, no Python
 # dependency at all. Everything here runs strictly sequentially, not
 # per-role parallel, the same choice FAPIgo's own script already made
@@ -25,7 +25,7 @@
 # only gives per-workflow, not per-job within one combined workflow —
 # see lib.sh's own doc comment). This script still runs all four
 # roles, unsplit, as the one-command full local reproduction — see
-# each role's own conformance/*/scripts/README for why the exact set
+# each role's own conformance/*/README.md for why the exact set
 # of modules each one runs is what it is.
 #
 # Prerequisites:

@@ -1,7 +1,6 @@
 # Architecture
 
-> **Status: every planned package is `(done)` except `walletprovider`
-> (`(started)`)**, including `conformance`
+> **Status: every planned package is `(done)`**, including `conformance`
 > (all four OIDF conformance-suite binaries built and each
 > confirmed live against a real, locally-run OIDF conformance suite
 > instance — see its own bullet below for the one deliberate, permanent
@@ -67,9 +66,11 @@ rule is scoped to the importing path's own module tree, and this is a
 separate module (`github.com/idfoundry/oid4vcgo` vs.
 `github.com/idfoundry/fapigo`) even though both live under the same GitHub
 org. Anything this repo needs from FAPIgo's protocol core has to already
-be, or become, one of FAPIgo's *public* packages (`server`, `client`,
-`resource`, `keys`, `storage`, `fapihttp`, `extension`, the root `fapigo`
-value types) — never a reason to vendor or reimplement FAPIgo's internals
+be, or become, one of FAPIgo's *public* packages (e.g. `server`,
+`server/interactioncookie`, `client`, `resource`, `serverresource`,
+`keys`, `keys/ephemeral`, `storage`, `storage/memstore`, `fapihttp`,
+`extension`, the root `fapigo` value types) — never a reason to vendor
+or reimplement FAPIgo's internals
 here instead.
 
 **`keys.KeyManager` turned out not to be reusable for credential-level
@@ -121,8 +122,14 @@ changes whether *every* bullet below is `(done)`.
   array, then, once a path is fully walked, including every Disclosure
   the target value itself transitively references (§4.2.6's own
   "recursive Disclosures", array elements included) so the disclosed
-  value comes through intact. `wallet.PresentSDJWTVCSelective` is this
-  function's own real caller — see the `wallet` bullet below. Its
+  value comes through intact. `SelectDisclosuresAt` does the same for
+  OpenID4VP §7.1 claims path pointers that also walk into arrays: a
+  non-negative integer selects one element and `nil` (a wildcard) every
+  element, an element's `{"...": digest}` placeholder bringing its
+  Disclosure (RFC 9901 §4.2.4.2), indices counting only the elements
+  the holder's credential has (not decoys).
+  `wallet.PresentSDJWTVCSelective` is its real caller — see the
+  `wallet` bullet below. Its
   tests include RFC 9901's own known-answer disclosure/digest vectors,
   not just round-trip checks.
   There's deliberately still no separate `credential` package defining a
@@ -377,7 +384,11 @@ changes whether *every* bullet below is `(done)`.
   off the request; it keeps serving an unexpired token when re-signing
   fails (`OnError`), and answers an `If-None-Match` naming its strong
   ETag with 304 — `internal/listhttp`, shared with `identifierlist`'s
-  `Publisher`. `Allocator` hands out a Referenced Token's index: uniformly
+  `Publisher`. Each replica signs its own tokens unless
+  `Publisher.Tokens` (a `TokenStore`) shares them: then one
+  replica at a time holds a lease and signs the list's token, and the
+  others serve the stored one. `Allocator` hands out a Referenced
+  Token's index: uniformly
   random and never reused (draft-14 §12.4, §12.5.1, §13.3), reserved
   atomically in an `IndexStore` (`MemoryIndexStore` for tests; a
   durable store in production), moving to the next list at its
@@ -439,7 +450,7 @@ changes whether *every* bullet below is `(done)`.
   why this package only reads claims FAPIgo's own verification discards,
   never re-verifies a signature FAPIgo already checked). Tests include
   OID4VCI 1.0's own Appendix D.1 and Appendix E worked examples.
-- **`walletprovider`** (started: the core package) — the Wallet
+- **`walletprovider`** (done) — the Wallet
   Provider role, which decides whether to mint what `attestation`
   mints: it registers wallet instances from platform evidence, records
   their per-issuance instance keys, issues HAIP §4.4.1 Wallet
@@ -692,14 +703,19 @@ changes whether *every* bullet below is `(done)`.
   support — Metadata's own `alg_values_supported` is always exactly
   `["ECDH-ES"]`, the only alg `internal/jwe` implements, so there's no
   Go field to set it from. Both functions operate purely on bytes/
-  Content-Type, deliberately not on `http.ResponseWriter` — this
-  package still doesn't own the HTTP handler; a caller's own glue calls
-  `DecryptRequestBody` before unmarshaling a request and
+  Content-Type, deliberately not on `http.ResponseWriter`: a caller's
+  own glue calls `DecryptRequestBody` before unmarshaling a request and
   `EncryptResponseBody` after marshaling a Response, the same
-  "expose the pieces, don't own the transport" boundary
-  `AuthorizedRequest`'s own doc comment already draws for access token
-  verification. New error type `Error` (§8.3.1.2's own closed
-  set of Credential Request/Response error codes, all HTTP 400) with a
+  "expose the pieces" boundary `AuthorizedRequest`'s own doc comment
+  already draws for access token verification. The package also
+  offers ready-made handlers built from those pieces:
+  `(*Issuer).CredentialHandler` (the Credential Endpoint, access token
+  check, request decryption, proof verification, issuance and
+  response encryption), `DeferredCredentialHandler`,
+  `NotificationEndpointHandler`, and `NewMetadataHandler` (the
+  Credential Issuer Metadata, signed per §12.2.3 to a Wallet that
+  asks for `application/jwt`). New error type `Error` (§8.3.1.2's own
+  closed set of Credential Request/Response error codes, all HTTP 400) with a
   `WriteJSON` mirroring `fapigo/resource.Error`'s own shape (Code/
   PublicDescription safe to expose, Unwrap for logs only). See
   `CredentialRequest`'s own doc comment for what's deliberately out of
@@ -923,6 +939,11 @@ changes whether *every* bullet below is `(done)`.
   through the new `CredentialRequest.JWTProofs` field instead — appended
   alongside `Keys`' own generated proofs in the outbound "jwt" array, so
   a request may mix both binding styles in one batch.
+  `GenerateProofWithKeyAttestation` signs a jwt proof carrying a Key
+  Attestation in its `key_attestation` header (key in `jwk`), and
+  `GenerateProofWithAttestedKeyIndex` the same proof naming the key by
+  its index in the attestation's `attested_keys` (`kid` `"0"` for the
+  first, no `jwk`), the form ETSI TS 119 472-3 has issuers require.
   `GenerateAttestationProof`
   builds the other key proof this package supports: a Key Attestation
   JWT (Appendix D.1) for the attestation proof type (Appendix F.3), by
@@ -975,7 +996,15 @@ changes whether *every* bullet below is `(done)`.
   name — satisfied by it directly (identical method signature), but
   this package's own tests don't need `fapigo/client`'s TokenSet/DPoP
   machinery just to exercise the wire format. `RequestNonce` covers the
-  Nonce Endpoint's own client side (§7.1). `BuildAuthorizationRequest`
+  Nonce Endpoint's own client side (§7.1), and
+  `RequestAttestationChallenge` fetches an Authorization Server's
+  Attestation Challenge (attestation-based client auth §8) for the next
+  Client Attestation PoP. `FetchCredentialIssuerMetadata` fetches the
+  Credential Issuer Metadata (§12.2) over the hardened fetcher; with
+  `Config.IssuerMetadataRoots` it asks for the signed form (§12.2.3,
+  HAIP 1.0 §4.1) and uses it only once its `x5c` chains to those roots
+  and its `sub` names the issuer, and `Config.RequireSignedIssuerMetadata`
+  refuses metadata that isn't signed that way. `BuildAuthorizationRequest`
   translates a resolved Credential Offer's own `authorization_code`
   grant (its `issuer_state`, via `fapigo/extension.Set`) and the
   caller's own resolved scope(s) into a `client.BeginAuthorizationRequest`
@@ -1062,21 +1091,22 @@ changes whether *every* bullet below is `(done)`.
   that had hand-crafted a `WWW-Authenticate` header to exercise this
   path were themselves testing the bug, not real Authorization Server
   behavior. Fixed to check the JSON body's own `"error"` member
-  (reusing `parseError`) instead. It sends no client authentication
-  (§6.1 makes it OPTIONAL for this grant; Wallet Attestation client
-  authentication is `fapigo/client`'s, for the Authorization Code Flow),
-  and no `authorization_details`. `GenerateDPoPProof` and
-  `DPoPAccessTokenHash` are exported beyond this one call: this package
-  builds the Token Request's own DPoP proof, but deliberately doesn't
-  build a full sender-constrained resource client for the access token
-  it returns (unlike the Authorization Code Flow, whose resource
-  requests go through `fapigo/client`'s already-hardened
-  `(*client.Client).ProtectedResource`) — a caller wiring a
-  pre-authorized_code-obtained token into `RequestCredential`/
-  `RequestDeferredCredential`/`RequestNotification`'s own
-  `ProtectedResourceClient` needs these two primitives to do that
-  itself, rather than reimplementing DPoP proof construction a second
-  time.
+  (reusing `parseError`) instead. Client authentication is opt-in:
+  §6.1 makes it OPTIONAL for this grant, but HAIP 1.0 §4.4.1 requires
+  it, so `PreAuthorizedCodeTokenRequest.ClientAttestation` (an
+  `fapigo/client` `*client.Client` configured for
+  `storage.ClientAuthMethodAttestation` is one) adds the Wallet
+  Attestation and a fresh Client Attestation PoP, built as for the
+  Authorization Code Flow. `PreAuthorizedCodeTokenRequest.Resource`
+  sends RFC 8707 resource indicators. No `authorization_details` is
+  sent. `(*Wallet).DPoPResourceClient` is the sender-constrained
+  `ProtectedResourceClient` for the access token this returns: each
+  request carries `Authorization: DPoP` and a fresh DPoP proof with
+  `ath`, retried once on a `use_dpop_nonce` challenge (the
+  Authorization Code Flow's token goes through `fapigo/client`'s
+  `(*client.Client).ProtectedResource` instead). `GenerateDPoPProof`
+  and `DPoPAccessTokenHash` stay exported for a caller building its
+  own resource client.
 - **`dcql`** (done) — the Digital Credentials Query Language
   (OID4VP §6/§7): `Query`/`CredentialQuery`/`CredentialSetQuery`/
   `ClaimsQuery`/`TrustedAuthoritiesQuery`, each with a `Validate()`
@@ -1326,11 +1356,15 @@ changes whether *every* bullet below is `(done)`.
   both response modes carry the exact same encrypted-JWT-wrapping-a-
   vp_token shape; only the transport differs (an HTTP POST body vs. the
   DC API's own resolved `data` object), a caller-side concern this
-  function's own byte-in/byte-out signature never touches. This package
-  still doesn't host the built Request Object at a `request_uri`
-  itself, or invoke the Digital Credentials API — the same "expose the
-  pieces, don't own the transport" split `issuer.CreateCredentialOffer`'s
-  own by-reference mode already draws.
+  function's own byte-in/byte-out signature never touches. These
+  low-level `Build*` functions don't host the built Request Object at a
+  `request_uri` themselves, or invoke the Digital Credentials API — the
+  same "expose the pieces, don't own the transport" split
+  `issuer.CreateCredentialOffer`'s own by-reference mode already draws;
+  `Transactions` (below) does host it: `RequestObject` and
+  `RequestObjectHandler` serve a transaction's Request Object at its
+  `request_uri`, and `ResponseHandler` receives the `direct_post.jwt`
+  response.
   `VerifyResponse` implements §8.6's own VP Token Validation for the
   `dc+sd-jwt` format: for each `dcql.CredentialQuery` in the original
   `dcql.Query`, it locates the matching Presentation by id, resolves
@@ -1523,10 +1557,12 @@ changes whether *every* bullet below is `(done)`.
   genuinely one real-world actor across both OID4VCI and OID4VP (the
   same app holds credentials and presents them), the same way `issuer`
   already covers everything the Credential Issuer role does in one
-  package regardless of internal protocol-section boundaries. New
-  exported surface, all free functions (no `*Wallet` state is actually
-  needed, the same precedent `BuildAuthorizationRequest`/
-  `DPoPAccessTokenHash` already set): `HeldCredential` (a credential
+  package regardless of internal protocol-section boundaries. The
+  presentation-building surface is free functions (no `*Wallet` state
+  is needed, the same precedent `BuildAuthorizationRequest`/
+  `DPoPAccessTokenHash` already set); the calls that fetch, verify or
+  send a request are `*Wallet` methods too (see the end of this
+  bullet): `HeldCredential` (a credential
   this Wallet holds — `Format`/`Credential`/`HolderKey`/
   `HolderKeyAlg`/`MdocDocType`, the last two format-specific — paired
   with the key its own proof-of-possession is bound to; this package
@@ -1551,18 +1587,15 @@ changes whether *every* bullet below is `(done)`.
   selected"): given the `[]dcql.Path` a Credential Query's own
   `SelectedSDJWTVCClaimPaths` says are needed, it walks the credential's
   own not-yet-resolved Issuer JWT payload
-  (`credential/sdjwtvc.SelectDisclosures`, new) and keeps only the
+  (`credential/sdjwtvc.SelectDisclosuresAt`) and keeps only the
   Disclosures actually reachable from those paths — including every
   one transitively referenced *below* a selected path (RFC 9901 §4.2.6's
   own "recursive Disclosures": disclosing `address` also discloses
   whatever `address` itself further selectively discloses internally,
   in full) but never a sibling claim that wasn't asked for. A `Path`
-  with a Wildcard/Index component (selecting into an array, not an
-  object property) isn't supported for trimming yet — falls back to
-  full disclosure for that whole credential rather than guessing which
-  array elements matter; no Claims Path Pointer either format's own
-  DCQL fixtures in this repo actually uses today has one, so this cut
-  costs nothing in practice yet. `PresentMdoc`
+  with an Index or Wildcard component discloses that array element, or
+  every element, with what the rest of the path needs inside it, and
+  nothing else in the array. `PresentMdoc`
   (builds one Presentation: `oid4vpmdoc.MarshalDeviceResponse` wrapping
   the held `IssuerSigned` plus a fresh `DeviceSigned` — ECDSA/EdDSA
   device signature only, over `SessionTranscriptBytes` built via a new
@@ -1655,7 +1688,16 @@ changes whether *every* bullet below is `(done)`.
   `redirect_uri` the user agent is sent to, from wherever it pointed.
   `Respond` does the whole answer in one call (`PresentCredentials`,
   `BuildDirectPostResponse`, `SubmitDirectPostResponse`), and
-  `EncryptionFromMetadata` picks credential request/response encryption
+  `RespondSelection` does it for the credentials the holder chose.
+  `FetchAuthorizationRequest`/`FetchAuthorizationRequestPost`,
+  `ParseAuthorizationRequest`, `ParseDCAPIRequest`,
+  `ParseDCAPIRequestData`, `SubmitDirectPostResponse`, `Respond` and
+  `RespondSelection` are `*Wallet` methods that use the Wallet's own
+  checked HTTP client (`Dependencies.HTTP`), `Config.VerifierTrust`,
+  `Config.Fetch` and clock; the package-level `ParseAuthorizationRequest`,
+  `ParseDCAPIRequest(Data)`, `SubmitDirectPostResponse`, `Respond` and
+  `RespondSelection` take those explicitly. `EncryptionFromMetadata`
+  picks credential request/response encryption
   from the Issuer's metadata.
 - **`haip`** (done) — the profile layer: wires HAIP's own specific
   overrides on top of `issuer`/`wallet`/`verifier` — mirrors
@@ -1695,9 +1737,9 @@ changes whether *every* bullet below is `(done)`.
   the other way round. `RecommendedWalletConfig()` bundles
   the one part of a `wallet.Config` HAIP actually grounds a value for —
   `ProofSigningAlg`, the same §7 ES256 minimum — into a
-  `WalletRecommendations`; `wallet.Config`'s other field, `Fetch`
-  (SSRF/redirect/timeout policy), is deployment-specific and HAIP has
-  nothing to say about it, so it's left out the same way
+  `WalletRecommendations`; `wallet.Config`'s other fields (such as
+  `Fetch`, the SSRF/redirect/timeout policy) are deployment-specific
+  and HAIP grounds no value for them, so they're left out the same way
   `IssuerRecommendations` leaves out `issuer.Config`'s own ungrounded
   fields. No `ValidateWalletConfig` — HAIP's substantive Wallet-facing
   requirements (§4's PAR+PKCE+DPoP, §4.4.1's Wallet Attestation client
@@ -1712,8 +1754,8 @@ changes whether *every* bullet below is `(done)`.
   Verifiers" pair, `jwe.A128GCM`+`jwe.A256GCM` — unlike a Wallet, which
   HAIP only requires to support one or the other, a Verifier has no
   choice here) — into a `VerifierRecommendations`;
-  `verifier.Config`'s other two fields, `ClientCertificate`/
-  `ResponseURI`, are deployment-specific (an Ecosystem's own Verifier
+  `verifier.Config`'s other fields (such as `ClientCertificate` and
+  `ResponseURI`) are deployment-specific (an Ecosystem's own Verifier
   identity and endpoint URL) the same way `issuer.Config`'s/
   `wallet.Config`'s own ungrounded fields are. No `ValidateVerifierConfig`
   either, for the same reason there's no `ValidateWalletConfig`:
@@ -1767,6 +1809,7 @@ changes whether *every* bullet below is `(done)`.
   (`NonceStore`, `PreAuthorizedCodeStore`, `DeferredTransactionStore`,
   `NotificationStore`, `CredentialOfferStore`), the verifier's
   `TransactionStore`, walletflow's five, statuslist's `IndexStore` and
+  `TokenStore` (`DB.StatusIndices`, `DB.StatusListTokens`), and
   walletprovider's `InstanceStore`, `InstanceKeyStore` and `ChallengeStore`, over `database/sql` for
   PostgreSQL and SQLite. A module of its own so the library takes no
   driver; its tests bring `pgx` and `modernc.org/sqlite` (pure Go, so
@@ -1821,9 +1864,17 @@ changes whether *every* bullet below is `(done)`.
   `StartPresentation` (OpenID4VP links), and over the
   Digital Credentials API `StartDCAPIPresentation` (OpenID4VP's
   `openid4vp-v1-*` protocols) and `StartMdocPresentation`
-  (`org-iso-mdoc`), plus `StartProximityPresentation` (ISO/IEC
-  18013-5, the holder in peripheral server mode). Reader trust for the
-  last two is `Config.MdocReaderRoots`, `MdocReaderLeafPolicy` and
+  (`org-iso-mdoc`), plus in-person ISO/IEC 18013-5 presentation:
+  `StartProximityPresentation` (QR engagement, BLE in mdoc peripheral
+  server mode, central client mode or both),
+  `StartNFCProximityPresentation` and
+  `StartNFCNegotiatedProximityPresentation` (static or negotiated NFC
+  handover to BLE), `StartNFCDataProximityPresentation` and
+  `StartNFCNegotiatedDataProximityPresentation` (NFC engagement with
+  NFC-only retrieval), and `StartCombinedProximityPresentation` (QR
+  and NFC offered under one consent). `CheckStatus` re-verifies a
+  stored credential's signing chain and records its status. Reader
+  trust for the mdoc presentations is `Config.MdocReaderRoots`, `MdocReaderLeafPolicy` and
   `RequireTrustedMdocReader`. Each presentation uses a copy chosen by
   `Config.CopyPolicy`, recorded as shown to that Verifier, so the app
   can warn when a presentation is linkable. Issuance follows the
@@ -1831,7 +1882,10 @@ changes whether *every* bullet below is `(done)`.
   (`Config.IssuanceProfile`'s `ProfileOpenID4VCI`): a Wallet
   Attestation or none at the token endpoint, a jwt proof or a key
   attestation, a c_nonce or none, as the metadata asks;
-  `ProfileHAIP` also refuses issuers outside HAIP 1.0 §4. The checks
+  `ProfileHAIP` also refuses issuers outside HAIP 1.0 §4;
+  `Config.ProofKeyByIndex` names a key-attested jwt proof's key by its
+  index in `attested_keys` (kid `"0"`) instead of `jwk`, for an issuer
+  that requires it. The checks
   that protect the holder (https, identifiers matching metadata, the
   offer's Authorization Server being one the issuer lists, PKCE/PAR/`iss`
   in the authorization code grant, credentials checked against
@@ -1842,11 +1896,12 @@ changes whether *every* bullet below is `(done)`.
   end-to-end tests of walletflow and the mobile module. See
   [mobile/MOBILE.md](mobile/MOBILE.md).
 - **`mobile`** (done; its own Go module) — the gomobile façade over
-  `walletflow`: JSON in and out across the boundary, `ABIVersion` 12
+  `walletflow`: JSON in and out across the boundary, `ABIVersion` 15
   ([`mobile/ABI.md`](mobile/ABI.md)), with the platform's keys and
   stores called back through interfaces, plus `ProximityPresentation`
-  and `ProximityReader` sessions whose BLE transport the native
-  libraries carry. `mobile/ios` (the OID4VCWallet Swift package and
+  and `ProximityReader` sessions whose BLE and NFC transports the
+  native libraries carry (BLE as whole messages, NFC as single APDUs
+  parsed in Go by `proximity/nfcapdu`). `mobile/ios` (the OID4VCWallet Swift package and
   the iOS demo wallet) and `mobile/android` (the Kotlin library and
   the Android demo wallet) build on it. A separate module so the
   library's own consumers never pull in gomobile.
@@ -1858,7 +1913,9 @@ changes whether *every* bullet below is `(done)`.
   AGENTS.md documentation convention. All four binaries exist, compile,
   and have each been confirmed live against a real,
   locally-run OIDF conformance suite instance — not just against each
-  other: `cmd/conformance-verifier` (OID4VP 1.0 Final/HAIP Verifier
+  other, and all four roles are OpenID Certified as of OID4VCgo 0.12.0
+  ([`conformance/README.md#oidf-certification`](conformance/README.md#oidf-certification)):
+  `cmd/conformance-verifier` (OID4VP 1.0 Final/HAIP Verifier
   role), `cmd/conformance-wallet-vp` (OID4VP Wallet role, the
   `direct_post.jwt` module lists and the three `dc_api.jwt` ones), `cmd/conformance-issuer` (OID4VCI 1.0
   Final/HAIP Issuer role — every OID4VCI-specific module, the generic
@@ -1883,6 +1940,21 @@ changes whether *every* bullet below is `(done)`.
   regression pass re-run); see `conformance/README.md`'s "Keeping the
   local suite current" section rather than assuming last session's checkout
   is still current.
+- **Interop** — CI workflows that run OID4VCgo against independent
+  implementations, each pinned and run on a disposable runner with no
+  secrets (see `conformance/README.md`'s "Interop with …" sections and
+  `interop/*/README.md`): `polaris-interop.yml`
+  (`cmd/conformance-wallet-vp` presenting to polaris-oid4vp's OpenID4VP
+  + HAIP verifier) and `polaris-vectors.yml` (polaris-id's SD-JWT VC and
+  mdoc negative vectors run through the `verifier` package);
+  `eudi-interop.yml` (the EUDI reference Verifier Endpoint, the EUDI
+  OpenID4VP and OpenID4VCI wallet libraries, and the EUDI PID Issuer);
+  `waltid-interop.yml` (walt.id's Issuer2, Verifier2 and Wallet2, in
+  all four directions); and `multipaz-interop.yml` (Multipaz in each
+  role for ISO/IEC 18013-5 in person, ISO/IEC TS 18013-7 Annex C over
+  the DC API, OpenID4VP and OpenID4VCI). Each also checks controls the
+  other side must refuse. Separately, `fuzz.yml` runs the Go fuzz
+  targets with mutation, daily.
 
 ## Design rules carried over from FAPIgo
 

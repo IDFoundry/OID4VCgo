@@ -52,6 +52,7 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/untrustedVerifier`` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
 | ``WalletError/Code/requestRefused`` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; ``WalletError/protocolError`` is the code it sent. Nothing was shown | Open ``Wallet/takeRefusalRedirect()`` if it returns a URL; tell the holder the request wasn't answered |
 | ``WalletError/Code/tlsPin`` | A pinned host's certificate matched none of its ``WalletConfiguration/tlsPins``: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
+| ``WalletError/Code/documentNotValid`` | A ``ProximityReader`` checking status (`statusCheck: .check`) verified a document whose revocation status isn't valid; ``WalletError/protocolError`` is the status (`invalid`, `suspended`, `unknown`, or `0x` and a value) | Don't accept the document, and show its `localizedDescription` |
 | ``WalletError/Code/noMatchingCredential`` | No held credential answers the request | Decline |
 | ``WalletError/Code/invalidSelection`` | The selection doesn't answer the request | Choose again |
 | ``WalletError/Code/deliveryUnknown`` | A response may or may not have reached the Verifier: it isn't sent again | Ask the holder to check with the Verifier |

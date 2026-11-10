@@ -170,7 +170,7 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, 
     return when (val state = session.state.first { it.isFinal }) {
         // Its status was checked first: valid, or it names none.
         is ProximityReaderSession.State.Verified -> state.result
-        // A revoked or suspended document is WalletException document_not_valid.
+        // A revoked or suspended document is WalletException Code.documentNotValid.
         is ProximityReaderSession.State.Failed -> throw state.error
         else -> null
     }
@@ -192,10 +192,42 @@ document names or the CA that signed the document signer (ISO/IEC
 18013-5 §12.3.6). Only a document that's `MdocStatus.Valid`, or names
 no status (`MdocStatus.NoStatus`), is `Verified`, with
 `VerifiedMdoc.status` set; any other status fails the session with a
-`WalletException` `document_not_valid`, its `protocolError` the
+`WalletException` `Code.documentNotValid`, its `protocolError` the
 status. With `StatusCheck.DECLINE`, nothing checks it: for a reader
 where something else stands in, which then calls
 `session.checkStatus()` itself or checks otherwise.
+
+### Reading several documents
+
+`start(context, qrCode, documents)` asks for several documents in one
+request, a `ProximityReader.DocumentRequest(docType, elements)` each, of
+different types and at most eight. The holder may answer any of them:
+`State.Verified.documents` has every document it answered, in the
+response's order, and `result` is the first. Check that each one needed
+came back. With `StatusCheck.CHECK`, each document's status is checked,
+and any one that isn't valid fails the session with
+`Code.documentNotValid`.
+
+```kotlin
+/**
+ * Asks the holder whose QR code was scanned for an mDL and a photo ID, and returns the documents
+ * the holder chose to share.
+ */
+suspend fun readTwo(context: Context, reader: ProximityReader, qrCode: String): List<VerifiedMdoc> {
+    val session = reader.start(
+        context, qrCode,
+        listOf(
+            ProximityReader.DocumentRequest("org.iso.18013.5.1.mDL", mapOf("org.iso.18013.5.1" to listOf("family_name", "portrait"))),
+            ProximityReader.DocumentRequest("org.iso.23220.photoid.1", mapOf("org.iso.23220.1" to listOf("family_name", "portrait"))),
+        ),
+    )
+    return when (val state = session.state.first { it.isFinal }) {
+        is ProximityReaderSession.State.Verified -> state.documents
+        is ProximityReaderSession.State.Failed -> throw state.error
+        else -> emptyList()
+    }
+}
+```
 
 ## NFC holder and reader
 

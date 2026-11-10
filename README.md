@@ -73,17 +73,23 @@ overrides of FAPI 2.0.
 > is checked against the same OIDF test plans by the daily conformance
 > workflows. The OpenID4VP wallet harness is also run on each pull
 > request, daily, and on each release, against [polaris-oid4vp](conformance/README.md#interop-with-polaris-oid4vp),
-> an independent verifier, with negative controls the OIDF suite lacks.
+> an independent verifier, with negative controls the OIDF suite lacks;
+> and OID4VCgo runs the same way against the [EUDI](conformance/README.md#interop-with-the-eudi-reference-verifier)
+> reference Verifier, wallet library and PID Issuer, [walt.id](conformance/README.md#interop-with-waltid)'s
+> Community Stack v2 (issuing and presenting, all four directions), and
+> [Multipaz](conformance/README.md#interop-with-multipaz) (in person,
+> Annex C, OpenID4VP and OpenID4VCI, each side in each role).
 > Those certified profiles are the redirect flows: the
 > Digital Credentials API (OpenID4VP's `dc_api.jwt` and `mdocdcapi`'s
 > `org-iso-mdoc`) and in-person presentation (`proximity`) aren't
 > certified. `org-iso-mdoc` has run in Safari on an iPhone, with the
 > demo iOS wallet as its document provider, and OpenID4VP over the DC
 > API in Chrome on the Android emulator, with the demo Android wallet
-> as its Credential Manager provider. `proximity` and `org-iso-mdoc` are
-> also run, message by message, against [Multipaz](conformance/README.md#interop-with-multipaz)
-> as reader and as holder; `proximity` is tested against ISO/IEC 18013-5
-> Annex D, not yet between two devices.
+> as its Credential Manager provider; both DC API protocols are also
+> run against Multipaz, and OpenID4VP's against EUDI's Verifier.
+> `proximity` is run, message by message, against Multipaz as reader
+> and as holder, and tested against ISO/IEC 18013-5 Annex D, not yet
+> between two devices.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
 > status and what, if anything, remains.
 
@@ -154,9 +160,11 @@ Where to start, by role:
   `BuildRequest` and `VerifyResponse` for the page (with
   `VerifyParams.Origins`, required under production), `ParseRequest` and
   `Incoming.Respond` for the wallet.
-- **In person** — package `proximity` is ISO/IEC 18013-5 over BLE:
-  `NewDeviceSession` for the holder, `NewReaderSession` for the reader.
-  The app carries the BLE messages; the package does everything else.
+- **In person** — package `proximity` is ISO/IEC 18013-5, with QR or
+  NFC engagement and BLE or NFC data retrieval: `NewDeviceSession` (or
+  `NewCombinedDeviceSession`) for the holder, `NewReaderSession` for the
+  reader, and `proximity/nfcapdu` for the NFC APDUs. The app carries
+  the radio; the package does everything else.
 - **A wallet app** — package `walletflow` runs issuance and
   presentation as sessions over keys and stores the app supplies, and a
   Wallet Provider for issuers that ask for attestations (HAIP 1.0, an

@@ -5,7 +5,8 @@ What a wallet needs before real holders use it.
 A wallet holding real credentials is only as trustworthy as the
 platform it runs on. The library enforces some of this itself: without
 `WalletConfiguration.development`, receiving credentials needs a key
-store and a credential store that both say they're durable, and
+store and a credential store that both say they're durable
+(`KeyStore.isDurable`, `CredentialStore.isDurable`), and
 services on loopback addresses are refused. The rest is the app's.
 
 ## Keys and storage
@@ -378,9 +379,19 @@ ecosystem, and record why:
 - `proximityDeviceAuth`: `MAC_PREFERRED` answers readers with deviceMac,
   which the reader can't show anyone else; it needs
   `holderKeyAgreement`. `SIGNATURE`, the default, signs.
+- `proofKeyByIndex`: names a key-attested jwt proof's key by its index
+  in the key attestation (`kid` `"0"`) instead of in `jwk`, as issuers
+  following ETSI TS 119 472-3 require; an issuer taking only `jwk`
+  refuses it. Set it only for such issuers.
+- `acceptMDLSignerWithoutEKU`, on a `WalletConfiguration` and a
+  `ProximityReaderConfiguration`: also accepts a document signer
+  certificate with no extended key usage, which the default check
+  refuses for lacking the mDL document signer's. Any end-entity
+  certificate without one under the same IACAs can then sign mdocs that
+  are accepted. Leave it off unless an issuer's document signers carry
+  no extended key usage.
 - For a `ProximityReader`: `issuerRootsByDocType` confines each document
-  type to its own IACAs, and `requireMDLSignerEKU` accepts only document
-  signers with the mDL document signer extended key usage.
+  type to its own IACAs.
 
 ## Privacy
 

@@ -78,19 +78,35 @@ allows: SD-JWT VC and mdoc presentations under its `haip` and
 the SD-JWT VC's Type Metadata checked, must be accepted, and controls
 (revoked credentials, a mismatched `vct#integrity`, untrusted CAs on
 either side, a replayed request, a mismatched `client_id`, an unheld
-credential) refused. It runs on each pull request, daily and on each
-release against the pinned image, and weekly against EUDI's `latest`
-image. See [`interop/eudi/README.md`](../interop/eudi/README.md) for
-the cases, what the verifier doesn't check, and moving the pin.
+credential) refused (`interop/eudi/run-verifier.sh`). See
+[`interop/eudi/README.md`](../interop/eudi/README.md) for the cases,
+what the verifier doesn't check, and moving the pin.
 
-The same workflow has the EUDI wallet library,
+The same workflow runs three more directions. The EUDI wallet library
+for presentation,
+[eudi-lib-jvm-openid4vp-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt),
+presents SD-JWT VC and mdoc PIDs to `cmd/conformance-verifier`, over
+the redirect flow and the DC API, from a pinned JVM driver
+(`interop/eudi/run-wallet.sh`). The EUDI wallet library for issuance,
 [eudi-lib-jvm-openid4vci-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vci-kt),
-obtain credentials from `cmd/conformance-issuer`: both formats, by the
+obtains credentials from `cmd/conformance-issuer`: both formats, by the
 pre-authorized code and the authorization code flows, with every proof
 type, batches, encryption, signed metadata, deferral, notifications
 and DPoP nonces, each credential verified on the wallet side, and
-controls refused. Its cases and the library's deviations from the
-specifications are in the same README.
+controls refused (`interop/eudi/run-issuer.sh`). And OID4VCgo's
+`wallet` and `walletflow` obtain SD-JWT VC and mdoc PIDs from the EUDI
+[PID Issuer](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer),
+run as its own pinned docker-compose stack (Keycloak with
+attestation-based client authentication, the status list service),
+verifying each credential and its status (`interop/eudi/run-pid-issuer.sh`).
+Their cases and each component's deviations from the specifications
+are in the same README.
+
+All four run on each pull request, daily and on each release against
+their pins. The weekly run against EUDI's `latest` images covers only
+the two image-based runs, the Verifier Endpoint and the PID Issuer;
+the two wallet libraries are pinned exactly and run only with the
+pinned runs.
 
 ## Interop with walt.id
 
@@ -138,8 +154,9 @@ cases, Multipaz's deviations, and moving the pin.
 These binaries only genuinely mirror what `certification.openid.net`
 (the hosted instance) checks if the local, self-hosted suite checkout
 (a real clone of `gitlab.com/openid/conformance-suite`, run via Docker
-Compose — see each role's own `scripts/README.md`) stays reasonably
-current. It doesn't update itself: at one point it was found 569
+Compose; the runs against it are `conformance/scripts/run-oid4vci.sh`
+and `run-oid4vp.sh`, sharing `conformance/scripts/lib.sh`) stays
+reasonably current. It doesn't update itself: at one point it was found 569
 commits/two upstream releases stale, and that gap had silently masked
 three real bugs in this repo (a Wallet-VP response-encryption-key
 selection bug, a Wallet `issuer_state` threading gap, and non-compliant
@@ -155,10 +172,19 @@ specific reason to suspect drift, not just when something seems off.
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays
   Wallet. **Confirmed live against a real, locally-run OIDF suite, all
-  12 in-scope modules correct** (7 positive-behavior modules succeed —
-  including genuine `request_uri_method=post` support, not a
-  self-skip — 5 negative-test modules correctly reject their malformed
-  presentation). Found and fixed three real gaps along the way:
+  12 of the plan's modules correct**: 6 positive-behavior modules
+  verify their presentation (including genuine
+  `request_uri_method=post` support, not a self-skip) and 6
+  negative-test modules have it rejected (5 SD-JWT VC corruptions plus
+  the `iso_mdl`-only `invalid-session-transcript`). `run-sdjwt-modules`
+  drives 11 of them under `sd_jwt_vc` and `run-mdoc-module` 4 under
+  `iso_mdl` (`happy-flow`, `request-uri-method-post`,
+  `request-uri-fetched-twice`, `invalid-session-transcript`). Every
+  module ends `FINISHED`/`REVIEW`, never `PASSED`: this binary answers
+  every response `200` and reports the verdict on its `/result` page,
+  and the suite then waits for a screenshot, whose upload placeholder
+  the scripts fill (they accept `PASSED` or `REVIEW`). Found and
+  fixed three real gaps along the way:
   `internal/jwe`'s Concat KDF never incorporated the sender's
   `apu`/`apv` header members, silently deriving the wrong CEK against
   the suite's own `direct_post.jwt` responses (which always set both);
@@ -175,9 +201,13 @@ specific reason to suspect drift, not just when something seems off.
   "dc_api.jwt"):
   `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
   half behind real HTTP; the suite plays Verifier. Confirmed live end
-  to end against `cmd/conformance-verifier` itself, and **all 14
-  direct_post.jwt modules are now run live** (the other 2 are DC API
-  only, 404 for this variant, and run under dc_api.jwt). Five real gaps found and fixed along the way: the
+  to end against `cmd/conformance-verifier` itself, and **every
+  direct_post.jwt module is run live by `run-modules`**: 15 in the main
+  plan (7 positive, 8 negative) plus `all-mandatory-claims`, which only
+  applies under a real `credential_type` and so runs in a second plan
+  (`eudi_pid` for `sd_jwt_vc`, `mdl` for `iso_mdl`). The DC API-only
+  modules 404 for this variant and run under dc_api.jwt. Five real
+  gaps found and fixed along the way: the
   same x5c-header/self-signed-leaf pair already found for
   `credential/sdjwtvc.Issue`, two request-object validation gaps this
   binary's own `requestobject.go` had — a request carrying
@@ -187,15 +217,21 @@ specific reason to suspect drift, not just when something seems off.
   genuine `request_uri_method=post` support (a fresh `wallet_nonce`
   sent over POST, and the fetched Request Object rejected outright if
   its own `wallet_nonce` claim doesn't echo it back). All fixed and
-  re-confirmed live: seven positive-behavior modules clean
+  re-confirmed live: the seven positive-behavior modules clean
   (`FINISHED`/`PASSED` or `WARNING`, zero `FAILURE`s — including
   `alternate-happy-flow`, whose own fragment-carrying `redirect_uri`
   is now relayed to the suite's own implicit-submission URL
   automatically, the exact wire shape pinned down by decompiling the
-  suite's own `fapi-test-suite.jar` rather than guessed), seven of
-  seven reachable negative tests correctly reject before ever calling
-  `response_uri`. Its three `dc_api.jwt` module lists (unsigned,
-  signed, multi-signed requests over the Digital Credentials API) are
+  suite's own `fapi-test-suite.jar` rather than guessed), and
+  `run-modules` grades `all-mandatory-claims` the same way. Of the
+  eight negative tests, five answer with an OID4VP error response
+  whose exact code `run-modules` checks, and the suite
+  grades them `PASSED`; three (`invalid-request-object-signature`,
+  `mismatched-client-id`, `invalid-client-id-prefix`) are refused
+  before `response_uri` is called and end `REVIEW` once the script
+  fills the suite's screenshot placeholder. Its three `dc_api.jwt`
+  module lists (unsigned, signed, multi-signed requests over the
+  Digital Credentials API) are
   driven too, `run-modules` standing in for the browser: all 34
   modules of each credential format end as expected. See
   `wallet-vp/README.md`.
@@ -299,13 +335,15 @@ specific reason to suspect drift, not just when something seems off.
   verification, since this module isn't in this battery's own default
   driven list.)
   **Update: the plan's own 5th module-list entry, the generic FAPI2SP
-  battery, is driven too** — 43 module instances (the exact 39+1
-  battery+Discovery set, derived directly from the Java source, plus 2
-  known-working sanity checks, plus `happy-flow-skip-notification` —
-  added so the Notification Endpoint's own HAIP-profile coverage is
-  automated by this script rather than left to a one-off manual
-  suite-UI run), via a new tool
-  (`conformance/issuer/scripts/run-fapi2sp-battery`). Unlike the Wallet
+  battery, is driven too**, via a new tool
+  (`conformance/issuer/scripts/run-fapi2sp-battery`). Its default
+  module list (`haipBattery`) is now 60 modules: the exact 39+1
+  battery+Discovery set, derived directly from the Java source, plus
+  20 of the plan's 21 OID4VCI-specific modules (all but
+  `fail-invalid-key-attestation-signature`, which has its own
+  `-credential-proof-type-hint attestation` run). When this battery was
+  first driven it was 42 modules (the 40 plus 2 sanity checks), and
+  then 43 with `happy-flow-skip-notification`. Unlike the Wallet
   role, this role needs no custom flow-driving code at all — the suite
   itself plays client and drives PAR→authorize→consent→callback→token
   through its own internal headless browser, the same `browser`
@@ -324,9 +362,20 @@ specific reason to suspect drift, not just when something seems off.
   reuse, a different one the Credential Endpoint reads from) instead
   of sharing one, the same wiring bug FAPIgo's own `cmd/conformance-as`
   already found and fixed for the identical finding. **All 42 modules
-  `FINISHED` twice in a row for stability**: `PASSED` except one
-  expected `SKIPPED`, and one expected `REVIEW` (a human-review
-  negative test) — no `FAILURE`s.
+  of that first battery `FINISHED` twice in a row for stability**:
+  `PASSED` except one expected `SKIPPED` (`refresh-token`: no refresh
+  token is issued without `offline_access`), and one expected `REVIEW`
+  (a human-review negative test) — no `FAILURE`s; the daily run
+  expects the same of the 60-module battery.
+  **Runs**: the daily OID4VCI workflow (`run_issuer` in
+  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` five
+  times — `haipBattery` with no flags and with `-issuer-initiated`
+  (the script sends each OID4VCI module's Credential Offer to the
+  suite's `credential_offer_endpoint` itself), `mdocBattery`
+  (`metadata-test`, `happy-flow`) with `-credential-format mdoc` with
+  and without `-issuer-initiated`, and `deferredBattery` (the same two
+  modules) with `-deferred`. The first four are the role's four
+  certification profiles; see `issuer/README.md`'s "Runs".
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-issuer-test-plan`
   is driven too**, via `run-fapi2sp-battery -base-plan` — the same 21
   module classes already covered above (no FAPI2SP battery in this
@@ -441,7 +490,15 @@ specific reason to suspect drift, not just when something seems off.
   retry on a DPoP nonce challenge, because `buildPushedRequestForm`
   mutated its caller's own shared `params` map — fixed upstream
   ([FAPIgo PR #322](https://github.com/IDFoundry/FAPIgo/pull/322),
-  merged, `go.mod` pinned past it). `issuer_initiated_dc_api` isn't
+  merged, `go.mod` pinned past it). `-credential-offer-variant
+  by_reference` has the suite send a `credential_offer_uri` instead of
+  the inline offer; `wallet.Wallet.ResolveCredentialOffer` fetches it.
+  The daily OID4VCI workflow (`run_wallet` in
+  `conformance/scripts/lib.sh`) drives the role's six certification
+  profiles, each all 22 module instances: `sd_jwt_vc` and `mdoc`, each
+  `wallet_initiated`, `issuer_initiated` by value and
+  `issuer_initiated` by reference (see `wallet/README.md`'s "Runs").
+  `issuer_initiated_dc_api` isn't
   covered: it needs the Digital Credentials API on the issuance side,
   which no driver here stands in for.
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-wallet-test-plan`

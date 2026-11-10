@@ -494,7 +494,8 @@ README ("Restricting the pages with Cloudflare Access").
 To run each server on its own (for example to restart or debug one),
 start them in this order from this directory, each in its own
 terminal. Each reads the `.pem` files the previous one wrote here, and
-keeps everything in memory:
+keeps everything else in memory, but for the Wallet Provider's own
+state files (below):
 
 **Start the four servers:**
 
@@ -696,11 +697,11 @@ demo verifier's `response_uri`, though, must be `https`.
 
 | Step | Endpoint | What happens |
 |---|---|---|
-| Upload | `POST /passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
+| Upload | `POST /demo/passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
 | PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
 | Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, seals the interaction (handle and request) into an encrypted cookie on this browser (fapigo's `interactioncookie`), then asks for the confirmation code (the page shows no passport data). The decision is read back from that cookie, so it can't name another offer, and only that browser can submit it; a cross-origin post is refused. Approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T; for a passport kept for refresh whose wallet asked for `offline_access`, a refresh token too (grant ID T, lasting 24 hours), which the `refresh_token` grant redeems for another access token for T |
-| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped — or, kept for refresh, T is issued again on each request until 24 hours after its first credential, or until the wallet revokes its refresh token at `POST /revoke` or T is forgotten on `/kept`. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
+| Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped — or, kept for refresh, T is issued again on each request until 24 hours after its first credential, or until the wallet revokes its refresh token at `POST /revoke` or T is forgotten on `/demo/kept`. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 | Notify | `POST /notification` | the wallet reports each credential it kept as `credential_accepted`, or one that failed its checks as `credential_failure` (OID4VCI 1.0 §11); the status page lists what the wallets reported |
 
 Also served: `/.well-known/openid-credential-issuer` (signed metadata),
@@ -718,7 +719,7 @@ needs only the PIN, given separately.
 
 | Step | Endpoint | What happens |
 |---|---|---|
-| Offer | `POST /passport` | the transaction T is claimed at once; a pre-authorized code is stored with T as its subject and the six-digit PIN as its `tx_code` |
+| Offer | `POST /demo/passport` | the transaction T is claimed at once; a pre-authorized code is stored with T as its subject and the six-digit PIN as its `tx_code` |
 | Token | `POST /token` | fapigo/server reads the request once (`TokenEndpointRequestFromHTTP`), and `grant_type` routes it. fapigo/server authenticates the wallet by its Wallet Attestation and PoP (`AuthenticateAttestedClient`, HAIP 1.0 §4.4.1), refuses a `client_id` naming another client, and verifies the DPoP proof with the same replay record and nonce policy as its own grants (`VerifyTokenRequestBinding`). Only then does `issuer.ExchangePreAuthorizedCode` (`issuer.VerifiedPreAuthorizedCode`) redeem the code and PIN (five wrong PINs void it). The token is signed with the Authorization Server's keys, names T as its subject and the wallet as its client, and is DPoP-bound |
 | Credential | `POST /nonce`, `POST /credential` | as for the authorization code flow, the wallet presenting the token with `wallet.DPoPResourceClient` |
 
@@ -739,7 +740,7 @@ hour.
 | Step | Endpoint | What happens |
 |---|---|---|
 | Defer | `POST /credential` | `issuer.CredentialRequest.Defer`: the transaction is bound to the access token's client and subject, so only that wallet's token can poll it |
-| Decide | `GET /review`, `POST /review/decision` | the operator approves or denies; the page shows the issuing country, passport expiry and chip-authentication evidence, not names or the document number |
+| Decide | `GET /demo/review`, `POST /demo/review/decision` | the operator approves or denies; the page shows the issuing country, passport expiry and chip-authentication evidence, not names or the document number |
 | Poll | `POST /deferred_credential` | the Deferred Credential Endpoint's `Resolve` hook carries out the decision on the wallet's next poll: an approved credential is issued (with its own status list index) and returned; a denied one is answered `credential_request_denied`; an undecided one is answered 202 again |
 
 The wallet keeps its access token in memory while it polls, so a
@@ -772,7 +773,7 @@ first and a CWT at the second: an mdoc reader may send no `Accept`
 (draft-14 §8.1). Both are signed by the document signer with its
 certificate in `x5c` / `x5chain` (HAIP 1.0 §6.1).
 
-The issuer's **Issued credentials** page (`/status`, linked from its
+The issuer's **Issued credentials** page (`/demo/status`, linked from its
 home page) lists every issued credential by format and day of issue,
 and revokes one with a button. The verifier checks every presented
 credential against the list: the token's certificate must chain to the
@@ -873,7 +874,7 @@ longer verify.
   `.demo-state/` under `cmd/demo`, and generated per process under
   `cmd/issuer` (where a restart invalidates issued credentials). Offers,
   sessions and tokens are in memory either way.
-- **Anyone who can reach the issuer can revoke.** The `/status` page has
+- **Anyone who can reach the issuer can revoke.** The `/demo/status` page has
   no login; it refuses only cross-origin form posts. It records no
   passport data, and names credentials by a random handle rather than
   their status list index, so it can't be used to match a presented
@@ -985,6 +986,10 @@ generator, planned for gmrtd itself).
 | `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
+| `internal/democert`, `internal/demotls` | the demo's X.509 certificates, and its servers' TLS certificates |
+| `internal/demoqr`, `internal/demoui` | its QR codes, and what its pages share |
+| `internal/statefile` | writes the servers' state files |
+| `internal/demotest` | starts the issuer and verifier on loopback, for tests |
 | `cmd/demo` | runs the issuer, verifier and web wallet together, with persistent state |
 | `cmd/issuer`, `cmd/verifier`, `cmd/webwallet`, `cmd/wallet`, `cmd/wallet-provider` | runnable binaries |
 
