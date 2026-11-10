@@ -3,8 +3,9 @@
 # published to the public Scorecard API (behind the README badge) and
 # uploaded as code scanning alerts (Security tab). Follows
 # ossf/scorecard-action's own template; publish_results requires the
-# job's permissions to stay exactly as they are, and its steps to use
-# only the actions it allows.
+# analysis job's permissions to stay exactly as they are, and its steps
+# to use only the actions it allows (wait-for-ci is a job of its own
+# for that reason).
 name: scorecard
 
 on:
@@ -20,7 +21,38 @@ permissions:
   contents: read
 
 jobs:
+  # Binary-Artifacts leaves the committed gradle-wrapper.jars out only
+  # when the first workflow that validates them (ci.yml) has succeeded
+  # on main's latest commit, which a run started by the same push would
+  # otherwise always look before. This waits for that run (CI takes
+  # under ten minutes); if it fails, or hasn't finished in 25, the
+  # analysis runs anyway and counts the jars, as it should then.
+  wait-for-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for _ in $(seq 50); do
+            state=$(gh run list --workflow ci.yml --commit "$SHA" --event push --limit 1 \
+              --json status,conclusion --jq '.[0] // empty | "\(.status) \(.conclusion)"' || true)
+            echo "ci.yml at $SHA: ${state:-no run yet}"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "::warning::CI didn't succeed on $SHA; Binary-Artifacts will count the Gradle wrappers"; exit 0 ;;
+            esac
+            sleep 30
+          done
+          echo "::warning::CI hadn't finished on $SHA after 25 minutes; Binary-Artifacts will count the Gradle wrappers"
+
   analysis:
+    needs: wait-for-ci
     runs-on: ubuntu-latest
     permissions:
       security-events: write # upload the results to code scanning
