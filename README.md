@@ -8,6 +8,7 @@
 [![Polaris vectors](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-vectors.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/polaris-vectors.yml)
 [![EUDI interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudi-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudi-interop.yml)
 [![walt.id interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml)
+[![Multipaz interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/multipaz-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/multipaz-interop.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/IDFoundry/OID4VCgo/badge)](https://securityscorecards.dev/viewer/?uri=github.com/IDFoundry/OID4VCgo)
 [![Go Reference](https://pkg.go.dev/badge/github.com/idfoundry/oid4vcgo.svg)](https://pkg.go.dev/github.com/idfoundry/oid4vcgo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -79,8 +80,10 @@ overrides of FAPI 2.0.
 > certified. `org-iso-mdoc` has run in Safari on an iPhone, with the
 > demo iOS wallet as its document provider, and OpenID4VP over the DC
 > API in Chrome on the Android emulator, with the demo Android wallet
-> as its Credential Manager provider; `proximity` is tested against
-> ISO/IEC 18013-5 Annex D, not yet between two devices.
+> as its Credential Manager provider. `proximity` and `org-iso-mdoc` are
+> also run, message by message, against [Multipaz](conformance/README.md#interop-with-multipaz)
+> as reader and as holder; `proximity` is tested against ISO/IEC 18013-5
+> Annex D, not yet between two devices.
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the full package-by-package
 > status and what, if anything, remains.
 
