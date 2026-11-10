@@ -3,7 +3,8 @@
 Interop with [Multipaz](https://github.com/openwallet-foundation/multipaz),
 the OpenWallet Foundation's identity library (formerly Google's
 identity-credential), from its published JVM library: its mdoc reader,
-holder, Annex C verifier and Annex C wallet against OID4VCgo's.
+holder, Annex C verifier and wallet, and OpenID4VP wallet and Verifier,
+against OID4VCgo's.
 [`run.sh`](run.sh) runs every case, from
 [`.github/workflows/multipaz-interop.yml`](../../.github/workflows/multipaz-interop.yml).
 
@@ -23,6 +24,14 @@ holder, Annex C verifier and Annex C wallet against OID4VCgo's.
 | OID4VCgo's verifier (`mdocdcapi`) → Multipaz wallet, Annex C | `org-iso-mdoc` request signed by OID4VCgo's reader | OID4VCgo decrypts and verifies the answer |
 | | An unsigned request, answered as if from another origin | the verifier refuses it (HPKE open fails: its info is the session transcript) |
 | | The mDL from an IACA the verifier doesn't trust | the verifier refuses it |
+| Multipaz wallet → `cmd/conformance-verifier`, OpenID4VP 1.0 | SD-JWT VC PID, cross-device (`x509_hash`, `direct_post.jwt`, `request_uri_method` `get`) | verified |
+| | mDL, cross-device, `request_uri_method` `post` | verified |
+| | PID and mDL over the Digital Credentials API (`openid4vp-v1-signed`, `dc_api.jwt`) | verified |
+| | The PID from an issuer the verifier doesn't trust | the verifier refuses it |
+| `walletflow` → Multipaz Verifier (`VerificationSession`), OpenID4VP 1.0 | PID and mDL, cross-device (signed `x509_hash` request, `direct_post.jwt`) | Multipaz verifies it: the claims asked for, only, under OID4VCgo's IACA |
+| | PID and mDL over the Digital Credentials API | Multipaz verifies it |
+| | The Verifier under a CA the wallet doesn't trust | the wallet refuses it |
+| | An `x509_hash` client_id naming another certificate than the one signing the request | the wallet refuses it |
 
 Each control is checked for its reason, not just for a failure.
 
@@ -48,23 +57,53 @@ Each control is checked for its reason, not just for a failure.
 - **Multipaz's holder** is `Iso18013Presentment` with a
   `SimplePresentmentSource` whose consent prompt agrees to what's
   asked; its mDL is Multipaz's sample mDL, with two credentials, one
-  signing and one agreeing keys.
+  signing and one agreeing keys, and its PID Multipaz's sample SD-JWT
+  VC PID. Its wallet is `uriSchemePresentment` (cross-device) and
+  `digitalCredentialsPresentment` (DC API) over the same source.
+- **OpenID4VP.** OID4VCgo's Verifier is `cmd/conformance-verifier`,
+  the binary OIDF-certified as a Verifier, an `x509_hash` client under
+  OID4VCgo's reader CA, which the peer starts per case. Multipaz's is a
+  `VerificationSession` the driver serves over HTTPS on loopback, signing
+  as an `x509_hash` client with its reader certificate. Both serve the
+  peer's certificate for `localhost`, which `walletflow`'s development
+  fetcher reaches by name.
 
 ## What it found
 
-Nothing to report: every case agreed with ISO/IEC 18013-5 and TS 18013-7
-on both sides. One behaviour worth knowing: Multipaz's wallet won't
-answer a signed `org-iso-mdoc` request from another origin than the one
-it was built for, since the reader authentication covers the session
-transcript; so the origin control uses an unsigned request.
+Seen running Multipaz 0.102.0; none reported upstream.
+
+1. **Multipaz's wallet doesn't bind an `x509_hash` client_id to the
+   request's certificate.** `uriSchemePresentment` checks the request
+   object's signature against its `x5c` leaf, but never that the
+   `client_id`'s hash is that leaf's (OpenID4VP 1.0 §5.9.3), nor, for a
+   cross-device request, that the chain verifies: a request naming
+   another Verifier's `x509_hash`, signed under a CA the holder doesn't
+   trust, was answered, the app only told (through its trust callback)
+   that the requester is unrecognized. OID4VCgo's wallet refuses such a
+   request (the control above).
+2. **Multipaz's Verifier doesn't check a Key Binding JWT's `aud` or
+   `iat`** (`verifyOpenID4VPResponse` passes checks that accept any,
+   the audience one marked TODO), and its
+   OpenID4VP verification takes the SD-JWT VC issuer's key from `x5c`
+   without a trust anchor: the run checks the chain itself.
+3. **Multipaz's wallet always encrypts with `A128GCM`**, whatever
+   `encrypted_response_enc_values_supported` lists; OID4VCgo's Verifier
+   lists both `A128GCM` and `A256GCM`, as HAIP requires, so it agrees.
+
+Every in-person and Annex C case agreed with ISO/IEC 18013-5 and TS
+18013-7 on both sides. One behaviour worth knowing: Multipaz's wallet
+won't answer a signed `org-iso-mdoc` request from another origin than
+the one it was built for, since the reader authentication covers the
+session transcript; so the origin control uses an unsigned request.
 
 ## What isn't covered
 
 - The radio transports (BLE, NFC) and NFC engagement: only QR
   engagement.
-- OpenID4VP and OpenID4VCI with Multipaz, and Multipaz's servers.
-- Requests for several documents, zero-knowledge proofs, and status
-  lists.
+- OpenID4VCI with Multipaz, and Multipaz's servers (its Verifier here is
+  the library's `VerificationSession`).
+- Requests for several documents, transaction data, zero-knowledge
+  proofs, and status lists.
 
 ## Running it
 

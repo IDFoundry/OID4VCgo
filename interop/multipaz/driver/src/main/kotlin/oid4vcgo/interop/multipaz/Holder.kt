@@ -7,6 +7,7 @@ import org.multipaz.document.DocumentStore
 import org.multipaz.document.buildDocumentStore
 import org.multipaz.documenttype.DocumentTypeRepository
 import org.multipaz.documenttype.knowntypes.DrivingLicense
+import org.multipaz.documenttype.knowntypes.EUPersonalID
 import org.multipaz.mdoc.credential.MdocCredential
 import org.multipaz.presentment.SimplePresentmentSource
 import org.multipaz.request.TrustedRequesterIdentity
@@ -25,11 +26,13 @@ import kotlin.time.Duration.Companion.hours
 /** The signature credential's domain, and the key agreement (deviceMac) one's. */
 const val DOMAIN_SIGNATURE = "mdoc"
 const val DOMAIN_MAC = "mdoc_mac"
+const val DOMAIN_SDJWT = "sdjwt"
 
 /**
  * Multipaz's holder: an mDL of Multipaz's sample data, issued under
  * [Pki]'s document signer, with two credentials, one whose key signs
- * and one whose key agrees (deviceMac), trusting OID4VCgo's reader CA.
+ * and one whose key agrees (deviceMac), and an SD-JWT VC PID, trusting
+ * OID4VCgo's reader CA.
  */
 class Holder private constructor(
     val store: DocumentStore,
@@ -63,6 +66,7 @@ class Holder private constructor(
         preferSignatureToKeyAgreement = !mac,
         domainsMdocSignature = listOf(DOMAIN_SIGNATURE),
         domainsMdocKeyAgreement = listOf(DOMAIN_MAC),
+        domainsKeyBoundSdJwt = listOf(DOMAIN_SDJWT),
     )
 
     /** The credential of [domain]. */
@@ -91,7 +95,21 @@ class Holder private constructor(
                     domain = domain,
                 )
             }
-            val types = DocumentTypeRepository().apply { addDocumentType(DrivingLicense.getDocumentType()) }
+            // And an SD-JWT VC PID, of Multipaz's sample PID data.
+            EUPersonalID.getDocumentType().createKeyBoundSdJwtVcCredentialWithSampleData(
+                document = store.createDocument(displayName = "PID"),
+                secureArea = secureArea,
+                createKeySettings = SoftwareCreateKeySettings.Builder().setAlgorithm(Algorithm.ESP256).build(),
+                dsKey = pki.ds,
+                signedAt = now - 1.hours,
+                validFrom = now - 1.hours,
+                validUntil = now + 1.days,
+                domain = DOMAIN_SDJWT,
+            )
+            val types = DocumentTypeRepository().apply {
+                addDocumentType(DrivingLicense.getDocumentType())
+                addDocumentType(EUPersonalID.getDocumentType())
+            }
             val readerTrust = TrustManager(storage)
             readerTrust.addX509Cert(goReaderCA, TrustMetadata(displayName = "OID4VCgo reader CA"))
             return Holder(store, document, types, readerTrust)
