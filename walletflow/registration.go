@@ -74,21 +74,29 @@ func (p *Presentation) checkRegistration(ctx context.Context, now time.Time) Reg
 		if reg == nil {
 			reg = &registration.Registration{}
 		}
-		over := reg.Unregistered(dcql.Query{Credentials: []dcql.CredentialQuery{cq}})[cq.ID]
-		if !slices.ContainsFunc(over, func(path dcql.Path) bool { return path == nil }) {
-			for _, c := range p.queries[i].Credentials {
-				for _, leaf := range reg.UnregisteredRevealed(cq, disclosedAlong(ctx, cq, c)) {
-					if !slices.ContainsFunc(over, func(path dcql.Path) bool { return slices.Equal(path, leaf) }) {
-						over = append(over, leaf)
-					}
-				}
-			}
-		}
-		if len(over) > 0 {
+		if over := p.unregisteredFor(ctx, i, cq, reg); len(over) > 0 {
 			out.Unregistered[cq.ID] = over
 		}
 	}
 	return out
+}
+
+// unregisteredFor is what credential query i, cq, asks for, or what a
+// candidate for it would reveal, that reg doesn't register; a nil path
+// among them is the whole query.
+func (p *Presentation) unregisteredFor(ctx context.Context, i int, cq dcql.CredentialQuery, reg *registration.Registration) []dcql.Path {
+	over := reg.Unregistered(dcql.Query{Credentials: []dcql.CredentialQuery{cq}})[cq.ID]
+	if slices.ContainsFunc(over, func(path dcql.Path) bool { return path == nil }) {
+		return over
+	}
+	for _, c := range p.queries[i].Credentials {
+		for _, leaf := range reg.UnregisteredRevealed(cq, disclosedAlong(ctx, cq, c)) {
+			if !slices.ContainsFunc(over, func(path dcql.Path) bool { return slices.Equal(path, leaf) }) {
+				over = append(over, leaf)
+			}
+		}
+	}
+	return over
 }
 
 // disclosedAlong is what answering cq with c would disclose along with

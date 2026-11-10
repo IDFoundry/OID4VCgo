@@ -387,50 +387,7 @@ func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *ent
 			f.held = held
 		}
 		c.flights[fk] = f
-		detached := context.WithoutCancel(ctx)
-		go func() {
-			if f.prior == nil && useStore {
-				if f.stored = c.load(fk.key); f.stored != nil {
-					held = f.stored.validators()
-				}
-			}
-			res, err := fetch(detached, held)
-			at := c.opts.Now()
-			var digest [sha256.Size]byte
-			fromStore := false
-			switch {
-			case err != nil:
-			case res.NotModified && f.stored != nil:
-				// The stored token is still the one served: verified in
-				// full, as a fetched one.
-				res.Token, res.NotModified, fromStore = f.stored.Token, false, true
-				if res.Validators == (Validators{}) {
-					res.Validators = held
-				}
-				digest = sha256.Sum256(res.Token)
-			case res.NotModified && f.prior == nil:
-				err = errors.New("statuscache: a 304 to an unconditional fetch")
-			case res.NotModified:
-				digest = f.prior.digest
-				if res.Validators == (Validators{}) {
-					// A 304 needn't repeat them (RFC 9110 §15.4.5).
-					res.Validators = held
-				}
-			default:
-				digest = sha256.Sum256(res.Token)
-			}
-			c.mu.Lock()
-			f.token, f.digest, f.at, f.err, f.fetched = res.Token, digest, at, err, true
-			f.notModified, f.fromStore, f.fetchMeta = res.NotModified, fromStore, fetchMeta{validators: res.Validators, maxAge: res.MaxAge}
-			if err != nil {
-				c.storeFailure(&entry{failure: &fk, err: err, at: at})
-			}
-			if err != nil || f.users == 0 {
-				c.endFlight(fk, f)
-			}
-			c.mu.Unlock()
-			close(f.done)
-		}()
+		go c.fly(context.WithoutCancel(ctx), fk, f, fetch, held, useStore)
 	}
 	f.users++
 	c.mu.Unlock()
@@ -445,6 +402,62 @@ func (c *Cache) fetch(ctx context.Context, fk flightKey, fetch Fetch, stale *ent
 		c.leave(fk, f)
 		return nil, ctx.Err()
 	}
+}
+
+// fly is flight f's fetch, with held the validators of the entry it
+// refreshes (none if none), or of the stored record when useStore and
+// there's no entry; it settles f and closes f.done.
+func (c *Cache) fly(ctx context.Context, fk flightKey, f *flight, fetch Fetch, held Validators, useStore bool) {
+	if f.prior == nil && useStore {
+		if f.stored = c.load(fk.key); f.stored != nil {
+			held = f.stored.validators()
+		}
+	}
+	res, err := fetch(ctx, held)
+	at := c.opts.Now()
+	res, digest, fromStore, err := settleFetched(res, err, f.stored, f.prior, held)
+	c.mu.Lock()
+	f.token, f.digest, f.at, f.err, f.fetched = res.Token, digest, at, err, true
+	f.notModified, f.fromStore, f.fetchMeta = res.NotModified, fromStore, fetchMeta{validators: res.Validators, maxAge: res.MaxAge}
+	if err != nil {
+		c.storeFailure(&entry{failure: &fk, err: err, at: at})
+	}
+	if err != nil || f.users == 0 {
+		c.endFlight(fk, f)
+	}
+	c.mu.Unlock()
+	close(f.done)
+}
+
+// settleFetched makes what fetch answered, with held the validators it
+// was sent, into the token to verify and its digest: for a 304, the
+// stored or prior token (fromStore when the stored one), with held when
+// the 304 repeats no validators.
+func settleFetched(res Fetched, err error, stored *record, prior *entry, held Validators) (Fetched, [sha256.Size]byte, bool, error) {
+	var digest [sha256.Size]byte
+	fromStore := false
+	switch {
+	case err != nil:
+	case res.NotModified && stored != nil:
+		// The stored token is still the one served: verified in
+		// full, as a fetched one.
+		res.Token, res.NotModified, fromStore = stored.Token, false, true
+		if res.Validators == (Validators{}) {
+			res.Validators = held
+		}
+		digest = sha256.Sum256(res.Token)
+	case res.NotModified && prior == nil:
+		err = errors.New("statuscache: a 304 to an unconditional fetch")
+	case res.NotModified:
+		digest = prior.digest
+		if res.Validators == (Validators{}) {
+			// A 304 needn't repeat them (RFC 9110 §15.4.5).
+			res.Validators = held
+		}
+	default:
+		digest = sha256.Sum256(res.Token)
+	}
+	return res, digest, fromStore, err
 }
 
 // settle verifies f's token for the caller: with verify if no caller

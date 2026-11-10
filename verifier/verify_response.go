@@ -334,6 +334,51 @@ type DiscardedPresentation struct {
 	Err error `json:"-"`
 }
 
+// checkVerifyResponseRequest refuses a request VerifyResponse can't
+// verify as configured, before anything presented is looked at.
+func (v *Verifier) checkVerifyResponseRequest(req VerifyResponseRequest) error {
+	if err := req.Query.Validate(); err != nil {
+		return fmt.Errorf("verifier: verify response: query: %w", err)
+	}
+	if req.ExpectedNonce == "" {
+		return fmt.Errorf("verifier: verify response: expected_nonce is required")
+	}
+	if req.Origin != "" {
+		if err := weborigin.Check(req.Origin); err != nil {
+			return fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
+	if req.Origin != "" && !slices.Contains(req.ExpectedOrigins, req.Origin) {
+		return fmt.Errorf("verifier: verify response: origin %q isn't one of the request's expected_origins %v", req.Origin, req.ExpectedOrigins)
+	}
+	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
+		return err
+	}
+	if err := checkTimeBounds(req); err != nil {
+		return err
+	}
+	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
+		return err
+	}
+	if err := checkIssuerKeysValid(req); err != nil {
+		return fmt.Errorf("verifier: verify response: %w", err)
+	}
+	if v.cfg.Assurance == AssuranceProduction {
+		if err := checkProductionKeySources(req); err != nil {
+			return fmt.Errorf("verifier: verify response: %w", err)
+		}
+		if err := checkProductionDecisions(req); err != nil {
+			return fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
+	if !req.statusByTransactions {
+		if err := CheckStatusDecision(v.cfg.Assurance, req.Status, req.NoStatusCheck); err != nil {
+			return fmt.Errorf("verifier: verify response: %w", err)
+		}
+	}
+	return nil
+}
+
 // Most Verifiers want Transactions, which calls VerifyResponse for each
 // answer and also does what it leaves to the caller: routing the answer
 // to its request, consuming the nonce, and binding the result to the
@@ -417,44 +462,8 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = WithVerificationTime(ctx, req.Now())
 	}
-	if err := req.Query.Validate(); err != nil {
-		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: query: %w", err)
-	}
-	if req.ExpectedNonce == "" {
-		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: expected_nonce is required")
-	}
-	if req.Origin != "" {
-		if err := weborigin.Check(req.Origin); err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
-		}
-	}
-	if req.Origin != "" && !slices.Contains(req.ExpectedOrigins, req.Origin) {
-		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: origin %q isn't one of the request's expected_origins %v", req.Origin, req.ExpectedOrigins)
-	}
-	if err := checkMaxKeyBindingAgeRequired(req); err != nil {
+	if err := v.checkVerifyResponseRequest(req); err != nil {
 		return VerifyResponseResult{}, err
-	}
-	if err := checkTimeBounds(req); err != nil {
-		return VerifyResponseResult{}, err
-	}
-	if err := checkTrustedAuthoritiesConfigured(req); err != nil {
-		return VerifyResponseResult{}, err
-	}
-	if err := checkIssuerKeysValid(req); err != nil {
-		return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
-	}
-	if v.cfg.Assurance == AssuranceProduction {
-		if err := checkProductionKeySources(req); err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
-		}
-		if err := checkProductionDecisions(req); err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
-		}
-	}
-	if !req.statusByTransactions {
-		if err := CheckStatusDecision(v.cfg.Assurance, req.Status, req.NoStatusCheck); err != nil {
-			return VerifyResponseResult{}, fmt.Errorf("verifier: verify response: %w", err)
-		}
 	}
 
 	answered := make(map[string]bool, len(req.Response.VPToken))
@@ -626,23 +635,7 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
 	for _, presented := range presentations {
-		var claims map[string]any
-		var status *mdoc.Status
-		var chain [][]byte
-		var signed []byte
-		var err error
-		switch cq.Format {
-		case sdjwtvc.CredentialFormat:
-			claims, chain, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
-			signed = sdjwtvcSignedPart(presented)
-		case mdoc.CredentialFormat:
-			claims, status, chain, signed, err = v.verifyMdocPresentation(ctx, cq, presented, req)
-		default:
-			return nil, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
-		}
-		if err == nil {
-			err = authorizeIssuer(ctx, req, cq, claims, chain)
-		}
+		vc, signed, err := v.verifyPresented(ctx, cq, presented, req)
 		if errors.Is(err, errNotThisRequest) {
 			// A presentation made for another request, or replayed: the
 			// whole response is refused, not just it (§14.1.2: "If any
@@ -670,17 +663,10 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		// be misled. A Wallet never does it, so the response is refused.
 		// So is one credential answering two queries, where the Verifier
 		// asked for a credential of its own for each.
-		identity := sha256.Sum256(signed)
-		if other, ok := seen[identity]; ok {
-			if other == cq.ID {
-				return nil, nil, newError(ReasonMalformed, "the same credential was presented more than once", nil)
-			}
-			if req.DistinctCredentials {
-				return nil, nil, newError(ReasonMalformed, fmt.Sprintf("the same credential was presented for credential queries %q and %q", other, cq.ID), nil)
-			}
+		if err := checkNotPresentedBefore(seen, signed, cq.ID, req.DistinctCredentials); err != nil {
+			return nil, nil, err
 		}
-		seen[identity] = cq.ID
-		vcs = append(vcs, VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain})
+		vcs = append(vcs, vc)
 	}
 	if len(vcs) == 0 && firstErr != nil {
 		// Nothing verified: the query's own failure, for the caller to
@@ -688,6 +674,50 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		return nil, discarded, &discardedError{firstErr}
 	}
 	return vcs, discarded, nil
+}
+
+// verifyPresented verifies one presentation answering cq, and that its
+// issuer may issue what it claims, returning it with the part its
+// issuer signed.
+func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (VerifiedCredential, []byte, error) {
+	var claims map[string]any
+	var status *mdoc.Status
+	var chain [][]byte
+	var signed []byte
+	var err error
+	switch cq.Format {
+	case sdjwtvc.CredentialFormat:
+		claims, chain, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
+		signed = sdjwtvcSignedPart(presented)
+	case mdoc.CredentialFormat:
+		claims, status, chain, signed, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+	default:
+		return VerifiedCredential{}, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+	}
+	if err == nil {
+		err = authorizeIssuer(ctx, req, cq, claims, chain)
+	}
+	if err != nil {
+		return VerifiedCredential{}, nil, err
+	}
+	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain}, signed, nil
+}
+
+// checkNotPresentedBefore records signed, a credential's signed part,
+// as presented for queryID in seen, refusing it if it was presented
+// for queryID already, or, under distinct, for another query.
+func checkNotPresentedBefore(seen map[[sha256.Size]byte]string, signed []byte, queryID string, distinct bool) error {
+	identity := sha256.Sum256(signed)
+	if other, ok := seen[identity]; ok {
+		if other == queryID {
+			return newError(ReasonMalformed, "the same credential was presented more than once", nil)
+		}
+		if distinct {
+			return newError(ReasonMalformed, fmt.Sprintf("the same credential was presented for credential queries %q and %q", other, queryID), nil)
+		}
+	}
+	seen[identity] = queryID
+	return nil
 }
 
 // sdjwtvcSignedPart is what identifies the credential an SD-JWT

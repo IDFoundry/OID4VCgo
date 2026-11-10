@@ -302,20 +302,7 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 			cur = *u
 			return errUnchanged
 		}
-		u.Status = CredentialStatus{Value: value, Reason: reason, CheckedAt: now.UTC()}
-		if len(u.Copies) == 0 && (len(revoked) > 0 || slices.ContainsFunc(u.AllCopies(), issuers.untrusted)) {
-			// Its one copy, kept as Copies to carry what was found.
-			u.Copies = u.AllCopies()
-		}
-		for i := range u.Copies {
-			cp := &u.Copies[i]
-			if revoked[cp.Credential] {
-				cp.Revoked = true
-			}
-			if _, checked := issuers[cp.Credential]; checked {
-				cp.IssuerUntrusted = issuers.untrusted(*cp)
-			}
-		}
+		recordStatus(u, CredentialStatus{Value: value, Reason: reason, CheckedAt: now.UTC()}, revoked, issuers)
 		cur = *u
 		return nil
 	})
@@ -323,6 +310,25 @@ func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, 
 		return StoredCredential{}, fmt.Errorf("walletflow: store credential %q's status: %w", id, err)
 	}
 	return cur, nil
+}
+
+// recordStatus records on u its status, the copies found revoked, and
+// whether each copy whose issuer was checked is untrusted.
+func recordStatus(u *StoredCredential, status CredentialStatus, revoked map[string]bool, issuers issuerChecks) {
+	u.Status = status
+	if len(u.Copies) == 0 && (len(revoked) > 0 || slices.ContainsFunc(u.AllCopies(), issuers.untrusted)) {
+		// Its one copy, kept as Copies to carry what was found.
+		u.Copies = u.AllCopies()
+	}
+	for i := range u.Copies {
+		cp := &u.Copies[i]
+		if revoked[cp.Credential] {
+			cp.Revoked = true
+		}
+		if _, checked := issuers[cp.Credential]; checked {
+			cp.IssuerUntrusted = issuers.untrusted(*cp)
+		}
+	}
 }
 
 // listStatus is c's status on its status list entries live and its
