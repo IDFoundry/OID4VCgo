@@ -18,7 +18,10 @@ import Foundation
 public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
     /// How the store keeps its files.
     public struct Options: Sendable {
-        /// The data protection class of every record.
+        /// The data protection class of every record: `.none` writes
+        /// them unprotected; a protection type the store doesn't know
+        /// writes them with complete protection, the strictest, rather
+        /// than none.
         public var protection: FileProtectionType
         /// Keeps the store's directory out of iCloud and device backups.
         public var excludedFromBackup: Bool
@@ -75,12 +78,17 @@ public final class FileCredentialStore: CredentialStore, @unchecked Sendable {
         return directory.appendingPathComponent(id + ".json")
     }
 
-    private var writeOptions: Data.WritingOptions {
-        switch options.protection {
+    private var writeOptions: Data.WritingOptions { Self.writeOptions(options.protection) }
+
+    /// How a record is written with `protection`: `.none` alone without
+    /// file protection, and an unknown type with the strictest.
+    static func writeOptions(_ protection: FileProtectionType) -> Data.WritingOptions {
+        switch protection {
         case .complete: [.atomic, .completeFileProtection]
         case .completeUnlessOpen: [.atomic, .completeFileProtectionUnlessOpen]
         case .completeUntilFirstUserAuthentication: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-        default: [.atomic, .noFileProtection]
+        case .none: [.atomic, .noFileProtection]
+        default: [.atomic, .completeFileProtection]
         }
     }
 
