@@ -5,6 +5,12 @@
 // changing a dependency, with an empty Gradle cache (GRADLE_USER_HOME)
 // so every artifact is fetched and recorded:
 //   ./gradlew --write-verification-metadata sha256 --write-locks resolveAndLockAll installDist
+//
+// -PmultipazVersion=X builds against another Multipaz release instead
+// (run.sh's MULTIPAZ_VERSION, the weekly run's latest): its versions
+// aren't the locked ones, so nothing is locked, and run.sh turns
+// checksum verification off for it.
+val multipazVersion = providers.gradleProperty("multipazVersion").orNull
 buildscript {
     configurations.classpath {
         resolutionStrategy.activateDependencyLocking()
@@ -17,7 +23,9 @@ plugins {
 }
 
 dependencyLocking {
-    lockAllConfigurations()
+    if (multipazVersion == null) {
+        lockAllConfigurations()
+    }
 }
 
 // Multipaz's JVM library also depends on Google's Android Key
@@ -36,6 +44,13 @@ configurations.configureEach {
     exclude(group = "org.xerial")
     exclude(group = "org.hsqldb")
     exclude(group = "com.google.protobuf")
+    if (multipazVersion != null) {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "org.multipaz") {
+                useVersion(multipazVersion)
+            }
+        }
+    }
 }
 
 dependencies {

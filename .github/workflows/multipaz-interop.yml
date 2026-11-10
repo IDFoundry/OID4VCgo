@@ -10,7 +10,9 @@
 # x509_hash client_id) refused. The library is pinned by
 # version, lock and checksum, and runs here on a disposable runner with
 # a read-only token and no secrets. Pull requests, the daily run and
-# each release test it.
+# each release test the pinned release; the weekly run tests Multipaz's
+# newest release on Maven Central (latest), without the pin's locks and
+# checksums, to show a break before the pin moves.
 name: Multipaz interop
 
 on:
@@ -19,16 +21,21 @@ on:
     paths-ignore:
       - 'mobile/**'
   schedule:
-    - cron: '45 6 * * *' # daily, 6:45am UTC
+    - cron: '45 6 * * *' # daily, 6:45am UTC: the pinned release
+    - cron: '15 8 * * 1' # Mondays, 8:15am UTC: Multipaz's newest release
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      multipaz_version:
+        description: Multipaz release to test (X.Y.Z, or latest; empty for the pinned release)
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: multipaz-interop-${{ github.ref }}
+  group: multipaz-interop-${{ github.ref }}-${{ github.event.schedule || 'run' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -58,10 +65,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Run the interop script
+        env:
+          MULTIPAZ_VERSION: ${{ inputs.multipaz_version || (github.event.schedule == '15 8 * * 1' && 'latest') || '' }}
         run: |
           set -o pipefail
           export WORK="$RUNNER_TEMP/multipaz-work"
           mkdir -p "$WORK"
+          [ -n "$MULTIPAZ_VERSION" ] || unset MULTIPAZ_VERSION
           bash interop/multipaz/run.sh 2>&1 | tee "$RUNNER_TEMP/multipaz-interop.log"
 
       # The work dir also holds the run's throwaway keys: only the logs
@@ -89,5 +99,5 @@ jobs:
     uses: ./.github/workflows/scheduled-alert.yml
     with:
       result: ${{ needs.interop.result }}
-      label: interop-multipaz
-      title: Scheduled Multipaz interop failure
+      label: ${{ (github.event.schedule == '15 8 * * 1' || inputs.multipaz_version != '') && 'interop-multipaz-latest' || 'interop-multipaz' }}
+      title: ${{ (github.event.schedule == '15 8 * * 1' || inputs.multipaz_version != '') && 'Multipaz interop failure against a newer Multipaz release' || 'Scheduled Multipaz interop failure' }}
