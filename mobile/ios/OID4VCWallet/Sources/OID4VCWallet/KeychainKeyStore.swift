@@ -83,14 +83,15 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
             kSecAttrApplicationTag as String: tag(id),
             kSecAttrLabel as String: "oid4vcgo " + purpose.rawValue,
         ]
-        if purpose == .holder, let group = options.holderAccessGroup {
+        let policy = Self.accessPolicy(purpose: purpose, options: options)
+        if let group = policy.accessGroup {
             privateAttrs[kSecAttrAccessGroup as String] = group
         }
-        if let access = try accessControl(purpose: purpose) {
+        if let access = try accessControl(policy) {
             privateAttrs[kSecAttrAccessControl as String] = access
         } else {
             #if os(iOS)
-            privateAttrs[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            privateAttrs[kSecAttrAccessible as String] = policy.accessible
             #endif
         }
         var attrs: [String: Any] = [
@@ -311,13 +312,21 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
 
     private func tag(_ id: String) -> Data { Data((options.tagPrefix + id).utf8) }
 
-    /// The key's access control, when it needs one: in the Secure Enclave,
-    /// or — for a holder key, if asked — with user presence, which needs a
-    /// passcode set; always only on this device, only when unlocked. (A key without one is kept
-    /// only on this device too, on iOS; on macOS, where this store serves
-    /// tests, an access control would move it to the data protection
-    /// keychain, which needs an entitlement.)
-    private func accessControl(purpose: KeyPurpose) throws -> SecAccessControl? {
+    /// What guards a key: its access control's flags (none: it has no
+    /// access control), when it's accessible, and its Keychain access
+    /// group (nil: the app's default one).
+    struct AccessPolicy {
+        var flags: SecAccessControlCreateFlags
+        var accessible: CFString
+        var accessGroup: String?
+    }
+
+    /// The access policy of a key made for `purpose`: in the Secure
+    /// Enclave, its private key's use is guarded; a holder key, if
+    /// asked, needs user presence too — and so a passcode set; and
+    /// always only on this device, only when unlocked. Only a holder key
+    /// is made in `Options.holderAccessGroup`.
+    static func accessPolicy(purpose: KeyPurpose, options: Options) -> AccessPolicy {
         var flags: SecAccessControlCreateFlags = []
         if options.secureEnclave {
             flags.insert(.privateKeyUsage)
@@ -325,13 +334,23 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         if purpose == .holder && options.holderUserPresence {
             flags.insert(.userPresence)
         }
-        guard !flags.isEmpty else { return nil }
         // A key needing user presence needs a passcode too: it can't be
         // made without one, and goes if the passcode is removed.
         let accessible = flags.contains(.userPresence)
             ? kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let group = purpose == .holder ? options.holderAccessGroup : nil
+        return AccessPolicy(flags: flags, accessible: accessible, accessGroup: group)
+    }
+
+    /// The key's access control, when its `policy` needs one: in the
+    /// Secure Enclave, or with user presence. (A key without one is kept
+    /// only on this device too, on iOS; on macOS, where this store serves
+    /// tests, an access control would move it to the data protection
+    /// keychain, which needs an entitlement.)
+    private func accessControl(_ policy: AccessPolicy) throws -> SecAccessControl? {
+        guard !policy.flags.isEmpty else { return nil }
         var error: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(nil, accessible, flags, &error) else {
+        guard let access = SecAccessControlCreateWithFlags(nil, policy.accessible, policy.flags, &error) else {
             throw error!.takeRetainedValue() as Error
         }
         return access
