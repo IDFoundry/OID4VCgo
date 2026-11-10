@@ -29,21 +29,28 @@ class Tls(dir: File) {
     private val certificates = CertificateFactory.getInstance("X.509")
 
     /** Trusts the peer's TLS CA, and nothing else. */
-    val client: SSLContext = SSLContext.getInstance("TLSv1.3").apply {
-        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
-        store.setCertificateEntry("ca", certificate(File(dir, "go-tls-ca.pem")))
-        val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
-        init(null, trust.trustManagers, null)
+    val client: SSLContext = trusting(File(dir, "go-tls-ca.pem").readText())
+
+    /** The peer's localhost certificate and key, as "tls", with no password. */
+    val keyStore: KeyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+        load(null, null)
+        val der = pem(File(dir, "tls-key.pem").readText())
+        val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
+        setKeyEntry("tls", key, CharArray(0), arrayOf(certificate(File(dir, "tls-cert.pem").readText())))
     }
 
     /** Serves the peer's localhost certificate. */
     val server: SSLContext = SSLContext.getInstance("TLSv1.3").apply {
-        val der = pem(File(dir, "tls-key.pem").readText())
-        val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
-        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
-        store.setKeyEntry("tls", key, CharArray(0), arrayOf(certificate(File(dir, "tls-cert.pem"))))
-        val keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(store, CharArray(0)) }
+        val keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(keyStore, CharArray(0)) }
         init(keys.keyManagers, null, null)
+    }
+
+    /** A context trusting [caPEM], and nothing else. */
+    fun trusting(caPEM: String): SSLContext = SSLContext.getInstance("TLSv1.3").apply {
+        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
+        store.setCertificateEntry("ca", certificate(caPEM))
+        val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
+        init(null, trust.trustManagers, null)
     }
 
     /** A client that follows no redirect, so a test can read one. */
@@ -54,10 +61,15 @@ class Tls(dir: File) {
         .build()
 
     /** Ktor's Java engine over [client], for Multipaz's own requests. */
-    val ktor = object : HttpClientEngineFactory<JavaHttpConfig> {
+    val ktor = ktorOver(client)
+
+    /** Ktor's Java engine trusting [caPEM]. */
+    fun ktorTrusting(caPEM: String) = ktorOver(trusting(caPEM))
+
+    private fun ktorOver(context: SSLContext) = object : HttpClientEngineFactory<JavaHttpConfig> {
         override fun create(block: JavaHttpConfig.() -> Unit): HttpClientEngine = Java.create {
             block()
-            config { sslContext(client) }
+            config { sslContext(context) }
         }
     }
 
@@ -71,8 +83,8 @@ class Tls(dir: File) {
             HttpResponse.BodyHandlers.ofString(),
         )
 
-    private fun certificate(file: File) =
-        certificates.generateCertificate(file.inputStream()) as X509Certificate
+    private fun certificate(pem: String) =
+        certificates.generateCertificate(pem.byteInputStream()) as X509Certificate
 
     private fun pem(text: String): ByteArray =
         Base64.getMimeDecoder().decode(text.lines().filterNot { it.startsWith("-----") }.joinToString(""))

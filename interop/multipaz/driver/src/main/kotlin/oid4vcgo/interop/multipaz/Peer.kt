@@ -12,8 +12,10 @@ import java.io.File
  * OID4VCgo's side (../scripts/peer), as a child process: one JSON
  * object per line each way.
  */
-class Peer(binary: String, dir: File, log: File, verifier: String) : AutoCloseable {
-    private val process = ProcessBuilder(binary, "-dir", dir.path, "-verifier", verifier)
+class Peer(binary: String, dir: File, log: File, verifier: String, setupIssuer: String, issuer: String) : AutoCloseable {
+    private val process = ProcessBuilder(
+        binary, "-dir", dir.path, "-verifier", verifier, "-setup-issuer", setupIssuer, "-issuer", issuer,
+    )
         .redirectError(ProcessBuilder.Redirect.appendTo(log))
         .start()
     private val input = process.outputStream.bufferedWriter()

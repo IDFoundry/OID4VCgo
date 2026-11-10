@@ -202,32 +202,16 @@ func (p *peer) verifierStart(req request) (reply, error) {
 		return reply{}, fmt.Errorf("unknown format %q", req.Format)
 	}
 	p.vp.started++
-	name := filepath.Join(p.vp.dir, fmt.Sprintf("verifier-%d", p.vp.started))
+	name := fmt.Sprintf("verifier-%d", p.vp.started)
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return reply{}, err
 	}
-	if err := os.WriteFile(name+".json", raw, 0o600); err != nil {
+	config := filepath.Join(p.vp.dir, name+".json")
+	if err := os.WriteFile(config, raw, 0o600); err != nil {
 		return reply{}, err
 	}
-	logFile, err := os.Create(name + ".log") // #nosec G304 -- in the run's own directory
-	if err != nil {
-		return reply{}, err
-	}
-	cmd := exec.Command(p.vp.verifierBinary, "-config", name+".json") // #nosec G204 -- the operator's own binary
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	if err := cmd.Start(); err != nil {
-		return reply{}, err
-	}
-	p.vp.procs = append(p.vp.procs, cmd)
-	for range 100 {
-		if c, err := net.DialTimeout("tcp", cfg.ListenAddr, time.Second); err == nil {
-			_ = c.Close()
-			return reply{BaseURL: base}, nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return reply{}, fmt.Errorf("the verifier didn't start; see %s.log", name)
+	return reply{BaseURL: base}, p.vp.spawn(name, p.vp.verifierBinary, config, cfg.ListenAddr)
 }
 
 // stop stops the verifiers started.

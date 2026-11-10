@@ -3,7 +3,10 @@
 // ISO/IEC TS 18013-7 Annex C and OpenID4VP messages with it, one JSON
 // object per line on stdin, each answered by one on stdout. For
 // OpenID4VP (vp.go) it is also walletflow's wallet, and starts
-// cmd/conformance-verifier (-verifier) as the driver's cases ask.
+// cmd/conformance-verifier (-verifier) as the driver's cases ask; for
+// OpenID4VCI (vci.go), walletflow's wallet and its Wallet Provider, and
+// cmd/conformance-issuer (-issuer), configured by
+// interop/eudi/scripts/setup-issuer (-setup-issuer).
 //
 // It is a holder, walletflow's in-person and org-iso-mdoc presentations
 // holding an mDL from its own IACA, and a reader, proximity's
@@ -13,7 +16,7 @@
 // mpz-reader-ca.pem), and, for the controls, a CA it never issues under
 // (go-other-ca.pem); then it prints {"ready": true}.
 //
-// Usage: go run ./interop/multipaz/scripts/peer -dir DIR -verifier BINARY
+// Usage: go run ./interop/multipaz/scripts/peer -dir DIR -verifier BINARY -setup-issuer BINARY -issuer BINARY
 package main
 
 import (
@@ -119,11 +122,13 @@ type reply struct {
 func main() {
 	dir := flag.String("dir", "", "where to write the peer's CAs and read the driver's")
 	verifierBinary := flag.String("verifier", "", "cmd/conformance-verifier's binary, for the OpenID4VP cases")
+	setupIssuerBinary := flag.String("setup-issuer", "", "interop/eudi/scripts/setup-issuer's binary, for the OpenID4VCI cases")
+	issuerBinary := flag.String("issuer", "", "cmd/conformance-issuer's binary, for the OpenID4VCI cases")
 	flag.Parse()
 	if *dir == "" {
 		log.Fatal("-dir is required")
 	}
-	p, err := newPeer(*dir, *verifierBinary)
+	p, err := newPeer(*dir, *verifierBinary, vciState{setupIssuerBinary: *setupIssuerBinary, issuerBinary: *issuerBinary})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -166,8 +171,9 @@ type peer struct {
 	reader  *proximity.ReaderSession
 	pending *mdocdcapi.Pending
 
-	// OpenID4VP's: see vp.go.
-	vp vpState
+	// OpenID4VP's: see vp.go; OpenID4VCI's: see vci.go.
+	vp  vpState
+	vci vciState
 }
 
 // readerKey is a reader authentication key and its chain.
@@ -176,7 +182,7 @@ type readerKey struct {
 	chain []*x509.Certificate
 }
 
-func newPeer(dir, verifierBinary string) (*peer, error) {
+func newPeer(dir, verifierBinary string, vci vciState) (*peer, error) {
 	iaca, iacaKey, iacaPEM, _, err := conformancecert.GenerateMdocIACA("OID4VCgo Multipaz interop IACA", "US", repoURL)
 	if err != nil {
 		return nil, err
@@ -198,7 +204,7 @@ func newPeer(dir, verifierBinary string) (*peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &peer{keys: &agreeingKeyStore{keys: map[string]*agreeingKey{}}, store: walletflow.NewMemoryCredentialStore(), readerCAs: map[string]readerKey{}, vp: vpState{verifierBinary: verifierBinary}}
+	p := &peer{keys: &agreeingKeyStore{keys: map[string]*agreeingKey{}}, store: walletflow.NewMemoryCredentialStore(), readerCAs: map[string]readerKey{}, vp: vpState{verifierBinary: verifierBinary}, vci: vci}
 	for name, ca := range map[string]struct {
 		cert *x509.Certificate
 		key  *ecdsa.PrivateKey
@@ -213,6 +219,9 @@ func newPeer(dir, verifierBinary string) (*peer, error) {
 		return nil, err
 	}
 	if err := p.setupVP(dir, ca{iaca, iacaKey}, ca{readerCA, readerCAKey}, ca{other, otherKey}); err != nil {
+		return nil, err
+	}
+	if p.vci.provider, err = newProvider(dir); err != nil {
 		return nil, err
 	}
 	for name, content := range map[string]string{"go-iaca.pem": iacaPEM, "go-reader-ca.pem": certPEM(readerCA), "go-other-ca.pem": certPEM(other)} {
@@ -308,6 +317,10 @@ func (p *peer) do(req request) (reply, error) {
 		return p.walletPresent(ctx, req)
 	case "wallet_dcapi":
 		return p.walletDCAPI(ctx, req)
+	case "issuer_start":
+		return p.issuerStart()
+	case "wallet_receive":
+		return p.walletReceive(ctx, req)
 	}
 	return reply{}, fmt.Errorf("unknown op %q", req.Op)
 }
@@ -488,6 +501,9 @@ func decode(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeStrin
 type agreeingKeyStore struct {
 	mu   sync.Mutex
 	keys map[string]*agreeingKey
+	// made numbers the keys: an ID is never reused, though keys are
+	// deleted.
+	made int
 }
 
 type agreeingKey struct {
@@ -519,7 +535,8 @@ func (s *agreeingKeyStore) NewKey(context.Context, walletflow.KeyPurpose) (walle
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	k := &agreeingKey{PrivateKey: priv, id: fmt.Sprintf("key%d", len(s.keys)+1)}
+	s.made++
+	k := &agreeingKey{PrivateKey: priv, id: fmt.Sprintf("key%d", s.made)}
 	s.keys[k.id] = k
 	return k, nil
 }
