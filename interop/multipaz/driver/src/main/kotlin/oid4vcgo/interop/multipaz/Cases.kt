@@ -56,6 +56,9 @@ private const val DOC_TYPE = DrivingLicense.MDL_DOCTYPE
 private const val NAMESPACE = DrivingLicense.MDL_NAMESPACE
 private const val ORIGIN = "https://verifier.interop.example"
 
+/** The Digital Credentials API protocol of ISO/IEC TS 18013-7 Annex C. */
+private const val ANNEX_C = "org-iso-mdoc"
+
 /** What each reader asks for, and whether it says it will keep it. */
 private val REQUESTED = mapOf("family_name" to true, "given_name" to false, "age_over_18" to false)
 
@@ -94,6 +97,14 @@ class Cases(
 
     /** Runs every case, returning how many failed. */
     suspend fun run(): Int {
+        mpzReaderCases()
+        goReaderCases()
+        mpzVerifierCases()
+        goVerifierCases()
+        return failed
+    }
+
+    private suspend fun mpzReaderCases() {
         println("### Multipaz reader → OID4VCgo's holder (walletflow)")
         for (mac in listOf(false, true)) {
             val auth = if (mac) "mac" else "signature"
@@ -113,6 +124,9 @@ class Cases(
             if (untrusted.holderSaw == "untrusted") null else "the holder took it as ${untrusted.holderSaw} (${untrusted.problem})"
         }
 
+    }
+
+    private suspend fun goReaderCases() {
         println("### OID4VCgo's reader (proximity) → Multipaz holder")
         for (mac in listOf(false, true)) {
             val auth = if (mac) "mac" else "signature"
@@ -133,6 +147,9 @@ class Cases(
             refusal(goReaderAnsweredOver(otherTranscript = true), "verify DeviceSignature")
         }
 
+    }
+
+    private suspend fun mpzVerifierCases() {
         println("### Annex C: Multipaz verifier → OID4VCgo's wallet (walletflow)")
         check("org-iso-mdoc request signed by the reader: Multipaz verified the answer") {
             val annexC = mpzVerifier(pki.reader)
@@ -148,6 +165,9 @@ class Cases(
             if (annexCUntrusted.holderSaw == "") null else "the wallet saw '${annexCUntrusted.holderSaw}' (${annexCUntrusted.problem})"
         }
 
+    }
+
+    private suspend fun goVerifierCases() {
         println("### Annex C: OID4VCgo's verifier (mdocdcapi) → Multipaz wallet")
         check("org-iso-mdoc request signed by OID4VCgo's reader: OID4VCgo verified the answer") {
             val toMpz = goVerifier()
@@ -166,7 +186,6 @@ class Cases(
         check("control: the verifier refuses an mDL from an IACA it doesn't trust") {
             refusal(goVerifier(trust = "other"), "does not verify against a trusted root")
         }
-        return failed
     }
 
     /** null if [r] failed with an error containing [want], or what it did instead. */
@@ -292,7 +311,7 @@ class Cases(
         val nonce = ByteString(Crypto.secureRandom.nextBytes(16))
         val encryptionKey = Crypto.createEcPrivateKey(EcCurve.P256)
         val request = VerificationUtil.generateDcRequestMdoc(
-            exchangeProtocols = listOf("org-iso-mdoc"),
+            exchangeProtocols = listOf(ANNEX_C),
             docType = DOC_TYPE,
             claims = REQUESTED.map { (name, retain) ->
                 MdocRequestedClaim(docType = DOC_TYPE, namespaceName = NAMESPACE, dataElementName = name, intentToRetain = retain)
@@ -308,7 +327,7 @@ class Cases(
         val saw = answer.string("reader") ?: ""
         answer.error?.let { return MpzResult(problem = "the wallet: $it", holderSaw = saw) }
         val response = buildJsonObject {
-            put("protocol", JsonPrimitive("org-iso-mdoc"))
+            put("protocol", JsonPrimitive(ANNEX_C))
             put("data", Json.parseToJsonElement(answer.string("data")!!))
         }
         val decrypted = VerificationUtil.decryptDcResponse(
@@ -343,7 +362,7 @@ class Cases(
         val request = peer.call("dcapi_request", "origin" to ORIGIN, "reader_ca" to readerCA)
         if (request.error != null) return request
         val answer = org.multipaz.presentment.digitalCredentialsPresentment(
-            protocol = "org-iso-mdoc",
+            protocol = ANNEX_C,
             data = Json.parseToJsonElement(request.string("data")!!).jsonObject,
             appId = null,
             origin = answeredFrom,
@@ -395,8 +414,12 @@ private class OneExchange(private val establishment: ByteArray) : MdocTransport(
     )
     override val scanningTime: Duration? = null
 
-    override suspend fun advertise() {}
-    override suspend fun open(eSenderKey: EcPublicKey) {}
+    override suspend fun advertise() {
+        // Nothing to advertise: the messages pass in process.
+    }
+    override suspend fun open(eSenderKey: EcPublicKey) {
+        // Already connected: there's no radio to open.
+    }
     override suspend fun sendMessage(message: ByteArray) {
         answer.complete(message)
     }

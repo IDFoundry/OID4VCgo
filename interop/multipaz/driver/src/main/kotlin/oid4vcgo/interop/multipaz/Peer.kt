@@ -30,7 +30,7 @@ class Peer(binary: String, dir: File, log: File) : AutoCloseable {
             put("op", JsonPrimitive(op))
             for ((name, value) in args) {
                 when (value) {
-                    null -> {}
+                    null -> continue
                     is Boolean -> put(name, JsonPrimitive(value))
                     else -> put(name, JsonPrimitive(value.toString()))
                 }
