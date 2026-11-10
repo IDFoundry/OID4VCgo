@@ -45,8 +45,8 @@ dependencies {
     implementation(libs.multipaz.server)
     implementation(libs.ktor.client.java)
     implementation(libs.ktor.server.netty)
-    runtimeOnly(libs.slf4j.simple)
     implementation(platform(libs.netty.bom))
+    runtimeOnly(libs.slf4j.simple)
     constraints {
         implementation(libs.logback.classic)
         implementation(libs.logback.core)
