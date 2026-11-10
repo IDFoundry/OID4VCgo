@@ -1323,16 +1323,9 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 		claims = append(claims, verified.Claims)
 		if i == 0 {
 			first = verified
-		} else if (verified.StatusList == nil) != (first.StatusList == nil) {
-			// A copy without a status the others have couldn't be
-			// revoked with them.
+		} else if differs := copyDiffers(first, verified, c.result.Credentials[0].Credential, ic.Credential); differs != "" {
 			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
-			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's status differs from copy 0's", c.configID, errInvalidCredential, i)
-		} else if !sameHolderClaims(first.Claims, verified.Claims) || !samePlaintext(c.result.Credentials[0].Credential, ic.Credential) {
-			// The holder sees copy 0's claims, and DCQL chooses per copy:
-			// copies that differ would present what the holder didn't see.
-			w.notify(ctx, c, oid4vci.NotificationEventCredentialFailure, "the credential's copies differ")
-			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's claims differ from copy 0's", c.configID, errInvalidCredential, i)
+			return StoredCredential{}, fmt.Errorf("walletflow: credential %q %w: copy %d's %s from copy 0's", c.configID, errInvalidCredential, i, differs)
 		}
 	}
 	id := c.replace
@@ -1362,6 +1355,23 @@ func (w *Wallet) accept(ctx context.Context, c issued) (StoredCredential, error)
 	}
 	w.notify(ctx, c, oid4vci.NotificationEventCredentialAccepted, "")
 	return stored, nil
+}
+
+// copyDiffers is how a copy, verified, differs from copy 0, first, in
+// what copies must share ("status differs", "claims differ"), or "".
+// firstCredential and credential are the two as issued.
+func copyDiffers(first, verified wallet.VerifiedIssuedCredential, firstCredential, credential string) string {
+	switch {
+	case (verified.StatusList == nil) != (first.StatusList == nil):
+		// A copy without a status the others have couldn't be revoked
+		// with them.
+		return "status differs"
+	case !sameHolderClaims(first.Claims, verified.Claims) || !samePlaintext(firstCredential, credential):
+		// The holder sees copy 0's claims, and DCQL chooses per copy:
+		// copies that differ would present what the holder didn't see.
+		return "claims differ"
+	}
+	return ""
 }
 
 // store stores a new credential, or one replacing c.replace
