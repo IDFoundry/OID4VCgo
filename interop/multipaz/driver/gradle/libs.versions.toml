@@ -1,0 +1,16 @@
+# Every version pinned exactly: see build.gradle.kts for the locks and
+# checksums that go with them.
+[versions]
+kotlin = "2.4.20"
+# The library under test: its mdoc reader, holder and Annex C verifier
+# and wallet.
+multipaz = "0.102.0"
+slf4j = "2.0.17"
+
+[libraries]
+multipaz = { module = "org.multipaz:multipaz", version.ref = "multipaz" }
+multipaz-doctypes = { module = "org.multipaz:multipaz-doctypes", version.ref = "multipaz" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

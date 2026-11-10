@@ -109,6 +109,23 @@ images, and weekly against walt.id's `latest` images. See
 [`interop/waltid/README.md`](../interop/waltid/README.md) for the cases,
 walt.id's deviations, and moving the pins.
 
+## Interop with Multipaz
+
+`.github/workflows/multipaz-interop.yml` runs OID4VCgo's mdoc readers
+and holder against [Multipaz](https://github.com/openwallet-foundation/multipaz)'s,
+from its published library pinned by version and checksum, each side in
+each role: in person (ISO/IEC 18013-5: QR engagement, session
+encryption, reader authentication, a device signature and deviceMac),
+`walletflow` as holder and `proximity` as reader; and over the Digital
+Credentials API (ISO/IEC TS 18013-7 Annex C, `org-iso-mdoc`),
+`walletflow` as wallet and `mdocdcapi` as verifier. The messages pass
+whole between the two programs, with no radio. Controls (untrusted
+readers and issuers, a DeviceResponse over another session transcript,
+an answer for another origin) are refused. It runs on each pull request,
+daily and on each release. See
+[`interop/multipaz/README.md`](../interop/multipaz/README.md) for the
+cases and moving the pin.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`
