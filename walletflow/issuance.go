@@ -1379,6 +1379,12 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 	if w.cfg.AllowForeignIss {
 		issuer = ""
 	}
+	if len(keys) == 0 {
+		// Every key was bound to an earlier copy: there were fewer
+		// distinct keys than copies, as when a KeyStore gave two keys
+		// one ID.
+		return wallet.VerifiedIssuedCredential{}, nil, errors.New("no holder key is left to bind this copy to")
+	}
 	roots, policy := w.cfg.issuerTrust(conf.Format, conf.DocType)
 	var lastErr error
 	for _, k := range keys {
