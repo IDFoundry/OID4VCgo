@@ -1,7 +1,9 @@
 // Command peer is OID4VCgo's side of interop/multipaz/run.sh: the
-// Multipaz driver (../../driver) starts it and exchanges ISO/IEC 18013-5
-// and ISO/IEC TS 18013-7 Annex C messages with it, one JSON object per
-// line on stdin, each answered by one on stdout.
+// Multipaz driver (../../driver) starts it and exchanges ISO/IEC 18013-5,
+// ISO/IEC TS 18013-7 Annex C and OpenID4VP messages with it, one JSON
+// object per line on stdin, each answered by one on stdout. For
+// OpenID4VP (vp.go) it is also walletflow's wallet, and starts
+// cmd/conformance-verifier (-verifier) as the driver's cases ask.
 //
 // It is a holder, walletflow's in-person and org-iso-mdoc presentations
 // holding an mDL from its own IACA, and a reader, proximity's
@@ -11,7 +13,7 @@
 // mpz-reader-ca.pem), and, for the controls, a CA it never issues under
 // (go-other-ca.pem); then it prints {"ready": true}.
 //
-// Usage: go run ./interop/multipaz/scripts/peer -dir DIR
+// Usage: go run ./interop/multipaz/scripts/peer -dir DIR -verifier BINARY
 package main
 
 import (
@@ -77,6 +79,15 @@ type request struct {
 	Data     string `json:"data,omitempty"`
 	Origin   string `json:"origin,omitempty"`
 	Response string `json:"response,omitempty"`
+
+	// OpenID4VP's: the credential format a verifier asks for ("dc+sd-jwt"
+	// or "mso_mdoc"), a Verifier's request (an openid4vp: link, or a DC
+	// API request's data with its Protocol), and the CA the wallet
+	// trusts Verifiers under ("mpz" or "other").
+	Format     string `json:"format,omitempty"`
+	Request    string `json:"request,omitempty"`
+	Protocol   string `json:"protocol,omitempty"`
+	VerifierCA string `json:"verifier_ca,omitempty"`
 }
 
 // reply is the answer to one request: Error says why it failed.
@@ -97,15 +108,22 @@ type reply struct {
 	Issuer     string         `json:"issuer,omitempty"`
 
 	Data string `json:"data,omitempty"`
+
+	// OpenID4VP's: a started verifier's base URL, and what a wallet
+	// answered and whom.
+	BaseURL  string   `json:"base_url,omitempty"`
+	QueryIDs []string `json:"query_ids,omitempty"`
+	Verifier string   `json:"verifier,omitempty"`
 }
 
 func main() {
 	dir := flag.String("dir", "", "where to write the peer's CAs and read the driver's")
+	verifierBinary := flag.String("verifier", "", "cmd/conformance-verifier's binary, for the OpenID4VP cases")
 	flag.Parse()
 	if *dir == "" {
 		log.Fatal("-dir is required")
 	}
-	p, err := newPeer(*dir)
+	p, err := newPeer(*dir, *verifierBinary)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,6 +145,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	p.vp.stop()
 	if err := in.Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -146,6 +165,9 @@ type peer struct {
 	holder  *walletflow.ProximityPresentation
 	reader  *proximity.ReaderSession
 	pending *mdocdcapi.Pending
+
+	// OpenID4VP's: see vp.go.
+	vp vpState
 }
 
 // readerKey is a reader authentication key and its chain.
@@ -154,7 +176,7 @@ type readerKey struct {
 	chain []*x509.Certificate
 }
 
-func newPeer(dir string) (*peer, error) {
+func newPeer(dir, verifierBinary string) (*peer, error) {
 	iaca, iacaKey, iacaPEM, _, err := conformancecert.GenerateMdocIACA("OID4VCgo Multipaz interop IACA", "US", repoURL)
 	if err != nil {
 		return nil, err
@@ -176,7 +198,7 @@ func newPeer(dir string) (*peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &peer{keys: &agreeingKeyStore{keys: map[string]*agreeingKey{}}, store: walletflow.NewMemoryCredentialStore(), readerCAs: map[string]readerKey{}}
+	p := &peer{keys: &agreeingKeyStore{keys: map[string]*agreeingKey{}}, store: walletflow.NewMemoryCredentialStore(), readerCAs: map[string]readerKey{}, vp: vpState{verifierBinary: verifierBinary}}
 	for name, ca := range map[string]struct {
 		cert *x509.Certificate
 		key  *ecdsa.PrivateKey
@@ -188,6 +210,9 @@ func newPeer(dir string) (*peer, error) {
 		p.readerCAs[name] = k
 	}
 	if err := p.issueMDL(dsKey, ds); err != nil {
+		return nil, err
+	}
+	if err := p.setupVP(dir, ca{iaca, iacaKey}, ca{readerCA, readerCAKey}, ca{other, otherKey}); err != nil {
 		return nil, err
 	}
 	for name, content := range map[string]string{"go-iaca.pem": iacaPEM, "go-reader-ca.pem": certPEM(readerCA), "go-other-ca.pem": certPEM(other)} {
@@ -277,6 +302,12 @@ func (p *peer) do(req request) (reply, error) {
 		return p.dcapiRequest(ctx, req)
 	case "dcapi_verify":
 		return p.dcapiVerify(ctx, req)
+	case "verifier_start":
+		return p.verifierStart(req)
+	case "wallet_present":
+		return p.walletPresent(ctx, req)
+	case "wallet_dcapi":
+		return p.walletDCAPI(ctx, req)
 	}
 	return reply{}, fmt.Errorf("unknown op %q", req.Op)
 }

@@ -73,28 +73,7 @@ class Cases(
     private val pki: Pki,
     private val holder: Holder,
     private val issuerTrust: TrustManager,
-) {
-    private var failed = 0
-
-    /** Why a control was refused, for its ok line. */
-    private var reason: String? = null
-
-    private fun ok(what: String) = println("  ok    $what")
-    private fun bad(what: String) {
-        println("  FAIL  $what")
-        failed++
-    }
-
-    private inline fun check(what: String, block: () -> String?) {
-        reason = null
-        val problem = try {
-            block()
-        } catch (e: Exception) {
-            "${e::class.simpleName}: ${e.message}"
-        }
-        if (problem == null) ok(what + (reason?.let { " ($it)" } ?: "")) else bad("$what: $problem")
-    }
-
+) : Checks() {
     /** Runs every case, returning how many failed. */
     suspend fun run(): Int {
         mpzReaderCases()
@@ -185,16 +164,6 @@ class Cases(
         }
         check("control: the verifier refuses an mDL from an IACA it doesn't trust") {
             refusal(goVerifier(trust = "other"), "does not verify against a trusted root")
-        }
-    }
-
-    /** null if [r] failed with an error containing [want], or what it did instead. */
-    private fun refusal(r: Reply, want: String): String? = when {
-        r.error == null -> "accepted: $r"
-        !r.error!!.contains(want) -> "refused, but not for its ${want.ifEmpty { "reason" }}: ${r.error}"
-        else -> {
-            reason = r.error!!.take(160)
-            null
         }
     }
 

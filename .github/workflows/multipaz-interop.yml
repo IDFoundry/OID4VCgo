@@ -2,9 +2,11 @@
 # and wallet, from its published library, by interop/multipaz/run.sh: in
 # person (ISO/IEC 18013-5, by whole messages, no radio) and over the
 # Digital Credentials API (ISO/IEC TS 18013-7 Annex C), each side in
-# each role, with deviceMac as well as device signatures; then controls
-# (untrusted readers and issuers, a response over another session
-# transcript or for another origin) refused. The library is pinned by
+# each role, with deviceMac as well as device signatures; and OpenID4VP
+# 1.0, each side as wallet and Verifier, cross-device and over the DC
+# API; then controls (untrusted readers, Verifiers and issuers, a
+# response over another session transcript or for another origin, a
+# mismatched x509_hash client_id) refused. The library is pinned by
 # version, lock and checksum, and runs here on a disposable runner with
 # a read-only token and no secrets. Pull requests, the daily run and
 # each release test it.

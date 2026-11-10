@@ -33,6 +33,7 @@ configurations.configureEach {
 dependencies {
     implementation(libs.multipaz)
     implementation(libs.multipaz.doctypes)
+    implementation(libs.ktor.client.java)
     runtimeOnly(libs.slf4j.simple)
 }
 
