@@ -24,7 +24,10 @@ if [[ ${#modules[@]} -eq 0 ]]; then
 fi
 
 # go_version DIR: the version DIR's go.mod names in its go directive.
-go_version() { awk '$1 == "go" { print $2; exit }' "$1/go.mod"; }
+go_version() {
+  local dir=$1
+  awk '$1 == "go" { print $2; exit }' "$dir/go.mod"
+}
 
 # The golangci-lint version every ci.yml lint step pins: one, or stop.
 pinned=$(grep -E '^\s+version: v[0-9]+\.[0-9]+' .github/workflows/ci.yml | awk '{ print $2 }' | sort -u)

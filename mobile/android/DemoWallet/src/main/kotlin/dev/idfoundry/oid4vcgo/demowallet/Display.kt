@@ -144,18 +144,22 @@ object Credentials {
     fun title(c: CredentialSummary): String = c.display?.name ?: c.vct ?: c.doctype ?: c.configurationID
 
     /** Why the credential can't be relied on, if it can't. */
-    fun problem(c: CredentialSummary): String? = when {
-        c.holderKeyPresent == false -> "Its key isn't on this device: it can't be presented"
-        c.isExpired() -> "Expired"
-        c.status?.value == CredentialStatus.Value.Revoked && c.status?.reason == CredentialStatus.Reason.IssuerCertificateRevoked ->
-            "Its issuer's certificate has been revoked"
-        c.status?.value == CredentialStatus.Value.Revoked && c.status?.reason == CredentialStatus.Reason.IssuerUntrusted ->
-            "Its issuer is no longer trusted"
-        c.status?.value == CredentialStatus.Value.Revoked -> "Revoked by the issuer"
-        c.status?.value == CredentialStatus.Value.Suspended -> "Suspended by the issuer"
-        c.status?.value == CredentialStatus.Value.Unknown && c.status?.reason == CredentialStatus.Reason.NoCurrentCRL ->
-            "Revocation lists out of date: refresh them in Settings"
-        else -> null
+    fun problem(c: CredentialSummary): String? {
+        val status = c.status
+        return when {
+            c.holderKeyPresent == false -> "Its key isn't on this device: it can't be presented"
+            c.isExpired() -> "Expired"
+            status == null -> null
+            status.value == CredentialStatus.Value.Revoked && status.reason == CredentialStatus.Reason.IssuerCertificateRevoked ->
+                "Its issuer's certificate has been revoked"
+            status.value == CredentialStatus.Value.Revoked && status.reason == CredentialStatus.Reason.IssuerUntrusted ->
+                "Its issuer is no longer trusted"
+            status.value == CredentialStatus.Value.Revoked -> "Revoked by the issuer"
+            status.value == CredentialStatus.Value.Suspended -> "Suspended by the issuer"
+            status.value == CredentialStatus.Value.Unknown && status.reason == CredentialStatus.Reason.NoCurrentCRL ->
+                "Revocation lists out of date: refresh them in Settings"
+            else -> null
+        }
     }
 
     /** How many fresh copies are left: each presentation uses one no Verifier has seen. */
