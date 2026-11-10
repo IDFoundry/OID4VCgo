@@ -46,6 +46,7 @@ jobs:
             case "$state" in
               "completed success") exit 0 ;;
               completed*) echo "::warning::CI didn't succeed on $SHA; Binary-Artifacts will count the Gradle wrappers"; exit 0 ;;
+              *) ;; # queued, in progress, or no run yet: wait
             esac
             sleep 30
           done
