@@ -65,8 +65,14 @@ func newTestReader(t *testing.T) testReader {
 // given_name.
 func (r testReader) ask(t *testing.T) ([]byte, mdocdcapi.Pending) {
 	t.Helper()
+	return r.askAt(t, readerOrigin)
+}
+
+// askAt is ask from a page at origin.
+func (r testReader) askAt(t *testing.T, origin string) ([]byte, mdocdcapi.Pending) {
+	t.Helper()
 	req, err := mdocdcapi.BuildRequest(mdocdcapi.RequestParams{
-		Origin: readerOrigin, DocType: walletflowtest.DocType, Readers: []mdocdcapi.ReaderKey{r.key},
+		Origin: origin, DocType: walletflowtest.DocType, Readers: []mdocdcapi.ReaderKey{r.key},
 		Elements: map[string]map[string]bool{walletflowtest.NameSpace: {"family_name": true, "given_name": false}},
 	})
 	if err != nil {
