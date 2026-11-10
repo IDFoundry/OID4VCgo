@@ -35,6 +35,8 @@ import kotlin.time.Clock
 
 private const val VP_ORIGIN = "https://verifier.interop.example"
 private const val PID_VCT = "urn:eudi:pid:1"
+private const val SD_JWT = "dc+sd-jwt"
+private const val MSO_MDOC = "mso_mdoc"
 
 /** The claims every OpenID4VP Verifier asks for, of the PID or the mDL. */
 private val VP_CLAIMS = listOf("family_name", "given_name")
@@ -61,19 +63,19 @@ class VpCases(
 
     private suspend fun mpzWalletCases() {
         println("### OpenID4VP: Multipaz wallet → OID4VCgo's verifier (cmd/conformance-verifier)")
-        for ((format, method) in listOf("dc+sd-jwt" to "get", "mso_mdoc" to "post")) {
+        for ((format, method) in listOf(SD_JWT to "get", MSO_MDOC to "post")) {
             check("$format, cross-device, request_uri_method $method: verified") {
                 val outcome = mpzWalletCrossDevice(format, method)
                 verified(outcome, format)
             }
         }
-        for (format in listOf("dc+sd-jwt", "mso_mdoc")) {
+        for (format in listOf(SD_JWT, MSO_MDOC)) {
             check("$format, Digital Credentials API (openid4vp-v1-signed): verified") {
                 verified(mpzWalletDCAPI(format), format)
             }
         }
         check("control: the verifier refuses a PID from an issuer it doesn't trust") {
-            val outcome = mpzWalletCrossDevice("dc+sd-jwt", "get", trust = "other")
+            val outcome = mpzWalletCrossDevice(SD_JWT, "get", trust = "other")
             refusal(outcome["error"]?.jsonPrimitive?.content, outcome.toString(), "trusted root")
         }
 
@@ -82,20 +84,20 @@ class VpCases(
     private suspend fun goWalletCases() {
         println("### OpenID4VP: OID4VCgo's wallet (walletflow) → Multipaz verifier (VerificationSession)")
         Verifier(tls, pki).use { verifier ->
-            for (format in listOf("dc+sd-jwt", "mso_mdoc")) {
+            for (format in listOf(SD_JWT, MSO_MDOC)) {
                 check("$format, cross-device, signed x509_hash request, direct_post.jwt: Multipaz verified it") {
                     val (answer, result) = verifier.ask(peer, format, "mpz")
                     answer.error ?: checkPresentation(result.get(30, TimeUnit.SECONDS), format)
                 }
             }
             check("control: the wallet refuses a Verifier under a CA it doesn't trust") {
-                refusal(verifier.ask(peer, "dc+sd-jwt", "other").first, "untrusted verifier")
+                refusal(verifier.ask(peer, SD_JWT, "other").first, "untrusted verifier")
             }
             check("control: the wallet refuses an x509_hash client_id naming another certificate than the request's") {
-                refusal(verifier.ask(peer, "dc+sd-jwt", "mpz", clientIdOf = pki.otherReader).first, "x509_hash")
+                refusal(verifier.ask(peer, SD_JWT, "mpz", clientIdOf = pki.otherReader).first, "x509_hash")
             }
         }
-        for (format in listOf("dc+sd-jwt", "mso_mdoc")) {
+        for (format in listOf(SD_JWT, MSO_MDOC)) {
             check("$format, Digital Credentials API (openid4vp-v1-signed): Multipaz verified it") {
                 goWalletDCAPI(format)
             }
@@ -107,8 +109,8 @@ class VpCases(
         if (outcome["status"]?.jsonPrimitive?.content != "verified") return "the verifier said $outcome"
         val credential = outcome["credentials"]!!.jsonObject.values.single().jsonObject
         // An mdoc's claims are by namespace.
-        val claims = if (format == "mso_mdoc") credential[DrivingLicense.MDL_NAMESPACE]!!.jsonObject.keys else credential.keys
-        val want = if (format == "mso_mdoc") REQUESTED_MDOC else VP_CLAIMS.toSet()
+        val claims = if (format == MSO_MDOC) credential[DrivingLicense.MDL_NAMESPACE]!!.jsonObject.keys else credential.keys
+        val want = if (format == MSO_MDOC) REQUESTED_MDOC else VP_CLAIMS.toSet()
         return if (claims.containsAll(want)) null else "verified only $claims"
     }
 
@@ -186,7 +188,7 @@ class VpCases(
         }.toSet()
         return when {
             !claims.containsAll(VP_CLAIMS) -> "verified only $claims"
-            format == "dc+sd-jwt" && "birthdate" in claims -> "birthdate disclosed, which wasn't asked for"
+            format == SD_JWT && "birthdate" in claims -> "birthdate disclosed, which wasn't asked for"
             !issuerTrust.verify(presentation.documentSignerCertChain!!.certificates).isTrusted ->
                 "the issuer's chain doesn't reach OID4VCgo's IACA"
             else -> null
@@ -199,11 +201,11 @@ private val REQUESTED_MDOC = setOf("family_name", "given_name", "age_over_18")
 
 /** A DCQL query for [format]'s [VP_CLAIMS]. */
 private fun dcql(format: String): String {
-    val credential = if (format == "mso_mdoc") {
-        """{"id": "mdl", "format": "mso_mdoc", "meta": {"doctype_value": "${DrivingLicense.MDL_DOCTYPE}"},
+    val credential = if (format == MSO_MDOC) {
+        """{"id": "mdl", "format": "$MSO_MDOC", "meta": {"doctype_value": "${DrivingLicense.MDL_DOCTYPE}"},
            "claims": [${VP_CLAIMS.joinToString { """{"path": ["${DrivingLicense.MDL_NAMESPACE}", "$it"]}""" }}]}"""
     } else {
-        """{"id": "pid", "format": "dc+sd-jwt", "meta": {"vct_values": ["$PID_VCT"]},
+        """{"id": "pid", "format": "$SD_JWT", "meta": {"vct_values": ["$PID_VCT"]},
            "claims": [${VP_CLAIMS.joinToString { """{"path": ["$it"]}""" }}]}"""
     }
     return """{"credentials": [$credential]}"""

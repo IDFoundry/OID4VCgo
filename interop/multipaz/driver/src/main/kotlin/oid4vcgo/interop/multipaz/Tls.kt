@@ -29,7 +29,7 @@ class Tls(dir: File) {
     private val certificates = CertificateFactory.getInstance("X.509")
 
     /** Trusts the peer's TLS CA, and nothing else. */
-    val client: SSLContext = SSLContext.getInstance("TLS").apply {
+    val client: SSLContext = SSLContext.getInstance("TLSv1.3").apply {
         val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
         store.setCertificateEntry("ca", certificate(File(dir, "go-tls-ca.pem")))
         val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
@@ -37,7 +37,7 @@ class Tls(dir: File) {
     }
 
     /** Serves the peer's localhost certificate. */
-    val server: SSLContext = SSLContext.getInstance("TLS").apply {
+    val server: SSLContext = SSLContext.getInstance("TLSv1.3").apply {
         val der = pem(File(dir, "tls-key.pem").readText())
         val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
         val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
