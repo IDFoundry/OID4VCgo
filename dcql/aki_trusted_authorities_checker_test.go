@@ -76,6 +76,36 @@ func TestAKITrustedAuthoritiesChecker_RejectsLeafWithNoAKI(t *testing.T) {
 	}
 }
 
+func TestAKITrustedAuthoritiesChecker_RejectsEmptyValueForLeafWithNoAKI(t *testing.T) {
+	// An empty value encodes no identifier, so it mustn't match a
+	// certificate that has none either.
+	leaf, _ := testcert.SelfSignedLeaf(t, "test-self-signed")
+
+	authorities := []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{""}}}
+	err := dcql.AKITrustedAuthoritiesChecker{}.CheckTrustedAuthorities(context.Background(), authorities, [][]byte{leaf.Raw})
+	if err == nil {
+		t.Fatalf("CheckTrustedAuthorities = nil error, want error (an empty value matched a leaf with no AKI)")
+	}
+}
+
+func TestAKITrustedAuthoritiesChecker_RejectsLoneLeafsOwnSKI(t *testing.T) {
+	// The topmost certificate's own subject key identifier counts only
+	// when it's an authority above the leaf: a chain of the leaf alone
+	// doesn't make the leaf its own authority.
+	ca, caKey := testcert.CA(t, "test-ca")
+	key := newKey(t)
+	leaf := issue(t, &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "test-leaf"},
+		SubjectKeyId: []byte("leaf-subject-key-id"),
+	}, &key.PublicKey, ca, caKey, nil)
+
+	authorities := []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{base64.RawURLEncoding.EncodeToString(leaf.SubjectKeyId)}}}
+	err := dcql.AKITrustedAuthoritiesChecker{}.CheckTrustedAuthorities(context.Background(), authorities, [][]byte{leaf.Raw})
+	if err == nil {
+		t.Fatalf("CheckTrustedAuthorities = nil error, want error (a lone leaf's own SKI matched)")
+	}
+}
+
 // verifiedAKI is an "aki" trusted_authorities entry naming ca.
 func verifiedAKI(ca *x509.Certificate) []dcql.TrustedAuthoritiesQuery {
 	return []dcql.TrustedAuthoritiesQuery{{Type: dcql.TrustedAuthorityAKI, Values: []string{base64.RawURLEncoding.EncodeToString(ca.SubjectKeyId)}}}
