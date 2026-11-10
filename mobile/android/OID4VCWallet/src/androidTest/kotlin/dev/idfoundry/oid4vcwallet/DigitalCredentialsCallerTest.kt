@@ -123,9 +123,9 @@ class DigitalCredentialsCallerTest {
     }
 
     /**
-     * From API 28 the platform itself gives such an app no certificate
-     * history; before it, Credential Manager's compat layer gives it its
-     * signers, and only the wallet's own check keeps it from an origin.
+     * From API 28 the platform reports such an app's several signers;
+     * before it, the compat layer reports them as its certificate history
+     * instead, and never multiple signers, so the wallet counts them.
      */
     @Test
     fun anAppSignedBySeveralKeysHasNoOrigin() {
@@ -137,7 +137,11 @@ class DigitalCredentialsCallerTest {
             else -> null
         }
         assumeTrue(caller != null)
-        assertTrue(caller!!.signingInfoCompat.hasMultipleSigners)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            assertTrue(caller!!.signingInfoCompat.hasMultipleSigners)
+        } else {
+            assertEquals(2, caller!!.signingInfoCompat.signingCertificateHistory.size)
+        }
         assertNull(DigitalCredentials.callerOrigin(caller, allowlist(pkg, sha256)))
     }
 }
