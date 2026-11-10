@@ -13,9 +13,13 @@
 # and cmd/conformance-issuer, which the peer starts. See README.md.
 #
 #   interop/multipaz/run.sh
+#   MULTIPAZ_VERSION=latest interop/multipaz/run.sh
 #
-# Needs go and a JDK (21 or later). Exits 0 only if every case behaves
-# as expected.
+# MULTIPAZ_VERSION builds the driver against another Multipaz release
+# (latest: Maven Central's newest) instead of the pinned one, without
+# the locks and checksums, which are the pinned release's.
+# Needs go and a JDK (21 or later), and curl for latest. Exits 0 only
+# if every case behaves as expected.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -30,7 +34,16 @@ echo "oid4vcgo  $SRC, commit $(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo 
   && go build -o "$WORK/verifier" ./cmd/conformance-verifier \
   && go build -o "$WORK/issuer" ./cmd/conformance-issuer \
   && go build -o "$WORK/setup-issuer" ./interop/eudi/scripts/setup-issuer)
-(cd "$HERE/driver" && ./gradlew --quiet --no-daemon installDist)
+GRADLE_ARGS=()
+if [[ -n "${MULTIPAZ_VERSION:-}" ]]; then
+  if [[ "$MULTIPAZ_VERSION" == latest ]]; then
+    MULTIPAZ_VERSION="$(curl -sSfL --proto '=https' --tlsv1.2 https://repo1.maven.org/maven2/org/multipaz/multipaz/maven-metadata.xml \
+      | sed -nE 's|.*<release>([^<]+)</release>.*|\1|p')"
+  fi
+  [[ "$MULTIPAZ_VERSION" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo "bad MULTIPAZ_VERSION: '$MULTIPAZ_VERSION'" >&2; exit 2; }
+  GRADLE_ARGS=(-PmultipazVersion="$MULTIPAZ_VERSION" --dependency-verification off)
+fi
+(cd "$HERE/driver" && ./gradlew --quiet --no-daemon ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"} installDist)
 echo "multipaz  $(find "$LIB" -name 'multipaz-*.jar' | sed -E 's|.*/||; s|\.jar$||' | sort | tr '\n' ' ')"
 
 status=0

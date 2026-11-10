@@ -7,7 +7,10 @@
 # a read-only token and no secrets, pinned to a reviewed commit. A pull
 # request's wallet is built from its own checkout (OID4VCGO_SRC), so a
 # regression shows before it's released; the schedule and each release
-# test published versions.
+# test published versions. The weekly run tests polaris-id's main
+# instead of the pin (polaris-oid4vp has no release since), to show a
+# break before the pin moves: unreviewed source, on the same disposable
+# runner, read-only token and no secrets.
 name: Polaris interop
 
 on:
@@ -16,7 +19,8 @@ on:
     paths-ignore:
       - 'mobile/**'
   schedule:
-    - cron: '30 6 * * *' # daily, 6:30am UTC
+    - cron: '30 6 * * *' # daily, 6:30am UTC: the pinned commit
+    - cron: '0 8 * * 1' # Mondays, 8:00am UTC: polaris-id's main
   # Each release, as the tag itself: right after tagging, the module
   # proxy's @latest can still be the previous release.
   release:
@@ -26,16 +30,21 @@ on:
       version:
         description: OID4VCgo release to test (vX.Y.Z, or latest)
         default: latest
+      polaris_ref:
+        description: polaris-id commit or branch to test (empty for the pinned commit)
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: polaris-interop-${{ github.ref }}
+  group: polaris-interop-${{ github.ref }}-${{ github.event.schedule || 'run' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   interop:
+    # sqlstore's releases (sqlstore/vX.Y.Z) aren't the wallet's.
+    if: ${{ !startsWith(github.event.release.tag_name, 'sqlstore/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -45,8 +54,8 @@ jobs:
           # polaris-oid4vp v1.0.0, reviewed 2026-10-11 (from 84a805f: the
           # verifier unchanged; run.sh gained OID4VCGO_BIN/OID4VCGO_SRC
           # and digest-pinned images). Move it only after reading the
-          # change.
-          ref: 6f2b890aa56678f090909dd265cf4f113bf04ddc
+          # change. The weekly run takes main.
+          ref: ${{ inputs.polaris_ref || (github.event.schedule == '0 8 * * 1' && 'main') || '6f2b890aa56678f090909dd265cf4f113bf04ddc' }}
           path: polaris-id
           persist-credentials: false
 
@@ -63,6 +72,8 @@ jobs:
           OID4VCGO_VERSION: ${{ github.event.release.tag_name || inputs.version || 'latest' }}
           OID4VCGO_SRC: ${{ github.event_name == 'pull_request' && format('{0}/oid4vcgo', github.workspace) || '' }}
         run: |
+          set -o pipefail
+          echo "polaris-id $(git rev-parse HEAD)"
           export WORK="$RUNNER_TEMP/polaris-work"
           mkdir -p "$WORK"
           bash lab/interop/oid4vcgo/run.sh 2>&1 | tee "$RUNNER_TEMP/polaris-interop.log"
@@ -92,5 +103,5 @@ jobs:
     uses: ./.github/workflows/scheduled-alert.yml
     with:
       result: ${{ needs.interop.result }}
-      label: interop-polaris
-      title: Nightly Polaris interop failure
+      label: ${{ (github.event.schedule == '0 8 * * 1' || inputs.polaris_ref != '') && 'interop-polaris-latest' || 'interop-polaris' }}
+      title: ${{ (github.event.schedule == '0 8 * * 1' || inputs.polaris_ref != '') && 'Polaris interop failure against polaris-id main' || 'Nightly Polaris interop failure' }}

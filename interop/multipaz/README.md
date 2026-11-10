@@ -149,10 +149,14 @@ session transcript; so the origin control uses an unsigned request.
 
 ```sh
 interop/multipaz/run.sh
+MULTIPAZ_VERSION=latest interop/multipaz/run.sh
 ```
 
 It needs Go and a JDK (21 or later), and exits 0 only if every case
-behaves as expected. `WORK` keeps the run's files; `driver.log` has
+behaves as expected. `MULTIPAZ_VERSION` builds the driver against
+another Multipaz release (`latest`: Maven Central's newest, found with
+`curl`) without the locks and checksums, which are the pinned
+release's. `WORK` keeps the run's files; `driver.log` has
 Multipaz's own logging.
 
 ## Moving the pin
@@ -174,3 +178,8 @@ them out, and raises Netty and logback past known vulnerabilities
 ([`build.gradle.kts`](driver/build.gradle.kts)); check those again when
 the pin moves.
 `interop/eudi/presentation` uses the same Multipaz release.
+
+The weekly run tests Multipaz's newest release (`MULTIPAZ_VERSION=latest`)
+with the pinned driver, and opens an `interop-multipaz-latest` issue
+when it fails: a new release, or one the driver no longer builds
+against.

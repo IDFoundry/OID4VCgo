@@ -62,10 +62,13 @@ OIDF suite has no negative wallet-side cases like those.
 It runs on each pull request (outside `mobile/`), with the wallet built
 from the pull request's checkout, so a regression shows before it's
 released; daily, against the newest release; on each release, against
-that release's tag; and by hand. polaris-id is pinned to a reviewed
-commit (polaris-oid4vp v1.0.0), since its verifier runs from source on
-the runner (a read-only token, no secrets). Move the pin only after
-reading the change. A run takes about a minute.
+that release's tag (not sqlstore's); and by hand. polaris-id is pinned
+to a reviewed commit (polaris-oid4vp v1.0.0), since its verifier runs
+from source on the runner (a read-only token, no secrets). Move the pin
+only after reading the change. The weekly run tests polaris-id's `main`
+instead, unreviewed, to show a break before the pin moves, and opens an
+`interop-polaris-latest` issue when it fails. A run takes about a
+minute.
 
 ## Interop with the EUDI reference verifier
 
@@ -145,7 +148,8 @@ The messages pass whole between the two programs, with no radio.
 Controls (untrusted readers, Verifiers, issuers and attesters, a
 DeviceResponse over another session transcript, an answer for another
 origin, a mismatched `x509_hash` client_id) are refused. It runs on each pull request,
-daily and on each release. See
+daily and on each release against the pinned release, and weekly
+against Multipaz's newest release on Maven Central. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the
 cases, Multipaz's deviations, and moving the pin.
 
