@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.1...v0.75.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **walletflow:** refuse a copy with no holder key left instead of panicking ([1f8b6df](https://github.com/IDFoundry/OID4VCgo/commit/1f8b6dfacc2729d5cd5f6adaf3179a85ca3758f5))
+
 ## [0.75.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.0...v0.75.1) (2026-11-09)
 
 
