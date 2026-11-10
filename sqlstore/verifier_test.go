@@ -152,3 +152,90 @@ func TestTransactionUpdateSkipsUnchanged(t *testing.T) {
 		t.Errorf("BrowserBindingHash = %v, want the update's", got.BrowserBindingHash)
 	}
 }
+
+// A transaction moved to another ID is refused, unsealed too: its
+// record names its own ID.
+func TestTransactionIsBoundToItsID(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, raw := e.raw()
+		store := d.Transactions(verifier.TransactionCodec{})
+		if err := store.Create(ctx, verifier.Transaction{ID: "a", ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, "UPDATE oid4vc_verifier_transactions SET id = 'b' WHERE id = 'a'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Get(ctx, "b"); !errors.Is(err, sqlstore.ErrRecordFormat) {
+			t.Errorf("Get of a transaction moved to another ID = %v, want ErrRecordFormat", err)
+		}
+	})
+}
+
+// An Update can't change a transaction's ID: it fails, writing nothing.
+func TestTransactionUpdateKeepsTheID(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		store := e.db().Transactions(verifier.TransactionCodec{})
+		if err := store.Create(ctx, verifier.Transaction{ID: "a", ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Update(ctx, "a", func(tx *verifier.Transaction) error {
+			tx.ID, tx.Status = "b", verifier.TransactionDone
+			return nil
+		}); err == nil {
+			t.Error("Update changing the ID = nil error, want it refused")
+		}
+		got, err := store.Get(ctx, "a")
+		if err != nil || got.ID != "a" || got.Status != verifier.TransactionPending {
+			t.Errorf("Get after a refused Update = %+v, %v; want it unchanged", got, err)
+		}
+	})
+}
+
+// Transactions without a KeyID or ResponseCodeHash, several of them,
+// are found by neither: an empty one is none.
+func TestTransactionLookupsIgnoreEmptyKeys(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		store := e.db().Transactions(verifier.TransactionCodec{})
+		for _, id := range []string{"a", "b"} {
+			if err := store.Create(ctx, verifier.Transaction{ID: id, ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending}); err != nil {
+				t.Fatalf("Create %s: %v", id, err)
+			}
+		}
+		if id, err := store.IDByKeyID(ctx, ""); !errors.Is(err, verifier.ErrTransactionUnknown) {
+			t.Errorf(`IDByKeyID("") = %q, %v; want ErrTransactionUnknown`, id, err)
+		}
+		if id, err := store.IDByResponseCode(ctx, ""); !errors.Is(err, verifier.ErrTransactionUnknown) {
+			t.Errorf(`IDByResponseCode("") = %q, %v; want ErrTransactionUnknown`, id, err)
+		}
+	})
+}
+
+// No two transactions share a KeyID, or a ResponseCodeHash: the second
+// is refused by the database.
+func TestTransactionLookupKeysAreUnique(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		store := e.db().Transactions(verifier.TransactionCodec{})
+		tx := func(id, kid, codeHash string) verifier.Transaction {
+			return verifier.Transaction{ID: id, KeyID: kid, ResponseCodeHash: codeHash, ExpiresAt: time.Now().Add(time.Hour), Status: verifier.TransactionPending}
+		}
+		if err := store.Create(ctx, tx("a", "kid", "hash")); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Create(ctx, tx("b", "kid", "")); err == nil {
+			t.Error("Create of a second transaction with the same KeyID = nil error")
+		}
+		if err := store.Create(ctx, tx("c", "", "hash")); err == nil {
+			t.Error("Create of a second transaction with the same ResponseCodeHash = nil error")
+		}
+		if id, err := store.IDByKeyID(ctx, "kid"); err != nil || id != "a" {
+			t.Errorf("IDByKeyID = %q, %v; want the first transaction", id, err)
+		}
+		if id, err := store.IDByResponseCode(ctx, "hash"); err != nil || id != "a" {
+			t.Errorf("IDByResponseCode = %q, %v; want the first transaction", id, err)
+		}
+	})
+}

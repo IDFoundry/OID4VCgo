@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -626,6 +627,53 @@ func TestMigrateAddsWalletProviderInstanceCredentialIDs(t *testing.T) {
 		var stored sql.NullString
 		if err := raw.QueryRowContext(ctx, inDialect(e.dialect, "SELECT credential_id FROM oid4vc_walletprovider_instances WHERE id = ?"), "e").Scan(&stored); err != nil || stored.Valid {
 			t.Fatalf("credential_id of an instance without one = %v, %v; want NULL", stored, err)
+		}
+	})
+}
+
+// ListUnretained refuses a key whose record has a RetainUntil its row
+// doesn't.
+func TestWalletProviderListUnretainedChecksTheRecord(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, raw := e.raw()
+		k := testInstanceKey("a", "i")
+		k.RetainUntil = time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+		if err := d.WalletProviderInstanceKeys().Create(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, "UPDATE oid4vc_walletprovider_instance_keys SET sweep_after = NULL WHERE id = 'a'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.WalletProviderInstanceKeys().ListUnretained(ctx, "", 10); !errors.Is(err, sqlstore.ErrRecordFormat) {
+			t.Errorf("ListUnretained of a key with a RetainUntil = %v, want ErrRecordFormat", err)
+		}
+	})
+}
+
+// An Update of a record at the greatest revision a row holds is a
+// conflict, writing nothing: there's no next revision.
+func TestWalletProviderUpdateAtTheLastRevision(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		d, raw := e.raw()
+		s := d.WalletProviderInstances()
+		if err := s.Create(ctx, testInstance("a")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, fmt.Sprintf("UPDATE oid4vc_walletprovider_instances SET revision = %d WHERE id = 'a'", int64(math.MaxInt64))); err != nil {
+			t.Fatal(err)
+		}
+		in, err := s.Get(ctx, "a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		in.Revision, in.State = math.MaxInt64, walletprovider.StateRevoked
+		if err := s.Update(ctx, in); !errors.Is(err, walletprovider.ErrConflict) {
+			t.Errorf("Update at revision MaxInt64 = %v, want ErrConflict", err)
+		}
+		if got, err := s.Get(ctx, "a"); err != nil || got.State != walletprovider.StateActive {
+			t.Errorf("Get after a refused Update = %v, %v; want it unchanged", got.State, err)
 		}
 	})
 }
