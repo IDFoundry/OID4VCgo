@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.content.pm.SigningInfo
 import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.credentials.provider.CallingAppInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,6 +24,9 @@ import java.security.MessageDigest
  * the request is answered for. The test app itself, signed with the
  * debug key, stands in for both the caller and the apps the allowlists
  * name.
+ *
+ * SigningInfo is API 28's: it appears only in [Signing]'s signatures, not
+ * this class's, which JUnit reflects over on API 26 too.
  */
 @RunWith(AndroidJUnit4::class)
 class DigitalCredentialsCallerTest {
@@ -30,14 +34,21 @@ class DigitalCredentialsCallerTest {
     private val pm: PackageManager = context.packageManager
     private val pkg: String = context.packageName
 
-    private val signingInfo: SigningInfo? by lazy {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) null
-        else pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo
+    @RequiresApi(Build.VERSION_CODES.P)
+    private object Signing {
+        fun of(pm: PackageManager, pkg: String): SigningInfo =
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo!!
+
+        fun caller(pm: PackageManager, pkg: String, origin: String?): CallingAppInfo = CallingAppInfo(pkg, of(pm, pkg), origin)
+
+        @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+        fun signedBy(pkg: String, signers: List<Signature>): CallingAppInfo =
+            CallingAppInfo(pkg, SigningInfo(SigningInfo.VERSION_SIGNING_BLOCK_V2, signers, emptyList(), null), null)
     }
 
     private val certificate: Signature by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            signingInfo!!.apkContentsSigners.single()
+            Signing.of(pm, pkg).apkContentsSigners.single()
         } else {
             @Suppress("DEPRECATION")
             pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures!!.single()
@@ -47,7 +58,7 @@ class DigitalCredentialsCallerTest {
     private val sha256: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(certificate.toByteArray()) }
 
     private fun caller(origin: String?): CallingAppInfo =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) CallingAppInfo(pkg, signingInfo!!, origin)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Signing.caller(pm, pkg, origin)
         else CallingAppInfo(pkg, listOf(certificate), origin)
 
     /** A privileged-browsers allowlist naming [packageName] signed with [fingerprint]. */
@@ -121,8 +132,7 @@ class DigitalCredentialsCallerTest {
         val other = Signature(ByteArray(64) { it.toByte() })
         val caller = when {
             Build.VERSION.SDK_INT < Build.VERSION_CODES.P -> CallingAppInfo(pkg, listOf(certificate, other), null)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM ->
-                CallingAppInfo(pkg, SigningInfo(SigningInfo.VERSION_SIGNING_BLOCK_V2, listOf(certificate, other), emptyList(), null), null)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM -> Signing.signedBy(pkg, listOf(certificate, other))
             // API 28–34 has no public way to make a SigningInfo.
             else -> null
         }
