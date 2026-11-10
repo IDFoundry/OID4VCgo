@@ -110,7 +110,9 @@ jobs:
 
       - name: build and lay out the package
         if: ${{ !inputs.documentation_only }}
-        run: mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
+        run: |
+          set -o pipefail
+          mobile/ios/package-swift-release.sh "$VERSION" wallet-swift "$RUNNER_TEMP/assets" | tee "$RUNNER_TEMP/summary.txt"
 
       # What's new since the previous release, whose notes name the commit
       # it was built from. Before anything is published, so a failure here
@@ -146,7 +148,9 @@ jobs:
       - name: checksums
         if: ${{ !inputs.documentation_only }}
         working-directory: ${{ runner.temp }}/assets
-        run: shasum -a 256 Mobile.xcframework.zip | tee SHA256SUMS
+        run: |
+          set -o pipefail
+          shasum -a 256 Mobile.xcframework.zip | tee SHA256SUMS
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: ${{ !inputs.documentation_only }}
