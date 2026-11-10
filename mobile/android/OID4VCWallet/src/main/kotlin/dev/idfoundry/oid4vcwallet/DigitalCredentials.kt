@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
 import android.util.Base64
+import androidx.annotation.VisibleForTesting
 import androidx.credentials.DigitalCredential
 import androidx.credentials.ExperimentalDigitalCredentialApi
 import androidx.credentials.GetCredentialResponse
@@ -276,7 +277,8 @@ public object DigitalCredentials {
      * it's on [privilegedBrowsers]; an app's own identity otherwise. Null
      * where neither can be established.
      */
-    private fun callerOrigin(caller: CallingAppInfo, privilegedBrowsers: String): String? {
+    @VisibleForTesting
+    internal fun callerOrigin(caller: CallingAppInfo, privilegedBrowsers: String): String? {
         val browserOrigin = runCatching { caller.getOrigin(privilegedBrowsers) }.getOrElse { return null }
         if (browserOrigin != null) return browserOrigin
         val signing = caller.signingInfoCompat
