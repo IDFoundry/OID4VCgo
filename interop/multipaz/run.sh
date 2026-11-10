@@ -18,8 +18,8 @@
 # MULTIPAZ_VERSION builds the driver against another Multipaz release
 # (latest: Maven Central's newest) instead of the pinned one, without
 # the locks and checksums, which are the pinned release's.
-# Needs go and a JDK (21 or later), and curl for latest. Exits 0 only if every case behaves
-# as expected.
+# Needs go and a JDK (21 or later), and curl for latest. Exits 0 only
+# if every case behaves as expected.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
