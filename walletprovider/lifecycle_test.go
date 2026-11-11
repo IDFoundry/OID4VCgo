@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -167,5 +168,71 @@ func TestRevokeWhere(t *testing.T) {
 	h.expectStatus(statuslist.StatusValid, strongBoxKeys...)
 	if _, err := h.p.RevokeWhere(context.Background(), nil, "x"); err == nil {
 		t.Fatal("RevokeWhere(nil) succeeded")
+	}
+}
+
+// gatedKeys is an InstanceKeyStore whose first List call made after
+// gate pauses until release is closed.
+type gatedKeys struct {
+	walletprovider.InstanceKeyStore
+	mu      sync.Mutex
+	gated   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedKeys) gate() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.gated = true
+}
+
+func (g *gatedKeys) List(ctx context.Context, id, after string, limit int) ([]walletprovider.InstanceKey, error) {
+	g.mu.Lock()
+	wait := g.gated
+	g.gated = false
+	g.mu.Unlock()
+	if wait {
+		close(g.entered)
+		<-g.release
+	}
+	return g.InstanceKeyStore.List(ctx, id, after, limit)
+}
+
+// TestTransitionRacingRevoke: a Suspend or Resume whose statuses are
+// set after a concurrent Revoke has set its own leaves the revoked
+// instance's keys INVALID, not SUSPENDED or VALID.
+func TestTransitionRacingRevoke(t *testing.T) {
+	for name, transition := range map[string]func(p *walletprovider.Provider, id string) error{
+		"Suspend": func(p *walletprovider.Provider, id string) error { return p.Suspend(context.Background(), id, "lost") },
+		"Resume":  func(p *walletprovider.Provider, id string) error { return p.Resume(context.Background(), id) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := &gatedKeys{entered: make(chan struct{}), release: make(chan struct{})}
+			h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+				g.InstanceKeyStore = d.InstanceKeys
+				d.InstanceKeys = g
+			})
+			ctx := context.Background()
+			in, _ := h.register(kindStrongBox)
+			key := h.newInstanceKey(in.ID, kindStrongBox)
+			if err := h.p.Suspend(ctx, in.ID, "lost"); err != nil {
+				t.Fatal(err)
+			}
+			g.gate()
+			done := make(chan error)
+			// Stores its state, then waits to list the instance's keys.
+			go func() { done <- transition(h.p, in.ID) }()
+			<-g.entered
+			if err := h.p.Revoke(ctx, in.ID, "fraud"); err != nil {
+				t.Fatal(err)
+			}
+			close(g.release)
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			h.expectState(in.ID, walletprovider.StateRevoked, "fraud")
+			h.expectStatus(statuslist.StatusInvalid, key)
+		})
 	}
 }
