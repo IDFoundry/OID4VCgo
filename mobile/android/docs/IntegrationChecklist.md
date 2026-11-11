@@ -218,8 +218,10 @@ is a complete, working app on this library to compare against.
   - On a final state: `releaseForeground(activity)`. Don't prefer again
     for that session. The fingerprint prompt resumes the activity after
     sharing; an unconditional `onResume` keeps taps away from other wallets.
-- [ ] Leaving the screen: `releaseForeground`, then `cancel()`, then
-  `close()` from a scope that outlives the screen, so cleanup finishes.
+- [ ] Leaving the screen: `releaseForeground`, then `cancel()`
+  (`NfcPresentation.presentation.cancel()`, or
+  `CombinedPresentation.cancel()`), then `close()` from a scope that
+  outlives the screen, so cleanup finishes.
 - [ ] The same consent flow as QR: `state`, `respond`, `decline` (on
   `NfcPresentation.presentation`, or directly on `CombinedPresentation`).
 - [ ] With `startCombinedPresentation`, hide the QR code once

@@ -95,6 +95,18 @@ session, which keeps the issuer's cookies out of the browser's. Where
 the browser has no Auth Tabs, open a Custom Tab: its redirect reaches
 the app through the intent filter, as a new intent.
 
+This example needs two libraries the AAR doesn't bring: AndroidX
+Browser, for Auth Tabs and Custom Tabs, and
+AndroidX Activity, for `ComponentActivity` and its result launchers.
+The demo wallet uses these versions:
+
+```
+dependencies {
+    implementation("androidx.browser:browser:1.10.0")
+    implementation("androidx.activity:activity:1.13.0")
+}
+```
+
 ```kotlin
 /** Opens issuers' authorization pages from `activity`, and returns their redirects. */
 class IssuerSignIn(private val activity: ComponentActivity, private val callbackScheme: String) {
