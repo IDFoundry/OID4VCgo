@@ -528,7 +528,7 @@ CRLs it holds, through `certrevocation.CRLs`.
 | 7 ✓ | Hardening | Suspension and resumption (deferred credentials, an authorization in progress), cancellation, network failures, issuer and verifier errors, logging without personal data, the demo app's retry and cancel |
 | 8 ✓ | Android | The same bridge over Android Keystore, packaged as an AAR, with the demo app and the DC API (below); some checks on a device are open items (Phase 8) |
 | 9 ✓ | DC API | A DC API adapter over the presentation engine: `org-iso-mdoc` (MdocPresentation, iOS) and OpenID4VP (`StartDCAPIPresentation`, for Android's Credential Manager) |
-| 10 ✓ | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions. The SDKs and the demos are done, and two iPhones ran in both directions (2026-11-12); the runs between an iPhone and an Android phone are open |
+| 10 ✓ | Proximity | ISO/IEC 18013-5 device retrieval over BLE in both SDKs: the holder shows a QR code and answers a reader; a reader mode in both demo apps; iPhone ↔ Android in both directions. The SDKs and the demos are done, and two iPhones ran in both directions and both BLE modes (2026-11-12); the runs between an iPhone and an Android phone are open |
 
 ### Phase 1 findings
 
@@ -1662,9 +1662,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   passport-vdc demo): a full presentation ran each way, each phone in
   turn holder and reader. The reader scanned the holder's QR code, and
   the session ran over BLE in mdoc central client mode (the holder the
-  BLE central), as the iPhone 14's reader screen showed. The holder
-  showed the demo reader as verified, the response was device-signed
-  (not deviceMac), and the reader verified it. iPhone ↔ Android (#933),
+  BLE central), as the iPhone 14's reader screen showed. With the
+  holder offering only mdoc peripheral server mode (the holder the BLE
+  peripheral), it ran each way too. The holder showed the demo reader
+  as verified, the responses were device-signed (not deviceMac), and
+  the reader verified them. iPhone ↔ Android (#933),
   deviceMac on a device, and the negative cases (cancel while
   connecting, Bluetooth off mid-session, a second reader nearby) are
   still to run.
