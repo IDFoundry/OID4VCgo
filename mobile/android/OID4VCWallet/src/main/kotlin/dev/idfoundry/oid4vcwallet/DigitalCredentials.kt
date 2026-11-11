@@ -3,6 +3,7 @@ package dev.idfoundry.oid4vcwallet
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -174,8 +175,11 @@ public object DigitalCredentials {
      * The Digital Credentials API request [activity] was started with:
      * its first OpenID4VP request, else its first `org-iso-mdoc` one.
      *
-     * Null unless Credential Manager started the activity: an app
-     * signed with the platform's key, or one of [credentialManagerApps].
+     * Null unless Credential Manager started the activity: the
+     * platform's own (the framework, or the system's
+     * `com.android.credentialmanager` selector, signed with the
+     * platform's key), or one of [credentialManagerApps]. Another app
+     * signed with the platform's key isn't Credential Manager.
      * The request, its caller and the caller's origin all come from the
      * activity's intent, which any app can fill in when it starts an
      * exported activity: only Credential Manager's is vouched for. An
@@ -197,10 +201,31 @@ public object DigitalCredentials {
         return request(activity.intent, privilegedBrowsers)
     }
 
-    /** Whether [caller] is a platform-signed app or one of [apps], by its signing certificate. */
+    /**
+     * The platform's own Credential Manager callers: the framework
+     * (`android`) and AOSP's Credential Manager selector, which launches
+     * a provider's PendingIntent on Android 14 and later.
+     */
+    internal val PLATFORM_CREDENTIAL_MANAGER_PACKAGES: Set<String> = setOf("android", "com.android.credentialmanager")
+
+    /**
+     * Whether [caller] is the platform's Credential Manager — one of
+     * [PLATFORM_CREDENTIAL_MANAGER_PACKAGES], installed on the system
+     * image and signed with the platform's key — or one of [apps], by its
+     * signing certificate. Any other app signed with the platform's key
+     * (on some builds, many are) isn't trusted to vouch for a caller's
+     * origin.
+     */
     internal fun isCredentialManager(pm: PackageManager, caller: String, apps: List<CredentialManagerApp>): Boolean {
-        if (pm.checkSignatures("android", caller) == PackageManager.SIGNATURE_MATCH) return true
+        if (isPlatformCredentialManager(pm, caller)) return true
         return apps.any { app -> app.packageName == caller && app.certificateSHA256.any { signedWith(pm, caller, it) } }
+    }
+
+    private fun isPlatformCredentialManager(pm: PackageManager, caller: String): Boolean {
+        if (caller !in PLATFORM_CREDENTIAL_MANAGER_PACKAGES) return false
+        if (caller != "android" && pm.checkSignatures("android", caller) != PackageManager.SIGNATURE_MATCH) return false
+        val flags = runCatching { pm.getApplicationInfo(caller, 0).flags }.getOrNull() ?: return false
+        return flags and ApplicationInfo.FLAG_SYSTEM != 0
     }
 
     private fun signedWith(pm: PackageManager, packageName: String, sha256: ByteArray): Boolean {
