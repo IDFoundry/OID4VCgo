@@ -62,12 +62,13 @@ suspend fun registerForChrome(context: Context, wallet: Wallet) {
 ```
 
 Nothing is presented by registering: the holder still agrees in the
-app. The claims' values are registered too, so the matcher can answer a
-query that asks for a value and the system's chooser can show it. They
-are then held by the system's registry before any consent; set
-`RegistrationOptions(claimValues = false)` to register the claims'
-names only. `RegistrationOptions` also sets the registry's ID and each
-credential's icon in the chooser.
+app. By default only the claims' names are registered, not their
+values, which the system's registry would hold before any consent — an
+mdoc's portrait among them. Set `RegistrationOptions(claimValues = true)`
+to register the values too, so the matcher can answer a query that asks
+for a particular value and the system's chooser can show them; without
+them, such a query doesn't match. `RegistrationOptions` also sets the
+registry's ID and each credential's icon in the chooser.
 
 ## Answer in the provider activity
 

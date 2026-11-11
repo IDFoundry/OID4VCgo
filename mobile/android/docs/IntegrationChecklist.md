@@ -128,9 +128,10 @@ is a complete, working app on this library to compare against.
   app's launch work, a key sweep included.
 - [ ] `DigitalCredentials.register(context, wallet)` whenever the
   credentials change: after an issuance, a deletion or a restore. A
-  failure (no Google Play services, say) is logged, not fatal. Set
-  `RegistrationOptions(claimValues = false)` if claim values shouldn't
-  be held by the system's registry before consent.
+  failure (no Google Play services, say) is logged, not fatal. Claim
+  values stay out of the system's registry unless the app sets
+  `RegistrationOptions(claimValues = true)`, deciding they may be held
+  there before consent.
 - [ ] A privileged-browsers allowlist (Credential Manager's JSON) in the
   app, with the browsers whose origins it trusts: Chrome's entries
   from Google's list, as the demo's `res/raw/privileged_browsers.json`.

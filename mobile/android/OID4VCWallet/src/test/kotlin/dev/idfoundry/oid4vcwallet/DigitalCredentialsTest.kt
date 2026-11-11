@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.Base64
@@ -61,6 +62,12 @@ class DigitalCredentialsTest {
         // base64url, unpadded (ISO/IEC TS 18013-7 Annex C).
         assertEquals(-1, response.indexOfAny(charArrayOf('=', '+', '/')))
         assertArrayEquals(encrypted, Base64.getUrlDecoder().decode(response))
+    }
+
+    @Test
+    fun claimNamesOnlyByDefault() {
+        // Values (a portrait among them) reach the system's registry before consent only when asked for.
+        assertFalse(DigitalCredentials.RegistrationOptions().claimValues)
     }
 
     @Test

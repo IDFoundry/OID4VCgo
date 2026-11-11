@@ -78,12 +78,14 @@ public object DigitalCredentials {
         val registryID: String? = null,
         /**
          * Whether to register each claim's value as well as its name.
-         * Values let the matcher answer a query that asks for a
-         * particular value, and let the system's chooser show them, but
-         * they are then held by the system's registry, before any
-         * consent; without them, only names are registered.
+         * By default only names are registered. Values let the matcher
+         * answer a query that asks for a particular value, and let the
+         * system's chooser show them, but they are then held by the
+         * system's registry, before any consent — every value, an
+         * mdoc's portrait (as base64) among them. OID4VCWallet 0.34.1
+         * and earlier registered them by default.
          */
-        val claimValues: Boolean = true,
+        val claimValues: Boolean = false,
         /** Each credential's icon in the chooser; null: a swatch of its card colour. */
         val icon: ((CredentialSummary) -> Bitmap)? = null,
     )
