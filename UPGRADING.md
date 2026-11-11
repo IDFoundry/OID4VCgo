@@ -137,9 +137,18 @@ CHANGELOG.md's BREAKING CHANGES sections.
   now checks both. sqlstore's store keeps them in its record with no
   migration.
 
-## v0.74.0 → v0.75.2
+## v0.74.0 → v0.75.3
 
 No API changes a caller has to act on; v0.75.0 adds one opt-in.
+
+### Go 1.26.11
+
+v0.75.3 (and sqlstore v0.11.1) raise the `go` directive to 1.26.11,
+for the standard library's fix for GO-2026-6859. A module requiring
+them builds with Go 1.26.11 or later: with an older toolchain, `go`
+downloads 1.26.11 (`GOTOOLCHAIN=auto`, the default) or refuses to
+build (`GOTOOLCHAIN=local`). `go get` raises your module's `go`
+directive to match; raise your build images' Go too.
 
 ### Behaviour that changes without a code change
 

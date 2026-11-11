@@ -78,6 +78,12 @@ each, not a deployment template" says what it does differently.
   CredentialOffers: db.CredentialOffers(), …}`.
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording
+  the outcome of every pre-authorized code exchange, Credential Request
+  and deferred credential, to a log kept apart from the service.
+  Required under `AssuranceProduction`. Recording is best-effort: a
+  sink that fails doesn't fail the request, so alert on its own
+  failures.
 - [ ] **Stateless c_nonces: `Dependencies.NonceKeys`.** With it, the
   Nonce Endpoint writes nothing: a c_nonce is an HMAC under
   `NonceKeys[0]`, and only spending one at the Credential Endpoint
@@ -132,13 +138,17 @@ db, _ := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer}
 if err := db.CheckSchema(ctx); err != nil { … } // migrated by the deployment step
 
 alloc := &statuslist.Allocator{Lists: lists, Store: db.StatusIndices()} // one per process
-pub := &statuslist.Publisher{URI: lists[0].URI, Signer: key, Chain: chain,
-	Statuses: …, Tokens: db.StatusListTokens()}
+for _, l := range lists { // a Publisher for each list, served at its URI
+	pub := &statuslist.Publisher{URI: l.URI, Signer: key, Chain: chain,
+		Statuses: alloc.Statuses(l.URI), Tokens: db.StatusListTokens()}
+	mux.Handle(pathOf(l.URI), pub)
+}
 
 iss, err := issuer.New(cfg, issuer.Dependencies{
 	Nonces: db.Nonces(), NonceKeys: nonceKeys,
 	PreAuthorizedCodes: db.PreAuthorizedCodes(), DeferredTransactions: db.DeferredTransactions(),
 	Notifications: db.Notifications(), CredentialOffers: db.CredentialOffers(),
+	Audit: auditSink, // to your security log
 	// …
 })
 go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
@@ -183,12 +193,23 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   kept token is reused only within `MaxAge` of its iat.
 
 ```go
-crls, _ := certrevocation.NewRefresher(certrevocation.RefresherConfig{URLs: crlURLs, Issuers: cas})
+crls, _ := certrevocation.NewRefresher(certrevocation.RefresherConfig{
+	URLs: crlURLs, Issuers: cas,
+	// The lists accepted before this process started, so a restart
+	// can't be rolled back to an older one; persist each list accepted.
+	Floors:   loadCRLs(),
+	OnAccept: func(url string, list *x509.RevocationList) { saveCRL(url, list) },
+	// Run reports failures nowhere else: log them, and alert before a
+	// list's nextUpdate passes.
+	OnError: func(url string, err error) { log.Printf("CRL refresh %s: %v", url, err) },
+})
 if err := crls.Refresh(ctx); err != nil { … } // before serving
 go crls.Run(ctx)
 
 cache := statuslist.NewCache(statuslist.CacheOptions{MaxEntries: 1024})
-checker := statuslist.Checker{Fetcher: fetcher, Roots: roots, Cache: cache}
+checker := statuslist.Checker{Fetcher: fetcher, Roots: roots, Cache: cache,
+	// Required under production: the list signers' certificates too.
+	Options: statuslist.VerifyOptions{Revocation: crls.Checker()}}
 txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```
 

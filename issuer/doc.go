@@ -5,16 +5,22 @@
 // Endpoint (§11), and the Pre-Authorized Code Flow's own Token
 // Request/Response (§6.1/§6.2).
 //
-// This package doesn't verify the access token authorizing a Credential
-// Request itself: that needs full HTTP request context (method, URL,
-// DPoP proof or mTLS certificate) that has nothing to do with
-// Credential Request/Response protocol logic — ordinarily
-// fapigo/resource.Verifier.Verify, called by the caller before
-// RequestCredential, its result adapted into AuthorizedRequest; see
-// resource_verifier.go for the worked recipe. This package never
-// reaches into fapigo's internal packages; see ARCHITECTURE.md's
-// "Relationship to FAPIgo" for why that's a hard boundary, not a style
-// choice.
+// Serve the Credential Endpoint with Issuer.CredentialHandler: it checks
+// each request's access token and DPoP proof with an
+// AccessTokenVerifier — issuer/fapiresource.New's, sharing the
+// Authorization Server's keys through fapigo's resource verifier —
+// parses and checks the Credential Request, has its Prepare callback
+// decide what to issue for the token's subject, and writes the
+// Credential Response, encrypted when asked (see
+// ExampleIssuer_CredentialHandler). Call RequestCredential directly
+// only where something else serves the endpoint: the caller then
+// verifies the access token itself, with the full HTTP request context
+// (method, URL, DPoP proof or mTLS certificate) — ordinarily
+// fapigo/resource.Verifier.Verify — and adapts its result into
+// AuthorizedRequest; resource_verifier.go has that recipe. This
+// package never reaches into fapigo's internal packages; see
+// ARCHITECTURE.md's "Relationship to FAPIgo" for why that's a hard
+// boundary, not a style choice.
 //
 // Running several replicas in production: DEPLOYING.md in the
 // repository is the checklist — sqlstore, Dependencies.NonceKeys,

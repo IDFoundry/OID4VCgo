@@ -180,6 +180,7 @@ together, then run `Migrate` once (see [UPGRADING.md](../UPGRADING.md)).
 
 | sqlstore | Released with | Requires oid4vcgo | Migrations |
 |---|---|---|---|
+| v0.11.1 | v0.75.3 | v0.73.0 | 0001–0014 |
 | v0.11.0 | v0.74.0 | v0.73.0 | 0001–0014 |
 | v0.10.0 | v0.73.0 | v0.73.0 | 0001–0014 |
 | v0.9.1 | v0.72.0 | v0.69.0 | 0001–0013 |
