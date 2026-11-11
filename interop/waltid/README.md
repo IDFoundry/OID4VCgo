@@ -85,18 +85,34 @@ Seen running walt.id 1.2.1; none reported upstream.
    other policies (`allowed-issuer`, an ETSI trust list, a VICAL) don't
    take X.509 roots, so the run tests Verifier2's handling of OID4VCgo's
    wallet's presentation, not its issuer trust.
+
+Observations, not deviations:
+
 4. **Issuer2's EU PID profile discloses everything.** Only `birthdate`
    is selectively disclosable: the address, personal administrative
    number, phone number and portrait are in every presentation of it,
-   whatever a Verifier asks for.
+   whatever a Verifier asks for. Which claims are selectively
+   disclosable is the issuer's choice; this is the profile's
+   configuration, not the protocol.
 5. **Issuer2's metadata names no client authentication.** By default it
    says the pre-authorized code isn't redeemable anonymously
    (`pre-authorized_grant_anonymous_access_supported: false`) but names
    no `token_endpoint_auth_methods_supported`, so OID4VCgo's wallet
    refuses before redeeming it; the run enables `preauth-anonymous`.
-6. **walt.id's own test attester omits `iss`** from its Wallet
-   Attestations, which OID4VCgo's issuer, and HAIP, require; the
-   stand-in sets it.
+   A default configuration a deployment changes, not a protocol
+   fault.
+6. **Wallet2 has no attester of its own.** It posts its instance key
+   to whatever Wallet Provider `attestationConfig.attesterUrl` names,
+   by default the EUDI reference implementation's
+   (`wallet-provider.eudiw.dev`, in its tag's `wallet-service.conf`),
+   and passes on the Client Attestation JWT it gets back. The run
+   points it at its own stand-in ([`scripts/serve`](scripts/serve)),
+   which signs with the attester key and `x5c` that
+   [`../eudi/scripts/setup-issuer`](../eudi/scripts/setup-issuer) makes
+   for OID4VCgo's issuer, and sets the `iss` the issuer expects
+   (draft-ietf-oauth-attestation-based-client-auth-07 §5.1). So every
+   Wallet Attestation in the run is OID4VCgo's stand-in's, not walt.id's
+   or EUDI's.
 
 ## What isn't covered
 

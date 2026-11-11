@@ -41,8 +41,11 @@ follows the verifier's `redirect_uri`, and the verifier releases the
 The verifier is run as strictly as it can be configured:
 
 - Each credential carries a Token Status List reference, and the
-  verifier checks it (`VERIFIER_VALIDATION_STATUSCHECK_ENABLED`): a JWT
-  Status List Token for the SD-JWT VC, a CWT one for the mdoc.
+  verifier reads it (`VERIFIER_VALIDATION_STATUSCHECK_ENABLED`): it
+  fetches the list, a JWT Status List Token for the SD-JWT VC, a CWT
+  one for the mdoc, and refuses a credential whose entry is invalid.
+  It never verifies the token's signature (below), so this exercises
+  the reference and the entry, not the list's authenticity.
 - SD-JWT VC Type Metadata is required (`always_required`), resolved for
   `urn:eudi:pid:1` and checked against the credential's `vct#integrity`
   (`..._INTEGRITY_ENABLED`).
@@ -55,7 +58,8 @@ The verifier is run as strictly as it can be configured:
   issuer.
 
 The run also checks the verifier fetched each status list and the Type
-Metadata, so a run in which it silently skipped a check fails.
+Metadata, so a run in which it silently skipped a check fails. Fetching
+a list shows the verifier read it, not that it verified it.
 
 What v0.12.0 doesn't check, whatever its configuration:
 
