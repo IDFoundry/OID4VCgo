@@ -156,11 +156,18 @@ func (r *StatusListRef) UnmarshalCBOR(data []byte) error {
 	if wire.URI == nil || *wire.URI == "" {
 		return fmt.Errorf("mdoc: the MSO's status_list has no uri")
 	}
-	if u, err := url.Parse(*wire.URI); err != nil || u.Scheme != "https" || u.Host == "" {
+	if !isHTTPSURL(*wire.URI) {
 		return fmt.Errorf("mdoc: the MSO's status_list uri %q isn't an https URL", *wire.URI)
 	}
 	*r = StatusListRef{Idx: *wire.Idx, URI: *wire.URI, Certificate: wire.Certificate}
 	return nil
+}
+
+// isHTTPSURL reports whether s is an https URL with a host: the only
+// status list uri a status check fetches.
+func isHTTPSURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Host != ""
 }
 
 // DigestIDs maps a DigestID (§12.3.4: an unsigned integer smaller than

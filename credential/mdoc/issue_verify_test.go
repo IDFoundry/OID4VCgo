@@ -21,7 +21,7 @@ func selfSignedCert(t testing.TB, pub, signer interface{}) []byte {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "mdoc test issuer"},
-		NotBefore:    time.Now().Add(-time.Hour),
+		NotBefore:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), // before testClaims' and the fuzz seeds' signed
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, signer)
@@ -614,13 +614,53 @@ func TestIssueNormalizesValidityTimes(t *testing.T) {
 	}
 }
 
-// A status reference without a uri can't be resolved: Issue refuses it.
+// A status reference without an https uri can't be resolved, and the
+// decoder refuses it: Issue refuses it too.
 func TestIssueRefusesStatusWithoutURI(t *testing.T) {
 	f := newFixture(t)
-	claims := f.claims
-	claims.Status = &StatusListRef{Idx: 1}
-	if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
-		t.Error("issued a status reference without a uri")
+	for _, uri := range []string{"", "http://status.example.com/1", "https:///1", "status.example.com/1"} {
+		claims := f.claims
+		claims.Status = &StatusListRef{Idx: 1, URI: uri}
+		if _, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{f.cert}}); err == nil {
+			t.Errorf("issued a status reference with uri %q", uri)
+		}
+	}
+}
+
+// ISO/IEC 18013-5 §9.3.1: the MSO's signed time is within the Document
+// Signer certificate's validity, so Issue refuses one signed before its
+// NotBefore — RoundedValidity's start of the day under a certificate
+// issued later that day — or after its NotAfter, which every reader
+// would refuse. Its bounds themselves are within.
+func TestIssueRefusesSignedOutsideCertificate(t *testing.T) {
+	f := newFixture(t)
+	notBefore := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	notAfter := notBefore.Add(48 * time.Hour)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "mdoc test issuer"},
+		NotBefore: notBefore, NotAfter: notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &f.issuerKey.PublicKey, f.issuerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issueAt := func(signed, validUntil time.Time) error {
+		claims := testClaims(t, &f.deviceKey.PublicKey)
+		claims.Signed, claims.ValidFrom, claims.ValidUntil = signed, signed, validUntil
+		_, err := Issue(f.issuerKey, cose.ES256, claims, IssueOptions{X5Chain: [][]byte{der}})
+		return err
+	}
+	if err := issueAt(notBefore.Add(-time.Second), notAfter); err == nil || !strings.Contains(err.Error(), "within IssueOptions.X5Chain[0]'s own validity") {
+		t.Errorf("signed before NotBefore: %v, want refused", err)
+	}
+	if err := issueAt(notAfter.Add(time.Second), notAfter.Add(time.Hour)); err == nil {
+		t.Error("signed after NotAfter: accepted")
+	}
+	if err := issueAt(notBefore, notAfter); err != nil {
+		t.Errorf("signed at NotBefore, valid until NotAfter: %v", err)
+	}
+	if signed, _, validUntil := RoundedValidity(notBefore.Add(25*time.Hour), time.Hour); issueAt(signed, validUntil) != nil {
+		t.Error("RoundedValidity's times the day after the certificate's NotBefore: refused")
 	}
 }
 

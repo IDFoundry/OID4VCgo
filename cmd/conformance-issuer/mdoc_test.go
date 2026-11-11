@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -65,6 +66,19 @@ func mdocTestConfig(t *testing.T) Config {
 		Claims:                    map[string]any{"given_name": "Jean", "family_name": "Dupont"},
 		Scope:                     "MobileDrivingLicense",
 	}
+	// A dedicated Document Signer, as the live configuration's: the
+	// shared issuer certificate is backdated by an hour only, so an MSO
+	// signed at the start of the UTC day (mdoc.RoundedValidity) falls
+	// before it, which mdoc.Issue refuses (ISO/IEC 18013-5 §9.3.1).
+	iacaCert, iacaKey, iacaPEM, _, err := conformancecert.GenerateMdocIACA("mdoc-test-iaca", "FR", "https://example.com/contact")
+	if err != nil {
+		t.Fatalf("GenerateMdocIACA: %v", err)
+	}
+	_, dsKeyPEM, dsCertPEM, err := conformancecert.GenerateMdocDocumentSigner("mdoc-test-ds", "FR", "https://example.com/contact", "", iacaCert, iacaKey)
+	if err != nil {
+		t.Fatalf("GenerateMdocDocumentSigner: %v", err)
+	}
+	cfg.Mdoc.SignerKeyPEM, cfg.Mdoc.CertificatePEM, cfg.Mdoc.TrustAnchorCertificatePEM = dsKeyPEM, dsCertPEM, iacaPEM
 	return cfg
 }
 
@@ -128,9 +142,9 @@ func TestFullFlow_MdocCredentialIssuance(t *testing.T) {
 		t.Fatalf("UnmarshalIssuerSigned: %v", err)
 	}
 
-	issuerCert, err := cfg.credentialIssuerCertificate()
+	_, issuerCert, _, err := cfg.mdocSignerKeyAndCert()
 	if err != nil {
-		t.Fatalf("credentialIssuerCertificate: %v", err)
+		t.Fatalf("mdocSignerKeyAndCert: %v", err)
 	}
 	verified, err := mdoc.Verify(signed, cfg.Mdoc.DocType, issuerCert.PublicKey, cose.ES256, mdoc.VerifyOptions{})
 	if err != nil {
