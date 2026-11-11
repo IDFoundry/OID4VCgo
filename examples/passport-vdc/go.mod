@@ -5,12 +5,12 @@ go 1.26.11
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/gmrtd/gmrtd v1.8.0
-	github.com/idfoundry/fapigo v0.72.0
-	github.com/idfoundry/fapigo/sqlstore v0.8.0
+	github.com/idfoundry/fapigo v0.72.4
+	github.com/idfoundry/fapigo/sqlstore v0.8.1
 	github.com/idfoundry/oid4vcgo v0.76.0
 	github.com/idfoundry/oid4vcgo/sqlstore v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
-	modernc.org/sqlite v1.61.1
+	modernc.org/sqlite v1.62.0
 	rsc.io/qr v0.2.0
 )
 
@@ -24,7 +24,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	modernc.org/libc v1.79.0 // indirect
+	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )

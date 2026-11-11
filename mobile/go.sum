@@ -2,8 +2,8 @@ github.com/fxamacker/cbor/v2 v2.10.0 h1:HVF3T5vYwLqO81ebPirWEPNv2SMrUMD3HLnKgEr6
 github.com/fxamacker/cbor/v2 v2.10.0/go.mod h1:uSwlToFuT9BZAKRxxVm3qQC8DR4tlWl7D6pf20iRYH4=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
-github.com/idfoundry/fapigo v0.72.0 h1:KTpA9ZtGhCLbWNV9m28KeYS0ybqaZVfj3x918syT1S4=
-github.com/idfoundry/fapigo v0.72.0/go.mod h1:CFRkuTwKWsHWiULO7grDhH8iqOcczGmey+lgqp+Sn+k=
+github.com/idfoundry/fapigo v0.72.4 h1:ivgT5iBnC1kE/I6C1YH18jd8CzNtR9u7L7w/lMnhy3A=
+github.com/idfoundry/fapigo v0.72.4/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e h1:zYnHsDmxfxKH/x9DjYNAdoIdMsP8enB1Ncb10b3pdHk=
