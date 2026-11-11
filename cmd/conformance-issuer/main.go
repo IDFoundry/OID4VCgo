@@ -11,7 +11,6 @@ package main
 import (
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -19,19 +18,17 @@ import (
 	"github.com/idfoundry/fapigo/server"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 )
 
 func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
-	flag.Usage = func() {
-		_, _ = fmt.Fprint(flag.CommandLine.Output(), "usage: conformance-issuer -config <file>\n\n"+
-			"A test harness for the OIDF conformance suite's issuer plans, not a\n"+
+	conformanceusage.Set("conformance-issuer -config <file>",
+		"A test harness for the OIDF conformance suite's issuer plans, not a\n"+
 			"deployment model: its Authorization Server and Credential Issuer run\n"+
 			"under development assurance, with in-memory stores and test keys.\n"+
 			"Never deploy it or copy its wiring; DEPLOYING.md is the checklist\n"+
-			"for a production issuer.\n\n")
-		flag.PrintDefaults()
-	}
+			"for a production issuer.")
 	flag.Parse()
 	if *configPath == "" {
 		log.Fatal("-config is required")

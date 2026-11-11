@@ -21,25 +21,22 @@ package main
 import (
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
-	flag.Usage = func() {
-		_, _ = fmt.Fprint(flag.CommandLine.Output(), "usage: conformance-wallet-vp -config <file>\n\n"+
-			"A test harness for the OIDF conformance suite's wallet (OID4VP) plan,\n"+
+	conformanceusage.Set("conformance-wallet-vp -config <file>",
+		"A test harness for the OIDF conformance suite's wallet (OID4VP) plan,\n"+
 			"not a wallet to model one on: it doesn't verify the Verifier's TLS\n"+
 			"certificate, and presents fixture credentials. Build a wallet on\n"+
-			"the wallet package, or on the mobile libraries.\n\n")
-		flag.PrintDefaults()
-	}
+			"the wallet package, or on the mobile libraries.")
 	flag.Parse()
 	if *configPath == "" {
 		log.Fatal("-config is required")
