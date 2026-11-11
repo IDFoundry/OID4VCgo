@@ -263,7 +263,7 @@ CHANGELOG.md's BREAKING CHANGES sections.
   request's path: alert on it, or revoke from your own logic.
 - **`Config.RequireSealedStore`** makes `New` refuse `Instances`,
   `InstanceKeys` and `Challenges` stores that don't seal their records
-  (the new `walletprovider.SealingStore`). sqlstore's stores report
+  (`sealing.Store`). sqlstore's stores report
   whether their `DB` has an `Options.Sealer` (sqlstore needs the
   release with this change). It's off by default; set it in
   production (DEPLOYING.md).

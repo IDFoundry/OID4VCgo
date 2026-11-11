@@ -166,7 +166,7 @@ func TestNewRefuses(t *testing.T) {
 	}
 }
 
-// The stores, saying they seal their records (SealingStore).
+// The stores, saying they seal their records (sealing.Store).
 type (
 	sealedInstances    struct{ walletprovider.InstanceStore }
 	sealedInstanceKeys struct {

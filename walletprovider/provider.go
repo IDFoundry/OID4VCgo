@@ -19,6 +19,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
@@ -204,21 +205,13 @@ type Config struct {
 
 	// RequireSealedStore makes New refuse Instances, InstanceKeys and
 	// Challenges stores that don't seal their records at rest
-	// (SealingStore): an instance's record holds its keys, its
+	// (sealing.Store): an instance's record holds its keys, its
 	// registration evidence's facts and its App Attest counter, which
 	// sealing keeps a database writer from altering unnoticed. sqlstore's
 	// stores seal when their DB has an Options.Sealer. Set it in
 	// production, where the stores are a shared database; an in-memory
 	// store, which nothing else can write, doesn't seal.
 	RequireSealedStore bool
-}
-
-// SealingStore is implemented by an InstanceStore, InstanceKeyStore or
-// ChallengeStore that says whether it seals its records where they're
-// stored, as sqlstore's do with a Sealer. Config.RequireSealedStore
-// refuses a store that doesn't implement it, or reports false.
-type SealingStore interface {
-	SealsRecords() bool
 }
 
 // Dependencies are a Provider's collaborators.
@@ -446,8 +439,8 @@ func (d Dependencies) checkSealed() error {
 		name  string
 		store any
 	}{{"Instances", d.Instances}, {"InstanceKeys", d.InstanceKeys}, {"Challenges", d.Challenges}} {
-		if sealing, ok := s.store.(SealingStore); !ok || !sealing.SealsRecords() {
-			return fmt.Errorf("RequireSealedStore is set, and %s doesn't seal its records (walletprovider.SealingStore: sqlstore's stores do with an Options.Sealer)", s.name)
+		if sealed, ok := s.store.(sealing.Store); !ok || !sealed.SealsRecords() {
+			return fmt.Errorf("RequireSealedStore is set, and %s doesn't seal its records (sealing.Store: sqlstore's stores do with an Options.Sealer)", s.name)
 		}
 	}
 	return nil

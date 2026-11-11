@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
@@ -27,12 +28,12 @@ func TestWalletProviderInstanceStoreContract(t *testing.T) {
 	})
 }
 
-// The stores say they seal their records (walletprovider.SealingStore)
+// The stores say they seal their records (sealing.Store)
 // when the DB has a Sealer, and only then.
 func TestWalletProviderStoresSayTheySeal(t *testing.T) {
 	forEachSealing(t, func(t *testing.T, e *env) {
 		db, want := e.db(), e.opts.Sealer != nil
-		for name, s := range map[string]walletprovider.SealingStore{
+		for name, s := range map[string]sealing.Store{
 			"Instances": db.WalletProviderInstances(), "InstanceKeys": db.WalletProviderInstanceKeys(), "Challenges": db.WalletProviderChallenges(),
 		} {
 			if got := s.SealsRecords(); got != want {
