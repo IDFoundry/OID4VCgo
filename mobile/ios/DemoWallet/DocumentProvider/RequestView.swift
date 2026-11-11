@@ -200,20 +200,14 @@ struct RequestView: View {
         }
     }
 
-    /// What the holder agreed to for one document: shown before iOS
-    /// released the request, checked against it after.
-    private struct Agreed: Sendable {
-        let doctype: String
-        let elements: [MdocPresentation.Element]
-        let credentialID: String
-        let toldLinkable: Bool
-    }
-
     private func share() {
         guard let origin, let originURL = context.requestingWebsiteOrigin else { return }
-        let agreed = toShare.compactMap { a -> Agreed? in
+        // What the holder agreed to, as shown before iOS released the
+        // request; checked against it after.
+        let agreed = toShare.compactMap { a -> MdocPresentation.Shown? in
             guard let id = chosen[a.id] else { return nil }
-            return Agreed(doctype: a.doctype, elements: a.elements, credentialID: id, toldLinkable: chosenCredential(a)?.linkableHere == true)
+            return MdocPresentation.Shown(doctype: a.doctype, elements: a.elements, credentialID: id,
+                                          toldLinkable: chosenCredential(a)?.linkableHere == true)
         }
         guard !agreed.isEmpty else { return }
         let reader = recognizedReader
@@ -233,26 +227,10 @@ struct RequestView: View {
                     _ = try IdentityDocumentWebPresentmentRawRequestValidator()
                         .validateISO18013MobileDocumentRequest(raw.requestData, origin: originURL)
                     let p = try await wallet.startMdocPresentation(requestData: raw.requestData, origin: origin)
-                    // The certificate shown, not just its name: two can
-                    // share one.
-                    if let reader, p.request.readerCertificate != reader.certificate {
-                        throw RequestError("The request isn't signed by \(reader.name).")
-                    }
                     // Answer only what the holder was shown, document by
-                    // document.
-                    let answers = try agreed.map { a -> MdocPresentation.Answer in
-                        guard let index = p.request.documents.firstIndex(where: { $0.doctype == a.doctype }),
-                              Set(p.request.documents[index].elements) == Set(a.elements) else {
-                            throw RequestError("The request changed after it was shown.")
-                        }
-                        // Nor a copy another website has seen, unless the
-                        // holder was told.
-                        if p.request.documents[index].credentials.first(where: { $0.id == a.credentialID })?.linkableHere == true, !a.toldLinkable {
-                            throw RequestError("Sharing this ID now would be linkable to another website. Try again to see why.")
-                        }
-                        return MdocPresentation.Answer(document: index, credentialID: a.credentialID, elements: a.elements)
-                    }
-                    let response = try await p.respond(answers: answers)
+                    // document, from the reader shown, and nothing that
+                    // became linkable unless the holder was told.
+                    let response = try await p.respond(shown: agreed, readerCertificate: reader?.certificate)
                     return ISO18013MobileDocumentResponse(responseData: response.response)
                 }
             } catch {
@@ -265,6 +243,13 @@ struct RequestView: View {
     private func describe(_ error: Error) -> String {
         if let e = error as? RequestError { return e.message }
         if let e = error as? WalletError { return e.message }
+        if let e = error as? MdocPresentation.RequestChanged {
+            switch e.reason {
+            case .reader: return "The request isn't signed by the reader shown."
+            case .linkable: return "Sharing this ID now would be linkable to another website. Try again to see why."
+            default: return "The request changed after it was shown."
+            }
+        }
         return error.localizedDescription
     }
 }

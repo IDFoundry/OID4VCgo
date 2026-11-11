@@ -11,7 +11,7 @@ Digital Credentials API, using the `org-iso-mdoc` protocol (ISO/IEC TS
 document, and shows the chosen app's document provider extension for
 the holder's consent. The extension answers through
 ``Wallet/startMdocPresentation(requestData:origin:)`` and
-``MdocPresentation/respond(document:credentialID:elements:)``; the
+``MdocPresentation/respond(shown:readerCertificate:)``; the
 response goes back through Safari, encrypted to the page, with no
 network request from the wallet.
 
@@ -116,12 +116,12 @@ struct WalletDocumentProvider: IdentityDocumentProvider {
     func performRegistrationUpdates() async {}
 }
 
-struct RequestChanged: Error {}
-
 @available(iOS 26.0, *)
 struct ConsentView: View {
     let context: ISO18013MobileDocumentRequestContext
     @State private var problem: String?
+    /// The candidate shared, from `Wallet.mdocCandidates(origin:)`.
+    @State private var chosen: CredentialSummary?
 
     /// The request's first document as iOS parsed it: what the consent
     /// screen shows the holder.
@@ -138,30 +138,35 @@ struct ConsentView: View {
     var body: some View {
         VStack {
             if let problem { Text(problem) }
-            Button("Share") { Task { await share(credentialID: nil) } }
+            if chosen?.linkableHere == true { Text("This website could link this to another.") }
+            Button("Share") { Task { await share() } }.disabled(chosen == nil)
             Button("Cancel") { context.cancel() }
+        }
+        .task {
+            guard let shown, let originURL = context.requestingWebsiteOrigin,
+                  let origin = MdocPresentation.origin(of: originURL) else { return }
+            chosen = try? await SharedWallet.open(provider: nil).mdocCandidates(origin: origin)
+                .first { $0.doctype == shown.doctype }
         }
     }
 
-    /// Shares the held mdoc `credentialID` (the first candidate when
-    /// nil), for exactly the document and elements the holder was shown.
-    func share(credentialID: String?) async {
-        guard let shown, let originURL = context.requestingWebsiteOrigin,
+    /// Shares the chosen mdoc, for exactly the document and elements the
+    /// holder was shown.
+    func share() async {
+        guard let shown, let chosen, let originURL = context.requestingWebsiteOrigin,
               let origin = MdocPresentation.origin(of: originURL) else { return }
+        let agreed = MdocPresentation.Shown(doctype: shown.doctype, elements: shown.elements,
+                                            credentialID: chosen.id, toldLinkable: chosen.linkableHere == true)
         do {
             let wallet = try SharedWallet.open(provider: nil)
             try await context.sendResponse { raw in
                 _ = try IdentityDocumentWebPresentmentRawRequestValidator()
                     .validateISO18013MobileDocumentRequest(raw.requestData, origin: originURL)
                 let presentation = try await wallet.startMdocPresentation(requestData: raw.requestData, origin: origin)
-                // Answer only what the holder was shown.
-                guard let index = presentation.request.documents.firstIndex(where: { $0.doctype == shown.doctype }),
-                      Set(presentation.request.documents[index].elements) == Set(shown.elements),
-                      let chosen = credentialID ?? presentation.request.documents[index].credentials.first?.id else {
-                    throw RequestChanged()
-                }
-                // The holder key signs now: Face ID, if the key store asks.
-                let response = try await presentation.respond(document: index, credentialID: chosen, elements: shown.elements)
+                // Answer only what the holder was shown, or throw
+                // RequestChanged. The holder key signs now: Face ID, if
+                // the key store asks.
+                let response = try await presentation.respond(shown: [agreed], readerCertificate: nil)
                 return ISO18013MobileDocumentResponse(responseData: response.response)
             }
         } catch {
@@ -172,12 +177,19 @@ struct ConsentView: View {
 }
 ```
 
-The response answers the elements the holder was shown, not those the
-released request names, and a request that changed in between is
-refused. Where the consent screen names the reader (below), compare its
-certificate with ``MdocPresentation/Request/readerCertificate`` there
-too. The demo wallet's `DocumentProvider` target does all of this, with
-a choice of credential and a linkability warning.
+``MdocPresentation/respond(shown:readerCertificate:)`` answers the
+elements the holder was shown, not those the released request names,
+and refuses, with ``MdocPresentation/RequestChanged``, a request that
+changed in between: a shown document no longer asked for, or asked for
+with other elements; a chosen credential that no longer answers it; or
+one that became linkable here when the holder wasn't told
+(``MdocPresentation/Shown/toldLinkable``). Where the consent screen
+names the reader (below), pass that reader's certificate as
+`readerCertificate`, and a request signed by any other is refused too.
+``MdocPresentation/Request/answers(for:readerCertificate:)`` makes the
+same check without answering. The demo wallet's `DocumentProvider`
+target does all of this, with several documents, a choice of
+credential and a linkability warning.
 
 ### Name the reader
 
