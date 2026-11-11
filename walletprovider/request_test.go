@@ -5,10 +5,15 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
@@ -78,6 +83,29 @@ func TestVerifyRequest(t *testing.T) {
 		}, walletprovider.ErrInstanceNotFound},
 		{"not a JWT", func() walletprovider.Request {
 			return walletprovider.Request{JWT: "x", Method: "POST", Path: requestPath}
+		}, walletprovider.ErrInvalidRequest},
+		{"from the future", func() walletprovider.Request {
+			ch := h.challenge(walletprovider.PurposeRequest)
+			jwt, err := walletprovider.SignRequest(key, in.ID, ch, "POST", requestPath, []byte(requestBody), h.clock.now().Add(2*time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return walletprovider.Request{JWT: jwt, Method: "POST", Path: requestPath, Body: []byte(requestBody)}
+		}, walletprovider.ErrInvalidRequest},
+		{"another typ", func() walletprovider.Request {
+			body := sha256.Sum256([]byte(requestBody))
+			payload, err := json.Marshal(map[string]any{
+				"sub": in.ID, "method": "POST", "path": requestPath, "body_sha256": base64.RawURLEncoding.EncodeToString(body[:]),
+				"challenge": h.challenge(walletprovider.PurposeRequest), "iat": h.clock.now().Unix(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			jwt, err := jose.Sign(oid4vci.ES256, key, map[string]any{"typ": "JWT"}, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return walletprovider.Request{JWT: jwt, Method: "POST", Path: requestPath, Body: []byte(requestBody)}
 		}, walletprovider.ErrInvalidRequest},
 		{"stale", func() walletprovider.Request {
 			ch := h.challenge(walletprovider.PurposeRequest)

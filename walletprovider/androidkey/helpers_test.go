@@ -248,7 +248,9 @@ type testChain struct {
 
 type chainOpts struct {
 	leafCurve     elliptic.Curve
+	leafValidity  [2]time.Time // zero: an hour ago to a day from now
 	interValidity [2]time.Time // zero: an hour ago to a day from now
+	rootValidity  [2]time.Time // zero: an hour ago to a day from now
 	serials       [3]int64     // leaf, intermediate, root; zero: 1, 2, 3
 }
 
@@ -264,15 +266,12 @@ func newChain(t testing.TB, s spec, o chainOpts) testChain {
 		return int64(i + 1)
 	}
 	rootKey := newKey(t, elliptic.P256())
-	root := issue(t, certTemplate("Test Attestation Root", serial(2), true), nil, rootKey, &rootKey.PublicKey)
+	root := issue(t, withValidity(certTemplate("Test Attestation Root", serial(2), true), o.rootValidity), nil, rootKey, &rootKey.PublicKey)
 	interKey := newKey(t, elliptic.P256())
-	interTmpl := certTemplate("Test Attestation Intermediate", serial(1), true)
-	if !o.interValidity[0].IsZero() {
-		interTmpl.NotBefore, interTmpl.NotAfter = o.interValidity[0], o.interValidity[1]
-	}
+	interTmpl := withValidity(certTemplate("Test Attestation Intermediate", serial(1), true), o.interValidity)
 	inter := issue(t, interTmpl, root, rootKey, &interKey.PublicKey)
 	leafKey := newKey(t, o.leafCurve)
-	leaf := makeLeaf(t, inter, interKey, &leafKey.PublicKey, s.encode(t), serial(0))
+	leaf := issue(t, withValidity(leafTemplate(s.encode(t), serial(0)), o.leafValidity), inter, interKey, &leafKey.PublicKey)
 	return testChain{
 		der: [][]byte{leaf.Raw, inter.Raw, root.Raw}, root: root, inter: inter,
 		interKey: interKey, leafKey: leafKey,
@@ -297,6 +296,14 @@ func certTemplate(cn string, serial int64, ca bool) *x509.Certificate {
 	}
 }
 
+// withValidity sets tmpl's validity to validity, unless that's zero.
+func withValidity(tmpl *x509.Certificate, validity [2]time.Time) *x509.Certificate {
+	if !validity[0].IsZero() {
+		tmpl.NotBefore, tmpl.NotAfter = validity[0], validity[1]
+	}
+	return tmpl
+}
+
 // issue signs tmpl with parentKey under parent (self-signed when nil).
 func issue(t testing.TB, tmpl, parent *x509.Certificate, parentKey crypto.Signer, pub crypto.PublicKey) *x509.Certificate {
 	t.Helper()
@@ -314,11 +321,17 @@ func issue(t testing.TB, tmpl, parent *x509.Certificate, parentKey crypto.Signer
 // (none when nil).
 func makeLeaf(t testing.TB, parent *x509.Certificate, parentKey crypto.Signer, pub crypto.PublicKey, ext []byte, serial int64) *x509.Certificate {
 	t.Helper()
+	return issue(t, leafTemplate(ext, serial), parent, parentKey, pub)
+}
+
+// leafTemplate is a leaf's template with ext as its attestation
+// extension (none when nil).
+func leafTemplate(ext []byte, serial int64) *x509.Certificate {
 	tmpl := certTemplate("Android Keystore Key", serial, false)
 	if ext != nil {
 		tmpl.ExtraExtensions = []pkix.Extension{{Id: androidkey.ExtensionOID, Value: ext}}
 	}
-	return issue(t, tmpl, parent, parentKey, pub)
+	return tmpl
 }
 
 // statusFixture parses testdata/status.json.

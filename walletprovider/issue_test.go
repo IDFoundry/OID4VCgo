@@ -438,6 +438,11 @@ type levels = []attestation.AttackPotentialResistance
 
 func TestKeyAttestationClaimsFromPolicyTable(t *testing.T) {
 	high, moderate := attestation.ISO18045High, attestation.ISO18045Moderate
+	strongBoxOnly := func(c *walletprovider.Config) {
+		c.Policy.KeyStorage = []walletprovider.KeyStorageRule{{
+			Platform: walletprovider.PlatformAndroid, SecurityLevel: walletprovider.SecurityLevelStrongBox, KeyStorage: levels{high},
+		}}
+	}
 	appAssertionRule := func(c *walletprovider.Config, binding walletprovider.KeyBinding) {
 		c.Policy.KeyStorage = append(c.Policy.KeyStorage, walletprovider.KeyStorageRule{
 			Platform: walletprovider.PlatformIOS, SecurityLevel: walletprovider.SecurityLevelSecureEnclave,
@@ -462,6 +467,15 @@ func TestKeyAttestationClaimsFromPolicyTable(t *testing.T) {
 		{"ios against a row for attested keys", kindIOS, []string{kindIOS}, func(c *walletprovider.Config) {
 			appAssertionRule(c, "")
 		}, nil, nil},
+		{"a row for another level matches no key", kindTEE, []string{kindTEE}, strongBoxOnly, nil, nil},
+		{"a row requiring user authentication doesn't match a key without it", kindTEE, []string{kindTEE}, func(c *walletprovider.Config) {
+			c.Policy.KeyStorage = []walletprovider.KeyStorageRule{{
+				Platform: walletprovider.PlatformAndroid, SecurityLevel: walletprovider.SecurityLevelTEE,
+				UserAuthentication: walletprovider.UserAuthenticationRequired,
+				KeyStorage:         levels{moderate}, UserAuthenticationLevels: levels{high},
+			}}
+		}, nil, nil},
+		{"a key no row matches leaves out what the others' rows list", kindStrongBox, []string{kindStrongBox, kindTEE}, strongBoxOnly, nil, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -678,29 +692,36 @@ func TestVerifierOutputChecked(t *testing.T) {
 	key := func(in walletprovider.EvidenceInput, level walletprovider.SecurityLevel, binding walletprovider.KeyBinding) []walletprovider.AttestedKey {
 		return []walletprovider.AttestedKey{{Key: in.Keys[0], SecurityLevel: level, Binding: binding}}
 	}
-	cases := map[string]func(walletprovider.EvidenceInput) walletprovider.VerifiedEvidence{
-		"no platform": func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
+	// Each report is refused for what's wrong with it, not by a later
+	// check that happens to catch it too, such as the Policy refusing
+	// an empty platform or level.
+	cases := map[string]struct {
+		report func(walletprovider.EvidenceInput) walletprovider.VerifiedEvidence
+		want   string
+	}{
+		"no platform": {func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
 			return walletprovider.VerifiedEvidence{Keys: key(in, walletprovider.SecurityLevelSoftware, walletprovider.KeyBindingAttested)}
-		},
-		"a key it wasn't asked about": func(walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
-			return walletprovider.VerifiedEvidence{Platform: walletprovidertest.FakePlatform, Keys: []walletprovider.AttestedKey{{
-				Key: &other.PublicKey, SecurityLevel: walletprovider.SecurityLevelSoftware, Binding: walletprovider.KeyBindingAttested,
-			}}}
-		},
-		"no security level": func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
+		}, "reported no platform"},
+		"a key it wasn't asked about": {func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
+			return walletprovider.VerifiedEvidence{Platform: walletprovidertest.FakePlatform, Keys: append(
+				key(in, walletprovider.SecurityLevelSoftware, walletprovider.KeyBindingAttested),
+				walletprovider.AttestedKey{Key: &other.PublicKey, SecurityLevel: walletprovider.SecurityLevelSoftware, Binding: walletprovider.KeyBindingAttested},
+			)}
+		}, "a key it wasn't asked about"},
+		"no security level": {func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
 			return walletprovider.VerifiedEvidence{Platform: walletprovidertest.FakePlatform, Keys: key(in, "", walletprovider.KeyBindingAttested)}
-		},
-		"no binding": func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
+		}, "without a security level"},
+		"no binding": {func(in walletprovider.EvidenceInput) walletprovider.VerifiedEvidence {
 			return walletprovider.VerifiedEvidence{Platform: walletprovidertest.FakePlatform, Keys: key(in, walletprovider.SecurityLevelSoftware, "")}
-		},
+		}, "with binding"},
 	}
-	for name, report := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
-				d.Evidence = append(d.Evidence, misbehavingVerifier{kind: "faulty", report: report})
+				d.Evidence = append(d.Evidence, misbehavingVerifier{kind: "faulty", report: tc.report})
 			})
-			if _, _, err := h.tryRegister("faulty"); err == nil {
-				t.Fatal("Register accepted a faulty verifier's report")
+			if _, _, err := h.tryRegister("faulty"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Register with a faulty verifier's report = %v, want it refused as %q", err, tc.want)
 			}
 		})
 	}
@@ -756,4 +777,135 @@ func TestEvidenceKindMatchesRegistration(t *testing.T) {
 	if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, kindOtherIOS); !errors.Is(err, walletprovider.ErrEvidenceRejected) {
 		t.Fatalf("KeyAttestation with another iOS verifier's evidence = %v, want ErrEvidenceRejected", err)
 	}
+}
+
+// TestWalletAttestationSubject: the Wallet Attestation's sub is the
+// client the request names, not the first one configured.
+func TestWalletAttestationSubject(t *testing.T) {
+	const second = "second-wallet-client"
+	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) {
+		c.ClientIDs = []string{clientID, second}
+	})
+	in, _ := h.register(kindStrongBox)
+	key := newKey(t)
+	ch := h.challenge(walletprovider.PurposeInstance)
+	jwt, err := h.p.WalletAttestation(context.Background(), walletprovider.WalletAttestationRequest{
+		InstanceID: in.ID, ClientID: second, InstanceKey: &key.PublicKey,
+		Challenge: ch, Evidence: evidence(t, kindTEE, ch, &key.PublicKey),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := jose.Verify(oid4vci.ES256, &h.signer.PublicKey, jwt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if claims.Sub != second {
+		t.Fatalf("sub = %q, want %q", claims.Sub, second)
+	}
+}
+
+// suspendingVerifier is the harness's fake verifier, except that for
+// evidence for purpose it suspends the stored instance before
+// reporting: as if the instance were suspended while its evidence was
+// verified.
+type suspendingVerifier struct {
+	walletprovidertest.FakeVerifier
+	purpose   walletprovider.Purpose
+	instances walletprovider.InstanceStore
+}
+
+func (v suspendingVerifier) Verify(ctx context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
+	ev, err := v.FakeVerifier.Verify(ctx, in)
+	if err != nil || in.Purpose != v.purpose {
+		return ev, err
+	}
+	cur, err := v.instances.Get(ctx, in.Instance.ID)
+	if err != nil {
+		return walletprovider.VerifiedEvidence{}, err
+	}
+	cur.State, cur.Reason = walletprovider.StateSuspended, "suspended meanwhile"
+	if err := v.instances.Update(ctx, cur); err != nil {
+		return walletprovider.VerifiedEvidence{}, err
+	}
+	return ev, nil
+}
+
+// TestSuspendedWhileVerifying: an instance suspended while its
+// evidence is verified gets nothing: the instance's state is checked
+// again when its use is recorded.
+func TestSuspendedWhileVerifying(t *testing.T) {
+	suspending := func(purpose walletprovider.Purpose) func(*walletprovider.Config, *walletprovider.Dependencies) {
+		return func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+			for i, v := range d.Evidence {
+				if v.Kind() == kindFake {
+					d.Evidence[i] = suspendingVerifier{purpose: purpose, instances: d.Instances}
+				}
+			}
+		}
+	}
+	t.Run("Wallet Attestation", func(t *testing.T) {
+		h := newHarness(t, suspending(walletprovider.PurposeInstance))
+		in, _ := h.register(kindFake)
+		if _, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindFake); !errors.Is(err, walletprovider.ErrInstanceNotActive) {
+			t.Fatalf("WalletAttestation for an instance suspended meanwhile = %v, want ErrInstanceNotActive", err)
+		}
+	})
+	t.Run("Key Attestation", func(t *testing.T) {
+		h := newHarness(t, suspending(walletprovider.PurposeHolder))
+		in, _ := h.register(kindFake)
+		ik := h.newInstanceKey(in.ID, kindFake)
+		if _, err := h.keyAttestation(in.ID, &ik.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, kindFake); !errors.Is(err, walletprovider.ErrInstanceNotActive) {
+			t.Fatalf("KeyAttestation for an instance suspended meanwhile = %v, want ErrInstanceNotActive", err)
+		}
+	})
+}
+
+// TestKeyAttestationEvidenceBounds: a request may carry no more
+// evidence than keys, and only one piece of it may advance the
+// instance's counter.
+func TestKeyAttestationEvidenceBounds(t *testing.T) {
+	t.Run("more evidence than keys", func(t *testing.T) {
+		h := newHarness(t, nil)
+		in, _ := h.register(kindStrongBox)
+		ik := h.newInstanceKey(in.ID, kindStrongBox)
+		k := newKey(t)
+		ch := h.challenge(walletprovider.PurposeHolder)
+		_, err := h.p.KeyAttestation(context.Background(), walletprovider.KeyAttestationRequest{
+			InstanceID: in.ID, InstanceKey: &ik.PublicKey, Challenge: ch,
+			Keys:     []crypto.PublicKey{&k.PublicKey},
+			Evidence: []walletprovider.Evidence{evidence(t, kindStrongBox, ch, &k.PublicKey), evidence(t, kindStrongBox, ch, &k.PublicKey)},
+		})
+		if !errors.Is(err, walletprovider.ErrInvalidRequest) {
+			t.Fatalf("KeyAttestation with two pieces of evidence for one key = %v, want ErrInvalidRequest", err)
+		}
+	})
+	t.Run("two counters", func(t *testing.T) {
+		h := newHarness(t, nil)
+		in, _ := h.register(kindIOS)
+		ik := h.newInstanceKey(in.ID, kindIOS)
+		k1, k2 := newKey(t), newKey(t)
+		ch := h.challenge(walletprovider.PurposeHolder)
+		assertion := func(counter uint64, k *ecdsa.PrivateKey) walletprovider.Evidence {
+			ev, err := walletprovidertest.FakeAssertion(kindIOS, ch, counter, &k.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return ev
+		}
+		_, err := h.p.KeyAttestation(context.Background(), walletprovider.KeyAttestationRequest{
+			InstanceID: in.ID, InstanceKey: &ik.PublicKey, Challenge: ch,
+			Keys:     []crypto.PublicKey{&k1.PublicKey, &k2.PublicKey},
+			Evidence: []walletprovider.Evidence{assertion(1, k1), assertion(2, k2)},
+		})
+		if !errors.Is(err, walletprovider.ErrInvalidRequest) {
+			t.Fatalf("KeyAttestation with two assertions = %v, want ErrInvalidRequest", err)
+		}
+	})
 }
