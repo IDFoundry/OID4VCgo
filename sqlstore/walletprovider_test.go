@@ -27,6 +27,21 @@ func TestWalletProviderInstanceStoreContract(t *testing.T) {
 	})
 }
 
+// The stores say they seal their records (walletprovider.SealingStore)
+// when the DB has a Sealer, and only then.
+func TestWalletProviderStoresSayTheySeal(t *testing.T) {
+	forEachSealing(t, func(t *testing.T, e *env) {
+		db, want := e.db(), e.opts.Sealer != nil
+		for name, s := range map[string]walletprovider.SealingStore{
+			"Instances": db.WalletProviderInstances(), "InstanceKeys": db.WalletProviderInstanceKeys(), "Challenges": db.WalletProviderChallenges(),
+		} {
+			if got := s.SealsRecords(); got != want {
+				t.Errorf("%s.SealsRecords() = %t, want %t", name, got, want)
+			}
+		}
+	})
+}
+
 func TestWalletProviderInstanceKeyStoreContract(t *testing.T) {
 	forEachSealing(t, func(t *testing.T, e *env) {
 		walletprovidertest.TestInstanceKeyStoreContract(t, func(*testing.T) walletprovider.InstanceKeyStore {
