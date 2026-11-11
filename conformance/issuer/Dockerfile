@@ -2,7 +2,7 @@
 # directory. Build context is the repo root (../.. from here) —
 # mirrors conformance/verifier/Dockerfile and
 # conformance/wallet-vp/Dockerfile exactly.
-FROM golang:1.26@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
+FROM golang:1.26.11@sha256:7af425da11f4fc1a9308eb704369e3f6d1c44e35bac0f874a59ade3f20fdc07e AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/conformance-issuer ./cmd/conformance-issuer
