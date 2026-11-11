@@ -104,10 +104,13 @@ storage and the UI:
 - **Storage:** `FileCredentialStore` uses complete file protection and
   is excluded from backup. Its writes lock a file in its directory, so
   an app and its extension can share one in an App Group.
-- **Wallet Provider:** you implement `WalletProvider`, which attests the
-  wallet, for issuers that ask for attestations, as HAIP issuers do; pass
-  `nil` for issuers that don't. Issuance follows each issuer's metadata,
-  or with `issuanceProfile: .haip` refuses issuers outside HAIP.
+- **Wallet Provider:** your backend attests the wallet, for issuers
+  that ask for attestations, as HAIP issuers do. `HttpWalletProvider`
+  is the client of one built on OID4VCgo's `walletprovider`, with App
+  Attest evidence; for another backend you implement `WalletProvider`,
+  making the checks the Getting started article lists. Pass `nil` for
+  issuers that don't ask. Issuance follows each issuer's metadata, or
+  with `issuanceProfile: .haip` refuses issuers outside HAIP.
 
 ## Install
 
@@ -115,8 +118,14 @@ storage and the UI:
 .package(url: "https://github.com/IDFoundry/OID4VCgo-wallet-swift", from: "@VERSION@")
 ```
 
-In-person presentation needs `NSBluetoothAlwaysUsageDescription` in your
-app's Info.plist.
+Then, in your app's Info.plist and capabilities:
+- `NSFaceIDUsageDescription`, as holder keys ask for Face ID at each
+  use; without it, iOS asks for the passcode instead.
+- A URL type (`CFBundleURLTypes`) for your redirect URI's private-use
+  scheme (`com.example.wallet`), registered with issuers, and for the
+  `openid-credential-offer` and `openid4vp` schemes your app opens.
+- The App Attest capability, for `HttpWalletProvider`.
+- `NSBluetoothAlwaysUsageDescription`, for in-person presentation.
 
 ## Use
 
