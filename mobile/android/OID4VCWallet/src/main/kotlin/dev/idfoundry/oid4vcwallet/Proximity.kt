@@ -578,7 +578,16 @@ public data class ProximityReaderConfiguration(
     @SerialName("reader_chain") val readerChain: String? = null,
     /** Tolerates an issuer's clock this far off the reader's, at most an hour. */
     @SerialName("max_clock_skew_seconds") val maxClockSkewSeconds: Long? = null,
-    /** Accepts only document signers with the mDL document signer extended key usage. */
+    /**
+     * Deprecated, and does nothing: the default check already requires
+     * the mDL document signer extended key usage, refusing a document
+     * signer certificate without it (or an OCSP signer's), so setting
+     * this changes nothing. It still can't be set with
+     * [acceptMDLSignerWithoutEKU]. Its `require_mdl_signer_eku` key is
+     * still accepted within ABI 15, and goes at the next ABI version,
+     * with this property.
+     */
+    @Deprecated("the default check already requires the mDL document signer extended key usage; setting it changes nothing")
     @SerialName("require_mdl_signer_eku") val requireMDLSignerEKU: Boolean = false,
     /**
      * Each document type's own IACAs, as PEM certificates: a document of
