@@ -617,7 +617,7 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 		return errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
 	}
 	if sealing, ok := store.(SealingStore); (!ok || !sealing.SealsTransactions()) && !cfg.UnsealedStore {
-		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as verifier.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
+		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as sealing.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
 	}
 	if cfg.Lifetime > MaxProductionTransactionLifetime {
 		return fmt.Errorf("verifier: transactions: lifetime is %v; under AssuranceProduction it must be at most %v", cfg.Lifetime, MaxProductionTransactionLifetime)

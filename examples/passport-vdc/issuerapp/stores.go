@@ -16,10 +16,10 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	oid4vcgostorage "github.com/idfoundry/oid4vcgo/storage"
-	"github.com/idfoundry/oid4vcgo/verifier"
 
 	_ "modernc.org/sqlite" // the "sqlite" database/sql driver, for OpenDatabase
 )
@@ -128,7 +128,7 @@ func OpenDatabase(path, keyPath string) (*sql.DB, sqlstore.Sealer, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: database key: %w", err)
 	}
-	sealer, err := verifier.AESGCMSealer(key)
+	sealer, err := sealing.AESGCMSealer(key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("issuerapp: database key %s: %w", keyPath, err)
 	}

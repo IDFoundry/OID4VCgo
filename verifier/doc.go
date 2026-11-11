@@ -49,8 +49,8 @@
 // the same scope for all of them, so give each its own explicit Scope.
 //
 // A production TransactionStore keeps transactions outside the process:
-// TransactionCodec encodes one, and with a TransactionSealer
-// (AESGCMSealer) seals what it holds of the holder's — the response
+// TransactionCodec encodes one, and with a sealing.Sealer
+// (sealing.AESGCMSealer) seals what it holds of the holder's — the response
 // decryption key and the disclosed claims — so the store's copy reveals
 // neither. The record's other fields stay readable and unprotected:
 // the store is trusted for their integrity.

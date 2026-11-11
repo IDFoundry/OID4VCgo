@@ -26,7 +26,7 @@ each, not a deployment template" says what it does differently.
   entry says what its migrations lock, and for how long.
 - [ ] **Seal records at rest.** `Options.Sealer` encrypts every issuer,
   verifier transaction, walletflow and Wallet Provider record
-  (`verifier.AESGCMSealer` makes one from a 32-byte key; the verifier's
+  (`sealing.AESGCMSealer` makes one from a 32-byte key; the verifier's
   `TransactionCodec` takes the same Sealer). Keep the key in a secret
   manager or KMS, never in the database. An AES-GCM key seals about
   2^32 records safely: rotate before then with fapigo/sqlstore's
