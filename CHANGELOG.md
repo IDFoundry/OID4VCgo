@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.75.3](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.2...v0.75.3) (2026-11-11)
+
+
+### Bug Fixes
+
+* build with Go 1.26.11 for GO-2026-6859 ([a5f71bd](https://github.com/IDFoundry/OID4VCgo/commit/a5f71bd87a4fa8e570ba446f0a9e5ac9e75066f1))
+
 ## [0.75.2](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.1...v0.75.2) (2026-11-10)
 
 
