@@ -79,109 +79,76 @@ recovered: delete each and have the holder receive that credential
 again. `unsupportedRecordIDs()` names those a newer version of the app
 wrote: keep them, since an update reads them.
 
-## Implement the Wallet Provider
+## Connect the Wallet Provider
 
 Issuers following HAIP accept only a wallet its Wallet Provider has
 attested: a Wallet Attestation for the wallet's instance key, and a Key
 Attestation for the keys a credential will be bound to. Your backend
-issues them; the app passes the keys and returns its answers.
+issues them, after checking Android Key Attestation that each key is in
+this device's secure hardware, made by your app.
 
-A real Wallet Provider attests a key only after checking Android Key
-Attestation that it's in this device's secure hardware, made by your
-app. Before the wallet makes an instance or holder key, it asks
-`attestationChallenge` for a challenge from your backend;
-`AndroidKeystoreKeyStore` makes the key over it, and the key then
-reaches `walletAttestation` or `keyAttestation` as `KeyEvidence`, with
-its attestation certificate chain for your backend to verify. A Key
-Attestation request also names the issuance's instance key, which
-`walletAttestation` attested first, so your backend can give the Key
-Attestation that key's status.
-[Going to production](GoingToProduction.md) lists what it checks.
+With a backend built on OID4VCgo's `walletprovider` package, the wallet
+needs no provider code of your own: `HttpWalletProvider` speaks its
+protocol
+([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)),
+registering the installation once, with a registration key of its own,
+and sending each instance and holder key's attestation chain. Give it
+the URL the protocol is mounted at and a registry for its registration;
+it keeps the registration key in Android Keystore, apart from the
+wallet's keys:
 
 ```kotlin
 import android.app.Activity
 import android.content.Context
 import android.os.Build
-import android.util.Base64
 import androidx.annotation.RequiresApi
 import dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore
 import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
 import dev.idfoundry.oid4vcwallet.FileInstanceRegistry
 import dev.idfoundry.oid4vcwallet.HttpWalletProvider
-import dev.idfoundry.oid4vcwallet.KeyAttestationRequest
-import dev.idfoundry.oid4vcwallet.KeyEvidence
-import dev.idfoundry.oid4vcwallet.KeyPurpose
 import dev.idfoundry.oid4vcwallet.Wallet
-import dev.idfoundry.oid4vcwallet.WalletAttestationRequest
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
-import dev.idfoundry.oid4vcwallet.WalletProvider
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 
-/**
- * Asks the app's backend for attestations, sending each key's Android Key
- * Attestation chain for it to verify. The keys are public JWKs, as JSON;
- * the answers are compact JWTs, and the challenges base64.
- */
-class BackendWalletProvider(private val backend: String) : WalletProvider {
-    // A challenge for each instance and holder key; DPoP keys aren't attested.
-    override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? =
-        if (purpose == KeyPurpose.DPOP) null
-        else Base64.decode(post("challenge", JSONObject().put("purpose", purpose.rawValue)), Base64.NO_WRAP)
-
-    override suspend fun walletAttestation(request: WalletAttestationRequest): String =
-        post("wallet-attestation", JSONObject()
-            .put("client_id", request.clientID)
-            .put("instance_key", evidence(request.instanceKey)))
-
-    // instanceKey is the issuance's, which walletAttestation sent first.
-    override suspend fun keyAttestation(request: KeyAttestationRequest): String =
-        post("key-attestation", JSONObject()
-            .put("instance_key", JSONObject(request.instanceKey.jwk.decodeToString()))
-            .put("keys", JSONArray(request.keys.map(::evidence)))
-            .put("nonce", request.nonce))
-
-    private fun evidence(key: KeyEvidence): JSONObject = JSONObject()
-        .put("jwk", JSONObject(key.jwk.decodeToString()))
-        .put("certificate_chain", JSONArray(key.certificateChain.map { Base64.encodeToString(it, Base64.NO_WRAP) }))
-
-    private suspend fun post(path: String, body: JSONObject): String = withContext(Dispatchers.IO) {
-        val connection = URL("$backend/$path").openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.outputStream.use { it.write(body.toString().toByteArray()) }
-            check(connection.responseCode == 200) { "the Wallet Provider answered ${connection.responseCode}" }
-            connection.inputStream.use { it.readBytes().decodeToString() }
-        } finally {
-            connection.disconnect()
-        }
-    }
-}
-```
-
-An `IOException` the provider throws reaches the wallet as a retryable
-`network` error; any other is `platform`.
-
-If your backend is built with OID4VCgo's `walletprovider` package, you
-needn't write this class: `HttpWalletProvider` speaks its protocol
-([WALLET_PROVIDER.md](https://github.com/IDFoundry/OID4VCgo/blob/main/mobile/WALLET_PROVIDER.md)),
-registering the installation once, with a registration key of its own,
-and sending each instance and holder key's attestation chain. Give it a
-registry for its registration; it keeps the registration key in Android
-Keystore, apart from the wallet's keys:
-
-```kotlin
-/** The Wallet Provider, when the backend is OID4VCgo's `walletprovider`, mounted at /wp. */
-fun oid4vcgoWalletProvider(context: Context): WalletProvider =
+/** The Wallet Provider: OID4VCgo's `walletprovider`, mounted at /wp. */
+fun oid4vcgoWalletProvider(context: Context): HttpWalletProvider =
     HttpWalletProvider("https://provider.example.com/wp", FileInstanceRegistry.standard(context))
 ```
+
+It sends nothing but to that https URL, follows no redirect, times out
+each connection and read, and checks each answer is for what it asked
+before the wallet uses it. Its failures reach the wallet as a
+retryable `network` error when the network or the provider's
+availability caused them (HTTP 5xx and 429 among them), and as
+`platform` when the provider refused.
+[Going to production](GoingToProduction.md#the-wallet-provider) lists
+what the backend checks.
+
+### If your backend isn't OID4VCgo's walletprovider
+
+Implement `WalletProvider` yourself, and make the checks
+`HttpWalletProvider` makes:
+
+- **Evidence:** `attestationChallenge` returns a fresh challenge from
+  your backend for each instance and holder key (null for DPoP keys);
+  `AndroidKeystoreKeyStore` makes the key over it, and the key reaches
+  `walletAttestation` or `keyAttestation` as `KeyEvidence`. Send each
+  key's `certificateChain`, and a Key Attestation's
+  `KeyAttestationRequest.instanceKey`, to your backend, which verifies
+  the chain as [Going to production](GoingToProduction.md#the-wallet-provider)
+  lists before attesting.
+- **Transport:** send only to your backend's https URL, with
+  `instanceFollowRedirects = false`, a connect and a read timeout, and a
+  bounded read of the answer.
+- **Answers:** before returning a Wallet Attestation, check its `sub`
+  is the request's `clientID` and its `cnf.jwk` the instance key;
+  before returning a Key Attestation, check its `nonce` is the
+  request's (absent when that's empty) and its `attested_keys` holds
+  only keys you sent. The issuer verifies their signatures.
+- **Errors:** throw an `IOException` for what's worth retrying — no
+  connection, a timeout, HTTP 5xx or 429 — which reaches the wallet as
+  a retryable `network` error. Any other exception reaches it as
+  `platform`: throw a refusal as one.
 
 ## Create the wallet
 
@@ -198,6 +165,7 @@ the CRLs your app fetches (`revocation`), or declined
 @RequiresApi(Build.VERSION_CODES.R)
 class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots: String, verifierRoots: String, crls: String) {
     private val keys = AndroidKeystoreKeyStore(authenticator = BiometricPromptAuthenticator(currentActivity))
+    private val provider = oid4vcgoWalletProvider(context)
 
     val wallet = Wallet(
         WalletConfiguration(
@@ -214,12 +182,13 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
         ),
         keys,
         FileCredentialStore.standard(context),
-        BackendWalletProvider("https://provider.example.com"),
+        provider,
     )
 
     /** Run once at launch, before any issuance. */
     suspend fun start() {
         wallet.sweepOrphanedKeys(keys)
+        provider.sweepOrphanedRegistrationKeys()
     }
 }
 ```

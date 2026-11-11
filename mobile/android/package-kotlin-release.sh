@@ -134,17 +134,18 @@ library. Your app owns the keys, the storage and the UI:
   that works only while the device is unlocked, out of backups. Its
   writes lock a file in its directory, so the app's processes can share
   one.
-- **Wallet Provider:** you implement \`WalletProvider\`, which attests the
-  wallet, for issuers that ask for attestations, as HAIP issuers do; pass
-  \`null\` for issuers that don't. It gives a challenge for each key the
-  wallet makes (\`attestationChallenge\`), and receives each key with its
-  Android Key Attestation chain (\`KeyEvidence\`): your backend verifies
-  the chain — Google's root, your challenge, StrongBox or the TEE, your
-  app's package and signing certificate — before attesting the key, as
+- **Wallet Provider:** your backend attests the wallet, for issuers that
+  ask for attestations, as HAIP issuers do, after verifying each key's
+  Android Key Attestation chain — Google's root, your challenge,
+  StrongBox or the TEE, your app's package and signing certificate — as
   [Going to production](docs/GoingToProduction.md#the-wallet-provider)
-  says. Issuance follows each issuer's
-  metadata, or with \`issuanceProfile = IssuanceProfile.HAIP\` refuses
-  issuers outside HAIP.
+  says. \`HttpWalletProvider\` is the client of one built on OID4VCgo's
+  \`walletprovider\`; for another backend you implement
+  \`WalletProvider\`, making the checks
+  [Getting started](docs/GettingStarted.md#if-your-backend-isnt-oid4vcgos-walletprovider)
+  lists. Pass \`null\` for issuers that don't ask. Issuance follows each
+  issuer's metadata, or with \`issuanceProfile = IssuanceProfile.HAIP\`
+  refuses issuers outside HAIP.
 
 ## Install
 

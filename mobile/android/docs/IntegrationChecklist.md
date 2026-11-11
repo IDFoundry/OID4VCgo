@@ -22,9 +22,11 @@ is a complete, working app on this library to compare against.
 - [ ] The app refuses to run on a test build: `OID4VC.isTestBuild` is
   false in what you ship.
 - [ ] Keys come from `AndroidKeystoreKeyStore`, credentials live in
-  `FileCredentialStore`, and the app implements `WalletProvider` (or
-  passes `null` for issuers that don't ask for attestations).
-  ([Getting started](GettingStarted.md))
+  `FileCredentialStore`, and the Wallet Provider is `HttpWalletProvider`
+  or a `WalletProvider` of the app's own making the checks
+  [Getting started](GettingStarted.md#if-your-backend-isnt-oid4vcgos-walletprovider)
+  lists (or the app passes `null` for issuers that don't ask for
+  attestations). ([Getting started](GettingStarted.md))
 - [ ] With a backend built on OID4VCgo's `walletprovider`, the provider
   is `HttpWalletProvider`, given `FileInstanceRegistry.standard(context)`
   and its default registration key store (not the wallet's), and the
