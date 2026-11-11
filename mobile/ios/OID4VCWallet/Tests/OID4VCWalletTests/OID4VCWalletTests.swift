@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Network
+import Security
 import XCTest
 @testable import OID4VCWallet
 
@@ -211,6 +213,58 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertThrowsError(try WalletProviderAdapter(Offline()).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertTrue(error.localizedDescription.hasPrefix("[network] "), error.localizedDescription)
         }
+
+        // A refusal with the protocol's error code reaches Go marked with
+        // it; one without a code, unmarked.
+        struct Refusing: WalletProvider {
+            let code: String?
+            func walletAttestation(clientID _: String, instanceKey _: Data) async throws -> String {
+                throw WalletProviderRefusedError(status: 403, error: code, description: nil, path: "/v1/wallet-attestation")
+            }
+            func keyAttestation(instanceKey _: Data, keys _: [Data], nonce _: String) async throws -> String { "" }
+        }
+        XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: "instance_revoked")).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+            XCTAssertEqual(error.localizedDescription, "[refused:instance_revoked] the Wallet Provider refused /v1/wallet-attestation: HTTP 403 instance_revoked")
+        }
+        XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: nil)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+            XCTAssertEqual(error.localizedDescription, "the Wallet Provider refused /v1/wallet-attestation: HTTP 403")
+        }
+    }
+
+    /// The holder cancelling a key's prompt reaches Go marked as a
+    /// cancellation; another failure, unmarked.
+    func testHolderCancellationIsMarked() {
+        let userCancel = NSError(domain: NSOSStatusErrorDomain, code: Int(errSecUserCanceled))
+        let laCancel = NSError(domain: LAErrorDomain, code: LAError.Code.userCancel.rawValue)
+        for error in [userCancel, laCancel, CancellationError() as Error] {
+            XCTAssertTrue(isHolderCancellation(error), "\(error)")
+            XCTAssertThrowsError(try markingHolderCancellation { () throws -> Int in throw error }) { thrown in
+                XCTAssertTrue(thrown.localizedDescription.hasPrefix("[cancelled] "), thrown.localizedDescription)
+            }
+        }
+        let other = NSError(domain: NSOSStatusErrorDomain, code: Int(errSecAuthFailed))
+        XCTAssertFalse(isHolderCancellation(other))
+        XCTAssertFalse(isHolderCancellation(NSError(domain: LAErrorDomain, code: LAError.Code.authenticationFailed.rawValue)))
+        XCTAssertThrowsError(try markingHolderCancellation { () throws -> Int in throw other }) { thrown in
+            XCTAssertFalse(thrown.localizedDescription.hasPrefix("[cancelled]"), thrown.localizedDescription)
+        }
+    }
+
+    /// A Wallet Provider's refusal, the holder's cancellation and a TLS
+    /// pin mismatch each have a sentence for the holder.
+    func testHolderFacingTextForProviderRefusalsAndPins() {
+        func parse(_ text: String) -> WalletError {
+            WalletError(NSError(domain: "go", code: 1, userInfo: [NSLocalizedDescriptionKey: text]))
+        }
+        let suspended = parse("[platform:instance_not_active] wallet attestation: the Wallet Provider refused")
+        XCTAssertEqual(suspended.code, .platform)
+        XCTAssertEqual(suspended.protocolError, "instance_not_active")
+        XCTAssertEqual(suspended.localizedDescription, "This wallet is suspended by its provider. Contact them, or try again later.")
+        XCTAssertNotEqual(parse("[platform:instance_revoked] x").localizedDescription, parse("[platform] x").localizedDescription)
+        XCTAssertNotEqual(parse("[platform:invalid_signed_request] x").localizedDescription, parse("[platform] x").localizedDescription)
+        XCTAssertEqual(parse("[platform:evidence_rejected] x").localizedDescription, "The wallet's provider refused the request.")
+        XCTAssertEqual(parse("[cancelled] sign with key: the holder cancelled").code, .cancelled)
+        XCTAssertEqual(parse("[tls_pin] pin mismatch").localizedDescription, "The service's identity couldn't be confirmed, so nothing was sent to it.")
     }
 }
 

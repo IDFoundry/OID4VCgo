@@ -63,8 +63,10 @@ import Foundation
 /// 429, a challenge that expired before it was used, App Attest's server
 /// unavailable) as `.network`, which may be retried
 /// (``WalletProviderUnavailableError``); a refusal
-/// (``WalletProviderRefusedError``) as `.platform`, its message naming the
-/// protocol's error code. On `instance_revoked`, it forgets the
+/// (``WalletProviderRefusedError``) as `.platform`, its `protocolError`
+/// the protocol's error code (`instance_not_active`, `instance_revoked`,
+/// `invalid_signed_request`, …), which `localizedDescription` explains to
+/// the holder. On `instance_revoked`, it forgets the
 /// registration and deletes its registration key: the next Wallet
 /// Attestation registers the installation again. The revoked instance's
 /// instance keys stay its own (`instance_key_registered`), so a
@@ -475,8 +477,18 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
 /// The Wallet Provider refused a request with one of the protocol's
 /// errors, or answered other than the protocol documents (a redirect, a
 /// path it doesn't serve). It reaches the wallet as `.platform`, its
-/// message naming ``error``.
+/// `protocolError` ``error`` when there is one. An app's own
+/// ``WalletProvider`` may throw it too, for the same.
 public struct WalletProviderRefusedError: LocalizedError, Sendable {
+    /// A refusal of `path` with HTTP `status` and the protocol's `error`
+    /// code.
+    public init(status: Int, error: String?, description: String?, path: String) {
+        self.status = status
+        self.error = error
+        self.description = description
+        self.path = path
+    }
+
     /// The HTTP status code.
     public let status: Int
     /// The protocol's error code (`evidence_rejected`, `instance_revoked`,

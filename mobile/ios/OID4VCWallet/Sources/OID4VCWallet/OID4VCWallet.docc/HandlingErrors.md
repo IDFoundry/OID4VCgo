@@ -62,9 +62,9 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/proofUnsupported`` | The wallet can't hold the credential, or the issuer needs a proof it can't give (a key attestation needs a `WalletProvider`, and a `clientID` for an issuance that redeems a pre-authorized code without client authentication) | Tell the holder |
 | ``WalletError/Code/notFound`` | No such credential, deferred credential or authorization | Refresh the list |
 | ``WalletError/Code/wrongStep`` | The session isn't at that step | A bug in the app's flow |
-| ``WalletError/Code/cancelled`` | The calling task was cancelled | Nothing |
+| ``WalletError/Code/cancelled`` | The calling task was cancelled, or the holder dismissed Face ID or the passcode for a holder key | Nothing |
 | ``WalletError/Code/invalidInput`` | A link, PIN or configuration isn't valid | Tell the holder, or fix the configuration |
-| ``WalletError/Code/platform`` | The key store, credential store or Wallet Provider failed | Check the app's implementation |
+| ``WalletError/Code/platform`` | The key store, credential store or Wallet Provider failed. When the provider refused (``WalletProviderRefusedError``), ``WalletError/protocolError`` is its error code: `instance_not_active` (suspended), `instance_revoked`, `invalid_signed_request`, … | Show its `localizedDescription`; without a `protocolError`, check the app's implementation |
 | ``WalletError/Code/internalError`` | Unexpected | Log it |
 
 ### Revoked certificates and out-of-date revocation lists

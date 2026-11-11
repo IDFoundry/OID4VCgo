@@ -1,5 +1,7 @@
 import Foundation
+import LocalAuthentication
 import Mobile
+import Security
 
 /// What a key is for.
 public enum KeyPurpose: String, Sendable, CaseIterable {
@@ -161,7 +163,9 @@ final class KeyStoreAdapter: NSObject, MobileKeyStoreProtocol, @unchecked Sendab
 
     func publicKey(_ id: String?) throws -> Data { try store.publicKey(id: id ?? "") ?? Data() }
 
-    func sign(_ id: String?, digest: Data?) throws -> Data { try store.sign(id: id ?? "", digest: digest ?? Data()) }
+    func sign(_ id: String?, digest: Data?) throws -> Data {
+        try markingHolderCancellation { try store.sign(id: id ?? "", digest: digest ?? Data()) }
+    }
 
     func deleteKey(_ id: String?) throws { try store.deleteKey(id: id ?? "") }
 
@@ -176,10 +180,37 @@ final class KeyAgreementAdapter: NSObject, MobileKeyAgreementProtocol, @unchecke
 
     func agree(_ id: String?, peerPublicKey: Data?) throws -> Data {
         do {
-            return try agreement.agree(id: id ?? "", peerPublicKey: peerPublicKey ?? Data())
+            return try markingHolderCancellation { try agreement.agree(id: id ?? "", peerPublicKey: peerPublicKey ?? Data()) }
         } catch let e as KeyAgreementUnsupported {
             throw StoreError("[no_key_agreement] " + e.message)
         }
+    }
+}
+
+/// Runs a key's use, marking the holder dismissing its prompt — Face ID's
+/// or the passcode's cancel, or a `CancellationError` — so Go reports it
+/// as `.cancelled` rather than `.platform`.
+func markingHolderCancellation<T>(_ use: () throws -> T) throws -> T {
+    do {
+        return try use()
+    } catch where isHolderCancellation(error) {
+        throw StoreError("[cancelled] " + error.localizedDescription)
+    }
+}
+
+/// Whether `error` is the holder cancelling a key's prompt:
+/// `errSecUserCanceled`, or LocalAuthentication's user, system or app
+/// cancel, or a `CancellationError`.
+func isHolderCancellation(_ error: Error) -> Bool {
+    if error is CancellationError { return true }
+    let ns = error as NSError
+    switch ns.domain {
+    case NSOSStatusErrorDomain:
+        return ns.code == Int(errSecUserCanceled)
+    case LAErrorDomain:
+        return [LAError.Code.userCancel, .systemCancel, .appCancel].map(\.rawValue).contains(ns.code)
+    default:
+        return false
     }
 }
 
@@ -257,7 +288,10 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
 
     /// Runs `body` and blocks this (Go's) thread until it finishes. A
     /// URLError is marked as a network failure, which Go reports as
-    /// `.network` (retryable) rather than `.platform`. With `waits`, it
+    /// `.network` (retryable) rather than `.platform`, and a
+    /// ``WalletProviderRefusedError`` with an error code as a refusal,
+    /// which Go reports as `.platform` with that code as `protocolError`.
+    /// With `waits`, it
     /// runs as the wait for `instanceKey` there, so cancelling that
     /// cancels its Task.
     static func wait<T: Sendable>(_ waits: CancellableWaits? = nil, _ instanceKey: Data? = nil,
@@ -269,6 +303,11 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
                 box.set(.success(try await body()))
             } catch let e as URLError {
                 box.set(.failure(StoreError("[network] " + e.localizedDescription)))
+            } catch let e as WalletProviderRefusedError {
+                // The protocol's error code, for Go to carry as the
+                // error's detail (protocolError).
+                let message = e.errorDescription ?? ""
+                box.set(.failure(StoreError(e.error.map { "[refused:\($0)] " + message } ?? message)))
             } catch {
                 box.set(.failure(error))
             }
