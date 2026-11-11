@@ -89,9 +89,10 @@ func (iss *Issuer) requireDeferral(auth AuthorizedRequest) error {
 	return nil
 }
 
-// startDeferral saves a pending transaction for a checked request and
-// returns the Credential Response that tells the Wallet to poll for it.
-func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
+// startDeferral saves a pending transaction for a checked request, whose
+// proofs were of proofType, and returns the Credential Response that
+// tells the Wallet to poll for it.
+func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID, proofType string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
 	raw := make([]byte, transactionIDEntropyBytes)
 	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: transaction_id: %w", err)
@@ -118,6 +119,9 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 		KeyAttestations: keyAttestations, ProofKeyHeaders: proofKeyHeaders,
+	}
+	if keyAttestations != nil {
+		record.KeyAttestationProofType = proofType
 	}
 	if err := iss.deps.DeferredTransactions.Create(ctx, transactionID, record); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: save deferred transaction: %w", err)
@@ -347,8 +351,8 @@ func sameKey(a, b crypto.PublicKey) bool {
 
 // recheckKeyAttestations verifies record's KeyAttestations again, as of
 // now: each one's signature against the key
-// Dependencies.AttestationVerifier resolves, by an algorithm one of
-// cc's proof types accepts, its exp, and its status
+// Dependencies.AttestationVerifier resolves, by an algorithm the proof
+// type they arrived under accepts (attestationAlgs), its exp, and its status
 // (checkAttestationStatus). The request-time checks of freshness
 // (nonce, iat) and of the proofs themselves aren't repeated: they were
 // met when the transaction was created.
@@ -364,9 +368,9 @@ func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConf
 	if iss.deps.AttestationVerifier == nil {
 		return fmt.Errorf("this issuer has no Dependencies.AttestationVerifier to verify them with")
 	}
-	var algs []string
-	for _, ptc := range cc.ProofTypesSupported {
-		algs = append(algs, ptc.ProofSigningAlgValuesSupported...)
+	algs, err := attestationAlgs(cc, record.KeyAttestationProofType)
+	if err != nil {
+		return err
 	}
 	now := iss.deps.Clock.Now()
 	var unknown error
@@ -384,6 +388,27 @@ func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConf
 		}
 	}
 	return unknown
+}
+
+// attestationAlgs are the algorithms a deferred transaction's key
+// attestations may be signed by: those cc's proofType lists, the proof
+// type they arrived under, or, for a record that doesn't name it (saved
+// before DeferredTransactionRecord.KeyAttestationProofType existed),
+// those any of cc's proof types lists. A proof type cc no longer
+// supports denies the transaction.
+func attestationAlgs(cc CredentialConfiguration, proofType string) ([]string, error) {
+	if proofType != "" {
+		ptc, ok := cc.ProofTypesSupported[proofType]
+		if !ok {
+			return nil, fmt.Errorf("the key attestations' proof type %q is no longer supported for this credential configuration", proofType)
+		}
+		return ptc.ProofSigningAlgValuesSupported, nil
+	}
+	var algs []string
+	for _, ptc := range cc.ProofTypesSupported {
+		algs = append(algs, ptc.ProofSigningAlgValuesSupported...)
+	}
+	return algs, nil
 }
 
 // abandonDeferral denies a pending transaction whose Credential

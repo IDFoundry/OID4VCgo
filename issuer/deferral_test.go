@@ -225,6 +225,60 @@ func TestDeferral_RechecksKeyAttestation(t *testing.T) {
 	}
 }
 
+// TestDeferral_RechecksKeyAttestationUnderItsProofType: the record keeps
+// the proof type the key attestation arrived under, and its signature
+// is verified again by an algorithm that proof type lists, not any
+// proof type's. Here jwt lists ES256, the attestation's, and attestation
+// only EdDSA: an ES256 attestation recorded under attestation is
+// refused, as one under a proof type no longer supported is; a record
+// from before the field, naming none, takes any proof type's.
+func TestDeferral_RechecksKeyAttestationUnderItsProofType(t *testing.T) {
+	for name, tc := range map[string]struct {
+		proofType string
+		denied    bool
+	}{
+		"as requested, jwt":          {proofType: oid4vci.ProofTypeJWT},
+		"attestation, without ES256": {proofType: oid4vci.ProofTypeAttestation, denied: true},
+		"no longer supported":        {proofType: "unsupported", denied: true},
+		"none recorded":              {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newDeferralFixture(t, func(cfg *issuer.Config, _ *issuer.Dependencies) {
+				c := cfg.CredentialConfigurationsSupported[testSDJWTConfigID]
+				ptc := c.ProofTypesSupported[oid4vci.ProofTypeAttestation]
+				ptc.ProofSigningAlgValuesSupported = []string{"EdDSA"}
+				c.ProofTypesSupported[oid4vci.ProofTypeAttestation] = ptc
+				cfg.CredentialConfigurationsSupported[testSDJWTConfigID] = c
+			})
+			ctx := context.Background()
+			key := testP256Key(t)
+			n := f.issueNonce(t)
+			ka := keyAttestationForJWT(t, f.attestationSigner, n, false, &key.PublicKey)
+			resp, err := f.iss.RequestCredential(ctx, deferralAuth, issuer.CredentialRequest{
+				CredentialConfigurationID: testSDJWTConfigID,
+				Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: {jwtProofWithKeyAttestation(t, key, n, ka)}},
+				Defer:                     &issuer.Deferral{},
+			})
+			if err != nil {
+				t.Fatalf("RequestCredential (deferred): %v", err)
+			}
+			if record, err := f.store.Get(ctx, resp.TransactionID); err != nil || record.KeyAttestationProofType != oid4vci.ProofTypeJWT {
+				t.Fatalf("record = %+v, %v; want the key attestation's proof type, jwt", record, err)
+			}
+			if err := f.store.Update(ctx, resp.TransactionID, func(r *issuer.DeferredTransactionRecord) error {
+				r.KeyAttestationProofType = tc.proofType
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			err = f.iss.IssueDeferredCredential(ctx, resp.TransactionID, issuer.DeferredIssuance{SDJWTClaims: testSDJWTClaims()})
+			if tc.denied != errors.Is(err, issuer.ErrDeferredKeyAttestation) || (!tc.denied && err != nil) {
+				t.Errorf("IssueDeferredCredential = %v, want denied %v", err, tc.denied)
+			}
+		})
+	}
+}
+
 // TestDeferral_NoKeyAttestationToRecheck: a transaction without key
 // attestations, from proofs that carried none or saved before
 // DeferredTransactionRecord had them, issues without a status check.
