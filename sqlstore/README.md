@@ -44,8 +44,7 @@ txs, err := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCode
 The Sealer is any `sqlstore.Sealer`; `sealing.AESGCMSealer` makes one
 from a 32-byte key for every store here, not only the verifier's (its
 result is a `sealing.Sealer`, which the verifier's `TransactionCodec`
-takes too). OID4VCgo releases before the `sealing` package have it as
-`verifier.AESGCMSealer`. With a Sealer, the issuer stores declare they
+takes too). With a Sealer, the issuer stores declare they
 seal their records (`sealing.Store`), which an issuer under
 `AssuranceProduction` requires of every store holding holders' data.
 

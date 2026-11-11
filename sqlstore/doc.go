@@ -208,8 +208,7 @@
 // The stores keep only what the library hands them: the issuer gives a
 // PreAuthorizedCodeStore the hash of each code and a keyed hash of its
 // Transaction Code, never either itself, and the verifier the hash of
-// each response_code. Give Options a Sealer — sealing.AESGCMSealer
-// (verifier.AESGCMSealer in OID4VCgo releases before the sealing package),
+// each response_code. Give Options a Sealer — sealing.AESGCMSealer,
 // with a 32-byte key kept outside the database, in a secret manager or
 // KMS — and every issuer and walletflow record is sealed too, bound to
 // its table and key: a deferred transaction's issued Credentials, a

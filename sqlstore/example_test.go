@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -47,7 +48,7 @@ func Example() {
 
 	// The key sealing records at rest: from a secret manager or KMS,
 	// never from the database.
-	sealer, err := verifier.AESGCMSealer(secret(32))
+	sealer, err := sealing.AESGCMSealer(secret(32))
 	if err != nil {
 		panic(err)
 	}

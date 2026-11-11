@@ -11,6 +11,7 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/issuertest"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 )
 
@@ -67,14 +68,13 @@ func TestIssuerStoresDeclareProductionCapabilities(t *testing.T) {
 // The issuer stores say they seal their records (sealing.Store's
 // SealsRecords) exactly when the DB has a Sealer.
 func TestIssuerStoresDeclareSealing(t *testing.T) {
-	type sealingStore interface{ SealsRecords() bool }
 	for _, sealed := range []bool{false, true} {
 		opts := sqlstore.Options{}
 		if sealed {
 			opts.Sealer = testSealer(t)
 		}
 		d := newSQLiteDB(t, opts)
-		for name, s := range map[string]sealingStore{
+		for name, s := range map[string]sealing.Store{
 			"Nonces": d.Nonces(), "PreAuthorizedCodes": d.PreAuthorizedCodes(), "DeferredTransactions": d.DeferredTransactions(),
 			"Notifications": d.Notifications(), "CredentialOffers": d.CredentialOffers(),
 		} {
