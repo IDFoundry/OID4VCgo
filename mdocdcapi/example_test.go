@@ -83,22 +83,31 @@ func ExampleBuildRequest() {
 	encrypted := must(in.Respond(0, issuerSigned, deviceKey, [][2]string{{ns, "age_over_18"}}))
 
 	// Page (server side): verify the response the page posted back,
-	// trusting documents signed under the IACA.
-	// Revocation: NoCheck keeps the example short; a deployment passes
-	// certrevocation.CRLs with each IACA's current CRL.
+	// trusting documents signed under the IACA, its certificates
+	// checked against its current CRL. A deployment's CRLs come from a
+	// certrevocation.Refresher (its Checker), fetched from the IACA's
+	// distribution points and kept current by its Run; here the IACA
+	// signs an empty one.
+	crl := must(x509.ParseRevocationList(must(x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+		Number: big.NewInt(1), ThisUpdate: now.Add(-time.Minute), NextUpdate: now.Add(time.Hour),
+	}, iaca, iacaKey))))
+	revocation := certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) {
+		return []*x509.RevocationList{crl}, nil
+	}}
+	statusCache := statuslist.NewCache(statuslist.CacheOptions{}) // one for the process
 	iacaRoots := x509.NewCertPool()
 	iacaRoots.AddCert(iaca)
 	verified := must(mdocdcapi.VerifyResponse(context.Background(), mdocdcapi.VerifyParams{
 		Pending:    req.Pending,
 		Response:   base64.RawURLEncoding.EncodeToString(encrypted),
-		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots, Revocation: certrevocation.NoCheck{}},
+		IssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: iacaRoots, Revocation: revocation},
 		// Every issuer under the IACA may issue the doctype.
 		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true,
 		// Revocation, checked before any Accept: the document's status
 		// list, signed under the IACA (the example document carries no
 		// status reference, so there's nothing to fetch).
 		Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
-			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation}, Cache: statusCache,
 		}},
 		Origins: []string{origin},
 	}))
@@ -176,7 +185,7 @@ func ExampleForTransactions() {
 func newCA(name string) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return newCert(&x509.Certificate{
 		Subject: pkix.Name{CommonName: name, Country: []string{"US"}}, IsCA: true, BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageCertSign,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}, nil, nil)
 }
 

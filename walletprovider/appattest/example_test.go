@@ -1,8 +1,6 @@
 package appattest_test
 
 import (
-	"os"
-
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/appattest"
 )
@@ -14,9 +12,11 @@ import (
 // KeyBindingAppAssertion): App Attest proves the app, not its keys.
 func ExampleEvidenceVerifier() {
 	v := &appattest.Verifier{
-		Apps: []string{os.Getenv("TEAM_ID") + ".com.example.wallet"},
-		// Only for a provider that development builds register with.
-		AllowDevelopment: os.Getenv("APP_ATTEST_ENVIRONMENT") == "development",
+		Apps: []string{"ABCDE12345.com.example.wallet"}, // team ID and bundle ID
+		// Production: false. Set it only in a separate provider that
+		// development builds register with, never from runtime
+		// configuration a production deployment could share.
+		AllowDevelopment: false,
 	}
 	deps := walletprovider.Dependencies{
 		Evidence: []walletprovider.EvidenceVerifier{appattest.EvidenceVerifier{Verifier: v}},

@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/fapiresource"
@@ -135,48 +135,30 @@ func ExampleIssuer_CredentialHandler() {
 	http.Handle("POST /credential", handler)
 }
 
-// statusListAttestationStatus checks a key attestation's Token Status
-// List reference: lists fetches and verifies the Status List Token,
-// through its hardened statuslist.Fetcher, against the Wallet
-// Providers' trust anchors.
-type statusListAttestationStatus struct {
-	lists statuslist.Checker
-}
+// Key attestations checked against their Wallet Providers' Token Status
+// Lists: an attestation whose entry isn't VALID, or that has no status
+// claim (RequireStatus), is refused as invalid_proof; a list that can't
+// be fetched or verified now is a server error the Wallet retries. One
+// statuslist.Cache serves the process, so each Wallet Provider's list
+// is fetched once per its ttl rather than once per Credential Request,
+// and the list signers' certificates are checked against CRLs a
+// certrevocation.Refresher keeps current. AssuranceProduction requires
+// both, and a hardened Fetcher.
+func ExampleStatusListAttestationStatus() {
+	var walletProviderRoots *x509.CertPool                        // the CAs of the Wallet Providers' list signers
+	var crls *certrevocation.Refresher                            // from certrevocation.NewRefresher, kept current by its Run
+	statusCache := statuslist.NewCache(statuslist.CacheOptions{}) // one for the process
 
-func (s statusListAttestationStatus) CheckAttestationStatus(ctx context.Context, a issuer.VerifiedKeyAttestation) error {
-	if a.Claims.Status == nil {
-		// This issuer's policy: every key attestation carries a status.
-		return fmt.Errorf("%w: the key attestation has no status claim", issuer.ErrKeyAttestationRevoked)
-	}
-	ref, err := statuslist.ParseStatusClaim(a.Claims.Status)
-	if err != nil {
-		return fmt.Errorf("%w: %w", issuer.ErrKeyAttestationRevoked, err)
-	}
-	// Only the attestation's own signer, or a certificate naming its
-	// issuer, may sign the list that decides it.
-	lists := s.lists
-	lists.Options.IssuerKey, lists.Options.Issuer = a.SignerKey, a.Claims.Issuer
-	var notValid *statuslist.NotValidError
-	err = lists.RequireValid(ctx, ref, false)
-	if errors.As(err, &notValid) {
-		return fmt.Errorf("%w: %w", issuer.ErrKeyAttestationRevoked, err)
-	}
-	// nil, or a list that couldn't be fetched or verified now: the
-	// Credential Request is then a server error, and a deferred
-	// transaction stays pending.
-	return err
-}
-
-// An AttestationStatusChecker over Token Status Lists: an attestation
-// whose list says it isn't VALID wraps ErrKeyAttestationRevoked, and a
-// list that can't be fetched or verified now is a plain error.
-func ExampleAttestationStatusChecker() {
-	var walletProviderRoots *x509.CertPool // the Wallet Providers' CAs
 	deps := issuer.Dependencies{
-		AttestationStatus: statusListAttestationStatus{lists: statuslist.Checker{
-			Fetcher: statuslist.Fetcher{}, // public addresses only: the uri is the attestation's
-			Roots:   walletProviderRoots,
-		}},
+		AttestationStatus: issuer.StatusListAttestationStatus{
+			Checker: statuslist.Checker{
+				Fetcher: statuslist.Fetcher{}, // public https addresses only: the uri is the attestation's
+				Roots:   walletProviderRoots,
+				Options: statuslist.VerifyOptions{Revocation: crls.Checker()},
+				Cache:   statusCache,
+			},
+			RequireStatus: true,
+		},
 		// ... the rest of the issuer's dependencies, as in ExampleNew.
 	}
 	_ = deps
