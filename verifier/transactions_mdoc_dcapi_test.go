@@ -735,6 +735,56 @@ func TestTransactions_MdocDCAPIQueryChangedInTheStore(t *testing.T) {
 	}
 }
 
+// A refusal repeated — a flood of unauthenticated answers — is written
+// to the store once, while each different one is still recorded, and
+// OnRefused still sees every one.
+func TestTransactions_RepeatedRefusalWrittenOnce(t *testing.T) {
+	store := &countingStore{TransactionStore: storage.NewVerifierTransactionStore()}
+	refused := 0
+	f := newMdocTxFixture(t, mdocTxOptions{store: store, tweak: func(cfg *verifier.TransactionsConfig) {
+		cfg.OnRefused = func(context.Context, string, error) { refused++ }
+	}})
+	ctx := context.Background()
+	begun := f.begin(testBinding)
+	malformed := []byte(`{"response":"!!"}`)
+	for range 5 {
+		if _, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, malformed); err == nil {
+			t.Fatal("a malformed answer was accepted")
+		}
+	}
+	if store.saved != 1 || refused != 5 {
+		t.Errorf("5 identical refusals: %d store writes, OnRefused %d times; want 1 and 5", store.saved, refused)
+	}
+	if _, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, []byte(`{}`)); err == nil {
+		t.Fatal("an answer without a response was accepted")
+	}
+	if view, _ := f.txs.Lookup(ctx, begun.ID, testBinding); store.saved != 2 || !strings.Contains(view.LastError, "(malformed)") {
+		t.Errorf("another refusal: %d store writes, LastError %q", store.saved, view.LastError)
+	}
+	if _, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, malformed); err == nil {
+		t.Fatal("a malformed answer was accepted")
+	}
+	if store.saved != 3 {
+		t.Errorf("the first refusal again, after another: %d store writes, want 3", store.saved)
+	}
+}
+
+// countingStore counts the Updates that save.
+type countingStore struct {
+	verifier.TransactionStore
+	saved int
+}
+
+func (s *countingStore) Update(ctx context.Context, id string, fn func(*verifier.Transaction) error) error {
+	return s.TransactionStore.Update(ctx, id, func(tx *verifier.Transaction) error {
+		err := fn(tx)
+		if err == nil {
+			s.saved++
+		}
+		return err
+	})
+}
+
 // droppingStore loses every transaction's MdocEncryptionInfo.
 type droppingStore struct{ verifier.TransactionStore }
 

@@ -149,6 +149,20 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
 - [ ] **Transactions:** `verifier.NewTransactions(v,
   db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)`, so
   a wallet's response can reach any replica.
+- [ ] **Rate-limit the response endpoints** per client, and per
+  request where the post names it: the `direct_post` response URI
+  (`HandleResponse`, `HandleUnencryptedError`), and the pages' Digital
+  Credentials API posts (`HandleDCAPIResponse`,
+  `HandleMdocDCAPIResponse`, by their request ID). An answer is
+  unauthenticated — anyone holding the request's public key can
+  encrypt one — and each costs an ECDH and a decryption, then
+  verification of up to `MaxPresentationsPerQuery` presentations for
+  each Credential Query, each with its issuer's certificate chain and
+  revocation check, before it's refused; a refused answer leaves the
+  request open for the next. Bound each post's body too
+  (`MaxMdocDCAPIResponseBytes` for an org-iso-mdoc answer). A refusal
+  that repeats the request's `LastError` isn't written again, but a
+  different one is, and every one reaches `OnRefused`.
 - [ ] **Certificate revocation:** a `certrevocation.Refresher` per
   process (`certrevocation.NewRefresher`), run in the background with
   `Run(ctx)` after one `Refresh(ctx)` before serving, and its

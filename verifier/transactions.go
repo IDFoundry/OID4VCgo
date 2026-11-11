@@ -981,14 +981,25 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 	if t.cfg.OnRefused != nil {
 		t.cfg.OnRefused(ctx, id, cause)
 	}
+	text := failureText(cause)
 	_ = t.update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
 		}
-		cur.LastError = failureText(cause)
+		if cur.LastError == text {
+			// Nothing to write: a refusal repeated, as a flood of
+			// unauthenticated answers repeats it, costs no store write
+			// (nor, under a Sealer, a seal).
+			return errFailureRecorded
+		}
+		cur.LastError = text
 		return nil
 	})
 }
+
+// errFailureRecorded aborts recordFailure's update when LastError
+// already says it.
+var errFailureRecorded = errors.New("verifier: transactions: the failure is already recorded")
 
 // maxFailureText bounds LastError.
 const maxFailureText = 256
