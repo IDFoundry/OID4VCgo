@@ -22,9 +22,19 @@ type statusLists struct {
 
 	mu         sync.Mutex
 	publishers map[string]servedList // by list URI
+	empty      map[string]time.Time  // lists found with no index reserved, by URI, until when that's believed
 	fillStart  int64                 // the period fillFrom is for
 	fillFrom   int                   // the first of its lists not known to be full
 }
+
+// emptyListTTL is how long the handler answers 404 for a list it found
+// no index reserved on without counting again: requests for lists that
+// aren't in use then cost one count a second each, not one each. It's
+// short, as another process may reserve the list's first index
+// meanwhile, and an attestation naming it then has its list answer 404
+// here for at most that long; this process's own reservations end it
+// at once.
+const emptyListTTL = time.Second
 
 // servedList is a served list's Publisher and its period's start.
 type servedList struct {
@@ -120,6 +130,7 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 	if _, n, ok := p.parseList(ref.URI); ok {
 		p.lists.filledBefore(start, n)
 	}
+	p.lists.reserved(ref.URI)
 	return ref, nil
 }
 
@@ -406,8 +417,9 @@ func (p *Provider) deleteLists(ctx context.Context, start int64) (int, error) {
 // status is two bits: VALID, INVALID (revoked) or SUSPENDED. It serves
 // the lists of the periods an attestation may name, from two periods
 // before the current one to the next, that have an index handed out,
-// and answers 404 for any other. The provider invalidates a list's
-// cached token whenever it changes a status on it.
+// and answers 404 for any other: for a second without counting its
+// indices again, for a list it found with none handed out. The provider
+// invalidates a list's cached token whenever it changes a status on it.
 func (p *Provider) StatusLists() http.Handler { return p.lists.handler }
 
 func (p *Provider) serveStatusList(w http.ResponseWriter, r *http.Request) {
@@ -438,11 +450,15 @@ func (p *Provider) publisher(ctx context.Context, startText, nText string) (*sta
 	if pub := p.lists.get(uri); pub != nil {
 		return pub, true, nil
 	}
+	if p.lists.knownEmpty(uri, now) {
+		return nil, false, nil
+	}
 	reserved, err := p.deps.StatusIndices.Reserved(ctx, uri)
 	switch {
 	case err != nil:
 		return nil, false, fmt.Errorf("walletprovider: counting the reserved indices of %s: %w", uri, err)
 	case reserved == 0:
+		p.lists.foundEmpty(uri, now)
 		return nil, false, nil
 	}
 	return p.lists.add(uri, servedList{start: start, pub: &statuslist.Publisher{
@@ -451,6 +467,40 @@ func (p *Provider) publisher(ctx context.Context, startText, nText string) (*sta
 		Lifetime: p.cfg.StatusListLifetime, TTL: p.cfg.StatusListTTL, Now: p.now,
 		Tokens: p.deps.StatusListTokens,
 	}}, func(start int64) bool { return p.served(start, now) }), true, nil
+}
+
+// knownEmpty reports whether the list at uri was found with no index
+// reserved less than emptyListTTL before now.
+func (l *statusLists) knownEmpty(uri string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	until, ok := l.empty[uri]
+	return ok && now.Before(until)
+}
+
+// foundEmpty records that the list at uri had no index reserved at
+// now, dropping the records that have lapsed: the handler serves a
+// bounded set of lists, so there are at most that many.
+func (l *statusLists) foundEmpty(uri string, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for u, until := range l.empty {
+		if !now.Before(until) {
+			delete(l.empty, u)
+		}
+	}
+	if l.empty == nil {
+		l.empty = make(map[string]time.Time)
+	}
+	l.empty[uri] = now.Add(emptyListTTL)
+}
+
+// reserved records that an index was reserved on the list at uri: it's
+// no longer empty.
+func (l *statusLists) reserved(uri string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.empty, uri)
 }
 
 func (l *statusLists) get(uri string) *statuslist.Publisher {

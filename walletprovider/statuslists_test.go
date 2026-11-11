@@ -267,6 +267,58 @@ func TestStatusListsServed(t *testing.T) {
 	}
 }
 
+// countingIndices counts Reserved calls.
+type countingIndices struct {
+	statuslist.MemoryIndexStore
+	mu       sync.Mutex
+	reserved int
+}
+
+func (s *countingIndices) Reserved(ctx context.Context, uri string) (int, error) {
+	s.mu.Lock()
+	s.reserved++
+	s.mu.Unlock()
+	return s.MemoryIndexStore.Reserved(ctx, uri)
+}
+
+func (s *countingIndices) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reserved
+}
+
+// TestStatusListsEmptyCached: a list with no index handed out is
+// answered 404 for a second without counting its indices again, unless
+// the provider hands one out of it meanwhile; one another process hands
+// out is served once that second has passed.
+func TestStatusListsEmptyCached(t *testing.T) {
+	idx := &countingIndices{}
+	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) { d.StatusIndices = idx })
+	start := h.periodStart()
+	get := func(n int, want, wantCalls int) {
+		t.Helper()
+		path := strings.TrimPrefix(listURI(start, n), statusBase)
+		if code, body := h.getStatusList(path, ""); code != want || idx.calls() != wantCalls {
+			t.Fatalf("GET %s: %d %s after %d counts, want %d after %d", path, code, body, idx.calls(), want, wantCalls)
+		}
+	}
+	get(0, http.StatusNotFound, 1)
+	get(0, http.StatusNotFound, 1)
+	h.clock.advance(time.Second)
+	get(0, http.StatusNotFound, 2)
+
+	in, _ := h.register(kindStrongBox)
+	h.newInstanceKey(in.ID, kindStrongBox)
+	before := idx.calls()
+	get(0, http.StatusOK, before+1)
+
+	get(1, http.StatusNotFound, before+2)
+	h.reserveOn(start, 1)
+	get(1, http.StatusNotFound, before+2)
+	h.clock.advance(time.Second)
+	get(1, http.StatusOK, before+3)
+}
+
 // TestStatusListsMountedAtBaseURI: StatusLists mounted as the example
 // and DEPLOYING.md mount it, under the base URI's path with
 // http.StripPrefix, serves the list an attestation names at its uri.
