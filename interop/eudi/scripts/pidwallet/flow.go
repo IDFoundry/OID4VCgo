@@ -19,7 +19,8 @@ import (
 // authorization code grant (OpenID4VCI 1.0 §4.1.1).
 //
 // -proof jwt or jwk is the jwt proof's key conveyance, should walletflow
-// choose a jwt proof with a Key Attestation (Config.ProofKeyByIndex).
+// choose a jwt proof with a Key Attestation: jwt its default, by index,
+// and jwk under Config.ProofKeyByJWK.
 func runWalletflow(ctx context.Context, env *environment, res *result) {
 	o := env.o
 	offer := o.offer
@@ -44,10 +45,10 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		RequireIssuerMetadataName:   true,
 		IssuanceProfile:             walletflow.ProfileHAIP,
 		BatchSize:                   max(1, o.batch),
-		// -proof jwt names the proof's key by its index among the
-		// Key Attestation's attested_keys, as the issuer requires;
-		// -proof jwk in jwk, walletflow's default.
-		ProofKeyByIndex: o.proof != "jwk",
+		// -proof jwt leaves walletflow's default, naming the proof's
+		// key by its index among the Key Attestation's attested_keys,
+		// as the issuer requires; -proof jwk names it in jwk.
+		ProofKeyByJWK: o.proof == "jwk",
 		// Development only for the stack's loopback address; the run's
 		// certificates publish no CRLs.
 		Development:              true,

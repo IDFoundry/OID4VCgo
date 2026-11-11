@@ -383,10 +383,12 @@ ecosystem, and record why:
 - `proximityDeviceAuth`: `MAC_PREFERRED` answers readers with deviceMac,
   which the reader can't show anyone else; it needs
   `holderKeyAgreement`. `SIGNATURE`, the default, signs.
-- `proofKeyByIndex`: names a key-attested jwt proof's key by its index
-  in the key attestation (`kid` `"0"`) instead of in `jwk`, as issuers
-  following ETSI TS 119 472-3 require; an issuer taking only `jwk`
-  refuses it. Set it only for such issuers.
+- `proofKeyByJWK`: names a key-attested jwt proof's key in `jwk`
+  instead of by its index in the key attestation (`kid` `"0"`), the
+  default, which issuers following ETSI TS 119 472-3 require and refuse
+  `jwk` in place of. Set it only for an issuer that takes no index.
+  `proofKeyByIndex`, which named the key by its index before that was
+  the default, has no effect.
 - `acceptMDLSignerWithoutEKU`, on a `WalletConfiguration` and a
   `ProximityReaderConfiguration`: also accepts a document signer
   certificate with no extended key usage, which the default check

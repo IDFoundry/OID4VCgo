@@ -39,6 +39,11 @@ Within version 15, without bumping it (an optional configuration key,
 so an older wrapper is unaffected), a Wallet's `proof_key_by_index`
 names a key-attested jwt proof's key by its index; the Swift and Kotlin
 libraries have it from OID4VCWallet 0.33.0, as `proofKeyByIndex`.
+Later within version 15 (an optional configuration key, so an older
+wrapper is unaffected), naming the key by its index is the default,
+`proof_key_by_index` has no effect, and `proof_key_by_jwk` names it in
+`jwk` instead; the Swift and Kotlin libraries have it from the release
+after OID4VCWallet 0.35.0, as `proofKeyByJWK`.
 
 Also within version 15, without bumping it (callback marks and a
 detail, so an older wrapper is unaffected): a `KeyStore.Sign` or
@@ -440,7 +445,7 @@ refused, and the Kotlin library's an `IOException` and a
  "require_signed_dcapi_requests": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
- "proof_key_by_index": false,
+ "proof_key_by_jwk": false,
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
@@ -464,10 +469,12 @@ a key attestation where the issuer requires one
 the issuer has a nonce endpoint; a DPoP-bound access token, or a Bearer
 one where the server issues that. `"haip"` also refuses an issuer that
 doesn't follow HAIP 1.0 §4 (`profile_violation`), and needs a provider
-and `client_id`. A jwt proof with a key attestation names its key in
-`jwk`; `proof_key_by_index` names it by its index in the attestation
-(`kid` `"0"`) instead, as issuers following ETSI TS 119 472-3 require,
-and an issuer taking only `jwk` refuses. A Wallet Attestation needs a provider and `client_id`,
+and `client_id`. A jwt proof with a key attestation names its key by
+its index in the attestation (`kid` `"0"`), as issuers following ETSI
+TS 119 472-3 require; `proof_key_by_jwk` names it in `jwk` instead, for
+an issuer that takes no index. `proof_key_by_index`, which asked for
+the index before it was the default, is still accepted, and has no
+effect; with `proof_key_by_jwk` it's `invalid_input`. A Wallet Attestation needs a provider and `client_id`,
 and the authorization code grant a `redirect_uri`: a wallet receiving
 credentials only from pre-authorized codes redeemed with no client
 authentication needs none of them. Outside `development`, a

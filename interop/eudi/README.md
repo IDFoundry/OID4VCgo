@@ -93,8 +93,11 @@ What isn't covered:
 - `request_uri_method` post: the EUDI verifier refuses a
   `wallet_metadata` without `issuer` and `response_types_supported`
   (it parses it as RFC 8414 Authorization Server metadata, which
-  requires both), and `cmd/conformance-wallet-vp` sends only
-  `vp_formats_supported`.
+  requires both), and `cmd/conformance-wallet-vp`, like walletflow,
+  sends `response_types_supported` but no `issuer`: a wallet with no
+  identifier of its own leaves the Request Object's `aud` at
+  `https://self-issued.me/v2` (OpenID4VP 1.0 §5.8), and OpenID4VP's
+  static configuration (§13.1) has none either.
 - Plain `direct_post`: `cmd/conformance-wallet-vp` always encrypts its
   response.
 - ISO/IEC 18013-7 Annex C (`org-iso-mdoc`): the EUDI verifier has no
@@ -524,9 +527,9 @@ and acknowledges it at the Notification Endpoint.
 | Credentials under an IACA the wallet doesn't trust, each format | the wallet refuses them |
 | A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR |
 | A Key Attestation whose `key_storage_status` is revoked | the issuer refuses the proof |
-| walletflow, under `ProfileHAIP` with `ProofKeyByIndex`: one PID, then a batch of three | issued and verified, status `VALID` |
+| walletflow, under `ProfileHAIP` with its default proof: one PID, then a batch of three | issued and verified, status `VALID` |
 | A `jwt` proof naming its key in `jwk`, as `GenerateProofWithKeyAttestation` makes it | refused (a note, not a failure: see Findings) |
-| walletflow naming the proof's key in `jwk`, its default | refused (a note: see Findings) |
+| walletflow naming the proof's key in `jwk` (`Config.ProofKeyByJWK`) | refused (a note: see Findings) |
 | A batch of one `jwt` proof per key | refused (a note: see Findings) |
 
 A Wallet Attestation and a Key Attestation are each other's controls'
@@ -596,11 +599,10 @@ the issuer's v0.11.2 source:
    the Credential Issuer MUST validate that the JWT used as a proof is
    signed by a key contained in the attestation in the JOSE Header".
    `wallet.Wallet.GenerateProofWithKeyAttestation` conveys the key in
-   `jwk`, and so, by default, does walletflow, which prefers the `jwt`
-   proof type. `wallet.Wallet.GenerateProofWithAttestedKeyIndex` names
-   it by kid `"0"` with no `jwk`, also valid under F.1, which the
-   issuer accepts; walletflow uses it under `Config.ProofKeyByIndex`,
-   which the run sets.
+   `jwk`, as walletflow, which prefers the `jwt` proof type, does under
+   `Config.ProofKeyByJWK`. `wallet.Wallet.GenerateProofWithAttestedKeyIndex`
+   names it by kid `"0"` with no `jwk`, also valid under F.1, which the
+   issuer accepts; walletflow uses it by default, as the run does.
 2. **It advertises batch issuance but refuses more than one proof.**
    Its metadata has `batch_credential_issuance.batch_size` 20, and a
    Credential Request with two `jwt` proofs is refused: `"You can
