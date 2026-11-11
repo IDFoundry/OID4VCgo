@@ -1542,11 +1542,15 @@ changes whether *every* bullet below is `(done)`.
   (`Durable`, `AtomicUpdate`) are checked against the assurance level,
   as for `issuer`'s stores. `TransactionCodec` encodes a transaction,
   every field with its types, for a store that keeps it outside the
-  process, and with a `TransactionSealer` (`AESGCMSealer`) seals the
+  process, and with a `sealing.Sealer` (`sealing.AESGCMSealer`) seals the
   response decryption key and the holder's claims at rest, each bound
-  to its transaction (the other fields — status, owner, browser
-  binding, query — aren't integrity-protected: the store is trusted
-  for them); `ForgetResultOnRead` drops a result once it's been read.
+  to its transaction and to the readable fields that say who may read
+  it, what it asked, and whether and how it may still be answered —
+  owner, browser binding, same-device flag, origin, query, kid, nonce,
+  state, status, expiry (record version 2; version 1 records, still
+  read, bound the first five) — so the store is trusted only for its
+  response_code hash and last error, and not to put back an older
+  copy; `ForgetResultOnRead` drops a result once it's been read.
   `Begin`, `BeginDCAPI` and `BeginMdocDCAPI` read a created transaction back and refuse a
   store that lost a field, since losing `SameDevice` or `Owner` fails
   open. `verifiertest` holds contract tests for a caller's own
@@ -1781,6 +1785,13 @@ changes whether *every* bullet below is `(done)`.
   of rules, and wraps `server.ErrClientAttestationRevoked` (invalid_client)
   for a refusal. `server.New` doesn't call its `CheckConfiguration`;
   the caller does, with the server's assurance level.
+- **`sealing`** (done) — sealing records at rest, for every role: the
+  `Sealer` interface (`sqlstore.Options.Sealer`,
+  `verifier.TransactionCodec.Sealer`), `AESGCMSealer` (AES-256-GCM,
+  refusing a key that isn't 32 random bytes), and `Store`, by which an
+  issuer store declares whether it seals what it holds. It moved out of
+  `verifier`, which keeps `AESGCMSealer` and `TransactionSealer` as
+  deprecated forwards, since it was always the sealer for every store.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
   defines (`NonceStore`, `CredentialOfferStore`, `DeferredTransactionStore`,
   `NotificationStore`, `PreAuthorizedCodeStore`) and `verifier` defines (`TransactionStore`, via
@@ -1830,7 +1841,7 @@ changes whether *every* bullet below is `(done)`.
   instance key's `instance_id`, indexed with its thumbprint for `List`, its
   `sweep_after` its `RetainUntil`); `record` is the
   record as JSON, sealed with an optional `Sealer` (the
-  `verifier.TransactionSealer` interface) bound to its table and key,
+  `sealing.Sealer` interface) bound to its table and key,
   or for the verifier `TransactionCodec`'s own encoding. Consumes are
   one `DELETE … RETURNING`, and every read-modify-write one transaction
   holding the row, so the contracts' atomicity holds across processes:

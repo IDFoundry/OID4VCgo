@@ -40,7 +40,7 @@ func TestSharesADatabaseWithFAPIgoSQLStore(t *testing.T) {
 		if err := sqlDB.PingContext(ctx); err != nil {
 			t.Fatal(err)
 		}
-		sealer := testSealer(t) // a verifier.TransactionSealer, for both modules
+		sealer := testSealer(t) // a sealing.Sealer, for both modules
 		dialect, objects := fapisqlstore.SQLite, sqliteObjects
 		if e.dialect == sqlstore.Postgres {
 			dialect, objects = fapisqlstore.Postgres, postgresObjects

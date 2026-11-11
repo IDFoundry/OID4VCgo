@@ -96,9 +96,12 @@ func ExampleNewTransactions() {
 	// which Lookup checks, so only it can read the result.
 	ctx := context.Background()
 	binding := rand.Text()
-	begun, err := txs.Begin(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{
-		dcql.SDJWTVCQuery("pid", "urn:eudi:pid:1", dcql.KeyPath("given_name")),
-	}}, binding, false)
+	begun, err := txs.BeginWith(ctx, verifier.BeginOptions{
+		Query: dcql.Query{Credentials: []dcql.CredentialQuery{
+			dcql.SDJWTVCQuery("pid", "urn:eudi:pid:1", dcql.KeyPath("given_name")),
+		}},
+		BrowserBinding: binding,
+	})
 	if err != nil {
 		panic(err)
 	}

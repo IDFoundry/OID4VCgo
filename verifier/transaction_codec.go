@@ -2,16 +2,12 @@ package verifier
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -20,12 +16,20 @@ import (
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"github.com/idfoundry/oid4vcgo/sealing"
 )
 
 // TransactionCodecVersion is the version of the encoding
-// TransactionCodec writes, recorded in each record. Unmarshal refuses
-// any other.
-const TransactionCodecVersion = 1
+// TransactionCodec writes, recorded in each record. Unmarshal reads it
+// and version 1, which OID4VCgo v0.75.3 and earlier wrote, and refuses
+// any other. The two differ only in what a sealed field is bound to
+// (see TransactionCodec): a version 1 record, read and written back,
+// becomes version 2.
+const TransactionCodecVersion = 2
+
+// transactionCodecV1 is the version whose sealed fields aren't bound to
+// the record's KeyID, State, Nonce, Status and ExpiresAt.
+const transactionCodecV1 = 1
 
 // TransactionCodec encodes a Transaction for a TransactionStore that
 // keeps it outside the process — a database row, a cache entry — so a
@@ -43,8 +47,8 @@ const TransactionCodecVersion = 1
 // With Sealer set, both are sealed, each bound to the transaction and
 // to who may read it, so a copy of the store reveals neither and one
 // transaction's sealed fields can't be moved to another's. Set it wherever the store is
-// shared, backed up or readable by more than the Verifier: AESGCMSealer
-// is one, with a key the Verifier keeps outside the store. The rest of
+// shared, backed up or readable by more than the Verifier:
+// sealing.AESGCMSealer is one, with a key the Verifier keeps outside the store. The rest of
 // the record — the request's nonce and state, which its public Request
 // Object carries, the browser binding's and response_code's hashes,
 // the query — stays readable, so a store can index and expire records
@@ -52,16 +56,23 @@ const TransactionCodecVersion = 1
 // claims once they've been read, so the store holds them for as little
 // time as possible.
 //
-// Each sealed field is bound to its transaction's ID and to the fields,
+// Each sealed field is bound to its transaction's ID; to the fields,
 // fixed when the request began, that say who may read its result and
 // what it asked for: its owner, browser binding hash, same_device,
 // origin and query, and an org-iso-mdoc request's EncryptionInfo
-// (BeginMdocDCAPI). Someone who can write to the store but hasn't the
+// (BeginMdocDCAPI); and to those that say how it's answered and
+// whether it still may be: its response key's kid, nonce, state,
+// status and expiry. Someone who can write to the store but hasn't the
 // key can't read or forge a sealed field, nor change any of those
-// fields to have the Verifier hand the result to someone else: the
-// record no longer opens. They can still change its status,
-// response_code hash, expiry, last error, nonce or state, delete it, or
-// put back an older copy, so the store must still be trusted for those.
+// fields — to have the Verifier hand the result to someone else,
+// reopen a completed request, or keep one answerable past its expiry:
+// the record no longer opens. Each write seals the fields again, bound
+// to the status the transaction then has. They can still change its
+// response_code hash or last error, delete it, or put back an older
+// copy whole (the pending one in place of the completed one, say), so
+// the store must still be trusted for those. Version 1 records, which
+// OID4VCgo v0.75.3 and earlier wrote, bound neither kid, nonce, state,
+// status nor expiry; they still open, and are written back as version 2.
 //
 // The zero TransactionCodec seals nothing.
 type TransactionCodec struct {
@@ -72,79 +83,22 @@ type TransactionCodec struct {
 	// records it wrote before — at most TransactionsConfig.Lifetime's
 	// worth, twice over. Nor does it open fields sealed by OID4VCgo
 	// v0.61.0 or earlier, which bound them to the transaction's ID alone.
-	Sealer TransactionSealer
+	Sealer sealing.Sealer
 }
 
 // TransactionSealer seals and opens a Transaction's secret fields for
-// TransactionCodec — an AEAD, such as AESGCMSealer, or a call to a key
-// management service. Open must refuse sealed data altered in any way,
-// or sealed with other additionalData: that's what binds each sealed
-// field to its transaction. It protects only those fields: the
-// record's other fields stay as the store keeps them.
-type TransactionSealer interface {
-	Seal(plaintext, additionalData []byte) ([]byte, error)
-	Open(sealed, additionalData []byte) ([]byte, error)
-}
+// TransactionCodec: a sealing.Sealer, the interface every store of this
+// library seals with.
+//
+// Deprecated: use sealing.Sealer, the same interface.
+type TransactionSealer = sealing.Sealer
 
-// AESGCMSealer is a TransactionSealer that seals with AES-256-GCM
-// under key (32 bytes, from a cryptographically secure source, kept
-// outside the store), with a random nonce for each seal. Random
-// nonces allow about 2^32 seals per key, so rotate the key before
-// then. Changing the key makes the records sealed under the previous
-// one unreadable; to rotate it, open with both until those records
-// expire, with a TransactionSealer of your own or
-// github.com/idfoundry/fapigo/sqlstore's RotatingSealer, which seals
-// with the first sealer it's given and opens with any of them. Under a
-// rolling deploy, give every instance RotatingSealer(old, new) before
-// any gets RotatingSealer(new, old), so none is handed a transaction
-// sealed under a key it can't open.
+// AESGCMSealer is sealing.AESGCMSealer: a Sealer that seals with
+// AES-256-GCM under key, refusing a key that isn't 32 random bytes.
 //
-// Each value it seals is the 12-byte random nonce followed by the
-// AES-GCM ciphertext and its 16-byte tag, sealed with the
-// additionalData Seal is given: a TransactionSealer of your own can
-// open it, with crypto/cipher's NewGCM, under a key this one refuses.
-//
-// It refuses a key that's one byte repeated (all zeros, say: a
-// placeholder), or all printable text (a passphrase, or a hex or base64
-// key not yet decoded), as fapigo/sqlstore's AESGCMSealer does: neither
-// is random, and 32 random bytes are all printable with probability
-// about 4e-14.
+// Deprecated: use sealing.AESGCMSealer, which this calls.
 func AESGCMSealer(key []byte) (TransactionSealer, error) {
-	switch {
-	case len(key) != 32:
-		return nil, fmt.Errorf("verifier: transaction sealer: key is %d bytes, want 32 (AES-256)", len(key))
-	case bytes.Count(key, key[:1]) == len(key):
-		return nil, errors.New("verifier: transaction sealer: key is one byte repeated, not a random key")
-	case !slices.ContainsFunc(key, func(c byte) bool { return (c < 0x20 || c > 0x7e) && c != '\t' && c != '\n' && c != '\r' }):
-		return nil, errors.New("verifier: transaction sealer: key is all printable text (a passphrase, or a hex or base64 key not yet decoded), not 32 random bytes: generate it with crypto/rand, and decode an encoded key before passing it")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("verifier: transaction sealer: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("verifier: transaction sealer: %w", err)
-	}
-	return gcmSealer{aead}, nil
-}
-
-type gcmSealer struct{ aead cipher.AEAD }
-
-func (s gcmSealer) Seal(plaintext, additionalData []byte) ([]byte, error) {
-	nonce := make([]byte, s.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	return s.aead.Seal(nonce, nonce, plaintext, additionalData), nil
-}
-
-func (s gcmSealer) Open(sealed, additionalData []byte) ([]byte, error) {
-	if len(sealed) < s.aead.NonceSize() {
-		return nil, errors.New("sealed data is too short")
-	}
-	nonce, ciphertext := sealed[:s.aead.NonceSize()], sealed[s.aead.NonceSize():]
-	return s.aead.Open(nil, nonce, ciphertext, additionalData)
+	return sealing.AESGCMSealer(key)
 }
 
 // wireTransaction is a Transaction as TransactionCodec records it.
@@ -245,8 +199,8 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
 	}
 	switch {
-	case w.Version != TransactionCodecVersion:
-		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d", w.Version, TransactionCodecVersion)
+	case w.Version != TransactionCodecVersion && w.Version != transactionCodecV1:
+		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d or %d", w.Version, TransactionCodecVersion, transactionCodecV1)
 	case w.ID == "":
 		return Transaction{}, errors.New("verifier: unmarshal transaction: no id")
 	case w.Status < TransactionPending || w.Status > TransactionClosed:
@@ -332,6 +286,12 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // One whose document may withhold
 // elements (MdocAllowWithheld) has one more, so a store can't let a
 // request that required every element complete without them.
+//
+// A version 2 record's binding (TransactionCodecVersion) is an object
+// instead: that array, as "v1", beside the record's KeyID, State,
+// Nonce, Status and ExpiresAt (in UTC, RFC 3339 with nanoseconds), so a
+// store can't reopen a completed request, extend one's expiry, or swap
+// its nonce, state or kid. A version 1 record's is the array alone.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(query))
 	dec.UseNumber()
@@ -351,7 +311,17 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	if w.MdocAllowWithheld {
 		bound = append(bound, "allow_withheld")
 	}
-	return json.Marshal(bound)
+	if w.Version == transactionCodecV1 {
+		return json.Marshal(bound)
+	}
+	return json.Marshal(struct {
+		V1        []any             `json:"v1"`
+		KeyID     string            `json:"kid"`
+		State     string            `json:"state"`
+		Nonce     string            `json:"nonce"`
+		Status    TransactionStatus `json:"status"`
+		ExpiresAt string            `json:"expires_at"`
+	}{bound, w.KeyID, w.State, w.Nonce, w.Status, w.ExpiresAt.UTC().Format(time.RFC3339Nano)})
 }
 
 // sealAD binds a sealed field to its name and to bound (sealBinding).

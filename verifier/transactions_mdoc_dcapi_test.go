@@ -612,14 +612,22 @@ func TestTransactions_MdocDCAPIProduction(t *testing.T) {
 	if _, err := verifier.NewTransactions(prod, assuredTransactionStore{plain}, mdocConfigFor(t, noOrigins)); err == nil {
 		t.Error("a Digital Credentials API-only production Transactions without Origins was accepted")
 	}
-	// With a RequestURIBase but no Origins, Begin refuses each request.
+	// Nor with a RequestURIBase: MdocDCAPI serves the Digital
+	// Credentials API alone, so NewTransactions refuses it rather than
+	// BeginMdocDCAPI refusing every request.
 	withBase := func(c *verifier.TransactionsConfig) { noOrigins(c); c.RequestURIBase = txBase }
-	txs, err := verifier.NewTransactions(prod, assuredTransactionStore{plain}, mdocConfigFor(t, withBase))
+	if _, err := verifier.NewTransactions(prod, assuredTransactionStore{plain}, mdocConfigFor(t, withBase)); err == nil || !strings.Contains(err.Error(), "mdoc_dcapi") {
+		t.Errorf("a production Transactions with MdocDCAPI and no Origins: %v", err)
+	}
+	// Without MdocDCAPI it's a redirect-flow Transactions, which
+	// NewTransactions takes: its BeginMdocDCAPI refuses each request.
+	redirectOnly := func(c *verifier.TransactionsConfig) { withBase(c); c.MdocDCAPI = nil }
+	txs, err := verifier.NewTransactions(prod, assuredTransactionStore{plain}, mdocConfigFor(t, redirectOnly))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := txs.BeginMdocDCAPI(ctx, mdocRequest(), testBinding, dcapiOrigin); err == nil || !strings.Contains(err.Error(), "Origins") {
-		t.Errorf("BeginMdocDCAPI without Origins under production: %v", err)
+	if _, err := txs.BeginMdocDCAPI(ctx, mdocRequest(), testBinding, dcapiOrigin); err == nil {
+		t.Error("BeginMdocDCAPI without MdocDCAPI under production: accepted")
 	}
 	// An unsealed store.
 	if _, err := verifier.NewTransactions(prod, unsealedTransactionStore{plain}, mdocConfigFor(t, sound)); err == nil {

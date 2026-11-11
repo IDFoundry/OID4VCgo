@@ -213,6 +213,19 @@ type CredentialRequest struct {
 	// issue only these, and the claims the Credential always carries,
 	// rather than the whole dataset. A direct caller of
 	// RequestCredential finds them with ResolveAuthorizedClaims.
+	//
+	// Their paths are checked for form alone — each a claims path
+	// pointer, none described twice, by
+	// oid4vci.AuthorizationDetailRARDefinition at the Authorization
+	// Server or, for a pre-authorized code, by the issuer's Token
+	// Endpoint — never against the configuration's
+	// credential_metadata: the Wallet chose them, and they may name
+	// claims the configuration doesn't describe, or select array
+	// elements or members it doesn't have. Match each against the claims
+	// you know and leave out what matches none, rather than taking a
+	// path as a claim to look up or issue. They only narrow what's
+	// issued: a path matching nothing selects nothing, so it never
+	// widens issuance beyond what nil (every claim) would give.
 	AuthorizedClaims []oid4vci.ClaimsDescription
 
 	// Proofs is §8.2's own "proofs" parameter: exactly one proof type

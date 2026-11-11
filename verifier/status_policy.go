@@ -38,8 +38,9 @@ type StatusPolicy struct {
 	// Checker fetches and verifies each status list, and an mdoc's
 	// identifier list with its Fetcher, Roots, Options and Cache (see
 	// RequireValidStatus). Its Roots are REQUIRED. Under
-	// AssuranceProduction, its Fetcher must be HardenedForProduction
-	// and its Options.Revocation set — certrevocation.CRLs, a
+	// AssuranceProduction, its Fetcher must be HardenedForProduction,
+	// its Cache set — one statuslist.Cache shared by the process — and
+	// its Options.Revocation set — certrevocation.CRLs, a
 	// certrevocation.Checker of your own, or certrevocation.NoCheck{}
 	// to decline checking the list signers' certificates explicitly.
 	// Its Fetcher's MaxBytes bounds both kinds of list: zero leaves
@@ -79,7 +80,8 @@ func (p *StatusPolicy) Check(ctx context.Context, vcs ...VerifiedCredential) err
 
 // validate refuses a policy that can't check anything, and under
 // AssuranceProduction one whose Fetcher may reach the Verifier's own
-// network or that hasn't decided its list signers' revocation.
+// network, that has no Cache, or that hasn't decided its list signers'
+// revocation.
 func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 	if p.Checker.Roots == nil {
 		return errors.New("Status.Checker.Roots is required: the trust anchors for status list signers")
@@ -89,6 +91,9 @@ func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 	}
 	if !p.Checker.Fetcher.HardenedForProduction() {
 		return errors.New("under AssuranceProduction, Status.Checker.Fetcher must be HardenedForProduction: none of AllowLoopback, AllowPrivate, AllowProxy and UncheckedTransport")
+	}
+	if p.Checker.Cache == nil {
+		return errors.New("under AssuranceProduction, Status.Checker.Cache is required (statuslist.NewCache, one shared by the process): without one every answer fetches each issuer's status list again, ignoring its ttl")
 	}
 	return validateRevocation("Status.Checker.Options", p.Checker.Options.Revocation)
 }

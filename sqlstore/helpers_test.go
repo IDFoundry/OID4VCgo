@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
-	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // newSQLiteDB is a migrated DB on a SQLite file of its own.
@@ -54,13 +54,13 @@ func requireEqualJSON(t *testing.T, what string, got, want any) {
 }
 
 // testSealer is an AES-256-GCM sealer under a fresh random key.
-func testSealer(t *testing.T) verifier.TransactionSealer {
+func testSealer(t *testing.T) sealing.Sealer {
 	t.Helper()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		t.Fatal(err)
 	}
-	s, err := verifier.AESGCMSealer(key)
+	s, err := sealing.AESGCMSealer(key)
 	if err != nil {
 		t.Fatal(err)
 	}

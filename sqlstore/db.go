@@ -45,7 +45,7 @@ func (d Dialect) String() string {
 // Options configures a DB.
 type Options struct {
 	// Sealer, if set, seals every record the issuer, walletflow and
-	// walletprovider stores write (an AEAD such as verifier.AESGCMSealer,
+	// walletprovider stores write (an AEAD such as sealing.AESGCMSealer,
 	// with a key kept outside the database), each bound to its table and
 	// key, so a copy of the database reveals none of their contents and a
 	// record can't be moved to another key. The columns a store looks

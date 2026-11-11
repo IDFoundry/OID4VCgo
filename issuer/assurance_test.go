@@ -57,6 +57,33 @@ type assuredPreAuthorizedCodeStore struct {
 
 func (a assuredPreAuthorizedCodeStore) Capabilities() issuer.StoreCapabilities { return a.caps }
 
+// Each assured* store also declares it seals its records
+// (sealing.Store), as a production store holding holders' data must;
+// unsealed wraps one to declare it doesn't.
+func (assuredNonceStore) SealsRecords() bool               { return true }
+func (assuredCredentialOfferStore) SealsRecords() bool     { return true }
+func (assuredDeferredTransactionStore) SealsRecords() bool { return true }
+func (assuredNotificationStore) SealsRecords() bool        { return true }
+func (assuredPreAuthorizedCodeStore) SealsRecords() bool   { return true }
+
+type unsealedNonceStore struct{ assuredNonceStore }
+
+type unsealedCredentialOfferStore struct{ assuredCredentialOfferStore }
+
+type unsealedDeferredTransactionStore struct {
+	assuredDeferredTransactionStore
+}
+
+type unsealedNotificationStore struct{ assuredNotificationStore }
+
+type unsealedPreAuthorizedCodeStore struct{ assuredPreAuthorizedCodeStore }
+
+func (unsealedNonceStore) SealsRecords() bool               { return false }
+func (unsealedCredentialOfferStore) SealsRecords() bool     { return false }
+func (unsealedDeferredTransactionStore) SealsRecords() bool { return false }
+func (unsealedNotificationStore) SealsRecords() bool        { return false }
+func (unsealedPreAuthorizedCodeStore) SealsRecords() bool   { return false }
+
 // assuredAttestationVerifier mirrors the assured* store wrappers
 // above, but for AttestationVerifier — pairing
 // fixedAttestationVerifier (already defined in
@@ -506,5 +533,48 @@ func TestNewProductionChecksWrappedAttestationBinding(t *testing.T) {
 	deps.AttestationVerifier = meteredAttestationVerifier{issuer.X5CAttestationVerifier{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}}
 	if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "explicit IssuerBinding") {
 		t.Fatalf("New with a wrapped, unbound X5CAttestationVerifier = %v, want an IssuerBinding error", err)
+	}
+}
+
+// TestNewProductionRequiresSealedStores: under AssuranceProduction, each
+// store holding holders' data — pre-authorized codes, Credential Offers,
+// deferred transactions, notifications — must declare it seals its
+// records (sealing.Store), unless Config.UnsealedStores says the stores
+// are as protected as the issuer's keys. A c_nonce store holds nothing
+// of the holder's and needn't.
+func TestNewProductionRequiresSealedStores(t *testing.T) {
+	for name, unseal := range map[string]func(*issuer.Dependencies){
+		"pre_authorized_codes": func(d *issuer.Dependencies) {
+			d.PreAuthorizedCodes = unsealedPreAuthorizedCodeStore{d.PreAuthorizedCodes.(assuredPreAuthorizedCodeStore)}
+		},
+		"credential_offers": func(d *issuer.Dependencies) {
+			d.CredentialOffers = unsealedCredentialOfferStore{d.CredentialOffers.(assuredCredentialOfferStore)}
+		},
+		"deferred_transactions": func(d *issuer.Dependencies) {
+			d.DeferredTransactions = unsealedDeferredTransactionStore{d.DeferredTransactions.(assuredDeferredTransactionStore)}
+		},
+		"notifications": func(d *issuer.Dependencies) {
+			d.Notifications = unsealedNotificationStore{d.Notifications.(assuredNotificationStore)}
+		},
+	} {
+		cfg, deps := preAuthorizedCodeProductionConfig(t)
+		unseal(&deps)
+		if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "dependencies."+name+" holds holders' data") {
+			t.Errorf("%s unsealed: New = %v, want it refused", name, err)
+		}
+		cfg.UnsealedStores = true
+		if _, err := issuer.New(cfg, deps); err != nil {
+			t.Errorf("%s unsealed, with UnsealedStores: %v", name, err)
+		}
+		cfg.UnsealedStores, cfg.Assurance = false, issuer.AssuranceDevelopment
+		if _, err := issuer.New(cfg, deps); err != nil {
+			t.Errorf("%s unsealed, under AssuranceDevelopment: %v", name, err)
+		}
+	}
+
+	cfg, deps := preAuthorizedCodeProductionConfig(t)
+	deps.Nonces = unsealedNonceStore{deps.Nonces.(assuredNonceStore)}
+	if _, err := issuer.New(cfg, deps); err != nil {
+		t.Errorf("an unsealed nonce store: %v", err)
 	}
 }

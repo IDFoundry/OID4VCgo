@@ -16,8 +16,9 @@
 //
 //   - issuer.Dependencies: Nonces, PreAuthorizedCodes,
 //     DeferredTransactions, Notifications and CredentialOffers. Each
-//     declares issuer.StoreCapabilities Durable and AtomicConsume, as
-//     AssuranceProduction requires. Nonces is an issuer.NonceSpender
+//     declares issuer.StoreCapabilities Durable and AtomicConsume, and
+//     whether it seals its records (sealing.Store's SealsRecords: with
+//     the DB's Sealer), as AssuranceProduction requires. Nonces is an issuer.NonceSpender
 //     too, for Dependencies.NonceKeys: its Spend is one INSERT … ON
 //     CONFLICT DO NOTHING on the nonce, the primary key.
 //   - verifier.NewTransactions's store: Transactions, with the
@@ -46,7 +47,7 @@
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices and StatusListTokens as its
 //     StatusListTokens. Each of the three says whether it seals
-//     (walletprovider.SealingStore), as Config.RequireSealedStore
+//     (sealing.Store), as Config.RequireSealedStore
 //     requires. An instance's Create is one
 //     INSERT on the id primary key and the UNIQUE key_thumbprint
 //     column, so one registration key registers one instance across
@@ -96,7 +97,7 @@
 // modules share one database and one *sql.DB:
 //
 //	sqlDB, err := sql.Open("pgx", dsn)
-//	sealer, err := verifier.AESGCMSealer(key)
+//	sealer, err := sealing.AESGCMSealer(key)
 //	issuerDB, err := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer})
 //	asDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{Sealer: sealer})
 //	rsDB, err := fapisqlstore.New(sqlDB, fapisqlstore.Postgres, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer})
@@ -207,7 +208,7 @@
 // The stores keep only what the library hands them: the issuer gives a
 // PreAuthorizedCodeStore the hash of each code and a keyed hash of its
 // Transaction Code, never either itself, and the verifier the hash of
-// each response_code. Give Options a Sealer — verifier.AESGCMSealer,
+// each response_code. Give Options a Sealer — sealing.AESGCMSealer,
 // with a 32-byte key kept outside the database, in a secret manager or
 // KMS — and every issuer and walletflow record is sealed too, bound to
 // its table and key: a deferred transaction's issued Credentials, a
@@ -217,10 +218,12 @@
 // transactions aren't sealed whole: their TransactionCodec's own
 // Sealer, or the DB's when it has none, seals only each one's response
 // decryption key and verified claims, bound to its Owner, same-device
-// flag, browser binding hash, origin and query, which stay readable:
-// changing one leaves the record unreadable. Its status, expiry and
-// response_code hash are unprotected, so the database must be trusted
-// for their integrity.
+// flag, browser binding hash, origin and query, and (TransactionCodec
+// version 2) its status, expiry, nonce, state and kid, which stay
+// readable: changing one leaves the record unreadable. Its
+// response_code hash and last error are unprotected, and a whole older
+// copy of the record still opens, so the database must be trusted for
+// those.
 // A Wallet Provider's instances, instance keys and challenges are
 // sealed too, though they hold nothing secret — an instance's public
 // keys, its registration evidence's summary, its App Attest key and

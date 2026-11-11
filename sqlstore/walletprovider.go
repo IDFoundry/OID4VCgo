@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
@@ -81,20 +82,20 @@ type InstanceStore struct {
 
 var (
 	_ walletprovider.InstanceStore = (*InstanceStore)(nil)
-	_ walletprovider.SealingStore  = (*InstanceStore)(nil)
-	_ walletprovider.SealingStore  = (*InstanceKeyStore)(nil)
-	_ walletprovider.SealingStore  = (*ChallengeStore)(nil)
+	_ sealing.Store                = (*InstanceStore)(nil)
+	_ sealing.Store                = (*InstanceKeyStore)(nil)
+	_ sealing.Store                = (*ChallengeStore)(nil)
 )
 
-// SealsRecords implements walletprovider.SealingStore, for
+// SealsRecords implements sealing.Store, for
 // walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
 func (s *InstanceStore) SealsRecords() bool { return s.t.d.sealer != nil }
 
-// SealsRecords implements walletprovider.SealingStore, for
+// SealsRecords implements sealing.Store, for
 // walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
 func (s *InstanceKeyStore) SealsRecords() bool { return s.t.d.sealer != nil }
 
-// SealsRecords implements walletprovider.SealingStore, for
+// SealsRecords implements sealing.Store, for
 // walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
 func (s *ChallengeStore) SealsRecords() bool { return s.t.d.sealer != nil }
 

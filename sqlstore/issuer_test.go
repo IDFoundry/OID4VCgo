@@ -11,6 +11,7 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/issuer/issuertest"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 )
 
@@ -60,6 +61,26 @@ func TestIssuerStoresDeclareProductionCapabilities(t *testing.T) {
 	} {
 		if c := s.Capabilities(); !c.Durable || !c.AtomicConsume {
 			t.Errorf("%s.Capabilities() = %+v, want Durable and AtomicConsume", name, c)
+		}
+	}
+}
+
+// The issuer stores say they seal their records (sealing.Store's
+// SealsRecords) exactly when the DB has a Sealer.
+func TestIssuerStoresDeclareSealing(t *testing.T) {
+	for _, sealed := range []bool{false, true} {
+		opts := sqlstore.Options{}
+		if sealed {
+			opts.Sealer = testSealer(t)
+		}
+		d := newSQLiteDB(t, opts)
+		for name, s := range map[string]sealing.Store{
+			"Nonces": d.Nonces(), "PreAuthorizedCodes": d.PreAuthorizedCodes(), "DeferredTransactions": d.DeferredTransactions(),
+			"Notifications": d.Notifications(), "CredentialOffers": d.CredentialOffers(),
+		} {
+			if got := s.SealsRecords(); got != sealed {
+				t.Errorf("with a Sealer %t: %s.SealsRecords() = %t", sealed, name, got)
+			}
 		}
 	}
 }

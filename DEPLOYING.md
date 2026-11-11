@@ -26,7 +26,7 @@ each, not a deployment template" says what it does differently.
   entry says what its migrations lock, and for how long.
 - [ ] **Seal records at rest.** `Options.Sealer` encrypts every issuer,
   verifier transaction, walletflow and Wallet Provider record
-  (`verifier.AESGCMSealer` makes one from a 32-byte key; the verifier's
+  (`sealing.AESGCMSealer` makes one from a 32-byte key; the verifier's
   `TransactionCodec` takes the same Sealer). Keep the key in a secret
   manager or KMS, never in the database. An AES-GCM key seals about
   2^32 records safely: rotate before then with fapigo/sqlstore's
@@ -75,7 +75,9 @@ each, not a deployment template" says what it does differently.
 - [ ] **Stores:** `issuer.Dependencies{Nonces: db.Nonces(),
   PreAuthorizedCodes: db.PreAuthorizedCodes(), DeferredTransactions:
   db.DeferredTransactions(), Notifications: db.Notifications(),
-  CredentialOffers: db.CredentialOffers(), …}`.
+  CredentialOffers: db.CredentialOffers(), …}`, on a `DB` with a
+  Sealer: under `AssuranceProduction` the stores holding holders' data
+  (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
 - [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording
@@ -181,7 +183,8 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   fetches CRLs on the request path stalls presentations whenever a list
   expires.
 - [ ] **Status checks: one `statuslist.Cache` per process**, shared by
-  every `statuslist.Checker` (`Checker.Cache`). Size `CacheOptions`:
+  every `statuslist.Checker` (`Checker.Cache`; a `verifier.StatusPolicy`
+  without one is refused under `AssuranceProduction`). Size `CacheOptions`:
   `MaxEntries` (256 by default) above the number of list URIs your
   verifiers read within the tokens' lifetime — one Wallet Provider's
   live attestations alone can name 128 (64 lists in each of the current

@@ -22,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/weborigin"
+	"github.com/idfoundry/oid4vcgo/sealing"
 )
 
 // TransactionStatus is where a presentation request is in its life.
@@ -206,9 +207,22 @@ type StoreAssurance interface {
 // it's stored, as a TransactionCodec with a Sealer does. Under
 // AssuranceProduction, NewTransactions requires a store that seals
 // them, unless TransactionsConfig.UnsealedStore says the store is as
-// protected as the Verifier's own keys.
+// protected as the Verifier's own keys. A store may declare it with
+// sealing.Store's SealsRecords instead, as the issuer's stores do.
 type SealingStore interface {
 	SealsTransactions() bool
+}
+
+// sealsTransactions is whether store declares it seals transactions,
+// as a SealingStore or a sealing.Store.
+func sealsTransactions(store TransactionStore) bool {
+	switch s := store.(type) {
+	case SealingStore:
+		return s.SealsTransactions()
+	case sealing.Store:
+		return s.SealsRecords()
+	}
+	return false
 }
 
 // MaxProductionTransactionLifetime is the longest
@@ -317,11 +331,15 @@ type TransactionsConfig struct {
 	// (scheme and host lowercased, no trailing "/" or default port).
 	// BeginDCAPI refuses any other origin, so one taken from the request
 	// (its Origin header, say) can't bind a presentation to a page the
-	// Verifier doesn't serve. REQUIRED for BeginDCAPI under
-	// AssuranceProduction: NewTransactions refuses a production
-	// Transactions without them only when it has no RequestURIBase
-	// either, and so can serve nothing else; otherwise BeginDCAPI
-	// refuses each request. Under AssuranceDevelopment, empty allows any.
+	// Verifier doesn't serve. REQUIRED for BeginDCAPI and
+	// BeginMdocDCAPI under AssuranceProduction. The Digital Credentials
+	// API is optional beside the redirect flows, so NewTransactions
+	// refuses a production Transactions without them only when its
+	// configuration says it serves that API: it has no RequestURIBase,
+	// and so can serve nothing else, or it has MdocDCAPI, which serves
+	// nothing else. A production Transactions with RequestURIBase alone
+	// is a redirect-flow one: its BeginDCAPI refuses each request. Under
+	// AssuranceDevelopment, empty allows any.
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
@@ -616,8 +634,8 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
 		return errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
 	}
-	if sealing, ok := store.(SealingStore); (!ok || !sealing.SealsTransactions()) && !cfg.UnsealedStore {
-		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as verifier.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
+	if !sealsTransactions(store) && !cfg.UnsealedStore {
+		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as sealing.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
 	}
 	if cfg.Lifetime > MaxProductionTransactionLifetime {
 		return fmt.Errorf("verifier: transactions: lifetime is %v; under AssuranceProduction it must be at most %v", cfg.Lifetime, MaxProductionTransactionLifetime)
@@ -628,10 +646,16 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
 		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
 	}
-	if cfg.RequestURIBase == "" && len(cfg.Origins) == 0 {
+	switch {
+	case cfg.RequestURIBase == "" && len(cfg.Origins) == 0:
 		// Without RequestURIBase only BeginDCAPI can begin a request,
 		// and without Origins it refuses every one.
 		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base serves the Digital Credentials API alone: set origins, the origins of the pages that make its requests")
+	case cfg.MdocDCAPI != nil && len(cfg.Origins) == 0:
+		// MdocDCAPI serves org-iso-mdoc requests alone, all of them over
+		// the Digital Credentials API, and without Origins
+		// BeginMdocDCAPI refuses every one.
+		return errors.New("verifier: transactions: under AssuranceProduction, mdoc_dcapi serves the Digital Credentials API: set origins, the origins of the pages that make its requests")
 	}
 	return nil
 }
@@ -680,20 +704,35 @@ type Begun struct {
 // the public request ID could guess.
 const MinBrowserBindingLength = 16
 
-// Begin creates a presentation request for query.
-//
-// browserBinding ties the request's result to whoever asked: an
-// unguessable secret the caller keeps — a cookie on the browser that
-// asked, or a value held server-side when no browser is involved — and
-// passes back to Lookup and Redeem. Only its hash is stored. It is
-// required: the request's ID is public, as the last segment of the
-// request_uri in its link or QR code, so the binding is what keeps the
-// result from anyone who saw that, and so must be at least
-// MinBrowserBindingLength bytes — a random token, not a user ID or a
-// short session number. A same-device request (sameDevice)
-// also needs TransactionsConfig.RedirectURI, where its answer sends the
-// browser back with a response_code.
-func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
+// BeginOptions is the presentation request BeginWith creates.
+type BeginOptions struct {
+	// Query is what the request asks for. REQUIRED.
+	Query dcql.Query
+
+	// BrowserBinding ties the request's result to whoever asked: an
+	// unguessable secret the caller keeps — a cookie on the browser
+	// that asked, or a value held server-side when no browser is
+	// involved — and passes back to Lookup and Redeem. Only its hash is
+	// stored. REQUIRED: the request's ID is public, as the last segment
+	// of the request_uri in its link or QR code, so the binding is what
+	// keeps the result from anyone who saw that, and so must be at
+	// least MinBrowserBindingLength bytes — a random token, not a user
+	// ID or a short session number.
+	BrowserBinding string
+
+	// SameDevice makes a same-device request: its answer sends the
+	// browser back to TransactionsConfig.RedirectURI, which it then
+	// needs, with a response_code, and its result is released only to
+	// the browser that redeems it (Redeem). false makes a cross-device
+	// one, whose result Lookup reports to the bound browser.
+	SameDevice bool
+}
+
+// BeginWith creates a presentation request as opts says (see
+// BeginOptions), for the redirect flows: the request is fetched from
+// TransactionsConfig.RequestURIBase, which it needs.
+func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun, error) {
+	query, browserBinding, sameDevice := opts.Query, opts.BrowserBinding, opts.SameDevice
 	if len(browserBinding) < MinBrowserBindingLength {
 		return Begun{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
 	}
@@ -737,6 +776,14 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 		"client_id": {t.v.ClientID()}, "request_uri": {t.cfg.RequestURIBase + "/" + id},
 	}.Encode()
 	return Begun{ID: id, Link: link}, nil
+}
+
+// Begin is BeginWith with query, browserBinding and sameDevice as its
+// BeginOptions' Query, BrowserBinding and SameDevice. Prefer BeginWith,
+// whose named fields can't be passed in the wrong order and which can
+// take more.
+func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
+	return t.BeginWith(ctx, BeginOptions{Query: query, BrowserBinding: browserBinding, SameDevice: sameDevice})
 }
 
 // RequestObject returns the signed Request Object to serve at the
@@ -821,15 +868,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	}
 	result, err := t.verify(ctx, tx, responseJWE)
 	if err != nil {
-		t.recordFailure(ctx, id, err)
-		var walletErr *ResponseError
-		if errors.As(err, &walletErr) && tx.SameDevice {
-			// The holder's browser goes back to the Verifier, which shows
-			// the refusal (HAIP 1.0 §5.1: in the same-device flow,
-			// "Verifiers MUST include redirect_uri" in the response).
-			return Answered{ID: id, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}, err
-		}
-		return Answered{}, err
+		return t.answerRefused(ctx, tx, err)
 	}
 
 	var code string
@@ -858,6 +897,20 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		answered.RedirectURI = withQuery(t.cfg.RedirectURI, "response_code", code)
 	}
 	return answered, nil
+}
+
+// answerRefused records err, why tx's answer was refused, and answers
+// it: a wallet's error response to a same-device request with
+// redirect_uri, where the holder's browser goes back to the Verifier,
+// which shows the refusal (HAIP 1.0 §5.1: in the same-device flow,
+// "Verifiers MUST include redirect_uri" in the response).
+func (t *Transactions) answerRefused(ctx context.Context, tx Transaction, err error) (Answered, error) {
+	t.recordFailure(ctx, tx.ID, err)
+	var walletErr *ResponseError
+	if errors.As(err, &walletErr) && tx.SameDevice {
+		return Answered{ID: tx.ID, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}, err
+	}
+	return Answered{}, err
 }
 
 // answerNotPending answers responseJWE, sent to tx when it's no longer

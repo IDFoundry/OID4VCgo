@@ -177,6 +177,19 @@ type Config struct {
 	// (haip.RecommendedJWTKeyAttestationProofType), rules that out.
 	AllowAttestationProofType bool
 
+	// UnsealedStores accepts, under AssuranceProduction, stores holding
+	// holders' data that don't declare they seal it (sealing.Store):
+	// PreAuthorizedCodes (the subject and what it may be issued),
+	// CredentialOffers (an offer's pre-authorized_code), Notifications
+	// (the client and subject of each issuance) and DeferredTransactions
+	// (the Credentials issued, with their claims). Whoever can read such
+	// a store, or its backups, then reads those, and can redeem the
+	// offers. Set it only where the stores are as protected as the
+	// issuer's own signing keys; otherwise give them a Sealer
+	// (github.com/idfoundry/oid4vcgo/sqlstore's Options.Sealer, from
+	// sealing.AESGCMSealer).
+	UnsealedStores bool
+
 	// AuthorizationServers are the OAuth 2.0 Authorization Servers
 	// (their issuer identifiers) this Credential Issuer relies on,
 	// advertised as Metadata's authorization_servers (§12.2.4).

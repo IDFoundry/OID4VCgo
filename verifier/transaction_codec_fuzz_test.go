@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -27,7 +28,7 @@ func FuzzTransactionCodecUnmarshal(f *testing.F) {
 	if _, err := rand.Read(key); err != nil {
 		f.Fatal(err)
 	}
-	sealer, err := verifier.AESGCMSealer(key)
+	sealer, err := sealing.AESGCMSealer(key)
 	if err != nil {
 		f.Fatal(err)
 	}

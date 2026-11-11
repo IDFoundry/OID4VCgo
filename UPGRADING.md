@@ -9,6 +9,21 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.75.3 → next
 
+### Issuer (`issuer`)
+
+- **Under `AssuranceProduction`, the stores holding holders' data must
+  seal it.** `issuer.New` refuses a `PreAuthorizedCodes`,
+  `CredentialOffers`, `Notifications` or `DeferredTransactions` store
+  that doesn't implement `sealing.Store` with `SealsRecords` true, as
+  `verifier.NewTransactions` refuses an unsealed `TransactionStore`.
+  With `sqlstore`, give the DB a Sealer:
+  `sqlstore.New(sqlDB, dialect, sqlstore.Options{Sealer: sealer})`,
+  with `sealer` from `sealing.AESGCMSealer` and a 32-byte key kept
+  outside the database (see DEPLOYING.md's "Seal records at rest");
+  its issuer stores then declare it. A store of your own implements
+  `SealsRecords`. `Nonces` needn't. Set `Config.UnsealedStores` only
+  where the stores are as protected as the issuer's own keys.
+
 ### Status lists (`statuslist`, `identifierlist`)
 
 - **`identifierlist.Checker.Check` with a `Cache` returns identifiers
@@ -17,6 +32,20 @@ CHANGELOG.md's BREAKING CHANGES sections.
   them being shared.
 
 ### Verifier (`verifier`, `mdocdcapi`)
+
+- **Under `AssuranceProduction`, a `StatusPolicy` needs
+  `Checker.Cache`.** `CheckStatusDecision`, and so `NewTransactions`,
+  `VerifyResponse`, `mdocdcapi` and `proximity`, refuse one without:
+  it would fetch every issuer's status list again for each answer,
+  whatever its ttl. Create one `statuslist.NewCache` per process and
+  set it as every `statuslist.Checker`'s `Cache`, as
+  `issuer.StatusListAttestationStatus` already required.
+- **Under `AssuranceProduction`, `NewTransactions` refuses `MdocDCAPI`
+  without `Origins`**, even with a `RequestURIBase`: `BeginMdocDCAPI`
+  refused every request there. Set `Origins` to the pages that make
+  org-iso-mdoc requests, or leave `MdocDCAPI` unset. A redirect-flow
+  `Transactions` (`RequestURIBase`, no `MdocDCAPI`) still needs no
+  `Origins`; its `BeginDCAPI` refuses each request, as before.
 
 - **An org-iso-mdoc answer through `verifier.Transactions` must
   disclose every requested element.** `HandleMdocDCAPIResponse` used to
@@ -37,6 +66,27 @@ CHANGELOG.md's BREAKING CHANGES sections.
   `MdocAllowWithheld` into a sealed record;
   `verifiertest.TestTransactionStoreContract` checks a store of your
   own keeps both.
+
+### New, and deprecated (`sealing`, `verifier`)
+
+- **`sealing` holds the sealer every store uses:** `sealing.Sealer`,
+  `sealing.AESGCMSealer` and `sealing.Store`. `verifier.AESGCMSealer`
+  and `verifier.TransactionSealer` still work, as deprecated forwards
+  to them: replace `verifier.AESGCMSealer(key)` with
+  `sealing.AESGCMSealer(key)`. The sealed values are the same, so
+  records sealed before open as they did.
+- **`Transactions.BeginWith(ctx, verifier.BeginOptions{Query,
+  BrowserBinding, SameDevice})`** begins a redirect-flow request from
+  named fields; `Begin` stays, as a wrapper over it. Prefer
+  `BeginWith`.
+- **A `TransactionStore` may declare it seals as a `sealing.Store`**
+  (`SealsRecords`), beside `verifier.SealingStore`.
+
+### sqlstore
+
+- **The issuer stores implement `sealing.Store`**: `SealsRecords` is
+  true when the DB has a Sealer, as the issuer now requires under
+  `AssuranceProduction`.
 
 ### Mobile libraries (OID4VCWallet, ABI 15)
 
@@ -87,6 +137,16 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ### Behaviour that changes without a code change
 
+- **`verifier.TransactionCodec` writes version 2 records**
+  (`TransactionCodecVersion`), whose sealed fields are also bound to
+  the transaction's status, expiry, nonce, state and kid: someone who
+  can write the store but hasn't the Sealer's key can no longer reopen
+  a completed request or extend one's expiry. Version 1 records still
+  open, and are written back as version 2. An earlier release doesn't
+  read version 2: during a rolling deploy, a request begun or updated
+  on an upgraded replica fails on one not yet upgraded, so finish the
+  rollout quickly (a request lives `TransactionsConfig.Lifetime`), and
+  a rollback fails the requests the new release wrote.
 - **`walletprovider` bounds the status list indices one instance's
   instance keys take in a period** (`Config.MaxInstanceKeysPerPeriod`,
   default `DefaultMaxInstanceKeysPerPeriod`, 128): each recorded key
@@ -203,7 +263,7 @@ CHANGELOG.md's BREAKING CHANGES sections.
   request's path: alert on it, or revoke from your own logic.
 - **`Config.RequireSealedStore`** makes `New` refuse `Instances`,
   `InstanceKeys` and `Challenges` stores that don't seal their records
-  (the new `walletprovider.SealingStore`). sqlstore's stores report
+  (`sealing.Store`). sqlstore's stores report
   whether their `DB` has an `Options.Sealer` (sqlstore needs the
   release with this change). It's off by default; set it in
   production (DEPLOYING.md).

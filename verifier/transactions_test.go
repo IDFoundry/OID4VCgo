@@ -182,9 +182,9 @@ func (f *txFixture) errorAnswerWithState(begun verifier.Begun, code, description
 
 func (f *txFixture) begin(binding string, sameDevice bool) verifier.Begun {
 	f.t.Helper()
-	begun, err := f.txs.Begin(context.Background(), f.query, binding, sameDevice)
+	begun, err := f.txs.BeginWith(context.Background(), verifier.BeginOptions{Query: f.query, BrowserBinding: binding, SameDevice: sameDevice})
 	if err != nil {
-		f.t.Fatalf("Begin: %v", err)
+		f.t.Fatalf("BeginWith: %v", err)
 	}
 	return begun
 }
@@ -276,10 +276,16 @@ func TestTransactions_SameDevice(t *testing.T) {
 			if _, err := f.txs.Begin(ctx, f.query, "user-42", sameDevice); err == nil {
 				t.Errorf("a request (same-device %v) began with a short browser binding", sameDevice)
 			}
+			if _, err := f.txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "user-42", SameDevice: sameDevice}); err == nil {
+				t.Errorf("BeginWith: a request (same-device %v) began with a short browser binding", sameDevice)
+			}
 		}
 		g := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.RedirectURI = "" })
 		if _, err := g.txs.Begin(ctx, g.query, "browser-binding-B", true); err == nil || !strings.Contains(err.Error(), "RedirectURI") {
 			t.Errorf("a same-device request without a RedirectURI: %v, want refused for it", err)
+		}
+		if _, err := g.txs.BeginWith(ctx, verifier.BeginOptions{Query: g.query, BrowserBinding: "browser-binding-B", SameDevice: true}); err == nil || !strings.Contains(err.Error(), "RedirectURI") {
+			t.Errorf("BeginWith: a same-device request without a RedirectURI: %v, want refused for it", err)
 		}
 	})
 }
@@ -511,6 +517,13 @@ func TestNewTransactions_Validates(t *testing.T) {
 			t.Errorf("%s store with UnsealedStore: %v", name, err)
 		}
 	}
+	// A store may say it seals as a sealing.Store does, too.
+	if _, err := verifier.NewTransactions(prod, recordSealingTransactionStore{store, assured, true}, sound); err != nil {
+		t.Errorf("a store declaring sealing.Store: %v", err)
+	}
+	if _, err := verifier.NewTransactions(prod, recordSealingTransactionStore{store, assured, false}, sound); err == nil {
+		t.Error("a store declaring sealing.Store's SealsRecords false: accepted")
+	}
 	long := sound
 	long.Lifetime = verifier.MaxProductionTransactionLifetime + time.Second
 	if _, err := verifier.NewTransactions(prod, assured, long); err == nil || !strings.Contains(err.Error(), "lifetime") {
@@ -543,6 +556,16 @@ func (unsealedTransactionStore) Capabilities() verifier.StoreCapabilities {
 }
 
 func (unsealedTransactionStore) SealsTransactions() bool { return false }
+
+// recordSealingTransactionStore declares whether it seals as a
+// sealing.Store, not a verifier.SealingStore.
+type recordSealingTransactionStore struct {
+	verifier.TransactionStore
+	verifier.StoreAssurance
+	seals bool
+}
+
+func (s recordSealingTransactionStore) SealsRecords() bool { return s.seals }
 
 func TestTransactions_HandlerEdges(t *testing.T) {
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Verify.Now = nil }) // the real clock
