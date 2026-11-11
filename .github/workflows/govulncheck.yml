@@ -3,12 +3,12 @@ name: govulncheck
 # Scans each Go module for known vulnerabilities under the Go version its
 # go.mod declares: the oldest Go anyone may build it with, so the version
 # every finding matters for. The mobile module's standard library is
-# compiled into the Swift and Kotlin packages, so it's scanned too, as is
-# examples/passport-vdc. A standard-library finding is fixed by raising
-# the go directive in every go.mod to a release that has the fix; that a
-# newer Go is already fixed says nothing about what these modules let
-# their users build with, so this deliberately doesn't scan under the
-# latest release. A finding in a dependency is fixed by upgrading it.
+# compiled into the Swift and Kotlin packages, so it's scanned too, as are
+# sqlstore and examples/passport-vdc. A standard-library finding is fixed
+# by raising the go directive in every go.mod to a release that has the
+# fix; that a newer Go is already fixed says nothing about what these
+# modules let their users build with, so this deliberately doesn't scan
+# under the latest release. A finding in a dependency is fixed by upgrading it.
 #
 # Runs on every pull request and push to main (as the required
 # "govulncheck" check, one job so the name stays that), and daily,
@@ -55,6 +55,17 @@ jobs:
           check-latest: false
           cache-dependency-path: mobile/go.sum
           work-dir: mobile
+
+      - name: sqlstore
+        if: ${{ !cancelled() }}
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          repo-checkout: false
+          go-version-input: ''
+          go-version-file: sqlstore/go.mod
+          check-latest: false
+          cache-dependency-path: sqlstore/go.sum
+          work-dir: sqlstore
 
       - name: examples/passport-vdc
         if: ${{ !cancelled() }}
