@@ -37,6 +37,7 @@ and what: ask the holder, then respond or decline.
 ```swift
 import Foundation
 import OID4VCWallet
+import Security
 
 /// What the holder agreed to share: a requested document, the held
 /// mdoc to answer it with, and the elements to disclose.
@@ -62,8 +63,16 @@ func shareInPerson(wallet: Wallet, showQRCode: (String) -> Void,
                 return nil
             }
             // The holder key signs now: Face ID, if the key store asks.
-            return try await session.respond(document: answer.document, credentialID: answer.credentialID,
-                                             elements: answer.elements)
+            do {
+                return try await session.respond(document: answer.document, credentialID: answer.credentialID,
+                                                 elements: answer.elements)
+            } catch {
+                // Nothing was sent (Face ID cancelled, say), and the
+                // request stands: end the session rather than leave the
+                // reader waiting. A consent screen may offer to try again.
+                await session.decline()
+                throw error
+            }
         case .failed(let error):
             throw error
         case let state where state.isFinal:
@@ -128,19 +137,27 @@ app with it set. ``ProximityReader/start(qrCode:docType:elements:timeouts:)``
 takes the holder's QR code and what to ask for.
 
 ```swift
+/// A verified mdoc whose issuer the reader doesn't accept.
+struct UnacceptedIssuer: Error {}
+
 /// Reads an mDL's name and portrait from the holder whose QR code was
-/// scanned. Returns the verified mdoc, its status checked, or nil if the
+/// scanned. `mdlIACAs` are the IACAs (PEM) trusted to issue mDLs, and
+/// only mDLs; `accepts` decides on the verified certificate path, leaf
+/// first. Returns the verified mdoc, its status checked, or nil if the
 /// holder declined.
-func readInPerson(qrCode: String, issuerRoots: String, crls: String) async throws -> VerifiedMdoc? {
+func readInPerson(qrCode: String, mdlIACAs: String, crls: String,
+                  accepts: ([SecCertificate]) -> Bool) async throws -> VerifiedMdoc? {
     let reader = try ProximityReader(configuration: ProximityReaderConfiguration(
-        issuerRoots: issuerRoots, crls: crls, revocation: [.issuer, .status],
-        anyIssuerForAnyType: true, statusCheck: .check))
+        issuerRoots: "", issuerRootsByDocType: ["org.iso.18013.5.1.mDL": mdlIACAs],
+        crls: crls, revocation: [.issuer, .status], statusCheck: .check))
     let session = try reader.start(qrCode: qrCode, docType: "org.iso.18013.5.1.mDL",
                                    elements: ["org.iso.18013.5.1": ["given_name", "family_name", "portrait"]])
     for await state in session.states {
         switch state {
         case .verified(let mdoc):
             // Its status was checked first: valid, or it names none.
+            // Decide on the verified chain, not the names shown.
+            guard accepts(mdoc.issuerChain) else { throw UnacceptedIssuer() }
             return mdoc
         case .failed(let error):
             // A revoked or suspended document is WalletError

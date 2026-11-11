@@ -23,6 +23,18 @@ Every failure from the wallet is a ``WalletError``:
 In-person sessions add ``ProximityError`` for Bluetooth failures:
 Bluetooth off or not allowed, a timeout, or a lost connection.
 
+Two more reach the app directly, not through the wallet:
+
+- ``MdocPresentation/RequestChanged``: from
+  ``MdocPresentation/respond(shown:readerCertificate:)``, in a document
+  provider, when the request iOS released isn't what the holder was
+  shown. Nothing was answered: tell the holder, and let them cancel.
+- ``StoreError``: from the package's stores and Wallet Provider client
+  when the app calls them itself — making ``HttpWalletProvider`` with an
+  invalid base URL, say. Inside a wallet call, a store's or provider's
+  failure arrives as ``WalletError/Code/platform`` (or
+  ``WalletError/Code/network``) instead.
+
 ```swift
 import Foundation
 import OID4VCWallet

@@ -1,7 +1,7 @@
 import Foundation
 import Mobile
 
-/// NewWallet's configuration.
+/// A ``Wallet``'s configuration.
 public struct WalletConfiguration: Codable, Sendable {
     /// The wallet's registration with Authorization Servers. Empty for a
     /// wallet with no `WalletProvider`.
@@ -220,9 +220,11 @@ public struct WalletConfiguration: Codable, Sendable {
     /// app gives it; empty keeps them in memory only. The directory shows
     /// whoever can read it which status lists the wallet checks (their
     /// URIs, so the issuers of its credentials, not which entries), the
-    /// lists themselves, and when each was last checked. Under complete
-    /// protection, a check while the device is locked reads and keeps no
-    /// list there: it downloads instead.
+    /// lists themselves, and when each was last checked. A check while
+    /// the device is locked can't read this directory under complete
+    /// protection, and with ``FileCredentialStore``'s default complete
+    /// protection it can't read the credential either: it fails as
+    /// `.platform`. Check status when the app comes to the foreground.
     public var statusCacheDir: String?
 
     /// A trust role whose certificates can be checked for revocation.
@@ -578,7 +580,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// How many copies no Verifier has seen.
     public let copiesLeft: Int
     /// Whether its issuance kept a refresh token
-    /// (`Configuration.requestRefresh`), so
+    /// (`WalletConfiguration.requestRefresh`), so
     /// `Wallet.refreshCredential(id:)` can replace its copies. The
     /// Authorization Server may still refuse
     /// (`WalletError.Code.reissueRequired`).

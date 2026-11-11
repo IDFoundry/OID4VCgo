@@ -33,12 +33,12 @@ import OID4VCWallet
 
 /// Receives the credentials an offer link offers. `confirm` shows the
 /// holder who is offering what, and returns whether they want it;
-/// `askPIN` asks for the PIN the issuer sent, or returns nil if they
-/// cancel; `signIn` opens the issuer's page and returns the redirect
-/// back.
+/// `askPIN` asks for the PIN the issuer sent, when the offer asks for
+/// one, or returns nil if they cancel; `signIn` opens the issuer's page
+/// and returns the redirect back.
 func receive(offerLink: String, wallet: Wallet,
              confirm: (Offer) async -> Bool,
-             askPIN: (Offer.TxCode?) async -> String?,
+             askPIN: (Offer.TxCode) async -> String?,
              signIn: (URL) async throws -> URL) async throws -> Issuance.Result? {
     let issuance = try await wallet.startIssuance(offer: offerLink)
     do {
@@ -48,16 +48,21 @@ func receive(offerLink: String, wallet: Wallet,
         }
         switch issuance.offer.grant {
         case .preAuthorizedCode:
+            guard let txCode = issuance.offer.txCode else {
+                try await issuance.redeemPreAuthorizedCode() // No PIN asked for.
+                break
+            }
             while true {
-                guard let pin = await askPIN(issuance.offer.txCode) else {
+                guard let pin = await askPIN(txCode) else {
                     try await issuance.close()
                     return nil
                 }
                 do {
                     try await issuance.redeemPreAuthorizedCode(pin: pin)
                     break
-                } catch let error as WalletError where error.isRetryable {
-                    continue // A wrong PIN (invalid_grant): ask again.
+                } catch let error as WalletError
+                            where error.code == .protocolError && error.protocolError == "invalid_grant" {
+                    continue // A wrong PIN: ask again. Anything else, a network failure too, ends here.
                 }
             }
         case .authorizationCode:
