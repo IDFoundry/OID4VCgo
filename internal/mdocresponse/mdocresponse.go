@@ -19,6 +19,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
 )
@@ -142,6 +143,39 @@ func Decode(data []byte, maxBytes, maxDocuments int) (Response, error) {
 		out.Documents = append(out.Documents, oid4vpmdoc.Document{DocType: d.DocType, IssuerSigned: issuerSigned, DeviceSigned: deviceSigned})
 	}
 	return out, nil
+}
+
+// UnverifiedDocType is the docType in issuerSigned's Mobile Security
+// Object, its IssuerAuth at most maxBytes, read without verifying the
+// signature: a holder answering a request checks the mdoc it holds is
+// of the requested type before its device key signs, so it never
+// presents one document as another.
+func UnverifiedDocType(issuerSigned mdoc.IssuerSigned, maxBytes int) (string, error) {
+	_, _, payload, err := cose.DecodeUnverifiedMax(issuerSigned.IssuerAuth, maxBytes)
+	if err != nil {
+		return "", fmt.Errorf("decode IssuerAuth: %w", err)
+	}
+	var tag cbor.RawTag
+	if err := decMode.Unmarshal(payload, &tag); err != nil {
+		return "", fmt.Errorf("decode MSO: %w", err)
+	}
+	if tag.Number != 24 {
+		return "", fmt.Errorf("decode MSO: tag %d, want 24", tag.Number)
+	}
+	var msoBytes []byte
+	if err := decMode.Unmarshal(tag.Content, &msoBytes); err != nil {
+		return "", fmt.Errorf("decode MSO: tag 24 content: %w", err)
+	}
+	var mso struct {
+		DocType string `cbor:"docType"`
+	}
+	if err := decMode.Unmarshal(msoBytes, &mso); err != nil {
+		return "", fmt.Errorf("decode MSO: %w", err)
+	}
+	if mso.DocType == "" {
+		return "", errors.New("decode MSO: no docType")
+	}
+	return mso.DocType, nil
 }
 
 // decMode decodes an untrusted DeviceResponse within credential/mdoc's

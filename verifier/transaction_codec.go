@@ -160,6 +160,7 @@ type wireTransaction struct {
 	RequestObject      string            `json:"request_object,omitempty"`
 	Origin             string            `json:"origin,omitempty"`
 	MdocEncryptionInfo string            `json:"mdoc_encryption_info,omitempty"`
+	MdocAllowWithheld  bool              `json:"mdoc_allow_withheld,omitempty"`
 	Owner              string            `json:"owner,omitempty"`
 	BrowserBindingHash []byte            `json:"browser_binding_hash,omitempty"`
 	SameDevice         bool              `json:"same_device,omitempty"`
@@ -182,18 +183,19 @@ type wireResult struct {
 // JSON they came from, an mdoc's (and its status reference) as CBOR,
 // so each keeps the types its own format decodes to.
 type wireCredential struct {
-	CredentialQueryID string          `json:"credential_query_id"`
-	Claims            json.RawMessage `json:"claims,omitempty"`
-	MdocClaims        []byte          `json:"mdoc_claims,omitempty"`
-	MdocStatus        []byte          `json:"mdoc_status,omitempty"`
-	IssuerChain       [][]byte        `json:"issuer_chain,omitempty"`
+	CredentialQueryID string              `json:"credential_query_id"`
+	Claims            json.RawMessage     `json:"claims,omitempty"`
+	MdocClaims        []byte              `json:"mdoc_claims,omitempty"`
+	MdocStatus        []byte              `json:"mdoc_status,omitempty"`
+	IssuerChain       [][]byte            `json:"issuer_chain,omitempty"`
+	Withheld          map[string][]string `json:"withheld,omitempty"`
 }
 
 // Marshal encodes tx, sealing its secret fields with c.Sealer if set.
 func (c TransactionCodec) Marshal(tx Transaction) ([]byte, error) {
 	w := wireTransaction{
 		Version: TransactionCodecVersion, ID: tx.ID, KeyID: tx.KeyID, State: tx.State, Nonce: tx.Nonce, Query: tx.Query,
-		Sealed: c.Sealer != nil, RequestObject: tx.RequestObject, Origin: tx.Origin, MdocEncryptionInfo: tx.MdocEncryptionInfo, Owner: tx.Owner,
+		Sealed: c.Sealer != nil, RequestObject: tx.RequestObject, Origin: tx.Origin, MdocEncryptionInfo: tx.MdocEncryptionInfo, MdocAllowWithheld: tx.MdocAllowWithheld, Owner: tx.Owner,
 		BrowserBindingHash: tx.BrowserBindingHash, SameDevice: tx.SameDevice, ExpiresAt: tx.ExpiresAt, RetainUntil: tx.RetainUntil,
 		Status: tx.Status, ResponseCodeHash: tx.ResponseCodeHash, LastError: tx.LastError,
 	}
@@ -260,7 +262,7 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	}
 	tx := Transaction{
 		ID: w.ID, KeyID: w.KeyID, State: w.State, Nonce: w.Nonce, Query: w.Query, RequestObject: w.RequestObject,
-		Origin: w.Origin, MdocEncryptionInfo: w.MdocEncryptionInfo, Owner: w.Owner, BrowserBindingHash: w.BrowserBindingHash, SameDevice: w.SameDevice,
+		Origin: w.Origin, MdocEncryptionInfo: w.MdocEncryptionInfo, MdocAllowWithheld: w.MdocAllowWithheld, Owner: w.Owner, BrowserBindingHash: w.BrowserBindingHash, SameDevice: w.SameDevice,
 		ExpiresAt: w.ExpiresAt, RetainUntil: w.RetainUntil, Status: w.Status, ResponseCodeHash: w.ResponseCodeHash, LastError: w.LastError,
 	}
 	var bound []byte
@@ -327,6 +329,9 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // before org-iso-mdoc requests existed open as they did; and an
 // org-iso-mdoc record whose MdocEncryptionInfo is removed, to pass it
 // off as another kind, no longer opens.
+// One whose document may withhold
+// elements (MdocAllowWithheld) has one more, so a store can't let a
+// request that required every element complete without them.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(query))
 	dec.UseNumber()
@@ -342,6 +347,9 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	bound := []any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]}
 	if w.MdocEncryptionInfo != "" {
 		bound = append(bound, w.MdocEncryptionInfo)
+	}
+	if w.MdocAllowWithheld {
+		bound = append(bound, "allow_withheld")
 	}
 	return json.Marshal(bound)
 }
@@ -389,7 +397,7 @@ func marshalResult(r VerifyResponseResult, query dcql.Query) ([]byte, error) {
 	byID := formats(query)
 	w := wireResult{Credentials: make([]wireCredential, 0, len(r.Credentials)), Discarded: r.Discarded}
 	for _, vc := range r.Credentials {
-		wc := wireCredential{CredentialQueryID: vc.CredentialQueryID, IssuerChain: vc.IssuerChain}
+		wc := wireCredential{CredentialQueryID: vc.CredentialQueryID, IssuerChain: vc.IssuerChain, Withheld: vc.Withheld}
 		var err error
 		switch byID[vc.CredentialQueryID] {
 		case mdoc.CredentialFormat:
@@ -417,7 +425,7 @@ func unmarshalResult(data []byte, query dcql.Query) (VerifyResponseResult, error
 	byID := formats(query)
 	r := VerifyResponseResult{Credentials: make([]VerifiedCredential, 0, len(w.Credentials)), Discarded: w.Discarded}
 	for _, wc := range w.Credentials {
-		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, IssuerChain: wc.IssuerChain}
+		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, IssuerChain: wc.IssuerChain, Withheld: wc.Withheld}
 		var err error
 		switch byID[wc.CredentialQueryID] {
 		case mdoc.CredentialFormat:

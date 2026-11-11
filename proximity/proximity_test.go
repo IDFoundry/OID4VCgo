@@ -680,13 +680,14 @@ func TestParseDeviceRequestRejects(t *testing.T) {
 	}
 	// Over the limits: too many documents, or too many elements in one
 	// document or across them.
-	docRequest := func(n int) map[string]any {
+	docRequestOf := func(docType string, n int) map[string]any {
 		elements := map[string]bool{}
 		for i := range n {
 			elements[fmt.Sprintf("e%d", i)] = false
 		}
-		return map[string]any{"itemsRequest": items(t, map[string]any{"docType": mDL, "nameSpaces": map[string]any{mDLNS: elements}})}
+		return map[string]any{"itemsRequest": items(t, map[string]any{"docType": docType, "nameSpaces": map[string]any{mDLNS: elements}})}
 	}
+	docRequest := func(n int) map[string]any { return docRequestOf(mDL, n) }
 	request := func(docs ...map[string]any) []byte {
 		list := make([]any, len(docs))
 		for i, d := range docs {
@@ -696,13 +697,18 @@ func TestParseDeviceRequestRejects(t *testing.T) {
 	}
 	nine := make([]map[string]any, MaxDocRequests+1)
 	for i := range nine {
-		nine[i] = docRequest(1)
+		nine[i] = docRequestOf(fmt.Sprintf("org.example.%d", i), 1)
 	}
 	tests["too many documents"] = request(nine...)
 	tests["too many elements"] = request(docRequest(MaxRequestedElements + 1))
-	tests["too many elements across documents"] = request(docRequest(MaxRequestedElements/2+1), docRequest(MaxRequestedElements/2))
-	if _, err := ParseDeviceRequest(request(docRequest(MaxRequestedElements/2), docRequest(MaxRequestedElements/2))); err != nil {
+	tests["too many elements across documents"] = request(docRequest(MaxRequestedElements/2+1), docRequestOf("org.example.other", MaxRequestedElements/2))
+	if _, err := ParseDeviceRequest(request(docRequest(MaxRequestedElements/2), docRequestOf("org.example.other", MaxRequestedElements/2))); err != nil {
 		t.Errorf("at the element limit: %v", err)
+	}
+	// A DeviceResponse holds one document of each type, so a reader
+	// asks for each once.
+	if _, err := ParseDeviceRequest(request(docRequest(1), docRequestOf("org.example.other", 1), docRequest(2))); !errors.Is(err, ErrCBORValidation) || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a document type asked for twice: %v, want ErrCBORValidation", err)
 	}
 	for name, b := range tests {
 		t.Run(name, func(t *testing.T) {

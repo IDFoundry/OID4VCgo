@@ -98,7 +98,7 @@ func checkAnswer(req DocRequest, issuerSigned mdoc.IssuerSigned, elements [][2]s
 	if err := checkRequested(req, elements); err != nil {
 		return err
 	}
-	if held, err := msoDocType(issuerSigned); err != nil {
+	if held, err := mdocresponse.UnverifiedDocType(issuerSigned, MaxMessageBytes); err != nil {
 		return fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	} else if held != req.DocType {
 		return fmt.Errorf("proximity: build DeviceResponse: the mdoc is a %q, the request is for %q", held, req.DocType)
@@ -163,26 +163,6 @@ func BuildDocumentMAC(req DocRequest, issuerSigned mdoc.IssuerSigned, holder Key
 		return oid4vpmdoc.Document{}, fmt.Errorf("proximity: build DeviceResponse: %w", err)
 	}
 	return oid4vpmdoc.Document{DocType: req.DocType, IssuerSigned: selected, DeviceSigned: deviceSigned}, nil
-}
-
-// msoDocType is the docType in issuerSigned's MSO — the holder's own
-// mdoc, read without verifying it.
-func msoDocType(issuerSigned mdoc.IssuerSigned) (string, error) {
-	_, _, payload, err := cose.DecodeUnverifiedMax(issuerSigned.IssuerAuth, MaxMessageBytes)
-	if err != nil {
-		return "", fmt.Errorf("decode IssuerAuth: %w", err)
-	}
-	msoBytes, err := unwrapTag24(payload)
-	if err != nil {
-		return "", fmt.Errorf("decode MSO: %w", err)
-	}
-	var mso struct {
-		DocType string `cbor:"docType"`
-	}
-	if err := decMode.Unmarshal(msoBytes, &mso); err != nil {
-		return "", fmt.Errorf("decode MSO: %w", err)
-	}
-	return mso.DocType, nil
 }
 
 // checkRequested refuses an empty disclosure, and any element req

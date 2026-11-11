@@ -293,6 +293,15 @@ type VerifiedCredential struct {
 	// §2.5 doesn't require them to correspond): don't rely on it as
 	// authenticated otherwise.
 	IssuerChain [][]byte
+
+	// Withheld are the data elements an org-iso-mdoc request asked for
+	// that the document didn't disclose, by namespace, each sorted
+	// (mdocdcapi.Verified.Missing). Through Transactions, only a request
+	// made with MdocDCAPIRequest.AllowWithheld completes with any. nil
+	// when every element was disclosed, and for every OpenID4VP
+	// presentation, whose Credential Query decides which claims must be
+	// there (VerifyResponse refuses one that doesn't satisfy it).
+	Withheld map[string][]string
 }
 
 // VerifyResponseResult is returned by a successful VerifyResponse.

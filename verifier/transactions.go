@@ -80,6 +80,11 @@ type Transaction struct {
 	// It says the request is one: "" for any other.
 	MdocEncryptionInfo string
 
+	// MdocAllowWithheld is an org-iso-mdoc request's
+	// MdocDCAPIRequest.AllowWithheld: its answer completes it with
+	// requested elements withheld. false requires every one.
+	MdocAllowWithheld bool
+
 	// Owner identifies the Transactions that created the transaction
 	// (TransactionsConfig.Scope): only a Transactions with the same
 	// owner reads it. "" for one saved before it was set, which only a
@@ -540,6 +545,7 @@ func lostFields(tx, saved Transaction) []string {
 	check("RequestObject", saved.RequestObject == tx.RequestObject)
 	check("Origin", saved.Origin == tx.Origin)
 	check("MdocEncryptionInfo", saved.MdocEncryptionInfo == tx.MdocEncryptionInfo)
+	check("MdocAllowWithheld", saved.MdocAllowWithheld == tx.MdocAllowWithheld)
 	check("Owner", saved.Owner == tx.Owner)
 	check("BrowserBindingHash", bytes.Equal(saved.BrowserBindingHash, tx.BrowserBindingHash))
 	check("SameDevice", saved.SameDevice == tx.SameDevice)
@@ -975,14 +981,25 @@ func (t *Transactions) recordFailure(ctx context.Context, id string, cause error
 	if t.cfg.OnRefused != nil {
 		t.cfg.OnRefused(ctx, id, cause)
 	}
+	text := failureText(cause)
 	_ = t.update(ctx, id, func(cur *Transaction) error {
 		if cur.Status != TransactionPending {
 			return ErrTransactionAnswered
 		}
-		cur.LastError = failureText(cause)
+		if cur.LastError == text {
+			// Nothing to write: a refusal repeated, as a flood of
+			// unauthenticated answers repeats it, costs no store write
+			// (nor, under a Sealer, a seal).
+			return errFailureRecorded
+		}
+		cur.LastError = text
 		return nil
 	})
 }
+
+// errFailureRecorded aborts recordFailure's update when LastError
+// already says it.
+var errFailureRecorded = errors.New("verifier: transactions: the failure is already recorded")
 
 // maxFailureText bounds LastError.
 const maxFailureText = 256

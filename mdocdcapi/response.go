@@ -120,7 +120,7 @@ type Verified struct {
 }
 
 // Credential is v as a verifier.VerifiedCredential — its NameSpaces as
-// Claims, its Status and IssuerChain — for what takes one, such as
+// Claims, its Status, IssuerChain and Missing (as Withheld) — for what takes one, such as
 // verifier.StatusPolicy.Check. An Annex C request has no DCQL query, so
 // its CredentialQueryID is the document's type, which names it: a
 // response has at most one document of each type. Namespaces aren't
@@ -131,7 +131,7 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 	for ns, elements := range v.NameSpaces {
 		claims[ns] = elements
 	}
-	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain}
+	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain, Withheld: v.Missing}
 }
 
 // encryptedResponseData is Annex C.3's EncryptedResponseData.

@@ -457,3 +457,32 @@ func TestRequestPage_Ended(t *testing.T) {
 		t.Errorf("unknown request page: %d %s", resp.StatusCode, body)
 	}
 }
+
+// An org-iso-mdoc answer must disclose what the scenario's query
+// requires: every element, unless its claim sets make some optional —
+// sign-up's photo — when the rest still answers.
+func TestDCAPI_WithheldElements(t *testing.T) {
+	iss := newDCAPIIssuer(t)
+	c := newDCAPIApp(t, iss)
+	page := c.startPage(verifierapp.ScenarioOverAsking)
+	data := c.askInBrowser(page)
+	ageOnly, device := iss.passportMdoc(t, map[string]any{"age_over_18": true})
+	if status, body := c.postResponse(page, answerDCAPI(t, data, dcapiOrigin, ageOnly, device)); status == http.StatusNoContent {
+		t.Errorf("an mdoc withholding the names answered the over-asking request: %d %s", status, body)
+	}
+
+	names := map[string]any{credential.FamilyName: "Doe", credential.GivenName: "Jane", "age_over_18": true}
+	page = c.startPage(verifierapp.ScenarioSignup)
+	data = c.askInBrowser(page)
+	noPhoto, device := iss.passportMdoc(t, names)
+	if status, body := c.postResponse(page, answerDCAPI(t, data, dcapiOrigin, noPhoto, device)); status != http.StatusNoContent {
+		t.Errorf("an mdoc without a photo, which sign-up's claim sets allow: status %d: %s", status, body)
+	}
+
+	page = c.startPage(verifierapp.ScenarioSignup)
+	data = c.askInBrowser(page)
+	noName, device := iss.passportMdoc(t, map[string]any{credential.FamilyName: "Doe", "age_over_18": true})
+	if status, body := c.postResponse(page, answerDCAPI(t, data, dcapiOrigin, noName, device)); status == http.StatusNoContent {
+		t.Errorf("an mdoc withholding the given name answered sign-up: %d %s", status, body)
+	}
+}

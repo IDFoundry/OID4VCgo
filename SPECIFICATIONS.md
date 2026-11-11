@@ -234,7 +234,8 @@ security of an exchange both sides run as this library does.
 - **Two documents of the same docType in one DeviceResponse** are
   refused (proximity and ISO/IEC 18013-7 Annex C): documents are
   matched to the reader's requests by docType, so a request can't ask
-  for one docType twice.
+  for one docType twice. The holder side refuses such a DeviceRequest
+  too (`proximity.ParseDeviceRequest`, `mdocdcapi.ParseRequest`).
 
 ## HAIP's deviations from plain FAPI 2.0
 

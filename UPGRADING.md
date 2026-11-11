@@ -9,7 +9,27 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.75.3 → next
 
-No API changes a caller has to act on.
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **An org-iso-mdoc answer through `verifier.Transactions` must
+  disclose every requested element.** `HandleMdocDCAPIResponse` used to
+  complete a `BeginMdocDCAPI` request with whatever the document
+  disclosed, though the request's `Query` has a claim for each element
+  and an OpenID4VP answer must satisfy its query: an `Accept` shared
+  between the two read a withheld element as absent without being
+  told. It now refuses such an answer with `ReasonNotAnswered`, as an
+  OpenID4VP answer not satisfying its query, and the request stays
+  open. To accept a partial answer, as before, set
+  `MdocDCAPIRequest.AllowWithheld`; `VerifiedCredential.Withheld` then
+  names what was withheld, which `Accept` checks.
+  `mdocdcapi.Verified.Credential()` carries `Missing` as `Withheld`
+  too.
+- **A `TransactionStore` keeps the new `Transaction.MdocAllowWithheld`**
+  and a stored result's `VerifiedCredential.Withheld`.
+  `TransactionCodec` (and so `sqlstore`) does, and binds
+  `MdocAllowWithheld` into a sealed record;
+  `verifiertest.TestTransactionStoreContract` checks a store of your
+  own keeps both.
 
 ### Behaviour that changes without a code change
 
@@ -91,6 +111,22 @@ No API changes a caller has to act on.
   `issuertest` contract checks it). A record without it, saved
   earlier, is checked against every proof type's algorithms as
   before.
+- **`mdocdcapi.Incoming.RespondDocuments` (and `Respond`) refuse an
+  mdoc of another type than its document request asks for**, read
+  from its MSO's `docType` before any key signs, as `proximity`
+  already did. It used to sign and send it under the requested type,
+  for the reader to refuse.
+- **`proximity.ParseDeviceRequest` and `mdocdcapi.ParseRequest`
+  refuse a DeviceRequest asking for one document type twice**
+  (`proximity.ErrCBORValidation` for the former), as readers here
+  already refuse a DeviceResponse with two documents of one type.
+- **An NFC reader waits `nfcapdu.MaxTNEPWait` (5 seconds) at most for
+  a tag's answer to a TNEP message**, however long the tag's service
+  parameters ask for: up to TNEP's maximum, several minutes, before.
+- **`oid4vpmdoc.UnmarshalDeviceResponse` refuses a DeviceResponse
+  whose `version` isn't 1.x**, as `proximity` and `mdocdcapi` already
+  did; it used to ignore the member. A verifier receiving an OpenID4VP
+  `mso_mdoc` presentation refuses one too.
 
 ### Wallet Provider stores
 

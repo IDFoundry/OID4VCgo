@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
@@ -56,6 +57,18 @@ type MdocDCAPIRequest struct {
 	// read it as its own query's mdoc. A DCQL Credential Query ID:
 	// [A-Za-z0-9_-]. "" means MdocDCAPICredentialQueryID.
 	CredentialQueryID string
+
+	// AllowWithheld lets the answer leave requested elements out: the
+	// request then completes with what was disclosed, and the verified
+	// document's VerifiedCredential.Withheld names what wasn't. By
+	// default every element must be disclosed, as each claim of the
+	// request's Query must be for an OpenID4VP answer: a document
+	// withholding any is refused with ReasonNotAnswered, as an answer
+	// that doesn't satisfy its Credential Query is, and the request
+	// stays open. ISO/IEC 18013-5 lets a holder withhold any element, so
+	// set it to ask for elements that are optional to the Verifier, and
+	// have Accept check what it needs is there.
+	AllowWithheld bool
 }
 
 // MdocDCAPIRequestData is an org-iso-mdoc request's data (Annex C.2):
@@ -178,6 +191,10 @@ type MdocDCAPIVerify struct {
 // request's is (TransactionCodec), and the request asked for is the
 // transaction's Query: a single mso_mdoc Credential Query, with
 // request.CredentialQueryID as its ID and a claim for each element.
+// As for an OpenID4VP request, an answer must disclose every one of
+// them, unless request.AllowWithheld (see MdocDCAPIRequest), so an
+// Accept shared between the two kinds of request reads the same
+// claims.
 func (t *Transactions) BeginMdocDCAPI(ctx context.Context, request MdocDCAPIRequest, browserBinding, origin string) (BegunMdocDCAPI, error) {
 	if len(browserBinding) < MinBrowserBindingLength {
 		return BegunMdocDCAPI{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
@@ -215,7 +232,7 @@ func (t *Transactions) BeginMdocDCAPI(ctx context.Context, request MdocDCAPIRequ
 	}
 	tx := Transaction{
 		ID: id, Query: query, ResponseDecryptionKey: key, MdocEncryptionInfo: built.Data.EncryptionInfo,
-		Origin: origin, Status: TransactionPending, Owner: t.owner,
+		MdocAllowWithheld: request.AllowWithheld, Origin: origin, Status: TransactionPending, Owner: t.owner,
 	}
 	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
@@ -234,7 +251,8 @@ func (t *Transactions) BeginMdocDCAPI(ctx context.Context, request MdocDCAPIRequ
 // request is still pending, decrypts and verifies the response with
 // TransactionsConfig.MdocDCAPI — bound to the request's own origin,
 // never one the page reports, and to its encryption key, disclosing
-// only what was asked — checks its revocation status
+// only what was asked, and all of it unless the request was made with
+// MdocDCAPIRequest.AllowWithheld — checks its revocation status
 // (TransactionsConfig.Status), runs TransactionsConfig.Accept, and
 // completes the request at most once, returning its result.
 //
@@ -244,7 +262,8 @@ func (t *Transactions) BeginMdocDCAPI(ctx context.Context, request MdocDCAPIRequ
 // another — the same one replayed among them — gets
 // ErrTransactionAnswered. A refusal of the response itself is an
 // *Error, whose Reason is ReasonMdocDCAPIResponse unless the cause has
-// one of its own. An answer arriving with another browser binding is
+// one of its own: ReasonNotAnswered for a document that withheld a
+// requested element its request required. An answer arriving with another browser binding is
 // refused with ErrWrongBrowser and leaves the request as it was.
 // Another kind of request's ID — BeginDCAPI's, Begin's — is
 // ErrTransactionUnknown here, as this request's is to
@@ -333,7 +352,48 @@ func (t *Transactions) verifyMdocDCAPI(ctx context.Context, tx Transaction, data
 		return VerifyResponseResult{}, newError(ReasonMdocDCAPIResponse, "the org-iso-mdoc response was refused", err)
 	}
 	vc.CredentialQueryID = cq
+	// What was withheld is read from the claims, not taken from the
+	// protocol.
+	vc.Withheld = withheldElements(vc.Claims, elements)
+	if vc.Withheld != nil && !tx.MdocAllowWithheld {
+		return VerifyResponseResult{}, newError(ReasonNotAnswered, "the org-iso-mdoc response withholds requested data elements", errors.New(describeWithheld(vc.Withheld)))
+	}
 	return t.acceptVerified(ctx, tx, VerifyResponseResult{Credentials: []VerifiedCredential{vc}})
+}
+
+// withheldElements are the elements of requested that claims, a
+// verified document's namespaces, doesn't have, by namespace, each
+// sorted; nil when it has them all.
+func withheldElements(claims map[string]any, requested map[string]map[string]bool) map[string][]string {
+	var out map[string][]string
+	for ns, elements := range requested {
+		disclosed, _ := claims[ns].(map[string]any)
+		for el := range elements {
+			if _, ok := disclosed[el]; ok {
+				continue
+			}
+			if out == nil {
+				out = map[string][]string{}
+			}
+			out[ns] = append(out[ns], el)
+		}
+	}
+	for ns := range out {
+		slices.Sort(out[ns])
+	}
+	return out
+}
+
+// describeWithheld lists withheld as "namespace/element" pairs, sorted.
+func describeWithheld(withheld map[string][]string) string {
+	var pairs []string
+	for ns, elements := range withheld {
+		for _, el := range elements {
+			pairs = append(pairs, ns+"/"+el)
+		}
+	}
+	slices.Sort(pairs)
+	return "withheld: " + strings.Join(pairs, ", ")
 }
 
 // mdocDCAPIQuery is request as the Query of its transaction: one

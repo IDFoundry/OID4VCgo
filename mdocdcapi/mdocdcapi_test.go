@@ -236,6 +236,10 @@ func TestRoundTrip_Missing(t *testing.T) {
 	if want := []string{"age_over_18"}; len(got.Missing) != 1 || !slices.Equal(got.Missing[isoNS], want) {
 		t.Errorf("Missing = %v, want %s: %v", got.Missing, isoNS, want)
 	}
+	// Credential carries it as Withheld.
+	if withheld := got.Credential().Withheld; len(withheld) != 1 || !slices.Equal(withheld[isoNS], got.Missing[isoNS]) {
+		t.Errorf("Credential().Withheld = %v, want %v", withheld, got.Missing)
+	}
 }
 
 // The response is bound to the origin the browser gave the mdoc and to
