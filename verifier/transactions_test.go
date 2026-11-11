@@ -182,9 +182,9 @@ func (f *txFixture) errorAnswerWithState(begun verifier.Begun, code, description
 
 func (f *txFixture) begin(binding string, sameDevice bool) verifier.Begun {
 	f.t.Helper()
-	begun, err := f.txs.Begin(context.Background(), f.query, binding, sameDevice)
+	begun, err := f.txs.BeginWith(context.Background(), verifier.BeginOptions{Query: f.query, BrowserBinding: binding, SameDevice: sameDevice})
 	if err != nil {
-		f.t.Fatalf("Begin: %v", err)
+		f.t.Fatalf("BeginWith: %v", err)
 	}
 	return begun
 }
@@ -276,10 +276,16 @@ func TestTransactions_SameDevice(t *testing.T) {
 			if _, err := f.txs.Begin(ctx, f.query, "user-42", sameDevice); err == nil {
 				t.Errorf("a request (same-device %v) began with a short browser binding", sameDevice)
 			}
+			if _, err := f.txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "user-42", SameDevice: sameDevice}); err == nil {
+				t.Errorf("BeginWith: a request (same-device %v) began with a short browser binding", sameDevice)
+			}
 		}
 		g := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.RedirectURI = "" })
 		if _, err := g.txs.Begin(ctx, g.query, "browser-binding-B", true); err == nil || !strings.Contains(err.Error(), "RedirectURI") {
 			t.Errorf("a same-device request without a RedirectURI: %v, want refused for it", err)
+		}
+		if _, err := g.txs.BeginWith(ctx, verifier.BeginOptions{Query: g.query, BrowserBinding: "browser-binding-B", SameDevice: true}); err == nil || !strings.Contains(err.Error(), "RedirectURI") {
+			t.Errorf("BeginWith: a same-device request without a RedirectURI: %v, want refused for it", err)
 		}
 	})
 }

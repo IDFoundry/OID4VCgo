@@ -690,20 +690,35 @@ type Begun struct {
 // the public request ID could guess.
 const MinBrowserBindingLength = 16
 
-// Begin creates a presentation request for query.
-//
-// browserBinding ties the request's result to whoever asked: an
-// unguessable secret the caller keeps — a cookie on the browser that
-// asked, or a value held server-side when no browser is involved — and
-// passes back to Lookup and Redeem. Only its hash is stored. It is
-// required: the request's ID is public, as the last segment of the
-// request_uri in its link or QR code, so the binding is what keeps the
-// result from anyone who saw that, and so must be at least
-// MinBrowserBindingLength bytes — a random token, not a user ID or a
-// short session number. A same-device request (sameDevice)
-// also needs TransactionsConfig.RedirectURI, where its answer sends the
-// browser back with a response_code.
-func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
+// BeginOptions is the presentation request BeginWith creates.
+type BeginOptions struct {
+	// Query is what the request asks for. REQUIRED.
+	Query dcql.Query
+
+	// BrowserBinding ties the request's result to whoever asked: an
+	// unguessable secret the caller keeps — a cookie on the browser
+	// that asked, or a value held server-side when no browser is
+	// involved — and passes back to Lookup and Redeem. Only its hash is
+	// stored. REQUIRED: the request's ID is public, as the last segment
+	// of the request_uri in its link or QR code, so the binding is what
+	// keeps the result from anyone who saw that, and so must be at
+	// least MinBrowserBindingLength bytes — a random token, not a user
+	// ID or a short session number.
+	BrowserBinding string
+
+	// SameDevice makes a same-device request: its answer sends the
+	// browser back to TransactionsConfig.RedirectURI, which it then
+	// needs, with a response_code, and its result is released only to
+	// the browser that redeems it (Redeem). false makes a cross-device
+	// one, whose result Lookup reports to the bound browser.
+	SameDevice bool
+}
+
+// BeginWith creates a presentation request as opts says (see
+// BeginOptions), for the redirect flows: the request is fetched from
+// TransactionsConfig.RequestURIBase, which it needs.
+func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun, error) {
+	query, browserBinding, sameDevice := opts.Query, opts.BrowserBinding, opts.SameDevice
 	if len(browserBinding) < MinBrowserBindingLength {
 		return Begun{}, fmt.Errorf("verifier: transactions: a browser binding of at least %d bytes is required: an unguessable random token", MinBrowserBindingLength)
 	}
@@ -747,6 +762,14 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 		"client_id": {t.v.ClientID()}, "request_uri": {t.cfg.RequestURIBase + "/" + id},
 	}.Encode()
 	return Begun{ID: id, Link: link}, nil
+}
+
+// Begin is BeginWith with query, browserBinding and sameDevice as its
+// BeginOptions' Query, BrowserBinding and SameDevice. Prefer BeginWith,
+// whose named fields can't be passed in the wrong order and which can
+// take more.
+func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBinding string, sameDevice bool) (Begun, error) {
+	return t.BeginWith(ctx, BeginOptions{Query: query, BrowserBinding: browserBinding, SameDevice: sameDevice})
 }
 
 // RequestObject returns the signed Request Object to serve at the

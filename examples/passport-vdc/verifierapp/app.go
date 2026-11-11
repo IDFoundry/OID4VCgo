@@ -468,13 +468,13 @@ func (a *App) createSession(ctx context.Context, sc Scenario, browserToken strin
 		return "", err
 	}
 	s := &session{scenario: sc, browserToken: browserToken, binding: binding}
-	cross, err := txs.Begin(ctx, query, binding, false)
+	cross, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: query, BrowserBinding: binding})
 	if err != nil {
 		return "", err
 	}
 	s.cross = channel{id: cross.ID, link: cross.Link}
 	if browserToken != "" {
-		same, err := txs.Begin(ctx, query, binding, true)
+		same, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: query, BrowserBinding: binding, SameDevice: true})
 		if err != nil {
 			return "", err
 		}
