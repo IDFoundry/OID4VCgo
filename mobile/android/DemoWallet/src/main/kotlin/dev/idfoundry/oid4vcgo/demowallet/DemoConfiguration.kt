@@ -2,6 +2,7 @@ package dev.idfoundry.oid4vcgo.demowallet
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import dev.idfoundry.oid4vcwallet.CRLDistributionPoint
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
@@ -75,9 +76,17 @@ data class DemoConfiguration(
         // dropped before the wallet could refuse it.
         private val json = Json
 
+        /**
+         * The configuration [intent] or a pushed demo-config.json gives,
+         * or the one remembered. The pushed file is read in a debuggable
+         * build only: below Android 10 (API 29) any app holding
+         * `WRITE_EXTERNAL_STORAGE` can write the external files
+         * directory, and so replace a release build's trust roots.
+         */
         fun load(context: Context, intent: Intent?): DemoConfiguration? {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val pushed = context.getExternalFilesDir(null)?.let { File(it, "demo-config.json") }
+            val debuggable = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+            val pushed = context.getExternalFilesDir(null)?.takeIf { debuggable }?.let { File(it, "demo-config.json") }
             val given = intent?.getStringExtra("config") ?: pushed?.takeIf { it.isFile }?.readText()?.also { pushed.delete() }
             if (given != null) {
                 runCatching { json.decodeFromString(serializer(), given) }.getOrNull()?.let {

@@ -34,9 +34,30 @@ Safari on macOS has no document providers.
   (``FileCredentialStore/inAppGroup(_:options:)``), and its holder keys in
   a Keychain access group both list
   (``KeychainKeyStore/Options/holderAccessGroup``). Instance and DPoP
-  keys stay in the app's own group: the extension presents, but doesn't
-  receive. The app saves its configuration where the extension can
-  read it too.
+  keys, and ``HttpWalletProvider``'s registration key, stay in the
+  app's default group: the extension presents, but doesn't receive.
+  The default group is the first in the app's `keychain-access-groups`
+  entitlement, so list a group only the app has first and the shared
+  group after it; listed first, the shared group becomes the default,
+  and those keys land where the extension can use them. The app saves
+  its configuration where the extension can read it too.
+
+  A wallet that starts on ``FileCredentialStore/standard(options:)``
+  and the default ``KeychainKeyStore`` and adds the extension later
+  can't hand the extension what it already holds: its credentials are
+  bound to holder keys in the app's own group, and the package has no
+  call that moves credentials or keys to the shared ones. Its holder
+  would receive each credential again. If the app may ever present to
+  Safari, start on the App Group store and the shared holder key group
+  from its first release.
+
+  ```
+  <key>keychain-access-groups</key>
+  <array>
+      <string>$(AppIdentifierPrefix)com.example.wallet</string>        <!-- the app's own: the default -->
+      <string>$(AppIdentifierPrefix)com.example.wallet.shared</string> <!-- shared with the extension -->
+  </array>
+  ```
 
 ```swift
 import Foundation
@@ -71,7 +92,8 @@ enum SharedWallet {
 ### Register the documents
 
 iOS offers the app only for documents it registered. Whenever the
-credentials change, register each presentable mdoc and remove the rest.
+credentials change — and after status checks, which can make one
+unpresentable — register each presentable mdoc and remove the rest.
 `supportedAuthorityKeyIdentifiers` names the reader CAs, by subject key
 identifier, whose requests the document answers.
 
@@ -84,7 +106,9 @@ func registerDocuments(_ credentials: [CredentialSummary], doctypes: Set<String>
     for registration in try await store.registrations {
         try await store.removeRegistration(forDocumentIdentifier: registration.documentIdentifier)
     }
-    for credential in credentials where credential.format == "mso_mdoc" && doctypes.contains(credential.doctype ?? "") {
+    // Presentable: unexpired, not found revoked or suspended, and its key still here.
+    for credential in credentials where credential.format == "mso_mdoc" && doctypes.contains(credential.doctype ?? "")
+        && credential.presentable && credential.holderKeyPresent != false {
         try await store.addRegistration(MobileDocumentRegistration(
             mobileDocumentType: credential.doctype ?? "",
             supportedAuthorityKeyIdentifiers: readerAuthorities,
@@ -120,6 +144,8 @@ struct WalletDocumentProvider: IdentityDocumentProvider {
 struct ConsentView: View {
     let context: ISO18013MobileDocumentRequestContext
     @State private var problem: String?
+    /// The one wallet this request uses, opened when the screen appears.
+    @State private var wallet: Wallet?
     /// The candidate shared, from `Wallet.mdocCandidates(origin:)`.
     @State private var chosen: CredentialSummary?
 
@@ -145,22 +171,27 @@ struct ConsentView: View {
         .task {
             guard let shown, let originURL = context.requestingWebsiteOrigin,
                   let origin = MdocPresentation.origin(of: originURL) else { return }
-            // Every held mdoc is a candidate, an expired or revoked one
-            // too: offer only one that can be presented.
-            chosen = try? await SharedWallet.open(provider: nil).mdocCandidates(origin: origin)
-                .first { $0.doctype == shown.doctype && $0.presentable }
+            do {
+                let opened = try SharedWallet.open(provider: nil)
+                wallet = opened
+                // Every held mdoc is a candidate, an expired or revoked
+                // one too: offer only one that can be presented.
+                chosen = try await opened.mdocCandidates(origin: origin)
+                    .first { $0.doctype == shown.doctype && $0.presentable }
+            } catch {
+                problem = "Can't read the wallet: \(error)"
+            }
         }
     }
 
     /// Shares the chosen mdoc, for exactly the document and elements the
     /// holder was shown.
     func share() async {
-        guard let shown, let chosen, let originURL = context.requestingWebsiteOrigin,
+        guard let shown, let chosen, let wallet, let originURL = context.requestingWebsiteOrigin,
               let origin = MdocPresentation.origin(of: originURL) else { return }
         let agreed = MdocPresentation.Shown(doctype: shown.doctype, elements: shown.elements,
                                             credentialID: chosen.id, toldLinkable: chosen.linkableHere == true)
         do {
-            let wallet = try SharedWallet.open(provider: nil)
             try await context.sendResponse { raw in
                 _ = try IdentityDocumentWebPresentmentRawRequestValidator()
                     .validateISO18013MobileDocumentRequest(raw.requestData, origin: originURL)

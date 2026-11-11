@@ -96,7 +96,7 @@ func Example() {
 	}
 	fmt.Printf("%d of %d indices reserved\n", fill[0].Reserved, fill[0].Limit)
 
-	// Every few minutes, from one process.
+	// Every few minutes, from every instance: runs that meet take turns.
 	if _, err := db.Sweep(ctx, time.Now()); err != nil {
 		panic(err)
 	}

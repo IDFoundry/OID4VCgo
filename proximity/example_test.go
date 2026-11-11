@@ -16,6 +16,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -53,19 +54,35 @@ func ExampleNewDeviceSession() {
 	holder := must(proximity.NewDeviceSession(rand.Reader))
 	qr := holder.QRCode()
 
+	// The IACA's current CRL. A deployment's come from a
+	// certrevocation.Refresher (its Checker), fetched from the IACA's
+	// distribution points and kept current by its Run; here the IACA
+	// signs an empty one.
+	crl := must(x509.ParseRevocationList(must(x509.CreateRevocationList(rand.Reader, &x509.RevocationList{
+		Number: big.NewInt(1), ThisUpdate: time.Now().Add(-time.Minute), NextUpdate: time.Now().Add(time.Hour),
+	}, iaca, iacaKey))))
+	revocation := certrevocation.CRLs{Lists: func(context.Context) ([]*x509.RevocationList, error) {
+		return []*x509.RevocationList{crl}, nil
+	}}
+	// One status list cache for the process, shared by every session.
+	statusCache := statuslist.NewCache(statuslist.CacheOptions{})
+
 	// Reader: scan the QR code and send a signed request, with a
-	// production reader's decisions. Only this IACA may issue mDLs.
+	// production reader's decisions. Only this IACA may issue mDLs, and
+	// it may issue them all.
 	iacaRoots := x509.NewCertPool()
 	iacaRoots.AddCert(iaca)
 	reader := must(proximity.NewReaderSession(qr,
 		proximity.WithAssurance(verifier.AssuranceProduction),
 		proximity.WithIssuerRootsByDocType(map[string]*x509.CertPool{docType: iacaRoots}),
 		proximity.WithAnyIssuerForAnyType(),
-		// A real reader checks its IACAs' CRLs (certrevocation.CRLs from
-		// a certrevocation.Refresher), and the documents' status lists
-		// (WithStatus): this example has neither to fetch.
-		proximity.WithIssuerRevocation(certrevocation.NoCheck{}),
-		proximity.WithNoStatusCheck(),
+		// The document signer's certificate against the IACA's CRL, and
+		// the document's own status list, signed under the IACA (this
+		// example's document names none, so there's nothing to fetch).
+		proximity.WithIssuerRevocation(revocation),
+		proximity.WithStatus(&verifier.StatusPolicy{Checker: statuslist.Checker{
+			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation}, Cache: statusCache,
+		}}),
 		proximity.WithReaderAuth(readerKey, []*x509.Certificate{readerCert, readerCA}),
 		proximity.WithMaxClockSkew(5*time.Minute),
 	))
@@ -109,7 +126,7 @@ func newCert(subject pkix.Name, parent *x509.Certificate, parentKey *ecdsa.Priva
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
 	}
 	if parent == nil {
-		tmpl.IsCA, tmpl.BasicConstraintsValid, tmpl.KeyUsage = true, true, x509.KeyUsageCertSign
+		tmpl.IsCA, tmpl.BasicConstraintsValid, tmpl.KeyUsage = true, true, x509.KeyUsageCertSign|x509.KeyUsageCRLSign
 		parent, parentKey = tmpl, key
 	}
 	return must(x509.ParseCertificate(must(x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)))), key

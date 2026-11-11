@@ -75,13 +75,13 @@ by role.
   than a locally installed golangci-lint or gofmt: one built for, or
   run under, another Go release can disagree with CI or fail to load
   packages at all.
-- Run `govulncheck ./...` in the root, `mobile` and `examples/passport-vdc`
-  modules under the Go version in their `go.mod`
+- Run `govulncheck ./...` in the root, `mobile`, `sqlstore` and
+  `examples/passport-vdc` modules under the Go version in their `go.mod`
   (`GOTOOLCHAIN=go<version from go.mod> govulncheck ./...`), as CI does:
   that's the oldest Go they may be built with, and the mobile module's
   standard library ships inside the Swift and Kotlin packages. A
   standard-library finding is fixed by raising the `go` directive in all
-  three `go.mod` files to a Go release that has the fix; a finding in a
+  four `go.mod` files to a Go release that has the fix; a finding in a
   dependency, by upgrading that dependency.
 - `mobile` is its own Go module too. Run `go vet ./...`,
   `go test -race ./...` and `go test -race -tags mobiletest ./...` there,

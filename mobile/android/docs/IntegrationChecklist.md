@@ -22,9 +22,11 @@ is a complete, working app on this library to compare against.
 - [ ] The app refuses to run on a test build: `OID4VC.isTestBuild` is
   false in what you ship.
 - [ ] Keys come from `AndroidKeystoreKeyStore`, credentials live in
-  `FileCredentialStore`, and the app implements `WalletProvider` (or
-  passes `null` for issuers that don't ask for attestations).
-  ([Getting started](GettingStarted.md))
+  `FileCredentialStore`, and the Wallet Provider is `HttpWalletProvider`
+  or a `WalletProvider` of the app's own making the checks
+  [Getting started](GettingStarted.md#if-your-backend-isnt-oid4vcgos-walletprovider)
+  lists (or the app passes `null` for issuers that don't ask for
+  attestations). ([Getting started](GettingStarted.md))
 - [ ] With a backend built on OID4VCgo's `walletprovider`, the provider
   is `HttpWalletProvider`, given `FileInstanceRegistry.standard(context)`
   and its default registration key store (not the wallet's), and the
@@ -128,9 +130,10 @@ is a complete, working app on this library to compare against.
   app's launch work, a key sweep included.
 - [ ] `DigitalCredentials.register(context, wallet)` whenever the
   credentials change: after an issuance, a deletion or a restore. A
-  failure (no Google Play services, say) is logged, not fatal. Set
-  `RegistrationOptions(claimValues = false)` if claim values shouldn't
-  be held by the system's registry before consent.
+  failure (no Google Play services, say) is logged, not fatal. Claim
+  values stay out of the system's registry unless the app sets
+  `RegistrationOptions(claimValues = true)`, deciding they may be held
+  there before consent.
 - [ ] A privileged-browsers allowlist (Credential Manager's JSON) in the
   app, with the browsers whose origins it trusts: Chrome's entries
   from Google's list, as the demo's `res/raw/privileged_browsers.json`.
@@ -215,8 +218,10 @@ is a complete, working app on this library to compare against.
   - On a final state: `releaseForeground(activity)`. Don't prefer again
     for that session. The fingerprint prompt resumes the activity after
     sharing; an unconditional `onResume` keeps taps away from other wallets.
-- [ ] Leaving the screen: `releaseForeground`, then `cancel()`, then
-  `close()` from a scope that outlives the screen, so cleanup finishes.
+- [ ] Leaving the screen: `releaseForeground`, then `cancel()`
+  (`NfcPresentation.presentation.cancel()`, or
+  `CombinedPresentation.cancel()`), then `close()` from a scope that
+  outlives the screen, so cleanup finishes.
 - [ ] The same consent flow as QR: `state`, `respond`, `decline` (on
   `NfcPresentation.presentation`, or directly on `CombinedPresentation`).
 - [ ] With `startCombinedPresentation`, hide the QR code once

@@ -20,6 +20,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
 	"github.com/idfoundry/oid4vcgo/verifier"
@@ -27,6 +28,12 @@ import (
 
 func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
+	conformanceusage.Set("conformance-verifier -config <file>",
+		"A test harness for the OIDF conformance suite's verifier plan, not a\n"+
+			"deployment model: it runs under development assurance, checks no\n"+
+			"certificate revocation, and keeps its transactions in memory. Never\n"+
+			"deploy it or copy its wiring; DEPLOYING.md is the checklist for a\n"+
+			"production Verifier.")
 	flag.Parse()
 	if *configPath == "" {
 		log.Fatal("-config is required")

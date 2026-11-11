@@ -108,7 +108,10 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
     /// Wallet Provider's error code when the provider refused
     /// (``WalletProviderRefusedError``): `instance_not_active` (the
     /// installation is suspended), `instance_revoked`,
-    /// `invalid_signed_request`, and so on.
+    /// `invalid_signed_request`, and so on. For ``Code/unavailable`` it's
+    /// `refresh_in_progress` (`MobileDetailRefreshInProgress`) when
+    /// another process sharing the ``CredentialStore`` is refreshing with
+    /// the same refresh grant: try again later.
     public let protocolError: String?
     /// Detail for logs: at most 300 characters, with no personal data, no
     /// remote party's own description, and no URL's path or query.

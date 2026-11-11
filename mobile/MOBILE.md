@@ -1915,3 +1915,14 @@ Bluetooth permissions are absent. On phones at 6aef12e, combined engagement pass
 with Multipaz (the tap won and QR was withdrawn), and with a second wallet
 registered for the same AID the presenting app held foreground preference
 and released it once the session ended.
+
+The two offers have independent ephemeral keys, DeviceEngagements and
+service UUIDs. QR uses a null Handover; NFC uses exactly `[Hs, null]`
+(static) or `[Hs, Hr]` (negotiated). Selection switches the Go session
+before any request is processed; consent and response remain one state
+machine. This avoids assuming permission to reuse one EDeviceKey across
+engagement mechanisms: the Annex D vectors cover transcript
+construction, but don't establish that key reuse is permitted. The
+additive method keeps the JVM descriptors and default-argument bridges
+of the existing QR and NFC APIs unchanged; `CombinedPresentation`
+delegates the existing state and consent flow.

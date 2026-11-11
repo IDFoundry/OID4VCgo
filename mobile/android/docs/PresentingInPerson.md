@@ -71,6 +71,7 @@ import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
 import dev.idfoundry.oid4vcwallet.VerifiedMdoc
 import dev.idfoundry.oid4vcwallet.Wallet
+import java.security.cert.X509Certificate
 import kotlinx.coroutines.flow.first
 
 /** What the holder agreed to share: a requested document, the held mdoc to answer it with, and the elements to disclose. */
@@ -150,16 +151,22 @@ status is checked (`statusCheck`). `development` relaxes this, for trying
 out a development issuer's documents; never ship an app with it set. `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
+/** A verified mdoc whose issuer the reader doesn't accept. */
+class UnacceptedIssuerException : Exception("the reader doesn't accept this document's issuer")
+
 /**
- * Reads an mDL's name and portrait from the holder whose QR code was scanned. Returns the verified
- * mdoc, its status checked, or null if the holder declined.
+ * Reads an mDL's name and portrait from the holder whose QR code was scanned. `mdlIACAs` are the
+ * IACAs (PEM) trusted to issue mDLs, and only mDLs; `accepts` decides on the verified certificate
+ * path, leaf first. Returns the verified mdoc, its status checked, or null if the holder declined.
  */
-suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, crls: String): VerifiedMdoc? {
+suspend fun readInPerson(
+    context: Context, qrCode: String, mdlIACAs: String, crls: String,
+    accepts: (List<X509Certificate>) -> Boolean,
+): VerifiedMdoc? {
     val reader = ProximityReader(
         ProximityReaderConfiguration(
-            issuerRoots = issuerRoots, crls = crls,
+            issuerRoots = "", issuerRootsByDocType = mapOf("org.iso.18013.5.1.mDL" to mdlIACAs), crls = crls,
             revocation = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
-            anyIssuerForAnyType = true,
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
         ),
     )
@@ -168,8 +175,10 @@ suspend fun readInPerson(context: Context, qrCode: String, issuerRoots: String, 
         mapOf("org.iso.18013.5.1" to listOf("given_name", "family_name", "portrait")),
     )
     return when (val state = session.state.first { it.isFinal }) {
-        // Its status was checked first: valid, or it names none.
-        is ProximityReaderSession.State.Verified -> state.result
+        // Its status was checked first: valid, or it names none. Decide on the verified chain,
+        // not the names shown.
+        is ProximityReaderSession.State.Verified ->
+            state.result.takeIf { accepts(it.issuerChain) } ?: throw UnacceptedIssuerException()
         // A revoked or suspended document is WalletException Code.documentNotValid.
         is ProximityReaderSession.State.Failed -> throw state.error
         else -> null
@@ -247,7 +256,7 @@ them to the presentation your app has started. No presentation started,
 no answer. NFC needs no runtime permission; it needs NFC on, and the
 device unlocked.
 
-Declare an application subclass, for example `class IdentityNfcService :
+Declare a service subclass, for example `class IdentityNfcService :
 NfcEngagementService()`, and its HCE service:
 
 ```xml
@@ -462,18 +471,7 @@ commitment, gate completion, NFC BLE startup with its modes, QR withdrawal
 and cleanup, and an aborted attempt that retains QR. Payloads and credentials
 are not logged. The default is disabled; existing app behavior is unchanged.
 
-The offers have independent ephemeral keys, DeviceEngagements and service UUIDs.
-QR uses a null Handover; NFC uses exactly `[Hs, null]` (static) or `[Hs, Hr]`
-(negotiated). Selection switches the Go session before processing any request;
-consent and response remain one state machine. This avoids assuming permission
-to reuse one EDeviceKey across engagement mechanisms. Existing Annex D vectors
-cover transcript construction; they do not establish that key reuse is permitted.
-
 With `nfcData = true`, missing Bluetooth runtime permissions omit the QR offer
 (`qrCode == ""`) and no Bluetooth transport is constructed. NFC remains armed.
 A QR transport startup failure also leaves the NFC offer available until the
 connection timeout. NFC-to-BLE requires Bluetooth permissions as before.
-
-The additive method keeps the JVM descriptors and default-argument bridges of
-the existing QR and NFC APIs unchanged. `CombinedPresentation` delegates the
-existing state/consent flow and uses the same serialized NFC owner registry.

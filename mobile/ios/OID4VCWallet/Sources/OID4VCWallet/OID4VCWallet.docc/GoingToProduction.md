@@ -334,9 +334,12 @@ ecosystem, and record why:
   can't be made, and on macOS. The directory shows whoever can read it
   which status lists the wallet checks (their URIs, so the issuers of
   its credentials, not which entries), the lists, and when each was
-  last checked; under complete protection, a background check while the
-  device is locked can't read or keep lists there, and downloads them
-  instead. Set a directory of the app's own to keep them elsewhere,
+  last checked. While the device is locked, complete protection keeps
+  a background check from reading lists there, and
+  ``FileCredentialStore``'s default complete protection keeps it from
+  reading the credential: the check fails as
+  ``WalletError/Code/platform``. Schedule status checks for when the app
+  comes to the foreground. Set a directory of the app's own to keep them elsewhere,
   with the protection you give it (a failure to get its key, or to make
   it, then fails the wallet), or `""` to keep them in memory only.
 - ``WalletConfiguration/mdocIssuerRoots`` and

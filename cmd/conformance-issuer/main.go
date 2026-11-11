@@ -18,10 +18,17 @@ import (
 	"github.com/idfoundry/fapigo/server"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 )
 
 func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
+	conformanceusage.Set("conformance-issuer -config <file>",
+		"A test harness for the OIDF conformance suite's issuer plans, not a\n"+
+			"deployment model: its Authorization Server and Credential Issuer run\n"+
+			"under development assurance, with in-memory stores and test keys.\n"+
+			"Never deploy it or copy its wiring; DEPLOYING.md is the checklist\n"+
+			"for a production issuer.")
 	flag.Parse()
 	if *configPath == "" {
 		log.Fatal("-config is required")

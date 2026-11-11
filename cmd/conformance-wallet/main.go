@@ -40,6 +40,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -214,6 +215,12 @@ func main() {
 	flag.StringVar(&driveCfg.testName, "drive-test-name", testNameCredentialIssuance, "the suite testName of the module instance -drive-only is driving — only affects whether the Attestation Challenge Endpoint is wired up (see batteryModulePrefix)")
 	flag.IntVar(&driveCfg.numCreds, "drive-num-creds", 1, "number of credentials to request in -drive-only mode — 2 for oid4vci-1_0-wallet-test-batch-credential-issuance, 1 for everything else")
 	flag.BoolVar(&driveCfg.encrypted, "drive-encrypted", false, "whether -drive-only should request/expect §10 Credential Request/Response encryption — set this for an immediate+encrypted module instance")
+	conformanceusage.Set("conformance-wallet [flags]",
+		"A test harness that drives the wallet package through the OIDF\n"+
+			"conformance suite's wallet (OID4VCI) plans, not a wallet to model\n"+
+			"one on: it skips TLS verification of the throwaway suite instance\n"+
+			"and runs under development assurance. Build a wallet on the wallet\n"+
+			"package, or on the mobile libraries.")
 	flag.Parse()
 
 	cfg.proofType = proofStrategy(*proofTypeFlag)

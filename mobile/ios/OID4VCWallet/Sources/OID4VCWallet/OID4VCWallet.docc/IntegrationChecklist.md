@@ -30,9 +30,11 @@ is a complete, working app on this package to compare against.
   false in what you ship.
 - Keys come from ``KeychainKeyStore``, with its defaults, and
   `NSFaceIDUsageDescription` is in the Info.plist. Credentials live in
-  ``FileCredentialStore``. The app implements ``WalletProvider``, or
-  passes nil for issuers that don't ask for attestations.
-  (<doc:GettingStarted>)
+  ``FileCredentialStore``. The Wallet Provider is ``HttpWalletProvider``
+  over ``FileInstanceRegistry/standard()`` for a backend built on
+  OID4VCgo's `walletprovider`; a ``WalletProvider`` of the app's own
+  makes the checks <doc:GettingStarted> lists; or the app passes nil
+  for issuers that don't ask for attestations. (<doc:GettingStarted>)
 - One ``Wallet``, created at launch and kept for the app's life, with
   ``Wallet/sweepOrphanedKeys(in:)`` run before any issuance.
 - Each setting in <doc:GoingToProduction>'s "Settings to decide" is
@@ -137,7 +139,15 @@ is a complete, working app on this package to compare against.
   (``KeychainKeyStore/Options/holderAccessGroup``), and the
   configuration where the extension can read it. The extension opens
   its ``Wallet`` with no Wallet Provider: it presents, but doesn't
-  receive.
+  receive. The app's `keychain-access-groups` entitlement lists a group
+  only the app has first and the shared group after it: the first is
+  the default, where instance, DPoP and registration keys are made.
+  *Check:* the entitlement's first entry isn't the extension's group.
+- An app that may add the extension later uses the App Group store and
+  the shared holder key group from its first release: credentials
+  received over ``FileCredentialStore/standard(options:)`` and the
+  default ``KeychainKeyStore`` can't be moved there, and would have to
+  be received again. (<doc:PresentingToSafari>)
 - The app registers each presentable mdoc with iOS whenever the
   credentials change, and removes the rest.
 - In the extension, the consent screen shows the website's origin and

@@ -50,64 +50,72 @@ data protection, out of backups: a credential is useless without its
 holder key, which can't leave this device. An app with a document
 provider extension keeps both in places the extension can read too; see
 ``FileCredentialStore/inAppGroup(_:options:)`` and
-``KeychainKeyStore/Options/holderAccessGroup``. The app and the
+``KeychainKeyStore/Options/holderAccessGroup``. If the app may ever
+present to Safari, use those from its first release: credentials it
+received into ``FileCredentialStore/standard(options:)`` with the
+default ``KeychainKeyStore`` can't be moved there, and its holders
+would have to receive them again (<doc:PresentingToSafari>). The app and the
 extension then share one store: a store of your own implements
 ``CredentialStore/compareAndSwap(id:expected:record:)`` atomically
 across both processes, as ``FileCredentialStore`` does with a file
 lock.
 
-### Implement the Wallet Provider
+### Connect the Wallet Provider
 
 Issuers following HAIP accept only a wallet its Wallet Provider has
 attested: a Wallet Attestation for the wallet's instance key, and a Key
 Attestation for the keys a credential will be bound to. Your backend
-issues them; the app passes the keys and returns its answers. A Key
-Attestation request also names the issuance's instance key, which
-`walletAttestation` attested first, so your backend can give the Key
-Attestation that key's status. A real Wallet Provider attests only
-after checking App Attest evidence that it's talking to your genuine
-app.
+issues them, after checking App Attest evidence that it's talking to
+your genuine app on a genuine device.
+
+With a backend built on OID4VCgo's `walletprovider` package, the wallet
+needs no provider code of your own: ``HttpWalletProvider`` speaks its
+protocol, with App Attest evidence. Give it the URL the protocol is
+mounted at and a registry that survives launches, and add the App
+Attest capability to the app (<doc:GoingToProduction> has its
+environments):
 
 ```swift
 import Foundation
 import OID4VCWallet
 
-/// Asks the app's backend for attestations. The keys are public JWKs,
-/// as JSON; the answers are compact JWTs.
-struct BackendWalletProvider: WalletProvider {
-    let backend: URL
-
-    func walletAttestation(clientID: String, instanceKey: Data) async throws -> String {
-        try await post("wallet-attestation", [
-            "client_id": clientID,
-            "instance_key": try JSONSerialization.jsonObject(with: instanceKey),
-        ])
-    }
-
-    // instanceKey is the issuance's, which walletAttestation sent first.
-    func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
-        try await post("key-attestation", [
-            "instance_key": try JSONSerialization.jsonObject(with: instanceKey),
-            "keys": try keys.map { try JSONSerialization.jsonObject(with: $0) },
-            "nonce": nonce,
-        ])
-    }
-
-    private func post(_ path: String, _ body: [String: Any]) async throws -> String {
-        var request = URLRequest(url: backend.appendingPathComponent(path))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return String(decoding: data, as: UTF8.self)
-    }
+/// The Wallet Provider: OID4VCgo's `walletprovider`, mounted at /wp.
+func makeWalletProvider() throws -> HttpWalletProvider {
+    try HttpWalletProvider(baseURL: URL(string: "https://provider.example.com/wp")!,
+                           instances: FileInstanceRegistry.standard())
 }
 ```
 
-A `URLError` the provider throws reaches the wallet as a retryable
-``WalletError/Code/network`` error; any other is
-``WalletError/Code/platform``.
+It sends nothing but to that https URL, follows no redirect, times
+each request out, and checks each answer is for what it asked before
+the wallet uses it. Its failures reach the wallet as a retryable
+``WalletError/Code/network`` when the network or the provider's
+availability caused them, and as ``WalletError/Code/platform`` when the
+provider refused.
+
+#### If your backend isn't OID4VCgo's walletprovider
+
+Implement ``WalletProvider`` yourself, and make the checks
+``HttpWalletProvider`` makes:
+
+- **Your backend** attests only after verifying App Attest: an
+  attestation of the app's App Attest key once, then an assertion, with
+  a counter that only rises, over each instance key and over each Key
+  Attestation's keys. Without that, anything that can reach the backend
+  gets attestations for keys it holds.
+- **Transport:** send only to your backend's https URL, over a
+  `URLSession` whose delegate refuses redirects (`URLSession.shared`
+  follows them), with a timeout on each request, and read at most a
+  bounded answer.
+- **Answers:** before returning a Wallet Attestation, check its `sub`
+  is `clientID` and its `cnf.jwk` is `instanceKey`; before returning a
+  Key Attestation, check its `nonce` is `nonce` (absent when `nonce` is
+  empty) and its `attested_keys` holds only keys you sent. The issuer
+  verifies their signatures.
+- **Errors:** throw a `URLError` for what's worth retrying — no
+  connection, a timeout, HTTP 5xx or 429 — which reaches the wallet as
+  a retryable ``WalletError/Code/network``. Any other error reaches it
+  as ``WalletError/Code/platform``: throw a refusal as one.
 
 ### Create the wallet
 
@@ -125,8 +133,9 @@ needs a revocation choice: checked against the CRLs your app fetches
 final class AppWallet {
     let wallet: Wallet
     private let keys: KeychainKeyStore
+    private let provider: HttpWalletProvider
 
-    init(clientID: String, redirectURI: String, issuerRoots: String, verifierRoots: String, crls: String, provider: URL) throws {
+    init(clientID: String, redirectURI: String, issuerRoots: String, verifierRoots: String, crls: String) throws {
         let configuration = WalletConfiguration(
             clientID: clientID,
             redirectURI: redirectURI,
@@ -135,16 +144,18 @@ final class AppWallet {
             crls: crls,
             revocation: [.issuer, .status, .verifier])
         keys = KeychainKeyStore()
+        provider = try makeWalletProvider()
         wallet = try Wallet(
             configuration: configuration,
             keyStore: keys,
             credentialStore: try FileCredentialStore.standard(),
-            provider: BackendWalletProvider(backend: provider))
+            provider: provider)
     }
 
     /// Run once at launch, before any issuance.
     func start() async throws {
         try await wallet.sweepOrphanedKeys(in: keys)
+        try await provider.sweepOrphanedRegistrationKeys()
     }
 }
 ```
