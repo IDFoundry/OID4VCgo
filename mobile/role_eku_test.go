@@ -181,3 +181,35 @@ func TestRoleEKU_RefusesAnyExtendedKeyUsage(t *testing.T) {
 		t.Error("anyExtendedKeyUsage accepted as a role's EKU")
 	}
 }
+
+// An object identifier has one spelling: an arc with a sign or a
+// leading zero is refused, so two spellings of one role's EKU can't
+// pass for two roles'.
+func TestParseOID_Canonical(t *testing.T) {
+	for _, ok := range []string{"1.2.3.4", "0.0", "2.5.29.37.0", mdocReaderAuthEKU, "1.2.10"} {
+		if _, err := parseOID(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"1.2.3.04", "+1.2.3.4", "01.2.3.4", "1.-2.3", "1..2", "1.2.", "1", "", "1.2. 3", "1.0x2", "1.2.99999999999999999999"} {
+		if _, err := parseOID(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// Two roles sharing an anchor are refused the same EKU however it's
+// spelled.
+func TestCheckRoleRoots_SameEKUSpelledDifferently(t *testing.T) {
+	shared := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ekuCert(t, nil, nil).Raw}))
+	for _, spelled := range []string{"1.2.3.04", "+1.2.3.4", "01.2.3.4"} {
+		cfg := config{IssuerRoots: shared, VerifierRoots: shared, IssuerRequireEKU: "1.2.3.4", VerifierRequireEKU: spelled}
+		if err := checkRoleRoots(cfg); err == nil {
+			t.Errorf("verifier_require_eku %q accepted beside issuer_require_eku 1.2.3.4", spelled)
+		}
+	}
+	cfg := config{MdocReaderRoots: shared, MdocReaderRequireEKU: true, VerifierRoots: shared, VerifierRequireEKU: "1.0.18013.5.1.06"}
+	if err := checkRoleRoots(cfg); err == nil {
+		t.Error("verifier_require_eku 1.0.18013.5.1.06 accepted beside mdoc_reader_require_eku")
+	}
+}

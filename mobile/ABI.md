@@ -463,7 +463,8 @@ Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 signs an `org-iso-mdoc` request (see MdocPresentation); without them,
 every such request is shown by its origin. `verifier_require_eku`,
 `registrar_require_eku`, `issuer_require_eku` and
-`issuer_metadata_require_eku`, dotted object identifiers, recognize only
+`issuer_metadata_require_eku`, dotted object identifiers (each arc in
+decimal digits, with no sign or leading zero), recognize only
 certificates under `verifier_roots`, `registrar_roots`, `issuer_roots`
 and `issuer_metadata_roots` whose extended key usage extension lists
 that OID: the one an ecosystem marks its Verifiers', registrars',
