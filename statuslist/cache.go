@@ -207,6 +207,13 @@ type tokenMemo struct {
 	chain          [][]byte
 	parsed         parsedClaims
 	decoded        *Decoded // nil when the list didn't decompress whole
+	// decodeErr is why the list didn't decompress whole. Every index's
+	// status then fails to read (StatusList.Status inflates the whole
+	// stream too), so a check through the memo fails with it rather
+	// than inflate the list — up to maxDecompressedSize — again. It
+	// depends on the token's bytes alone, as decoded does, and goes
+	// with the memo.
+	decodeErr error
 }
 
 // verifyMemo verifies token, fetched from uri, as checkX5C or, when cwt
@@ -232,13 +239,16 @@ func verifyMemo(ctx context.Context, token []byte, cwt bool, roots *x509.CertPoo
 	for _, der := range signed.chain {
 		m.chain = append(m.chain, slices.Clone(der))
 	}
-	if decoded, err := signed.parsed.claims.StatusList.Decode(); err == nil {
-		// Trimmed to what it holds: io.ReadAll leaves room to spare.
-		if cap(decoded.Packed) > len(decoded.Packed) {
-			decoded.Packed = slices.Clone(decoded.Packed)
-		}
-		m.decoded = &decoded
+	decoded, err := signed.parsed.claims.StatusList.Decode()
+	if err != nil {
+		m.decodeErr = err
+		return m, nil
 	}
+	// Trimmed to what it holds: io.ReadAll leaves room to spare.
+	if cap(decoded.Packed) > len(decoded.Packed) {
+		decoded.Packed = slices.Clone(decoded.Packed)
+	}
+	m.decoded = &decoded
 	return m, nil
 }
 
@@ -331,6 +341,9 @@ func (c *Cache) check(ctx context.Context, fetcher Fetcher, ref StatusListRef, m
 	}
 	// Read once the token passed, so that a reference the list doesn't
 	// cover, say, doesn't keep the list from being cached.
+	if used.decodeErr != nil {
+		return 0, TokenClaims{}, used.decodeErr
+	}
 	status, parsed, err := checkClaims(used.parsed, ref, used.decoded)
 	if err != nil {
 		return 0, TokenClaims{}, err
