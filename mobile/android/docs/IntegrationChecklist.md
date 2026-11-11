@@ -21,6 +21,11 @@ is a complete, working app on this library to compare against.
   AAR's SHA-256 matches the release's `SHA256SUMS`.
 - [ ] The app refuses to run on a test build: `OID4VC.isTestBuild` is
   false in what you ship.
+- [ ] A build with `development` set calls `OID4VC.allowDevelopment()`
+  in `Application.onCreate`, behind `BuildConfig.DEBUG`: every build
+  needs it (unlike on iOS, a debug build too), and it lasts for its
+  process only. *Check:* the release build refuses a `development`
+  configuration (`invalid_input`).
 - [ ] Keys come from `AndroidKeystoreKeyStore`, credentials live in
   `FileCredentialStore`, and the Wallet Provider is `HttpWalletProvider`
   or a `WalletProvider` of the app's own making the checks

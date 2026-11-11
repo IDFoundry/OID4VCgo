@@ -301,7 +301,12 @@ public object OID4VC {
      * production requires, so a staging configuration shipped by mistake must not take effect.
      * The library can't see the app's build type: call it from a debuggable build only, e.g.
      * `if (BuildConfig.DEBUG) OID4VC.allowDevelopment()`. The test build ([isTestBuild]) needs no
-     * call.
+     * call. A debug build needs it too, unlike with OID4VCWallet for iOS, which allows
+     * `development` in a `DEBUG` build by itself.
+     *
+     * It lasts for this process only: call it in `Application.onCreate`, which runs in each of
+     * the app's processes, so a component in a process of its own (`android:process`) is allowed
+     * too.
      */
     public fun allowDevelopment() {
         developmentAllowed = true
