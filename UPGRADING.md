@@ -9,6 +9,13 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.75.3 → next
 
+### Status lists (`statuslist`, `identifierlist`)
+
+- **`identifierlist.Checker.Check` with a `Cache` returns identifiers
+  of the caller's own**: their bytes are copied, not the Cache's, so a
+  caller may change them. Nothing to change, unless you relied on
+  them being shared.
+
 ### Verifier (`verifier`, `mdocdcapi`)
 
 - **An org-iso-mdoc answer through `verifier.Transactions` must
@@ -107,6 +114,19 @@ CHANGELOG.md's BREAKING CHANGES sections.
   rechecked; `androidkey.InstanceFacts` decodes them for a
   `RevokeWhere` match, which also makes a refused instance's live
   attestations `INVALID`.
+- **`walletprovider` revokes an Android instance whose chain Google's
+  status list names `REVOKED`, and suspends one it names
+  `SUSPENDED`**, before refusing the request: its live attestations
+  then read `INVALID` (or `SUSPENDED`) at an issuer's next status
+  check, without a `RevokeWhere`, and its later requests are refused
+  `instance_revoked` (or `instance_not_active`). The instance's
+  `Reason` says so. A suspended one stays suspended once Google lifts
+  the suspension, until `Resume`. A root removed from
+  `androidkey.Verifier.Roots`, a tightened `Verifier` policy, or a list
+  entry with another status still only refuses the request. An
+  `EvidenceRechecker` of your own triggers this by wrapping the new
+  `walletprovider.ErrEvidenceRevoked` or `ErrEvidenceSuspended` in its
+  refusal.
 - **`walletprovider` Suspend or Resume racing Revoke leaves the
   instance's keys `INVALID`.** Each transition reads the instance
   again after setting its keys' statuses, and sets them again for the
@@ -174,6 +194,19 @@ CHANGELOG.md's BREAKING CHANGES sections.
   whose `version` isn't 1.x**, as `proximity` and `mdocdcapi` already
   did; it used to ignore the member. A verifier receiving an OpenID4VP
   `mso_mdoc` presentation refuses one too.
+
+### Wallet Provider (`walletprovider`)
+
+- **`Config.OnRecheckRefused`**, if set, is called with every refusal
+  an `EvidenceRechecker` makes and the instance as stored afterwards
+  (revoked or suspended for Google's verdict, active otherwise), on the
+  request's path: alert on it, or revoke from your own logic.
+- **`Config.RequireSealedStore`** makes `New` refuse `Instances`,
+  `InstanceKeys` and `Challenges` stores that don't seal their records
+  (the new `walletprovider.SealingStore`). sqlstore's stores report
+  whether their `DB` has an `Options.Sealer` (sqlstore needs the
+  release with this change). It's off by default; set it in
+  production (DEPLOYING.md).
 
 ### Wallet Provider stores
 

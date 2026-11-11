@@ -1,10 +1,13 @@
 package statuslist
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -57,6 +60,7 @@ type cacheServer struct {
 	ttl      *int64
 	expIn    time.Duration // zero: no exp
 	statuses []uint8
+	lst      string // when set, the lst served in place of statuses'
 	failing  bool
 	gate     chan struct{} // when set, requests wait for it to close
 	// etag, when set, has the server sign each list's token, in each
@@ -91,7 +95,7 @@ func (s *cacheServer) set(f func(s *cacheServer)) {
 func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 	s.fetches.Add(1)
 	s.mu.Lock()
-	gate, failing, ttl, expIn, statuses := s.gate, s.failing, s.ttl, s.expIn, s.statuses
+	gate, failing, ttl, expIn, statuses, lst := s.gate, s.failing, s.ttl, s.expIn, s.statuses, s.lst
 	etag, cacheControl, held := s.etag, s.cacheControl, s.signed[r.URL.Path+" "+r.Header.Get("Accept")]
 	s.mu.Unlock()
 	if cacheControl != "" {
@@ -120,6 +124,9 @@ func (s *cacheServer) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if lst != "" {
+		sl.Lst = lst
 	}
 	now := s.clock.Now()
 	claims := TokenClaims{Sub: s.srv.URL + r.URL.Path, Iat: now.Unix(), TTL: ttl, StatusList: sl}
@@ -371,6 +378,46 @@ func TestCache_HitCost(t *testing.T) {
 	if perHit := (after.TotalAlloc - before.TotalAlloc) / hits; perHit > uint64(len(sl.Lst)/4) {
 		t.Errorf("a hit allocates %d bytes, for a list whose lst is %d", perHit, len(sl.Lst))
 	}
+}
+
+// A cached token whose list doesn't decompress whole — here one that
+// inflates past maxDecompressedSize — fails every check, in both forms,
+// with why, and isn't inflated again for each: the checks through its
+// memo cost what a hit on a sound list does.
+func TestCache_UndecodableListNotInflatedAgain(t *testing.T) {
+	var bomb bytes.Buffer
+	w := zlib.NewWriter(&bomb)
+	if _, err := w.Write(make([]byte, maxDecompressedSize+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s := newCacheServer(t)
+	s.set(func(s *cacheServer) { s.lst = base64.RawURLEncoding.EncodeToString(bomb.Bytes()) })
+	c := s.checker(NewCache(CacheOptions{Now: s.clock.Now}))
+	check := func(cwt bool) {
+		t.Helper()
+		_, _, err := c.Check(context.Background(), StatusListRef{Idx: 1, URI: s.uri("/l")}, cwt)
+		if err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("Check (cwt %t) = %v, want the list's decompression refused", cwt, err)
+		}
+	}
+	for _, cwt := range []bool{false, true} {
+		check(cwt)
+		const hits = 10
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		for range hits {
+			check(cwt)
+		}
+		runtime.ReadMemStats(&after)
+		// Inflating allocates a zlib reader and its 32 KiB window.
+		if perHit := (after.TotalAlloc - before.TotalAlloc) / hits; perHit > 16<<10 {
+			t.Errorf("a check of the cached token (cwt %t) allocates %d bytes: its list is inflated again", cwt, perHit)
+		}
+	}
+	s.wantFetches(t, 2, "the checks")
 }
 
 // A failed fetch fails the checks of its uri for MaxFailureAge without

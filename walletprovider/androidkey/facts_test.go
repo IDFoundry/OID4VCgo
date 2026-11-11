@@ -15,7 +15,14 @@ import (
 // lowercase hex.
 func revokingSerial(t *testing.T, serial string) *androidkey.StatusList {
 	t.Helper()
-	l, err := androidkey.ParseStatusList([]byte(`{"entries": {"` + serial + `": {"status": "REVOKED", "reason": "KEY_COMPROMISE"}}}`))
+	return listingSerial(t, serial, androidkey.StatusRevoked)
+}
+
+// listingSerial is a status list naming the serial number serial with
+// status.
+func listingSerial(t *testing.T, serial, status string) *androidkey.StatusList {
+	t.Helper()
+	l, err := androidkey.ParseStatusList([]byte(`{"entries": {"` + serial + `": {"status": "` + status + `", "reason": "KEY_COMPROMISE"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,19 +58,32 @@ func TestRecheck(t *testing.T) {
 	}
 
 	for name, tc := range map[string]struct {
-		policy func(v *androidkey.Verifier)
-		want   []error // nil: accepted
+		policy  func(v *androidkey.Verifier)
+		want    []error // nil: accepted
+		notWant []error
 	}{
 		"unchanged": {},
 		"intermediate revoked since": {
 			policy: func(v *androidkey.Verifier) { v.Revocation = revokingSerial(t, "2") },
-			want:   []error{walletprovider.ErrEvidenceRejected, androidkey.ErrRevoked},
+			want:   []error{walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked, androidkey.ErrRevoked},
+		},
+		"leaf suspended since": {
+			policy:  func(v *androidkey.Verifier) { v.Revocation = listingSerial(t, "1", androidkey.StatusSuspended) },
+			want:    []error{walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceSuspended, androidkey.ErrRevoked},
+			notWant: []error{walletprovider.ErrEvidenceRevoked},
+		},
+		// Refused, but not a verdict the provider acts on.
+		"intermediate listed with another status": {
+			policy:  func(v *androidkey.Verifier) { v.Revocation = listingSerial(t, "2", "UNDER_REVIEW") },
+			want:    []error{walletprovider.ErrEvidenceRejected, androidkey.ErrRevoked},
+			notWant: []error{walletprovider.ErrEvidenceRevoked, walletprovider.ErrEvidenceSuspended},
 		},
 		"root no longer trusted": {
 			policy: func(v *androidkey.Verifier) {
 				v.Roots = []*x509.Certificate{newChain(t, goodSpec(t), chainOpts{}).root}
 			},
-			want: []error{walletprovider.ErrEvidenceRejected, androidkey.ErrUntrustedRoot},
+			want:    []error{walletprovider.ErrEvidenceRejected, androidkey.ErrUntrustedRoot},
+			notWant: []error{walletprovider.ErrEvidenceRevoked, walletprovider.ErrEvidenceSuspended},
 		},
 		"patch level now too old": {
 			policy: func(v *androidkey.Verifier) { v.MinOSPatchLevel = 202601 },
@@ -108,6 +128,11 @@ func TestRecheck(t *testing.T) {
 			for _, want := range tc.want {
 				if !errors.Is(err, want) {
 					t.Fatalf("Recheck = %v, want %v", err, want)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if errors.Is(err, notWant) {
+					t.Fatalf("Recheck = %v, wraps %v", err, notWant)
 				}
 			}
 			if refusal := errors.Is(err, walletprovider.ErrPolicy) || errors.Is(err, walletprovider.ErrEvidenceRejected); refusal != (tc.want[0] != androidkey.ErrStatusUnavailable) {

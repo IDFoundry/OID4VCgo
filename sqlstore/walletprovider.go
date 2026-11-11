@@ -79,7 +79,24 @@ type InstanceStore struct {
 	t *table[walletprovider.Instance]
 }
 
-var _ walletprovider.InstanceStore = (*InstanceStore)(nil)
+var (
+	_ walletprovider.InstanceStore = (*InstanceStore)(nil)
+	_ walletprovider.SealingStore  = (*InstanceStore)(nil)
+	_ walletprovider.SealingStore  = (*InstanceKeyStore)(nil)
+	_ walletprovider.SealingStore  = (*ChallengeStore)(nil)
+)
+
+// SealsRecords implements walletprovider.SealingStore, for
+// walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
+func (s *InstanceStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
+// SealsRecords implements walletprovider.SealingStore, for
+// walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
+func (s *InstanceKeyStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
+// SealsRecords implements walletprovider.SealingStore, for
+// walletprovider.Config.RequireSealedStore: whether the DB has a Sealer.
+func (s *ChallengeStore) SealsRecords() bool { return s.t.d.sealer != nil }
 
 // WalletProviderInstances returns d's walletprovider.InstanceStore.
 func (d *DB) WalletProviderInstances() *InstanceStore {

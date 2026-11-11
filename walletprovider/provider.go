@@ -1,6 +1,7 @@
 package walletprovider
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
@@ -182,6 +183,42 @@ type Config struct {
 
 	// Policy decides what verified evidence is attested. REQUIRED.
 	Policy Policy
+
+	// OnRecheckRefused, if set, is called each time an
+	// EvidenceRechecker refuses an instance before a Wallet or Key
+	// Attestation, with the refusal and the instance as stored once the
+	// provider has acted on it: StateRevoked or StateSuspended when the
+	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
+	// provider revoked or suspended it, with a Reason naming the
+	// recheck), StateActive otherwise (a policy refusal, or a root no
+	// longer trusted: the request is refused, the instance and its live
+	// attestations left as they are). Use it to alert, or to revoke from
+	// your own logic. It's called on the request's path, before the
+	// refusal is answered: keep it quick, and hand anything slow to
+	// another goroutine. A recheck that couldn't check (a status list
+	// that can't be fetched), or a refusal the provider couldn't revoke
+	// or suspend the instance for (a store failure), fails the request
+	// as the provider's own failure without calling it; the next
+	// request rechecks.
+	OnRecheckRefused func(ctx context.Context, in Instance, err error)
+
+	// RequireSealedStore makes New refuse Instances, InstanceKeys and
+	// Challenges stores that don't seal their records at rest
+	// (SealingStore): an instance's record holds its keys, its
+	// registration evidence's facts and its App Attest counter, which
+	// sealing keeps a database writer from altering unnoticed. sqlstore's
+	// stores seal when their DB has an Options.Sealer. Set it in
+	// production, where the stores are a shared database; an in-memory
+	// store, which nothing else can write, doesn't seal.
+	RequireSealedStore bool
+}
+
+// SealingStore is implemented by an InstanceStore, InstanceKeyStore or
+// ChallengeStore that says whether it seals its records where they're
+// stored, as sqlstore's do with a Sealer. Config.RequireSealedStore
+// refuses a store that doesn't implement it, or reports false.
+type SealingStore interface {
+	SealsRecords() bool
 }
 
 // Dependencies are a Provider's collaborators.
@@ -261,6 +298,11 @@ func New(cfg Config, deps Dependencies) (*Provider, error) {
 	}
 	if err := deps.validate(); err != nil {
 		return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
+	}
+	if cfg.RequireSealedStore {
+		if err := deps.checkSealed(); err != nil {
+			return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
+		}
 	}
 	p := &Provider{cfg: cfg, deps: deps, verifiers: make(map[string]EvidenceVerifier, len(deps.Evidence))}
 	for i, v := range deps.Evidence {
@@ -392,6 +434,20 @@ func (d Dependencies) validate() error {
 	for i, v := range d.Evidence {
 		if isNil(v) {
 			return fmt.Errorf("the EvidenceVerifier at Evidence[%d] is nil", i)
+		}
+	}
+	return nil
+}
+
+// checkSealed refuses stores that don't seal their records
+// (Config.RequireSealedStore).
+func (d Dependencies) checkSealed() error {
+	for _, s := range []struct {
+		name  string
+		store any
+	}{{"Instances", d.Instances}, {"InstanceKeys", d.InstanceKeys}, {"Challenges", d.Challenges}} {
+		if sealing, ok := s.store.(SealingStore); !ok || !sealing.SealsRecords() {
+			return fmt.Errorf("RequireSealedStore is set, and %s doesn't seal its records (walletprovider.SealingStore: sqlstore's stores do with an Options.Sealer)", s.name)
 		}
 	}
 	return nil

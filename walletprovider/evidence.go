@@ -235,6 +235,10 @@ type EvidenceRechecker interface {
 	// check, and should accept). It returns nil to accept the instance,
 	// an error wrapping ErrPolicy or ErrEvidenceRejected to refuse it,
 	// and any other error when it couldn't check: the request then
-	// fails as the provider's own failure.
+	// fails as the provider's own failure. A refusal because the
+	// evidence's issuer has revoked or suspended its attestation wraps
+	// ErrEvidenceRevoked or ErrEvidenceSuspended too, and the provider
+	// revokes or suspends the instance; any other refusal only refuses
+	// the request, since the operator can undo what caused it.
 	Recheck(ctx context.Context, in Instance) error
 }

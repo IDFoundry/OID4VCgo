@@ -476,10 +476,47 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 	}
 	if r, ok := p.verifiers[in.Evidence.Kind].(EvidenceRechecker); ok {
 		if err := r.Recheck(ctx, in); err != nil {
-			return Instance{}, fmt.Errorf("walletprovider: rechecking the instance's registration evidence: %w", err)
+			return Instance{}, p.recheckRefused(ctx, in, fmt.Errorf("walletprovider: rechecking the instance's registration evidence: %w", err))
 		}
 	}
 	return in, nil
+}
+
+// recheckRefused acts on err, an EvidenceRechecker's error for in, and
+// returns the error the request fails with. A refusal for evidence its
+// issuer has revoked or suspended revokes or suspends the instance
+// first — through the transitions Revoke and Suspend make, so one
+// racing an operator's Resume still ends with the instance revoked —
+// and every refusal is reported to Config.OnRecheckRefused. The
+// transition isn't cut short by the request's cancellation: once begun,
+// it sets the instance's key statuses too.
+func (p *Provider) recheckRefused(ctx context.Context, in Instance, err error) error {
+	if !errors.Is(err, ErrEvidenceRejected) && !errors.Is(err, ErrPolicy) {
+		return err
+	}
+	var state State
+	switch {
+	case errors.Is(err, ErrEvidenceRevoked):
+		state = StateRevoked
+	case errors.Is(err, ErrEvidenceSuspended):
+		state = StateSuspended
+	}
+	if state != "" {
+		reason := fmt.Sprintf("%s automatically: %v", state, err)
+		terr := p.transition(context.WithoutCancel(ctx), in.ID, state, reason)
+		if terr != nil && !errors.Is(terr, ErrInstanceRevoked) {
+			// The provider's own failure: the next request rechecks,
+			// and tries again.
+			return fmt.Errorf("walletprovider: making the instance %s after its recheck refused it (%v): %w", state, err, terr)
+		}
+		if stored, gerr := p.getInstance(ctx, in.ID); gerr == nil {
+			in = stored
+		}
+	}
+	if p.cfg.OnRecheckRefused != nil {
+		p.cfg.OnRecheckRefused(ctx, in, err)
+	}
+	return err
 }
 
 func (p *Provider) getInstance(ctx context.Context, id string) (Instance, error) {

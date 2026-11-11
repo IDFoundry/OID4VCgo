@@ -242,16 +242,30 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   signed request consumes a challenge and writes the instance's
   record. Don't key the limit on the signed request's `sub` before
   `Handler` has verified it: anyone can name another instance there.
+- [ ] **Seal the provider's records: `Config.RequireSealedStore`.**
+  With the `DB`'s `Options.Sealer` set, sqlstore's Wallet Provider
+  stores seal each instance's record; set `RequireSealedStore` so `New`
+  refuses to start when they don't (a missing Sealer), rather than
+  keep instances unsealed.
 - [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
   `StatusSource` (Google's list, refreshed daily). Android instances
   are judged again before each attestation from the facts kept at
   registration (`androidkey.EvidenceVerifier` is an
   `EvidenceRechecker`), so a revoked attestation key or a tightened
-  `Verifier` stops new attestations at once. To make the attestations
-  such instances already hold `INVALID` too, revoke them:
-  `p.RevokeWhere(ctx, match, reason)` with `match` calling the
-  adapter's `Recheck`, or reading `androidkey.InstanceFacts` (a
+  `Verifier` stops new attestations at once. When Google's list names
+  a certificate of an instance's chain `REVOKED`, the provider revokes
+  the instance itself, so the attestations it already holds read
+  `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
+  suspension). A root removed from `Roots` or a tightened policy only
+  refuses: to make such instances' attestations `INVALID` too, revoke
+  them with `p.RevokeWhere(ctx, match, reason)`, `match` calling the
+  adapter's `Recheck` or reading `androidkey.InstanceFacts` (a
   certificate serial, a patch level).
+- [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
+  called with each refusal and the instance as stored afterwards
+  (revoked, suspended or still active): alert on it, and revoke from
+  your own logic the instances a policy refusal leaves active. It runs
+  on the request's path, so hand slow work to another goroutine.
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes
   retired periods' list indices and gives instance keys recorded

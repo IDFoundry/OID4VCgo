@@ -45,7 +45,9 @@
 //   - walletprovider.Dependencies: WalletProviderInstances,
 //     WalletProviderInstanceKeys and WalletProviderChallenges, with
 //     StatusIndices as its StatusIndices and StatusListTokens as its
-//     StatusListTokens. An instance's Create is one
+//     StatusListTokens. Each of the three says whether it seals
+//     (walletprovider.SealingStore), as Config.RequireSealedStore
+//     requires. An instance's Create is one
 //     INSERT on the id primary key and the UNIQUE key_thumbprint
 //     column, so one registration key registers one instance across
 //     every process; its Update is one UPDATE … WHERE id = ? AND
