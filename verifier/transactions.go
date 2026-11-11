@@ -868,15 +868,7 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 	}
 	result, err := t.verify(ctx, tx, responseJWE)
 	if err != nil {
-		t.recordFailure(ctx, id, err)
-		var walletErr *ResponseError
-		if errors.As(err, &walletErr) && tx.SameDevice {
-			// The holder's browser goes back to the Verifier, which shows
-			// the refusal (HAIP 1.0 §5.1: in the same-device flow,
-			// "Verifiers MUST include redirect_uri" in the response).
-			return Answered{ID: id, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}, err
-		}
-		return Answered{}, err
+		return t.answerRefused(ctx, tx, err)
 	}
 
 	var code string
@@ -905,6 +897,20 @@ func (t *Transactions) HandleResponse(ctx context.Context, responseJWE string) (
 		answered.RedirectURI = withQuery(t.cfg.RedirectURI, "response_code", code)
 	}
 	return answered, nil
+}
+
+// answerRefused records err, why tx's answer was refused, and answers
+// it: a wallet's error response to a same-device request with
+// redirect_uri, where the holder's browser goes back to the Verifier,
+// which shows the refusal (HAIP 1.0 §5.1: in the same-device flow,
+// "Verifiers MUST include redirect_uri" in the response).
+func (t *Transactions) answerRefused(ctx context.Context, tx Transaction, err error) (Answered, error) {
+	t.recordFailure(ctx, tx.ID, err)
+	var walletErr *ResponseError
+	if errors.As(err, &walletErr) && tx.SameDevice {
+		return Answered{ID: tx.ID, RedirectURI: withQuery(t.cfg.RedirectURI, "error", errorCodeOf(walletErr.Code))}, err
+	}
+	return Answered{}, err
 }
 
 // answerNotPending answers responseJWE, sent to tx when it's no longer
