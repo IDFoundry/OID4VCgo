@@ -16,20 +16,30 @@ import (
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
+// providerDetail is err's Detail, "" for none (status_reason_test.go's
+// detail is mobiletest's only).
+func providerDetail(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Detail
+	}
+	return ""
+}
+
 // A Wallet Provider's refusal marked with its error code, as the Swift
 // and Kotlin adapters mark one, is platform with that code as the
 // detail, through classify too; a code that isn't a plain token is
 // dropped, the refusal still platform.
 func TestProviderError_Refused(t *testing.T) {
 	got := providerError("wallet attestation", errors.New("[refused:instance_revoked] the Wallet Provider refused /v1/wallet-attestation: HTTP 403 instance_revoked"))
-	if code(got) != CodePlatform || detail(got) != "instance_revoked" || !strings.HasPrefix(got.Error(), "[platform:instance_revoked] wallet attestation: the Wallet Provider refused") {
+	if code(got) != CodePlatform || providerDetail(got) != "instance_revoked" || !strings.HasPrefix(got.Error(), "[platform:instance_revoked] wallet attestation: the Wallet Provider refused") {
 		t.Errorf("a marked refusal: %v", got)
 	}
-	if c := classify(fmt.Errorf("walletflow: %w", got)); code(c) != CodePlatform || detail(c) != "instance_revoked" {
+	if c := classify(fmt.Errorf("walletflow: %w", got)); code(c) != CodePlatform || providerDetail(c) != "instance_revoked" {
 		t.Errorf("classify = %v, want the provider's code kept", c)
 	}
 	for _, msg := range []string{"[refused:not a code] x", "[refused:a\"b] x", "[refused:] x", "[refused:unterminated"} {
-		if got := providerError("key attestation", errors.New(msg)); code(got) != CodePlatform || detail(got) != "" {
+		if got := providerError("key attestation", errors.New(msg)); code(got) != CodePlatform || providerDetail(got) != "" {
 			t.Errorf("%q: %v, want platform without a detail", msg, got)
 		}
 	}
