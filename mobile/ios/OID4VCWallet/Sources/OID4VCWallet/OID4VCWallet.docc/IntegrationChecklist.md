@@ -139,7 +139,10 @@ is a complete, working app on this package to compare against.
   (``KeychainKeyStore/Options/holderAccessGroup``), and the
   configuration where the extension can read it. The extension opens
   its ``Wallet`` with no Wallet Provider: it presents, but doesn't
-  receive. The app's `keychain-access-groups` entitlement lists a group
+  receive. An internal release build whose shared configuration sets
+  ``WalletConfiguration/development`` calls
+  ``OID4VC/allowDevelopmentInRelease()`` in the extension too: it lasts
+  for its process only. The app's `keychain-access-groups` entitlement lists a group
   only the app has first and the shared group after it: the first is
   the default, where instance, DPoP and registration keys are made.
   *Check:* the entitlement's first entry isn't the extension's group.

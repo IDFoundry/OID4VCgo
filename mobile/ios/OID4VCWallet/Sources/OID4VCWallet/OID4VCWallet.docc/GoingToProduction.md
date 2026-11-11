@@ -145,7 +145,11 @@ along with its Wallet Attestations (the Wallet Provider protocol's
   build refuses it, and ``ProximityReaderConfiguration/development``,
   with `invalidInput`, unless the app called
   ``OID4VC/allowDevelopmentInRelease()``: a staging configuration
-  shipped by mistake fails instead of relaxing production's checks.
+  shipped by mistake fails instead of relaxing production's checks. A
+  debug build (`DEBUG`) allows it without the call, which Android's
+  library doesn't: there every build calls `OID4VC.allowDevelopment()`.
+  The call lasts for its process only: an internal release build's
+  document provider extension, in its own process, makes it too.
 - To pin your services' certificates, set
   ``WalletConfiguration/tlsPins``: host → base64 SHA-256 digests of a
   certificate's SubjectPublicKeyInfo. Pin a CA's key, so a leaf renewal

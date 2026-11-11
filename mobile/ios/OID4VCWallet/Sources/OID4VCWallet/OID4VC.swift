@@ -251,9 +251,17 @@ public enum OID4VC {
     /// configuration with `development` set, which it otherwise refuses
     /// (`invalidInput`): `development` relaxes what production requires,
     /// so a staging configuration shipped by mistake must not take
-    /// effect. A debug build (`DEBUG`), or one on the test framework,
-    /// needs no call. Call it only for an internal build that must run a
-    /// development configuration.
+    /// effect. A debug build (the package compiled with `DEBUG`, as
+    /// Xcode's Debug configuration compiles it), or one on the test
+    /// framework, needs no call. Call it only for an internal build that
+    /// must run a development configuration.
+    ///
+    /// It lasts for this process only. An app extension — a document
+    /// provider, say — runs in a process of its own: an internal release
+    /// build of it calls this itself, before making its `Wallet`.
+    /// (OID4VCWallet for Android has no debug-build exemption: there,
+    /// every build with `development` set calls
+    /// `OID4VC.allowDevelopment()`.)
     public static func allowDevelopmentInRelease() {
         developmentInRelease.withLock { $0 = true }
     }
