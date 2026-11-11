@@ -40,6 +40,16 @@ so an older wrapper is unaffected), a Wallet's `proof_key_by_index`
 names a key-attested jwt proof's key by its index; the Swift and Kotlin
 libraries have it from OID4VCWallet 0.33.0, as `proofKeyByIndex`.
 
+Also within version 15, without bumping it (callback marks and a
+detail, so an older wrapper is unaffected): a `KeyStore.Sign` or
+`KeyAgreement.Agree` error whose message starts with `[cancelled]` —
+the holder dismissed the prompt — is `cancelled` rather than
+`platform`, and a Wallet Provider callback's (or `CreateKey`'s) starting
+with `[refused:code]` is `platform` with the provider's error code as
+its detail (`instance_revoked`, say); see Callbacks the app implements.
+The Swift and Kotlin libraries mark both from the release after
+OID4VCWallet 0.34.0.
+
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
 `"status"` is `"check"` or `"decline"`, and outside development one is
@@ -141,7 +151,9 @@ format or error code below changes incompatibly.
   any code: see Error details). The code and detail are stable; the
   message is for
   logs. A callback's error comes back to the app as `platform`,
-  carrying its message. (Version 1 had no detail.)
+  carrying its message, unless the callback marked it (`[network]`,
+  `[cancelled]`, `[refused:code]`: see Callbacks the app implements).
+  (Version 1 had no detail.)
 - **Threads:** every call blocks. Call from a background thread, never
   the main thread; callbacks run on the calling thread.
 - **Cancellation:** a call that waits on the network takes an
@@ -157,10 +169,10 @@ format or error code below changes incompatibly.
 | Code | Meaning |
 |---|---|
 | `invalid_input` | an argument or the configuration is malformed, or, with the detail `not_configured`, the configuration lacks what the call needs (`verifier_roots` to present, say): the message names the key |
-| `platform` | a callback into the app failed (its message follows) |
+| `platform` | a callback into the app failed (its message follows); for a Wallet Provider's refusal the callback marked, the detail is the provider's error code, such as `instance_revoked` |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
 | `unavailable` | the service answered with HTTP 5xx or 429; or, with the detail `refresh_in_progress` (ABI 13), another process sharing the CredentialStore is refreshing with the same refresh grant; retryable later |
-| `cancelled` | the Operation was cancelled |
+| `cancelled` | the Operation was cancelled, or the holder dismissed a holder key's prompt (a `KeyStore.Sign` or `KeyAgreement.Agree` error marked `[cancelled]`) |
 | `not_found` | no key, credential or deferred credential with that ID |
 | `wrong_step` | a session method called out of turn, or after Close |
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
@@ -188,6 +200,7 @@ the wallet's own:
 |---|---|---|
 | `not_configured` | `invalid_input` | the configuration lacks what the call needs |
 | `refresh_in_progress` | `unavailable` | another process is refreshing with the same grant (ABI 13) |
+| the Wallet Provider's error code | `platform` | a Wallet Provider callback (or a `CreateKey` that asked the provider for a challenge) failed with `[refused:code]`: the provider refused with that error code of its protocol, such as `instance_not_active` (suspended), `instance_revoked` or `invalid_signed_request` ([WALLET_PROVIDER.md](WALLET_PROVIDER.md)). Added within ABI 15 |
 | `certificate_revoked` | any code without a detail of its own, such as `protocol` or `untrusted_verifier` | a certificate in a chain checked under `revocation` is revoked (its CA's CRL names it): a credential's issuer on receipt, a Verifier's or mdoc reader's request signer, a status list's signer, or, from a ProximityReader's `HandleMessage`, the document's signer. The message names the certificate. Added within ABI 14 (OID4VCWallet 0.27.0) |
 | `no_current_crl` | likewise | a role named in `revocation` holds no current CRL from the certificate's CA, so its revocation can't be decided and the chain is refused: `RefreshCRLs` (or `SetCRLs`) and try again. Added within ABI 14 (OID4VCWallet 0.27.0) |
 
@@ -230,8 +243,17 @@ require user presence, which then asks at those times too. `CheckKeyStore`
 exercises an implementation as the wallet will.
 
 A `CreateKey` error whose message starts with `[network]` is reported as
-`network` (retryable), as a `WalletProvider`'s is; any other is
-`platform`. The Kotlin library's adapter asks the app's `WalletProvider`
+`network` (retryable), and one starting with `[refused:code]` as
+`platform` with the detail `code`, as a `WalletProvider`'s are; any
+other is `platform`. A `Sign` error whose message starts with
+`[cancelled]` — the holder dismissed the store's prompt (Face ID's
+cancel, BiometricPrompt's) — is `cancelled`; any other is `platform`.
+The Swift package's adapter marks a user cancellation of Face ID or
+the passcode (`errSecUserCanceled`, `LAError.userCancel`,
+`.systemCancel`, `.appCancel`) and a `CancellationError` this way; the
+Kotlin library's a `HolderCancelledException`, which
+`BiometricPromptAuthenticator` throws when the holder dismisses its
+prompt. The Kotlin library's adapter asks the app's `WalletProvider`
 for an attestation challenge before it creates a key, and marks an
 `IOException` from it this way. That challenge, and the key's
 attestation chain, stay on the Kotlin side: the ABI's calls are
@@ -254,8 +276,8 @@ A key that can't agree keys (Android Keystore keys need
 `[no_key_agreement]`: the wallet then signs. On iOS, `KeychainKeyStore`
 agrees keys with any holder key, in the Secure Enclave or not
 (`SecKeyCopyKeyExchangeResult`), and asks for user presence as it
-does to sign. Any other error fails the
-response as `platform`. `CheckKeyAgreement(store, ka)` exercises one.
+does to sign. An error starting with `[cancelled]` fails the response
+as `cancelled`, as `KeyStore.Sign`'s does; any other as `platform`. `CheckKeyAgreement(store, ka)` exercises one.
 
 ### CallbackCanceller
 
@@ -396,9 +418,13 @@ nowhere: such an issuance needs `client_id` for a Key Attestation
 
 These may wait on the network. A cancelled call returns without waiting
 for them, and tells the CallbackCanceller, if any, to cancel them. An error whose message starts with `[network]` is a network
-failure, reported as `network` (retryable); any other is `platform`.
-The Swift package's adapter marks a `URLError` this way, and the Kotlin
-library's an `IOException`.
+failure, reported as `network` (retryable); one starting with
+`[refused:code]` — the provider refused with `code`, one of its
+protocol's error codes — is `platform` with the detail `code`; any
+other is `platform`. The Swift package's adapter marks a `URLError` as
+network and a `WalletProviderRefusedError` with an error code as
+refused, and the Kotlin library's an `IOException` and a
+`WalletProviderRefusedException` likewise.
 
 ## Wallet
 
@@ -463,7 +489,8 @@ Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 signs an `org-iso-mdoc` request (see MdocPresentation); without them,
 every such request is shown by its origin. `verifier_require_eku`,
 `registrar_require_eku`, `issuer_require_eku` and
-`issuer_metadata_require_eku`, dotted object identifiers, recognize only
+`issuer_metadata_require_eku`, dotted object identifiers (each arc in
+decimal digits, with no sign or leading zero), recognize only
 certificates under `verifier_roots`, `registrar_roots`, `issuer_roots`
 and `issuer_metadata_roots` whose extended key usage extension lists
 that OID: the one an ecosystem marks its Verifiers', registrars',
@@ -1007,12 +1034,14 @@ sent to the reader.
 | Method | Result |
 |---|---|
 | `Request()` | `{"origin", "reader", "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`: `reader` is the subject common name of the reader that signed the request when its certificate chains to `mdoc_reader_roots`, without control, line separator or invisible format characters, else `""` — show `origin` then. `reader_certificate`, with `reader`, is that reader's certificate, base64 DER: compare it, not the name, with a reader the app checked itself. Each document is the request's, with the held mdocs of its doctype (none when nothing can answer); `retain` is whether the reader says it will keep the value. Each summary has `shown_to_verifier` and `linkable_here`, for this origin |
-| `Wallet.MdocCandidates(origin)` | `{"credentials": [summary]}`: the held mdocs, each with `shown_to_verifier` and `linkable_here` for `origin` — for a consent screen shown before iOS releases the request itself |
+| `Wallet.MdocCandidates(origin)` | `{"credentials": [summary]}`: every held mdoc, each with `shown_to_verifier` and `linkable_here` for `origin` — for a consent screen shown before iOS releases the request itself. Expired, revoked or suspended ones are listed too, with `presentable` false: offer only the presentable ones |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"response", "linkable"}`: `response` is the base64 `EncryptedResponse` to hand back to the platform (on iOS, `ISO18013MobileDocumentResponse(responseData:)`); `linkable` whether the copy presented had been seen by another Verifier |
 | `RespondDocuments(op, answersJSON)` | `Respond`'s result, answering several of the request's documents in one `EncryptedResponse` (additive within ABI 15). `answersJSON` is `[{"document", "credential_id", "elements"}]`, each as `Respond`'s arguments; at least one, no document twice, no credential twice and no two documents of one type (`invalid_selection`); a document left out isn't in the response. `linkable` is whether any copy presented had been seen by another Verifier, and `linkable_credentials` which, by credential ID (also in `Respond`'s result). Each holder key signs in the request's order; if one fails or the holder cancels, nothing is returned |
 
 `elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
-one the document requested (`invalid_selection` otherwise), and
+one the document requested (`invalid_selection` otherwise); an element
+that isn't a pair of strings, or anything after the array, is
+`invalid_input` (in `answersJSON` too), and
 `document` an index into `documents`. The credential's next unused copy
 is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.

@@ -18,6 +18,8 @@ import (
 var oidAnyExtendedKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37, 0}
 
 // parseOID parses a dotted object identifier, such as "1.3.6.1.5.5.7.3.2".
+// Each arc must be written canonically, in decimal digits with no sign
+// and no leading zero, so one object identifier has one spelling.
 func parseOID(dotted string) (asn1.ObjectIdentifier, error) {
 	parts := strings.Split(dotted, ".")
 	if len(parts) < 2 {
@@ -25,13 +27,30 @@ func parseOID(dotted string) (asn1.ObjectIdentifier, error) {
 	}
 	oid := make(asn1.ObjectIdentifier, len(parts))
 	for i, p := range parts {
+		if !canonicalArc(p) {
+			return nil, fmt.Errorf("%q isn't a dotted object identifier", dotted)
+		}
 		n, err := strconv.Atoi(p)
-		if err != nil || n < 0 {
+		if err != nil {
 			return nil, fmt.Errorf("%q isn't a dotted object identifier", dotted)
 		}
 		oid[i] = n
 	}
 	return oid, nil
+}
+
+// canonicalArc reports whether p is an object identifier arc written
+// canonically: decimal digits only, and no leading zero but in "0".
+func canonicalArc(p string) bool {
+	if p == "" || (len(p) > 1 && p[0] == '0') {
+		return false
+	}
+	for _, c := range p {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // requireEKU is a leaf policy refusing a certificate whose extended key
@@ -156,7 +175,16 @@ func checkRolePair(a, b roleRoots) error {
 			return newError(CodeInvalidInput, fmt.Errorf("%s may share a trust anchor with %s: set %s to tell its certificates apart", r.role.name, r.other, r.role.ekuConfigKey()))
 		}
 	}
-	if a.eku == b.eku {
+	ekus := make([]asn1.ObjectIdentifier, 2)
+	for i, r := range []roleRoots{a, b} {
+		oid, err := parseOID(r.eku)
+		if err != nil {
+			return newError(CodeInvalidInput, fmt.Errorf("%s: %w", r.ekuConfigKey(), err))
+		}
+		ekus[i] = oid
+	}
+	// Compared parsed, so one object identifier is one however spelled.
+	if ekus[0].Equal(ekus[1]) {
 		return newError(CodeInvalidInput, fmt.Errorf("%s and %s may share a trust anchor, and %s and %s are the same extended key usage, which can't tell their certificates apart", a.name, b.name, a.ekuConfigKey(), b.ekuConfigKey()))
 	}
 	return nil

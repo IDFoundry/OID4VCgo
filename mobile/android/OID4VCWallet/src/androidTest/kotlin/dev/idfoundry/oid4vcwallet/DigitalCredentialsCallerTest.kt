@@ -77,6 +77,43 @@ class DigitalCredentialsCallerTest {
         assertFalse(DigitalCredentials.isCredentialManager(pm, pkg, listOf(DigitalCredentials.GOOGLE_PLAY_SERVICES)))
     }
 
+    /** The framework itself is the platform's Credential Manager caller. */
+    @Test
+    fun theFrameworkIsCredentialManager() {
+        assertTrue(DigitalCredentials.isCredentialManager(pm, "android", emptyList()))
+    }
+
+    /**
+     * An app signed with the platform's key isn't Credential Manager
+     * unless it's the platform's own selector: on many builds that key
+     * signs dozens of apps, any of which could otherwise hand the wallet
+     * a request with whatever origin it liked.
+     */
+    @Test
+    fun anotherPlatformSignedAppIsNotCredentialManager() {
+        @Suppress("DEPRECATION")
+        val platformSigned = pm.getInstalledPackages(0).map { it.packageName }.filter {
+            it !in DigitalCredentials.PLATFORM_CREDENTIAL_MANAGER_PACKAGES &&
+                pm.checkSignatures("android", it) == PackageManager.SIGNATURE_MATCH
+        }
+        assumeTrue("no other platform-signed package is visible", platformSigned.isNotEmpty())
+        for (p in platformSigned) {
+            assertFalse(p, DigitalCredentials.isCredentialManager(pm, p, emptyList()))
+        }
+    }
+
+    /** A package not installed, under a Credential Manager name or not, isn't one. */
+    @Test
+    fun anUninstalledPackageIsNotCredentialManager() {
+        assertFalse(DigitalCredentials.isCredentialManager(pm, "$pkg.absent", emptyList()))
+        // The selector's name, when the device doesn't have it, vouches
+        // for nothing; when it does, it's the system's own.
+        val selector = "com.android.credentialmanager"
+        val installed = runCatching { pm.getApplicationInfo(selector, 0) }.isSuccess
+        assertEquals(installed && pm.checkSignatures("android", selector) == PackageManager.SIGNATURE_MATCH,
+            DigitalCredentials.isCredentialManager(pm, selector, emptyList()))
+    }
+
     @Test
     fun credentialManagerByPackageAndCertificate() {
         val pinned = DigitalCredentials.CredentialManagerApp(pkg, listOf(sha256))

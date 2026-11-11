@@ -772,7 +772,14 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
     }
 
+    /// Decodes a configuration, refusing a key it doesn't know, as
+    /// ``WalletConfiguration`` does: a misspelled option would otherwise
+    /// be dropped here and silently left at its default.
     public init(from decoder: any Decoder) throws {
+        let all = try decoder.container(keyedBy: AnyCodingKey.self)
+        if let unknown = all.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {
+            throw DecodingError.dataCorruptedError(forKey: unknown, in: all, debugDescription: "unknown configuration key \(unknown.stringValue)")
+        }
         let c = try decoder.container(keyedBy: CodingKeys.self)
         issuerRootsByDocType = try c.decodeIfPresent([String: String].self, forKey: .issuerRootsByDocType) ?? [:]
         issuerRoots = try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? ""

@@ -924,7 +924,9 @@ public class Wallet(
      * shown it and whether presenting it there now would be linkable
      * (`shownToVerifier`, `linkableHere`): for a consent screen shown
      * before the platform releases the request itself.
-     * [MdocPresentation.request] says the same once it has.
+     * [MdocPresentation.request] says the same once it has. Every held
+     * mdoc is listed, an expired, revoked or suspended one too: offer the
+     * holder only those whose [CredentialSummary.presentable] is true.
      */
     public suspend fun mdocCandidates(origin: String): List<CredentialSummary> {
         return decode<CredentialsResult>(OID4VC.offMain { handle.mdocCandidates(origin) }).credentials
@@ -980,6 +982,18 @@ public class Wallet(
         val app = context.applicationContext
         return startNfcPresentation(timeouts, modes, negotiated, nfcData) { it.transport(app) }
     }
+
+    /**
+     * [startNfcPresentation] with its handover and transport named by
+     * [options] rather than by two adjacent Booleans:
+     * `startNfcPresentation(context, options = NfcEngagementOptions(nfcData = true))`.
+     */
+    public suspend fun startNfcPresentation(
+        context: Context,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+        modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
+        options: NfcEngagementOptions,
+    ): NfcPresentation = startNfcPresentation(context, timeouts, modes, options.negotiated, options.nfcData)
 
     /**
      * Offers QR/BLE and NFC with independent keys and one consent flow. A valid

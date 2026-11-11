@@ -145,8 +145,10 @@ struct ConsentView: View {
         .task {
             guard let shown, let originURL = context.requestingWebsiteOrigin,
                   let origin = MdocPresentation.origin(of: originURL) else { return }
+            // Every held mdoc is a candidate, an expired or revoked one
+            // too: offer only one that can be presented.
             chosen = try? await SharedWallet.open(provider: nil).mdocCandidates(origin: origin)
-                .first { $0.doctype == shown.doctype }
+                .first { $0.doctype == shown.doctype && $0.presentable }
         }
     }
 

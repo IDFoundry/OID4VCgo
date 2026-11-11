@@ -66,12 +66,15 @@ func TestSessions_ProximityRespondDocuments(t *testing.T) {
 		answers string
 		want    string
 	}{
-		"not an array":   {`{`, CodeInvalidInput},
-		"unknown member": {`[{"document": 0, "credential_id": "` + one + `", "elements": [], "nope": true}]`, CodeInvalidInput},
-		"no document":    {`[{"credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}]`, CodeInvalidInput},
-		"none":           {`[]`, CodeInvalidSelection},
-		"answered twice": {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}, {"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}]`, CodeInvalidSelection},
-		"unrequested":    {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","given_name"]]}]`, CodeInvalidSelection},
+		"not an array":     {`{`, CodeInvalidInput},
+		"unknown member":   {`[{"document": 0, "credential_id": "` + one + `", "elements": [], "nope": true}]`, CodeInvalidInput},
+		"no document":      {`[{"credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}]`, CodeInvalidInput},
+		"none":             {`[]`, CodeInvalidSelection},
+		"element of three": {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name","x"]]}]`, CodeInvalidInput},
+		"element of one":   {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1"]]}]`, CodeInvalidInput},
+		"text after":       {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}] ]`, CodeInvalidInput},
+		"answered twice":   {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}, {"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","family_name"]]}]`, CodeInvalidSelection},
+		"unrequested":      {`[{"document": 0, "credential_id": "` + one + `", "elements": [["org.example.test.1","given_name"]]}]`, CodeInvalidSelection},
 	} {
 		if _, err := holder.RespondDocuments(NewOperation(0), tc.answers); code(err) != tc.want {
 			t.Errorf("%s: %v, want %s", name, err, tc.want)

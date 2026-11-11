@@ -65,7 +65,11 @@ type CredentialStore interface {
 
 // WalletProvider asks the Wallet Provider's backend for attestations
 // (HAIP 1.0 §4.4.1, §4.5.1). Keys are public JWKs; attestations are
-// compact JWTs.
+// compact JWTs. An error whose message starts with "[network]" is
+// reported as CodeNetwork (retryable), one starting with
+// "[refused:code]" — the provider refused with its protocol's error code
+// — as CodePlatform with code as the detail, and any other as
+// CodePlatform.
 type WalletProvider interface {
 	// WalletAttestation returns a Wallet Attestation binding the
 	// instance key instanceKeyJWK to clientID.
@@ -890,15 +894,31 @@ func cancellable(ctx context.Context, call func() ([]byte, error), cancel func()
 // adapter marks a URLError so.
 const networkPrefix = "[network]"
 
+// refusedPrefix starts the message of a Wallet Provider callback's error
+// for the provider refusing with one of its protocol's error codes,
+// "[refused:instance_revoked] …": it's reported as platform with that
+// code as the detail, so an app can tell the holder why. The Swift
+// package's and Kotlin library's adapters mark a
+// WalletProviderRefusedError (Exception) so.
+const refusedPrefix = "[refused:"
+
 // providerError is a Wallet Provider callback's err doing what: a
 // cancellation as is, a network failure the callback marked as network,
-// anything else as platform.
+// a refusal it marked with the provider's error code as platform with
+// that detail, anything else as platform.
 func providerError(what string, err error) error {
+	msg := err.Error()
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
-	case strings.HasPrefix(err.Error(), networkPrefix):
-		return newError(CodeNetwork, fmt.Errorf("%s: %s", what, strings.TrimSpace(strings.TrimPrefix(err.Error(), networkPrefix))))
+	case strings.HasPrefix(msg, networkPrefix):
+		return newError(CodeNetwork, fmt.Errorf("%s: %s", what, strings.TrimSpace(strings.TrimPrefix(msg, networkPrefix))))
+	case strings.HasPrefix(msg, refusedPrefix):
+		if code, rest, ok := strings.Cut(strings.TrimPrefix(msg, refusedPrefix), "]"); ok {
+			// errorCode drops a code that isn't a plain token: the
+			// refusal is still platform, with no detail.
+			return &Error{Code: CodePlatform, Detail: errorCode(code), Message: cleanText(what + ": " + strings.TrimSpace(rest))}
+		}
 	}
 	return newError(CodePlatform, fmt.Errorf("%s: %w", what, err))
 }

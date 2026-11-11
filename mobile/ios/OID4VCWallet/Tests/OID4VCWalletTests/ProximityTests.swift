@@ -132,6 +132,15 @@ final class ProximityTests: XCTestCase {
             issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true, statusCheck: .check), keys: nil))
     }
 
+    /// A reader configuration with a key it doesn't know — a misspelled
+    /// option — is refused, not left at its default.
+    func testReaderConfigurationRefusesUnknownKeys() throws {
+        XCTAssertNoThrow(try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(#"{"issuer_roots":"PEM","status":"check"}"#.utf8)))
+        XCTAssertThrowsError(try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(#"{"issuer_roots":"PEM","statsu":"check"}"#.utf8))) {
+            XCTAssertTrue("\($0)".contains("unknown configuration key statsu"), "\($0)")
+        }
+    }
+
     /// A reader that checks status never reports a revoked document
     /// verified: the session fails with `.documentNotValid`.
     func testReaderRefusesARevokedDocument() async throws {

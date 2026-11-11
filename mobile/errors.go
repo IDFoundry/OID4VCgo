@@ -102,8 +102,8 @@ func classifyCode(err error) error {
 		return newError(CodeTLSPin, walletflow.ErrTLSPinMismatch)
 	case errors.As(err, &mobileErr):
 		// A KeyStore or other callback's error, inside walletflow's
-		// context.
-		return newError(mobileErr.Code, err)
+		// context, with its detail: a Wallet Provider's error code.
+		return &Error{Code: mobileErr.Code, Detail: mobileErr.Detail, Message: cleanText(err.Error())}
 	case errors.Is(err, walletflow.ErrWrongStep):
 		return newError(CodeWrongStep, err)
 	case errors.Is(err, walletflow.ErrTerminated):

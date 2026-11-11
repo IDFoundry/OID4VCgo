@@ -43,3 +43,17 @@ func decodeConfig(configJSON string, v any) error {
 	}
 	return nil
 }
+
+// decodeStrict decodes text, one JSON value, into v, refusing an object
+// member no field has and anything after the value.
+func decodeStrict(text string, v any) error {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected data after the value")
+	}
+	return nil
+}

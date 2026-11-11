@@ -70,9 +70,9 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `proofUnsupported` | The wallet can't hold the credential, or the issuer needs a proof it can't give (a key attestation needs a `WalletProvider`, and a `clientID` for an issuance that redeems a pre-authorized code without client authentication) | Tell the holder |
 | `notFound` | No such credential, deferred credential or authorization | Refresh the list |
 | `wrongStep` | The session isn't at that step | A bug in the app's flow |
-| `cancelled` | The call was cancelled (a cancelled coroutine ends with its own `CancellationException` instead) | Nothing |
+| `cancelled` | The call was cancelled (a cancelled coroutine ends with its own `CancellationException` instead), or the holder dismissed a holder key's prompt (`HolderCancelledException`) | Nothing |
 | `invalidInput` | A link, PIN or configuration isn't valid | Tell the holder, or fix the configuration |
-| `platform` | The key store, credential store or Wallet Provider failed: refused to attest a key, say | Check the app's implementation |
+| `platform` | The key store, credential store or Wallet Provider failed. When the provider refused (`WalletProviderRefusedException`), `protocolError` is its error code: `instance_not_active` (suspended), `instance_revoked`, `invalid_signed_request`, … | Show its `description`; without a `protocolError`, check the app's implementation |
 | `internal` | Unexpected | Log it |
 
 ## Revoked certificates and out-of-date revocation lists

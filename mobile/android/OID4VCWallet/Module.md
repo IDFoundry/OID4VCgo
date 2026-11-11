@@ -24,7 +24,7 @@ credentials:
 The protocols run in OID4VCgo's Go code, compiled into this library:
 every network request, every protocol message and every check on what
 comes back. Your app supplies the platform, through three interfaces:
-a [KeyStore][dev.idfoundry.oid4vcwallet.KeyStore] whose keys never leave the device's secure hardware
+a [KeyStore][dev.idfoundry.oid4vcwallet.KeyStore] whose private keys can't be exported, kept in the device's secure hardware where it has some
 ([AndroidKeystoreKeyStore][dev.idfoundry.oid4vcwallet.AndroidKeystoreKeyStore]), a [CredentialStore][dev.idfoundry.oid4vcwallet.CredentialStore] under the device's
 protection ([FileCredentialStore][dev.idfoundry.oid4vcwallet.FileCredentialStore]), and a [WalletProvider][dev.idfoundry.oid4vcwallet.WalletProvider] that attests
 the wallet. It also owns the UI: every session stops where the holder

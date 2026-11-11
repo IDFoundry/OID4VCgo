@@ -43,7 +43,9 @@ public enum class KeyPurpose(public val rawValue: String) {
 /**
  * The wallet's keys: P-256 keys whose private halves never leave the
  * store (Android Keystore). An exception it throws reaches Go and comes
- * back as a [WalletException.Code.platform] error. Go calls it on its own
+ * back as a [WalletException.Code.platform] error — a
+ * [HolderCancelledException] from [sign], the holder dismissing its
+ * prompt, as [WalletException.Code.cancelled]. Go calls it on its own
  * thread, never the main one.
  */
 public interface KeyStore {
@@ -356,7 +358,7 @@ internal class KeyStoreAdapter(
 
     override fun publicKey(id: String): ByteArray = store.publicKey(id) ?: ByteArray(0)
 
-    override fun sign(id: String, digest: ByteArray): ByteArray = store.sign(id, digest)
+    override fun sign(id: String, digest: ByteArray): ByteArray = markingHolderCancellation { store.sign(id, digest) }
 
     override fun deleteKey(id: String) {
         store.deleteKey(id)
@@ -373,7 +375,7 @@ internal class KeyStoreAdapter(
 internal class KeyAgreementAdapter(private val agreement: KeyAgreement) : MobileKeyAgreement {
     override fun agree(id: String, peerPublicKey: ByteArray): ByteArray =
         try {
-            agreement.agree(id, peerPublicKey)
+            markingHolderCancellation { agreement.agree(id, peerPublicKey) }
         } catch (e: KeyAgreementUnsupportedException) {
             throw StoreException("[no_key_agreement] " + (e.message ?: "unsupported"))
         }
@@ -485,7 +487,10 @@ internal fun jwkPoint(jwk: ByteArray): ByteArray? {
 /**
  * Runs a Wallet Provider call on Go's thread, which waits for it; an
  * IOException is marked as a network failure, which Go reports as
- * [WalletException.Code.network] (retryable). With [calls], it runs as
+ * [WalletException.Code.network] (retryable), and a
+ * [WalletProviderRefusedException] with an error code as a refusal,
+ * which Go reports as [WalletException.Code.platform] with that code as
+ * [WalletException.protocolError]. With [calls], it runs as
  * the wait for [instanceKeyJWK] there, so cancelling that ends it.
  */
 internal fun <T> waitForProvider(calls: CancellableWaits? = null, instanceKeyJWK: ByteArray? = null, body: suspend () -> T): T =
@@ -493,6 +498,10 @@ internal fun <T> waitForProvider(calls: CancellableWaits? = null, instanceKeyJWK
         if (calls != null && instanceKeyJWK != null) calls.await(instanceKeyJWK.decodeToString(), body) else runBlocking { body() }
     } catch (e: IOException) {
         throw StoreException("[network] " + (e.message ?: e.javaClass.simpleName))
+    } catch (e: WalletProviderRefusedException) {
+        // The protocol's error code, for Go to carry as the error's
+        // detail (protocolError).
+        throw StoreException(e.error?.let { "[refused:$it] " + e.message } ?: (e.message ?: "the Wallet Provider refused"))
     } catch (e: CancellationException) {
         throw StoreException("the Wallet Provider call was cancelled", e)
     }
@@ -518,3 +527,26 @@ internal class CallbackCancellerAdapter(
 public open class StoreException(message: String, cause: Throwable?) : Exception(message, cause) {
     public constructor(message: String) : this(message, null)
 }
+
+/**
+ * The holder dismissed the prompt a holder key's use showed:
+ * [BiometricPromptAuthenticator] throws it when the holder cancels, and
+ * an app's own [HolderAuthenticator] or [KeyStore] may too. The call
+ * ends with [WalletException.Code.cancelled] rather than
+ * [WalletException.Code.platform].
+ */
+public class HolderCancelledException(message: String, cause: Throwable? = null) : StoreException(message, cause)
+
+/**
+ * Runs a key's use, marking a [HolderCancelledException] — anywhere in
+ * the failure's causes — so Go reports it as
+ * [WalletException.Code.cancelled].
+ */
+internal fun <T> markingHolderCancellation(use: () -> T): T =
+    try {
+        use()
+    } catch (e: Exception) {
+        val cancelled = generateSequence<Throwable>(e) { it.cause }.take(8).firstOrNull { it is HolderCancelledException }
+        if (cancelled != null) throw StoreException("[cancelled] " + (cancelled.message ?: "the holder cancelled"), e)
+        throw e
+    }

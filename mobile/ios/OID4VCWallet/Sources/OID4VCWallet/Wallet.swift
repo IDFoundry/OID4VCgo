@@ -912,7 +912,9 @@ public final class Wallet: @unchecked Sendable {
     /// shown it and whether presenting it there now would be linkable
     /// (`shownToVerifier`, `linkableHere`): for a document provider's
     /// consent screen, shown before iOS releases the request itself.
-    /// `MdocPresentation.request` says the same once it has.
+    /// `MdocPresentation.request` says the same once it has. Every held
+    /// mdoc is listed, an expired, revoked or suspended one too: offer the
+    /// holder only those whose `presentable` is true.
     public func mdocCandidates(origin: String) async throws -> [CredentialSummary] {
         struct All: Decodable { let credentials: [CredentialSummary] }
         let wallet = handle

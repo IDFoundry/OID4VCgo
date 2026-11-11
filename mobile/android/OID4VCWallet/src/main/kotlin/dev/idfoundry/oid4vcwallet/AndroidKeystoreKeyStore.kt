@@ -71,6 +71,18 @@ public fun interface HolderAuthenticator {
     }
 }
 
+/**
+ * BiometricPrompt's errors for the holder dismissing it: their cancel, or
+ * the system cancelling it (another app in front). The prompt allows the
+ * screen lock, so it has no negative button. (API 28's constants, but
+ * compile-time ints, used only by the API 30 prompt.)
+ */
+@SuppressLint("InlinedApi")
+private val HOLDER_CANCELLED = setOf(
+    BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
+    BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
+)
+
 // API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
 // as the per-use holder keys it's for do, which need 30 too.
 /**
@@ -109,7 +121,12 @@ public class BiometricPromptAuthenticator(
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    cont.resumeWithException(StoreException("the holder wasn't authenticated: $errString"))
+                    val failure = if (errorCode in HOLDER_CANCELLED) {
+                        HolderCancelledException("the holder cancelled: $errString")
+                    } else {
+                        StoreException("the holder wasn't authenticated: $errString")
+                    }
+                    cont.resumeWithException(failure)
                 }
             }
             if (signature != null) {
@@ -122,9 +139,11 @@ public class BiometricPromptAuthenticator(
 }
 
 /**
- * The wallet's keys, in Android Keystore: P-256 keys whose private
- * halves never leave its secure hardware — StrongBox where the device
- * has it ([Options.strongBox]), else the TEE. Each key's ID is its
+ * The wallet's keys, in Android Keystore: non-exportable P-256 keys
+ * made in StrongBox where the device has it ([Options.strongBox]), else
+ * the TEE — or, on a device whose Keystore has no secure hardware, in
+ * Keystore's software, which [securityLevel] reports and a key's
+ * attestation chain shows the Wallet Provider. Each key's ID is its
  * Keystore alias after [Options.aliasPrefix]. Keys are usable only while
  * the device is unlocked, and holder keys, if
  * [Options.holderUserAuthentication], each time they sign only after
@@ -133,6 +152,11 @@ public class BiometricPromptAuthenticator(
  * one the wallet's [WalletProvider.attestationChallenge] gives — carries
  * an Android Key Attestation chain ([attestationChain]), which the wallet
  * hands the Wallet Provider with the key.
+ *
+ * The default [Options] need API 30 (per-use holder authentication):
+ * below it, construction throws IllegalStateException rather than make
+ * weaker keys. On a minSdk below 30, pass [Options.forDevice] and
+ * authenticate the holder in the app where it turns that off.
  */
 public class AndroidKeystoreKeyStore(
     /** How the store makes keys. */
@@ -143,7 +167,7 @@ public class AndroidKeystoreKeyStore(
         // Per-use authentication by biometrics or the screen lock is API
         // 30's: below it, fail now rather than make weaker keys.
         check(!options.holderUserAuthentication || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            "holderUserAuthentication needs API 30; set it false and authenticate the holder in the app"
+            "holderUserAuthentication needs API 30; use Options.forDevice() and authenticate the holder in the app"
         }
         // Without one, holder keys could never sign: say so now, not at
         // the first presentation.
@@ -254,7 +278,27 @@ public class AndroidKeystoreKeyStore(
          * again.
          */
         val holderAuthenticationTimeout: kotlin.time.Duration = kotlin.time.Duration.ZERO,
-    )
+    ) {
+        /** Options for the device the app runs on. */
+        public companion object {
+            /**
+             * [base] as this device can make it: on API 30 and later
+             * unchanged; below it, with [holderUserAuthentication] (and
+             * [holderAuthenticationTimeout]) off, since Keystore can't
+             * require the holder for each use there. Then nothing in the
+             * key asks for the holder: the app must authenticate them
+             * itself (BiometricPrompt, or the keyguard) before every
+             * presentation, as [holderUserAuthentication] describes.
+             * Without it, the default options fail on API 26–29.
+             */
+            public fun forDevice(base: Options = Options(), sdkInt: Int = Build.VERSION.SDK_INT): Options =
+                if (sdkInt >= Build.VERSION_CODES.R) {
+                    base
+                } else {
+                    base.copy(holderUserAuthentication = false, holderAuthenticationTimeout = kotlin.time.Duration.ZERO)
+                }
+        }
+    }
 
     private val keystore: JavaKeyStore = JavaKeyStore.getInstance(PROVIDER).apply { load(null) }
 

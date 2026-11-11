@@ -23,3 +23,18 @@ func TestDecodeConfig(t *testing.T) {
 		t.Error("a misspelled reader option was accepted")
 	}
 }
+
+// Respond's elements are [namespace, identifier] pairs: an element of
+// another length, or text after the array, is refused, not dropped or
+// zero-filled.
+func TestMdocElementsJSON(t *testing.T) {
+	got, err := mdocElementsJSON(`[["ns","a"], ["ns","b"]] `)
+	if err != nil || len(got) != 2 || got[1] != [2]string{"ns", "b"} {
+		t.Fatalf("mdocElementsJSON = %v, %v", got, err)
+	}
+	for _, bad := range []string{`[["ns","a","extra"]]`, `[["ns"]]`, `[[]]`, `[["ns","a"]] ]`, `[["ns","a"]] [`, `{}`, `[["ns",1]]`} {
+		if _, err := mdocElementsJSON(bad); code(err) != CodeInvalidInput {
+			t.Errorf("%s: %v, want %s", bad, err, CodeInvalidInput)
+		}
+	}
+}

@@ -52,7 +52,8 @@ type KeyStore interface {
 	// Objective-C reserves methods named new… for returning an owned
 	// object.) An error whose message starts with "[network]" — a store
 	// that fetched a key attestation challenge from the Wallet Provider
-	// first, say — is reported as CodeNetwork (retryable); any other as
+	// first, say — is reported as CodeNetwork (retryable), one starting
+	// with "[refused:code]" as a WalletProvider's is, and any other as
 	// CodePlatform.
 	CreateKey(purpose string) (string, error)
 	// PublicKey returns key id's public key as an uncompressed X9.63
@@ -61,6 +62,9 @@ type KeyStore interface {
 	PublicKey(id string) ([]byte, error)
 	// Sign signs a SHA-256 digest with key id, returning an ASN.1 DER
 	// ECDSA signature. It may ask the user (Face ID) for a holder key.
+	// An error whose message starts with "[cancelled]" — the holder
+	// dismissed that prompt — is reported as CodeCancelled; any other as
+	// CodePlatform.
 	Sign(id string, digest []byte) ([]byte, error)
 	// DeleteKey deletes key id. Deleting a key that doesn't exist isn't
 	// an error.
@@ -81,7 +85,9 @@ type KeyAgreement interface {
 	// X9.63 P-256 point, and returns the shared secret: its 32-byte
 	// x-coordinate. For a key that can't agree keys (created for
 	// signing only), it fails with a message starting with
-	// "[no_key_agreement]": the wallet then signs instead.
+	// "[no_key_agreement]": the wallet then signs instead. One starting
+	// with "[cancelled]", the holder dismissing its prompt, is
+	// CodeCancelled, as KeyStore.Sign's is.
 	Agree(id string, peerPublicKey []byte) ([]byte, error)
 }
 
@@ -296,6 +302,23 @@ func (p *platformKey) cancelled(what string, err error) error {
 	return newError(CodeCancelled, fmt.Errorf("%s with key %q: the call was cancelled (%v)", what, p.id, err))
 }
 
+// cancelledPrefix starts the message of a KeyStore.Sign or
+// KeyAgreement.Agree error for the holder dismissing the prompt it
+// showed — Face ID's or BiometricPrompt's: the call returns cancelled,
+// not platform. The Swift package's and Kotlin library's adapters mark
+// the holder's cancellation so.
+const cancelledPrefix = "[cancelled]"
+
+// keyUseError is err, the error of a KeyStore.Sign or KeyAgreement.Agree
+// doing what that Go didn't cancel: cancelled when the store marked it
+// as the holder's cancellation, platform otherwise.
+func keyUseError(what string, err error) error {
+	if rest, ok := strings.CutPrefix(err.Error(), cancelledPrefix); ok {
+		return newError(CodeCancelled, fmt.Errorf("%s: the holder cancelled (%s)", what, strings.TrimSpace(rest)))
+	}
+	return newError(CodePlatform, fmt.Errorf("%s: %w", what, err))
+}
+
 var _ proximity.KeyAgreer = (*platformKey)(nil)
 
 // Agree implements proximity.KeyAgreer through the Wallet's
@@ -318,7 +341,7 @@ func (p *platformKey) Agree(peer *ecdsa.PublicKey) ([]byte, error) {
 	case err != nil && strings.HasPrefix(err.Error(), noKeyAgreementPrefix):
 		return nil, fmt.Errorf("key %q: %w", p.id, proximity.ErrNoKeyAgreement)
 	case err != nil:
-		return nil, newError(CodePlatform, fmt.Errorf("agree with key %q: %w", p.id, err))
+		return nil, keyUseError(fmt.Sprintf("agree with key %q", p.id), err)
 	case len(z) != 32:
 		return nil, newError(CodePlatform, fmt.Errorf("key %q agreed a %d-byte secret, want 32", p.id, len(z)))
 	}
@@ -343,7 +366,7 @@ func (p *platformKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) (
 		return nil, p.cancelled("sign", err)
 	}
 	if err != nil {
-		return nil, newError(CodePlatform, fmt.Errorf("sign with key %q: %w", p.id, err))
+		return nil, keyUseError(fmt.Sprintf("sign with key %q", p.id), err)
 	}
 	if !ecdsa.VerifyASN1(p.pub, digest, sig) {
 		return nil, newError(CodePlatform, fmt.Errorf("key %q's signature doesn't verify under its public key", p.id))
