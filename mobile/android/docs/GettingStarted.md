@@ -224,6 +224,23 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
 }
 ```
 
+`AndroidKeystoreKeyStore`'s default options need Android 11 (API 30),
+and it throws on API 26–29 rather than make holder keys that don't ask
+for the holder. On a `minSdk` below 30, give it
+`Options.forDevice()`: unchanged from API 30, and without per-use
+holder authentication below it, where your app then asks for the
+holder itself — `BiometricPrompt`, or the keyguard — before every
+presentation, receipt and refresh.
+
+```kotlin
+/** The key store on any supported API level: below 30, the app authenticates the holder itself. */
+fun appKeyStore(currentActivity: () -> Activity?): AndroidKeystoreKeyStore {
+    val options = AndroidKeystoreKeyStore.Options.forDevice()
+    val authenticator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) BiometricPromptAuthenticator(currentActivity) else null
+    return AndroidKeystoreKeyStore(options, authenticator)
+}
+```
+
 ## Ship the release build
 
 The release AAR carries the release build of the Go library. OID4VCgo's

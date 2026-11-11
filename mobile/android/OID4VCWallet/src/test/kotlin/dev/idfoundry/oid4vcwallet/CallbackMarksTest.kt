@@ -1,10 +1,12 @@
 package dev.idfoundry.oid4vcwallet
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * How the adapters mark a callback's failure for Go — a Wallet
@@ -79,5 +81,17 @@ class CallbackMarksTest {
         assertEquals("The wallet's provider refused the request.", parse("[platform:evidence_rejected] x").description)
         assertEquals(WalletException.Code.cancelled, parse("[cancelled] sign with key: the holder cancelled").code)
         assertEquals("The service's identity couldn't be confirmed, so nothing was sent to it.", parse("[tls_pin] mismatch").description)
+    }
+
+    /** The key store's options for a device below API 30 drop what it can't make; from 30, unchanged. */
+    @Test
+    fun optionsForDevice() {
+        val base = AndroidKeystoreKeyStore.Options(holderAuthenticationTimeout = 30.seconds)
+        assertEquals(base, AndroidKeystoreKeyStore.Options.forDevice(base, sdkInt = 30))
+        val below = AndroidKeystoreKeyStore.Options.forDevice(base, sdkInt = 29)
+        assertFalse(below.holderUserAuthentication)
+        assertEquals(kotlin.time.Duration.ZERO, below.holderAuthenticationTimeout)
+        assertEquals(base.strongBox, below.strongBox)
+        assertEquals(base.aliasPrefix, below.aliasPrefix)
     }
 }
