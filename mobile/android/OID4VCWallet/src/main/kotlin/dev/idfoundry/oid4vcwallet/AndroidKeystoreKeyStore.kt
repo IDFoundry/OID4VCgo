@@ -71,6 +71,16 @@ public fun interface HolderAuthenticator {
     }
 }
 
+/**
+ * BiometricPrompt's errors for the holder dismissing it: their cancel, or
+ * the system cancelling it (another app in front). The prompt allows the
+ * screen lock, so it has no negative button.
+ */
+private val HOLDER_CANCELLED = setOf(
+    BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
+    BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
+)
+
 // API 30's: it allows biometrics or the screen lock (setAllowedAuthenticators),
 // as the per-use holder keys it's for do, which need 30 too.
 /**
@@ -109,7 +119,12 @@ public class BiometricPromptAuthenticator(
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    cont.resumeWithException(StoreException("the holder wasn't authenticated: $errString"))
+                    val failure = if (errorCode in HOLDER_CANCELLED) {
+                        HolderCancelledException("the holder cancelled: $errString")
+                    } else {
+                        StoreException("the holder wasn't authenticated: $errString")
+                    }
+                    cont.resumeWithException(failure)
                 }
             }
             if (signature != null) {

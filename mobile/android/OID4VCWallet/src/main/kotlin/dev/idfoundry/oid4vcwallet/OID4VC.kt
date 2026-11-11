@@ -33,6 +33,9 @@ public class WalletException internal constructor(
      * needs — such as `issuerRoots` or `redirectURI` to receive credentials, or
      * `verifierRoots` to present them — rather than an argument being malformed: the
      * app's configuration to fix, which [message] names by its JSON key (`issuer_roots`).
+     * For [Code.platform] it's the Wallet Provider's error code when the provider refused
+     * ([WalletProviderRefusedException]): `instance_not_active` (the installation is
+     * suspended), `instance_revoked`, `invalid_signed_request`, and so on.
      */
     public val protocolError: String?,
     message: String,
@@ -53,13 +56,18 @@ public class WalletException internal constructor(
             public val invalidInput: Code = Code(Mobile.CodeInvalidInput)
             /**
              * A key store, credential store or Wallet Provider call failed; its message follows.
+             * For the Wallet Provider refusing, [WalletException.protocolError] is its
+             * protocol's error code, such as `instance_revoked`.
              */
             public val platform: Code = Code(Mobile.CodePlatform)
             /** A request couldn't be made, got no answer, or timed out. Retryable. */
             public val network: Code = Code(Mobile.CodeNetwork)
             /** The service answered with HTTP 5xx or 429. Retryable later. */
             public val unavailable: Code = Code(Mobile.CodeUnavailable)
-            /** The call was cancelled. */
+            /**
+             * The call was cancelled, or the holder dismissed a holder key's prompt
+             * ([HolderCancelledException]).
+             */
             public val cancelled: Code = Code(Mobile.CodeCancelled)
             /**
              * No key, credential, deferred credential or authorization in progress with that ID.
@@ -212,6 +220,14 @@ public class WalletException internal constructor(
                 "This wallet can't receive credentials from this issuer."
             code == Code.protocol && protocolError == "invalid_grant" -> "That code or PIN wasn't accepted."
             code == Code.protocol -> "The service refused the request."
+            code == Code.tlsPin -> "The service's identity couldn't be confirmed, so nothing was sent to it."
+            code == Code.platform && protocolError == "instance_not_active" ->
+                "This wallet is suspended by its provider. Contact them, or try again later."
+            code == Code.platform && protocolError == "instance_revoked" ->
+                "This wallet's registration with its provider was withdrawn. Try again to register it anew."
+            code == Code.platform && protocolError == "invalid_signed_request" ->
+                "The wallet's provider couldn't verify this device's request. Check the date and time, then try again."
+            code == Code.platform && protocolError != null -> "The wallet's provider refused the request."
             code == Code.platform -> "The wallet couldn't use its keys or storage."
             code == Code.invalidInput && protocolError == Mobile.DetailNotConfigured -> "This wallet isn't set up for that."
             code == Code.invalidInput -> "That link or code isn't valid."

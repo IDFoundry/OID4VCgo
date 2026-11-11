@@ -507,7 +507,9 @@ private fun checkKeyAttestation(jwt: String, points: List<ByteArray>, nonce: Str
  * The Wallet Provider refused a request with one of the protocol's
  * errors, or answered other than the protocol documents (a redirect, a
  * path it doesn't serve). It reaches the wallet as
- * [WalletException.Code.platform], its message naming [error].
+ * [WalletException.Code.platform], its [WalletException.protocolError]
+ * [error] when there is one. An app's own [WalletProvider] may throw it
+ * too, for the same.
  */
 public class WalletProviderRefusedException(
     /** The HTTP status code. */
