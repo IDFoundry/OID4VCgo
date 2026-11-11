@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.11.0...sqlstore/v0.11.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* build with Go 1.26.11 for GO-2026-6859 ([a5f71bd](https://github.com/IDFoundry/OID4VCgo/commit/a5f71bd87a4fa8e570ba446f0a9e5ac9e75066f1))
+
 ## [0.11.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.10.0...sqlstore/v0.11.0) (2026-11-08)
 
 
