@@ -40,8 +40,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// (§6.1.1, RFC 9396), OPTIONAL: ParseAuthorizationDetails reads the
 	// form parameter. Each must be an openid_credential entry for a
 	// configuration the code grants, by credential identifiers or scope,
-	// whose locations, if any, include this Credential Issuer. The token
-	// then carries a credential_identifier for each, and the Token
+	// whose locations, if any, include this Credential Issuer, and whose
+	// claims, if any, are well-formed claims descriptions (Appendix B.1).
+	// The token then carries a credential_identifier for each, with its
+	// claims — CredentialRequest.AuthorizedClaims, so issuance is
+	// narrowed to them as for an authorization code — and the Token
 	// Response echoes them (§6.2: "REQUIRED when the
 	// authorization_details parameter is used in ... the Token Request").
 	// Their form, and whether the code grants them, are checked before
@@ -591,16 +594,18 @@ func (iss *Issuer) consumePreAuthorizedCode(ctx context.Context, req ExchangePre
 }
 
 // requestedConfigurations checks a Token Request's authorization_details
-// by their form, before the code is consumed, and returns the
-// configurations they name (nil for none): openid_credential entries
-// for configurations this issuer supports, each once, with no
-// credential_identifiers (the Authorization Server's to mint), and
-// locations, if any, including this Credential Issuer.
-func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail) ([]string, error) {
+// by their form, before the code is consumed, and returns them (nil
+// for none): openid_credential entries for configurations this issuer
+// supports, each once, with no credential_identifiers (the
+// Authorization Server's to mint), locations, if any, including this
+// Credential Issuer, and claims, if any, well-formed claims
+// descriptions (Appendix B.1, B.3) — the form
+// oid4vci.AuthorizationDetailRARDefinition's Validate checks at an
+// Authorization Server for the authorization code flow.
+func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail) ([]oid4vci.AuthorizationDetail, error) {
 	if len(details) == 0 {
 		return nil, nil
 	}
-	ids := make([]string, 0, len(details))
 	for i, d := range details {
 		var problem string
 		switch _, supported := iss.cfg.CredentialConfigurationsSupported[d.CredentialConfigurationID]; {
@@ -608,7 +613,9 @@ func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail
 			problem = fmt.Sprintf("type %q isn't %q", d.Type, oid4vci.AuthorizationDetailsTypeOpenIDCredential)
 		case !supported:
 			problem = fmt.Sprintf("credential_configuration_id %q isn't supported", d.CredentialConfigurationID)
-		case slices.Contains(ids, d.CredentialConfigurationID):
+		case slices.ContainsFunc(details[:i], func(e oid4vci.AuthorizationDetail) bool {
+			return e.CredentialConfigurationID == d.CredentialConfigurationID
+		}):
 			problem = fmt.Sprintf("credential_configuration_id %q is requested twice", d.CredentialConfigurationID)
 		case len(d.CredentialIdentifiers) > 0:
 			problem = "credential_identifiers are the Authorization Server's to issue"
@@ -618,33 +625,43 @@ func (iss *Issuer) requestedConfigurations(details []oid4vci.AuthorizationDetail
 			// §5.1.1: with authorization_servers in the metadata, locations
 			// "MUST be set to the Credential Issuer Identifier value".
 			problem = "locations is required, since this Credential Issuer lists authorization_servers"
+		default:
+			if err := authorizationDetailForm.Validate(d); err != nil {
+				problem = err.Error()
+			}
 		}
 		if problem != "" {
 			return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("authorization_details[%d]: %s", i, problem), nil)
 		}
-		ids = append(ids, d.CredentialConfigurationID)
 	}
-	return ids, nil
+	return details, nil
 }
+
+// authorizationDetailForm is the openid_credential definition whose
+// Validate checks one object's form; its limits aren't used.
+var authorizationDetailForm = oid4vci.AuthorizationDetailRARDefinition(1, 1)
 
 // acceptPreAuthorizedCode checks a pre-authorized code's record against
 // the request before the store consumes the code — it hasn't expired,
 // and grants every configuration requested (requestedConfigurations's
 // result, nil for none) — and mints the authorization_details for the
-// token: one per requested configuration or, with none requested, per
-// the record's CredentialConfigurationIDs.
-func (iss *Issuer) acceptPreAuthorizedCode(record PreAuthorizedCodeRecord, requested []string, now time.Time) ([]oid4vci.AuthorizationDetail, error) {
+// token: one per requested object, with its claims, or, with none
+// requested, one per the record's CredentialConfigurationIDs, for
+// every claim.
+func (iss *Issuer) acceptPreAuthorizedCode(record PreAuthorizedCodeRecord, requested []oid4vci.AuthorizationDetail, now time.Time) ([]oid4vci.AuthorizationDetail, error) {
 	if now.After(record.ExpiresAt) {
 		return nil, newError(ErrorInvalidGrant, 400, "pre-authorized_code has expired", nil)
 	}
-	mint := record.CredentialConfigurationIDs
-	if requested != nil {
-		for _, id := range requested {
-			if !iss.recordGrants(record, id) {
-				return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("the pre-authorized_code doesn't grant %q", id), nil)
-			}
+	for _, d := range requested {
+		if !iss.recordGrants(record, d.CredentialConfigurationID) {
+			return nil, newError(ErrorInvalidAuthorizationDetails, 400, fmt.Sprintf("the pre-authorized_code doesn't grant %q", d.CredentialConfigurationID), nil)
 		}
-		mint = requested
+	}
+	mint := requested
+	if mint == nil {
+		for _, id := range record.CredentialConfigurationIDs {
+			mint = append(mint, oid4vci.AuthorizationDetail{CredentialConfigurationID: id})
+		}
 	}
 	if len(mint) == 0 {
 		return nil, nil
@@ -666,16 +683,24 @@ func (iss *Issuer) recordGrants(record PreAuthorizedCodeRecord, id string) bool 
 	return scope != "" && slices.Contains(record.Scopes, scope)
 }
 
-// mintAuthorizationDetails builds one AuthorizationDetail per configID,
-// each with a single freshly generated credential_identifier (§6.2).
-// Every configID is checked against Config.CredentialConfigurationsSupported
-// first — a PreAuthorizedCodeRecord naming one this issuer doesn't
-// actually support is this deployment's own bug, not anything the
-// Wallet did wrong, so this returns a plain error rather than a
-// wallet-facing *Error.
-func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.AuthorizationDetail, error) {
-	details := make([]oid4vci.AuthorizationDetail, len(configIDs))
-	for i, configID := range configIDs {
+// mintAuthorizationDetails builds one AuthorizationDetail per asked
+// object, each with a single freshly generated credential_identifier
+// (§6.2) and asked's claims, so the token narrows issuance to them
+// (CredentialRequest.AuthorizedClaims) as an Authorization Server's
+// grant of a requested object does. Its locations are this Credential
+// Issuer's identifier when asked names any — requestedConfigurations
+// has checked they include it, and a pre-authorized code is good here
+// only — or the metadata lists authorization_servers. Every
+// configuration is checked against
+// Config.CredentialConfigurationsSupported first — a
+// PreAuthorizedCodeRecord naming one this issuer doesn't actually
+// support is this deployment's own bug, not anything the Wallet did
+// wrong, so this returns a plain error rather than a wallet-facing
+// *Error.
+func (iss *Issuer) mintAuthorizationDetails(asked []oid4vci.AuthorizationDetail) ([]oid4vci.AuthorizationDetail, error) {
+	details := make([]oid4vci.AuthorizationDetail, len(asked))
+	for i, a := range asked {
+		configID := a.CredentialConfigurationID
 		if _, ok := iss.cfg.CredentialConfigurationsSupported[configID]; !ok {
 			return nil, fmt.Errorf("credential_configuration_id %q is not supported", configID)
 		}
@@ -685,9 +710,9 @@ func (iss *Issuer) mintAuthorizationDetails(configIDs []string) ([]oid4vci.Autho
 		}
 		details[i] = oid4vci.AuthorizationDetail{
 			Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
-			CredentialIdentifiers: []string{identifier},
+			CredentialIdentifiers: []string{identifier}, Claims: cloneClaims(a.Claims),
 		}
-		if len(iss.cfg.AuthorizationServers) > 0 {
+		if len(a.Locations) > 0 || len(iss.cfg.AuthorizationServers) > 0 {
 			// §5.1.1: with authorization_servers in the metadata, locations
 			// "MUST be set to the Credential Issuer Identifier value".
 			details[i].Locations = []string{iss.cfg.Issuer.String()}
