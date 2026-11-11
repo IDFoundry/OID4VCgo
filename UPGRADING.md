@@ -7,6 +7,44 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.75.3 → next
+
+No API changes a caller has to act on.
+
+### Behaviour that changes without a code change
+
+- **`walletprovider` bounds the status list indices one instance's
+  instance keys take in a period** (`Config.MaxInstanceKeysPerPeriod`,
+  default `DefaultMaxInstanceKeysPerPeriod`, 128): each recorded key
+  takes one, and each recorded key first used in a period takes
+  another. Past it, a Wallet Attestation that would take one more is
+  refused with `ErrTooManyInstanceKeys`, which `Handler` answers
+  `429 too_many_instance_keys`, until the next period. Before, one
+  registered instance could fill a period's lists and leave every
+  other instance `ErrListsFull`. Raise it if your wallets use more
+  instance keys a period, or if `StatusListPeriod` is much longer
+  than a week.
+- **`walletprovider` rechecks Android instances before each
+  attestation.** `androidkey.EvidenceVerifier` now reports the facts
+  of the registration chain (`VerifiedEvidence.Facts`), which the
+  provider keeps as `Instance.EvidenceFacts`, and is an
+  `EvidenceRechecker`: before each Wallet and Key Attestation, it
+  judges them by its `Verifier` as it is then. An instance whose chain
+  has a certificate Google's status list now names, whose root is no
+  longer configured, or that a tightened `Verifier` policy (apps,
+  patch level, boot, security level) now refuses, is refused even
+  for an instance key it recorded before — `evidence_rejected` or
+  `policy_refused`. A status list the `Verifier` can't get fails the
+  request as the provider's own (`500`) rather than refusing it.
+  Instances registered before this release have no facts, and aren't
+  rechecked; `androidkey.InstanceFacts` decodes them for a
+  `RevokeWhere` match, which also makes a refused instance's live
+  attestations `INVALID`.
+- **`walletprovider` Suspend or Resume racing Revoke leaves the
+  instance's keys `INVALID`.** Each transition reads the instance
+  again after setting its keys' statuses, and sets them again for the
+  state it then has, so the last state stored wins.
+
 ## v0.74.0 → v0.75.2
 
 No API changes a caller has to act on; v0.75.0 adds one opt-in.
