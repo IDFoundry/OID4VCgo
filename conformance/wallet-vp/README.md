@@ -310,7 +310,11 @@ no module may log a `FAILURE` or a `WARNING`.
 `invalid-request-object-typ`, `missing-request-object-typ`,
 `age-over-18` and the three PID claims-path modules were listed by the
 suite's plans but never driven, until the plan's own module list
-became what the script drives. All pass.
+became what the script drives. All pass. `age-over-18` first ended
+`WARNING` (`EnsureMostPreferredMdocDcqlClaimSetReturned`): the mDL
+fixture held no `age_over_18`, so the wallet could only return
+`birth_date`, the least preferred option. The fixture now carries
+`age_over_18`, and the wallet returns it.
 
 **`alternate-happy-flow`'s fragment relay is now automated too.** Its
 own fragment-carrying `redirect_uri` needs relaying real fragment

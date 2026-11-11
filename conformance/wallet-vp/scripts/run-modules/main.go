@@ -324,9 +324,13 @@ var fixtureClaims = map[string]any{
 // §7.2.4's own DrivingPrivileges CDDL (an array of DrivingPrivilege
 // maps, each needing at least "vehicle_category_code").
 var mdocFixtureClaims = map[string]any{
-	"given_name":             "Jean",
-	"family_name":            "Dupont",
-	"birth_date":             "1990-01-01",
+	"given_name":  "Jean",
+	"family_name": "Dupont",
+	"birth_date":  "1990-01-01",
+	// age_over_18 lets age-over-18 check the wallet returns the
+	// verifier's most preferred claim_sets option: without it the wallet
+	// can only return birth_date, the last, which the suite warns about.
+	"age_over_18":            true,
 	"issue_date":             "2024-01-01",
 	"expiry_date":            "2034-01-01",
 	"issuing_country":        "FR",
