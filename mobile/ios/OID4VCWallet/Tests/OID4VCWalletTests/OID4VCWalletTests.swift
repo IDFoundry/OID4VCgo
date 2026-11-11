@@ -121,6 +121,52 @@ final class OID4VCWalletTests: XCTestCase {
         #endif
     }
 
+    /// A sweep deletes only the keys a KeychainKeyStore made: another of
+    /// the app's keys under the same tag prefix is kept.
+    func testKeychainSweepKeepsKeysItDidntMake() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
+        #else
+        let prefix = "org.idfoundry.oid4vcgo.test.\(UUID())."
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: prefix))
+        let orphan = try store.createKey(purpose: .dpop)
+        let tag = Data((prefix + "apps-own").utf8)
+        let attrs: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: true,
+                kSecAttrApplicationTag as String: tag,
+                kSecAttrLabel as String: "the app's own key",
+            ] as [String: Any],
+        ]
+        var error: Unmanaged<CFError>?
+        XCTAssertNotNil(SecKeyCreateRandomKey(attrs as CFDictionary, &error), "\(String(describing: error))")
+        defer {
+            SecItemDelete([kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag] as CFDictionary)
+        }
+        XCTAssertEqual(Set(try store.keyIDs()), [orphan, "apps-own"])
+        XCTAssertEqual(try store.deleteKeys(except: []), 1)
+        XCTAssertEqual(try store.keyIDs(), ["apps-own"], "the sweep deleted a key it didn't make")
+        #endif
+    }
+
+    /// A sweep refuses a store whose tag prefix is empty, or overlaps the
+    /// Wallet Provider registration key's.
+    func testSweepRefusesReservedPrefixes() throws {
+        let registration = HttpWalletProvider.registrationKeyTagPrefix
+        for prefix in ["", registration, registration + "other.", "org.idfoundry.oid4vcgo.", "org.idfoundry.", "o"] {
+            XCTAssertNotNil(Wallet.sweepRefusal(tagPrefix: prefix), "prefix \(prefix) accepted")
+        }
+        for prefix in [KeychainKeyStore.Options().tagPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test."] {
+            XCTAssertNil(Wallet.sweepRefusal(tagPrefix: prefix), "prefix \(prefix) refused")
+        }
+        let empty = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: ""))
+        _ = try empty.createKey(purpose: .dpop)
+        XCTAssertThrowsError(try empty.deleteKeys(except: []))
+        XCTAssertEqual(try empty.keyIDs().count, 1)
+    }
+
     /// Keys in the Secure Enclave — simulated by the iOS Simulator; a
     /// real device needs the demo app.
     func testCheckKeyStoreSecureEnclave() async throws {

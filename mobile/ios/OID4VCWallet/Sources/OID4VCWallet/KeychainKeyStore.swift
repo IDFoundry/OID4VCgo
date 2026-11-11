@@ -39,6 +39,9 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         public var holderUserPresence: Bool
         /// Prefixes every key's Keychain application tag. Keys under
         /// another prefix are never touched, by a sweep or anything else.
+        /// A sweep refuses an empty one; and the wallet's mustn't cover,
+        /// or fall under, ``HttpWalletProvider/registrationKeyTagPrefix``,
+        /// which ``Wallet/sweepOrphanedKeys(in:)`` refuses.
         public var tagPrefix: String
         /// The Keychain access group holder keys are made in, when the
         /// app shares them with an extension — a document provider
@@ -81,7 +84,7 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         var privateAttrs: [String: Any] = [
             kSecAttrIsPermanent as String: options.persistent,
             kSecAttrApplicationTag as String: tag(id),
-            kSecAttrLabel as String: "oid4vcgo " + purpose.rawValue,
+            kSecAttrLabel as String: Self.labelPrefix + purpose.rawValue,
         ]
         let policy = Self.accessPolicy(purpose: purpose, options: options)
         if let group = policy.accessGroup {
@@ -224,8 +227,14 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
 
     /// The IDs of every key this store holds (under its tag prefix).
     public func keyIDs() throws -> [String] {
+        try listKeys().map(\.id)
+    }
+
+    /// Every key under the tag prefix, and whether a `KeychainKeyStore`
+    /// made it (`createKey` labels it with its purpose).
+    private func listKeys() throws -> [(id: String, ours: Bool)] {
         if !options.persistent {
-            return lock.withLock { Array(ephemeral.keys) }
+            return lock.withLock { ephemeral.keys.map { ($0, true) } }
         }
         let q: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -242,18 +251,36 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         let prefix = Data(options.tagPrefix.utf8)
         return all.compactMap { attrs in
             guard let tag = attrs[kSecAttrApplicationTag as String] as? Data, tag.starts(with: prefix) else { return nil }
-            return String(decoding: tag.dropFirst(prefix.count), as: UTF8.self)
+            let id = String(decoding: tag.dropFirst(prefix.count), as: UTF8.self)
+            return (id, Self.madeByStore(label: attrs[kSecAttrLabel as String] as? String))
         }
+    }
+
+    /// The label prefix `createKey` gives every key, before its purpose.
+    static let labelPrefix = "oid4vcgo "
+
+    /// Whether a key labelled `label` is one a `KeychainKeyStore` made.
+    static func madeByStore(label: String?) -> Bool {
+        label?.hasPrefix(labelPrefix) == true
     }
 
     /// Deletes every key this store holds except `keep`, and returns how
     /// many it deleted. `Wallet.sweepOrphanedKeys(in:)` calls it with the
     /// keys the wallet's credentials are bound to.
+    ///
+    /// It deletes only keys a `KeychainKeyStore` made (labelled with
+    /// their purpose by `createKey`) under `Options.tagPrefix`: another
+    /// of the app's keys under that prefix, made otherwise, is kept. It
+    /// throws for an empty `tagPrefix`, which covers every tagged key in
+    /// the app's Keychain.
     @discardableResult
     public func deleteKeys(except keep: Set<String>) throws -> Int {
+        guard !options.tagPrefix.isEmpty else {
+            throw StoreError("delete keys: the key store's tagPrefix is empty, which covers every tagged key")
+        }
         var deleted = 0
-        for id in try keyIDs() where !keep.contains(id) {
-            try deleteKey(id: id)
+        for key in try listKeys() where key.ours && !keep.contains(key.id) {
+            try deleteKey(id: key.id)
             deleted += 1
         }
         return deleted
@@ -296,10 +323,10 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         var item: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &item)
         guard status == errSecSuccess, let attrs = item as? [String: Any],
-              let label = attrs[kSecAttrLabel as String] as? String, label.hasPrefix("oid4vcgo ") else {
+              let label = attrs[kSecAttrLabel as String] as? String, Self.madeByStore(label: label) else {
             return nil
         }
-        return KeyPurpose(rawValue: String(label.dropFirst("oid4vcgo ".count)))
+        return KeyPurpose(rawValue: String(label.dropFirst(Self.labelPrefix.count)))
     }
 
     private func query(_ id: String) -> [String: Any] {
