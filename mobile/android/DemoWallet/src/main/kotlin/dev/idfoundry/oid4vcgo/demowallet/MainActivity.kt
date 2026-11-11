@@ -64,9 +64,10 @@ class MainActivity : ComponentActivity() {
      * debuggable build only. This activity is exported, for its deep
      * links: in a release build any app could otherwise replace the
      * wallet's trust roots, wipe it, or open an offer or request without
-     * the confirmation a link gets. Any build also takes its
+     * the confirmation a link gets. A debuggable build also takes its
      * configuration from the demo-config.json the run scripts push to
-     * its external files directory, which only adb and the app write.
+     * its external files directory (DemoConfiguration.load): a release
+     * build doesn't, as below Android 10 other apps can write there.
      */
     private fun testExtras(intent: Intent?): Intent? =
         intent.takeIf { applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }

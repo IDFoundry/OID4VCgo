@@ -72,9 +72,10 @@ the issuer, or a tracker it names, that the offer was opened).
 ## Configuration
 
 The app takes its configuration — the JSON mobile/cmd/testservices
-serves at `/config` — from `demo-config.json` pushed to its external
-files directory, or, in a debug build only, from the launch intent's
-`config` extra, and remembers it. The other test extras (`reset`,
+serves at `/config` — in a debug build only, from `demo-config.json`
+pushed to its external files directory or from the launch intent's
+`config` extra, and remembers it. A release build reads neither: below
+Android 10 other apps can write the external files directory. The other test extras (`reset`,
 `offer`, `request`) are debug-only too: the main activity is exported
 for its links, and a release build mustn't let any app replace its
 trust roots, wipe it, or skip a link's confirmation.
