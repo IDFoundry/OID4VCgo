@@ -53,8 +53,8 @@ type Checker struct {
 // Check validates ref, fetches the list it names and checks it, as
 // Check does: documentSignerPath is the MSO's IssuerAuth x5chain as
 // verified, and ref and it must come from a verified MSO. With an
-// error, revoked is true. With a Cache, the identifiers returned share
-// memory with it: treat them as read-only.
+// error, revoked is true. The claims returned are the caller's own,
+// with a Cache too.
 func (c Checker) Check(ctx context.Context, ref Ref, documentSignerPath []*x509.Certificate) (revoked bool, claims TokenClaims, err error) {
 	claims, cached, err := c.check(ctx, ref, documentSignerPath)
 	if err != nil {
@@ -188,9 +188,10 @@ func (m *tokenMemo) bytes() int {
 	return n
 }
 
-// clone is c with its own exp, ttl and identifier slice, so a caller
-// changing them doesn't change a Cache's; the identifiers' bytes are
-// still shared.
+// clone is c with its own exp, ttl and identifiers, so a caller
+// changing them doesn't change a Cache's. The identifiers' bytes are
+// copied into one buffer, each capped at its own length, so appending
+// to one doesn't overwrite the next.
 func (c TokenClaims) clone() TokenClaims {
 	if c.Exp != nil {
 		exp := *c.Exp
@@ -200,7 +201,21 @@ func (c TokenClaims) clone() TokenClaims {
 		ttl := *c.TTL
 		c.TTL = &ttl
 	}
-	c.Identifiers = slices.Clone(c.Identifiers)
+	if c.Identifiers == nil {
+		return c
+	}
+	n := 0
+	for _, id := range c.Identifiers {
+		n += len(id)
+	}
+	buf := make([]byte, 0, n)
+	ids := make([][]byte, len(c.Identifiers))
+	for i, id := range c.Identifiers {
+		start := len(buf)
+		buf = append(buf, id...)
+		ids[i] = buf[start:len(buf):len(buf)]
+	}
+	c.Identifiers = ids
 	return c
 }
 

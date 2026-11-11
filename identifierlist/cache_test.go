@@ -54,7 +54,11 @@ func TestChecker_Cache(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantFetches(1, "two MSOs")
-	claims.Identifiers[0] = []byte{0xdd} // a caller's change doesn't reach the cache
+	claims.Identifiers[0][0] = 0xdd // a caller's change to an identifier's bytes doesn't reach the cache
+	if err := c.RequireNotRevoked(ctx, Ref{ID: []byte{0xcc}, URI: uri}, pki.dsPath); !errors.Is(err, ErrRevoked) {
+		t.Errorf("revoked, after a caller changed an identifier: %v", err)
+	}
+	claims.Identifiers[0] = []byte{0xdd} // nor one to the slice
 	if err := c.RequireNotRevoked(ctx, Ref{ID: []byte{0xcc}, URI: uri}, pki.dsPath); !errors.Is(err, ErrRevoked) {
 		t.Errorf("revoked, after a caller changed its claims: %v", err)
 	}
