@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -1138,26 +1137,11 @@ func holderPublicKeyFromCNF(cnf any) (crypto.PublicKey, jose.Alg, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("parse cnf.jwk: %w", err)
 	}
-	alg, err := sdjwtvcAlgForKey(pub)
+	alg, err := jose.AlgForKey(pub)
 	if err != nil {
 		return nil, "", err
 	}
 	return pub, alg, nil
-}
-
-// sdjwtvcAlgForKey infers the JOSE algorithm a "dc+sd-jwt" JWS
-// verifies under from its own public key's type — internal/jose's own
-// ES256/EdDSA scope (see its doc comment), the same inference
-// holderPublicKeyFromCNF and X5CIssuerKeyResolver both need.
-func sdjwtvcAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return jose.ES256, nil
-	case ed25519.PublicKey:
-		return jose.EdDSA, nil
-	default:
-		return "", fmt.Errorf("unsupported public key type %T", pub)
-	}
 }
 
 // errNotThisRequest marks a presentation that isn't bound to this

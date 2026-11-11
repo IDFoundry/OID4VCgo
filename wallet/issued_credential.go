@@ -3,8 +3,6 @@ package wallet
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -203,7 +201,7 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	alg, err := joseAlgForKey(leaf.PublicKey)
+	alg, err := jose.AlgForKey(leaf.PublicKey)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
@@ -376,20 +374,9 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 	return ok && eq.Equal(b)
 }
 
-// joseAlgForKey and coseAlgForKey pick the signature algorithm from the
-// verified certificate's key type, never from the credential's own
-// (untrusted) header.
-func joseAlgForKey(pub crypto.PublicKey) (jose.Alg, error) {
-	switch pub.(type) {
-	case *ecdsa.PublicKey:
-		return jose.ES256, nil
-	case ed25519.PublicKey:
-		return jose.EdDSA, nil
-	default:
-		return "", fmt.Errorf("unsupported issuer key type %T", pub)
-	}
-}
-
+// coseAlgForKey, like jose.AlgForKey for an SD-JWT VC, picks the
+// signature algorithm from the verified certificate's key type, never
+// from the credential's own (untrusted) header.
 func coseAlgForKey(pub crypto.PublicKey) (cose.Alg, error) {
 	alg, err := cose.AlgForKey(pub)
 	if err != nil {

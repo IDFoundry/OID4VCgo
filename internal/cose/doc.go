@@ -13,7 +13,8 @@
 // and EdDSA (§9.1.2.4, §9.1.3.6, §9.1.4); AlgForKey picks the one a
 // key verifies with. The brainpool curves and Ed448 it also lists
 // aren't in Go's standard library, and aren't supported: a key on one
-// is refused. internal/jose, for SD-JWT VC, stays at ES256 and EdDSA.
+// is refused. internal/jose, for SD-JWT VC, verifies the same four but
+// signs ES256 and EdDSA only.
 // HMAC256 ("HMAC 256/256", COSE algorithm 5, mac0.go) is the only MAC
 // algorithm supported, since it's the only one mdoc's DeviceMac uses.
 //

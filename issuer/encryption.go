@@ -307,7 +307,7 @@ func (iss *Issuer) responseEncryptionKey(req *ResponseEncryptionRequest) (*ecdsa
 		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "malformed credential_response_encryption.jwk", err)
 	}
 	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
+	if !ok || ecPub.Curve != elliptic.P256() {
 		return nil, "", newError(ErrorInvalidEncryptionParameters, 400, "credential_response_encryption.jwk must be an EC P-256 key", nil)
 	}
 	// The Wallet's own jwk may optionally carry its own "kid" — if so,

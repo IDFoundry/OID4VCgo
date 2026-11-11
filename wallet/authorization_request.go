@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -578,8 +579,9 @@ func selectResponseEncryptionKey(keys []json.RawMessage) (*ecdsa.PublicKey, stri
 		if err != nil {
 			continue
 		}
+		// ECDH-ES here is on P-256 only (internal/jwe).
 		encPub, ok := rawPub.(*ecdsa.PublicKey)
-		if !ok {
+		if !ok || encPub.Curve != elliptic.P256() {
 			continue
 		}
 		return encPub, kid.Kid, nil

@@ -16,8 +16,28 @@ import (
 // refused, so one value has one encoding.
 var b64 b64url.Encoding
 
-// JWK is the minimal JWK (RFC 7517) shape this package supports: P-256
-// EC keys ("kty":"EC") and Ed25519 OKP keys ("kty":"OKP"). D is only
+// curves are the EC curves this package supports, by their JWK "crv"
+// names (RFC 7518 §6.2.1.1): those of ES256, ES384 and ES512.
+var curves = map[string]elliptic.Curve{
+	"P-256": elliptic.P256(),
+	"P-384": elliptic.P384(),
+	"P-521": elliptic.P521(),
+}
+
+// curveName is c's JWK "crv" name, if this package supports c.
+func curveName(c elliptic.Curve) (string, bool) {
+	for name, curve := range curves {
+		if c == curve {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// JWK is the minimal JWK (RFC 7517) shape this package supports: P-256,
+// P-384 and P-521 EC keys ("kty":"EC") and Ed25519 OKP keys
+// ("kty":"OKP"). A caller that needs one curve only — ECDH-ES
+// encryption on P-256, say — checks the key it gets. D is only
 // ever populated by MarshalPrivate (Marshal never sets it) — kept on
 // this same type, not a separate one, so PublicKey/Thumbprint/Matches
 // all keep working unchanged on a JWK that happens to carry a private
@@ -29,7 +49,8 @@ type JWK struct {
 	Y   string `json:"y,omitempty"`
 
 	// D is the private key (RFC 7518 §6.2.2.1 "d" for EC, RFC 8037 §2
-	// "d" for OKP) — the 32-byte private scalar/seed, base64url
+	// "d" for OKP) — the private scalar (the curve's field size)
+	// or the 32-byte Ed25519 seed, base64url
 	// (no padding) encoded. Empty for a public-only JWK.
 	D string `json:"d,omitempty"`
 }
@@ -38,18 +59,20 @@ type JWK struct {
 func Marshal(pub crypto.PublicKey) (JWK, error) {
 	switch k := pub.(type) {
 	case *ecdsa.PublicKey:
-		if k.Curve != elliptic.P256() {
-			return JWK{}, fmt.Errorf("jwk: unsupported EC curve (only P-256 is supported)")
+		crv, ok := curveName(k.Curve)
+		if !ok {
+			return JWK{}, fmt.Errorf("jwk: unsupported EC curve (only P-256, P-384 and P-521 are supported)")
 		}
-		// SEC1 uncompressed point: 0x04 || X || Y, each 32 bytes for
-		// P-256 — avoids the deprecated PublicKey.X/Y field access (see
-		// crypto/ecdsa's own doc comment as of Go 1.26).
+		// SEC1 uncompressed point: 0x04 || X || Y, each the curve's
+		// field size (RFC 7518 §6.2.1.2) — avoids the deprecated
+		// PublicKey.X/Y field access (see crypto/ecdsa's own doc
+		// comment as of Go 1.26).
 		raw, err := k.Bytes()
 		if err != nil {
 			return JWK{}, fmt.Errorf("jwk: encode public key: %w", err)
 		}
 		size := (len(raw) - 1) / 2
-		return JWK{Kty: "EC", Crv: "P-256", X: b64.EncodeToString(raw[1 : 1+size]), Y: b64.EncodeToString(raw[1+size:])}, nil
+		return JWK{Kty: "EC", Crv: crv, X: b64.EncodeToString(raw[1 : 1+size]), Y: b64.EncodeToString(raw[1+size:])}, nil
 	case ed25519.PublicKey:
 		return JWK{Kty: "OKP", Crv: "Ed25519", X: b64.EncodeToString(k)}, nil
 	default:
@@ -97,8 +120,9 @@ func MarshalPrivate(priv crypto.PrivateKey) (JWK, error) {
 func (k JWK) PublicKey() (crypto.PublicKey, error) {
 	switch k.Kty {
 	case "EC":
-		if k.Crv != "P-256" {
-			return nil, fmt.Errorf("jwk: unsupported EC curve %q (only P-256 is supported)", k.Crv)
+		curve, ok := curves[k.Crv]
+		if !ok {
+			return nil, fmt.Errorf("jwk: unsupported EC curve %q (only P-256, P-384 and P-521 are supported)", k.Crv)
 		}
 		x, err := b64.DecodeString(k.X)
 		if err != nil {
@@ -108,7 +132,6 @@ func (k JWK) PublicKey() (crypto.PublicKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("jwk: decode y: %w", err)
 		}
-		curve := elliptic.P256()
 		size := (curve.Params().BitSize + 7) / 8
 		if len(x) != size || len(y) != size {
 			return nil, fmt.Errorf("jwk: EC coordinate has unexpected length")
@@ -205,10 +228,10 @@ func (k JWK) Thumbprint() (string, error) {
 	var canonical string
 	switch k.Kty {
 	case "EC":
-		if k.Crv != "P-256" {
-			return "", fmt.Errorf("jwk: thumbprint: unsupported EC curve %q (only P-256 is supported)", k.Crv)
+		if _, ok := curves[k.Crv]; !ok {
+			return "", fmt.Errorf("jwk: thumbprint: unsupported EC curve %q (only P-256, P-384 and P-521 are supported)", k.Crv)
 		}
-		canonical = fmt.Sprintf(`{"crv":"P-256","kty":"EC","x":%q,"y":%q}`, k.X, k.Y)
+		canonical = fmt.Sprintf(`{"crv":%q,"kty":"EC","x":%q,"y":%q}`, k.Crv, k.X, k.Y)
 	case "OKP":
 		if k.Crv != "Ed25519" {
 			return "", fmt.Errorf("jwk: thumbprint: unsupported OKP curve %q (only Ed25519 is supported)", k.Crv)

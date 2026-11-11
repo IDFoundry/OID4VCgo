@@ -163,7 +163,7 @@ func (c CredentialConfiguration) validateBindingAndProofTypes() error {
 			continue
 		}
 		for _, alg := range p.ProofSigningAlgValuesSupported {
-			if !jose.IsSupported(jose.Alg(alg)) {
+			if !jose.IsVerifiable(jose.Alg(alg)) {
 				return fmt.Errorf("proof_types_supported[%q]: proof_signing_alg_values_supported lists %q, which this issuer can't verify", id, alg)
 			}
 		}

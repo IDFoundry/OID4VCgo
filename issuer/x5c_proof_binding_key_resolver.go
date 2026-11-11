@@ -9,6 +9,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // X5CProofBindingKeyResolver implements ProofBindingKeyResolver by
@@ -70,7 +71,7 @@ func (r X5CProofBindingKeyResolver) ResolveProofBindingKey(ctx context.Context, 
 	if err != nil {
 		return nil, "", err
 	}
-	alg, err := algForKey(leaf.PublicKey)
+	alg, err := jose.AlgForKey(leaf.PublicKey)
 	if err != nil {
 		return nil, "", err
 	}

@@ -1,6 +1,6 @@
 // Package jwk implements a small, self-contained JWK (RFC 7517)
-// marshaler/parser for the two key types internal/jose signs with:
-// P-256 EC keys and Ed25519 OKP keys. It is deliberately not a
+// marshaler/parser for the key types internal/jose verifies with:
+// P-256, P-384 and P-521 EC keys and Ed25519 OKP keys. It is deliberately not a
 // general-purpose JWK codec — extend alongside internal/jose if a real
 // need for another key type arises.
 //

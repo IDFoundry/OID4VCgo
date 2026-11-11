@@ -503,3 +503,20 @@ func TestDecodePartyInfo_RejectsInvalidBase64(t *testing.T) {
 		t.Fatalf("decodePartyInfo = nil error, want error for invalid base64url")
 	}
 }
+
+// ECDH-ES here derives keys on P-256 only: a recipient key on another
+// curve is refused, not handed to crypto/ecdh to fail there.
+func TestEncrypt_RefusesNonP256Recipient(t *testing.T) {
+	for _, c := range []elliptic.Curve{elliptic.P384(), elliptic.P521()} {
+		key, err := ecdsa.GenerateKey(c, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Encrypt(&key.PublicKey, A128GCM, []byte(`{}`), EncryptOptions{}); err == nil || !strings.Contains(err.Error(), "P-256") {
+			t.Errorf("%s: Encrypt = %v, want a P-256 error", c.Params().Name, err)
+		}
+	}
+	if _, err := Encrypt(nil, A128GCM, []byte(`{}`), EncryptOptions{}); err == nil {
+		t.Error("Encrypt accepted a nil recipient key")
+	}
+}

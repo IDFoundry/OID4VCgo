@@ -21,6 +21,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -180,7 +181,7 @@ type polarisVector struct {
 type polarisFixedKey struct{ pub crypto.PublicKey }
 
 func (r polarisFixedKey) ResolveIssuerKey(context.Context, map[string]any, map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
-	alg, err := sdjwtvcAlgForKey(r.pub)
+	alg, err := jose.AlgForKey(r.pub)
 	return r.pub, alg, err
 }
 

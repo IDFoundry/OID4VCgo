@@ -83,7 +83,7 @@ func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL stri
 		return nil, errors.New("signed metadata: the signer certificate is self-signed")
 	}
 	alg, _ := header["alg"].(string)
-	if !jose.IsSupported(jose.Alg(alg)) {
+	if !jose.IsVerifiable(jose.Alg(alg)) {
 		return nil, fmt.Errorf("signed metadata: alg %q is not supported", alg)
 	}
 	_, payload, err := jose.VerifyMax(jose.Alg(alg), leaf.PublicKey, token, int(w.cfg.Fetch.MaxResponseBytes))

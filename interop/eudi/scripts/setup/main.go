@@ -10,10 +10,13 @@
 // under a CA the verifier is told to trust; and unrelated CAs for the
 // controls.
 //
-// Usage: go run ./interop/eudi/scripts/setup -out DIR -serve-url URL
+// Usage: go run ./interop/eudi/scripts/setup -out DIR -serve-url URL [-verifier-curve P-521]
 //
 // URL is where the verifier reaches serve (https://host:port), whose
-// host must be one of -serve-hosts.
+// host must be one of -serve-hosts. -verifier-curve P-521 makes the
+// Access Certificate a P-521 key's, for the EUDI verifier signing ES512
+// (run-verifier.sh); P-256, the default, signs ES256, as
+// cmd/conformance-verifier does (run-wallet.sh).
 //
 // DIR receives:
 //
@@ -35,6 +38,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -111,23 +115,24 @@ func main() {
 	out := flag.String("out", "", "directory to write into")
 	serveURL := flag.String("serve-url", "", "the base URL the verifier reaches serve at")
 	serveHosts := flag.String("serve-hosts", "localhost,host.docker.internal", "comma-separated DNS names for serve's TLS certificate")
+	verifierCurve := flag.String("verifier-curve", "P-256", "the Access Certificate key's curve: P-256, signing ES256, or P-521, signing ES512")
 	flag.Parse()
 	if *out == "" || *serveURL == "" {
 		fail("-out and -serve-url are required")
 	}
-	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ",")); err != nil {
+	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve); err != nil {
 		fail(err.Error())
 	}
 }
 
-func run(dir, serveURL string, serveHosts []string) error {
+func run(dir, serveURL string, serveHosts []string, verifierCurve string) error {
 	if u, err := url.Parse(serveURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("-serve-url %q isn't an https URL", serveURL)
 	}
 	files := map[string][]byte{}
 	put := func(name, content string) { files[name] = []byte(content) }
 
-	if err := verifierFiles(put); err != nil {
+	if err := verifierFiles(put, verifierCurve); err != nil {
 		return err
 	}
 	if err := serveFiles(put, serveHosts); err != nil {
@@ -168,11 +173,34 @@ func run(dir, serveURL string, serveHosts []string) error {
 }
 
 // verifierFiles makes the verifier's Access Certificate, registration
-// certificate and TLS listener.
-func verifierFiles(put func(name, content string)) error {
+// certificate and TLS listener. The Access Certificate's key is on
+// curve: P-521 for the EUDI verifier, which signs ES512 as its own
+// docker-compose configures it, and P-256 for cmd/conformance-verifier,
+// which signs ES256.
+func verifierFiles(put func(name, content string), curve string) error {
+	var c elliptic.Curve
+	switch curve {
+	case "P-256":
+		c = elliptic.P256()
+	case "P-521":
+		c = elliptic.P521()
+	default:
+		return fmt.Errorf("-verifier-curve %q isn't P-256 or P-521", curve)
+	}
 	// EUDI refuses a self-signed Access Certificate.
-	verifierKey, verifierKeyPEM, verifierCertPEM, verifierCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcgo-eudi-interop-verifier", "oid4vcgo-eudi-interop-verifier-ca")
+	verifierKey, err := ecdsa.GenerateKey(c, rand.Reader)
+	if err != nil {
+		return err
+	}
+	verifierKeyPEM, err := conformancecert.ECKeyPEM(verifierKey)
+	if err != nil {
+		return err
+	}
+	verifierCA, verifierCAKey, verifierCAPEM, _, err := conformancecert.GenerateCA("oid4vcgo-eudi-interop-verifier-ca")
+	if err != nil {
+		return fmt.Errorf("verifier access certificate: %w", err)
+	}
+	verifierCertPEM, err := conformancecert.IssueLeafCertPEM("oid4vcgo-eudi-interop-verifier", verifierKey, verifierCA, verifierCAKey)
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
@@ -339,9 +367,10 @@ func typeMetadata() ([]byte, error) {
 }
 
 // registrationCertificate is a Wallet Relying Party Registration
-// Certificate (an rc-wrp+jwt) for the verifier, signed with its Access
-// Certificate's key: the EUDI verifier puts one in every request and
-// refuses a transaction without one. Its contents are illustrative.
+// Certificate (an rc-wrp+jwt) for the verifier, signed with its
+// Access Certificate's key (ES512 on P-521, ES256 on P-256): the EUDI
+// verifier puts one in every request
+// and refuses a transaction without one. Its contents are illustrative.
 func registrationCertificate(key *ecdsa.PrivateKey, certPEM string) (string, error) {
 	cert, err := conformancecert.ParseCertificatePEM(certPEM)
 	if err != nil {
@@ -362,10 +391,35 @@ func registrationCertificate(key *ecdsa.PrivateKey, certPEM string) (string, err
 	if err != nil {
 		return "", err
 	}
-	return jose.Sign(jose.ES256, key, map[string]any{
+	header := map[string]any{
 		"typ": "rc-wrp+jwt",
 		"x5c": []string{base64.StdEncoding.EncodeToString(cert.Raw)},
-	}, payload)
+	}
+	if key.Curve == elliptic.P521() {
+		return signES512(key, header, payload)
+	}
+	return jose.Sign(jose.ES256, key, header, payload)
+}
+
+// signES512 signs payload as a compact JWS under header, ES512 (RFC
+// 7518 §3.4) with key, a P-521 key: internal/jose verifies ES512 but
+// signs only ES256 and EdDSA.
+func signES512(key *ecdsa.PrivateKey, header map[string]any, payload []byte) (string, error) {
+	header["alg"] = "ES512"
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	input := base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	digest := sha512.Sum512([]byte(input))
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		return "", err
+	}
+	sig := make([]byte, 2*66)
+	r.FillBytes(sig[:66])
+	s.FillBytes(sig[66:])
+	return input + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
 // baseWalletConfig is what both wallet configs share: the listener,
