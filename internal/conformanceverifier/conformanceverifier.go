@@ -18,13 +18,16 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -94,6 +97,9 @@ type Config struct {
 	Namespace            string          `json:"namespace,omitempty"`
 	MdocClaims           []string        `json:"mdoc_claims,omitempty"`
 	MdocTrustAnchorPEM   string          `json:"mdoc_trust_anchor_pem,omitempty"`
+	// RejectUnverifiedResponses is always set here: see
+	// cmd/conformance-verifier's Config, and DriveModule.
+	RejectUnverifiedResponses bool `json:"reject_unverified_responses"`
 }
 
 // KeyMaterial is everything GenerateKeyMaterial produces: a caller
@@ -148,6 +154,8 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 			ClientCertificatePEM: certPEM,
 			ClientPrivateKeyPEM:  keyPEM,
 			CredentialIssuerJWK:  issuerJWKRaw,
+
+			RejectUnverifiedResponses: true,
 		},
 		ClientCACertPEM:            caCertPEM,
 		CredentialIssuerPrivateJWK: issuerPrivateJWK,
@@ -310,28 +318,30 @@ const placeholderPNGDataURI = "data:image/png;base64," +
 // conformance/verifier/README.md's own "Interaction model, confirmed
 // live" section documents: GET this binary's own /authorize to mint a
 // session and get its "openid4vp://" deep link, then GET that same
-// query string against the suite's own authorization_endpoint. Every
-// module in this plan needs the same upload-placeholder fill —
-// cmd/conformance-verifier's own POST /response always replies 200
-// regardless of verification outcome (handlers.go's own
-// handleResponse never returns a 4xx, for either a wallet-side parse
-// error or a VerifyResponse rejection), so every module always takes
-// the suite's own "success response, defer grading to a screenshot of
-// the /result page" branch — confirmed by reading handleResponse
-// directly, not assumed from any one module's own testSummary text.
-// Filled here the same proven way
-// conformance/issuer/scripts/run-fapi2sp-battery/unblock.go fills one
-// for a different role's own modules.
-func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testName string, moduleVariant map[string]string) (status, result string, err error) {
+// query string against the suite's own authorization_endpoint.
+//
+// cmd/conformance-verifier runs with reject_unverified_responses (see
+// Config), so a presentation it verifies is answered 200 and the suite
+// asks for a screenshot of the result page (filled here with a
+// placeholder image, the same proven way
+// conformance/issuer/scripts/run-fapi2sp-battery/unblock.go fills one,
+// ending the module REVIEW), while one it refuses is answered 400 and
+// the suite grades the module itself, without a screenshot. The
+// result is then graded against the module's Expectation (Grade).
+func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testName string, moduleVariant map[string]string) ModuleResult {
+	res := ModuleResult{TestName: testName, Expected: expectations[testName]}
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, moduleVariant)
 	if err != nil {
-		return "", "", fmt.Errorf("create module instance: %w", err)
+		res.Err = fmt.Errorf("create module instance: %w", err)
+		return res
 	}
+	res.ModuleID = module.ID
 	// The suite sets a module up asynchronously: a wallet request that
 	// reaches it before WAITING can leave it stuck, and it then never
 	// asks for its upload placeholder.
 	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, module.ID, restartTimeout); err != nil {
-		return "", "", err
+		res.Err = err
+		return res
 	}
 
 	noRedirect := &http.Client{
@@ -340,16 +350,20 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 	}
 	authorizeResp, err := noRedirect.Get(verifierBase + "/authorize")
 	if err != nil {
-		return "", "", fmt.Errorf("GET %s/authorize: %w", verifierBase, err)
+		res.Err = fmt.Errorf("GET %s/authorize: %w", verifierBase, err)
+		return res
 	}
 	deepLink := authorizeResp.Header.Get("Location")
 	_ = authorizeResp.Body.Close()
-	if deepLink == "" {
-		return "", "", fmt.Errorf("GET %s/authorize returned no Location header (status %d)", verifierBase, authorizeResp.StatusCode)
-	}
 	query, ok := strings.CutPrefix(deepLink, "openid4vp://")
 	if !ok {
-		return "", "", fmt.Errorf("GET %s/authorize Location %q does not start with openid4vp://", verifierBase, deepLink)
+		res.Err = fmt.Errorf("GET %s/authorize Location %q (status %d) is no openid4vp:// link", verifierBase, deepLink, authorizeResp.StatusCode)
+		return res
+	}
+	sessionID, err := sessionIDOf(query)
+	if err != nil {
+		res.Err = err
+		return res
 	}
 
 	// noRedirect again: the suite's own final response, once its
@@ -361,65 +375,150 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 	driveURL := module.URL + "/authorize" + query
 	driveResp, err := noRedirect.Get(driveURL)
 	if err != nil {
-		return "", "", fmt.Errorf("GET %s: %w", driveURL, err)
+		res.Err = fmt.Errorf("GET %s: %w", driveURL, err)
+		return res
 	}
 	_ = driveResp.Body.Close()
 
 	if err := fillUploadPlaceholder(httpClient, apiBase, module.ID); err != nil {
-		return "", "", fmt.Errorf("fill upload placeholder: %w", err)
+		res.Err = fmt.Errorf("fill upload placeholder: %w", err)
+		return res
 	}
-
-	return conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, restartTimeout)
+	res.Status, res.Result, err = conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, restartTimeout)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	res.VerifierOutcome, err = verifierOutcome(httpClient, verifierBase, sessionID)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	entries, err := conformancesuite.FetchModuleLog(httpClient, apiBase, module.ID)
+	if err != nil {
+		res.Err = fmt.Errorf("fetch module log: %w", err)
+		return res
+	}
+	res.Err = Grade(res.Expected, res.Status, res.Result, res.VerifierOutcome, entries)
+	return res
 }
 
-// ModuleResult is one DriveModule call's own outcome, keyed by its own
-// testName — both run-sdjwt-modules and run-mdoc-module accumulate a
-// slice of these to print as a summary once every module has run.
+// sessionIDOf is the cmd/conformance-verifier session a deep link's
+// query string starts: its request_uri's last path segment
+// (/request/{id}).
+func sessionIDOf(query string) (string, error) {
+	values, err := url.ParseQuery(strings.TrimPrefix(query, "?"))
+	if err != nil {
+		return "", fmt.Errorf("parse deep link query %q: %w", query, err)
+	}
+	requestURI, err := url.Parse(values.Get("request_uri"))
+	if err != nil || !strings.HasPrefix(requestURI.Path, "/request/") {
+		return "", fmt.Errorf("deep link query %q carries no /request/{id} request_uri", query)
+	}
+	return path.Base(requestURI.Path), nil
+}
+
+// Verifier outcomes, as cmd/conformance-verifier's result page reports
+// them.
+const (
+	outcomeVerified = "verified"
+	outcomeFailed   = "failed"
+	outcomePending  = "pending"
+)
+
+// verifierOutcome reads what cmd/conformance-verifier decided for
+// sessionID from its result page (GET /result/{id}, the page the
+// suite's screenshot stands for): the Verifier's own verdict, which
+// the suite can't see when it answered 200.
+func verifierOutcome(httpClient *http.Client, verifierBase, sessionID string) (string, error) {
+	resp, err := httpClient.Get(verifierBase + "/result/" + url.PathEscape(sessionID)) //nolint:gosec,noctx // verifierBase is the operator's own -verifier-base flag
+	if err != nil {
+		return "", fmt.Errorf("GET result page: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read result page: %w", err)
+	}
+	page := string(body)
+	switch {
+	case resp.StatusCode != http.StatusOK:
+		return "", fmt.Errorf("GET result page: status %d", resp.StatusCode)
+	case strings.Contains(page, "<h1>Verification succeeded</h1>"):
+		return outcomeVerified, nil
+	case strings.Contains(page, "<h1>Verification failed</h1>"):
+		return outcomeFailed, nil
+	case strings.Contains(page, "<h1>Pending</h1>"):
+		return outcomePending, nil
+	}
+	return "", fmt.Errorf("result page reports no outcome: %.200s", page)
+}
+
+// ModuleResult is one DriveModule call's outcome: the suite's
+// status/result, the Verifier's own (VerifierOutcome), the module's
+// Expectation, and Err, set whenever any of them isn't as expected.
 type ModuleResult struct {
-	TestName string
-	Status   string
-	Result   string
-	Err      error
+	TestName        string
+	ModuleID        string
+	Expected        Expectation
+	Status          string
+	Result          string
+	VerifierOutcome string
+	Err             error
 }
 
-// DriveModules calls DriveModule for every testNames entry in order
-// against the same planID/moduleVariant, logging each one's own
-// outcome as it completes — the driving loop run-sdjwt-modules and
-// run-mdoc-module both used to duplicate near-verbatim (confirmed live
-// by SonarCloud's own duplication gate on the PR that added
-// run-mdoc-module's own multi-module driving loop, mirroring this
-// package's own doc comment about why it exists at all).
-func DriveModules(httpClient *http.Client, apiBase, verifierBase, planID string, testNames []string, moduleVariant map[string]string) []ModuleResult {
-	results := make([]ModuleResult, 0, len(testNames))
-	for _, testName := range testNames {
-		status, result, err := DriveModule(httpClient, apiBase, verifierBase, planID, testName, moduleVariant)
-		res := ModuleResult{TestName: testName, Status: status, Result: result, Err: err}
-		results = append(results, res)
-		if err != nil {
-			log.Printf("%s: ERROR: %v", testName, err)
-		} else {
-			log.Printf("%s: %s=%s", testName, status, result)
+// DriveModules drives every module of the plan's own module list
+// (planModules, as CreatePlan returned it) that expectations names, in
+// the plan's order and against moduleVariant, logging each outcome as
+// it completes. A module the plan lists but expectations doesn't name
+// fails the run (a new suite module is classified before it is
+// trusted), unless notDriven gives the reason it isn't driven.
+func DriveModules(httpClient *http.Client, apiBase, verifierBase, planID string, planModules []conformancesuite.PlanModule, moduleVariant map[string]string) []ModuleResult {
+	results := make([]ModuleResult, 0, len(planModules))
+	seen := make(map[string]bool, len(planModules))
+	for _, m := range planModules {
+		if seen[m.TestModule] {
+			continue
 		}
+		seen[m.TestModule] = true
+		if reason, skip := notDriven[m.TestModule]; skip {
+			log.Printf("%s: not driven: %s", m.TestModule, reason)
+			continue
+		}
+		var res ModuleResult
+		if _, known := expectations[m.TestModule]; known {
+			res = DriveModule(httpClient, apiBase, verifierBase, planID, m.TestModule, moduleVariant)
+		} else {
+			res = ModuleResult{TestName: m.TestModule, Err: errors.New("the plan lists a module with no expectation: classify it in internal/conformanceverifier")}
+		}
+		results = append(results, res)
+		log.Printf("%s: %s", res.TestName, res.line())
 	}
 	return results
 }
 
+func (res ModuleResult) line() string {
+	verdict := fmt.Sprintf("%s=%s verifier=%s (want %s)", res.Status, res.Result, res.VerifierOutcome, res.Expected)
+	if res.ModuleID != "" {
+		verdict += " module " + res.ModuleID
+	}
+	if res.Err != nil {
+		verdict += ": UNEXPECTED: " + res.Err.Error()
+	}
+	return verdict
+}
+
 // PrintSummaryAndExit prints results as a "=== summary ===" block and
-// calls os.Exit(1) if any result is unexpected — REVIEW is this plan's
-// own legitimate terminal grade for every module here, not a failure:
-// each one only reaches FINISHED at all because DriveModule's own
-// upload-placeholder fill satisfied its own screenshot-evidence
-// requirement — see DriveModule's own doc comment for why
-// cmd/conformance-verifier's design means every module takes that
-// branch, not just the positive-behavior ones.
+// calls os.Exit(1) if any module's verdict isn't the one its
+// Expectation names, or none was driven at all.
 func PrintSummaryAndExit(results []ModuleResult, apiBase, planID string) {
 	log.Print("=== summary ===")
-	allExpected := true
+	allExpected := len(results) > 0
 	for _, res := range results {
-		if res.Err != nil || (res.Result != "PASSED" && res.Result != "REVIEW") {
+		if res.Err != nil {
 			allExpected = false
 		}
-		log.Printf("%-55s %s=%s %v", res.TestName, res.Status, res.Result, res.Err)
+		log.Printf("%-60s %s", res.TestName, res.line())
 	}
 	if !allExpected {
 		log.Printf("plan detail: %splan-detail.html?plan=%s", apiBase, planID)
@@ -427,6 +526,9 @@ func PrintSummaryAndExit(results []ModuleResult, apiBase, planID string) {
 	}
 }
 
+// fillUploadPlaceholder fills the screenshot placeholder the suite
+// creates once the Verifier answered a presentation 200. A module the
+// Verifier answered with an error creates none, and finishes instead.
 func fillUploadPlaceholder(httpClient *http.Client, apiBase, moduleID string) error {
 	deadline := time.Now().Add(uploadTimeout)
 	for {
@@ -438,9 +540,13 @@ func fillUploadPlaceholder(httpClient *http.Client, apiBase, moduleID string) er
 				}
 			}
 		}
+		info, infoErr := conformancesuite.FetchModuleInfo(httpClient, apiBase, moduleID)
+		if infoErr == nil && (info.Status == "FINISHED" || info.Status == "INTERRUPTED") {
+			return nil
+		}
 		if time.Now().After(deadline) {
 			status := "unknown"
-			if info, infoErr := conformancesuite.FetchModuleInfo(httpClient, apiBase, moduleID); infoErr == nil {
+			if infoErr == nil {
 				status = info.Status + " (result " + info.Result + ")"
 			}
 			return fmt.Errorf("no upload placeholder appeared within %s; the module is %s, log %sapi/log/%s", uploadTimeout, status, apiBase, moduleID)
@@ -450,17 +556,19 @@ func fillUploadPlaceholder(httpClient *http.Client, apiBase, moduleID string) er
 }
 
 func postPlaceholder(httpClient *http.Client, apiBase, moduleID, placeholder string) error {
-	url := fmt.Sprintf("%sapi/log/%s/images/%s", apiBase, moduleID, placeholder)
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(placeholderPNGDataURI))
+	target := fmt.Sprintf("%sapi/log/%s/images/%s", apiBase, moduleID, placeholder)
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(placeholderPNGDataURI))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
-	res, err := httpClient.Do(req)
+	body, status, err := conformancesuite.Do(httpClient, req)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = res.Body.Close() }()
+	if status >= 300 {
+		return fmt.Errorf("POST %s: status %d: %.200s", target, status, body)
+	}
 	return nil
 }
 
@@ -505,10 +613,12 @@ type SetupParams struct {
 }
 
 // SetupResult is Setup's own output: the HTTP client and plan id every
-// caller needs to go on and call DriveModule with.
+// caller needs to go on and call DriveModules with, and the plan's own
+// module list.
 type SetupResult struct {
 	HTTPClient *http.Client
 	PlanID     string
+	Modules    []conformancesuite.PlanModule
 }
 
 // Setup runs every step both scripts need before they can start
@@ -559,14 +669,14 @@ func Setup(params SetupParams) (SetupResult, error) {
 	}
 
 	planVariant := map[string]string{"credential_format": params.PlanCredentialFormat, "response_mode": "direct_post.jwt"} //nolint:gosec // false positive: a suite variant selector value, not a credential
-	planID, _, err := conformancesuite.CreatePlan(httpClient, *params.Flags.APIBase, PlanName, planVariant, pcRaw)
+	planID, modules, err := conformancesuite.CreatePlan(httpClient, *params.Flags.APIBase, PlanName, planVariant, pcRaw)
 	if err != nil {
 		return SetupResult{}, fmt.Errorf("create plan: %w", err)
 	}
 	log.Printf("created plan %s (alias %s)", planID, *params.Flags.Alias)
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
 
-	return SetupResult{HTTPClient: httpClient, PlanID: planID}, nil
+	return SetupResult{HTTPClient: httpClient, PlanID: planID, Modules: modules}, nil
 }
 
 // fetchMdocIACARootPEM fetches the suite's own well-known mdoc IACA

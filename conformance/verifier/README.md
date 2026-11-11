@@ -75,7 +75,9 @@ A Verifier uses `verifier.Transactions` with a durable
   doc comment), calls `VerifyResponse`, and replies with
   `{"redirect_uri": ".../result/{id}?response_code=..."}` — HAIP's own
   requirement on top of plain OID4VP §8.3. A response for no pending
-  session (a replayed one among them) is refused with 400.
+  session (a replayed one among them) is refused with 400, and so,
+  with `reject_unverified_responses` (the suite runs), is a
+  presentation that fails verification (see "Status").
 - `GET /result/{id}` — a plain HTML page reporting that session's
   outcome, for the suite's own "verifier_verification_result_screenshot"
   evidence capture.
@@ -97,66 +99,105 @@ use them.
 
 ## Status
 
-**Confirmed live against a real, locally-run OIDF conformance suite**
-(pre-built Docker images, `docker-compose-prebuilt.yml`, `dev` Spring
-profile), covering all 12 modules of
-`oid4vp-1final-verifier-haip-test-plan`: 11 `direct_post.jwt` +
-`x509_hash` + `request_uri_signed` modules under `credential_format=
-sd_jwt_vc` (confirmed against a real historical plan document, GET
-`/api/plan/{id}` — not the base `/api/runner/available` module list,
-which also lists `-invalid-session-transcript` and unrelated
-`oid4vp-id2`/`id3` draft-version modules this repo doesn't target),
-driven by a dedicated tool,
-`conformance/verifier/scripts/run-sdjwt-modules`, plus the plan's own
-twelfth module, `-invalid-session-transcript` — `iso_mdl`-only
-(confirmed directly against the suite's own `/api/runner/available`:
-its `credential_format` variant offers no `sd_jwt_vc` value at all).
-Under `credential_format=iso_mdl`, via a second binary code path
-(`cmd/conformance-verifier`'s own `buildMdocQuery`), its own driver,
-`conformance/verifier/scripts/run-mdoc-module`, drives the 4 modules
-that apply to `iso_mdl`: `happy-flow`, `request-uri-method-post`,
-`request-uri-fetched-twice` and `invalid-session-transcript` (the
-other 8 carry `@VariantNotApplicable(credential_format=iso_mdl)`; it
-used to drive only `invalid-session-transcript`). So the plan's 12
-modules are 6 positive-behavior and 6 negative-test modules, 15 module
-instances across the two formats.
-Confirmed live, twice for stability, via each tool:
+Driven live against a locally-run OIDF conformance suite (pre-built
+Docker images, `docker-compose-prebuilt.yml`) by two tools sharing
+`internal/conformanceverifier`:
+`conformance/verifier/scripts/run-sdjwt-modules`
+(`credential_format=sd_jwt_vc`) and
+`conformance/verifier/scripts/run-mdoc-module`
+(`credential_format=iso_mdl`), both under `direct_post.jwt` +
+`x509_hash` + `request_uri_signed`. Each drives every module the
+plan's own module list (`POST /api/plan`) names for its format, and
+exits non-zero unless every module's verdict is the one its
+expectation names. A module the plan lists that has no expectation
+fails the run, so a module the suite adds is classified before it is
+trusted.
 
-- **6 positive-behavior modules** (`happy-flow`, `minimal-cnf-jwk`,
-  `request-uri-fetched-twice`, `request-uri-method-post`,
-  `kb-jwt-iat-in-past`, `kb-jwt-iat-in-future`) all reach
-  `FINISHED`/`REVIEW`, this binary's own `/result` page reporting
-  `Verification succeeded` and the correct disclosed claims, and
-  `GET /api/log` shows zero entries at `WARNING` or worse.
-- **5 negative-test modules** (`invalid-kb-jwt-signature`,
-  `invalid-credential-signature`, `invalid-sd-hash`,
-  `invalid-kb-jwt-nonce`, `invalid-kb-jwt-aud`) all reach
-  `FINISHED`/`REVIEW` too, each module's own log confirming the exact
-  corruption the suite deliberately introduced (e.g. "Invalidated
-  KB-JWT signature in SD-JWT credential", "Using invalid sd_hash in
-  key binding JWT") and this binary's own `/result` page correctly
-  reporting the presentation as rejected — `VerifyResponse`'s own
-  checks reject each malformed presentation precisely as designed.
-- **`invalid-session-transcript` (the `iso_mdl`-only 12th module):
-  `FINISHED`/`REVIEW`**, confirmed via `run-mdoc-module`. The suite's
-  own module log confirms this repo's own `verifier.VerifyResponse`
-  correctly detected and rejected the tampered `SessionTranscript`.
-  `run-mdoc-module` drives `happy-flow`, `request-uri-method-post` and
-  `request-uri-fetched-twice` under `iso_mdl` too, graded the same way
-  as under `sd_jwt_vc`.
+### How a verdict is reached
 
-Every module in this plan — positive and negative alike, `sd_jwt_vc`
-and `iso_mdl` alike — reaches `REVIEW` this same way, never a clean
-`PASSED`: `handleResponse` always replies `200` with
-`{"redirect_uri":...}` regardless of verification outcome, deferring
-the pass/fail signal to the later `/result` page (OID4VP 1.0 Final
-permits this: "defers VP verification until after this step"), so
-every module's own summary text requires a screenshot before it can
-reach a terminal grade. Both `run-sdjwt-modules` and `run-mdoc-module`
-fill that upload placeholder themselves (the same proven mechanism
-`conformance/issuer/scripts/run-fapi2sp-battery/unblock.go` already
-uses for a different role's own modules), so this is reached without a
-real browser.
+OpenID4VP lets a Verifier refuse a presentation at the `response_uri`
+(4xx) or answer 200 and defer verification. The suite grades the
+first itself; for the second it can't see what the Verifier decided,
+so it waits for a screenshot of the Verifier's result page and ends
+the module `REVIEW`, whatever the Verifier decided. This binary used
+to answer every response 200, so every module, positive or negative,
+ended `REVIEW` and the run could not fail on a wrong verification
+outcome.
+
+The suite runs now set `reject_unverified_responses` (see
+`Config.RejectUnverifiedResponses`): a presentation `VerifyResponse`
+refuses is answered 400, so the suite grades a negative module
+`PASSED` itself, and a wrongly accepted one ends `REVIEW` instead,
+which the driver counts as a failure. A verified presentation is still
+answered 200 with the HAIP-required `redirect_uri`, and the driver
+fills the screenshot placeholder with a stand-in image, ending the
+module `REVIEW`: the only verdict the suite gives a Verifier that
+accepted a presentation. Interop runs leave the option unset: they
+redeem the result page's outcome instead.
+
+Each module is graded on three things (`conformanceverifier.Grade`):
+
+- the suite's status and result: `FINISHED=REVIEW` for a module whose
+  presentation must be accepted, `FINISHED=PASSED` for one that must
+  be refused;
+- this binary's own outcome, read from `GET /result/{id}`:
+  `Verification succeeded` or `Verification failed` respectively;
+- the module's log (`GET /api/log/{id}`): no `FAILURE`, and no
+  `WARNING` but `EnsureVerifierFetchedRevocationList` on an accepted
+  module. `REVIEW` outranks `WARNING` in a result, so a warning would
+  otherwise go unseen.
+
+### Expected verdicts
+
+| Module | `sd_jwt_vc` | `iso_mdl` | Verifier must | Suite verdict |
+| --- | --- | --- | --- | --- |
+| `happy-flow` | yes | yes | accept | `FINISHED=REVIEW` |
+| `minimal-cnf-jwk` | yes | — | accept | `FINISHED=REVIEW` |
+| `request-uri-method-post` | yes | yes | accept | `FINISHED=REVIEW` |
+| `request-uri-fetched-twice` | yes | yes | accept | `FINISHED=REVIEW` |
+| `present-credential-without-status` | yes | yes | accept | `FINISHED=REVIEW` |
+| `invalid-kb-jwt-signature` | yes | — | refuse | `FINISHED=PASSED` |
+| `invalid-credential-signature` | yes | — | refuse | `FINISHED=PASSED` |
+| `invalid-sd-hash` | yes | — | refuse | `FINISHED=PASSED` |
+| `invalid-kb-jwt-nonce` | yes | — | refuse | `FINISHED=PASSED` |
+| `invalid-kb-jwt-aud` | yes | — | refuse | `FINISHED=PASSED` |
+| `kb-jwt-iat-in-past` | yes | — | refuse | `FINISHED=PASSED` |
+| `kb-jwt-iat-in-future` | yes | — | refuse | `FINISHED=PASSED` |
+| `wrong-vct` | yes | — | refuse | `FINISHED=PASSED` |
+| `invalid-session-transcript` | — | yes | refuse | `FINISHED=PASSED` |
+| `present-revoked-credential` | not driven | not driven | refuse | — |
+| `present-credential-on-identifier-list` | — | not driven | refuse | — |
+
+`kb-jwt-iat-in-past` and `kb-jwt-iat-in-future` present a Key Binding
+JWT issued a year ago or a year from now. The suite's
+`VP1FinalVerifierKbJwtIatIn{Past,Future}` extend
+`AbstractVP1FinalVerifierNegativeTest`, and their summaries say the
+Verifier should reject the presentation: they are negative modules.
+This binary refuses both (`MaxKeyBindingAge` is five minutes; the
+library's clock-skew bound refuses a future `iat`). An earlier version
+of this file listed them as positive modules that verify; the
+Verifier's own log never said so.
+
+The two revocation modules aren't driven: this binary checks no
+credential status in the suite's runs (`NoStatusCheck`), so it can't
+refuse a revoked credential. That is also why an accepted module may
+log `EnsureVerifierFetchedRevocationList` (the suite's credentials
+carry a status reference the Verifier never fetches): the suite makes
+it a warning, as no specification makes the check mandatory. Driving
+them needs a `status_list` trust anchor for the suite's per-run
+issuer.
+
+`wrong-vct` and `present-credential-without-status` are newer than
+this repo's certification run, and pass.
+
+To check that the harness catches a Verifier that accepts what it
+must refuse: make `server.verify` in `handlers.go` return without
+setting `failErr` for an error mentioning "signature", and run
+`run-sdjwt-modules`. `invalid-kb-jwt-signature` and
+`invalid-credential-signature` then end `FINISHED=REVIEW` with the
+result page reporting `verified`, and the run exits 1.
+
+### Earlier findings
 
 **`request-uri-method-post` and `request-uri-fetched-twice`: real
 support added, not just made to pass.** These two used to be grouped

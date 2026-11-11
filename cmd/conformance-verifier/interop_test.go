@@ -329,6 +329,27 @@ func TestHandleResponse_VerifiesAVPToken(t *testing.T) {
 	}
 }
 
+func TestHandleResponse_RejectUnverifiedResponses(t *testing.T) {
+	cfg := interopTestConfig(t)
+	cfg.RejectUnverifiedResponses = true
+	s, mux := newRoutedServer(t, cfg)
+
+	sess := startBuiltSession(t, s, mux)
+	rec := postResponse(mux, encryptTo(t, sess, `{"vp_token":{"cred1":["not-an-sd-jwt"]}}`))
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "redirect_uri") {
+		t.Fatalf("an unverified presentation = %d %s, want 400 without a redirect_uri", rec.Code, rec.Body)
+	}
+	if page := get(mux, "/result/"+sess.id); !strings.Contains(page.Body.String(), "Verification failed") {
+		t.Fatalf("result page = %s, want the failure", page.Body)
+	}
+
+	// A Wallet's error response is answered as before: it was processed.
+	sess = startBuiltSession(t, s, mux)
+	if rec := postResponse(mux, encryptTo(t, sess, `{"error":"access_denied"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("an error response = %d, want 200", rec.Code)
+	}
+}
+
 func TestHandleResponse_RefusesASecondAnswerToAnAnsweredSession(t *testing.T) {
 	s, mux := newRoutedServer(t, interopTestConfig(t))
 	sess := startBuiltSession(t, s, mux)

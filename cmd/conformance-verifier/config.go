@@ -97,6 +97,17 @@ type Config struct {
 	// REQUIRED when CredentialFormat is "mso_mdoc"; ignored otherwise.
 	MdocTrustAnchorPEM string `json:"mdoc_trust_anchor_pem"`
 
+	// RejectUnverifiedResponses makes POST /response answer a
+	// presentation it didn't verify with 400, instead of 200 and a
+	// redirect_uri to a result page reporting the failure. OpenID4VP
+	// permits either (the suite's negative modules accept both), but
+	// only the 400 is a verdict the suite can grade: with a 200 every
+	// module waits for a screenshot and ends REVIEW, whatever the
+	// Verifier decided. The OIDF suite runs
+	// (internal/conformanceverifier) set it; interop runs, which redeem
+	// the result page's outcome, leave it unset.
+	RejectUnverifiedResponses bool `json:"reject_unverified_responses"`
+
 	// The fields below are for interop runs against other wallets
 	// (interop/eudi/run-wallet.sh), not the OIDF suite, whose
 	// configuration leaves them unset.

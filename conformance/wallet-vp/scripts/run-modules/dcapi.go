@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
@@ -120,14 +119,16 @@ func (d dcapiRun) run() bool {
 	for _, m := range modules {
 		res := driveDCAPI(httpClient, apiBase, walletVPBase, planID, m)
 		res.testName = m.TestModule + " [" + m.Variant["request_method"] + "]"
+		log.Printf("%s: %s", res.testName, res.line())
 		results = append(results, res)
 	}
 	log.Print("=== summary (dc_api.jwt) ===")
-	allExpected := true
+	allExpected := len(results) > 0
 	for _, res := range results {
-		ok := res.err == nil
-		allExpected = allExpected && ok
-		log.Printf("%-90s %s=%s %v", res.testName, res.status, res.result, res.err)
+		if res.err != nil {
+			allExpected = false
+		}
+		log.Printf("%-90s %s", res.testName, res.line())
 	}
 	if !allExpected {
 		log.Printf("plan detail: %splan-detail.html?plan=%s", apiBase, planID)
@@ -135,19 +136,25 @@ func (d dcapiRun) run() bool {
 	return allExpected
 }
 
-// driveDCAPI runs one dc_api.jwt module and grades it: a positive
-// module must finish PASSED (or WARNING) after the wallet presents; a
-// negative one must either get the error response
-// negativeTestExpectedErrorCode names, and then finish PASSED, or —
-// when the wallet refuses without answering, as for a request it can't
-// trust — be left for review once its screenshot placeholder is filled.
+// driveDCAPI runs one dc_api.jwt module and grades it against its
+// expectation (expectations.go): what the wallet did — presented, sent
+// the named error response, or refused without answering, as for a
+// request it can't trust, leaving the module for review once its
+// screenshot placeholder is filled — and the suite's verdict and log.
 func driveDCAPI(httpClient *http.Client, apiBase, walletVPBase, planID string, m conformancesuite.PlanModule) moduleResult {
 	var res moduleResult
+	exp, err := expectationFor(m.TestModule)
+	if err != nil {
+		res.err = err
+		return res
+	}
+	res.expected = exp
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, m.TestModule, m.Variant)
 	if err != nil {
 		res.err = fmt.Errorf("create module instance: %w", err)
 		return res
 	}
+	res.moduleID = module.ID
 	req, err := pollBrowserAPIRequest(httpClient, apiBase, module.ID)
 	if err != nil {
 		res.err = err
@@ -171,21 +178,8 @@ func driveDCAPI(httpClient *http.Client, apiBase, walletVPBase, planID string, m
 		return res
 	}
 
-	negative := strings.Contains(m.TestModule, "negative-test")
-	refused := bytes.Contains(answer.Result, []byte(`"exception"`))
-	wantCode, sendsError := negativeTestExpectedErrorCode[m.TestModule]
-	switch {
-	case !negative && (refused || answer.SentError != ""):
-		res.err = fmt.Errorf("the wallet didn't present: %s", answer.Result)
-	case negative && sendsError && answer.SentError != wantCode:
-		res.err = fmt.Errorf("sent error %q (refused: %v), want %q", answer.SentError, refused, wantCode)
-	case negative && !sendsError && !refused:
-		res.err = fmt.Errorf("the wallet answered a request it should refuse: sent error %q", answer.SentError)
-	}
-	if res.err != nil {
-		return res
-	}
-	if refused {
+	res.action = dcapiAction(answer)
+	if res.action == actionRefused {
 		if entry, ok := pollUpload(httpClient, apiBase, module.ID, uploadTimeout); ok {
 			if err := postPlaceholder(httpClient, apiBase, module.ID, entry); err != nil {
 				res.err = fmt.Errorf("fill upload placeholder: %w", err)
@@ -194,15 +188,31 @@ func driveDCAPI(httpClient *http.Client, apiBase, walletVPBase, planID string, m
 		}
 	}
 	res.status, res.result, err = conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, moduleTimeout)
-	switch {
-	case err != nil:
-		res.err = fmt.Errorf("wait until finished: %w", err)
-	case refused && res.result != "REVIEW" && res.result != "PASSED":
-		res.err = fmt.Errorf("refused, but the module ended %s", res.result)
-	case !refused && res.result != "PASSED" && res.result != "WARNING":
-		res.err = fmt.Errorf("the module ended %s", res.result)
+	if err != nil {
+		res.err = fmt.Errorf("wait until finished: %w (the wallet %s: %.300s)", err, res.action, answer.Result)
+		return res
 	}
+	entries, err := conformancesuite.FetchModuleLog(httpClient, apiBase, module.ID)
+	if err != nil {
+		res.err = fmt.Errorf("fetch module log: %w", err)
+		return res
+	}
+	res.err = grade(res.expected, res.action, res.status, res.result, entries)
 	return res
+}
+
+// dcapiAction is what cmd/conformance-wallet-vp did with a DC API
+// request, from its POST /dcapi answer: a result carrying an exception
+// is a refusal (the page's promise rejected); otherwise it sent an
+// error response or presented.
+func dcapiAction(answer dcapiAnswer) walletAction {
+	switch {
+	case bytes.Contains(answer.Result, []byte(`"exception"`)):
+		return actionRefused
+	case answer.SentError != "":
+		return actionSentError(answer.SentError)
+	}
+	return actionPresented
 }
 
 // pollBrowserAPIRequest waits for the module's browser API request.

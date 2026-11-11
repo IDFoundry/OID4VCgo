@@ -33,28 +33,23 @@
 // handleAuthorize runs the entire flow synchronously within that one
 // call.
 //
-// A positive-behavior module (happy-flow and 5 others) completes to a
-// clean FINISHED/PASSED from that alone. So does a negative-test
-// module this binary answers with an OID4VP error response
-// (negativeTestExpectedErrorCode's entries): the suite validates the
-// error response and withdraws its own screenshot placeholder, so no
-// upload is needed or made. Every other negative-test module (rejected
-// locally, before response_uri) is REVIEW-gated instead (the suite's own condition text: "the wallet
-// should display an error, a screenshot of which must be uploaded for
-// the test to transition to FINISHED") — filled the same proven way
-// conformance/verifier's own scripts and
+// The script drives every module each plan's own module list names
+// and grades it against expectations.go's table: what the wallet did,
+// read from this binary's answer to the drive GET (a non-200, with the
+// Go error as the body, is a refusal before response_uri was ever
+// contacted; a 200 is either a presentation or the "Sent error
+// response: <code>" page), the suite's status and result, and the
+// module's log. A presentation completes to FINISHED/PASSED, and so
+// does an OID4VP error response: the suite validates it and withdraws
+// its own screenshot placeholder, so no upload is needed or made. A
+// refusal is REVIEW-gated instead (the suite's own condition text:
+// "the wallet should display an error, a screenshot of which must be
+// uploaded for the test to transition to FINISHED") — filled the same
+// proven way conformance/verifier's own scripts and
 // conformance/issuer/scripts/run-fapi2sp-battery/unblock.go already
-// fill one. But per conformance/wallet-vp/README.md's own established
-// finding, the suite's own overall verdict on a negative-test module
-// isn't the real pass/fail signal (a REVIEW grade there is expected
-// regardless of whether this binary's own security check actually
-// worked) — this binary's own local HTTP response to the drive GET is:
-// a 200 means it presented a credential (wrong, for a negative test);
-// a non-200 (with the real Go error as the body, via handleAuthorize's
-// own http.Error calls) means it correctly rejected the malformed
-// request before ever calling response_uri. This script grades
-// negative-test modules on that local signal, not the suite's own
-// REVIEW verdict.
+// fill one. REVIEW is the verdict whatever the wallet did before the
+// screenshot, so for those modules the wallet's own action is what
+// tells a refusal from a wrongful presentation.
 //
 // `alternate-happy-flow`'s own fragment-carrying redirect_uri (HAIP's
 // alternate response variant) needs relaying real fragment content to
@@ -125,75 +120,6 @@ const (
 	// script's default.
 	directPostJWT = "direct_post.jwt"
 )
-
-// positiveTests are driven and expected to complete cleanly on the
-// first drive call alone (FINISHED/PASSED or /WARNING) — this
-// binary's own local response is a 200.
-var positiveTests = []string{
-	"oid4vp-1final-wallet-happy-flow",
-	"oid4vp-1final-wallet-alternate-happy-flow",
-	"oid4vp-1final-wallet-request-uri-method-post",
-	"oid4vp-1final-wallet-ignores-unusable-encryption-key",
-	"oid4vp-1final-wallet-fewer-claims-than-available",
-	"oid4vp-1final-wallet-optional-credential-set",
-	"oid4vp-1final-wallet-no-claims-in-dcql-query",
-}
-
-// negativeTests are driven the same way, but graded on this binary's
-// own local non-200 response (correctly rejected before ever calling
-// response_uri) — see this file's own package doc comment for why the
-// suite's own REVIEW verdict isn't the real signal here.
-var negativeTests = []string{
-	"oid4vp-1final-wallet-negative-test-invalid-request-object-signature",
-	"oid4vp-1final-wallet-negative-test-mismatched-client-id",
-	"oid4vp-1final-wallet-negative-test-redirect-uri-with-direct-post",
-	"oid4vp-1final-wallet-negative-test-missing-nonce",
-	"oid4vp-1final-wallet-negative-test-invalid-client-id-prefix",
-	"oid4vp-1final-wallet-negative-test-unknown-transaction-data-type",
-	"oid4vp-1final-wallet-negative-test-required-non-matching-credential",
-	"oid4vp-1final-wallet-negative-test-claim-not-in-credential",
-}
-
-// negativeTestExpectedErrorCode names the exact OID4VP §8.1 "error"
-// value handleAuthorize's own respondWithError call must send for the
-// five negativeTests entries that actually reach response_uri at all
-// (the other three — invalid-request-object-signature,
-// mismatched-client-id, invalid-client-id-prefix — reject locally
-// before response_uri is ever contacted, so there's no error code to
-// check). Without this, driveOne's own moduleResultExpected grading
-// only ever checked "did some rejection happen," never which code —
-// exactly the gap that let redirect-uri-with-direct-post/missing-
-// nonce ship as generic "invalid_request" and unknown-transaction-
-// data-type/required-non-matching-credential ship with the wrong code
-// (invalid_request instead of invalid_transaction_data/access_denied)
-// undetected by this script's own local-suite runs, only caught by
-// driving the real hosted suite live and reading its own condition
-// checks directly (EnsureInvalidTransactionDataError,
-// EnsureAuthorizationEndpointErrorIsAccessDenied).
-var negativeTestExpectedErrorCode = map[string]string{
-	"oid4vp-1final-wallet-negative-test-redirect-uri-with-direct-post":    "invalid_request",
-	"oid4vp-1final-wallet-negative-test-missing-nonce":                    "invalid_request",
-	"oid4vp-1final-wallet-negative-test-unknown-transaction-data-type":    "invalid_transaction_data",
-	"oid4vp-1final-wallet-negative-test-required-non-matching-credential": "access_denied",
-	"oid4vp-1final-wallet-negative-test-claim-not-in-credential":          "access_denied",
-}
-
-// allMandatoryClaimsTest is oid4vp-1final-wallet-all-mandatory-claims
-// — deliberately not in positiveTests above: unlike every other module
-// in this plan, it's @VariantNotApplicable for credential_type=custom
-// (the suite's own default when a plan never sets that variant, which
-// this script's own main plan never did), so it isn't even reachable
-// under the same plan/variant crossing the other 14 modules use — it
-// needs its own plan with credential_type set to a real value
-// (allMandatoryClaimsCredentialType), which makes every module in
-// that plan use the suite's own built-in DCQL query for that
-// credential type instead of a client-supplied one. Confirmed by
-// reading the suite's own VP1FinalWalletAllMandatoryClaims.java and
-// VP1FinalWalletCredentialType.java directly, not guessed — this is
-// also why it was never caught by this script's own "14/14 confirmed
-// live" runs: it was never driven, automated or otherwise, until
-// found live against the real hosted suite.
-const allMandatoryClaimsTest = "oid4vp-1final-wallet-all-mandatory-claims"
 
 // allMandatoryClaimsCredentialType returns the
 // VP1FinalWalletCredentialType variant value matching
@@ -324,9 +250,14 @@ type planServer struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 }
 
+// moduleResult is one driven module: what the wallet did, the suite's
+// verdict, the module's expectation, and err, set whenever any of them
+// isn't as expected (or the module couldn't be driven).
 type moduleResult struct {
 	testName string
-	localOK  bool // this binary's own drive call returned 200
+	moduleID string
+	expected expectation
+	action   walletAction
 	status   string
 	result   string
 	err      error
@@ -518,23 +449,6 @@ func writeConfigAndMaybeRestart(cfg generatedConfig, httpClient *http.Client, wa
 	return nil
 }
 
-// moduleResultExpected reports whether res's own outcome matches what
-// this script's own combined-summary grading expects — split out of
-// main purely to keep it under the linter's own cognitive complexity
-// ceiling.
-func moduleResultExpected(res moduleResult) bool {
-	if res.err != nil {
-		return false
-	}
-	if res.localOK && res.result != "PASSED" && res.result != "WARNING" && res.result != "REVIEW" {
-		return false
-	}
-	if !res.localOK && res.result != "REVIEW" && res.result != "PASSED" {
-		return false
-	}
-	return true
-}
-
 // buildDCQLCredential builds this run's own DCQL "credentials" entry —
 // "dc+sd-jwt" (cfg.VCT/given_name/family_name, the plan's own default)
 // or "mso_mdoc" (cfg.MdocDocType/the same two claims, namespace-prefixed)
@@ -629,10 +543,12 @@ func main() {
 		log.Fatalf("marshal plan config: %v", err)
 	}
 
-	// allMandatoryClaimsTest needs its own plan under a real
-	// credential_type variant — see that const's own doc comment for
-	// why it can't share the main plan above (credential_type=custom,
-	// this plan's own implicit default). A fresh client JWK per plan
+	// all-mandatory-claims (and the other modules whose DCQL query is
+	// the suite's own for a credential type) need their own plan under
+	// a real credential_type variant: each is @VariantNotApplicable for
+	// credential_type=custom, the main plan's implicit default
+	// (VP1FinalWalletAllMandatoryClaims.java,
+	// VP1FinalWalletCredentialType.java). A fresh client JWK per plan
 	// mirrors every other plan this script already creates (client.dcql
 	// is included for schema completeness even though the suite
 	// ignores it under a non-custom credential_type — see
@@ -662,7 +578,7 @@ func main() {
 	}
 
 	planVariant := map[string]string{"credential_format": *credentialFormat, "response_mode": directPostJWT} //nolint:gosec // false positive: a suite variant selector value, not a credential
-	planID, _, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, pcRaw)
+	planID, planModules, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, planVariant, pcRaw)
 	if err != nil {
 		log.Fatalf("create plan: %v", err)
 	}
@@ -673,7 +589,7 @@ func main() {
 		"credential_format": *credentialFormat, "response_mode": directPostJWT,
 		"credential_type": allMandatoryClaimsCredentialType(*credentialFormat),
 	}
-	amcPlanID, _, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, amcPlanVariant, amcPCRaw)
+	amcPlanID, amcPlanModules, err := conformancesuite.CreatePlan(httpClient, *apiBase, planName, amcPlanVariant, amcPCRaw)
 	if err != nil {
 		log.Fatalf("create all-mandatory-claims plan: %v", err)
 	}
@@ -682,22 +598,33 @@ func main() {
 
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
+	// Every module the main plan lists, then those only the
+	// credential_type plan lists (all-mandatory-claims, and the
+	// modules whose DCQL query is the suite's own for that type).
 	var results []moduleResult
-	for _, testName := range positiveTests {
-		results = append(results, driveOne(httpClient, *apiBase, *walletVPBase, planID, testName, moduleVariant, false))
+	driven := make(map[string]bool)
+	for _, p := range []struct {
+		id      string
+		modules []conformancesuite.PlanModule
+	}{{planID, planModules}, {amcPlanID, amcPlanModules}} {
+		for _, m := range p.modules {
+			if driven[m.TestModule] {
+				continue
+			}
+			driven[m.TestModule] = true
+			res := driveOne(httpClient, *apiBase, *walletVPBase, p.id, m.TestModule, moduleVariant)
+			log.Printf("%s: %s", res.testName, res.line())
+			results = append(results, res)
+		}
 	}
-	for _, testName := range negativeTests {
-		results = append(results, driveOne(httpClient, *apiBase, *walletVPBase, planID, testName, moduleVariant, true))
-	}
-	results = append(results, driveOne(httpClient, *apiBase, *walletVPBase, amcPlanID, allMandatoryClaimsTest, moduleVariant, false))
 
 	log.Print("=== summary ===")
-	allExpected := true
+	allExpected := len(results) > 0
 	for _, res := range results {
-		if !moduleResultExpected(res) {
+		if res.err != nil {
 			allExpected = false
 		}
-		log.Printf("%-70s localOK=%-5v %s=%s %v", res.testName, res.localOK, res.status, res.result, res.err)
+		log.Printf("%-70s %s", res.testName, res.line())
 	}
 	if !allExpected {
 		log.Printf("plan detail: %splan-detail.html?plan=%s", *apiBase, planID)
@@ -706,9 +633,21 @@ func main() {
 	}
 }
 
+// line is res as one summary line.
+func (res moduleResult) line() string {
+	s := fmt.Sprintf("wallet %s, %s=%s (want %s)", res.action, res.status, res.result, res.expected)
+	if res.moduleID != "" {
+		s += " module " + res.moduleID
+	}
+	if res.err != nil {
+		s += ": UNEXPECTED: " + res.err.Error()
+	}
+	return s
+}
+
 // buildPlanConfig builds the suite's own oid4vp-1final-wallet-haip-
 // test-plan configuration body — shared by both plans main creates
-// (the primary 14-module one and allMandatoryClaimsTest's own), which
+// (the main one and the credential_type one), which
 // otherwise differed only in alias/description/client JWK.
 func buildPlanConfig(alias, description, trustAnchorCertPEM string, clientJWK jwk.SetEntry, dcqlCredential planDCQLCredential, authorizationEndpoint string) planConfig {
 	return planConfig{
@@ -725,32 +664,38 @@ func buildPlanConfig(alias, description, trustAnchorCertPEM string, clientJWK jw
 	}
 }
 
-// unexpectedLocalOK reports whether a negative test's own local 200
-// response is actually suspicious. A local 200 is only suspicious for
-// the three negativeTests not in negativeTestExpectedErrorCode — those
-// reject before ever reaching response_uri, so a genuine rejection is a
-// non-200. The other four (sendsErrorResponse) correctly return 200
-// here as part of respondFollowingRedirect's own "Rejected"
-// confirmation page, having already POSTed a legitimate OID4VP §8.1
-// encrypted error response to response_uri first — driveOne's own
-// exact-code check right after this is their real correctness gate,
-// not this local status code.
-func unexpectedLocalOK(negativeTest, localOK, sendsErrorResponse bool) bool {
-	return negativeTest && localOK && !sendsErrorResponse
+// directPostAction is what cmd/conformance-wallet-vp did with a
+// direct_post.jwt request, from its answer to the drive GET: a non-200
+// is a refusal before the response_uri was ever contacted; a 200 is
+// either the "Sent error response: <code>" page or a presentation.
+func directPostAction(localOK bool, driveBody string) walletAction {
+	if !localOK {
+		return actionRefused
+	}
+	if code, sent := extractSentErrorCode(driveBody); sent {
+		return actionSentError(code)
+	}
+	return actionPresented
 }
 
 // driveOne creates one module instance within planID for testName,
-// drives it, and grades it per this file's own package doc comment:
-// negativeTest modules are graded on the local drive response, not
-// the suite's own overall verdict.
-func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName string, moduleVariant map[string]string, negativeTest bool) moduleResult {
+// drives it, and grades it against its expectation: what the wallet
+// did, the suite's status and result, and the module's log.
+func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName string, moduleVariant map[string]string) moduleResult {
 	res := moduleResult{testName: testName}
+	exp, err := expectationFor(testName)
+	if err != nil {
+		res.err = err
+		return res
+	}
+	res.expected = exp
 
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, moduleVariant)
 	if err != nil {
 		res.err = fmt.Errorf("create module instance: %w", err)
 		return res
 	}
+	res.moduleID = module.ID
 
 	redirectTo, err := pollRedirectTo(httpClient, apiBase, module.ID)
 	if err != nil {
@@ -766,22 +711,7 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 	}
 	driveBody, _ := io.ReadAll(driveResp.Body)
 	_ = driveResp.Body.Close()
-	res.localOK = driveResp.StatusCode == http.StatusOK
-	wantCode, sendsErrorResponse := negativeTestExpectedErrorCode[testName]
-	if unexpectedLocalOK(negativeTest, res.localOK, sendsErrorResponse) {
-		log.Printf("%s: WARNING — this binary returned 200 for a negative test (should have rejected)", testName)
-	}
-	if sendsErrorResponse {
-		gotCode, sent := extractSentErrorCode(string(driveBody))
-		if !sent {
-			res.err = fmt.Errorf("expected an OID4VP error response with code %q, but none was sent (body: %s)", wantCode, driveBody)
-			return res
-		}
-		if gotCode != wantCode {
-			res.err = fmt.Errorf("sent error code %q, want %q", gotCode, wantCode)
-			return res
-		}
-	}
+	res.action = directPostAction(driveResp.StatusCode == http.StatusOK, string(driveBody))
 
 	// alternate-happy-flow's own fragment-carrying redirect_uri — see
 	// this file's own package doc comment. cmd/conformance-wallet-vp's
@@ -796,16 +726,13 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 		}
 	}
 
-	// Optional: only negative-test modules that reject locally need
-	// this (see package doc comment) — a short, non-fatal grace
-	// period, since a positive-behavior module that already reached
-	// FINISHED/PASSED never gets one. Skipped when this binary sent an
-	// error response: the suite creates its screenshot placeholder as
-	// soon as the Request Object is fetched, then withdraws it
+	// A refusal leaves the module waiting for a screenshot of the
+	// wallet's error (see the package doc comment). Not filled for an
+	// error response: the suite withdraws its placeholder
 	// ("image_no_longer_required") once it validates that response and
 	// grades the module PASSED — filling it first would race the suite
 	// and downgrade the result to REVIEW.
-	if !sendsErrorResponse {
+	if res.action == actionRefused {
 		if entry, ok := pollUpload(httpClient, apiBase, module.ID, uploadTimeout); ok {
 			if err := postPlaceholder(httpClient, apiBase, module.ID, entry); err != nil {
 				res.err = fmt.Errorf("fill upload placeholder: %w", err)
@@ -814,11 +741,17 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 		}
 	}
 
-	status, result, err := conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, moduleTimeout)
-	res.status, res.result = status, result
+	res.status, res.result, err = conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, moduleTimeout)
 	if err != nil {
-		res.err = fmt.Errorf("wait until finished: %w", err)
+		res.err = fmt.Errorf("wait until finished: %w (the wallet %s: %.300s)", err, res.action, driveBody)
+		return res
 	}
+	entries, err := conformancesuite.FetchModuleLog(httpClient, apiBase, module.ID)
+	if err != nil {
+		res.err = fmt.Errorf("fetch module log: %w", err)
+		return res
+	}
+	res.err = grade(exp, res.action, res.status, res.result, entries)
 	return res
 }
 

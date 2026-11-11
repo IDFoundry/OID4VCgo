@@ -215,7 +215,9 @@ func (s *server) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 // required "redirect_uri" JSON body pointing at that session's own
 // human-readable result page, with a response_code (§8.2) that
 // handleRedeem releases the result for. A response that matches no
-// pending session (a replay of an answered one among them) is refused.
+// pending session (a replay of an answered one among them) is refused,
+// and so, with Config.RejectUnverifiedResponses, is a presentation that
+// fails verification.
 func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -268,6 +270,14 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 		log.Printf("session %s: the wallet answered with an error: %v", matched.id, walletErr)
 	} else {
 		s.verify(r, matched, parsed, "")
+		if matched.failErr != nil && s.cfg.RejectUnverifiedResponses {
+			// The outcome stays on the result page, for the run's logs.
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error":             "invalid_request",
+				"error_description": "the presentation was not verified",
+			})
+			return
+		}
 	}
 
 	// The response_code (§8.2) lets the browser the Wallet redirects

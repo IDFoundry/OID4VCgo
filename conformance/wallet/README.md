@@ -364,7 +364,7 @@ fetches from the module's own endpoint).
 
 `conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
 through `run_wallet` in `conformance/scripts/lib.sh`: six runs of
-`cmd/conformance-wallet`, one per certification profile, each all 22
+`cmd/conformance-wallet`, one per certification profile, each all 23
 module instances, with no expected exceptions:
 
 | Run | Flags |
@@ -378,6 +378,27 @@ module instances, with no expected exceptions:
 
 `-proof-type` and `-base-plan` aren't certification profiles and are
 run by hand.
+
+### Expected verdicts
+
+Every module instance must end `FINISHED`/`PASSED` (`check_summary` in
+`conformance/scripts/lib.sh` compares the status as well as the
+result, and fails a summary with no module in it), and this driver's
+own outcome is graded too (`gradeDriver` in
+`cmd/conformance-wallet/main.go`):
+
+| Modules | Driver must | Suite verdict |
+| --- | --- | --- |
+| the 4 `oid4vci-1_0-wallet-test-*` modules, `happy-path`, `happy-path-no-dpop-nonce`, `happy-path-no-mtls-endpoint-aliases`, `token-endpoint-response-without-expires_in`, `token-type-case-insensitivity`, `rs-dpop-auth-scheme-case-insensitivity` | complete the flow without an error | `FINISHED=PASSED` |
+| `discovery-issuer-mismatch`, `remove-authorization-response-iss`, `invalid-authorization-response-iss`, `ensure-authorization-response-with-invalid-state-fails`, `ensure-authorization-response-with-invalid-missing-state-fails` | abandon the flow with an error (`walletMustAbandon`) | `FINISHED=PASSED` |
+
+A driver error on a module whose flow must complete used to be
+appended to a `PASSED` line and ignored; it now fails the module, as
+does a flow the wallet completes where it must abandon it. A module
+the plan lists that `inScopeModules` doesn't name (or under a crossing
+`inScopeCrossings` doesn't) used to be skipped silently; it now fails
+the run. That is how `happy-path-no-mtls-endpoint-aliases`, which the
+HAIP plan lists, came to be driven: it passes.
 
 ## Debugging
 

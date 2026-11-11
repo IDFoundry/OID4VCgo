@@ -30,6 +30,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -74,6 +75,7 @@ var inScopeModules = map[string]int{
 	// running suite's own /api/runner/available.
 	"fapi2-security-profile-final-client-test-happy-path":                                                     1,
 	"fapi2-security-profile-final-client-test-happy-path-no-dpop-nonce":                                       1,
+	"fapi2-security-profile-final-client-test-happy-path-no-mtls-endpoint-aliases":                            1,
 	"fapi2-security-profile-final-client-test-discovery-issuer-mismatch":                                      1,
 	"fapi2-security-profile-final-client-test-remove-authorization-response-iss":                              1,
 	"fapi2-security-profile-final-client-test-invalid-authorization-response-iss":                             1,
@@ -347,10 +349,14 @@ func driveAllModules(ctx context.Context, runner moduleRunner, modules []conform
 	for _, m := range modules {
 		numCreds, ok := scopeModules[m.TestModule]
 		if !ok {
+			// A module the suite added, or one this driver dropped:
+			// classified before it is trusted, not silently skipped.
+			summary[m.TestModule] = "ERROR: the plan lists this module, which this driver doesn't drive (add it to inScopeModules/baseInScopeModules)"
 			continue
 		}
 		crossing, ok := matchCrossing(m.TestModule, m.Variant)
 		if !ok {
+			summary[m.TestModule+" ["+m.Variant["vci_credential_issuance_mode"]+"+"+m.Variant["vci_credential_encryption"]+"]"] = "ERROR: the plan lists this module under a crossing this driver doesn't drive (add it to inScopeCrossings)"
 			continue
 		}
 		key := m.TestModule + " [" + crossing.String() + "]"
@@ -373,13 +379,20 @@ func driveAllModules(ctx context.Context, runner moduleRunner, modules []conform
 // purely to keep it under the linter's own cognitive complexity
 // ceiling.
 func printModuleSummary(scopeModules map[string]int, summary map[string]string) {
+	printed := make(map[string]bool, len(summary))
 	for name := range scopeModules {
 		for _, crossing := range crossingsFor(name) {
 			key := name + " [" + crossing.String() + "]"
+			printed[key] = true
 			outcome, ran := summary[key]
 			if !ran {
 				outcome = "NOT RUN (not found in plan's own module list)"
 			}
+			log.Printf("%-70s %s", key, outcome)
+		}
+	}
+	for key, outcome := range summary {
+		if !printed[key] {
 			log.Printf("%-70s %s", key, outcome)
 		}
 	}
@@ -489,21 +502,48 @@ func (r moduleRunner) runModule(ctx context.Context, planID, testName string, va
 		return "ERROR: wait for module ready: " + err.Error()
 	}
 
-	driverErr := ""
-	if err := r.driveModule(ctx, module, testName, numCreds, encrypted, offer); err != nil {
-		driverErr = err.Error()
-	}
+	driverErr := r.driveModule(ctx, module, testName, numCreds, encrypted, offer)
 
 	status, result, err := conformancesuite.WaitUntilFinished(r.HTTPClient, r.APIBase, module.ID, 45*time.Second)
+	moduleRef := " (module " + module.ID + ", " + r.APIBase + "api/log/" + module.ID + ")"
 	if err != nil {
-		if driverErr != "" {
-			return "ERROR [driver: " + driverErr + "] (also: " + err.Error() + ")"
+		if driverErr != nil {
+			return "ERROR: driver: " + driverErr.Error() + " (also: " + err.Error() + ")" + moduleRef
 		}
-		return "ERROR: " + err.Error() + " (module " + module.ID + ")"
+		return "ERROR: " + err.Error() + moduleRef
 	}
-	outcome := status + "=" + result + " (module " + module.ID + ", " + r.APIBase + "api/log/" + module.ID + ")"
-	if driverErr != "" {
-		outcome += " [driver: " + driverErr + "]"
+	if err := gradeDriver(testName, driverErr); err != nil {
+		return "ERROR: " + err.Error() + " (the suite reports " + status + "=" + result + ")" + moduleRef
 	}
-	return outcome
+	if driverErr != nil {
+		log.Printf("%s: the wallet abandoned the flow, as it must: %v", testName, driverErr)
+	}
+	return status + "=" + result + moduleRef
+}
+
+// walletMustAbandon are the modules whose flow the wallet must abandon:
+// the FAPI2SP client battery's negative modules, whose suite-emulated
+// Authorization Server sends a bad discovery document or authorization
+// response. For these, driveModule returning an error is the pass
+// condition; for every other module, it is a failure.
+var walletMustAbandon = map[string]bool{
+	"fapi2-security-profile-final-client-test-discovery-issuer-mismatch":                                      true,
+	"fapi2-security-profile-final-client-test-remove-authorization-response-iss":                              true,
+	"fapi2-security-profile-final-client-test-invalid-authorization-response-iss":                             true,
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails":         true,
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": true,
+}
+
+// gradeDriver reports, as an error, a driver outcome testName doesn't
+// expect: an error from a module whose flow must complete, or none from
+// one whose flow the wallet must abandon. The suite's own verdict is
+// graded separately (conformance/scripts/lib.sh's check_summary).
+func gradeDriver(testName string, driverErr error) error {
+	switch {
+	case walletMustAbandon[testName] && driverErr == nil:
+		return errors.New("the wallet completed a flow it must abandon")
+	case !walletMustAbandon[testName] && driverErr != nil:
+		return fmt.Errorf("driver: %w", driverErr)
+	}
+	return nil
 }
