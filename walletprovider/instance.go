@@ -90,6 +90,15 @@ type Instance struct {
 	WalletAttestations uint64
 	KeyAttestations    uint64
 
+	// IndexPeriodStart is the start, in seconds since the Unix epoch, of
+	// the status list period IndicesInPeriod counts in, and
+	// IndicesInPeriod how many status list indices the instance's
+	// instance keys took in it, which Config.MaxInstanceKeysPerPeriod
+	// bounds. Both are zero for an instance whose keys have taken none
+	// since the provider counted them (v0.75.3 and before).
+	IndexPeriodStart int64
+	IndicesInPeriod  int
+
 	// Revision is the store's version of the record: Create stores 1,
 	// and each Update one more. Update compares it to detect a
 	// concurrent change.

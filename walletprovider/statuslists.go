@@ -102,9 +102,14 @@ func (p *Provider) served(start int64, now time.Time) bool {
 	return start >= cur-2*p.period() && start <= cur+p.period()
 }
 
-// allocateStatus reserves an index on a list of the period now is in.
-func (p *Provider) allocateStatus(ctx context.Context, now time.Time) (statuslist.StatusListRef, error) {
+// allocateStatus reserves an index on a list of the period now is in
+// for an instance key of the instance id, first counting it against the
+// instance's Config.MaxInstanceKeysPerPeriod (countIndex).
+func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time) (statuslist.StatusListRef, error) {
 	start := p.periodStart(now)
+	if err := p.countIndex(ctx, id, start); err != nil {
+		return statuslist.StatusListRef{}, err
+	}
 	ref, err := p.allocator(start, p.lists.firstWithRoom(start)).Allocate(ctx)
 	switch {
 	case errors.Is(err, statuslist.ErrListsFull):
@@ -116,6 +121,31 @@ func (p *Provider) allocateStatus(ctx context.Context, now time.Time) (statuslis
 		p.lists.filledBefore(start, n)
 	}
 	return ref, nil
+}
+
+// countIndex counts one more status list index taken by the instance
+// id's instance keys in the period starting at start, refusing it with
+// ErrTooManyInstanceKeys once they've taken
+// Config.MaxInstanceKeysPerPeriod, and refusing an instance that isn't
+// active. It's counted before the index is reserved, so concurrent
+// requests can't take more between them; an index then not reserved,
+// or not recorded, stays counted. A period earlier than the one the
+// instance counts in, from a process whose clock is behind, counts in
+// the later one.
+func (p *Provider) countIndex(ctx context.Context, id string, start int64) error {
+	return p.update(ctx, id, func(cur *Instance) error {
+		if err := stateError(cur.State); err != nil {
+			return err
+		}
+		if start > cur.IndexPeriodStart {
+			cur.IndexPeriodStart, cur.IndicesInPeriod = start, 0
+		}
+		if cur.IndicesInPeriod >= p.cfg.MaxInstanceKeysPerPeriod {
+			return fmt.Errorf("%w: the instance's keys took %d status list indices this period", ErrTooManyInstanceKeys, cur.IndicesInPeriod)
+		}
+		cur.IndicesInPeriod++
+		return nil
+	})
 }
 
 // StatusListFill is how full the status lists of a period are.
@@ -209,7 +239,7 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 	if current(ik.Status) {
 		return ik, nil
 	}
-	ref, err := p.allocateStatus(ctx, now)
+	ref, err := p.allocateStatus(ctx, ik.InstanceID, now)
 	if err != nil {
 		return InstanceKey{}, err
 	}

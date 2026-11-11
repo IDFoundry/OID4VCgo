@@ -58,6 +58,13 @@ import (
 // Handler does no rate limiting: wrap it with the deployment's own.
 // ChallengePath and InstancesPath answer anyone, and every challenge
 // is stored until it's used or expires, so limit them per client.
+// WalletAttestationPath and KeyAttestationPath answer only a
+// registered instance, but each request it signs writes to the
+// stores, so limit them per client as well; the provider itself bounds
+// only the status list indices an instance's keys take in a period
+// (Config.MaxInstanceKeysPerPeriod). Don't key a limit on the signed
+// request's sub before Handler has verified it: anyone can name
+// another instance there.
 func (p *Provider) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+ChallengePath, p.serveChallenge)
@@ -92,6 +99,7 @@ var (
 	errUnknownKey    = apiError{http.StatusBadRequest, "unknown_instance_key", "The instance key isn't recorded for the instance."}
 	errUnknownClient = apiError{http.StatusBadRequest, "unknown_client", "The provider doesn't attest that client."}
 	errNoKeyAttested = apiError{http.StatusForbidden, "no_key_attested", "No key could be attested."}
+	errTooManyKeys   = apiError{http.StatusTooManyRequests, "too_many_instance_keys", "The instance has used too many instance keys this period."}
 	errServer        = apiError{http.StatusInternalServerError, "server_error", "The provider couldn't answer."}
 )
 
@@ -109,6 +117,7 @@ func refusal(err error) apiError {
 		api apiError
 	}{
 		{ErrNoKeyAttested, errNoKeyAttested},
+		{ErrTooManyInstanceKeys, errTooManyKeys},
 		{ErrInstanceKeyRegistered, errKeyRegistered},
 		{ErrUnknownInstanceKey, errUnknownKey},
 		{ErrInstanceRevoked, errRevoked},

@@ -173,7 +173,7 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 	}
 	// An index allocated for a key that then isn't recorded stays
 	// reserved, as every allocated index does: it's never reused.
-	if ik.Status, err = p.allocateStatus(ctx, ik.CreatedAt); err != nil {
+	if ik.Status, err = p.allocateStatus(ctx, in.ID, ik.CreatedAt); err != nil {
 		return InstanceKey{}, err
 	}
 	ik.RetainUntil = p.retainUntil(p.periodStart(ik.CreatedAt))

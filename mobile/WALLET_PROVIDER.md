@@ -116,6 +116,7 @@ Clients decide on `error` and the status code, never the description.
 | 403 | `instance_not_active` | The instance is suspended. |
 | 403 | `instance_revoked` | The instance is revoked, for good: register a new one. |
 | 403 | `no_key_attested` | None of the holder keys could be attested. |
+| 429 | `too_many_instance_keys` | The instance's instance keys have used up this status list period's allowance: a Wallet Attestation for a new instance key, or for a recorded one not yet used this period, is refused until the next period. Instance keys already used this period are still attested. |
 | 500 | `server_error` | The provider couldn't answer. |
 
 A path or method the protocol doesn't define gets the HTTP server's own

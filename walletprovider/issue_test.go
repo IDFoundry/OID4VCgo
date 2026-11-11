@@ -245,8 +245,11 @@ func withEvidence(t *testing.T, h *harness, kind string, purpose walletprovider.
 // each new instance key reserves one, on the period's lists in order,
 // until every one of them is full.
 func TestStatusIndexPerInstanceKey(t *testing.T) {
-	// Four entries a list, of which half are handed out.
-	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.StatusListSize = 4 })
+	// Four entries a list, of which half are handed out, all to one
+	// instance.
+	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) {
+		c.StatusListSize, c.MaxInstanceKeysPerPeriod = 4, 1000
+	})
 	in, _ := h.register(kindStrongBox)
 	if n, err := h.deps.StatusIndices.Reserved(context.Background(), listURI(h.periodStart(), 0)); err != nil || n != 0 {
 		t.Fatalf("registering reserved %d status indices (%v)", n, err)
@@ -287,6 +290,54 @@ func TestStatusIndexPerInstanceKey(t *testing.T) {
 	h.newInstanceKey(in.ID, kindStrongBox)
 	if f := fill(); f.Start.Unix() != h.periodStart() || f.Free() != 2*walletprovider.MaxStatusListsPerPeriod-1 {
 		t.Fatalf("the next period's fill = %+v", f)
+	}
+}
+
+// TestInstanceKeysPerPeriodBounded: one instance's instance keys take
+// at most Config.MaxInstanceKeysPerPeriod status list indices a period,
+// new keys and recorded keys moving to the period's lists alike, so it
+// can't fill the period's lists and starve another instance, in this
+// period or, with the keys it recorded, the next.
+func TestInstanceKeysPerPeriodBounded(t *testing.T) {
+	// Room for 128 instance keys a period.
+	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) {
+		c.StatusListSize, c.MaxInstanceKeysPerPeriod = 4, 3
+	})
+	flooder, _ := h.register(kindStrongBox)
+	var recorded []*ecdsa.PrivateKey
+	for range 3 {
+		recorded = append(recorded, h.newInstanceKey(flooder.ID, kindStrongBox))
+	}
+	_, err := h.walletAttestation(flooder.ID, &newKey(t).PublicKey, kindStrongBox)
+	if !errors.Is(err, walletprovider.ErrTooManyInstanceKeys) {
+		t.Fatalf("a fourth instance key this period = %v, want ErrTooManyInstanceKeys", err)
+	}
+	// Its recorded keys are still attested, on the indices they have.
+	if _, err := h.walletAttestation(flooder.ID, &recorded[0].PublicKey, ""); err != nil {
+		t.Fatalf("a recorded instance key: %v", err)
+	}
+	other, _ := h.register(kindStrongBox)
+	h.newInstanceKey(other.ID, kindStrongBox)
+	if f, err := h.p.StatusListFill(context.Background()); err != nil || f.Free() != 2*walletprovider.MaxStatusListsPerPeriod-4 {
+		t.Fatalf("fill = %+v, %v; want 4 indices taken", f, err)
+	}
+
+	// In the next period, each recorded key it moves to the period's
+	// lists takes one of its indices.
+	h.toNextPeriod()
+	for _, k := range recorded {
+		if _, err := h.walletAttestation(flooder.ID, &k.PublicKey, ""); err != nil {
+			t.Fatalf("a recorded key in the next period: %v", err)
+		}
+	}
+	_, err = h.walletAttestation(flooder.ID, &newKey(t).PublicKey, kindStrongBox)
+	if !errors.Is(err, walletprovider.ErrTooManyInstanceKeys) {
+		t.Fatalf("a new instance key after three moves = %v, want ErrTooManyInstanceKeys", err)
+	}
+	h.newInstanceKey(other.ID, kindStrongBox)
+	in, err := h.deps.Instances.Get(context.Background(), flooder.ID)
+	if err != nil || in.IndexPeriodStart != h.periodStart() || in.IndicesInPeriod != 3 {
+		t.Fatalf("the instance counts %d indices from %d (%v), want 3 from %d", in.IndicesInPeriod, in.IndexPeriodStart, err, h.periodStart())
 	}
 }
 
