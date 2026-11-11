@@ -101,6 +101,20 @@ final class FileCredentialStoreTests: XCTestCase {
         }
     }
 
+    func testWriteOptions() {
+        let cases: [(FileProtectionType, Data.WritingOptions)] = [
+            (.complete, [.atomic, .completeFileProtection]),
+            (.completeUnlessOpen, [.atomic, .completeFileProtectionUnlessOpen]),
+            (.completeUntilFirstUserAuthentication, [.atomic, .completeFileProtectionUntilFirstUserAuthentication]),
+            (.none, [.atomic, .noFileProtection]),
+            // A type this store doesn't know: the strictest, not none.
+            (FileProtectionType(rawValue: "NSFileProtectionSomethingNew"), [.atomic, .completeFileProtection]),
+        ]
+        for (protection, want) in cases {
+            XCTAssertEqual(FileCredentialStore.writeOptions(protection), want, protection.rawValue)
+        }
+    }
+
     func testExcludedFromBackup() throws {
         let s = try store()
         XCTAssertEqual(try s.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)

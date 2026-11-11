@@ -84,6 +84,19 @@ final class HttpWalletProviderTests: XCTestCase {
         } catch let e as StoreError {
             XCTAssertTrue(e.message.contains("wasn't sent"), e.message)
         }
+
+        // Over another nonce: a Key Attestation replayed from another
+        // Credential Request.
+        env.server.state.withLock {
+            $0.attestStranger = false
+            $0.nonceClaim = .some("another nonce")
+        }
+        do {
+            _ = try await env.provider.keyAttestation(instanceKey: instance.json, keys: holders.map(\.json), nonce: "n")
+            XCTFail("a Key Attestation over another nonce was accepted")
+        } catch let e as StoreError {
+            XCTAssertTrue(e.message.contains("isn't over the nonce sent"), e.message)
+        }
     }
 
     /// Without App Attest there's no registration, and no request.

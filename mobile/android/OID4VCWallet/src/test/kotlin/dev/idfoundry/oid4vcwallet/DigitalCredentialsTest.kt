@@ -46,6 +46,13 @@ class DigitalCredentialsTest {
     }
 
     @Test
+    fun noCertificateNoAppOrigin() {
+        // Not an origin every app without a certificate would share.
+        assertNull(DigitalCredentials.appOrigin(null))
+        assertNull(DigitalCredentials.appOrigin(ByteArray(0)))
+    }
+
+    @Test
     fun mdocResponseData() {
         val encrypted = byteArrayOf(0x82.toByte(), 0x65, 0xFF.toByte(), 0xFE.toByte())
         val data = Json.parseToJsonElement(MdocPresentation.Response(encrypted).responseData()).jsonObject
