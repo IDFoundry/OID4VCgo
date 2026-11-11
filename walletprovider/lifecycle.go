@@ -127,9 +127,13 @@ func (p *Provider) setKeyStatuses(ctx context.Context, id string, status statusl
 const listPageSize = 100
 
 // RevokeWhere revokes every instance not yet revoked that match
-// selects — every instance of an app version, say, or every one whose
-// device didn't boot verified — with reason, and returns how many it
-// revoked. It walks the whole store (InstanceStore.List), so match sees
+// selects — every instance of an app version, say, every one whose
+// device didn't boot verified, or, from its EvidenceFacts, every one
+// whose attestation chain has a certificate since revoked — with
+// reason, and returns how many it revoked. An EvidenceRechecker's
+// refusal already stops an instance getting new attestations, but
+// leaves those it has VALID until they expire: revoking it makes them
+// INVALID too. It walks the whole store (InstanceStore.List), so match sees
 // each instance once, as it was when read. It stops at the first error,
 // having revoked those before it; run it again to finish.
 func (p *Provider) RevokeWhere(ctx context.Context, match func(Instance) bool, reason string) (int, error) {

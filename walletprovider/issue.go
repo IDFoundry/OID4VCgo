@@ -461,7 +461,8 @@ func (p *Provider) checkEvidenceFrom(in Instance, kind string, ev VerifiedEviden
 }
 
 // activeInstance returns the instance with id, refusing one that isn't
-// active or whose registration evidence the Policy no longer accepts.
+// active, whose registration evidence the Policy no longer accepts, or
+// whose registration verifier, an EvidenceRechecker, refuses it now.
 func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, error) {
 	in, err := p.getInstance(ctx, id)
 	if err != nil {
@@ -472,6 +473,11 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 	}
 	if err := p.cfg.Policy.checkInstance(in); err != nil {
 		return Instance{}, err
+	}
+	if r, ok := p.verifiers[in.Evidence.Kind].(EvidenceRechecker); ok {
+		if err := r.Recheck(ctx, in); err != nil {
+			return Instance{}, fmt.Errorf("walletprovider: rechecking the instance's registration evidence: %w", err)
+		}
 	}
 	return in, nil
 }

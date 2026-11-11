@@ -177,6 +177,17 @@ type VerifiedEvidence struct {
 	// of any Kind, has. Set only at registration; ignored afterwards.
 	CredentialID string
 
+	// Facts, if set, are what the verifier wants kept of the
+	// registration evidence: the facts its checks rested on, in a
+	// format of its own (androidkey's: the chain's certificate serial
+	// numbers, the app's signing certificates, the patch level and the
+	// root of trust). The provider stores them in Instance.EvidenceFacts
+	// at registration and ignores them afterwards, so an operator can
+	// find the instances whose evidence a later finding taints
+	// (Provider.RevokeWhere), and an EvidenceRechecker can check them
+	// again. Opaque here.
+	Facts []byte
+
 	// Counter, if set, is the instance's new signature counter (App
 	// Attest). The provider stores it with a compare-and-swap against
 	// the Counter the verifier was given, so two requests can't both
@@ -203,4 +214,27 @@ type EvidenceVerifier interface {
 	Kind() string
 
 	Verify(ctx context.Context, in EvidenceInput) (VerifiedEvidence, error)
+}
+
+// EvidenceRechecker is an EvidenceVerifier that can check a registered
+// instance's evidence again: against what it knows now, such as a
+// revocation list that has since named a certificate of the instance's
+// chain, or a policy it has since been configured with. The provider
+// calls Recheck with the instance, for the verifier of the Kind it
+// registered with, before each Wallet Attestation and Key Attestation:
+// Android Key Attestation evidence is verified only for a key the
+// instance hasn't used before, so a recorded instance key would
+// otherwise never be checked again. androidkey.EvidenceVerifier is
+// one.
+type EvidenceRechecker interface {
+	EvidenceVerifier
+
+	// Recheck checks in's registration evidence again, from what Verify
+	// reported of it (Instance.EvidenceFacts; empty for an instance
+	// registered before the provider kept them, which it then can't
+	// check, and should accept). It returns nil to accept the instance,
+	// an error wrapping ErrPolicy or ErrEvidenceRejected to refuse it,
+	// and any other error when it couldn't check: the request then
+	// fails as the provider's own failure.
+	Recheck(ctx context.Context, in Instance) error
 }

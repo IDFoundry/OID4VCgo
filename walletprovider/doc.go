@@ -176,5 +176,10 @@
 // attestation endpoints write to the stores on each request.
 //
 // Evidence kinds plug in from subpackages: androidkey.EvidenceVerifier
-// for Android Key Attestation.
+// for Android Key Attestation. A verifier may report facts about the
+// registration evidence (VerifiedEvidence.Facts), kept with the
+// instance (Instance.EvidenceFacts), and, as an EvidenceRechecker,
+// judge them again before each attestation, so an instance whose
+// attestation key has since been revoked gets nothing more, even for
+// an instance key it recorded before.
 package walletprovider
