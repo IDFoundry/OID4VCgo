@@ -172,6 +172,33 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 	return nil, nil
 }
 
+// configureIssuerTrust adds cfg's per-document-type IACAs, clock skew
+// and document signer check to r's options.
+func (r *ProximityReader) configureIssuerTrust(cfg proximityReaderConfig) error {
+	if len(cfg.IssuerRootsByDocType) > 0 {
+		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
+		for docType, pemText := range cfg.IssuerRootsByDocType {
+			pool, err := certPool(pemText)
+			if err != nil {
+				return newError(CodeInvalidInput, fmt.Errorf("issuer_roots_by_doctype[%q]: %w", docType, err))
+			}
+			byType[docType] = pool
+		}
+		r.opts = append(r.opts, proximity.WithIssuerRootsByDocType(byType))
+	}
+	if cfg.MaxClockSkewSeconds != 0 {
+		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
+	}
+	policy, err := readerDocumentSignerPolicy(cfg)
+	if err != nil {
+		return err
+	}
+	if policy != nil {
+		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(policy))
+	}
+	return nil
+}
+
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "status_max_bytes",
@@ -203,19 +230,8 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if err := r.configureDecisions(cfg); err != nil {
 		return nil, err
 	}
-	if len(cfg.IssuerRootsByDocType) > 0 {
-		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
-		for docType, pemText := range cfg.IssuerRootsByDocType {
-			pool, err := certPool(pemText)
-			if err != nil {
-				return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots_by_doctype[%q]: %w", docType, err))
-			}
-			byType[docType] = pool
-		}
-		r.opts = append(r.opts, proximity.WithIssuerRootsByDocType(byType))
-	}
-	if cfg.MaxClockSkewSeconds != 0 {
-		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
+	if err := r.configureIssuerTrust(cfg); err != nil {
+		return nil, err
 	}
 	switch {
 	case cfg.StatusMaxBytes < 0 || cfg.StatusMaxBytes > statuslist.MaxTokenBytesLimit:
@@ -229,13 +245,6 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		return nil, err
 	}
 	r.statusCache = cache
-	policy, err := readerDocumentSignerPolicy(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if policy != nil {
-		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(policy))
-	}
 	if err := r.configureRevocation(cfg); err != nil {
 		return nil, err
 	}
