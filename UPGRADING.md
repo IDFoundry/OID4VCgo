@@ -62,6 +62,21 @@ CHANGELOG.md's BREAKING CHANGES sections.
 - **Android API 26–29:** `AndroidKeystoreKeyStore()` still refuses per-use
   holder authentication there; `AndroidKeystoreKeyStore.Options.forDevice()`
   gives options that work on every API level.
+- **`require_mdl_signer_eku` is deprecated** (Swift and Kotlin
+  `ProximityReaderConfiguration.requireMDLSignerEKU`, Go
+  `proximity.RequireMDLDocumentSignerEKU`): the default document signer
+  check already requires the mDL document signer extended key usage, so
+  setting it changes nothing. Drop it; the key is still accepted within
+  ABI 15 and goes at the next ABI version.
+- **`Wallet.sweepOrphanedKeys` refuses a key store under the Wallet
+  Provider registration key's prefix**, or one covering it
+  (`org.idfoundry.oid4vcgo.`, say), deleting nothing: a `StoreError` in
+  Swift, `IllegalArgumentException` in Kotlin. Give the wallet's key
+  store a prefix of its own, as the default one is. A sweep also no
+  longer deletes keys the store didn't make: in Swift, only keys a
+  `KeychainKeyStore` labelled (and it throws for an empty `tagPrefix`);
+  in Kotlin, only key pairs, never a secret key such as the credential
+  store's under a custom `keyAlias`.
 
 ### Behaviour that changes without a code change
 
