@@ -90,7 +90,9 @@ func (p *Presentation) unregisteredFor(ctx context.Context, i int, cq dcql.Crede
 		return over
 	}
 	for _, c := range p.queries[i].Credentials {
-		for _, leaf := range reg.UnregisteredRevealed(cq, disclosedAlong(ctx, cq, c)) {
+		// The copy Respond would present: copies are checked to
+		// disclose alike, but it's that one's that's sent.
+		for _, leaf := range reg.UnregisteredRevealed(cq, disclosedAlong(ctx, cq, p.presentable(c))) {
 			if !slices.ContainsFunc(over, func(path dcql.Path) bool { return slices.Equal(path, leaf) }) {
 				over = append(over, leaf)
 			}

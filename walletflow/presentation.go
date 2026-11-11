@@ -430,6 +430,10 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 	if err != nil {
 		return Presented{}, err
 	}
+	if err := p.checkShown(ctx, sel, reserved); err != nil {
+		p.release(ctx, reserved)
+		return Presented{}, err
+	}
 	held, err := p.withKeys(ctx, reserved)
 	if err != nil {
 		p.release(ctx, reserved)
@@ -586,15 +590,85 @@ func (p *Presentation) held(_ context.Context, sel Selection) (map[string][]wall
 			if !ok {
 				return nil, fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, id)
 			}
-			// The copy Respond would present, under the copy policy: under
-			// CopyPerVerifier a returning Verifier gets the copy it saw,
-			// whose claims Preview must then show.
-			_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, p.verifier(), p.w.deps.Clock())
-			c.Credential = cp.Credential
-			out[q] = append(out[q], heldCredential(c, nil))
+			out[q] = append(out[q], heldCredential(p.presentable(c), nil))
 		}
 	}
 	return out, nil
+}
+
+// presentable is c with Credential the copy Respond would present now,
+// under the copy policy: under CopyPerVerifier a returning Verifier
+// gets the copy it saw, whose claims Preview must then show.
+func (p *Presentation) presentable(c StoredCredential) StoredCredential {
+	_, cp, _ := c.copyFor(p.w.cfg.CopyPolicy, p.verifier(), p.w.deps.Clock())
+	c.Credential = cp.Credential
+	return c
+}
+
+// checkShown refuses, with ErrCredentialChanged, reserved copies that
+// would disclose other claims — selected, always disclosed or disclosed
+// along with them — than Preview shows the holder for sel. The copy
+// reserved needn't be the one previewed (that one presented since, say,
+// or found revoked), and a batch's copies are checked to disclose alike
+// only when they're received.
+func (p *Presentation) checkShown(ctx context.Context, sel Selection, reserved []reservedCopy) error {
+	held, err := p.held(ctx, sel)
+	if err != nil {
+		return err
+	}
+	shown, err := previewByCredential(ctx, p.req.Query, held, p.idsByCredential())
+	if err != nil {
+		return fmt.Errorf("walletflow: %w", err)
+	}
+	sending := map[string][]wallet.HeldCredential{}
+	ids := map[string]string{}
+	for _, r := range reserved {
+		sending[r.query] = append(sending[r.query], heldCredential(r.c, nil))
+		ids[r.c.Credential] = r.id
+	}
+	sent, err := previewByCredential(ctx, p.req.Query, sending, ids)
+	for key, s := range shown {
+		if err != nil || !sameDisclosure(s, sent[key]) {
+			return fmt.Errorf("walletflow: credential %q: %w", key.id, ErrCredentialChanged)
+		}
+	}
+	return nil
+}
+
+// previewKey is a credential, by ID, answering a query.
+type previewKey struct{ query, id string }
+
+// previewByCredential is wallet.PreviewSelection of held, keyed by the
+// query each credential answers and its ID, which ids has by its text.
+func previewByCredential(ctx context.Context, query dcql.Query, held map[string][]wallet.HeldCredential, ids map[string]string) (map[previewKey]wallet.PreviewedCredential, error) {
+	preview, err := wallet.PreviewSelection(ctx, query, held, trustedAuthorities)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[previewKey]wallet.PreviewedCredential, len(preview))
+	for _, c := range preview {
+		out[previewKey{c.QueryID, ids[c.Credential.Credential]}] = c
+	}
+	return out, nil
+}
+
+// sameDisclosure reports whether a and b disclose the same claims.
+func sameDisclosure(a, b wallet.PreviewedCredential) bool {
+	return samePaths(a.Claims, b.Claims) && samePaths(a.AlwaysDisclosed, b.AlwaysDisclosed) &&
+		samePaths(a.DisclosedAlong, b.DisclosedAlong) && samePaths(a.Retained, b.Retained)
+}
+
+// samePaths reports whether a and b hold the same paths, in any order.
+func samePaths(a, b []dcql.Path) bool {
+	within := func(paths, in []dcql.Path) bool {
+		for _, p := range paths {
+			if !slices.ContainsFunc(in, func(q dcql.Path) bool { return slices.Equal(p, q) }) {
+				return false
+			}
+		}
+		return true
+	}
+	return len(a) == len(b) && within(a, b) && within(b, a)
 }
 
 // reservedCopy is a copy Respond is presenting: credential id's copy

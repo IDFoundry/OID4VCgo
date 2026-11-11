@@ -73,8 +73,10 @@ anything: show that before the holder agrees.
 Open `Presented.redirectURI`, when the Verifier sends one, in the
 browser the request came from: it's how a same-device flow returns to
 the Verifier's page. The library refuses http and schemes that run code
-or read local data, but lets through a scheme the Verifier's own app
-may have registered: open an https URL in the browser, any other only
+or read local data (`javascript:`, `data:`, `file:`, and Android's
+`intent:`, `content:` and `android-app:`), but lets through a scheme
+the Verifier's own app may have registered: open an https URL in the
+browser, any other only
 through an `ACTION_VIEW` intent, never in a WebView, and never one in
 the wallet's own schemes (`openid4vp`, `openid-credential-offer`, its
 redirect URI's), which would start another flow in the wallet.
