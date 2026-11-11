@@ -331,16 +331,26 @@ func TestSweep(t *testing.T) {
 		}
 		mustDo(d.Nonces().Issue(ctx, issuer.NonceIssuance{Nonce: "old", ExpiresAt: past}))
 		mustDo(d.Nonces().Issue(ctx, issuer.NonceIssuance{Nonce: "new", ExpiresAt: future}))
+		mustDo(d.Nonces().Issue(ctx, issuer.NonceIssuance{Nonce: "now", ExpiresAt: now}))
+		mustDo(d.PreAuthorizedCodes().Issue(ctx, "old", issuer.PreAuthorizedCodeRecord{ExpiresAt: past}))
+		mustDo(d.PreAuthorizedCodes().Issue(ctx, "new", issuer.PreAuthorizedCodeRecord{ExpiresAt: future}))
+		mustDo(d.CredentialOffers().Store(ctx, issuer.CredentialOfferRecord{Reference: "old", ExpiresAt: past}))
+		mustDo(d.CredentialOffers().Store(ctx, issuer.CredentialOfferRecord{Reference: "new", ExpiresAt: future}))
+		mustDo(d.Notifications().Issue(ctx, "old", issuer.NotificationRecord{ExpiresAt: past}))
 		mustDo(d.Notifications().Issue(ctx, "forever", issuer.NotificationRecord{}))
 		mustDo(d.DeferredTransactions().Create(ctx, "old", issuer.DeferredTransactionRecord{ExpiresAt: past}))
+		mustDo(d.DeferredTransactions().Create(ctx, "new", issuer.DeferredTransactionRecord{ExpiresAt: future}))
+		mustDo(d.DeferredTransactions().Create(ctx, "forever", issuer.DeferredTransactionRecord{}))
 		mustDo(d.Transactions(verifier.TransactionCodec{}).Create(ctx, verifier.Transaction{ID: "kept", ExpiresAt: past, RetainUntil: future, Status: verifier.TransactionPending}))
 		mustDo(d.Transactions(verifier.TransactionCodec{}).Create(ctx, verifier.Transaction{ID: "gone", KeyID: "k", ExpiresAt: past, RetainUntil: past, Status: verifier.TransactionPending}))
 		mustDo(d.Authorizations().PutAuthorization(ctx, walletflow.PendingAuthorization{State: "old", ExpiresAt: past}))
 		mustDo(d.Credentials().Put(ctx, walletflow.StoredCredential{ID: "c"}))
 
+		// An expired nonce, pre-authorized code, Credential Offer,
+		// notification_id, deferred transaction and verifier transaction.
 		n, err := d.Sweep(ctx, now)
-		if err != nil || n != 3 {
-			t.Errorf("Sweep = %d, %v; want 3 deleted", n, err)
+		if err != nil || n != 6 {
+			t.Errorf("Sweep = %d, %v; want 6 deleted", n, err)
 		}
 		if _, err := d.Nonces().Consume(ctx, issuer.NonceConsumption{Nonce: "old"}); !errors.Is(err, issuer.ErrNonceUnknown) {
 			t.Errorf("an expired nonce survived the sweep: %v", err)
@@ -348,8 +358,35 @@ func TestSweep(t *testing.T) {
 		if _, err := d.Nonces().Consume(ctx, issuer.NonceConsumption{Nonce: "new"}); err != nil {
 			t.Errorf("an unexpired nonce was swept: %v", err)
 		}
+		// Expired before now, not at it.
+		if _, err := d.Nonces().Consume(ctx, issuer.NonceConsumption{Nonce: "now"}); err != nil {
+			t.Errorf("a nonce expiring at the sweep's now was swept: %v", err)
+		}
+		if _, _, err := d.PreAuthorizedCodes().Consume(ctx, "old", "", 0, nil); !errors.Is(err, issuer.ErrPreAuthorizedCodeUnknown) {
+			t.Errorf("an expired pre-authorized code survived the sweep: %v", err)
+		}
+		if _, _, err := d.PreAuthorizedCodes().Consume(ctx, "new", "", 0, nil); err != nil {
+			t.Errorf("an unexpired pre-authorized code was swept: %v", err)
+		}
+		if _, err := d.CredentialOffers().Get(ctx, "old"); !errors.Is(err, sqlstore.ErrNotFound) {
+			t.Errorf("an expired Credential Offer survived the sweep: %v", err)
+		}
+		if _, err := d.CredentialOffers().Get(ctx, "new"); err != nil {
+			t.Errorf("an unexpired Credential Offer was swept: %v", err)
+		}
+		if _, err := d.Notifications().Get(ctx, "old"); !errors.Is(err, issuer.ErrNotificationIDUnknown) {
+			t.Errorf("an expired notification_id survived the sweep: %v", err)
+		}
 		if _, err := d.Notifications().Get(ctx, "forever"); err != nil {
 			t.Errorf("a notification_id with no expiry was swept: %v", err)
+		}
+		if _, err := d.DeferredTransactions().Get(ctx, "old"); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
+			t.Errorf("an expired deferred transaction survived the sweep: %v", err)
+		}
+		for _, id := range []string{"new", "forever"} {
+			if _, err := d.DeferredTransactions().Get(ctx, id); err != nil {
+				t.Errorf("deferred transaction %q was swept: %v", id, err)
+			}
 		}
 		if _, err := d.Transactions(verifier.TransactionCodec{}).Get(ctx, "kept"); err != nil {
 			t.Errorf("a transaction within its retention was swept: %v", err)

@@ -206,3 +206,18 @@ func (e *env) db() *sqlstore.DB {
 	e.t.Helper()
 	return e.storage()()
 }
+
+// raw is a fresh, migrated storage's one handle, with e.opts, and the
+// *sql.DB under it, for writing rows the stores never would.
+func (e *env) raw() (*sqlstore.DB, *sql.DB) {
+	e.t.Helper()
+	db := e.location()()
+	d, err := sqlstore.New(db, e.dialect, e.opts)
+	if err != nil {
+		e.t.Fatalf("sqlstore.New: %v", err)
+	}
+	if err := d.Migrate(context.Background()); err != nil {
+		e.t.Fatalf("Migrate: %v", err)
+	}
+	return d, db
+}

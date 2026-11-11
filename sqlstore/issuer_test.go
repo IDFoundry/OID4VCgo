@@ -194,3 +194,56 @@ func TestPreAuthorizedCodeTxCodeColumnMustMatchRecord(t *testing.T) {
 		})
 	}
 }
+
+// The wrong tx_code guesses a code has had count against the limit of
+// each Consume, even one lower than when they were made: at it, the
+// code is invalidated, the right tx_code refused. The guess reaching
+// the limit invalidates it too.
+func TestPreAuthorizedCodeTxCodeAttemptLimit(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		codes := e.db().PreAuthorizedCodes()
+		issue := func(code string) {
+			t.Helper()
+			if err := codes.Issue(ctx, code, issuer.PreAuthorizedCodeRecord{TxCodeHash: "right", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		guess := func(code, txCodeHash string, maxAttempts int, want error) {
+			t.Helper()
+			if _, _, err := codes.Consume(ctx, code, txCodeHash, maxAttempts, nil); !errors.Is(err, want) {
+				t.Errorf("Consume(%s, %s, max %d) = %v, want %v", code, txCodeHash, maxAttempts, err, want)
+			}
+		}
+
+		issue("lowered")
+		guess("lowered", "wrong", 5, issuer.ErrWrongTxCode)
+		guess("lowered", "wrong", 5, issuer.ErrWrongTxCode)
+		guess("lowered", "right", 2, issuer.ErrTooManyTxCodeAttempts)
+		guess("lowered", "right", 5, issuer.ErrPreAuthorizedCodeUnknown)
+
+		issue("reached")
+		guess("reached", "wrong", 2, issuer.ErrWrongTxCode)
+		guess("reached", "wrong", 2, issuer.ErrWrongTxCode)
+		guess("reached", "right", 2, issuer.ErrPreAuthorizedCodeUnknown)
+	})
+}
+
+// A sealed record is bound to its table: one copied into another
+// table, under the same key, is refused.
+func TestSealedIssuerRecordsAreBoundToTheirTable(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, e *env) {
+		ctx := context.Background()
+		e.opts.Sealer = testSealer(t)
+		d, raw := e.raw()
+		if err := d.Notifications().Issue(ctx, "id", issuer.NotificationRecord{Owner: "o", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, "INSERT INTO oid4vc_issuer_deferred_transactions (id, owner, sweep_after, record) SELECT id, owner, sweep_after, record FROM oid4vc_issuer_notifications WHERE id = 'id'"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.DeferredTransactions().Get(ctx, "id"); !errors.Is(err, sqlstore.ErrRecordFormat) {
+			t.Errorf("Get of a notification's record copied into deferred transactions = %v, want ErrRecordFormat", err)
+		}
+	})
+}
