@@ -13,17 +13,20 @@ import (
 )
 
 // productionStatus is a StatusPolicy AssuranceProduction accepts: a
-// hardened Fetcher (the zero one) and an explicit revocation choice.
+// hardened Fetcher (the zero one), a Cache and an explicit revocation
+// choice.
 func productionStatus() *verifier.StatusPolicy {
 	return &verifier.StatusPolicy{Checker: statuslist.Checker{
 		Roots:   x509.NewCertPool(),
 		Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
 	}}
 }
 
 // The status decision is Status or NoStatusCheck, never both; under
 // AssuranceProduction one of them is required, and Status's Fetcher
-// must be hardened and its list signers' revocation decided.
+// must be hardened, have a Cache, and its list signers' revocation
+// decided.
 func TestCheckStatusDecision(t *testing.T) {
 	loopback := productionStatus()
 	loopback.Checker.Fetcher.AllowLoopback = true
@@ -31,6 +34,8 @@ func TestCheckStatusDecision(t *testing.T) {
 	noRevocation.Checker.Options.Revocation = nil
 	noRoots := productionStatus()
 	noRoots.Checker.Roots = nil
+	noCache := productionStatus()
+	noCache.Checker.Cache = nil
 	for name, tc := range map[string]struct {
 		assurance     verifier.AssuranceLevel
 		status        *verifier.StatusPolicy
@@ -44,6 +49,8 @@ func TestCheckStatusDecision(t *testing.T) {
 		"production, loopback fetcher":       {verifier.AssuranceProduction, loopback, false, "HardenedForProduction"},
 		"production, no revocation decision": {verifier.AssuranceProduction, noRevocation, false, "Revocation is required"},
 		"production, no roots":               {verifier.AssuranceProduction, noRoots, false, "Roots"},
+		"production, no cache":               {verifier.AssuranceProduction, noCache, false, "Cache is required"},
+		"development, no cache":              {verifier.AssuranceDevelopment, noCache, false, ""},
 		"development, neither":               {verifier.AssuranceDevelopment, nil, false, ""},
 		"development, loopback fetcher":      {verifier.AssuranceDevelopment, loopback, false, ""},
 		"development, both":                  {verifier.AssuranceDevelopment, productionStatus(), true, "not both"},

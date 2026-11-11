@@ -181,7 +181,8 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   fetches CRLs on the request path stalls presentations whenever a list
   expires.
 - [ ] **Status checks: one `statuslist.Cache` per process**, shared by
-  every `statuslist.Checker` (`Checker.Cache`). Size `CacheOptions`:
+  every `statuslist.Checker` (`Checker.Cache`; a `verifier.StatusPolicy`
+  without one is refused under `AssuranceProduction`). Size `CacheOptions`:
   `MaxEntries` (256 by default) above the number of list URIs your
   verifiers read within the tokens' lifetime — one Wallet Provider's
   live attestations alone can name 128 (64 lists in each of the current

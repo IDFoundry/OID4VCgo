@@ -18,7 +18,10 @@ import (
 // noStatusList is a status policy that can be configured but never
 // fetches: its documents in these tests name no status list.
 func noStatusList() *verifier.StatusPolicy {
-	return &verifier.StatusPolicy{Checker: statuslist.Checker{Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}}}}
+	return &verifier.StatusPolicy{Checker: statuslist.Checker{
+		Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		Cache: statuslist.NewCache(statuslist.CacheOptions{}),
+	}}
 }
 
 // NewReaderSession requires an assurance level and a document signer
