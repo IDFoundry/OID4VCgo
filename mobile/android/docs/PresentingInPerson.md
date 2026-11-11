@@ -131,6 +131,22 @@ makes holder keys created from then on usable for a short time after
 the holder authenticates, so one prompt covers the whole response. If
 the holder cancels any prompt, nothing is sent and the request stands.
 
+### deviceMac
+
+`WalletConfiguration.proximityDeviceAuth = MAC_PREFERRED` answers with
+deviceMac, which the reader can check but can't show anyone else, where
+the holder key can agree keys, and signs otherwise — silently: nothing
+fails, and the response is a signature. Under
+`AndroidKeystoreKeyStore`'s default options it always signs, since
+holder keys are made to sign only and require the holder for each use.
+A holder key agrees keys when it was made with
+`Options.holderKeyAgreement = true`, on API 31 or later, and with either
+a positive `Options.holderAuthenticationTimeout` or
+`holderUserAuthentication = false` (the app then authenticates the
+holder before each presentation). Keys made before keep signing until
+their credentials are issued again. A reader's `VerifiedMdoc.deviceAuth`
+says which it got: check it with a test reader.
+
 `cancel()` ends a session at any point, as the holder leaves the screen,
 say. `ProximityTimeouts` sets how long it waits: by default 60 seconds
 for a reader to connect, 30 for its request, and 300 for the holder to

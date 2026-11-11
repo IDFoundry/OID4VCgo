@@ -620,8 +620,21 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     public var readerChain: String?
     /// Tolerates an issuer's clock this far off the reader's, at most an hour.
     public var maxClockSkewSeconds: Int?
-    /// Accepts only document signers with the mDL document signer extended key usage.
-    public var requireMDLSignerEKU: Bool
+    /// Deprecated, and does nothing: the default check already requires
+    /// the mDL document signer extended key usage, refusing a document
+    /// signer certificate without it (or an OCSP signer's), so setting
+    /// this changes nothing. It still can't be set with
+    /// `acceptMDLSignerWithoutEKU`. Its `require_mdl_signer_eku` key is
+    /// still accepted within ABI 15, and goes at the next ABI version,
+    /// with this property and the initializer's parameter.
+    @available(*, deprecated, message: "the default check already requires the mDL document signer extended key usage; setting it changes nothing")
+    public var requireMDLSignerEKU: Bool {
+        get { requireMDLSignerEKUValue }
+        set { requireMDLSignerEKUValue = newValue }
+    }
+    // requireMDLSignerEKU's storage, which the initializers and Codable
+    // use without a deprecation warning.
+    private var requireMDLSignerEKUValue: Bool
     /// Also accepts a document signer certificate with no extended key
     /// usage, which is refused by default for lacking the mDL document
     /// signer's, for issuers whose document signers have none. It can't
@@ -723,7 +736,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     }
 
     /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
-    /// and `readerChain`, requests are signed.
+    /// and `readerChain`, requests are signed. `requireMDLSignerEKU` is
+    /// deprecated, as the property is: leave it out.
     public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
                 maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
                 issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
@@ -737,7 +751,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         self.readerKeyID = readerKeyID
         self.readerChain = readerChain
         self.maxClockSkewSeconds = maxClockSkewSeconds
-        self.requireMDLSignerEKU = requireMDLSignerEKU
+        requireMDLSignerEKUValue = requireMDLSignerEKU
         self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
         self.issuerRootsByDocType = issuerRootsByDocType
         self.crls = crls
@@ -759,7 +773,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
-        case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
+        case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKUValue = "require_mdl_signer_eku"
         case acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
         case crls, revocation, crlIssuers = "crl_issuers"
@@ -786,7 +800,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         readerKeyID = try c.decodeIfPresent(String.self, forKey: .readerKeyID)
         readerChain = try c.decodeIfPresent(String.self, forKey: .readerChain)
         maxClockSkewSeconds = try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds)
-        requireMDLSignerEKU = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKU) ?? false
+        requireMDLSignerEKUValue = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKUValue) ?? false
         acceptMDLSignerWithoutEKU = try c.decodeIfPresent(Bool.self, forKey: .acceptMDLSignerWithoutEKU) ?? false
         crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
         revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []

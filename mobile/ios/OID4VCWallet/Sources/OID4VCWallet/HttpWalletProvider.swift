@@ -78,8 +78,9 @@ import Foundation
 public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// The Keychain tag prefix of ``registrationKeyStore()``'s keys. The
     /// wallet's own ``KeychainKeyStore`` mustn't cover it, as its default
-    /// prefix doesn't: ``Wallet/sweepOrphanedKeys(in:)`` would
-    /// delete the registration key.
+    /// prefix doesn't: ``Wallet/sweepOrphanedKeys(in:)`` refuses a
+    /// store whose prefix covers or falls under it, rather than delete
+    /// the registration key.
     public static let registrationKeyTagPrefix = "org.idfoundry.oid4vcgo.walletprovider."
 
     /// The registration key's store: Secure Enclave keys in the Keychain
@@ -130,7 +131,8 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     ///     nothing else deletes from. By default
     ///     ``registrationKeyStore()``. Not the wallet's key store:
     ///     ``Wallet/sweepOrphanedKeys(in:)`` deletes every key there
-    ///     that no credential is bound to.
+    ///     that no credential is bound to (and refuses a store under
+    ///     ``registrationKeyTagPrefix``).
     ///   - appAttest: App Attest: by default the device's.
     ///   - timeout: The timeout of each request.
     /// - Throws: `StoreError` when `baseURL` isn't an absolute https URL

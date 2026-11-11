@@ -508,6 +508,19 @@ final class SessionTests: XCTestCase {
         XCTAssertNil(try keys.publicKey(id: stray))
         let held = try await w.credentials()
         XCTAssertTrue(held.allSatisfy { $0.holderKeyPresent == true }, "a credential's key was swept")
+
+        // Not the Wallet Provider registration key's store.
+        let registration = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false,
+                                                           tagPrefix: HttpWalletProvider.registrationKeyTagPrefix))
+        let registrationKey = try registration.createKey(purpose: .instance)
+        var refused = false
+        do {
+            _ = try await w.sweepOrphanedKeys(in: registration)
+        } catch is StoreError {
+            refused = true
+        }
+        XCTAssertTrue(refused, "swept the registration key's store")
+        XCTAssertNotNil(try registration.publicKey(id: registrationKey))
     }
 
     /// An issuance dropped without close() still deletes its keys.

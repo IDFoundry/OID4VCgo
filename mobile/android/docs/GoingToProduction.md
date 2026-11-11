@@ -210,7 +210,11 @@ authorizations: it is for development only.
   call it only from a debuggable build
   (`if (BuildConfig.DEBUG) OID4VC.allowDevelopment()`), so a staging
   configuration shipped by mistake fails instead of relaxing
-  production's checks.
+  production's checks. A debug build needs the call too — unlike on
+  iOS, where a `DEBUG` build allows `development` by itself. It lasts
+  for its process only: call it in `Application.onCreate`, which runs
+  in each of the app's processes, so a component in its own
+  `android:process` is allowed too.
 - To pin your services' certificates, set `tlsPins`: host → base64
   SHA-256 digests of a certificate's SubjectPublicKeyInfo. Pin a CA's
   key, so a leaf renewal doesn't break the app, and keep a backup pin:

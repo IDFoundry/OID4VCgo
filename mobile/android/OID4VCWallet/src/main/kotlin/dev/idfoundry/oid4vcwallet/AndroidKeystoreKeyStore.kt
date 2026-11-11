@@ -242,8 +242,10 @@ public class AndroidKeystoreKeyStore(
         /**
          * Prefixes every key's alias. Keys under another prefix are never
          * touched, by a sweep or anything else. It must be non-empty, and
-         * must not cover [FileCredentialStore]'s default key alias, which a
-         * sweep would then delete.
+         * must not cover [FileCredentialStore]'s default key alias. The
+         * wallet's mustn't cover, or fall under,
+         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX]:
+         * [Wallet.sweepOrphanedKeys] refuses such a store.
          */
         val aliasPrefix: String = "org.idfoundry.oid4vcgo.key.",
         /**
@@ -375,6 +377,12 @@ public class AndroidKeystoreKeyStore(
      * wallet signs. One usable for a while after the holder authenticates
      * ([Options.holderAuthenticationTimeout]) agrees, asking the holder
      * first when they haven't lately.
+     *
+     * The wallet signs instead without telling the app: under the default
+     * [Options] — no [Options.holderKeyAgreement], and per-use holder
+     * authentication — every response under
+     * [WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED] is a
+     * deviceSignature, asking the holder as a signature does.
      */
     override fun agree(id: String, peerPublicKey: ByteArray): ByteArray {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) throw KeyAgreementUnsupportedException("key agreement in Android Keystore needs API 31")
@@ -387,8 +395,10 @@ public class AndroidKeystoreKeyStore(
         return agreement.generateSecret()
     }
 
-
-
+    // Lint can't follow digests through KeyAttempt: they are only ever
+    // DIGEST_FALLBACKS' KeyProperties.DIGEST_ constants, which setDigests
+    // takes.
+    @SuppressLint("WrongConstant")
     private fun spec(id: String, purpose: KeyPurpose, purposes: Int, digests: Array<String>, strongBox: Boolean?, challenge: ByteArray?): KeyGenParameterSpec {
         val spec = KeyGenParameterSpec.Builder(alias(id), purposes)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -538,11 +548,17 @@ public class AndroidKeystoreKeyStore(
      * Deletes every key this store holds except [except], and returns how
      * many it deleted. `Wallet.sweepOrphanedKeys` calls it with the keys
      * the wallet's credentials are bound to.
+     *
+     * It deletes only key pairs (`KeyStore.PrivateKeyEntry`) under
+     * [Options.aliasPrefix], as this store makes: a secret key under it —
+     * [FileCredentialStore]'s, under a custom
+     * [FileCredentialStore.Options.keyAlias], or the status cache's — is
+     * kept.
      */
     public fun deleteKeys(except: Set<String>): Int {
         var deleted = 0
         for (id in keyIDs()) {
-            if (id !in except) {
+            if (id !in except && keystore.entryInstanceOf(options.aliasPrefix + id, JavaKeyStore.PrivateKeyEntry::class.java)) {
                 deleteKey(id)
                 deleted++
             }

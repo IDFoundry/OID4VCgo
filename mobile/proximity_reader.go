@@ -91,6 +91,11 @@ type proximityReaderConfig struct {
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too, and
 	// is the check this makes: it accepts nothing the default refuses.
+	// It still can't be set with AcceptMDLSignerWithoutEKU.
+	//
+	// Deprecated: the default check already requires the mDL document
+	// signer extended key usage; setting it changes nothing. The key is
+	// still accepted within ABI 15, and goes at the next ABI version.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
 	// AcceptMDLSignerWithoutEKU also accepts a document signer
 	// certificate with no extended key usage extension, which the
@@ -159,11 +164,39 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 	case cfg.RequireMDLSignerEKU && cfg.AcceptMDLSignerWithoutEKU:
 		return nil, newError(CodeInvalidInput, errors.New("require_mdl_signer_eku and accept_mdl_signer_without_eku can't both be set"))
 	case cfg.RequireMDLSignerEKU:
-		return proximity.RequireMDLDocumentSignerEKU, nil
+		// What proximity.RequireMDLDocumentSignerEKU, deprecated, is.
+		return proximity.DefaultDocumentSignerPolicy, nil
 	case cfg.AcceptMDLSignerWithoutEKU:
 		return mdoc.LenientDocumentSignerPolicy, nil
 	}
 	return nil, nil
+}
+
+// configureIssuerTrust adds cfg's per-document-type IACAs, clock skew
+// and document signer check to r's options.
+func (r *ProximityReader) configureIssuerTrust(cfg proximityReaderConfig) error {
+	if len(cfg.IssuerRootsByDocType) > 0 {
+		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
+		for docType, pemText := range cfg.IssuerRootsByDocType {
+			pool, err := certPool(pemText)
+			if err != nil {
+				return newError(CodeInvalidInput, fmt.Errorf("issuer_roots_by_doctype[%q]: %w", docType, err))
+			}
+			byType[docType] = pool
+		}
+		r.opts = append(r.opts, proximity.WithIssuerRootsByDocType(byType))
+	}
+	if cfg.MaxClockSkewSeconds != 0 {
+		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
+	}
+	policy, err := readerDocumentSignerPolicy(cfg)
+	if err != nil {
+		return err
+	}
+	if policy != nil {
+		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(policy))
+	}
+	return nil
 }
 
 // NewProximityReader configures a reader from configJSON:
@@ -197,19 +230,8 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 	if err := r.configureDecisions(cfg); err != nil {
 		return nil, err
 	}
-	if len(cfg.IssuerRootsByDocType) > 0 {
-		byType := make(map[string]*x509.CertPool, len(cfg.IssuerRootsByDocType))
-		for docType, pemText := range cfg.IssuerRootsByDocType {
-			pool, err := certPool(pemText)
-			if err != nil {
-				return nil, newError(CodeInvalidInput, fmt.Errorf("issuer_roots_by_doctype[%q]: %w", docType, err))
-			}
-			byType[docType] = pool
-		}
-		r.opts = append(r.opts, proximity.WithIssuerRootsByDocType(byType))
-	}
-	if cfg.MaxClockSkewSeconds != 0 {
-		r.opts = append(r.opts, proximity.WithMaxClockSkew(time.Duration(cfg.MaxClockSkewSeconds)*time.Second))
+	if err := r.configureIssuerTrust(cfg); err != nil {
+		return nil, err
 	}
 	switch {
 	case cfg.StatusMaxBytes < 0 || cfg.StatusMaxBytes > statuslist.MaxTokenBytesLimit:
@@ -223,13 +245,6 @@ func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, err
 		return nil, err
 	}
 	r.statusCache = cache
-	policy, err := readerDocumentSignerPolicy(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if policy != nil {
-		r.opts = append(r.opts, proximity.WithDocumentSignerPolicy(policy))
-	}
 	if err := r.configureRevocation(cfg); err != nil {
 		return nil, err
 	}

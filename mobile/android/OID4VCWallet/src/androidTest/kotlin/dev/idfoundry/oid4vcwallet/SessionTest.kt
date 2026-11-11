@@ -1,5 +1,7 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import kotlinx.coroutines.async
@@ -23,6 +25,7 @@ import org.junit.runner.RunWith
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLEncoder
+import javax.crypto.KeyGenerator
 import kotlin.concurrent.thread
 import kotlin.time.Duration.Companion.seconds
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.TestEnv as MobileTestEnv
@@ -447,9 +450,35 @@ class SessionTest {
         val w = wallet(env, keys)
         assertEquals(2, receive(env, w).credentials.size)
         val stray = keys.createKey(KeyPurpose.DPOP)
-        assertEquals(1, w.sweepOrphanedKeys(keys))
-        assertNull(keys.publicKey(stray))
-        assertTrue("a credential's key was swept", w.credentials().all { it.holderKeyPresent == true })
+        // A secret key under the prefix, as a credential store's key
+        // under a custom alias would be: not a key pair, so kept.
+        val secretAlias = prefix + "secret"
+        KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+            init(KeyGenParameterSpec.Builder(secretAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
+        }.generateKey()
+        val android = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        try {
+            assertEquals(1, w.sweepOrphanedKeys(keys))
+            assertNull(keys.publicKey(stray))
+            assertTrue("a credential's key was swept", w.credentials().all { it.holderKeyPresent == true })
+            assertTrue("the sweep deleted a secret key", android.containsAlias(secretAlias))
+        } finally {
+            android.deleteEntry(secretAlias)
+        }
+
+        // Not the Wallet Provider registration key's store.
+        val registration = AndroidKeystoreKeyStore(
+            AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX + "session${System.nanoTime()}."),
+        )
+        val registrationKey = registration.createKey(KeyPurpose.INSTANCE)
+        try {
+            val refused = runCatching { w.sweepOrphanedKeys(registration) }.exceptionOrNull()
+            assertTrue("swept the registration key's store: $refused", refused is IllegalArgumentException)
+            assertNotNull(registration.publicKey(registrationKey))
+        } finally {
+            registration.deleteKey(registrationKey)
+        }
     }
 }
 
