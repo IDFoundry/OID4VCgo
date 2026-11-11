@@ -44,6 +44,19 @@ No API changes a caller has to act on.
   instance's keys `INVALID`.** Each transition reads the instance
   again after setting its keys' statuses, and sets them again for the
   state it then has, so the last state stored wins.
+- **`walletflow` refuses a batch whose copies' claim structure
+  differs**, as invalid ("claims differ"): the Issuer JWT and every
+  disclosed value, at any depth and in arrays, must leave each claim
+  plaintext in every copy or selectively disclosable in every copy.
+  Only the Issuer JWT's top-level plaintext claims were compared, so
+  copies disclosing a claim's members separately in one and within
+  the claim's Disclosure in another were accepted.
+- **`walletflow.Presentation.Respond` returns
+  `ErrCredentialChanged` when the copy it would present discloses
+  other claims than `Preview` showed** — selected, always disclosed
+  or disclosed along with them — as one stored before the check above
+  could, once the copy previewed is presented or found revoked.
+  Nothing is sent; start the presentation again.
 
 ### Wallet Provider stores
 

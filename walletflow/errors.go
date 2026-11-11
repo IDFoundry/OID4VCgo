@@ -62,10 +62,12 @@ var (
 	ErrTxCodeRefused = errors.New("walletflow: the issuer refused the PIN, or the code has expired or been used")
 	// ErrCredentialChanged is wrapped by Presentation.Respond (and the
 	// mdoc presentations' Respond) when a selected credential was
-	// replaced — refreshed, say — after the presentation started, so
-	// what would be sent isn't what the holder was shown. Nothing is
-	// sent. Start the presentation again to show the holder the new
-	// credential.
+	// replaced — refreshed, say — after the presentation started, or
+	// when the copy Respond would present, not the one previewed (that
+	// one presented or found revoked since, say), would disclose other
+	// claims than Preview showed: either way, what would be sent isn't
+	// what the holder was shown. Nothing is sent. Start the presentation
+	// again to show the holder what would be.
 	ErrCredentialChanged = errors.New("walletflow: the credential changed after the holder was shown it")
 
 	// ErrMalformedRequest is wrapped for a Digital Credentials API

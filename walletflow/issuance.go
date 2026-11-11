@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1366,7 +1367,7 @@ func copyDiffers(first, verified wallet.VerifiedIssuedCredential, firstCredentia
 		// A copy without a status the others have couldn't be revoked
 		// with them.
 		return "status differs"
-	case !sameHolderClaims(first.Claims, verified.Claims) || !samePlaintext(firstCredential, credential):
+	case !sameHolderClaims(first.Claims, verified.Claims) || !sameStructure(firstCredential, credential):
 		// The holder sees copy 0's claims, and DCQL chooses per copy:
 		// copies that differ would present what the holder didn't see.
 		return "claims differ"
@@ -1556,22 +1557,26 @@ func earliestExpiry(copies []CredentialCopy) time.Time {
 	return earliest
 }
 
-// samePlaintext reports whether two copies of an SD-JWT VC leave the
-// same claims plaintext, those that may differ per copy aside: the
+// sameStructure reports whether two copies of an SD-JWT VC have the
+// same claim structure, those claims that may differ per copy aside:
+// every claim path, walked into disclosed values as into plaintext
+// ones, plaintext in both or selectively disclosable in both. The
 // preview the holder is shown is built from one copy, so another that
-// always discloses a claim the first made selectively disclosable
+// always discloses a claim the first made selectively disclosable, or
+// discloses within one Disclosure what the first disclosed separately,
 // would send what the holder didn't see. Decoys may differ, so they
-// aren't compared; another format has no plaintext to compare.
-func samePlaintext(a, b string) bool {
-	pa, okA := plaintextPaths(a)
-	pb, okB := plaintextPaths(b)
-	return okA == okB && slices.Equal(pa, pb)
+// aren't compared; another format has no structure to compare.
+func sameStructure(a, b string) bool {
+	sa, okA := claimStructure(a)
+	sb, okB := claimStructure(b)
+	return okA == okB && slices.Equal(sa, sb)
 }
 
-// plaintextPaths are credential's plaintext claim paths, sorted, as
-// "/"-joined keys ("[]" for an array element), for an SD-JWT VC; false
-// for anything else.
-func plaintextPaths(credential string) ([]string, bool) {
+// claimStructure is credential's claim structure, for an SD-JWT VC,
+// sorted: each claim path, its components quoted keys and the indices
+// of the elements the credential has, marked " sd" where the claim is
+// selectively disclosable; false for anything else.
+func claimStructure(credential string) ([]string, bool) {
 	pres, err := sdjwtvc.Parse(credential)
 	if err != nil {
 		return nil, false
@@ -1584,33 +1589,76 @@ func plaintextPaths(credential string) ([]string, bool) {
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil, false
 	}
-	for _, name := range perCopyClaims {
-		delete(payload, name)
+	alg, err := sdjwtvc.PayloadHashAlg(payload, sdjwtvc.SHA256)
+	if err != nil {
+		return nil, false
 	}
-	out := appendPlaintextPaths(nil, "", payload)
-	slices.Sort(out)
-	return slices.Compact(out), true
+	w := structureWalker{byDigest: make(map[string]sdjwtvc.Disclosure, len(pres.Disclosures))}
+	for _, d := range pres.Disclosures {
+		digest, err := d.Digest(alg)
+		if err != nil {
+			return nil, false
+		}
+		w.byDigest[digest] = d
+	}
+	w.object("", payload, true)
+	slices.Sort(w.out)
+	return slices.Compact(w.out), true
 }
 
-// appendPlaintextPaths appends to out the plaintext claim paths of v,
-// found at prefix, as plaintextPaths names them.
-func appendPlaintextPaths(out []string, prefix string, v any) []string {
-	switch v := v.(type) {
-	case map[string]any:
-		if _, digest := v["..."]; digest && len(v) == 1 {
-			return out // a selectively disclosable array element
-		}
-		for k, child := range v {
-			if k == "_sd" || k == "_sd_alg" {
-				continue
-			}
-			out = append(out, prefix+"/"+k)
-			out = appendPlaintextPaths(out, prefix+"/"+k, child)
-		}
-	case []any:
-		for _, child := range v {
-			out = appendPlaintextPaths(out, prefix+"/[]", child)
+// structureWalker collects a credential's claim structure
+// (claimStructure), resolving digests with its disclosures, byDigest.
+// A digest without one is a decoy, and left out.
+type structureWalker struct {
+	byDigest map[string]sdjwtvc.Disclosure
+	out      []string
+}
+
+// object walks the claims of v, found at prefix; top is the payload,
+// whose per-copy claims aren't compared.
+func (w *structureWalker) object(prefix string, v map[string]any, top bool) {
+	skip := func(name string) bool { return top && slices.Contains(perCopyClaims, name) }
+	for k, child := range v {
+		if k != "_sd" && k != "_sd_alg" && !skip(k) {
+			w.claim(prefix+"/"+strconv.Quote(k), "", child)
 		}
 	}
-	return out
+	digests, _ := v["_sd"].([]any)
+	for _, digest := range digests {
+		s, _ := digest.(string)
+		if d, ok := w.byDigest[s]; ok && !d.IsArrayElement() && !skip(d.Name) {
+			w.claim(prefix+"/"+strconv.Quote(d.Name), " sd", d.Value)
+		}
+	}
+}
+
+// array walks the elements of v, found at prefix, indexed as the
+// credential has them.
+func (w *structureWalker) array(prefix string, v []any) {
+	i := 0
+	for _, el := range v {
+		marker := ""
+		if ref, ok := el.(map[string]any); ok && len(ref) == 1 {
+			if digest, isRef := ref["..."].(string); isRef {
+				d, found := w.byDigest[digest]
+				if !found {
+					continue // a decoy
+				}
+				el, marker = d.Value, " sd"
+			}
+		}
+		w.claim(prefix+"/"+strconv.Itoa(i), marker, el)
+		i++
+	}
+}
+
+// claim records the claim at path, marked, and walks into its value v.
+func (w *structureWalker) claim(path, marker string, v any) {
+	w.out = append(w.out, path+marker)
+	switch v := v.(type) {
+	case map[string]any:
+		w.object(path, v, false)
+	case []any:
+		w.array(path, v)
+	}
 }
