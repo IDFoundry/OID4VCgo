@@ -75,7 +75,10 @@ type CredentialHandlerConfig struct {
 	// the only fields of req read after it; req.ResolvedConfigurationID
 	// names the configuration to build the claims of, and
 	// req.AuthorizedClaims the claims the token's authorization detail
-	// asks for (nil for all of them). Returning a *Error — typically
+	// asks for (nil for all of them): paths checked for form only, not
+	// against credential_metadata, so match them against the claims
+	// the configuration has and ignore the rest (see
+	// CredentialRequest.AuthorizedClaims). Returning a *Error — typically
 	// NewError(ErrorCredentialRequestDenied, ...) — refuses the request
 	// with that error; any other error is a 500 whose detail the Wallet
 	// never sees. REQUIRED.
