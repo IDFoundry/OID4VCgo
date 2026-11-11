@@ -116,6 +116,10 @@ CHANGELOG.md's BREAKING CHANGES sections.
   from its MSO's `docType` before any key signs, as `proximity`
   already did. It used to sign and send it under the requested type,
   for the reader to refuse.
+- **`proximity.ParseDeviceRequest` and `mdocdcapi.ParseRequest`
+  refuse a DeviceRequest asking for one document type twice**
+  (`proximity.ErrCBORValidation` for the former), as readers here
+  already refuse a DeviceResponse with two documents of one type.
 
 ### Wallet Provider stores
 

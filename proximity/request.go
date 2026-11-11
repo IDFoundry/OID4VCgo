@@ -3,6 +3,7 @@ package proximity
 import (
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/identifier"
+	"slices"
 	"sort"
 	"strings"
 
@@ -71,7 +72,8 @@ const (
 // DeviceSession.HandleSessionEstablishment or HandleSessionData
 // returns it. An error wraps ErrCBORDecoding for bytes that aren't
 // well-formed CBOR, or ErrCBORValidation for well-formed CBOR that isn't
-// a DeviceRequest: answer either with DeviceSession.ErrorResponse.
+// a DeviceRequest — one asking for a document type twice among them:
+// answer either with DeviceSession.ErrorResponse.
 func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 	if len(b) > MaxMessageBytes {
 		return nil, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
@@ -99,6 +101,11 @@ func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 		parsed, err := parseDocRequest(dr)
 		if err != nil {
 			return nil, fmt.Errorf("proximity: docRequests[%d]: %w", i, err)
+		}
+		// A DeviceResponse carries one document of each type, so a
+		// reader asks for each type once.
+		if slices.ContainsFunc(out, func(d DocRequest) bool { return d.DocType == parsed.DocType }) {
+			return nil, fmt.Errorf("proximity: DeviceRequest asks for %q twice: %w", parsed.DocType, ErrCBORValidation)
 		}
 		if elements += len(parsed.Elements); elements > MaxRequestedElements {
 			return nil, fmt.Errorf("proximity: DeviceRequest asks for over %d data elements: %w", MaxRequestedElements, ErrCBORValidation)

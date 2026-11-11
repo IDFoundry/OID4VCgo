@@ -425,6 +425,11 @@ func TestParseRequestRefusesOverLimits(t *testing.T) {
 	if _, err := ParseRequest(repeat("readerAuthAll", MaxReaderSignatures), testOrigin); err != nil {
 		t.Errorf("%d reader signatures: %v", MaxReaderSignatures, err)
 	}
+	// A DeviceResponse holds one document of each type, so a reader
+	// asks for each once.
+	if _, err := ParseRequest(repeat("docRequests", 2), testOrigin); err == nil || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("a document type asked for twice: %v", err)
+	}
 }
 
 // editDocRequests applies edit to the DocRequests of dr, a decoded

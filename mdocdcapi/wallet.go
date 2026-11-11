@@ -198,6 +198,11 @@ func (in *Incoming) parseDeviceRequest(deviceRequest string) error {
 		if err != nil {
 			return fmt.Errorf("mdocdcapi: docRequests[%d]: %w", i, err)
 		}
+		// A DeviceResponse carries one document of each type, so a
+		// reader asks for each type once.
+		if slices.ContainsFunc(in.Documents, func(d RequestedDocument) bool { return d.DocType == doc.DocType }) {
+			return fmt.Errorf("mdocdcapi: DeviceRequest asks for %q twice", doc.DocType)
+		}
 		for _, els := range doc.Elements {
 			elements += len(els)
 		}
