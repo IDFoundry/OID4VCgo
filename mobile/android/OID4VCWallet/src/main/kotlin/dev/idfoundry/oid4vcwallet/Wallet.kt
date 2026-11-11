@@ -348,7 +348,19 @@ public data class WalletConfiguration(
          * the response carries a MAC (deviceMac). The reader can check it
          * but can't prove to anyone else that this device took part; the
          * issuer-signed elements stay provable. A holder key that can't
-         * agree keys signs instead.
+         * agree keys signs instead, without an error: the response is a
+         * signature, as [SIGNATURE]'s.
+         *
+         * With [AndroidKeystoreKeyStore]'s default options its holder keys
+         * can't: they sign only, and each signature requires the holder.
+         * A holder key agrees keys when made with
+         * [AndroidKeystoreKeyStore.Options.holderKeyAgreement] on API 31
+         * or later, and either a positive
+         * [AndroidKeystoreKeyStore.Options.holderAuthenticationTimeout] or
+         * [AndroidKeystoreKeyStore.Options.holderUserAuthentication] off,
+         * the app authenticating the holder itself. Keys made before keep
+         * signing. A reader's [VerifiedMdoc.deviceAuth] says which it
+         * got.
          */
         @SerialName("mac_preferred") MAC_PREFERRED,
     }

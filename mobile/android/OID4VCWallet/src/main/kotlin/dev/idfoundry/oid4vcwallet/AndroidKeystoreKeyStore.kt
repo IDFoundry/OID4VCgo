@@ -377,6 +377,12 @@ public class AndroidKeystoreKeyStore(
      * wallet signs. One usable for a while after the holder authenticates
      * ([Options.holderAuthenticationTimeout]) agrees, asking the holder
      * first when they haven't lately.
+     *
+     * The wallet signs instead without telling the app: under the default
+     * [Options] — no [Options.holderKeyAgreement], and per-use holder
+     * authentication — every response under
+     * [WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED] is a
+     * deviceSignature, asking the holder as a signature does.
      */
     override fun agree(id: String, peerPublicKey: ByteArray): ByteArray {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) throw KeyAgreementUnsupportedException("key agreement in Android Keystore needs API 31")
