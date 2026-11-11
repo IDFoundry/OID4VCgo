@@ -154,6 +154,14 @@ trust check.
   an EC P-256 key with `alg` absent and uses it for ECDH-ES, as it does
   for an Issuer's credential request encryption key (OpenID4VCI 1.0
   §10): a key whose `alg` names another algorithm is still passed over.
+- **Request encryption JWKs without `kid`.** OpenID4VCI 1.0 §12.2.4
+  requires a `kid` on each key in an Issuer's
+  `credential_request_encryption.jwks`. The wallet takes the first EC
+  P-256 ECDH-ES key it can encrypt to whether it has one or not, and a
+  JWE to a key without one carries no `kid` header (OpenID4VCI 1.0
+  §10). This library's `issuer` publishes a `kid` on each of its own
+  keys, which it requires, and refuses a JWE that names none
+  (`invalid_encryption_parameters`).
 - **Unrecognised Credential Request members** are ignored (OpenID4VCI
   1.0 §8.2), but one that differs from a known member only in case is
   refused, deliberately: parsers that fold case would read it as the
@@ -166,6 +174,18 @@ trust check.
   the single byte string RFC 9360 §2 asks for, and a `tdate` in an MSO's
   validityInfo is accepted with fractional seconds or a UTC offset,
   which ISO/IEC 18013-5 §12.3.4 excludes; `mdoc.Issue` produces neither.
+- **mdoc rules for the issuer.** A reader doesn't check that each
+  IssuerSignedItem's `random` is at least 16 bytes (ISO/IEC 18013-5
+  §12.3.5), or that an MSO's `validFrom` is no earlier than its
+  `signed` (§12.3.4): a credential that breaks either tells a reader
+  nothing false, so `mdoc.Verify` accepts it. `mdoc.Issue` meets both.
+- **A DeviceResponse's `documentErrors`** are decoded but not read.
+  The OpenID4VP and ISO/IEC TS 18013-7 Annex C readers take the
+  documents a response carries and ignore its `documentErrors`; the
+  proximity reader reports them only when no document came back
+  (`proximity.ErrNoDocument`). A request for several documents
+  answered with some of them gives the caller those, without the
+  reason the others are missing.
 - **mdoc status lists with `bits` other than 1.** ISO/IEC 18013-5
   §12.3.6.5 requires one bit per status for a list an mdoc references.
   Neither `statuslist.Publisher` nor the Checker enforces it; a list
@@ -187,8 +207,9 @@ trust check.
 
 Where this library refuses input a specification allows, or requires
 more than it asks, deliberately. Each can stop an exchange with another
-implementation that relies on the latitude; none is needed for the
-security of an exchange both sides run as this library does.
+implementation that relies on the latitude. Most aren't needed for the
+security of an exchange both sides run as this library does; those that
+guard against a third party say so.
 
 - **A key attestation attesting more keys than `batch_size`** is
   refused (`invalid_proof`), though OpenID4VCI 1.0 Appendix F.3 only
@@ -236,6 +257,53 @@ security of an exchange both sides run as this library does.
   matched to the reader's requests by docType, so a request can't ask
   for one docType twice. The holder side refuses such a DeviceRequest
   too (`proximity.ParseDeviceRequest`, `mdocdcapi.ParseRequest`).
+- **The `attestation` proof type** (OpenID4VCI 1.0 Appendix F.3, one
+  of the two combinations HAIP 1.0 §4.5.1 names) is refused by
+  `issuer.New` under `AssuranceProduction` unless
+  `Config.AllowAttestationProofType` is set, and then only with a Nonce
+  Endpoint. It guards against a third party: a key attestation names
+  no audience, so another issuer that fetched a c_nonce here could
+  relay a Wallet's attestation. A Wallet that sends only `attestation`
+  proofs finds just `jwt` in `proof_types_supported`;
+  `haip.RecommendedJWTKeyAttestationProofType` is HAIP's other
+  combination, a `jwt` proof carrying the key attestation in its
+  `key_attestation` header.
+- **A claim whose value isn't among its claims query's `values`**
+  fails the Credential Query at the Verifier. OpenID4VP 1.0 §6.3 has
+  the Wallet return such a claim only when its value matches, which
+  this library's wallet does; the Verifier checks the same of what it
+  received (`ReasonNotAnswered`), so a Wallet that returns the claim
+  anyway has its response refused, `verifier.Transactions` answering
+  the Response URI's POST with 400 `invalid_request`.
+- **An mdoc's ECDSA algorithm must match its key's curve**: ES256 with
+  P-256, ES384 with P-384, ES512 with P-521, for issuer, device and
+  reader authentication and CWT status and identifier lists. RFC 9053
+  §2.1 only suggests that pairing: an ES256 signature by a P-384 key,
+  say, is refused rather than verified, as is a protected `alg` other
+  than the one the key's curve gives (`internal/cose`).
+- **Authorization errors before the user is authenticated** are shown
+  on the Authorization Server's own page under `AssuranceProduction`,
+  not redirected to the client. FAPIgo's `server` can't trust a
+  redirect destination for a request it couldn't validate (an unknown,
+  expired or reused `request_uri`, another client's, or a client no
+  longer registered: `server.LocalErrorResponse`), where RFC 6749
+  §4.1.2.1 redirects every error but a bad client or redirect URI.
+  `server.BuildAuthorizationErrorRedirect` sends one to a redirect URI
+  the client registered, but only under `AssuranceDevelopment`. Under
+  production it refuses, guarding against a third party: any
+  registered client could otherwise have the server send users to a
+  page of its own, which RFC 9700 §4.11.2 forbids before the user has
+  authenticated. The conformance binaries run at development and
+  redirect, for the OIDF suite's negative modules. A Wallet sees the
+  browser stop at the error page; errors once the user is
+  authenticated, a denial among them, are redirected as usual.
+- **An `org-iso-mdoc` Digital Credentials API answer that withholds a
+  requested element** is refused (`ReasonNotAnswered`), and the request
+  stays open, unless `verifier.MdocDCAPIRequest.AllowWithheld` is set.
+  ISO/IEC 18013-5 lets a holder withhold any element; refusing makes
+  every element of the request required, as each claim of an OpenID4VP
+  request's Credential Query is. A Wallet whose holder left an element
+  out gets no completed presentation.
 
 ## HAIP's deviations from plain FAPI 2.0
 

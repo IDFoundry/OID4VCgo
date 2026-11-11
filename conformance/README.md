@@ -48,6 +48,37 @@ workflows, which run daily and on demand. Those runs, and the per-role
 write-ups below, are the self-run work that produced the evidence for
 these certifications, not a substitute for them.
 
+The certified binaries run at development assurance:
+`cmd/conformance-issuer` builds its `issuer` and FAPIgo `server` with
+`AssuranceDevelopment`, `cmd/conformance-verifier` its `verifier`, and
+`cmd/conformance-wallet` its `wallet` and FAPIgo `client`;
+`cmd/conformance-wallet-vp` calls `wallet`'s request parsing directly,
+with no `wallet.Wallet` and so no assurance level. What production
+assurance adds, or a deployment uses instead, the OIDF runs don't
+exercise, in particular:
+
+- The issuer proof setup production takes without opting in: `jwt`
+  proofs carrying a key attestation in their `key_attestation` header
+  (`haip.RecommendedJWTKeyAttestationProofType`), with no `attestation`
+  proof type. The suite's issuer plans run plain `jwt` proofs beside
+  the `attestation` proof type, which `issuer.New` refuses under
+  production without `AllowAttestationProofType` (see
+  [SPECIFICATIONS.md](../SPECIFICATIONS.md#known-strictness)). The
+  EUDI issuance interop runs `jwt` with `key_attestation`.
+- `verifier.Transactions`: `cmd/conformance-verifier` keeps its own
+  sessions and calls `verifier.Verifier` directly.
+- `walletflow`: the suite drives `wallet` through
+  `cmd/conformance-wallet` and `cmd/conformance-wallet-vp`, never
+  `walletflow`, which the interop runs and the mobile libraries use.
+- Fetching a Request Object as a production wallet does:
+  `cmd/conformance-wallet-vp` fetches `request_uri` with its own HTTP
+  client, which skips TLS verification, rather than
+  `wallet.Wallet.FetchAuthorizationRequest`'s hardened one.
+- Authorization errors shown on the Authorization Server's own page:
+  at development, `cmd/conformance-issuer` redirects them to a
+  registered redirect URI for the suite's negative modules, which
+  production refuses.
+
 ## Interop with polaris-oid4vp
 
 Besides the OIDF suite, `.github/workflows/polaris-interop.yml` runs
@@ -77,11 +108,15 @@ against the EUDI Wallet reference implementation's
 [Verifier Endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint),
 from its published image pinned by digest, configured as strictly as it
 allows: SD-JWT VC and mdoc presentations under its `haip` and
-`openid4vp` profiles and over the DC API, with their status lists and
-the SD-JWT VC's Type Metadata checked, must be accepted, and controls
-(revoked credentials, a mismatched `vct#integrity`, untrusted CAs on
-either side, a replayed request, a mismatched `client_id`, an unheld
-credential) refused (`interop/eudi/run-verifier.sh`). See
+`openid4vp` profiles and over the DC API, with the SD-JWT VC's Type
+Metadata checked and each credential's status list entry read, must be
+accepted, and controls (revoked credentials, a mismatched
+`vct#integrity`, untrusted CAs on either side, a replayed request, a
+mismatched `client_id`, an unheld credential) refused
+(`interop/eudi/run-verifier.sh`). The verifier never verifies a Status
+List Token's signature, so the run shows it reads the entry and
+refuses a revoked credential, not that it would refuse a forged list.
+See
 [`interop/eudi/README.md`](../interop/eudi/README.md) for the cases,
 what the verifier doesn't check, and moving the pin.
 
@@ -101,7 +136,10 @@ controls refused (`interop/eudi/run-issuer.sh`). And OID4VCgo's
 [PID Issuer](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer),
 run as its own pinned docker-compose stack (Keycloak with
 attestation-based client authentication, the status list service),
-verifying each credential and its status (`interop/eudi/run-pid-issuer.sh`).
+verifying each credential, and the SD-JWT VC's status: the status list
+service's CWT tokens don't verify, so the wallet refuses an mdoc's
+status list and its revocation isn't shown
+(`interop/eudi/run-pid-issuer.sh`).
 Their cases and each component's deviations from the specifications
 are in the same README.
 
@@ -126,7 +164,7 @@ issuers, Verifiers and attesters, an unsigned request) refused. It runs
 on each pull request, daily and on each release against the pinned
 images, and weekly against walt.id's `latest` images. See
 [`interop/waltid/README.md`](../interop/waltid/README.md) for the cases,
-walt.id's deviations, and moving the pins.
+walt.id's deviations and other observations, and moving the pins.
 
 ## Interop with Multipaz
 

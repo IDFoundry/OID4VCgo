@@ -107,8 +107,11 @@ Seen running Multipaz 0.102.0; none reported upstream.
    OpenID4VP verification takes the SD-JWT VC issuer's key from `x5c`
    without a trust anchor: the run checks the chain itself.
 3. **Multipaz's wallet always encrypts with `A128GCM`**, whatever
-   `encrypted_response_enc_values_supported` lists; OID4VCgo's Verifier
-   lists both `A128GCM` and `A256GCM`, as HAIP requires, so it agrees.
+   `encrypted_response_enc_values_supported` lists. An observation, not
+   a deviation: HAIP 1.0 §5 requires a Verifier to support both
+   `A128GCM` and `A256GCM`, and a Wallet only one of them (a Wallet with
+   both should use `A256GCM`). OID4VCgo's Verifier lists both, so it
+   agrees.
 4. **Multipaz's wallet can't redeem a pre-authorized code at an issuer
    that follows OpenID4VCI 1.0 §6.2 and §8.2.** Its Token Request always
    names the configuration in `authorization_details`, which the issuer
