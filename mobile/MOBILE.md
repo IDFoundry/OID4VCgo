@@ -1151,6 +1151,12 @@ on an emulator, in CI too (`mobile-android`).
 - **The emulator:** its Keystore is software, with no StrongBox; holder
   keys still require authentication there, given a PIN (CI sets one).
   StrongBox, the TEE and the prompt itself are for the device run.
+- **On devices (#875):** `AndroidKeystoreKeyStoreTest` passed in
+  StrongBox on a Pixel 8a (Android 17; 11 of 12, the other needing a
+  PIN unlock in the last five minutes) and a Xiaomi 14 (Android 16; 12
+  of 12), and in the TEE on an LG G6 (Android 9, no StrongBox; the 9
+  that run on API 28). `FileCredentialStoreTest` passed on all three,
+  including its StrongBox `PREFERRED`, `REQUIRED` and `OFF` cases.
 
 ### Phase 8 findings: the Kotlin sessions
 
@@ -1404,8 +1410,9 @@ Thirteen tests pass on the emulator, against `testservices`.
 
 - The APEX store on golang/go#71258; drop `certdirs_android.go` once Go
   reads it.
-- On a device: StrongBox, the unlocked-device key, BiometricPrompt with a
-  fingerprint, and the DC API in Chrome.
+- On a device: the unlocked-device key, BiometricPrompt with a
+  fingerprint, and the DC API in Chrome. StrongBox is done (#875,
+  above).
 
 ## Phase 9 findings: `org-iso-mdoc` on iOS
 
