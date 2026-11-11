@@ -65,12 +65,22 @@ func TestRedeemPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 		elsewhere.Locations = []string{"https://elsewhere.example.com"}
 		minted := detail("IdentityCredential")
 		minted.CredentialIdentifiers = []string{"mine"}
+		withClaims := func(claims ...oid4vci.ClaimsDescription) oid4vci.AuthorizationDetail {
+			d := detail("IdentityCredential")
+			d.Claims = claims
+			return d
+		}
+		givenName := oid4vci.ClaimsDescription{Path: []any{"given_name"}}
 		for name, d := range map[string][]oid4vci.AuthorizationDetail{
 			"another type":           {other},
 			"an unknown config":      {detail("Nope")},
 			"one config twice":       {detail("IdentityCredential"), detail("IdentityCredential")},
 			"locations elsewhere":    {elsewhere},
 			"identifiers of its own": {minted},
+			"empty claims":           {withClaims([]oid4vci.ClaimsDescription{}...)},
+			"a claim without a path": {withClaims(oid4vci.ClaimsDescription{})},
+			"a negative path index":  {withClaims(oid4vci.ClaimsDescription{Path: []any{"nationalities", -1}})},
+			"a claim twice":          {withClaims(givenName, givenName)},
 		} {
 			_, err := redeem(f, "code-2", d...)
 			assertIssuerError(t, err, issuer.ErrorInvalidAuthorizationDetails)

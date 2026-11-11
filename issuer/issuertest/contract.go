@@ -925,8 +925,9 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		want := issuer.DeferredTransactionRecord{
 			Owner: contractOwner, ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
 			BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, Reference: "ref-1",
-			KeyAttestations: []string{"key-attestation-1"},
-			ProofKeyHeaders: []json.RawMessage{json.RawMessage(`{"x5c":["AAAA"]}`)},
+			KeyAttestations:         []string{"key-attestation-1"},
+			KeyAttestationProofType: oid4vci.ProofTypeJWT,
+			ProofKeyHeaders:         []json.RawMessage{json.RawMessage(`{"x5c":["AAAA"]}`)},
 		}
 		if err := store.Create(ctx, "txn2", want); err != nil {
 			t.Fatalf("Create: %v", err)

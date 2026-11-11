@@ -61,6 +61,36 @@ No API changes a caller has to act on.
   the `intent`, `content` or `android-app` scheme**, which on Android
   launch an app component of the Verifier's choosing or read a content
   provider's data, as it refuses `javascript` and `file`.
+- **A pre-authorized Token Request's `authorization_details` `claims`
+  now narrow the token.** `issuer.Issuer.ExchangePreAuthorizedCode`
+  and `RedeemPreAuthorizedCode` mint each requested object with its
+  `claims`, so `CredentialRequest.AuthorizedClaims` is those claims
+  rather than nil (every claim): a `Prepare` that honours it issues
+  only them, as for an authorization code. A requested object with
+  malformed `claims` (empty, a path that isn't a claims path pointer,
+  a path described twice) is refused with
+  `invalid_authorization_details`, and one naming `locations` is
+  minted with this Credential Issuer's, even without
+  `authorization_servers`.
+- **`credential/mdoc.Issue` refuses an MSO signed outside the Document
+  Signer certificate's validity** (`Claims.Signed` before its
+  `NotBefore` or after its `NotAfter`, ISO/IEC 18013-5 §9.3.1), which
+  every reader refuses. With `mdoc.RoundedValidity`, `Signed` is the
+  start of the UTC day: a Document Signer certificate needs a
+  `NotBefore` more than a day back, or issuance fails until the next
+  day.
+- **`credential/mdoc.Issue` refuses a `Claims.Status.URI` that isn't
+  an https URL**, as decoding already did.
+- **`credential/sdjwtvc.Issue` refuses a `Claims.Additional` name that
+  is a reserved claim in another case** (`"Exp"`, `"CNF"`), which the
+  verifier refused, **or isn't valid UTF-8**.
+- **A deferred transaction's key attestations are verified again under
+  the proof type they arrived under**:
+  `issuer.DeferredTransactionRecord.KeyAttestationProofType` records
+  it, and a store must persist it like any other field (an
+  `issuertest` contract checks it). A record without it, saved
+  earlier, is checked against every proof type's algorithms as
+  before.
 
 ### Wallet Provider stores
 

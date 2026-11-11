@@ -37,13 +37,25 @@ func issueUnder(t *testing.T, iaca, ds pkix.Name, signed time.Time) fixture {
 	}
 	ca, _ := x509.ParseCertificate(caDER)
 	dsKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	dsDER, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: ds,
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{MDLDocumentSignerEKU},
-	}, ca, &dsKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
+	dsCert := func(notBefore time.Time) []byte {
+		der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+			SerialNumber: big.NewInt(2), Subject: ds,
+			NotBefore: notBefore, NotAfter: now.Add(24 * time.Hour),
+			KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: []asn1.ObjectIdentifier{MDLDocumentSignerEKU},
+		}, ca, &dsKey.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return der
+	}
+	dsDER := dsCert(now.Add(-time.Hour))
+	// mdoc.Issue refuses an MSO signed outside its certificate's
+	// validity, so one signed before dsDER's is issued under a
+	// certificate that covers it, then signed again under dsDER.
+	outside := signed.Before(now.Add(-time.Hour))
+	issuingDER := dsDER
+	if outside {
+		issuingDER = dsCert(signed)
 	}
 	deviceKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	issuerSigned, err := mdoc.Issue(dsKey, cose.ES256, mdoc.Claims{
@@ -51,9 +63,19 @@ func issueUnder(t *testing.T, iaca, ds pkix.Name, signed time.Time) fixture {
 		NameSpaces: map[string]map[string]interface{}{mDLNS: {"age_over_18": true}},
 		DeviceKey:  &deviceKey.PublicKey,
 		Signed:     signed, ValidFrom: signed, ValidUntil: now.Add(time.Hour),
-	}, mdoc.IssueOptions{X5Chain: [][]byte{dsDER}})
+	}, mdoc.IssueOptions{X5Chain: [][]byte{issuingDER}})
 	if err != nil {
 		t.Fatalf("mdoc.Issue: %v", err)
+	}
+	if outside {
+		protected, unprotected, payload, err := cose.DecodeUnverified(issuerSigned.IssuerAuth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unprotected.X5Chain = [][]byte{dsDER}
+		if issuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, dsKey, protected, unprotected, payload, []byte{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)

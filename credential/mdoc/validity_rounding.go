@@ -17,9 +17,13 @@ import "time"
 // validity, so that certificate's NotBefore must not be after the
 // start of the day it signs on: issue it backdated by more than a day
 // (internal/conformancecert's mdocCertificateBackdate does, by 25
-// hours), or rotate it to a new one well before that day starts.
-// validUntil must likewise not be after its NotAfter (§12.3.4), which
-// Issue checks.
+// hours), or rotate it to a new one well before that day starts. Issue
+// refuses an mdoc signed outside the certificate's validity, rather
+// than sign one every reader refuses; RoundedValidity doesn't clamp
+// signed to the certificate's NotBefore, since then mdocs issued on one
+// day under different certificates would no longer share their
+// values. validUntil must likewise not be after its NotAfter
+// (§12.3.4), which Issue checks.
 //
 // An mdoc is valid for lifetime less however much of its UTC day had
 // passed when it was issued: one issued just before midnight with a

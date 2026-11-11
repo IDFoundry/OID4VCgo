@@ -27,7 +27,8 @@ func FuzzUnmarshalDeviceResponse(f *testing.F) {
 		f.Fatalf("generate device key: %v", err)
 	}
 	const docType = "org.iso.18013.5.1.mDL"
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Within the certificate's validity, as mdoc.Issue requires.
+	now := time.Now().UTC().Truncate(time.Hour)
 	cert := testcert.SelfSigned(f, "oid4vpmdoc fuzz issuer", &issuerKey.PublicKey, issuerKey)
 
 	issuerSigned, err := mdoc.Issue(issuerKey, cose.ES256, mdoc.Claims{

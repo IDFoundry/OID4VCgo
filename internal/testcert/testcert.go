@@ -24,7 +24,9 @@ import (
 
 // SelfSigned builds a self-signed leaf certificate for pub, signed by
 // signer (ordinarily pub's own corresponding private key), valid from
-// an hour ago to 24 hours from now. t is testing.TB, not *testing.T,
+// 25 hours ago to 24 hours from now: from before the start of the UTC
+// day, so an mdoc signed at mdoc.RoundedValidity's start of today falls
+// within it, as mdoc.Issue requires. t is testing.TB, not *testing.T,
 // so a FuzzXxx target's own *testing.F can build seed material with
 // it too — both implement testing.TB, and *testing.F.Fatalf works the
 // same way *testing.T.Fatalf does at fuzz-setup time (before f.Fuzz's
@@ -34,7 +36,7 @@ func SelfSigned(t testing.TB, commonName string, pub crypto.PublicKey, signer cr
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: commonName},
-		NotBefore:    time.Now().Add(-time.Hour),
+		NotBefore:    time.Now().Add(-25 * time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, signer)

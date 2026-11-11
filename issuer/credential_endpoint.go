@@ -420,7 +420,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 		}
 	}
 	if req.Defer != nil {
-		return iss.startDeferral(ctx, auth, configID, keys, *req.Defer)
+		return iss.startDeferral(ctx, auth, configID, proofType, keys, *req.Defer)
 	}
 
 	credentials, err := iss.issueBatch(ctx, cc, req, keys)

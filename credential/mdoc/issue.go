@@ -164,6 +164,11 @@ func validateClaims(claims Claims) error {
 	if claims.Status != nil && claims.Status.URI == "" {
 		return fmt.Errorf("mdoc: Claims.Status.URI is required")
 	}
+	if claims.Status != nil && !isHTTPSURL(claims.Status.URI) {
+		// The decoder refuses it (StatusListRef.UnmarshalCBOR), so every
+		// reader of this package would refuse the mdoc.
+		return fmt.Errorf("mdoc: Claims.Status.URI %q isn't an https URL", claims.Status.URI)
+	}
 	if claims.Status != nil && claims.IdentifierList != nil {
 		return fmt.Errorf("mdoc: Claims.Status and Claims.IdentifierList must not both be set")
 	}
@@ -215,6 +220,15 @@ func validateX5Chain(signer crypto.Signer, claims Claims, opts IssueOptions) err
 	// certificate in the x5chain element of the IssuerAuth structure."
 	if claims.ValidUntil.After(leaf.NotAfter) {
 		return fmt.Errorf("mdoc: Claims.ValidUntil (%s) must not be after IssueOptions.X5Chain[0]'s own NotAfter (%s)", claims.ValidUntil, leaf.NotAfter)
+	}
+	// §9.3.1: the signed time must fall within the Document Signer
+	// certificate's validity, which a reader checks — signed before its
+	// NotBefore (RoundedValidity's start of the UTC day, under a
+	// certificate issued later that day) or after its NotAfter is an
+	// mdoc every reader refuses. ValidFrom is never before Signed
+	// (validateClaims), so it can't be before NotBefore either.
+	if claims.Signed.Before(leaf.NotBefore) || claims.Signed.After(leaf.NotAfter) {
+		return fmt.Errorf("mdoc: Claims.Signed (%s) must be within IssueOptions.X5Chain[0]'s own validity (%s to %s); with RoundedValidity, issue the certificate backdated by more than a day", claims.Signed, leaf.NotBefore, leaf.NotAfter)
 	}
 	// A two-value assertion, not a direct one: signer.Public() is every
 	// stdlib key type's own crypto.PublicKey, all of which implement
