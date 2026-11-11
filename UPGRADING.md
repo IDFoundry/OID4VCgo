@@ -9,7 +9,27 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.75.3 → next
 
-No API changes a caller has to act on.
+### Verifier (`verifier`, `mdocdcapi`)
+
+- **An org-iso-mdoc answer through `verifier.Transactions` must
+  disclose every requested element.** `HandleMdocDCAPIResponse` used to
+  complete a `BeginMdocDCAPI` request with whatever the document
+  disclosed, though the request's `Query` has a claim for each element
+  and an OpenID4VP answer must satisfy its query: an `Accept` shared
+  between the two read a withheld element as absent without being
+  told. It now refuses such an answer with `ReasonNotAnswered`, as an
+  OpenID4VP answer not satisfying its query, and the request stays
+  open. To accept a partial answer, as before, set
+  `MdocDCAPIRequest.AllowWithheld`; `VerifiedCredential.Withheld` then
+  names what was withheld, which `Accept` checks.
+  `mdocdcapi.Verified.Credential()` carries `Missing` as `Withheld`
+  too.
+- **A `TransactionStore` keeps the new `Transaction.MdocAllowWithheld`**
+  and a stored result's `VerifiedCredential.Withheld`.
+  `TransactionCodec` (and so `sqlstore`) does, and binds
+  `MdocAllowWithheld` into a sealed record;
+  `verifiertest.TestTransactionStoreContract` checks a store of your
+  own keeps both.
 
 ### Behaviour that changes without a code change
 

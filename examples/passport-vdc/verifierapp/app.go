@@ -633,6 +633,9 @@ func (a *App) accept(ctx context.Context, sc Scenario, txID string, result verif
 	if a.otherAnswered(ctx, s, txID) {
 		return errors.New("this request has already been answered")
 	}
+	if err := a.checkMdocClaimSets(sc, result); err != nil {
+		return err
+	}
 	out, err := a.outcomeOf(ctx, sc, result)
 	if err != nil {
 		return err

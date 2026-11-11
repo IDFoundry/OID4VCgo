@@ -1183,7 +1183,8 @@ changes whether *every* bullet below is `(done)`.
   it's an ISO protocol, not OpenID4VP. `ForTransactions` hands the
   Verifier side to `verifier.Transactions` (`BeginMdocDCAPI`,
   `HandleMdocDCAPIResponse`), which keeps each request's `Pending` for
-  the caller. The wallet side, for an iOS
+  the caller and, as for an OpenID4VP answer, requires every requested
+  element unless the request sets `AllowWithheld`. The wallet side, for an iOS
   document provider: `ParseRequest` decodes the request for the origin
   the platform reports; `VerifyReader` checks its `ReaderAuthAll` (or,
   from a first-edition reader, every `DocRequest`'s `ReaderAuth`)

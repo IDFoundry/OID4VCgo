@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -235,7 +236,7 @@ func TestTransactions_MdocDCAPICredentialQueryID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := f.txs.HandleMdocDCAPIResponse(context.Background(), begun.ID, testBinding, f.answer(begun, dcapiOrigin, [2]string{mdocNS, "age_over_18"}))
+	view, err := f.txs.HandleMdocDCAPIResponse(context.Background(), begun.ID, testBinding, f.answer(begun, dcapiOrigin))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +246,63 @@ func TestTransactions_MdocDCAPICredentialQueryID(t *testing.T) {
 	req.CredentialQueryID = "not an id"
 	if _, err := f.txs.BeginMdocDCAPI(context.Background(), req, testBinding, dcapiOrigin); err == nil {
 		t.Error("an invalid CredentialQueryID was accepted")
+	}
+}
+
+// An answer withholding a requested element is refused, as an
+// OpenID4VP answer not satisfying its Credential Query is, and the
+// request stays open — unless the request allows it, when it completes
+// with Withheld naming what's missing, for Accept and in the stored
+// result.
+func TestTransactions_MdocDCAPIWithheldElements(t *testing.T) {
+	var accepted []verifier.VerifyResponseResult
+	f := newMdocTxFixture(t, mdocTxOptions{tweak: func(cfg *verifier.TransactionsConfig) {
+		cfg.Accept = func(_ context.Context, _ string, result verifier.VerifyResponseResult) error {
+			accepted = append(accepted, result)
+			return nil
+		}
+	}})
+	ctx := context.Background()
+	begun := f.begin(testBinding)
+	_, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, f.answer(begun, dcapiOrigin, [2]string{mdocNS, "age_over_18"}))
+	var verr *verifier.Error
+	if !errors.As(err, &verr) || verr.Reason() != verifier.ReasonNotAnswered || !strings.Contains(err.Error(), mdocNS+"/given_name") {
+		t.Errorf("an answer withholding given_name: %v, want ReasonNotAnswered naming it", err)
+	}
+	if view, _ := f.txs.Lookup(ctx, begun.ID, testBinding); view.Status != verifier.TransactionPending || !strings.Contains(view.LastError, "not_answered") {
+		t.Errorf("after the refused answer: %+v", view)
+	}
+	if len(accepted) != 0 {
+		t.Errorf("Accept ran on a refused answer: %+v", accepted)
+	}
+	// The full answer still completes it, with nothing withheld.
+	view, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, f.answer(begun, dcapiOrigin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := view.Result.Credentials[0].Withheld; w != nil {
+		t.Errorf("Withheld = %v for a full answer", w)
+	}
+
+	req := mdocRequest()
+	req.AllowWithheld = true
+	allowing, err := f.txs.BeginMdocDCAPI(ctx, req, testBinding, dcapiOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err = f.txs.HandleMdocDCAPIResponse(ctx, allowing.ID, testBinding, f.answer(allowing, dcapiOrigin, [2]string{mdocNS, "age_over_18"}))
+	if err != nil {
+		t.Fatalf("an answer withholding an element of a request allowing it: %v", err)
+	}
+	want := map[string][]string{mdocNS: {"given_name"}}
+	if got := view.Result.Credentials[0].Withheld; !reflect.DeepEqual(got, want) {
+		t.Errorf("Withheld = %v, want %v", got, want)
+	}
+	if len(accepted) != 2 || !reflect.DeepEqual(accepted[1].Credentials[0].Withheld, want) {
+		t.Errorf("Accept saw %+v", accepted)
+	}
+	if looked, err := f.txs.Lookup(ctx, allowing.ID, testBinding); err != nil || looked.Result == nil || !reflect.DeepEqual(looked.Result.Credentials[0].Withheld, want) {
+		t.Errorf("Lookup: %+v, %v", looked, err)
 	}
 }
 
@@ -418,7 +476,8 @@ func TestTransactions_MdocDCAPISealed(t *testing.T) {
 		"query changed": func(r map[string]any) {
 			r["query"].(map[string]any)["credentials"].([]any)[0].(map[string]any)["meta"] = map[string]any{"doctype_value": "org.example.other"}
 		},
-		"origin changed": func(r map[string]any) { r["origin"] = "https://attacker.example.com" },
+		"origin changed":      func(r map[string]any) { r["origin"] = "https://attacker.example.com" },
+		"withholding allowed": func(r map[string]any) { r["mdoc_allow_withheld"] = true },
 	} {
 		var copied map[string]any
 		if err := json.Unmarshal(row, &copied); err != nil {
@@ -444,6 +503,33 @@ func TestTransactions_MdocDCAPISealed(t *testing.T) {
 	view, err := f.txs.Lookup(ctx, begun.ID, testBinding)
 	if err != nil || view.Result == nil || view.Result.Credentials[0].Claims[mdocNS].(map[string]any)["given_name"] != "Alice" {
 		t.Errorf("Lookup: %+v, %v", view, err)
+	}
+
+	// A request allowing withheld elements binds that too: its record
+	// doesn't open once a store makes it require them all.
+	req := mdocRequest()
+	req.AllowWithheld = true
+	allowing, err := f.txs.BeginMdocDCAPI(ctx, req, testBinding, dcapiOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allowingRecord map[string]any
+	if err := json.Unmarshal(store.rows[allowing.ID], &allowingRecord); err != nil {
+		t.Fatal(err)
+	}
+	if allowingRecord["mdoc_allow_withheld"] != true {
+		t.Fatalf("record = %s", store.rows[allowing.ID])
+	}
+	delete(allowingRecord, "mdoc_allow_withheld")
+	tampered, err := json.Marshal(allowingRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codec.Unmarshal(tampered); err == nil {
+		t.Error("a record whose withholding was disallowed opened")
+	}
+	if _, err := codec.Unmarshal(store.rows[allowing.ID]); err != nil {
+		t.Errorf("the record as written: %v", err)
 	}
 }
 

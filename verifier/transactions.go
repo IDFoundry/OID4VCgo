@@ -80,6 +80,11 @@ type Transaction struct {
 	// It says the request is one: "" for any other.
 	MdocEncryptionInfo string
 
+	// MdocAllowWithheld is an org-iso-mdoc request's
+	// MdocDCAPIRequest.AllowWithheld: its answer completes it with
+	// requested elements withheld. false requires every one.
+	MdocAllowWithheld bool
+
 	// Owner identifies the Transactions that created the transaction
 	// (TransactionsConfig.Scope): only a Transactions with the same
 	// owner reads it. "" for one saved before it was set, which only a
@@ -540,6 +545,7 @@ func lostFields(tx, saved Transaction) []string {
 	check("RequestObject", saved.RequestObject == tx.RequestObject)
 	check("Origin", saved.Origin == tx.Origin)
 	check("MdocEncryptionInfo", saved.MdocEncryptionInfo == tx.MdocEncryptionInfo)
+	check("MdocAllowWithheld", saved.MdocAllowWithheld == tx.MdocAllowWithheld)
 	check("Owner", saved.Owner == tx.Owner)
 	check("BrowserBindingHash", bytes.Equal(saved.BrowserBindingHash, tx.BrowserBindingHash))
 	check("SameDevice", saved.SameDevice == tx.SameDevice)

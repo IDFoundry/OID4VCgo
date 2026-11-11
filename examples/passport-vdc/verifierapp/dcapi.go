@@ -55,21 +55,25 @@ func originOf(verifierURL string) (string, error) {
 }
 
 // mdocElements are the mdoc data elements sc's query asks for, by
-// namespace, none to be retained.
-func (a *App) mdocElements(sc Scenario) (map[string]map[string]bool, error) {
+// namespace, none to be retained, and whether some may be withheld: the
+// query's claim sets make some of them optional, which an org-iso-mdoc
+// request can't say, so it asks for them all and checkMdocClaimSets
+// checks the answer against the query's claim sets.
+func (a *App) mdocElements(sc Scenario) (elements map[string]map[string]bool, optional bool, err error) {
 	q, err := buildQuery(sc, a.cfg.IssuerVCT, a.issuerTrusted)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := map[string]map[string]bool{}
 	for _, cq := range q.Credentials {
 		if cq.ID != mdocQueryID {
 			continue
 		}
+		optional = optional || len(cq.ClaimSets) > 0
 		for _, cl := range cq.Claims {
 			ns, el, ok := mdocPath(cl.Path)
 			if !ok {
-				return nil, fmt.Errorf("verifierapp: scenario %q: an mdoc claim isn't a namespace and an element", sc)
+				return nil, false, fmt.Errorf("verifierapp: scenario %q: an mdoc claim isn't a namespace and an element", sc)
 			}
 			if out[ns] == nil {
 				out[ns] = map[string]bool{}
@@ -78,9 +82,40 @@ func (a *App) mdocElements(sc Scenario) (map[string]map[string]bool, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("verifierapp: scenario %q asks for no mdoc", sc)
+		return nil, false, fmt.Errorf("verifierapp: scenario %q asks for no mdoc", sc)
 	}
-	return out, nil
+	return out, optional, nil
+}
+
+// checkMdocClaimSets refuses an mdoc that withheld elements sc's query
+// requires: an org-iso-mdoc request that let some be withheld
+// (mdocElements) is answered with whichever the holder disclosed.
+func (a *App) checkMdocClaimSets(sc Scenario, result verifier.VerifyResponseResult) error {
+	var q dcql.Query
+	for _, vc := range result.Credentials {
+		if vc.Withheld == nil || vc.CredentialQueryID != mdocQueryID {
+			continue
+		}
+		if q.Credentials == nil {
+			var err error
+			if q, err = buildQuery(sc, a.cfg.IssuerVCT, a.issuerTrusted); err != nil {
+				return err
+			}
+		}
+		nameSpaces := map[string]map[string]any{}
+		for ns, elements := range vc.Claims {
+			nameSpaces[ns], _ = elements.(map[string]any)
+		}
+		for _, cq := range q.Credentials {
+			if cq.ID != mdocQueryID {
+				continue
+			}
+			if err := cq.SatisfiedByMdocClaims(credential.DocType, nameSpaces); err != nil {
+				return fmt.Errorf("the mdoc doesn't disclose what the request needs: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // handleDCAPIRequest starts a Digital Credentials API request for the
@@ -96,7 +131,7 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this scenario takes several passports, which one Digital Credentials API request can't", http.StatusBadRequest)
 		return
 	}
-	elements, err := a.mdocElements(s.scenario)
+	elements, optional, err := a.mdocElements(s.scenario)
 	if err != nil {
 		http.Error(w, errBuildRequest, http.StatusInternalServerError)
 		return
@@ -110,7 +145,7 @@ func (a *App) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 	// The mdoc is reported under the query's own mdoc ID, so the
 	// scenario's Accept reads it as it reads an OpenID4VP answer's.
 	mdocBegun, err := txs.BeginMdocDCAPI(r.Context(), verifier.MdocDCAPIRequest{
-		DocType: credential.DocType, Elements: elements, CredentialQueryID: mdocQueryID,
+		DocType: credential.DocType, Elements: elements, CredentialQueryID: mdocQueryID, AllowWithheld: optional,
 	}, s.binding, a.origin)
 	if err != nil {
 		http.Error(w, errBuildRequest, http.StatusInternalServerError)
