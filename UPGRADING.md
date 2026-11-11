@@ -31,6 +31,38 @@ CHANGELOG.md's BREAKING CHANGES sections.
   `verifiertest.TestTransactionStoreContract` checks a store of your
   own keeps both.
 
+### Mobile libraries (OID4VCWallet, ABI 15)
+
+- **Android's `DigitalCredentials.register` registers claim names
+  only.** `RegistrationOptions.claimValues` now defaults to false, so
+  no claim value reaches Credential Manager before the holder agrees;
+  pass `claimValues = true` to register them as before.
+- **A holder who dismisses a holder key's prompt is `cancelled`**, not
+  `platform`: Swift's user, system and app cancels and
+  `errSecUserCanceled`, and Kotlin's `HolderCancelledException`
+  (`BiometricPromptAuthenticator` throws it, for a system cancel too).
+  A `KeyStore` of your own marks its error `[cancelled]` (mobile/ABI.md).
+- **A Wallet Provider's refusal keeps its error code**: still
+  `platform`, with the provider's code (`instance_not_active`,
+  `instance_revoked`, `invalid_signed_request`, …) as the detail, from
+  `WalletProviderRefusedError` / `WalletProviderRefusedException`, or a
+  provider of your own marking its error `[refused:code]`.
+- **An `*_require_eku` must be a canonical dotted OID** (no sign, no
+  leading zero), and two roles that may share a trust anchor are
+  compared by OID: `1.2.3.04` is refused as the same usage as
+  `1.2.3.4`.
+- **The gomobile `MdocPresentation.Respond` and `RespondDocuments`
+  parse their JSON strictly**:
+  each element is exactly two strings, and nothing may follow the
+  array.
+- **Android trusts only `android` and `com.android.credentialmanager`
+  as platform Credential Manager callers**, installed with the system
+  image and signed with the platform key; Google Play services is
+  pinned as before.
+- **Android API 26–29:** `AndroidKeystoreKeyStore()` still refuses per-use
+  holder authentication there; `AndroidKeystoreKeyStore.Options.forDevice()`
+  gives options that work on every API level.
+
 ### Behaviour that changes without a code change
 
 - **`walletprovider` bounds the status list indices one instance's
