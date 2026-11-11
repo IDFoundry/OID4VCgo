@@ -47,6 +47,16 @@ func (v *recheckingVerifier) refuse(err error) {
 	v.err = err
 }
 
+// install makes v the harness's Android verifier.
+func (v *recheckingVerifier) install(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+	for i, e := range d.Evidence {
+		if a, ok := e.(androidVerifier); ok {
+			v.androidVerifier = a
+			d.Evidence[i] = v
+		}
+	}
+}
+
 // TestRecheckRegistrationEvidence: the registration verifier's facts
 // are kept with the instance, and an EvidenceRechecker judges them again
 // before each attestation, so an instance whose evidence it now refuses
@@ -54,14 +64,7 @@ func (v *recheckingVerifier) refuse(err error) {
 // it by them. A failure to check is the provider's own, not a refusal.
 func TestRecheckRegistrationEvidence(t *testing.T) {
 	v := &recheckingVerifier{}
-	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
-		for i, e := range d.Evidence {
-			if a, ok := e.(androidVerifier); ok {
-				v.androidVerifier = a
-				d.Evidence[i] = v
-			}
-		}
-	})
+	h := newHarness(t, v.install)
 	ctx := context.Background()
 	in, _ := h.register(kindStrongBox)
 	if !bytes.Equal(in.EvidenceFacts, testFacts) {
@@ -101,4 +104,119 @@ func TestRecheckRegistrationEvidence(t *testing.T) {
 	h.expectState(in.ID, walletprovider.StateRevoked, "attestation key revoked")
 	h.expectStatus(statuslist.StatusInvalid, key)
 	h.expectState(ios.ID, walletprovider.StateActive, "")
+}
+
+// recheckHarness is a harness whose Android verifier is v.
+func recheckHarness(t *testing.T, v *recheckingVerifier, mutate func(*walletprovider.Config, *walletprovider.Dependencies)) *harness {
+	t.Helper()
+	return newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		v.install(c, d)
+		if mutate != nil {
+			mutate(c, d)
+		}
+	})
+}
+
+// stored is the instance id as stored.
+func (h *harness) stored(id string) walletprovider.Instance {
+	h.t.Helper()
+	in, err := h.deps.Instances.Get(context.Background(), id)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return in
+}
+
+// TestRecheckRevokesOrSuspends: a recheck refusing an instance because
+// its evidence's issuer revoked or suspended its attestation revokes or
+// suspends the instance, so its live attestations read INVALID or
+// SUSPENDED, before refusing the request; any other refusal only
+// refuses.
+func TestRecheckRevokesOrSuspends(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict error // wrapped by the refusal, besides ErrEvidenceRejected
+		state   walletprovider.State
+		status  statuslist.StatusType
+		next    error // what the instance's next request is refused with
+	}{
+		{"revoked", walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid, walletprovider.ErrInstanceRevoked},
+		{"suspended", walletprovider.ErrEvidenceSuspended, walletprovider.StateSuspended, statuslist.StatusSuspended, walletprovider.ErrInstanceNotActive},
+		{"root removed", nil, walletprovider.StateActive, statuslist.StatusValid, walletprovider.ErrEvidenceRejected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := &recheckingVerifier{}
+			h := recheckHarness(t, v, nil)
+			in, _ := h.register(kindStrongBox)
+			key := h.newInstanceKey(in.ID, kindStrongBox)
+			refused := fmt.Errorf("%w: the chain's root isn't configured", walletprovider.ErrEvidenceRejected)
+			if tc.verdict != nil {
+				refused = fmt.Errorf("%w: %w: certificate 1 is named", walletprovider.ErrEvidenceRejected, tc.verdict)
+			}
+			v.refuse(refused)
+			if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, refused) {
+				t.Fatalf("Wallet Attestation = %v, want %v", err, refused)
+			}
+			stored := h.stored(in.ID)
+			if stored.State != tc.state || (tc.state != walletprovider.StateActive) != (stored.Reason != "") {
+				t.Fatalf("the instance is %s (%q), want %s", stored.State, stored.Reason, tc.state)
+			}
+			h.expectStatus(tc.status, key)
+			if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, tc.next) {
+				t.Fatalf("the next Wallet Attestation = %v, want %v", err, tc.next)
+			}
+		})
+	}
+
+	// A policy refusal, or a recheck that couldn't check, leaves the
+	// instance active.
+	v := &recheckingVerifier{}
+	h := recheckHarness(t, v, nil)
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	v.refuse(fmt.Errorf("%w: patch level too old", walletprovider.ErrPolicy))
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, walletprovider.ErrPolicy) {
+		t.Fatalf("Wallet Attestation = %v, want ErrPolicy", err)
+	}
+	v.refuse(errors.New("status list unavailable"))
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); err == nil {
+		t.Fatal("a recheck that couldn't check succeeded")
+	}
+	h.expectState(in.ID, walletprovider.StateActive, "")
+	h.expectStatus(statuslist.StatusValid, key)
+}
+
+// TestRecheckRevokeRacingResume: a recheck's revocation that lands
+// while an operator's Resume sets its statuses leaves the instance
+// revoked, its keys INVALID, as Revoke does.
+func TestRecheckRevokeRacingResume(t *testing.T) {
+	g := &gatedKeys{entered: make(chan struct{}), release: make(chan struct{})}
+	v := &recheckingVerifier{}
+	h := recheckHarness(t, v, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		g.InstanceKeyStore = d.InstanceKeys
+		d.InstanceKeys = g
+	})
+	ctx := context.Background()
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	if err := h.p.Suspend(ctx, in.ID, "lost"); err != nil {
+		t.Fatal(err)
+	}
+	g.gate()
+	done := make(chan error)
+	// Stores the instance active, then waits to list its keys.
+	go func() { done <- h.p.Resume(ctx, in.ID) }()
+	<-g.entered
+	v.refuse(fmt.Errorf("%w: %w: certificate 1 is REVOKED", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked))
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, walletprovider.ErrEvidenceRevoked) {
+		t.Fatalf("Wallet Attestation = %v, want ErrEvidenceRevoked", err)
+	}
+	close(g.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if stored := h.stored(in.ID); stored.State != walletprovider.StateRevoked {
+		t.Fatalf("the instance is %s, want revoked", stored.State)
+	}
+	h.expectStatus(statuslist.StatusInvalid, key)
 }

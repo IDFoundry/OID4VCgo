@@ -22,6 +22,18 @@ var (
 	// the keys it was sent for.
 	ErrEvidenceRejected = errors.New("walletprovider: evidence rejected")
 
+	// ErrEvidenceRevoked and ErrEvidenceSuspended: an
+	// EvidenceRechecker found that whoever issued the registration
+	// evidence's attestation has since revoked or suspended it — a
+	// verdict on the device's attestation key, such as Google's
+	// attestation status list naming a certificate of an Android
+	// instance's chain REVOKED or SUSPENDED, not a change of the
+	// provider's own configuration. A Recheck error wrapping one also
+	// wraps ErrEvidenceRejected. The provider then revokes, or
+	// suspends, the instance before refusing the request.
+	ErrEvidenceRevoked   = errors.New("walletprovider: evidence revoked by its issuer")
+	ErrEvidenceSuspended = errors.New("walletprovider: evidence suspended by its issuer")
+
 	// ErrPolicy: the evidence verified, but the Policy refuses it.
 	ErrPolicy = errors.New("walletprovider: refused by policy")
 

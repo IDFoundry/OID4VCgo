@@ -52,7 +52,11 @@
 // registers, and is a walletprovider.EvidenceRechecker: before each
 // attestation, Verifier.Recheck judges the instance's Facts by the
 // Verifier as it is then, so a certificate the status list names since,
-// or a policy tightened since, refuses it.
+// or a policy tightened since, refuses it. A certificate the list names
+// REVOKED or SUSPENDED also has the provider revoke or suspend the
+// instance (walletprovider.ErrEvidenceRevoked, ErrEvidenceSuspended);
+// a root removed from Roots or a tightened policy only refuses, since
+// the operator may undo it.
 //
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension

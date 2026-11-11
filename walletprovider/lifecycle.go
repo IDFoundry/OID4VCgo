@@ -131,9 +131,11 @@ const listPageSize = 100
 // device didn't boot verified, or, from its EvidenceFacts, every one
 // whose attestation chain has a certificate since revoked — with
 // reason, and returns how many it revoked. An EvidenceRechecker's
-// refusal already stops an instance getting new attestations, but
-// leaves those it has VALID until they expire: revoking it makes them
-// INVALID too. It walks the whole store (InstanceStore.List), so match sees
+// refusal already stops an instance getting new attestations, but —
+// unless it found the evidence revoked or suspended by its issuer
+// (ErrEvidenceRevoked, ErrEvidenceSuspended), which revokes or
+// suspends the instance — leaves those it has VALID until they expire:
+// revoking it makes them INVALID too. It walks the whole store (InstanceStore.List), so match sees
 // each instance once, as it was when read. It stops at the first error,
 // having revoked those before it; run it again to finish.
 func (p *Provider) RevokeWhere(ctx context.Context, match func(Instance) bool, reason string) (int, error) {

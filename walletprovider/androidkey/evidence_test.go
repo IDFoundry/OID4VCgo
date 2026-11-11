@@ -370,6 +370,13 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
 		t.Fatalf("the recorded instance key after its attestation key's revocation: %v, want evidence_rejected", err)
 	}
+	// Google's REVOKED verdict revoked the instance: it stays refused
+	// once the list no longer names the key.
+	v.Revocation = &androidkey.StatusList{}
+	_, err = client.WalletAttestation(ctx, registration.leafKey, recorded)
+	if !errors.As(err, &refused) || refused.Code != "instance_revoked" {
+		t.Fatalf("the revoked instance's recorded instance key: %v, want instance_revoked", err)
+	}
 }
 
 // serialKey is c's serial number as the status list keys it.

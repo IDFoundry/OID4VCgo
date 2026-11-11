@@ -181,5 +181,9 @@
 // instance (Instance.EvidenceFacts), and, as an EvidenceRechecker,
 // judge them again before each attestation, so an instance whose
 // attestation key has since been revoked gets nothing more, even for
-// an instance key it recorded before.
+// an instance key it recorded before. A recheck finding the evidence
+// revoked (or suspended) by its issuer — Google's attestation status
+// list naming a certificate of an Android instance's chain — revokes
+// (or suspends) the instance too, so the attestations it holds read
+// INVALID (or SUSPENDED).
 package walletprovider

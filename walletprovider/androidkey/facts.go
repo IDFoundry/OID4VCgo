@@ -141,10 +141,20 @@ func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 // been tightened to refuse, gets no more attestations, even for an
 // instance key it recorded before. It accepts an instance with no Facts
 // kept (InstanceFacts), which it can't judge. A refusal wraps
-// walletprovider.ErrEvidenceRejected for a revoked certificate or a root
-// no longer trusted, and walletprovider.ErrPolicy otherwise; a status
-// list it couldn't get, or a misconfigured Verifier, is returned as it
-// is, for the provider to fail the request as its own failure.
+// walletprovider.ErrEvidenceRejected for a certificate the status list
+// names or a root no longer trusted, and walletprovider.ErrPolicy
+// otherwise; a status list it couldn't get, or a misconfigured
+// Verifier, is returned as it is, for the provider to fail the request
+// as its own failure.
+//
+// Google's status list naming a certificate of the chain is Google's
+// verdict on the device's attestation key, not a change the operator
+// can undo, so a REVOKED entry's refusal wraps
+// walletprovider.ErrEvidenceRevoked as well, for the provider to revoke
+// the instance, and a SUSPENDED entry's walletprovider.ErrEvidenceSuspended,
+// for it to suspend it (Provider.Resume makes it active again, once
+// Google lifts the suspension). An entry with another status only
+// refuses, as a root removed from Roots or a tightened policy does.
 //
 // Only the registration chain's Facts are kept: an instance key's or a
 // holder key's chain, verified once, comes from the same device and
@@ -162,9 +172,28 @@ func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instanc
 		return nil
 	case errors.Is(err, ErrStatusUnavailable), errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
 		return err
-	case errors.Is(err, ErrRevoked), errors.Is(err, ErrUntrustedRoot):
+	case errors.Is(err, ErrRevoked):
+		return fmt.Errorf("%w: %w", revocationVerdict(err), err)
+	case errors.Is(err, ErrUntrustedRoot):
 		return fmt.Errorf("%w: %w", walletprovider.ErrEvidenceRejected, err)
 	default:
 		return fmt.Errorf("%w: %w", walletprovider.ErrPolicy, err)
 	}
+}
+
+// revocationVerdict is what a recheck refused for ErrRevoked wraps:
+// walletprovider.ErrEvidenceRejected, with ErrEvidenceRevoked or
+// ErrEvidenceSuspended for the status list entry's REVOKED or
+// SUSPENDED status.
+func revocationVerdict(err error) error {
+	var revoked *RevokedError
+	if errors.As(err, &revoked) {
+		switch revoked.Entry.Status {
+		case StatusRevoked:
+			return fmt.Errorf("%w: %w", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked)
+		case StatusSuspended:
+			return fmt.Errorf("%w: %w", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceSuspended)
+		}
+	}
+	return walletprovider.ErrEvidenceRejected
 }
