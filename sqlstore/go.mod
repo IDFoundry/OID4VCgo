@@ -1,6 +1,6 @@
 module github.com/idfoundry/oid4vcgo/sqlstore
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/idfoundry/fapigo v0.72.0

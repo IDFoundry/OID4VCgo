@@ -1,6 +1,6 @@
 module github.com/idfoundry/oid4vcgo/mobile
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
