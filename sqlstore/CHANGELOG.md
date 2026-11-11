@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.11.1...sqlstore/v0.12.0) (2026-11-11)
+
+
+### Features
+
+* **sqlstore:** declare whether the issuer stores seal their records ([31456e9](https://github.com/IDFoundry/OID4VCgo/commit/31456e915f640a05a0cee2695b7b3971bfb00d64))
+* **sqlstore:** say whether the Wallet Provider stores seal their records ([2025c13](https://github.com/IDFoundry/OID4VCgo/commit/2025c130d3a9e87eb55e0ebba957f76aeb876744))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.72.4 and fapigo/sqlstore v0.8.1 ([97e0d80](https://github.com/IDFoundry/OID4VCgo/commit/97e0d80b736bc185683ceb65515b994524c927ab))
+* **sqlstore:** require OID4VCgo v0.76.0 ([85e19e1](https://github.com/IDFoundry/OID4VCgo/commit/85e19e15a0f45ef9286471012dcb3ca1cf2347f0))
+
 ## [0.11.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.11.0...sqlstore/v0.11.1) (2026-11-11)
 
 

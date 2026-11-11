@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.76.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.3...v0.76.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **issuer:** under issuer.AssuranceProduction, issuer.New refuses a PreAuthorizedCodes, CredentialOffers, Notifications or DeferredTransactions store that doesn't implement sealing.Store with SealsRecords true. With sqlstore, give the DB a Sealer (sqlstore.Options{Sealer: sealer}, the sealer from sealing.AESGCMSealer with a 32-byte key kept outside the database); a store of your own implements SealsRecords. Set Config.UnsealedStores only where the stores are as protected as the issuer's keys.
+* **verifier:** under verifier.AssuranceProduction, NewTransactions refuses a TransactionsConfig with MdocDCAPI and no Origins. Set Origins to the origins of the pages that make org-iso-mdoc requests, or leave MdocDCAPI unset if the Transactions makes none.
+* **verifier:** under verifier.AssuranceProduction, a StatusPolicy needs Checker.Cache. Create one statuslist.Cache per process (statuslist.NewCache) and set it as the Cache of every statuslist.Checker the process uses.
+* **verifier:** an org-iso-mdoc answer through verifier.Transactions that withholds a requested element is refused. Set MdocDCAPIRequest.AllowWithheld to accept it, and check VerifiedCredential.Withheld in Accept. A TransactionStore of your own must keep Transaction.MdocAllowWithheld and VerifiedCredential.Withheld (verifiertest.TestTransactionStoreContract checks).
+
+### Features
+
+* **sealing:** move AESGCMSealer to a neutral sealing package ([438efbf](https://github.com/IDFoundry/OID4VCgo/commit/438efbf464171c2c736455f954b75f2201b0a9c6))
+* **verifier:** add Transactions.BeginWith, taking BeginOptions ([658c986](https://github.com/IDFoundry/OID4VCgo/commit/658c9863d730978eeac99c020638eab89d9f8e4f))
+* **walletprovider:** add Config.RequireSealedStore ([29f6c1a](https://github.com/IDFoundry/OID4VCgo/commit/29f6c1aac433997e08830764c5ba93f07be1f4b4))
+* **walletprovider:** report recheck refusals to Config.OnRecheckRefused ([039614b](https://github.com/IDFoundry/OID4VCgo/commit/039614b5c2b84e6d21bb39acd65d2bbbfee68f07))
+
+
+### Bug Fixes
+
+* **credential/mdoc:** refuse to issue an mdoc signed outside its certificate, or with a non-https status uri ([0be1af6](https://github.com/IDFoundry/OID4VCgo/commit/0be1af68bbb26e74c37de935a57af71b94d33308))
+* **deps:** pin FAPIgo v0.72.4 and fapigo/sqlstore v0.8.1 ([97e0d80](https://github.com/IDFoundry/OID4VCgo/commit/97e0d80b736bc185683ceb65515b994524c927ab))
+* **identifierlist:** copy a cached list's identifiers for each Check ([165baae](https://github.com/IDFoundry/OID4VCgo/commit/165baaef7b0da276fa19b4798ddefc0b66106b18))
+* **issuer:** carry a pre-authorized Token Request's claims into the token ([d054a94](https://github.com/IDFoundry/OID4VCgo/commit/d054a941f02df20126fbf442e2bead49d2e0eb2a))
+* **issuer:** recheck a deferred key attestation under the proof type it arrived under ([c23c023](https://github.com/IDFoundry/OID4VCgo/commit/c23c0237655a2916dd75f167a22163938a8fa0b2))
+* **issuer:** require sealed stores for holders' data under production ([a79d045](https://github.com/IDFoundry/OID4VCgo/commit/a79d04514a9df8bdc3de42b154c92a71413cbb8b))
+* **mdocdcapi:** refuse an mdoc of another type than its request ([a5fc2bf](https://github.com/IDFoundry/OID4VCgo/commit/a5fc2bf186c3e763526d150206e3a9d3ae35a72b))
+* **oid4vpmdoc:** refuse a DeviceResponse whose version isn't 1.x ([d0eb5ba](https://github.com/IDFoundry/OID4VCgo/commit/d0eb5ba05544f010c38249b33d30c5064a563ef1))
+* **proximity:** bound an NFC reader's TNEP wait ([a072327](https://github.com/IDFoundry/OID4VCgo/commit/a072327853989ee5a8f283c4b1af0a263af20ada))
+* **proximity:** refuse a DeviceRequest asking for a document type twice ([d93a75d](https://github.com/IDFoundry/OID4VCgo/commit/d93a75d02345b2939aeab1abe8468a821fa38b8e))
+* **sdjwtvc:** refuse Additional names that are invalid UTF-8 or a reserved claim in another case ([ea3e1d1](https://github.com/IDFoundry/OID4VCgo/commit/ea3e1d1b665d6607c43f54f5b1e24d8ede0be072))
+* **statuslist:** don't inflate a cached undecodable list on every check ([62cc122](https://github.com/IDFoundry/OID4VCgo/commit/62cc1225a1d4a9ef3302802bdd832b1f43844dcf))
+* **verifier:** bind a sealed transaction's status, expiry, nonce, state and kid ([2d7b206](https://github.com/IDFoundry/OID4VCgo/commit/2d7b206f9b8e37b79df87c25792f49222387901a))
+* **verifier:** refuse org-iso-mdoc Transactions without origins under production ([2fd2d47](https://github.com/IDFoundry/OID4VCgo/commit/2fd2d47fbe9a24053daf1e5aefdfb78afdef8bd6))
+* **verifier:** require a status list cache under production assurance ([85c4897](https://github.com/IDFoundry/OID4VCgo/commit/85c48977b3679c036850932a034942ce0b138c53))
+* **verifier:** require every element of an org-iso-mdoc answer ([2edfa14](https://github.com/IDFoundry/OID4VCgo/commit/2edfa14bd3343c360ad4ffbc85553e2f5dc686fd))
+* **verifier:** write a repeated refusal to the store once ([00f65f7](https://github.com/IDFoundry/OID4VCgo/commit/00f65f7b47375577e0e7572fecb6d1a59fee98c5))
+* **walletflow:** compare batch copies' full claim structure, check the copy sent ([1afbd39](https://github.com/IDFoundry/OID4VCgo/commit/1afbd39e179a510b585047f97c0d47029d84005b))
+* **walletprovider:** bound the status list indices one instance's keys take a period ([c973cec](https://github.com/IDFoundry/OID4VCgo/commit/c973cecfd341a20138134dcef38d0cb6e0810480))
+* **walletprovider:** cache a status list found empty for a second ([ce40b81](https://github.com/IDFoundry/OID4VCgo/commit/ce40b81531a2877434ee59696b99de1c3b155a2e))
+* **walletprovider:** keep a revoked instance's keys INVALID when Suspend or Resume races Revoke ([1029ed8](https://github.com/IDFoundry/OID4VCgo/commit/1029ed8122b557f10b68c7f103dc4fbbcf0ae087))
+* **walletprovider:** recheck an Android instance's registration evidence before each attestation ([d3590a1](https://github.com/IDFoundry/OID4VCgo/commit/d3590a196a19620f42a072e6b597bcf88456b3a6))
+* **walletprovider:** revoke or suspend an instance Google's status list names ([ec591df](https://github.com/IDFoundry/OID4VCgo/commit/ec591df80d8c3cf4c975e2d58ba3c7d37c366246))
+* **wallet:** refuse intent, content and android-app redirect_uri schemes ([9a827e8](https://github.com/IDFoundry/OID4VCgo/commit/9a827e80234e508e04d52016c1cb9c062ae57d5b))
+
 ## [0.75.3](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.2...v0.75.3) (2026-11-11)
 
 
