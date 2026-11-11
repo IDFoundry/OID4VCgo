@@ -91,6 +91,11 @@ type proximityReaderConfig struct {
 	// with the mDL document signer extended key usage. The default
 	// check (proximity.DefaultDocumentSignerPolicy) requires it too, and
 	// is the check this makes: it accepts nothing the default refuses.
+	// It still can't be set with AcceptMDLSignerWithoutEKU.
+	//
+	// Deprecated: the default check already requires the mDL document
+	// signer extended key usage; setting it changes nothing. The key is
+	// still accepted within ABI 15, and goes at the next ABI version.
 	RequireMDLSignerEKU bool `json:"require_mdl_signer_eku,omitempty"`
 	// AcceptMDLSignerWithoutEKU also accepts a document signer
 	// certificate with no extended key usage extension, which the
@@ -159,7 +164,8 @@ func readerDocumentSignerPolicy(cfg proximityReaderConfig) (func(*x509.Certifica
 	case cfg.RequireMDLSignerEKU && cfg.AcceptMDLSignerWithoutEKU:
 		return nil, newError(CodeInvalidInput, errors.New("require_mdl_signer_eku and accept_mdl_signer_without_eku can't both be set"))
 	case cfg.RequireMDLSignerEKU:
-		return proximity.RequireMDLDocumentSignerEKU, nil
+		// What proximity.RequireMDLDocumentSignerEKU, deprecated, is.
+		return proximity.DefaultDocumentSignerPolicy, nil
 	case cfg.AcceptMDLSignerWithoutEKU:
 		return mdoc.LenientDocumentSignerPolicy, nil
 	}
