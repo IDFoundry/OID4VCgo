@@ -757,8 +757,10 @@ struct ClaimRows: View {
     }
 
     /// An image claim: a data: URL (an SD-JWT VC's picture), or base64
-    /// bytes under a name like an mdoc's portrait.
-    static func image(_ v: JSONValue, key: String) -> UIImage? {
+    /// bytes under a name like an mdoc's portrait. Nonisolated: it only
+    /// decodes, so a credential's summary can build its portrait off the
+    /// main actor.
+    nonisolated static func image(_ v: JSONValue, key: String) -> UIImage? {
         guard case .string(let s) = v else { return nil }
         if s.hasPrefix("data:image/"), let comma = s.firstIndex(of: ","),
            let data = Data(base64Encoded: String(s[s.index(after: comma)...])) {
