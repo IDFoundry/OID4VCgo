@@ -45,6 +45,15 @@ No API changes a caller has to act on.
   again after setting its keys' statuses, and sets them again for the
   state it then has, so the last state stored wins.
 
+### Wallet Provider stores
+
+- **A custom `walletprovider.InstanceStore` keeps three more
+  `Instance` fields** — `EvidenceFacts`, `IndexPeriodStart` and
+  `IndicesInPeriod` — and copies `EvidenceFacts` as it copies `Key`
+  and `Credential`. `walletprovidertest.TestInstanceStoreContract`
+  now checks both. sqlstore's store keeps them in its record with no
+  migration.
+
 ## v0.74.0 → v0.75.2
 
 No API changes a caller has to act on; v0.75.0 adds one opt-in.
