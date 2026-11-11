@@ -486,8 +486,9 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 // returns the error the request fails with. A refusal for evidence its
 // issuer has revoked or suspended revokes or suspends the instance
 // first — through the transitions Revoke and Suspend make, so one
-// racing an operator's Resume still ends with the instance revoked.
-// The transition isn't cut short by the request's cancellation: once begun,
+// racing an operator's Resume still ends with the instance revoked —
+// and every refusal is reported to Config.OnRecheckRefused. The
+// transition isn't cut short by the request's cancellation: once begun,
 // it sets the instance's key statuses too.
 func (p *Provider) recheckRefused(ctx context.Context, in Instance, err error) error {
 	if !errors.Is(err, ErrEvidenceRejected) && !errors.Is(err, ErrPolicy) {
@@ -508,6 +509,12 @@ func (p *Provider) recheckRefused(ctx context.Context, in Instance, err error) e
 			// and tries again.
 			return fmt.Errorf("walletprovider: making the instance %s after its recheck refused it (%v): %w", state, err, terr)
 		}
+		if stored, gerr := p.getInstance(ctx, in.ID); gerr == nil {
+			in = stored
+		}
+	}
+	if p.cfg.OnRecheckRefused != nil {
+		p.cfg.OnRecheckRefused(ctx, in, err)
 	}
 	return err
 }

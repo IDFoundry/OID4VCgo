@@ -106,11 +106,45 @@ func TestRecheckRegistrationEvidence(t *testing.T) {
 	h.expectState(ios.ID, walletprovider.StateActive, "")
 }
 
-// recheckHarness is a harness whose Android verifier is v.
-func recheckHarness(t *testing.T, v *recheckingVerifier, mutate func(*walletprovider.Config, *walletprovider.Dependencies)) *harness {
+// refusalLog records Config.OnRecheckRefused's calls.
+type refusalLog struct {
+	mu    sync.Mutex
+	calls []refusal
+}
+
+type refusal struct {
+	in  walletprovider.Instance
+	err error
+}
+
+func (l *refusalLog) record(_ context.Context, in walletprovider.Instance, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, refusal{in, err})
+}
+
+// expect checks OnRecheckRefused was called n times, the last with
+// the instance as stored and an error wrapping want.
+func (l *refusalLog) expect(t *testing.T, n int, stored walletprovider.Instance, want error) {
+	t.Helper()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.calls) != n {
+		t.Fatalf("OnRecheckRefused called %d times, want %d", len(l.calls), n)
+	}
+	got := l.calls[n-1]
+	if got.in.ID != stored.ID || got.in.State != stored.State || got.in.Reason != stored.Reason || !errors.Is(got.err, want) {
+		t.Fatalf("OnRecheckRefused(%s, %s %q, %v), want (%s, %s %q, %v)", got.in.ID, got.in.State, got.in.Reason, got.err, stored.ID, stored.State, stored.Reason, want)
+	}
+}
+
+// recheckHarness is a harness whose Android verifier is v, reporting
+// recheck refusals to log.
+func recheckHarness(t *testing.T, v *recheckingVerifier, log *refusalLog, mutate func(*walletprovider.Config, *walletprovider.Dependencies)) *harness {
 	t.Helper()
 	return newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
 		v.install(c, d)
+		c.OnRecheckRefused = log.record
 		if mutate != nil {
 			mutate(c, d)
 		}
@@ -131,7 +165,8 @@ func (h *harness) stored(id string) walletprovider.Instance {
 // its evidence's issuer revoked or suspended its attestation revokes or
 // suspends the instance, so its live attestations read INVALID or
 // SUSPENDED, before refusing the request; any other refusal only
-// refuses.
+// refuses. Each is reported to OnRecheckRefused with the instance as
+// stored.
 func TestRecheckRevokesOrSuspends(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -145,8 +180,8 @@ func TestRecheckRevokesOrSuspends(t *testing.T) {
 		{"root removed", nil, walletprovider.StateActive, statuslist.StatusValid, walletprovider.ErrEvidenceRejected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := &recheckingVerifier{}
-			h := recheckHarness(t, v, nil)
+			v, log := &recheckingVerifier{}, &refusalLog{}
+			h := recheckHarness(t, v, log, nil)
 			in, _ := h.register(kindStrongBox)
 			key := h.newInstanceKey(in.ID, kindStrongBox)
 			refused := fmt.Errorf("%w: the chain's root isn't configured", walletprovider.ErrEvidenceRejected)
@@ -162,16 +197,17 @@ func TestRecheckRevokesOrSuspends(t *testing.T) {
 				t.Fatalf("the instance is %s (%q), want %s", stored.State, stored.Reason, tc.state)
 			}
 			h.expectStatus(tc.status, key)
+			log.expect(t, 1, stored, refused)
 			if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); !errors.Is(err, tc.next) {
 				t.Fatalf("the next Wallet Attestation = %v, want %v", err, tc.next)
 			}
 		})
 	}
 
-	// A policy refusal, or a recheck that couldn't check, leaves the
-	// instance active.
-	v := &recheckingVerifier{}
-	h := recheckHarness(t, v, nil)
+	// A policy refusal leaves the instance active, and a recheck that
+	// couldn't check isn't reported.
+	v, log := &recheckingVerifier{}, &refusalLog{}
+	h := recheckHarness(t, v, log, nil)
 	in, _ := h.register(kindStrongBox)
 	key := h.newInstanceKey(in.ID, kindStrongBox)
 	v.refuse(fmt.Errorf("%w: patch level too old", walletprovider.ErrPolicy))
@@ -184,6 +220,7 @@ func TestRecheckRevokesOrSuspends(t *testing.T) {
 	}
 	h.expectState(in.ID, walletprovider.StateActive, "")
 	h.expectStatus(statuslist.StatusValid, key)
+	log.expect(t, 1, h.stored(in.ID), walletprovider.ErrPolicy)
 }
 
 // TestRecheckRevokeRacingResume: a recheck's revocation that lands
@@ -191,8 +228,8 @@ func TestRecheckRevokesOrSuspends(t *testing.T) {
 // revoked, its keys INVALID, as Revoke does.
 func TestRecheckRevokeRacingResume(t *testing.T) {
 	g := &gatedKeys{entered: make(chan struct{}), release: make(chan struct{})}
-	v := &recheckingVerifier{}
-	h := recheckHarness(t, v, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+	v, log := &recheckingVerifier{}, &refusalLog{}
+	h := recheckHarness(t, v, log, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
 		g.InstanceKeyStore = d.InstanceKeys
 		d.InstanceKeys = g
 	})

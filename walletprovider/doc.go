@@ -185,5 +185,6 @@
 // revoked (or suspended) by its issuer — Google's attestation status
 // list naming a certificate of an Android instance's chain — revokes
 // (or suspends) the instance too, so the attestations it holds read
-// INVALID (or SUSPENDED).
+// INVALID (or SUSPENDED); Config.OnRecheckRefused hears of every
+// recheck refusal.
 package walletprovider

@@ -1,6 +1,7 @@
 package walletprovider
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/base64"
@@ -182,6 +183,24 @@ type Config struct {
 
 	// Policy decides what verified evidence is attested. REQUIRED.
 	Policy Policy
+
+	// OnRecheckRefused, if set, is called each time an
+	// EvidenceRechecker refuses an instance before a Wallet or Key
+	// Attestation, with the refusal and the instance as stored once the
+	// provider has acted on it: StateRevoked or StateSuspended when the
+	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
+	// provider revoked or suspended it, with a Reason naming the
+	// recheck), StateActive otherwise (a policy refusal, or a root no
+	// longer trusted: the request is refused, the instance and its live
+	// attestations left as they are). Use it to alert, or to revoke from
+	// your own logic. It's called on the request's path, before the
+	// refusal is answered: keep it quick, and hand anything slow to
+	// another goroutine. A recheck that couldn't check (a status list
+	// that can't be fetched), or a refusal the provider couldn't revoke
+	// or suspend the instance for (a store failure), fails the request
+	// as the provider's own failure without calling it; the next
+	// request rechecks.
+	OnRecheckRefused func(ctx context.Context, in Instance, err error)
 }
 
 // Dependencies are a Provider's collaborators.
