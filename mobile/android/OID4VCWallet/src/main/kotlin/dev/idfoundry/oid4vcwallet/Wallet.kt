@@ -982,6 +982,18 @@ public class Wallet(
     }
 
     /**
+     * [startNfcPresentation] with its handover and transport named by
+     * [options] rather than by two adjacent Booleans:
+     * `startNfcPresentation(context, options = NfcEngagementOptions(nfcData = true))`.
+     */
+    public suspend fun startNfcPresentation(
+        context: Context,
+        timeouts: ProximityTimeouts = ProximityTimeouts(),
+        modes: Set<ProximityBLEMode> = ProximityBLEMode.entries.toSet(),
+        options: NfcEngagementOptions,
+    ): NfcPresentation = startNfcPresentation(context, timeouts, modes, options.negotiated, options.nfcData)
+
+    /**
      * Offers QR/BLE and NFC with independent keys and one consent flow. A valid
      * NFC-to-BLE handover (full Hs read), NFC data application SELECT, or a
      * completed QR BLE connection wins permanently. Type 4 discovery keeps QR available.
