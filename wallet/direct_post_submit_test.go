@@ -54,6 +54,11 @@ func TestSubmitDirectPostResponse(t *testing.T) {
 		"offer scheme":          {200, "application/json", `{"redirect_uri":"HAIP-VCI://?credential_offer_uri=x"}`, "", "isn't an absolute URI the Wallet can follow"},
 		"mdoc wallet scheme":    {200, "application/json", `{"redirect_uri":"mdoc-openid4vp://?request_uri=https://v.example/r"}`, "", "isn't an absolute URI the Wallet can follow"},
 		"eudi wallet scheme":    {200, "application/json", `{"redirect_uri":"eudi-openid4vp://?request_uri=https://v.example/r"}`, "", "isn't an absolute URI the Wallet can follow"},
+		// Android's: an intent: URI launches any app component, with
+		// extras; content: reads a content provider's data.
+		"intent redirect":      {200, "application/json", `{"redirect_uri":"Intent://x#Intent;component=com.example/.Activity;end"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"content redirect":     {200, "application/json", `{"redirect_uri":"content://com.example.provider/data"}`, "", "isn't an absolute URI the Wallet can follow"},
+		"android-app redirect": {200, "application/json", `{"redirect_uri":"android-app://com.example/https/example.com/"}`, "", "isn't an absolute URI the Wallet can follow"},
 		// OpenID4VP §8.2: any absolute URI, which HAIP 1.0 §5.1 has the
 		// Wallet follow: the Verifier's own app's, say.
 		"app scheme redirect_uri": {200, "application/json", `{"redirect_uri":"com.example.verifier:/done?response_code=abc"}`, "com.example.verifier:/done?response_code=abc", ""},

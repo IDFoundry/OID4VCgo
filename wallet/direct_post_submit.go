@@ -32,7 +32,8 @@ type DirectPostResult struct {
 	// the Verifier (§8.2; HAIP 1.0 §5.1 requires Wallets to follow it).
 	// It is an absolute URI: an https page, or a scheme the Verifier's
 	// own app registered. Plain http, and one that runs code or reads
-	// local data (javascript:, data:, file:), are refused. Open a non-https one only
+	// local data (javascript:, data:, file:, Android's intent:, content:
+	// and android-app:), are refused. Open a non-https one only
 	// through the platform's handling of app links, never in a web view.
 	RedirectURI string
 }
@@ -212,8 +213,10 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 }
 
 // unsafeRedirectSchemes are the URI schemes a redirect_uri may not
-// have: each runs code, or reads local data, in whatever opens it.
-// Plain http too: HAIP requires TLS, and a same-device return over it
+// have: each runs code, or reads local data, in whatever opens it —
+// Android's among them: intent: launches any app component, with
+// whatever extras the Verifier chose, android-app: an app the Verifier
+// names, and content: reads a content provider's data. Plain http too: HAIP requires TLS, and a same-device return over it
 // could be read or rewritten on the way. And the schemes that invoke a
 // Wallet (OpenID4VP 1.0 §13.1.1, OpenID4VCI 1.0 §4.1, HAIP 1.0 §5 and
 // §4.1, ISO/IEC 18013-7 Annex B's mdoc-openid4vp, the EUDI Wallet's
@@ -223,6 +226,7 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 // walletflow refuses the Wallet's own redirect URI's scheme too.
 var unsafeRedirectSchemes = map[string]bool{
 	"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true,
+	"intent": true, "android-app": true, "content": true,
 	"openid4vp": true, "haip-vp": true, "openid-credential-offer": true, "haip-vci": true,
 	"mdoc-openid4vp": true, "eudi-openid4vp": true,
 }

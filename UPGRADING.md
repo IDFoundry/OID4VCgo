@@ -57,6 +57,10 @@ No API changes a caller has to act on.
   or disclosed along with them — as one stored before the check above
   could, once the copy previewed is presented or found revoked.
   Nothing is sent; start the presentation again.
+- **`wallet.SubmitDirectPostResponse` refuses a `redirect_uri` with
+  the `intent`, `content` or `android-app` scheme**, which on Android
+  launch an app component of the Verifier's choosing or read a content
+  provider's data, as it refuses `javascript` and `file`.
 
 ### Wallet Provider stores
 
