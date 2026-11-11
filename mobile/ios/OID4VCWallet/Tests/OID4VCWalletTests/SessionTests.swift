@@ -513,10 +513,13 @@ final class SessionTests: XCTestCase {
         let registration = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false,
                                                            tagPrefix: HttpWalletProvider.registrationKeyTagPrefix))
         let registrationKey = try registration.createKey(purpose: .instance)
+        var refused = false
         do {
             _ = try await w.sweepOrphanedKeys(in: registration)
-            XCTFail("swept the registration key's store")
-        } catch is StoreError {}
+        } catch is StoreError {
+            refused = true
+        }
+        XCTAssertTrue(refused, "swept the registration key's store")
         XCTAssertNotNil(try registration.publicKey(id: registrationKey))
     }
 

@@ -130,24 +130,18 @@ final class OID4VCWalletTests: XCTestCase {
         let prefix = "org.idfoundry.oid4vcgo.test.\(UUID())."
         let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: prefix))
         let orphan = try store.createKey(purpose: .dpop)
-        let tag = Data((prefix + "apps-own").utf8)
-        let attrs: [String: Any] = [
-            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-            kSecAttrKeySizeInBits as String: 256,
-            kSecPrivateKeyAttrs as String: [
-                kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: tag,
-                kSecAttrLabel as String: "the app's own key",
-            ] as [String: Any],
+        // Another of the app's keys under the prefix: one without the
+        // store's label.
+        let foreign = try store.createKey(purpose: .holder)
+        defer { try? store.deleteKey(id: foreign) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: Data((prefix + foreign).utf8),
         ]
-        var error: Unmanaged<CFError>?
-        XCTAssertNotNil(SecKeyCreateRandomKey(attrs as CFDictionary, &error), "\(String(describing: error))")
-        defer {
-            SecItemDelete([kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag] as CFDictionary)
-        }
-        XCTAssertEqual(Set(try store.keyIDs()), [orphan, "apps-own"])
+        XCTAssertEqual(SecItemUpdate(query as CFDictionary, [kSecAttrLabel as String: "the app's own key"] as CFDictionary), errSecSuccess)
+        XCTAssertEqual(Set(try store.keyIDs()), [orphan, foreign])
         XCTAssertEqual(try store.deleteKeys(except: []), 1)
-        XCTAssertEqual(try store.keyIDs(), ["apps-own"], "the sweep deleted a key it didn't make")
+        XCTAssertEqual(try store.keyIDs(), [foreign], "the sweep deleted a key it didn't make")
         #endif
     }
 
