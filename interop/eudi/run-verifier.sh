@@ -185,6 +185,19 @@ events() {
     | jq -r '.events[]? | "        event: " + .event + (if .cause then ": " + (.cause | tostring | .[0:300]) else "" end)' || true
 }
 
+# invalid_vp_token reports whether the verifier refused the transaction's
+# vp_token, as the wallet posted it, for a cause containing $1: its
+# events say why, and the wallet saw the refusal. A transaction the
+# wallet never answered, or one refused for anything else, isn't.
+invalid_vp_token() {  # $1 what the cause must contain, $2 the wallet's output
+  local want="$1" out="$2"
+  curl -sk --max-time 30 -o "events-$TID.json" "$VERIFIER/ui/presentations/$TID/events" || true
+  grep -q 'wallet: verifier rejected the authorization response: status 400 InvalidVpToken' "$out" \
+    && jq -e --arg want "$want" '[.events[]? | select(.event == "Wallet failed to post response")
+      | .cause | tostring | select(startswith("vp_token is not valid: ") and contains($want))] | length >= 1' \
+      "events-$TID.json" >/dev/null 2>&1
+}
+
 # present runs one presentation, which must be accepted: the wallet
 # follows the redirect, and the verifier releases the vp_token for its
 # response_code.
@@ -202,14 +215,16 @@ present() {  # $1 label, $2 dcql, $3 profile, $4 issuer chain file, $5 request_u
   else bad "the verifier accepted the vp_token ($(head -c 300 "result-$name.json"))"; events; fi
 }
 
-# refused runs one presentation the verifier must refuse, and shows why.
-refused() {  # $1 label, $2 dcql, $3 issuer chain file
-  local name="$1" dcql="$2" chain="$3"
+# refused runs one presentation the verifier must refuse, for a cause
+# containing $4.
+refused() {  # $1 label, $2 dcql, $3 issuer chain file, $4 the cause
+  local name="$1" dcql="$2" chain="$3" want="$4"
   if init_transaction "$dcql" haip "$chain" get; then
     authorize "wallet-$name.txt"
     result "result-$name.json"
     if jq -e '.vp_token' "result-$name.json" >/dev/null 2>&1; then bad "the verifier accepted it"
-    else ok "the verifier refused it"; events | grep -i 'failed' || true; fi
+    elif invalid_vp_token "$want" "wallet-$name.txt"; then ok "the verifier refused it: $want"
+    else bad "the verifier refused it for $want ($(head -c 200 "wallet-$name.txt" | tr -s '\n' ' '))"; events; fi
   else bad "transaction initialized"; fi
 }
 
@@ -218,7 +233,8 @@ refused() {  # $1 label, $2 dcql, $3 issuer chain file
 echo "== control: an SD-JWT VC whose vct#integrity doesn't match its Type Metadata"
 jq '.vct_integrity = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="' wallet-sdjwt.json > wallet-sdjwt-integrity.json
 start_wallet wallet-sdjwt-integrity.json verifier-ca.pem
-refused sdjwt-integrity "$SDJWT_QUERY" issuer-ca.pem
+INTEGRITY_FAILURE='{"error":"TypeMetadataResolutionFailure","description":"unable to resolve sd-jwt vc type metadata, sub-resource integrity validation fails"}'
+refused sdjwt-integrity "$SDJWT_QUERY" issuer-ca.pem "$INTEGRITY_FAILURE"
 
 start_wallet wallet-sdjwt.json verifier-ca.pem
 present sdjwt-haip "$SDJWT_QUERY" haip issuer-ca.pem get
@@ -226,30 +242,49 @@ present sdjwt-openid4vp "$SDJWT_QUERY" openid4vp issuer-ca.pem get
 
 echo "== control: the same request again, after it was answered"
 authorize replay.txt
-if grep -q 'Presented' replay.txt; then bad "the verifier served the request twice"; else ok "refused: $(head -c 200 replay.txt | tr -s '\n' ' ')"; fi
+# The answered transaction's own request_uri, which the verifier no
+# longer serves: the wallet's refusal names that fetch.
+replayed="fetch request_uri: GET $(jq -r '.request_uri' init.json): status 400"
+if grep -q 'Presented' replay.txt; then bad "the verifier served the request twice"
+elif grep -qF "$replayed" replay.txt; then ok "refused: $replayed"
+else bad "refused, as $replayed ($(head -c 200 replay.txt | tr -s '\n' ' '))"; fi
 
 echo "== control: the verifier trusts an unrelated issuer CA"
 if init_transaction "$SDJWT_QUERY" haip other-ca.pem get; then
   authorize untrusted-issuer.txt
   result untrusted-issuer.json
+  want='{"error":"IssuerCertificateIsNotTrusted","description":"sd-jwt vc issuer certificate is not trusted"}'
   if jq -e '.vp_token' untrusted-issuer.json >/dev/null 2>&1; then bad "the verifier accepted it"
-  else ok "the verifier refused the credential"; events | grep -i 'failed' || true; fi
+  elif invalid_vp_token "$want" untrusted-issuer.txt; then ok "the verifier refused the credential: $want"
+  else bad "the verifier refused the credential for $want ($(head -c 200 untrusted-issuer.txt | tr -s '\n' ' '))"; events; fi
 else bad "transaction initialized"; fi
+
+# wallet_refused checks the wallet refused the request for $2, in its
+# output $1, and that the verifier got no vp_token for it.
+wallet_refused() {  # $1 the wallet's output, $2 why, $3 the verifier's result
+  local out="$1" want="$2" res="$3"
+  if jq -e '.vp_token' "$res" >/dev/null 2>&1; then bad "the wallet presented"
+  elif grep -qF "$want" "$out"; then ok "the wallet refused: $want"
+  else bad "the wallet refused, for $want ($(head -c 200 "$out" | tr -s '\n' ' '))"; fi
+}
 
 echo "== control: a launch whose client_id isn't the signed request's"
 if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   authorize mismatch.txt "x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   result mismatch.json
-  if jq -e '.vp_token' mismatch.json >/dev/null 2>&1; then bad "the wallet presented"
-  else ok "the wallet refused: $(head -c 200 mismatch.txt | tr -s '\n' ' ')"; fi
+  wallet_refused mismatch.txt \
+    "wallet: parse authorization request: client_id \"x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" does not match x5c leaf's own x509_hash \"$(jq -r '.client_id' init.json)\"" \
+    mismatch.json
 else bad "transaction initialized"; fi
 
 echo "== control: a query for a credential the wallet doesn't hold"
 if init_transaction "$UNHELD_QUERY" haip iaca.pem get; then
   authorize unheld.txt
   result unheld.json
-  if jq -e '.error == "access_denied"' unheld.json >/dev/null 2>&1; then ok "the verifier received the wallet's access_denied"
-  else bad "the verifier received access_denied ($(head -c 300 unheld.json))"; events; fi
+  want='Sent error response: access_denied: wallet: present credentials: wallet: match dcql query: credential query "mdl": no held credential satisfies this credential query'
+  if jq -e '.error == "access_denied"' unheld.json >/dev/null 2>&1 && grep -qF "$want" unheld.txt; then
+    ok "the verifier received the wallet's access_denied, for holding no mDL"
+  else bad "the verifier received access_denied, for holding no mDL ($(head -c 300 unheld.json); $(head -c 300 unheld.txt))"; events; fi
 else bad "transaction initialized"; fi
 
 echo "== control: the wallet trusts an unrelated CA for the verifier"
@@ -257,13 +292,14 @@ start_wallet wallet-sdjwt.json other-ca.pem
 if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   authorize untrusted-verifier.txt
   result untrusted-verifier.json
-  if jq -e '.vp_token' untrusted-verifier.json >/dev/null 2>&1; then bad "the wallet presented"
-  else ok "the wallet refused: $(head -c 200 untrusted-verifier.txt | tr -s '\n' ' ')"; fi
+  wallet_refused untrusted-verifier.txt \
+    'wallet: parse authorization request: untrusted verifier: wallet: verifier certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority' \
+    untrusted-verifier.json
 else bad "transaction initialized"; fi
 
 echo "== control: a revoked SD-JWT VC (status list index 1)"
 start_wallet wallet-sdjwt.json verifier-ca.pem 1
-refused sdjwt-revoked "$SDJWT_QUERY" issuer-ca.pem
+refused sdjwt-revoked "$SDJWT_QUERY" issuer-ca.pem '{"error":"StatusNotValid","description":"Status is not Valid"}'
 
 echo "== an SD-JWT VC whose vct#integrity doesn't match, once the verifier has the Type Metadata cached"
 # Not a control: v0.12.0 caches resolved Type Metadata by vct alone and
@@ -274,14 +310,19 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   result result-sdjwt-integrity-cached.json
   if jq -e '.vp_token' result-sdjwt-integrity-cached.json >/dev/null 2>&1; then
     echo "  note  accepted, as expected of v0.12.0 (see README.md)"
-  else
+  elif invalid_vp_token "$INTEGRITY_FAILURE" wallet-sdjwt-integrity-cached.txt; then
     echo "  note  refused: the verifier now checks vct#integrity on a cache hit; make this a control"
+  else
+    # Refused for anything else, this presentation, the accepted one's
+    # but for vct#integrity, shows something else broke.
+    bad "accepted, or refused for its vct#integrity ($(head -c 200 wallet-sdjwt-integrity-cached.txt | tr -s '\n' ' '))"; events
   fi
 else bad "transaction initialized"; fi
 
 echo "== control: a revoked mdoc (status list index 1)"
 start_wallet wallet-mdoc.json verifier-ca.pem 1
-refused mdoc-revoked "$MDOC_QUERY" iaca.pem
+refused mdoc-revoked "$MDOC_QUERY" iaca.pem \
+  "DeviceResponse contains invalid documents: Document at index '0' with docType 'eu.europa.ec.eudi.pid.1' contains the following errors: 'DocumentHasBeenRevoked'"
 
 start_wallet wallet-mdoc.json verifier-ca.pem
 present mdoc-haip "$MDOC_QUERY" haip iaca.pem get
