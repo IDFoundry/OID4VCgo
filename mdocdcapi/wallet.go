@@ -402,8 +402,9 @@ type Answer struct {
 // answer, in order, each signed by its own holder key. A document
 // request the holder doesn't answer is left out of the response, which
 // ISO/IEC 18013-5 allows; none is answered twice. Everything is checked
-// before any key signs, including that each credential holds an element
-// to disclose, and an error leaves nothing to send. Once ctx ends, no
+// before any key signs, including that each credential is of its
+// request's document type (its MSO's docType, read unverified) and
+// holds an element to disclose, and an error leaves nothing to send. Once ctx ends, no
 // further key signs: a holder key that asks the holder isn't asked again
 // for a response that will fail.
 func (in Incoming) RespondDocuments(ctx context.Context, answers []Answer) ([]byte, error) {
@@ -425,6 +426,11 @@ func (in Incoming) RespondDocuments(ctx context.Context, answers []Answer) ([]by
 		}
 		if err := checkConsented(in.Documents[a.Document], a.Elements); err != nil {
 			return nil, err
+		}
+		if held, err := mdocresponse.UnverifiedDocType(a.IssuerSigned, MaxResponseBytes); err != nil {
+			return nil, fmt.Errorf("mdocdcapi: document request %d: %w", a.Document, err)
+		} else if held != in.Documents[a.Document].DocType {
+			return nil, fmt.Errorf("mdocdcapi: document request %d is for %q, the mdoc is a %q", a.Document, in.Documents[a.Document].DocType, held)
 		}
 		if a.Holder == nil {
 			return nil, fmt.Errorf("mdocdcapi: document request %d has no device key", a.Document)

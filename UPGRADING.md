@@ -111,6 +111,11 @@ CHANGELOG.md's BREAKING CHANGES sections.
   `issuertest` contract checks it). A record without it, saved
   earlier, is checked against every proof type's algorithms as
   before.
+- **`mdocdcapi.Incoming.RespondDocuments` (and `Respond`) refuse an
+  mdoc of another type than its document request asks for**, read
+  from its MSO's `docType` before any key signs, as `proximity`
+  already did. It used to sign and send it under the requested type,
+  for the reader to refuse.
 
 ### Wallet Provider stores
 

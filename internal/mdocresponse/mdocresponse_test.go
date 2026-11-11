@@ -126,3 +126,36 @@ func TestDecode(t *testing.T) {
 		}
 	}
 }
+
+// UnverifiedDocType reads the MSO's docType without verifying it, and
+// refuses an IssuerAuth whose payload isn't an MSO with one.
+func TestUnverifiedDocType(t *testing.T) {
+	f := testmdoc.Issue(t)
+	if got, err := mdocresponse.UnverifiedDocType(f.IssuerSigned, 1<<20); err != nil || got != testmdoc.DocType {
+		t.Fatalf("UnverifiedDocType = %q, %v; want %q", got, err, testmdoc.DocType)
+	}
+	sign := func(payload []byte) mdoc.IssuerSigned {
+		t.Helper()
+		sign1, err := cose.Sign(cose.ES256, f.IssuerKey, cose.Headers{}, cose.Headers{}, payload, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mdoc.IssuerSigned{IssuerAuth: sign1}
+	}
+	for name, tc := range map[string]struct {
+		signed  mdoc.IssuerSigned
+		maxSize int
+	}{
+		"not COSE":         {mdoc.IssuerSigned{IssuerAuth: []byte{0x01}}, 1 << 20},
+		"over the size":    {f.IssuerSigned, 8},
+		"untagged MSO":     {sign([]byte{0x41, 0xa0}), 1 << 20},
+		"another tag":      {sign([]byte{0xd8, 0x19, 0x41, 0xa0}), 1 << 20},
+		"no docType":       {sign([]byte{0xd8, 0x18, 0x41, 0xa0}), 1 << 20},
+		"not a map":        {sign([]byte{0xd8, 0x18, 0x41, 0x01}), 1 << 20},
+		"tag over no bstr": {sign([]byte{0xd8, 0x18, 0x01}), 1 << 20},
+	} {
+		if got, err := mdocresponse.UnverifiedDocType(tc.signed, tc.maxSize); err == nil {
+			t.Errorf("%s: UnverifiedDocType = %q", name, got)
+		}
+	}
+}

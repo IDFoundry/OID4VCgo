@@ -215,6 +215,33 @@ func TestRespondDocuments_EmptySelectionBeforeAnySignature(t *testing.T) {
 	}
 }
 
+// An mdoc of another type than its document request asks for is
+// refused before any key signs, so a holder can't present one document
+// as another; an IssuerAuth that doesn't decode is refused too.
+func TestRespondDocuments_DocTypeMismatchBeforeAnySignature(t *testing.T) {
+	h := newMultiHarness(t)
+	signed := 0
+	first := h.answer(0)
+	first.Holder = countingSigner{Signer: first.Holder, signed: &signed}
+	swapped := h.answer(1)
+	swapped.IssuerSigned = h.fixtures[2].IssuerSigned
+	if _, err := h.incoming.RespondDocuments(context.Background(), []Answer{first, swapped}); err == nil || !strings.Contains(err.Error(), `the mdoc is a "org.example.c"`) {
+		t.Fatalf("RespondDocuments = %v, want the org.example.c mdoc refused for org.example.b", err)
+	}
+	if signed != 0 {
+		t.Errorf("%d keys signed before the mismatch was refused, want 0", signed)
+	}
+	garbled := h.answer(1)
+	garbled.IssuerSigned.IssuerAuth = []byte{0x01}
+	if _, err := h.incoming.RespondDocuments(context.Background(), []Answer{garbled}); err == nil || !strings.Contains(err.Error(), "IssuerAuth") {
+		t.Fatalf("RespondDocuments = %v, want an undecodable IssuerAuth refused", err)
+	}
+	// Respond, for one document, checks the same.
+	if _, err := h.incoming.Respond(0, h.fixtures[1].IssuerSigned, h.fixtures[1].DeviceKey, [][2]string{{testmdoc.Namespace, "given_name"}}); err == nil {
+		t.Fatal("Respond answered org.example.a with an org.example.b mdoc")
+	}
+}
+
 // Once ctx ends, no further holder key signs.
 func TestRespondDocuments_CancelledBetweenKeys(t *testing.T) {
 	h := newMultiHarness(t)
