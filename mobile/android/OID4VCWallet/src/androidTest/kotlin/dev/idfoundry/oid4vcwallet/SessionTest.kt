@@ -473,11 +473,10 @@ class SessionTest {
         )
         val registrationKey = registration.createKey(KeyPurpose.INSTANCE)
         try {
-            w.sweepOrphanedKeys(registration)
-            fail("swept the registration key's store")
-        } catch (_: IllegalArgumentException) {
-        } finally {
+            val refused = runCatching { w.sweepOrphanedKeys(registration) }.exceptionOrNull()
+            assertTrue("swept the registration key's store: $refused", refused is IllegalArgumentException)
             assertNotNull(registration.publicKey(registrationKey))
+        } finally {
             registration.deleteKey(registrationKey)
         }
     }
