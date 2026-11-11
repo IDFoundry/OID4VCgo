@@ -124,11 +124,17 @@ Seen running Multipaz 0.102.0; none reported upstream.
    bounds their lifetime refuses them, as OID4VCgo's does past a day. A
    policy difference, not a protocol one, but one a Wallet Provider on
    Multipaz's backend meets.
-6. **Multipaz's issuer requires `client_id` in a Token Request** of a
-   client that authenticates by Wallet Attestation, whose `sub` already
-   names it, though OpenID4VCI 1.0 §6.1 makes it optional; `walletflow`
-   sends none, so the run's HTTP client adds it to the issuer's token
-   requests (`scripts/peer`'s `withClientID`).
+6. **Multipaz's issuer requires `client_id` in a pre-authorized code
+   Token Request** of a client that authenticates by Wallet Attestation.
+   That is the specification's default, not a deviation: an
+   Authorization Server that doesn't advertise
+   `pre-authorized_grant_anonymous_access_supported` (OpenID4VCI 1.0
+   §12.3, default `false`) needs the client identified (§6.1), and
+   draft-ietf-oauth-attestation-based-client-auth-07 §6.3 has it check
+   `client_id` against the Wallet Attestation's `sub`. `walletflow`
+   once sent none, and the run's HTTP client added it; OID4VCgo's
+   wallet now sends the attestation's `sub` as `client_id` itself, and
+   the run sends the Token Request as it is.
 
 Every in-person and Annex C case agreed with ISO/IEC 18013-5 and TS
 18013-7 on both sides. One behaviour worth knowing: Multipaz's wallet

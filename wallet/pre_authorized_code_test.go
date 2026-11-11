@@ -87,6 +87,9 @@ func TestRequestPreAuthorizedCodeToken_Success(t *testing.T) {
 	if sentDPoP == "" {
 		t.Errorf("DPoP header is empty")
 	}
+	if _, ok := sentForm["client_id"]; ok {
+		t.Errorf("an anonymous request sent client_id %q", sentForm.Get("client_id"))
+	}
 }
 
 // TestRequestPreAuthorizedCodeToken_ParsesAuthorizationDetails checks

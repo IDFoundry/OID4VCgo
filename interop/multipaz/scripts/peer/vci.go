@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,7 +18,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -184,9 +182,9 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	if req.Trust == "other" {
 		prov = prov.other
 	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: withClientID{&http.Transport{
+	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: p.vp.tlsRoots, MinVersion: tls.VersionTLS12},
-	}}}
+	}}
 	w, err := walletflow.New(walletflow.Config{
 		Development: true, ClientID: goClientID, IssuerRoots: roots, IssuanceProfile: walletflow.ProfileHAIP,
 	}, walletflow.Dependencies{Keys: p.keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client, Provider: prov})
@@ -218,34 +216,6 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	}
 	rep.Claims = claims
 	return rep, nil
-}
-
-// withClientID adds client_id to the form of each token request, which
-// Multipaz's issuer requires ('client_id' parameter missing) though the
-// client authenticates by Wallet Attestation, whose sub names it, and
-// OpenID4VCI 1.0 §6.1 makes it optional; walletflow sends none. Every
-// other request passes as it is.
-type withClientID struct{ next http.RoundTripper }
-
-func (t withClientID) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.Method != http.MethodPost || r.URL.Path != "/token" || r.Body == nil {
-		return t.next.RoundTrip(r)
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	_ = r.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	form, err := url.ParseQuery(string(raw))
-	if err != nil {
-		return nil, err
-	}
-	form.Set("client_id", goClientID)
-	body := form.Encode()
-	r = r.Clone(r.Context())
-	r.Body, r.ContentLength = io.NopCloser(strings.NewReader(body)), int64(len(body))
-	r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(body)), nil }
-	return t.next.RoundTrip(r)
 }
 
 // provider is walletflow's Wallet Provider: it attests whatever it's
