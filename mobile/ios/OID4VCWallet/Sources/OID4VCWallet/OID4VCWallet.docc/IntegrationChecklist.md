@@ -143,9 +143,9 @@ is a complete, working app on this package to compare against.
 - In the extension, the consent screen shows the website's origin and
   ``Wallet/mdocCandidates(origin:)``. In `sendResponse`'s closure,
   validate the raw request, parse it with
-  ``Wallet/startMdocPresentation(requestData:origin:)``, refuse it if
-  it differs from what the holder was shown, and answer with
-  ``MdocPresentation/respond(document:credentialID:elements:)``.
+  ``Wallet/startMdocPresentation(requestData:origin:)``, and answer
+  with ``MdocPresentation/respond(shown:readerCertificate:)``, which
+  refuses it if it differs from what the holder was shown.
 - *Check:* on an iOS 26 device, Safari offers the app for a page's
   `org-iso-mdoc` request, and the page receives the elements the holder
   chose. (<doc:PresentingToSafari>)
