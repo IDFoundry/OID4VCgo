@@ -93,8 +93,7 @@ func WithMaxClockSkew(d time.Duration) ReaderOption {
 // fails. Chain validation accepts a leaf with any key usage; the
 // default refuses the certificates an IACA issues for other jobs,
 // requiring the extended key usage ISO/IEC 18013-5 Annex B.1.4
-// profiles an mDL document signer with, as RequireMDLDocumentSignerEKU
-// does. mdoc.LenientDocumentSignerPolicy also accepts a certificate
+// profiles an mDL document signer with. mdoc.LenientDocumentSignerPolicy also accepts a certificate
 // with no extended key usage extension, and AnyDocumentSigner checks
 // nothing.
 func WithDocumentSignerPolicy(policy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error) ReaderOption {
@@ -217,6 +216,10 @@ var MDLDocumentSignerEKU = mdoc.MDLDocumentSignerEKU
 // which requires the same: a policy named for requiring the extended
 // key usage mustn't accept what the default refuses, an OCSP signer's
 // certificate or one whose key usage doesn't allow digital signatures.
+//
+// Deprecated: DefaultDocumentSignerPolicy, which a reader without
+// WithDocumentSignerPolicy uses, already requires the mDL document
+// signer extended key usage; passing this changes nothing.
 func RequireMDLDocumentSignerEKU(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return DefaultDocumentSignerPolicy(leaf, chains)
 }
