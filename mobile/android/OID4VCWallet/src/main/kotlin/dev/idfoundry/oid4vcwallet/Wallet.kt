@@ -141,10 +141,17 @@ public data class WalletConfiguration(
     /** The profile issuance follows. */
     @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
     /**
+     * Names the key of a jwt proof carrying a key attestation in `jwk`
+     * rather than by its index in the attestation (`kid` `"0"`), the
+     * default, which issuers following ETSI TS 119 472-3, such as the
+     * EUDI reference PID issuer, require. Set it only for an issuer that
+     * takes no index.
+     */
+    @SerialName("proof_key_by_jwk") val proofKeyByJWK: Boolean = false,
+    /**
      * Names the key of a jwt proof carrying a key attestation by its
-     * index in the attestation (`kid` `"0"`) rather than in `jwk`, as
-     * issuers following ETSI TS 119 472-3, such as the EUDI reference PID
-     * issuer, require. An issuer taking only `jwk` refuses it.
+     * index in the attestation, which is now the default: it has no
+     * effect, and can't be set with [proofKeyByJWK].
      */
     @SerialName("proof_key_by_index") val proofKeyByIndex: Boolean = false,
     /**

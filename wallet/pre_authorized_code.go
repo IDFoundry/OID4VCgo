@@ -1,11 +1,12 @@
 package wallet
 
 import (
-	"bytes"
 	"context"
 	"crypto"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
@@ -63,7 +65,14 @@ type PreAuthorizedCodeTokenRequest struct {
 	// Attestation-Based Client Authentication), as HAIP 1.0 §4.4.1
 	// requires at the Token Endpoint. fapigo/client's *client.Client
 	// is one, configured for storage.ClientAuthMethodAttestation, so the
-	// PoP is built exactly as for its own PAR and token requests.
+	// PoP is built exactly as for its own PAR and token requests. The
+	// request then also carries client_id, the Wallet Attestation's sub:
+	// an Authorization Server that doesn't redeem pre-authorized codes
+	// anonymously (pre-authorized_grant_anonymous_access_supported
+	// false, OpenID4VCI 1.0 §12.3's default) identifies the client by
+	// it (§6.1), and checks it matches the sub
+	// (draft-ietf-oauth-attestation-based-client-auth-07 §6.3). Left
+	// nil, the request is anonymous and carries no client_id.
 	ClientAttestation ClientAttestationSource
 
 	// Resource, OPTIONAL, names the resource servers the access token is
@@ -161,6 +170,8 @@ type tokenResponseBody struct {
 // §8, not §9's WWW-Authenticate-header challenge, which only a
 // resource server sends) — the same one-retry behavior
 // (*client.ResourceClient).Do applies for its own resource requests.
+// With a ClientAttestation, each attempt carries client_id, the sub of
+// the Wallet Attestation the source returns for it.
 // With a ClientAttestation that is an AttestationChallengeObserver, it
 // passes the source every response's headers, and retries once more
 // when the server answers use_attestation_challenge with a Challenge.
@@ -180,17 +191,17 @@ func (w *Wallet) RequestPreAuthorizedCodeToken(
 }
 
 // postToken POSTs form to the token endpoint, with a DPoP proof when
-// dpopKey is set and the attestation headers when attestation is,
-// retrying once on a DPoP nonce challenge and once on an attestation
-// challenge, and returns the 200 response's body. op names the call in
-// errors.
+// dpopKey is set, and the attestation headers and client_id (the Wallet
+// Attestation's sub) when attestation is, retrying once on a DPoP nonce
+// challenge and once on an attestation challenge, and returns the 200
+// response's body. op names the call in errors.
 func (w *Wallet) postToken(
-	ctx context.Context, endpoint fapi.URL, form []byte, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
+	ctx context.Context, endpoint fapi.URL, form url.Values, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
 ) ([]byte, error) {
 	target := endpoint.URL()
 	htu := target
 	htu.RawQuery, htu.Fragment = "", ""
-	post := tokenPost{target: target.String(), htu: htu.String(), body: form, dpopKey: dpopKey, attestation: attestation, op: op}
+	post := tokenPost{target: target.String(), htu: htu.String(), form: form, dpopKey: dpopKey, attestation: attestation, op: op}
 
 	observer, _ := attestation.(AttestationChallengeObserver)
 	// At most three attempts: one retry after a DPoP nonce challenge,
@@ -254,8 +265,9 @@ func (w *Wallet) checkPreAuthorizedCodeTokenRequest(req PreAuthorizedCodeTokenRe
 	return nil
 }
 
-// preAuthorizedCodeTokenForm is the Token Request's form body (§6.1).
-func preAuthorizedCodeTokenForm(req PreAuthorizedCodeTokenRequest) []byte {
+// preAuthorizedCodeTokenForm is the Token Request's form (§6.1), but
+// for the client_id postTokenOnce adds when it authenticates the client.
+func preAuthorizedCodeTokenForm(req PreAuthorizedCodeTokenRequest) url.Values {
 	form := url.Values{}
 	form.Set("grant_type", PreAuthorizedCodeGrantType)
 	form.Set("pre-authorized_code", req.PreAuthorizedCode)
@@ -265,7 +277,7 @@ func preAuthorizedCodeTokenForm(req PreAuthorizedCodeTokenRequest) []byte {
 	for _, r := range req.Resource {
 		form.Add("resource", r)
 	}
-	return []byte(form.Encode())
+	return form
 }
 
 // tokenHTTPResponse is one Token Request's answer.
@@ -275,12 +287,13 @@ type tokenHTTPResponse struct {
 	body   []byte
 }
 
-// tokenPost is a Token Request, the same on each attempt: body POSTed
-// to target, with a DPoP proof for htu when dpopKey is set and the
-// attestation headers when attestation is. op names the call in errors.
+// tokenPost is a Token Request, the same on each attempt: form POSTed
+// to target, with a DPoP proof for htu when dpopKey is set, and the
+// attestation headers and client_id when attestation is. op names the
+// call in errors.
 type tokenPost struct {
 	target, htu string
-	body        []byte
+	form        url.Values
 	dpopKey     crypto.Signer
 	attestation ClientAttestationSource
 	op          string
@@ -290,7 +303,21 @@ type tokenPost struct {
 // set) and a fresh attestation PoP: both are single-use.
 func (w *Wallet) postTokenOnce(ctx context.Context, p tokenPost, nonce string) (tokenHTTPResponse, error) {
 	op := p.op
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.target, bytes.NewReader(p.body))
+	form := p.form
+	var attestation, pop string
+	if p.attestation != nil {
+		var err error
+		if attestation, pop, err = p.attestation.ClientAttestationHeaders(ctx); err != nil {
+			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: client attestation: %w", op, err)
+		}
+		clientID, err := attestationSubject(attestation)
+		if err != nil {
+			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: client attestation: %w", op, err)
+		}
+		form = maps.Clone(p.form)
+		form.Set("client_id", clientID)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.target, strings.NewReader(form.Encode()))
 	if err != nil {
 		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: build request: %w", op, err)
 	}
@@ -303,10 +330,6 @@ func (w *Wallet) postTokenOnce(ctx context.Context, p tokenPost, nonce string) (
 		httpReq.Header.Set("DPoP", proof)
 	}
 	if p.attestation != nil {
-		attestation, pop, err := p.attestation.ClientAttestationHeaders(ctx)
-		if err != nil {
-			return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: client attestation: %w", op, err)
-		}
 		httpReq.Header.Set("OAuth-Client-Attestation", attestation)
 		httpReq.Header.Set("OAuth-Client-Attestation-PoP", pop)
 	}
@@ -320,6 +343,28 @@ func (w *Wallet) postTokenOnce(ctx context.Context, p tokenPost, nonce string) (
 		return tokenHTTPResponse{}, fmt.Errorf("wallet: %s: read response: %w", op, readErr)
 	}
 	return tokenHTTPResponse{status: res.StatusCode, header: res.Header, body: respBody}, nil
+}
+
+// attestationSubject is the sub of the Wallet Attestation the wallet
+// itself holds: its client_id
+// (draft-ietf-oauth-attestation-based-client-auth-07 §5.1, where it's
+// REQUIRED). The wallet doesn't verify its own attestation; the
+// Authorization Server does, and checks client_id against it (§6.3).
+func attestationSubject(attestation string) (string, error) {
+	_, payload, err := jose.DecodeUnverified(attestation)
+	if err != nil {
+		return "", fmt.Errorf("decode wallet attestation: %w", err)
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := strictjson.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("decode wallet attestation: %w", err)
+	}
+	if claims.Sub == "" {
+		return "", errors.New("wallet attestation has no sub to send as client_id")
+	}
+	return claims.Sub, nil
 }
 
 func decodeTokenResponse(body []byte) (PreAuthorizedCodeTokenResult, error) {

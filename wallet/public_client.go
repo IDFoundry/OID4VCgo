@@ -53,7 +53,7 @@ func (w *Wallet) RequestRefreshToken(ctx context.Context, endpoint fapi.URL, req
 	for _, r := range req.Resource {
 		form.Add("resource", r)
 	}
-	body, err := w.postToken(ctx, endpoint, []byte(form.Encode()), req.DPoPKey, nil, "request refresh token")
+	body, err := w.postToken(ctx, endpoint, form, req.DPoPKey, nil, "request refresh token")
 	if err != nil {
 		return PreAuthorizedCodeTokenResult{}, err
 	}
@@ -76,7 +76,7 @@ func (w *Wallet) RevokeToken(ctx context.Context, endpoint fapi.URL, token fapi.
 	if tokenTypeHint != "" {
 		form.Set("token_type_hint", tokenTypeHint)
 	}
-	if _, err := w.postToken(ctx, endpoint, []byte(form.Encode()), nil, nil, "revoke token"); err != nil {
+	if _, err := w.postToken(ctx, endpoint, form, nil, nil, "revoke token"); err != nil {
 		return err
 	}
 	return nil

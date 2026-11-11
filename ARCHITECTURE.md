@@ -1895,9 +1895,10 @@ changes whether *every* bullet below is `(done)`.
   Attestation or none at the token endpoint, a jwt proof or a key
   attestation, a c_nonce or none, as the metadata asks;
   `ProfileHAIP` also refuses issuers outside HAIP 1.0 §4;
-  `Config.ProofKeyByIndex` names a key-attested jwt proof's key by its
-  index in `attested_keys` (kid `"0"`) instead of `jwk`, for an issuer
-  that requires it. The checks
+  a key-attested jwt proof names its key by its index in
+  `attested_keys` (kid `"0"`), as ETSI TS 119 472-3 issuers require,
+  and `Config.ProofKeyByJWK` names it in `jwk` instead, for an issuer
+  that takes no index. The checks
   that protect the holder (https, identifiers matching metadata, the
   offer's Authorization Server being one the issuer lists, PKCE/PAR/`iss`
   in the authorization code grant, credentials checked against

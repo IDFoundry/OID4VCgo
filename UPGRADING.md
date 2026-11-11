@@ -7,6 +7,34 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.76.0 → next
+
+### Wallet (`wallet`, `walletflow`, `mobile`)
+
+- **A jwt proof carrying a Key Attestation names its key by index by
+  default.** `walletflow` now names it by its index in the
+  attestation's `attested_keys` (`kid` `"0"`, no `jwk`,
+  `wallet.Wallet.GenerateProofWithAttestedKeyIndex`), which OpenID4VCI
+  1.0 Appendix F.1 permits and ETSI TS 119 472-3 issuers, such as the
+  EUDI reference PID issuer, require. An issuer that takes the key only
+  in `jwk` now refuses the proof: set the new
+  `walletflow.Config.ProofKeyByJWK` (the mobile configuration's
+  `proof_key_by_jwk`, `proofKeyByJWK` in the Swift and Kotlin
+  libraries) for it. `Config.ProofKeyByIndex` is deprecated and has no
+  effect; remove it. `walletflow.New` refuses it set with
+  `ProofKeyByJWK`. Only a key-attested jwt proof changes: `walletflow`
+  sends one under `ProfileHAIP` where the issuer takes a key
+  attestation, or where it requires one (`key_attestations_required`).
+- **A pre-authorized code Token Request authenticated by a Wallet
+  Attestation carries `client_id`**, the attestation's `sub`
+  (`wallet.Wallet.RequestPreAuthorizedCodeToken` with a
+  `ClientAttestation`), as an Authorization Server that doesn't redeem
+  pre-authorized codes anonymously needs (OpenID4VCI 1.0 §6.1, §12.3)
+  and checks against the attestation
+  (draft-ietf-oauth-attestation-based-client-auth-07 §6.3). Nothing to
+  change, unless your `ClientAttestationSource` returns an attestation
+  without a `sub`, which is now refused before the request is sent.
+
 ## v0.75.3 → v0.76.0
 
 ### Issuer (`issuer`)

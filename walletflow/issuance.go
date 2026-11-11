@@ -1158,10 +1158,12 @@ func (s *Issuance) deleteKeyAttestationKey(ctx context.Context) error {
 // jwtProofsWithKeyAttestation creates one holder key per copy to
 // request, has the Wallet Provider attest them together for nonce, and
 // sends one jwt proof, signed by the first, carrying that attestation in
-// its key_attestation header (Appendix D.1, F.1). The issuer "SHOULD
-// issue a Credential for each cryptographic public key specified in the
-// attested_keys claim" (F.1), so one proof covers the batch: a holder
-// key that asks for user presence to sign asks once, not once per copy.
+// its key_attestation header (Appendix D.1, F.1), naming its key by its
+// index in the attestation, kid "0", or in jwk under
+// Config.ProofKeyByJWK. The issuer "SHOULD issue a Credential for each
+// cryptographic public key specified in the attested_keys claim" (F.1),
+// so one proof covers the batch: a holder key that asks for user
+// presence to sign asks once, not once per copy.
 // An issuer issuing fewer copies leaves keys unused, which receiving
 // deletes. A key created before a failure is deleted.
 func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string) ([]Key, wallet.CredentialRequest, error) {
@@ -1170,11 +1172,11 @@ func (s *Issuance) jwtProofsWithKeyAttestation(ctx context.Context, nonce string
 		return nil, wallet.CredentialRequest{}, err
 	}
 	var proof string
-	if s.w.cfg.ProofKeyByIndex {
+	if s.w.cfg.ProofKeyByJWK {
+		proof, err = s.w.core.GenerateProofWithKeyAttestation(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation)
+	} else {
 		// The first key attestedHolders attested is holders[0]'s.
 		proof, err = s.w.core.GenerateProofWithAttestedKeyIndex(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation, 0)
-	} else {
-		proof, err = s.w.core.GenerateProofWithKeyAttestation(holders[0], s.offer.CredentialIssuer, nonce, keyAttestation)
 	}
 	if err != nil {
 		s.w.deleteKeys(context.WithoutCancel(ctx), holders)

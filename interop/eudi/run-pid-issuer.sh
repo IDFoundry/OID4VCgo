@@ -344,13 +344,13 @@ for c in "${SDJWT}_deferred attestation sdjwt $SDJWT_STATUS" "${MDOC}_deferred j
   check "deferred-$format" "deferred, then fetched from the Deferred Credential Endpoint" '.deferred and .deferred_polls >= 1'
 done
 
-# walletflow negotiates the proof itself; -proof jwt has it name the
-# jwt proof's key by index (Config.ProofKeyByIndex), as the issuer
+# walletflow negotiates the proof itself; -proof jwt leaves its
+# default, naming the jwt proof's key by index, as the issuer
 # requires. Its result records no exchanges, so issued's protocol
 # checks don't apply: walletflow's own tests make those.
 for c in "1 walletflow-sdjwt" "3 walletflow-batch-sdjwt"; do
   read -r count name <<< "$c"
-  echo "== walletflow, under ProfileHAIP, ProofKeyByIndex: $count SD-JWT VC PID(s)"
+  echo "== walletflow, under ProfileHAIP, its default proof: $count SD-JWT VC PID(s)"
   wallet "$name" -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -proof jwt -batch "$count"
   if ! jq -e '.ok' "result-$name.json" >/dev/null; then bad "issued ($(why "$name"))"; continue; fi
   ok "issued"
@@ -394,12 +394,12 @@ if grep -q 'served GET /statuslists/jwt$' serve.log; then ok "fetched /statuslis
 
 # Not controls: what OpenID4VCI 1.0 allows a wallet, which this issuer
 # refuses (README.md, "Findings"). Each says if a later image accepts.
-echo "== a jwt proof naming its key in jwk, as package wallet and walletflow make it"
+echo "== a jwt proof naming its key in jwk, as GenerateProofWithKeyAttestation makes it"
 wallet jwk-proof -issuer "$ISSUER" -config "$SDJWT" -proof jwk
 if jq -e '.ok' result-jwk-proof.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
 else note "refused, as expected of v0.11.2 ($(why jwk-proof))"; fi
 
-echo "== walletflow, under ProfileHAIP, naming the proof's key in jwk (its default)"
+echo "== walletflow, under ProfileHAIP, naming the proof's key in jwk (Config.ProofKeyByJWK)"
 wallet walletflow-jwk -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -proof jwk
 if jq -e '.ok' result-walletflow-jwk.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
 else note "refused, as expected of v0.11.2 ($(why walletflow-jwk))"; fi

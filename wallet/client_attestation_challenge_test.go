@@ -27,7 +27,7 @@ type challengeSource struct {
 
 func (c *challengeSource) ClientAttestationHeaders(context.Context) (string, string, error) {
 	c.calls++
-	return "wallet-attestation-jwt", fmt.Sprintf("pop-%d-%s", c.calls, c.challenge), nil
+	return testWalletAttestation, fmt.Sprintf("pop-%d-%s", c.calls, c.challenge), nil
 }
 
 func (c *challengeSource) ObserveAttestationChallenge(header http.Header) {

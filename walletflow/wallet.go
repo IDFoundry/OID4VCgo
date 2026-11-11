@@ -292,13 +292,23 @@ type Config struct {
 	// one copy.
 	BatchSize int
 
-	// ProofKeyByIndex names the key of a jwt proof carrying a Key
-	// Attestation by its index in the attestation's attested_keys, as
-	// kid "0", rather than in jwk (wallet.Wallet's
-	// GenerateProofWithAttestedKeyIndex). OpenID4VCI 1.0 Appendix F.1
-	// allows either, but ETSI TS 119 472-3 has issuers require the
-	// index, and the EUDI reference PID issuer refuses a jwk; an issuer
-	// accepting only jwk refuses the index. It changes no other proof.
+	// ProofKeyByJWK names the key of a jwt proof carrying a Key
+	// Attestation in the proof's jwk header (wallet.Wallet's
+	// GenerateProofWithKeyAttestation), rather than by its index in the
+	// attestation's attested_keys, as kid "0" (wallet.Wallet's
+	// GenerateProofWithAttestedKeyIndex), the default. OpenID4VCI 1.0
+	// Appendix F.1 allows either, but ETSI TS 119 472-3 has issuers
+	// require the index, and the EUDI reference PID issuer refuses a
+	// jwk; set it only for an issuer that takes no index. It changes no
+	// other proof.
+	ProofKeyByJWK bool
+
+	// ProofKeyByIndex named a key-attested jwt proof's key by its index,
+	// which is now the default.
+	//
+	// Deprecated: naming the key by its index is the default, so this
+	// has no effect; ProofKeyByJWK names it in jwk instead. New refuses
+	// both set.
 	ProofKeyByIndex bool
 
 	// Development relaxes what production requires, for a wallet
@@ -640,6 +650,8 @@ func (c Config) validateChoices() error {
 		return fmt.Errorf("walletflow: Config.CopyPolicy %d isn't a policy", c.CopyPolicy)
 	case c.BatchSize < 0:
 		return fmt.Errorf("walletflow: Config.BatchSize %d is negative", c.BatchSize)
+	case c.ProofKeyByJWK && c.ProofKeyByIndex:
+		return errors.New("walletflow: Config.ProofKeyByJWK and ProofKeyByIndex name a proof's key in two ways; set one")
 	}
 	return nil
 }

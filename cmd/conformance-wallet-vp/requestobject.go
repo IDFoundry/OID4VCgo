@@ -32,8 +32,13 @@ func newWalletNonce() (string, error) {
 // minimal declaration of the one presentation format/algorithm this
 // binary actually supports (dc+sd-jwt, ES256 for both the Issuer
 // signature and the Key Binding JWT — see wallet.HeldCredential's own
-// HolderKeyAlg in credential.go), not a placeholder.
-const walletMetadataForPost = `{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":["ES256"],"kb-jwt_alg_values":["ES256"]}}}`
+// HolderKeyAlg in credential.go), not a placeholder — plus RFC 8414
+// §2's required response_types_supported and the one response mode it
+// answers in, as walletflow's own wallet metadata carries them. Like
+// walletflow's, it names no issuer, so the Request Object's aud stays
+// https://self-issued.me/v2 (§5.8).
+const walletMetadataForPost = `{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":["ES256"],"kb-jwt_alg_values":["ES256"]}},` +
+	`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"]}`
 
 // fetchAndVerifyRequestObject fetches requestURI — via POST (with a
 // fresh wallet_nonce, §5.10) when usePost is true, plain GET (§5)

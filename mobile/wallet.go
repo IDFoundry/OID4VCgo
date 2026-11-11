@@ -119,10 +119,14 @@ type config struct {
 	// IssuanceProfile is "openid4vci" (the default) or "haip"
 	// (walletflow.Config.IssuanceProfile).
 	IssuanceProfile string `json:"issuance_profile,omitempty"`
-	// ProofKeyByIndex names the key of a jwt proof carrying a Key
-	// Attestation by its index in the attestation (kid "0"), not in
-	// jwk, as issuers following ETSI TS 119 472-3 require
-	// (walletflow.Config.ProofKeyByIndex).
+	// ProofKeyByJWK names the key of a jwt proof carrying a Key
+	// Attestation in jwk, rather than by its index in the attestation
+	// (kid "0"), the default, which issuers following ETSI TS 119 472-3
+	// require (walletflow.Config.ProofKeyByJWK).
+	ProofKeyByJWK bool `json:"proof_key_by_jwk,omitempty"`
+	// ProofKeyByIndex named it by its index, now the default: it has no
+	// effect, and is kept so a configuration setting it still decodes.
+	// It's refused with ProofKeyByJWK.
 	ProofKeyByIndex bool `json:"proof_key_by_index,omitempty"`
 	// DevelopmentRoots are PEM certificates the wallet's HTTPS requests
 	// trust besides the system's: a development service's own CA, where
@@ -487,8 +491,12 @@ func (w *Wallet) SetCRLs(pemText string) error {
 func walletConfig(cfg config) (walletflow.Config, error) {
 	wcfg := walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
-		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh, ProofKeyByIndex: cfg.ProofKeyByIndex,
-		RequireTrustedMdocReader: cfg.RequireTrustedMdocReader, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
+		ProofKeyByJWK: cfg.ProofKeyByJWK, RequireTrustedMdocReader: cfg.RequireTrustedMdocReader,
+		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+	}
+	if cfg.ProofKeyByJWK && cfg.ProofKeyByIndex {
+		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("proof_key_by_jwk and proof_key_by_index name a proof's key in two ways; set one"))
 	}
 	switch cfg.IssuanceProfile {
 	case "", "openid4vci":

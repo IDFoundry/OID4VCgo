@@ -503,33 +503,57 @@ func TestCopiesCorrelated_DistinctBatch(t *testing.T) {
 	}
 }
 
-// Under ProofKeyByIndex, the one jwt proof names its key by its index in
-// the Key Attestation's attested_keys, kid "0", with no jwk (as ETSI TS
-// 119 472-3 issuers require), and the issuer still binds a copy to each
-// attested key.
-func TestBatch_JWTProofsWithKeyAttestation_KeyByIndex(t *testing.T) {
-	f := newFixture(t, walletflowtest.Options{BatchSize: 3, JWTKeyAttestation: true})
-	headers := &proofHeaders{base: f.env.HTTP.Transport}
-	httpClient := *f.env.HTTP
-	httpClient.Transport = headers
-	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
-		ProofKeyByIndex: true,
-	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
-	if err != nil {
-		t.Fatal(err)
+// By default, and under the deprecated ProofKeyByIndex, the one jwt
+// proof names its key by its index in the Key Attestation's
+// attested_keys, kid "0", with no jwk (as ETSI TS 119 472-3 issuers
+// require); under ProofKeyByJWK it names it in jwk, with no kid. Either
+// way the issuer binds a copy to each attested key.
+func TestBatch_JWTProofsWithKeyAttestation_KeyNaming(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		byJWK, index bool
+	}{{name: "default"}, {name: "ProofKeyByIndex", index: true}, {name: "ProofKeyByJWK", byJWK: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, walletflowtest.Options{BatchSize: 3, JWTKeyAttestation: true})
+			headers := &proofHeaders{base: f.env.HTTP.Transport}
+			httpClient := *f.env.HTTP
+			httpClient.Transport = headers
+			w, err := walletflow.New(walletflow.Config{
+				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+				ProofKeyByJWK: tc.byJWK, ProofKeyByIndex: tc.index,
+			}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+			if len(c.Copies) != 3 {
+				t.Fatalf("copies = %d, want 3", len(c.Copies))
+			}
+			assertDistinct(t, c.Copies)
+			got := headers.all()
+			if len(got) != 1 {
+				t.Fatalf("jwt proofs = %d, want one", len(got))
+			}
+			h := got[0]
+			switch {
+			case h["key_attestation"] == nil:
+				t.Errorf("proof header = %v, want a key_attestation", h)
+			case tc.byJWK && (h["jwk"] == nil || h["kid"] != nil):
+				t.Errorf("proof header = %v, want a jwk and no kid", h)
+			case !tc.byJWK && (h["kid"] != "0" || h["jwk"] != nil):
+				t.Errorf("proof header = %v, want kid 0 and no jwk", h)
+			}
+		})
 	}
-	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
-	if len(c.Copies) != 3 {
-		t.Fatalf("copies = %d, want 3", len(c.Copies))
-	}
-	assertDistinct(t, c.Copies)
-	got := headers.all()
-	if len(got) != 1 {
-		t.Fatalf("jwt proofs = %d, want one", len(got))
-	}
-	if h := got[0]; h["kid"] != "0" || h["jwk"] != nil || h["key_attestation"] == nil {
-		t.Errorf("proof header = %v, want kid 0 beside a key_attestation and no jwk", h)
+}
+
+// New refuses ProofKeyByJWK with the deprecated ProofKeyByIndex: they
+// name a proof's key in two ways.
+func TestNew_ProofKeyByJWKAndIndex(t *testing.T) {
+	_, err := walletflow.New(walletflow.Config{Development: true, ProofKeyByJWK: true, ProofKeyByIndex: true},
+		walletflow.Dependencies{Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore()})
+	if err == nil || !strings.Contains(err.Error(), "ProofKeyByJWK") {
+		t.Errorf("New = %v, want ProofKeyByJWK with ProofKeyByIndex refused", err)
 	}
 }
 

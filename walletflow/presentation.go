@@ -187,15 +187,24 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // accepted on receipt (ES256 or EdDSA), its Key Binding JWT ES256; an
 // mdoc's IssuerAuth likewise (COSE -7 or -8), its DeviceSignature ES256
 // (-7). Requests are accepted only from an x509_hash Client Identifier.
-// It asks for no encrypted Request Object, which the wallet can't
-// decrypt: jwks, the only wallet metadata that does (§5.10), isn't
-// sent. The authorization_encryption_* parameters, about the
-// Authorization Response, aren't either: the response's encryption
-// follows the Verifier's client_metadata.
+// Of the Authorization Server Metadata §10 takes the wallet's from, it
+// carries response_types_supported, which RFC 8414 §2 requires, and
+// response_modes_supported: the wallet answers a request it fetched
+// only with a vp_token in direct_post.jwt (§8.3; HAIP 1.0 §5), its
+// dc_api.jwt being for the Digital Credentials API, which fetches no
+// request_uri. It names no issuer: the wallet has no identifier of its
+// own, so the Request Object's aud is "https://self-issued.me/v2"
+// (§5.8), as the wallet requires. It asks for no encrypted Request
+// Object, which the wallet can't decrypt: jwks, the only wallet
+// metadata that does (§5.10), isn't sent. The
+// authorization_encryption_* parameters, about the Authorization
+// Response, aren't either: the response's encryption follows the
+// Verifier's client_metadata.
 var walletMetadata = json.RawMessage(`{"vp_formats_supported":{` +
 	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
 	`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
-	`"client_id_prefixes_supported":["x509_hash"]}`)
+	`"client_id_prefixes_supported":["x509_hash"],` +
+	`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"]}`)
 
 // refuse tells the Verifier its authentic request r is refused, by an
 // error response to its response_uri (OpenID4VP §8.5), and returns
