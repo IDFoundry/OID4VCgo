@@ -52,8 +52,12 @@
 // TransactionCodec encodes one, and with a sealing.Sealer
 // (sealing.AESGCMSealer) seals what it holds of the holder's — the response
 // decryption key and the disclosed claims — so the store's copy reveals
-// neither. The record's other fields stay readable and unprotected:
-// the store is trusted for their integrity.
+// neither. The record's other fields stay readable; those saying who
+// may read the result, what was asked, and whether and how the request
+// may still be answered (its status, expiry, nonce, state and kid) are
+// bound into the sealing, so changing one leaves the record unreadable,
+// and the store is trusted only for the rest (the response_code hash,
+// the last error) and for not putting back an older copy.
 // TransactionsConfig.ForgetResultOnRead drops the claims as soon as
 // they've been read.
 //

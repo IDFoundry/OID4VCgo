@@ -5,13 +5,16 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -239,6 +242,13 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 		"owner":                func(m map[string]any) { m["owner"] = "another-verifier" },
 		"same device":          func(m map[string]any) { m["same_device"] = true },
 		"origin":               func(m map[string]any) { m["origin"] = "https://attacker.example" },
+		// Nor one reopened, kept answerable longer, or answered under
+		// another nonce, state or key.
+		"status":     func(m map[string]any) { m["status"] = int(verifier.TransactionPending) },
+		"expires_at": func(m map[string]any) { m["expires_at"] = "2999-01-01T00:00:00Z" },
+		"nonce":      func(m map[string]any) { m["nonce"] = "another-nonce" },
+		"state":      func(m map[string]any) { m["state"] = "another-state" },
+		"kid":        func(m map[string]any) { m["kid"] = "another-kid" },
 		"query": func(m map[string]any) {
 			m["query"].(map[string]any)["credentials"].([]any)[0].(map[string]any)["id"] = "other"
 		},
@@ -304,6 +314,89 @@ func TestTransactionCodec_Sealed(t *testing.T) {
 	}
 }
 
+// v1SealedRecord is testdata/transaction_codec_v1_sealed.json: a
+// completed transaction as TransactionCodec version 1 (OID4VCgo
+// v0.75.3) sealed it, under v1SealerKey.
+const v1SealerKey = "76456737f50a4cf5bf467ea9b53be746a44da1e629f7c244fb4f719a00e50832"
+
+func v1SealedRecord(t *testing.T) (verifier.TransactionCodec, map[string]any) {
+	t.Helper()
+	key, err := hex.DecodeString(v1SealerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := sealing.AESGCMSealer(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("testdata/transaction_codec_v1_sealed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	return verifier.TransactionCodec{Sealer: sealer}, record
+}
+
+// TestTransactionCodec_OpensVersion1: a record version 1 sealed, whose
+// sealed fields weren't bound to its kid, nonce, state, status or
+// expiry, still opens, with its result; written back, it's version 2,
+// bound to them. Its expiry, given in another zone, is the same instant.
+func TestTransactionCodec_OpensVersion1(t *testing.T) {
+	codec, record := v1SealedRecord(t)
+	if record["v"] != float64(1) {
+		t.Fatalf("the fixture is version %v, want 1", record["v"])
+	}
+	data, _ := json.Marshal(record)
+	tx, err := codec.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal of a version 1 record: %v", err)
+	}
+	if tx.Status != verifier.TransactionDone || tx.ResponseDecryptionKey == nil || tx.Result == nil || tx.Result.Credentials[0].Claims["given_name"] != "Jean" {
+		t.Fatalf("version 1 record = %+v; want the completed transaction, its key and result", tx)
+	}
+	// Version 1 bound none of the fields version 2 added.
+	record["nonce"] = "another-nonce"
+	data, _ = json.Marshal(record)
+	if _, err := codec.Unmarshal(data); err != nil {
+		t.Errorf("a version 1 record with another nonce: %v (version 1 didn't bind it)", err)
+	}
+	// Nor does it open as version 2.
+	record["v"] = verifier.TransactionCodecVersion
+	data, _ = json.Marshal(record)
+	if _, err := codec.Unmarshal(data); err == nil {
+		t.Error("a version 1 record relabelled version 2 opened")
+	}
+
+	rewritten, err := codec.Marshal(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v2 map[string]any
+	if err := json.Unmarshal(rewritten, &v2); err != nil {
+		t.Fatal(err)
+	}
+	if v2["v"] != float64(verifier.TransactionCodecVersion) {
+		t.Errorf("rewritten as version %v, want %d", v2["v"], verifier.TransactionCodecVersion)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, v2["expires_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2["expires_at"] = expires.In(time.FixedZone("", -7*3600)).Format(time.RFC3339Nano)
+	data, _ = json.Marshal(v2)
+	if _, err := codec.Unmarshal(data); err != nil {
+		t.Errorf("a version 2 record's expiry in another zone: %v", err)
+	}
+	v2["status"] = int(verifier.TransactionPending)
+	data, _ = json.Marshal(v2)
+	if _, err := codec.Unmarshal(data); err == nil {
+		t.Error("a rewritten record reopened")
+	}
+}
+
 // TestAESGCMSealer_Deprecated: the deprecated verifier.AESGCMSealer is
 // sealing.AESGCMSealer, so a value one seals the other opens.
 func TestAESGCMSealer_Deprecated(t *testing.T) {
@@ -341,7 +434,7 @@ func TestTransactionCodec_RefusesWhatItDidntWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(map[string]any){
-		"version 2":       func(m map[string]any) { m["v"] = 2 },
+		"version 3":       func(m map[string]any) { m["v"] = 3 },
 		"unknown field":   func(m map[string]any) { m["sealer_hint"] = "x" },
 		"status 0":        func(m map[string]any) { m["status"] = 0 },
 		"status expired":  func(m map[string]any) { m["status"] = int(verifier.TransactionExpired) },

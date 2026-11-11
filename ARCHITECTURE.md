@@ -1544,9 +1544,13 @@ changes whether *every* bullet below is `(done)`.
   every field with its types, for a store that keeps it outside the
   process, and with a `sealing.Sealer` (`sealing.AESGCMSealer`) seals the
   response decryption key and the holder's claims at rest, each bound
-  to its transaction (the other fields — status, owner, browser
-  binding, query — aren't integrity-protected: the store is trusted
-  for them); `ForgetResultOnRead` drops a result once it's been read.
+  to its transaction and to the readable fields that say who may read
+  it, what it asked, and whether and how it may still be answered —
+  owner, browser binding, same-device flag, origin, query, kid, nonce,
+  state, status, expiry (record version 2; version 1 records, still
+  read, bound the first five) — so the store is trusted only for its
+  response_code hash and last error, and not to put back an older
+  copy; `ForgetResultOnRead` drops a result once it's been read.
   `Begin`, `BeginDCAPI` and `BeginMdocDCAPI` read a created transaction back and refuse a
   store that lost a field, since losing `SameDevice` or `Owner` fails
   open. `verifiertest` holds contract tests for a caller's own

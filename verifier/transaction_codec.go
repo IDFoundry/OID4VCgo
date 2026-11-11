@@ -20,9 +20,16 @@ import (
 )
 
 // TransactionCodecVersion is the version of the encoding
-// TransactionCodec writes, recorded in each record. Unmarshal refuses
-// any other.
-const TransactionCodecVersion = 1
+// TransactionCodec writes, recorded in each record. Unmarshal reads it
+// and version 1, which OID4VCgo v0.75.3 and earlier wrote, and refuses
+// any other. The two differ only in what a sealed field is bound to
+// (see TransactionCodec): a version 1 record, read and written back,
+// becomes version 2.
+const TransactionCodecVersion = 2
+
+// transactionCodecV1 is the version whose sealed fields aren't bound to
+// the record's KeyID, State, Nonce, Status and ExpiresAt.
+const transactionCodecV1 = 1
 
 // TransactionCodec encodes a Transaction for a TransactionStore that
 // keeps it outside the process — a database row, a cache entry — so a
@@ -49,16 +56,23 @@ const TransactionCodecVersion = 1
 // claims once they've been read, so the store holds them for as little
 // time as possible.
 //
-// Each sealed field is bound to its transaction's ID and to the fields,
+// Each sealed field is bound to its transaction's ID; to the fields,
 // fixed when the request began, that say who may read its result and
 // what it asked for: its owner, browser binding hash, same_device,
 // origin and query, and an org-iso-mdoc request's EncryptionInfo
-// (BeginMdocDCAPI). Someone who can write to the store but hasn't the
+// (BeginMdocDCAPI); and to those that say how it's answered and
+// whether it still may be: its response key's kid, nonce, state,
+// status and expiry. Someone who can write to the store but hasn't the
 // key can't read or forge a sealed field, nor change any of those
-// fields to have the Verifier hand the result to someone else: the
-// record no longer opens. They can still change its status,
-// response_code hash, expiry, last error, nonce or state, delete it, or
-// put back an older copy, so the store must still be trusted for those.
+// fields — to have the Verifier hand the result to someone else,
+// reopen a completed request, or keep one answerable past its expiry:
+// the record no longer opens. Each write seals the fields again, bound
+// to the status the transaction then has. They can still change its
+// response_code hash or last error, delete it, or put back an older
+// copy whole (the pending one in place of the completed one, say), so
+// the store must still be trusted for those. Version 1 records, which
+// OID4VCgo v0.75.3 and earlier wrote, bound neither kid, nonce, state,
+// status nor expiry; they still open, and are written back as version 2.
 //
 // The zero TransactionCodec seals nothing.
 type TransactionCodec struct {
@@ -185,8 +199,8 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
 	}
 	switch {
-	case w.Version != TransactionCodecVersion:
-		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d", w.Version, TransactionCodecVersion)
+	case w.Version != TransactionCodecVersion && w.Version != transactionCodecV1:
+		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d or %d", w.Version, TransactionCodecVersion, transactionCodecV1)
 	case w.ID == "":
 		return Transaction{}, errors.New("verifier: unmarshal transaction: no id")
 	case w.Status < TransactionPending || w.Status > TransactionClosed:
@@ -272,6 +286,12 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // One whose document may withhold
 // elements (MdocAllowWithheld) has one more, so a store can't let a
 // request that required every element complete without them.
+//
+// A version 2 record's binding (TransactionCodecVersion) is an object
+// instead: that array, as "v1", beside the record's KeyID, State,
+// Nonce, Status and ExpiresAt (in UTC, RFC 3339 with nanoseconds), so a
+// store can't reopen a completed request, extend one's expiry, or swap
+// its nonce, state or kid. A version 1 record's is the array alone.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(query))
 	dec.UseNumber()
@@ -291,7 +311,17 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	if w.MdocAllowWithheld {
 		bound = append(bound, "allow_withheld")
 	}
-	return json.Marshal(bound)
+	if w.Version == transactionCodecV1 {
+		return json.Marshal(bound)
+	}
+	return json.Marshal(struct {
+		V1        []any             `json:"v1"`
+		KeyID     string            `json:"kid"`
+		State     string            `json:"state"`
+		Nonce     string            `json:"nonce"`
+		Status    TransactionStatus `json:"status"`
+		ExpiresAt string            `json:"expires_at"`
+	}{bound, w.KeyID, w.State, w.Nonce, w.Status, w.ExpiresAt.UTC().Format(time.RFC3339Nano)})
 }
 
 // sealAD binds a sealed field to its name and to bound (sealBinding).
