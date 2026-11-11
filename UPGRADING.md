@@ -123,6 +123,10 @@ CHANGELOG.md's BREAKING CHANGES sections.
 - **An NFC reader waits `nfcapdu.MaxTNEPWait` (5 seconds) at most for
   a tag's answer to a TNEP message**, however long the tag's service
   parameters ask for: up to TNEP's maximum, several minutes, before.
+- **`oid4vpmdoc.UnmarshalDeviceResponse` refuses a DeviceResponse
+  whose `version` isn't 1.x**, as `proximity` and `mdocdcapi` already
+  did; it used to ignore the member. A verifier receiving an OpenID4VP
+  `mso_mdoc` presentation refuses one too.
 
 ### Wallet Provider stores
 

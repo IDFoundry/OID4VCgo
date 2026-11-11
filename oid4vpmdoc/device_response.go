@@ -2,6 +2,7 @@ package oid4vpmdoc
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
@@ -98,7 +99,8 @@ func MarshalDeviceResponse(doc Document) ([]byte, error) {
 // its own single Document — Marshal's inverse. It performs no
 // signature/MAC verification; use credential/mdoc.Verify/
 // VerifyDeviceSignature/VerifyDeviceMAC for that. Returns an error if
-// status isn't 0 ("OK") or documents doesn't have exactly one entry.
+// version isn't 1.x, status isn't 0 ("OK") or documents doesn't have
+// exactly one entry.
 // It rejects data larger than MaxBytes; use UnmarshalDeviceResponseMax
 // for a caller that needs a different ceiling.
 func UnmarshalDeviceResponse(data []byte) (Document, error) {
@@ -114,6 +116,11 @@ func UnmarshalDeviceResponseMax(data []byte, maxBytes int) (Document, error) {
 	var wire wireDeviceResponse
 	if err := decMode.Unmarshal(data, &wire); err != nil {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: %w", err)
+	}
+	// Any 1.x, as internal/mdocresponse takes: a minor version only adds
+	// members this package ignores.
+	if !strings.HasPrefix(wire.Version, "1.") {
+		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: version %q, want 1.x", wire.Version)
 	}
 	if wire.Status != mdocResponseStatusOK {
 		return Document{}, fmt.Errorf("oid4vpmdoc: unmarshal device response: status %d, want %d (OK)", wire.Status, mdocResponseStatusOK)
