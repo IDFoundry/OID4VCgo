@@ -79,6 +79,30 @@ func (h *harness) clientWalletAttestation(c *walletprovider.Client, id string, r
 	return key, jwt
 }
 
+// TestHandlerTooManyInstanceKeys: an instance past
+// Config.MaxInstanceKeysPerPeriod is answered 429
+// too_many_instance_keys, which a client retries later.
+func TestHandlerTooManyInstanceKeys(t *testing.T) {
+	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.MaxInstanceKeysPerPeriod = 1 })
+	_, c := h.server("")
+	ctx := context.Background()
+	id, key := h.clientRegister(c, kindStrongBox)
+	h.clientWalletAttestation(c, id, key, kindStrongBox)
+	instanceKey := newKey(t)
+	ch, err := c.Challenge(ctx, walletprovider.PurposeInstance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.WalletAttestation(ctx, key, walletprovider.WalletAttestationRequest{
+		InstanceID: id, ClientID: clientID, InstanceKey: &instanceKey.PublicKey,
+		Challenge: ch.Value, Evidence: evidence(t, kindStrongBox, ch.Value, &instanceKey.PublicKey),
+	})
+	var r *walletprovider.RefusedError
+	if !errors.As(err, &r) || r.Code != "too_many_instance_keys" || r.Status != http.StatusTooManyRequests {
+		t.Fatalf("a second instance key: %v, want 429 too_many_instance_keys", err)
+	}
+}
+
 func refusedCode(t *testing.T, err error) string {
 	t.Helper()
 	var r *walletprovider.RefusedError

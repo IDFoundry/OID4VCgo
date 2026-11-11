@@ -51,9 +51,10 @@ func sampleInstance(id string) walletprovider.Instance {
 			AppID: "com.example.wallet", AppVersion: 42, BootState: walletprovider.BootStateVerified, DeviceLocked: true,
 		},
 		Credential: []byte{1, 2, 3}, CredentialID: "cred-" + id, Counter: 7,
-		State: walletprovider.StateSuspended, Reason: "lost device",
+		State: walletprovider.StateSuspended, Reason: "lost device", EvidenceFacts: []byte(`{"certificates":[{"serial":"2"}]}`),
 		CreatedAt: at, LastSeenAt: at.Add(time.Hour),
 		WalletAttestations: 3, KeyAttestations: 5,
+		IndexPeriodStart: at.Unix(), IndicesInPeriod: 4,
 	}
 }
 
@@ -273,12 +274,13 @@ func instanceListPages(t *testing.T, s walletprovider.InstanceStore) {
 func instanceCopies(t *testing.T, s walletprovider.InstanceStore) {
 	in := sampleInstance("a")
 	mustCreate(t, s, in)
-	in.Key[0], in.Credential[0] = 'X', 9 // the caller's copy, after Create
+	in.Key[0], in.Credential[0], in.EvidenceFacts[0] = 'X', 9, 'X' // the caller's copy, after Create
 	got := mustGet(t, s, "a")
-	got.Key[1], got.Credential[1] = 'X', 9 // a returned copy
+	got.Key[1], got.Credential[1], got.EvidenceFacts[1] = 'X', 9, 'X' // a returned copy
 	again := mustGet(t, s, "a")
-	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Credential[0] == 9 || again.Credential[1] == 9 {
-		t.Fatalf("the stored record shares memory with the caller's: %s %v", again.Key, again.Credential)
+	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Credential[0] == 9 || again.Credential[1] == 9 ||
+		again.EvidenceFacts[0] == 'X' || again.EvidenceFacts[1] == 'X' {
+		t.Fatalf("the stored record shares memory with the caller's: %s %v %s", again.Key, again.Credential, again.EvidenceFacts)
 	}
 }
 

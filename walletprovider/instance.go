@@ -74,6 +74,15 @@ type Instance struct {
 	// Android one doesn't. No two instances have the same non-empty one.
 	CredentialID string
 
+	// EvidenceFacts are the registration verifier's facts about the
+	// evidence (VerifiedEvidence.Facts), in its own format: decode
+	// androidkey's with androidkey.InstanceFacts, to find the instances
+	// a revoked certificate or a vulnerable patch level taints
+	// (Provider.RevokeWhere). Empty when the verifier reported none, or
+	// for an instance registered before the provider kept them (v0.75.3
+	// and before).
+	EvidenceFacts []byte
+
 	// Counter is the instance's signature counter (App Attest): the last
 	// one a verifier accepted.
 	Counter uint64
@@ -90,6 +99,15 @@ type Instance struct {
 	WalletAttestations uint64
 	KeyAttestations    uint64
 
+	// IndexPeriodStart is the start, in seconds since the Unix epoch, of
+	// the status list period IndicesInPeriod counts in, and
+	// IndicesInPeriod how many status list indices the instance's
+	// instance keys took in it, which Config.MaxInstanceKeysPerPeriod
+	// bounds. Both are zero for an instance whose keys have taken none
+	// since the provider counted them (v0.75.3 and before).
+	IndexPeriodStart int64
+	IndicesInPeriod  int
+
 	// Revision is the store's version of the record: Create stores 1,
 	// and each Update one more. Update compares it to detect a
 	// concurrent change.
@@ -100,6 +118,7 @@ type Instance struct {
 func (in Instance) clone() Instance {
 	in.Key = slices.Clone(in.Key)
 	in.Credential = slices.Clone(in.Credential)
+	in.EvidenceFacts = slices.Clone(in.EvidenceFacts)
 	return in
 }
 

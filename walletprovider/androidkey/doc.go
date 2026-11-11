@@ -47,7 +47,12 @@
 // EvidenceVerifier adapts a Verifier to walletprovider.EvidenceVerifier,
 // for a walletprovider.Provider's Dependencies.Evidence: the evidence
 // is one key's chain (Evidence), and what the Verifier proves becomes
-// the VerifiedEvidence the provider's Policy decides on.
+// the VerifiedEvidence the provider's Policy decides on. It reports the
+// chain's Facts too, which the provider keeps with an instance it
+// registers, and is a walletprovider.EvidenceRechecker: before each
+// attestation, Verifier.Recheck judges the instance's Facts by the
+// Verifier as it is then, so a certificate the status list names since,
+// or a policy tightened since, refuses it.
 //
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension

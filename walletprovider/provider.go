@@ -37,6 +37,10 @@ const (
 	// DefaultInstanceKeyRetention is the least Config.InstanceKeyRetention
 	// zero means: three StatusListPeriods when they're longer.
 	DefaultInstanceKeyRetention = 90 * 24 * time.Hour
+	// DefaultMaxInstanceKeysPerPeriod is Config.MaxInstanceKeysPerPeriod's
+	// default: room for a wallet issuing or refreshing a credential
+	// every hour or two through a week-long period.
+	DefaultMaxInstanceKeysPerPeriod = 128
 )
 
 // Upper bounds New enforces on Config's durations.
@@ -125,6 +129,21 @@ type Config struct {
 	// at any time, but not lowered while a served list holds an index
 	// past the new size: that list can't be published until it retires.
 	StatusListSize int
+
+	// MaxInstanceKeysPerPeriod bounds the status list indices one
+	// instance's instance keys take in a period: one each time a key is
+	// recorded (its first Wallet Attestation) and each time a recorded
+	// key is first used in the period (moving to its lists). A request
+	// that would take one more is refused with ErrTooManyInstanceKeys
+	// until the next period, so no one instance can fill a period's
+	// lists and leave none for the others. Since each recorded key took
+	// one, it also bounds the keys an instance records: at most this
+	// many a period, kept for InstanceKeyRetention. Size it for one
+	// wallet's issuances and refreshes in a period, with room to spare;
+	// a period's lists then take StatusListSize × MaxStatusListsPerPeriod
+	// / 2 / MaxInstanceKeysPerPeriod instances at that bound before they
+	// fill. Zero means DefaultMaxInstanceKeysPerPeriod.
+	MaxInstanceKeysPerPeriod int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
 	// Token's lifetime (exp) and the time a Relying Party may cache it
@@ -278,6 +297,9 @@ func (c Config) withDefaults() Config {
 	if c.StatusListSize == 0 {
 		c.StatusListSize = DefaultStatusListSize
 	}
+	if c.MaxInstanceKeysPerPeriod == 0 {
+		c.MaxInstanceKeysPerPeriod = DefaultMaxInstanceKeysPerPeriod
+	}
 	return c
 }
 
@@ -309,6 +331,9 @@ func (c Config) validate() error {
 	}
 	if c.StatusListSize <= 0 || c.StatusListSize%4 != 0 || c.StatusListSize > MaxStatusListSize {
 		return fmt.Errorf("StatusListSize is %d, not a positive multiple of 4 up to %d", c.StatusListSize, MaxStatusListSize)
+	}
+	if c.MaxInstanceKeysPerPeriod < 0 {
+		return fmt.Errorf("MaxInstanceKeysPerPeriod is %d, not positive", c.MaxInstanceKeysPerPeriod)
 	}
 	if longest := max(c.WalletAttestationTTL, c.KeyAttestationTTL); c.StatusListPeriod < longest || c.StatusListPeriod > MaxStatusListPeriod {
 		return fmt.Errorf("StatusListPeriod is %v, not between the longest attestation TTL (%v) and %v", c.StatusListPeriod, longest, MaxStatusListPeriod)

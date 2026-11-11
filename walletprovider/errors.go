@@ -58,6 +58,13 @@ var (
 	// ErrNoKeyAttested: no key in a Key Attestation request has evidence
 	// that passed and a security level the Policy accepts.
 	ErrNoKeyAttested = errors.New("walletprovider: no key could be attested")
+
+	// ErrTooManyInstanceKeys: the instance's instance keys have taken
+	// Config.MaxInstanceKeysPerPeriod status list indices in the
+	// current period, so a Wallet Attestation for a new instance key,
+	// or for a recorded one not yet used in the period, waits for the
+	// next period.
+	ErrTooManyInstanceKeys = errors.New("walletprovider: too many instance keys this period")
 )
 
 // Store errors, which InstanceStore, InstanceKeyStore and

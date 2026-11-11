@@ -197,6 +197,26 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   `Provider.StatusListFill` from monitoring: alert when its `Free`
   won't last until its `End` at the current rate, and raise
   `StatusListSize` for the next period.
+- [ ] **Per-instance bounds: `Config.MaxInstanceKeysPerPeriod`** (128
+  by default) caps the status list indices one instance's keys take
+  in a period, so one instance can't fill the lists for every other:
+  size it for one wallet's issuances and refreshes per period. It
+  doesn't limit request rates: also **rate-limit
+  `WalletAttestationPath` and `KeyAttestationPath`** per client in
+  front of the service, as the unauthenticated endpoints are. Each
+  signed request consumes a challenge and writes the instance's
+  record. Don't key the limit on the signed request's `sub` before
+  `Handler` has verified it: anyone can name another instance there.
+- [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
+  `StatusSource` (Google's list, refreshed daily). Android instances
+  are judged again before each attestation from the facts kept at
+  registration (`androidkey.EvidenceVerifier` is an
+  `EvidenceRechecker`), so a revoked attestation key or a tightened
+  `Verifier` stops new attestations at once. To make the attestations
+  such instances already hold `INVALID` too, revoke them:
+  `p.RevokeWhere(ctx, match, reason)` with `match` calling the
+  adapter's `Recheck`, or reading `androidkey.InstanceFacts` (a
+  certificate serial, a patch level).
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes
   retired periods' list indices and gives instance keys recorded

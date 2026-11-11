@@ -80,7 +80,7 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 			SecurityLevel: attested.SecurityLevel, Binding: attested.Binding,
 			AppID: ev.AppID, AppVersion: ev.AppVersion, BootState: ev.BootState, DeviceLocked: ev.DeviceLocked,
 		},
-		Credential: slices.Clone(ev.Credential), CredentialID: ev.CredentialID,
+		Credential: slices.Clone(ev.Credential), CredentialID: ev.CredentialID, EvidenceFacts: slices.Clone(ev.Facts),
 		State: StateActive, CreatedAt: now, LastSeenAt: now,
 	}
 	if ev.Counter != nil {

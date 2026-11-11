@@ -133,7 +133,8 @@
 // check — the list signed with the attestation's own key — accepts
 // them. Size Config.StatusListSize for the instance keys used in a
 // period, and watch Provider.StatusListFill, how many more the current
-// period's lists take. With Dependencies.StatusListTokens, the replicas serving the
+// period's lists take; Config.MaxInstanceKeysPerPeriod bounds how many
+// of them one instance's keys take. With Dependencies.StatusListTokens, the replicas serving the
 // lists share their tokens: one signs a list's token at a time, and a
 // status change is served by every replica from its next check.
 //
@@ -171,8 +172,14 @@
 // carry fixed error codes, never internal error text; and every signed
 // request that doesn't verify gets the same 401. The handler does no
 // rate limiting: an integrator wraps it with their own, per client, as
-// the challenge and registration endpoints answer anyone.
+// the challenge and registration endpoints answer anyone, and the
+// attestation endpoints write to the stores on each request.
 //
 // Evidence kinds plug in from subpackages: androidkey.EvidenceVerifier
-// for Android Key Attestation.
+// for Android Key Attestation. A verifier may report facts about the
+// registration evidence (VerifiedEvidence.Facts), kept with the
+// instance (Instance.EvidenceFacts), and, as an EvidenceRechecker,
+// judge them again before each attestation, so an instance whose
+// attestation key has since been revoked gets nothing more, even for
+// an instance key it recorded before.
 package walletprovider

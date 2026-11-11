@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto"
 	"encoding/asn1"
+	"encoding/json"
+	"fmt"
 	"slices"
 	"time"
 
@@ -62,7 +64,7 @@ type EvidenceVerifier struct {
 // the window the EUDI reference wallet gives its holder keys.
 const DefaultMaxAuthTimeout = 30 * time.Second
 
-var _ walletprovider.EvidenceVerifier = EvidenceVerifier{}
+var _ walletprovider.EvidenceRechecker = EvidenceVerifier{}
 
 // Kind implements walletprovider.EvidenceVerifier: EvidenceKind.
 func (EvidenceVerifier) Kind() string { return EvidenceKind }
@@ -88,7 +90,12 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 		return walletprovider.VerifiedEvidence{}, fail(ErrAppNotAllowed, "%d packages share the key's user ID, want one", len(r.App.Packages))
 	}
 	pkg := r.App.Packages[0]
+	facts, err := json.Marshal(FactsOf(r))
+	if err != nil {
+		return walletprovider.VerifiedEvidence{}, fmt.Errorf("androidkey: encoding the chain's facts: %w", err)
+	}
 	out := walletprovider.VerifiedEvidence{
+		Facts:    facts,
 		Platform: walletprovider.PlatformAndroid,
 		AppID:    pkg.Name,
 		Keys: []walletprovider.AttestedKey{{

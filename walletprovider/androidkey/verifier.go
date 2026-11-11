@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 )
@@ -164,16 +165,27 @@ func (v *Verifier) Verify(ctx context.Context, chain [][]byte, challenge []byte)
 			return nil, err
 		}
 	}
-	if err := v.checkRevocation(ctx, r); err != nil {
+	serials := make([]*big.Int, len(certs))
+	for i, c := range certs {
+		serials[i] = c.SerialNumber
+	}
+	if r.RevocationChecked, err = v.checkRevocation(ctx, serials); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
 func (v *Verifier) checkConfig(challenge []byte) error {
-	switch {
-	case len(challenge) == 0 || len(challenge) > MaxChallengeBytes:
+	if len(challenge) == 0 || len(challenge) > MaxChallengeBytes {
 		return fail(ErrConfig, "a %d-byte challenge, want 1 to %d", len(challenge), MaxChallengeBytes)
+	}
+	return v.checkPolicyConfig()
+}
+
+// checkPolicyConfig checks v's configuration, as both Verify and
+// Recheck need it.
+func (v *Verifier) checkPolicyConfig() error {
+	switch {
 	case len(v.Apps) == 0:
 		return fail(ErrConfig, "no allowed apps")
 	case v.Revocation == nil && !v.RevocationOptional:
@@ -247,10 +259,7 @@ func boundedKey(pub any) error {
 // configured root's validity, not its own: Google's 2016 root
 // certificate has expired, while its key lives on in the 2022 one.
 func (v *Verifier) anchor(certs []*x509.Certificate) (*x509.Certificate, error) {
-	roots := v.Roots
-	if roots == nil {
-		roots = googleRoots()
-	}
+	roots := v.roots()
 	top := certs[len(certs)-1]
 	root := rootWithKey(top, roots)
 	if root == nil {
@@ -270,6 +279,14 @@ func (v *Verifier) anchor(certs []*x509.Certificate) (*x509.Certificate, error) 
 		}
 	}
 	return root, nil
+}
+
+// roots are the configured roots: Roots, or Google's.
+func (v *Verifier) roots() []*x509.Certificate {
+	if v.Roots == nil {
+		return googleRoots()
+	}
+	return v.Roots
 }
 
 func within(c *x509.Certificate, t time.Time) bool {
@@ -454,28 +471,29 @@ func (a AllowedApp) allows(p PackageInfo, digests [][]byte) bool {
 	return true
 }
 
-func (v *Verifier) checkRevocation(ctx context.Context, r *Result) error {
+// checkRevocation looks up serials, a chain's certificates' serial
+// numbers leaf first, in the status list, reporting whether it could.
+func (v *Verifier) checkRevocation(ctx context.Context, serials []*big.Int) (bool, error) {
 	if v.Revocation == nil {
-		return nil // RevocationOptional, as checkConfig ensured
+		return false, nil // RevocationOptional, as checkConfig ensured
 	}
 	list, err := v.Revocation.Current(ctx)
 	if err != nil || list == nil {
 		if v.RevocationOptional {
-			return nil
+			return false, nil
 		}
 		if err == nil {
-			return fail(ErrStatusUnavailable, "no status list")
+			return false, fail(ErrStatusUnavailable, "no status list")
 		}
 		if errors.Is(err, ErrStatusUnavailable) {
-			return err
+			return false, err
 		}
-		return fmt.Errorf("%w: %w", ErrStatusUnavailable, err)
+		return false, fmt.Errorf("%w: %w", ErrStatusUnavailable, err)
 	}
-	for i, c := range r.Chain {
-		if e, ok := list.Lookup(c.SerialNumber); ok {
-			return &RevokedError{Position: i, Serial: serialKey(c.SerialNumber), Entry: e}
+	for i, serial := range serials {
+		if e, ok := list.Lookup(serial); ok {
+			return false, &RevokedError{Position: i, Serial: serialKey(serial), Entry: e}
 		}
 	}
-	r.RevocationChecked = true
-	return nil
+	return true, nil
 }

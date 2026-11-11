@@ -335,6 +335,7 @@ func (s *fileInstanceStore) setHolderInstance(id string) error {
 func cloneInstance(in wp.Instance) wp.Instance {
 	in.Key = slices.Clone(in.Key)
 	in.Credential = slices.Clone(in.Credential)
+	in.EvidenceFacts = slices.Clone(in.EvidenceFacts)
 	return in
 }
 

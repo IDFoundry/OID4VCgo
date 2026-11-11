@@ -358,4 +358,19 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
 		t.Fatalf("another key's instance chain: %v, want evidence_rejected", err)
 	}
+
+	// Once the status list revokes the device's attestation key, the
+	// recorded instance key, which needs no evidence, is refused too.
+	recorded := walletprovider.WalletAttestationRequest{InstanceID: instanceID, ClientID: "wallet", InstanceKey: &instance.leafKey.PublicKey}
+	if _, err := client.WalletAttestation(ctx, registration.leafKey, recorded); err != nil {
+		t.Fatalf("WalletAttestation for the recorded instance key: %v", err)
+	}
+	v.Revocation = revokingSerial(t, serialKey(registration.inter))
+	_, err = client.WalletAttestation(ctx, registration.leafKey, recorded)
+	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
+		t.Fatalf("the recorded instance key after its attestation key's revocation: %v, want evidence_rejected", err)
+	}
 }
+
+// serialKey is c's serial number as the status list keys it.
+func serialKey(c *x509.Certificate) string { return c.SerialNumber.Text(16) }
