@@ -1013,7 +1013,9 @@ sent to the reader.
 | `RespondDocuments(op, answersJSON)` | `Respond`'s result, answering several of the request's documents in one `EncryptedResponse` (additive within ABI 15). `answersJSON` is `[{"document", "credential_id", "elements"}]`, each as `Respond`'s arguments; at least one, no document twice, no credential twice and no two documents of one type (`invalid_selection`); a document left out isn't in the response. `linkable` is whether any copy presented had been seen by another Verifier, and `linkable_credentials` which, by credential ID (also in `Respond`'s result). Each holder key signs in the request's order; if one fails or the holder cancels, nothing is returned |
 
 `elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
-one the document requested (`invalid_selection` otherwise), and
+one the document requested (`invalid_selection` otherwise); an element
+that isn't a pair of strings, or anything after the array, is
+`invalid_input` (in `answersJSON` too), and
 `document` an index into `documents`. The credential's next unused copy
 is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.

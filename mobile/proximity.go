@@ -335,9 +335,9 @@ func (p *ProximityPresentation) Request() string {
 // KeyStore requiring user presence prompts now. On an error nothing is
 // sent and the session goes on: try again, or Terminate.
 func (p *ProximityPresentation) Respond(op *Operation, document int, credentialID, elementsJSON string) (string, error) {
-	var elements [][2]string
-	if err := json.Unmarshal([]byte(elementsJSON), &elements); err != nil {
-		return "", newError(CodeInvalidInput, fmt.Errorf("elements: %w", err))
+	elements, err := mdocElementsJSON(elementsJSON)
+	if err != nil {
+		return "", err
 	}
 	presented, err := p.p.Respond(op.context(), document, credentialID, elements)
 	if err != nil {

@@ -3,10 +3,7 @@ package mobile
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -127,9 +124,9 @@ func (w *Wallet) MdocCandidates(origin string) (string, error) {
 // another Verifier. The holder key signs here, so a KeyStore requiring
 // user presence prompts now. Answered once.
 func (p *MdocPresentation) Respond(op *Operation, document int, credentialID, elementsJSON string) (string, error) {
-	var elements [][2]string
-	if err := json.Unmarshal([]byte(elementsJSON), &elements); err != nil {
-		return "", newError(CodeInvalidInput, fmt.Errorf("elements: %w", err))
+	elements, err := mdocElementsJSON(elementsJSON)
+	if err != nil {
+		return "", err
 	}
 	presented, err := p.p.Respond(op.context(), document, credentialID, elements)
 	if err != nil {
@@ -173,29 +170,60 @@ func mdocPresentedJSON(presented walletflow.MdocPresented) (string, error) {
 
 // mdocAnswer is one of RespondDocuments' answers, as JSON.
 type mdocAnswer struct {
-	Document     *int        `json:"document"`
-	CredentialID string      `json:"credential_id"`
-	Elements     [][2]string `json:"elements"`
+	Document     *int       `json:"document"`
+	CredentialID string     `json:"credential_id"`
+	Elements     [][]string `json:"elements"`
 }
 
 // mdocAnswers parses answersJSON, refusing unknown members, an answer
-// without a document number, and anything after the array.
+// without a document number, an element that isn't a pair, and
+// anything after the array.
 func mdocAnswers(answersJSON string) ([]walletflow.MdocAnswer, error) {
-	dec := json.NewDecoder(strings.NewReader(answersJSON))
-	dec.DisallowUnknownFields()
 	var in []mdocAnswer
-	if err := dec.Decode(&in); err != nil {
+	if err := decodeStrict(answersJSON, &in); err != nil {
 		return nil, newError(CodeInvalidInput, fmt.Errorf("answers: %w", err))
-	}
-	if dec.More() {
-		return nil, newError(CodeInvalidInput, errors.New("answers: text after the array"))
 	}
 	out := make([]walletflow.MdocAnswer, 0, len(in))
 	for i, a := range in {
 		if a.Document == nil {
 			return nil, newError(CodeInvalidInput, fmt.Errorf("answers[%d]: no document", i))
 		}
-		out = append(out, walletflow.MdocAnswer{Request: *a.Document, CredentialID: a.CredentialID, Elements: a.Elements})
+		elements, err := mdocElementPairs(a.Elements)
+		if err != nil {
+			return nil, newError(CodeInvalidInput, fmt.Errorf("answers[%d]: %w", i, err))
+		}
+		out = append(out, walletflow.MdocAnswer{Request: *a.Document, CredentialID: a.CredentialID, Elements: elements})
+	}
+	return out, nil
+}
+
+// mdocElementsJSON parses Respond's elementsJSON, a JSON array of
+// [namespace, identifier] pairs, refusing an element that isn't a
+// pair and anything after the array.
+func mdocElementsJSON(elementsJSON string) ([][2]string, error) {
+	var in [][]string
+	if err := decodeStrict(elementsJSON, &in); err != nil {
+		return nil, newError(CodeInvalidInput, fmt.Errorf("elements: %w", err))
+	}
+	elements, err := mdocElementPairs(in)
+	if err != nil {
+		return nil, newError(CodeInvalidInput, err)
+	}
+	return elements, nil
+}
+
+// mdocElementPairs is in as [namespace, identifier] pairs, refusing an
+// element of another length rather than dropping or zero-filling it.
+func mdocElementPairs(in [][]string) ([][2]string, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make([][2]string, len(in))
+	for i, e := range in {
+		if len(e) != 2 {
+			return nil, fmt.Errorf("elements[%d]: %d items, want [namespace, identifier]", i, len(e))
+		}
+		out[i] = [2]string{e[0], e[1]}
 	}
 	return out, nil
 }
