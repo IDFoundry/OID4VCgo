@@ -924,7 +924,9 @@ public class Wallet(
      * shown it and whether presenting it there now would be linkable
      * (`shownToVerifier`, `linkableHere`): for a consent screen shown
      * before the platform releases the request itself.
-     * [MdocPresentation.request] says the same once it has.
+     * [MdocPresentation.request] says the same once it has. Every held
+     * mdoc is listed, an expired, revoked or suspended one too: offer the
+     * holder only those whose [CredentialSummary.presentable] is true.
      */
     public suspend fun mdocCandidates(origin: String): List<CredentialSummary> {
         return decode<CredentialsResult>(OID4VC.offMain { handle.mdocCandidates(origin) }).credentials

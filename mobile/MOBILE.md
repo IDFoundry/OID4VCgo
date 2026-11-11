@@ -1442,9 +1442,11 @@ document providers, so a page there reports the API unsupported.
   authentication EKU when `mdoc_reader_require_eku`; otherwise only the
   website's origin is shown. `require_trusted_mdoc_reader` refuses the
   rest.
-- **Linkability** (#459): `mdocCandidates` lists only mdocs that can be
-  presented, each saying whether its every copy has been shown to
-  another website, so the sheet can warn before the holder chooses.
+- **Linkability** (#459): `mdocCandidates` lists every held mdoc, each
+  saying whether it's `presentable` (an expired, revoked or suspended
+  one isn't: leave it out of the sheet, as the demo does) and whether
+  its every copy has been shown to another website, so the sheet can
+  warn before the holder chooses.
 - **Resolved in ABI 13:** the app and the extension each wrote a
   credential's record under a lock that only spanned their own process,
   so a refresh in the app could overwrite the extension marking a copy

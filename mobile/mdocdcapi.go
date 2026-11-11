@@ -89,7 +89,9 @@ func (p *MdocPresentation) Request() string {
 // "credentials": [summary]}. It's for a consent screen shown before the
 // request itself is available — iOS releases an org-iso-mdoc request
 // to a document provider only once the holder agrees — so the holder
-// can be told before agreeing; Request says the same once it is.
+// can be told before agreeing; Request says the same once it is. Every
+// held mdoc is listed, an expired, revoked or suspended one too, with
+// presentable false: the screen offers only the presentable ones.
 func (w *Wallet) MdocCandidates(origin string) (string, error) {
 	creds, err := w.w.Credentials(context.Background())
 	if err != nil {
