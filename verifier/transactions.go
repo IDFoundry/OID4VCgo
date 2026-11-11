@@ -317,11 +317,15 @@ type TransactionsConfig struct {
 	// (scheme and host lowercased, no trailing "/" or default port).
 	// BeginDCAPI refuses any other origin, so one taken from the request
 	// (its Origin header, say) can't bind a presentation to a page the
-	// Verifier doesn't serve. REQUIRED for BeginDCAPI under
-	// AssuranceProduction: NewTransactions refuses a production
-	// Transactions without them only when it has no RequestURIBase
-	// either, and so can serve nothing else; otherwise BeginDCAPI
-	// refuses each request. Under AssuranceDevelopment, empty allows any.
+	// Verifier doesn't serve. REQUIRED for BeginDCAPI and
+	// BeginMdocDCAPI under AssuranceProduction. The Digital Credentials
+	// API is optional beside the redirect flows, so NewTransactions
+	// refuses a production Transactions without them only when its
+	// configuration says it serves that API: it has no RequestURIBase,
+	// and so can serve nothing else, or it has MdocDCAPI, which serves
+	// nothing else. A production Transactions with RequestURIBase alone
+	// is a redirect-flow one: its BeginDCAPI refuses each request. Under
+	// AssuranceDevelopment, empty allows any.
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
@@ -628,10 +632,16 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	if cfg.Verify.IssuerAuthorized == nil && !cfg.Verify.AnyIssuerForAnyType {
 		return errors.New("verifier: transactions: under AssuranceProduction, set verify.issuer_authorized (which issuers may issue which types) or verify.any_issuer_for_any_type: without either, any trusted issuer is accepted for any type")
 	}
-	if cfg.RequestURIBase == "" && len(cfg.Origins) == 0 {
+	switch {
+	case cfg.RequestURIBase == "" && len(cfg.Origins) == 0:
 		// Without RequestURIBase only BeginDCAPI can begin a request,
 		// and without Origins it refuses every one.
 		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base serves the Digital Credentials API alone: set origins, the origins of the pages that make its requests")
+	case cfg.MdocDCAPI != nil && len(cfg.Origins) == 0:
+		// MdocDCAPI serves org-iso-mdoc requests alone, all of them over
+		// the Digital Credentials API, and without Origins
+		// BeginMdocDCAPI refuses every one.
+		return errors.New("verifier: transactions: under AssuranceProduction, mdoc_dcapi serves the Digital Credentials API: set origins, the origins of the pages that make its requests")
 	}
 	return nil
 }
