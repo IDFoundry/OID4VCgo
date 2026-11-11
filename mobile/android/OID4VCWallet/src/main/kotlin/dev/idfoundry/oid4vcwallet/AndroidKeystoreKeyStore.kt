@@ -74,8 +74,10 @@ public fun interface HolderAuthenticator {
 /**
  * BiometricPrompt's errors for the holder dismissing it: their cancel, or
  * the system cancelling it (another app in front). The prompt allows the
- * screen lock, so it has no negative button.
+ * screen lock, so it has no negative button. (API 28's constants, but
+ * compile-time ints, used only by the API 30 prompt.)
  */
+@SuppressLint("InlinedApi")
 private val HOLDER_CANCELLED = setOf(
     BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED,
     BiometricPrompt.BIOMETRIC_ERROR_CANCELED,
