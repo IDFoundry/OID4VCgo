@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -175,6 +177,23 @@ var reservedTopLevelClaims = map[string]bool{
 	"_sd": true, "_sd_alg": true, "...": true,
 }
 
+// checkAdditionalName refuses a Claims.Additional name a verifier
+// would refuse, or read as another: one that isn't valid UTF-8, which
+// encoding/json would rewrite, and a reserved claim's name in any case
+// ("Exp"), which strictjson, matching members to fields
+// case-insensitively, refuses as a near-duplicate of the claim.
+func checkAdditionalName(name string) error {
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("sdjwtvc: Claims.Additional name %q isn't valid UTF-8", name)
+	}
+	for reserved := range reservedTopLevelClaims {
+		if strings.EqualFold(name, reserved) {
+			return fmt.Errorf("sdjwtvc: Claims.Additional name %q is the reserved claim %q: set it via Claims, not Additional", name, reserved)
+		}
+	}
+	return nil
+}
+
 // applyPlaintextClaims sets sealed's own always-plaintext registered
 // claims (draft-13 §3.2.2.2's own never-selectively-disclosed set)
 // from claims — split out of Issue purely to keep it under the
@@ -244,8 +263,8 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 
 	tree := make(map[string]any, len(claims.Additional))
 	for k, v := range claims.Additional {
-		if reservedTopLevelClaims[k] {
-			return "", nil, fmt.Errorf("sdjwtvc: %q must be set via Claims, not Additional", k)
+		if err := checkAdditionalName(k); err != nil {
+			return "", nil, err
 		}
 		tree[k] = v
 	}

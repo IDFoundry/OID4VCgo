@@ -480,12 +480,19 @@ func TestIssue_NoSelectivelyDisclosableClaims(t *testing.T) {
 
 func TestIssue_RejectsReservedClaimInAdditional(t *testing.T) {
 	issuerKey := testKey(t)
-	_, _, err := Issue(issuerKey, jose.ES256, Claims{
-		VCT:        "vc-type",
-		Additional: map[string]any{"vct": "override-attempt"},
-	}, IssueOptions{})
-	if err == nil {
-		t.Errorf("Issue accepted \"vct\" inside Additional")
+	// A reserved name in any case, which strictjson refuses on reading,
+	// and a name encoding/json would rewrite, are refused too.
+	for _, name := range []string{"vct", "Exp", "CNF", "_SD_ALG", "giv\xffen_name"} {
+		_, _, err := Issue(issuerKey, jose.ES256, Claims{
+			VCT:        "vc-type",
+			Additional: map[string]any{name: "override-attempt"},
+		}, IssueOptions{})
+		if err == nil {
+			t.Errorf("Issue accepted %q inside Additional", name)
+		}
+	}
+	if _, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type", Additional: map[string]any{"expiry": "x", "Given_Name": "y"}}, IssueOptions{}); err != nil {
+		t.Errorf("Issue refused names that aren't reserved: %v", err)
 	}
 }
 
