@@ -1,5 +1,6 @@
 package dev.idfoundry.oid4vcwallet
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -315,7 +316,12 @@ public object DigitalCredentials {
         // share its origin with what that key still signs. Before API 28
         // there's no history: the compat layer reports the app's signers
         // in its place, and never multiple signers.
-        if (signing.hasMultipleSigners) return null
+        // SigningInfoCompat's own property, set on every API level (from
+        // the app's signatures below 28): lint takes it for
+        // android.content.pm.SigningInfo.hasMultipleSigners, which is 28's.
+        @SuppressLint("NewApi")
+        val multipleSigners = signing.hasMultipleSigners
+        if (multipleSigners) return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P && signing.signingCertificateHistory.size > 1) return null
         return appOrigin(signing.signingCertificateHistory.lastOrNull()?.toByteArray())
     }

@@ -387,8 +387,10 @@ public class AndroidKeystoreKeyStore(
         return agreement.generateSecret()
     }
 
-
-
+    // Lint can't follow digests through KeyAttempt: they are only ever
+    // DIGEST_FALLBACKS' KeyProperties.DIGEST_ constants, which setDigests
+    // takes.
+    @SuppressLint("WrongConstant")
     private fun spec(id: String, purpose: KeyPurpose, purposes: Int, digests: Array<String>, strongBox: Boolean?, challenge: ByteArray?): KeyGenParameterSpec {
         val spec = KeyGenParameterSpec.Builder(alias(id), purposes)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
