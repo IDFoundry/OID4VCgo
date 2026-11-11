@@ -107,7 +107,8 @@ public class HttpWalletProvider internal constructor(
      *   else deletes from. By default [registrationKeyStore], Android
      *   Keystore under an alias prefix of its own. Not the wallet's key
      *   store: [Wallet.sweepOrphanedKeys] deletes every key there that no
-     *   credential is bound to.
+     *   credential is bound to (and refuses a store under
+     *   [REGISTRATION_KEY_ALIAS_PREFIX]).
      * @param timeoutMillis The connect and the read timeout of each request.
      * @throws IllegalArgumentException when [baseURL] isn't an absolute
      *   https URL without user info, query or fragment, or
@@ -420,7 +421,8 @@ public class HttpWalletProvider internal constructor(
         /**
          * The alias prefix of [registrationKeyStore]'s keys. The wallet's
          * own [AndroidKeystoreKeyStore] mustn't cover it, as its default
-         * prefix doesn't: [Wallet.sweepOrphanedKeys] would delete the
+         * prefix doesn't: [Wallet.sweepOrphanedKeys] refuses a store whose
+         * prefix covers or falls under it, rather than delete the
          * registration key.
          */
         public const val REGISTRATION_KEY_ALIAS_PREFIX: String = "org.idfoundry.oid4vcgo.walletprovider."

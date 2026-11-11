@@ -242,8 +242,10 @@ public class AndroidKeystoreKeyStore(
         /**
          * Prefixes every key's alias. Keys under another prefix are never
          * touched, by a sweep or anything else. It must be non-empty, and
-         * must not cover [FileCredentialStore]'s default key alias, which a
-         * sweep would then delete.
+         * must not cover [FileCredentialStore]'s default key alias. The
+         * wallet's mustn't cover, or fall under,
+         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX]:
+         * [Wallet.sweepOrphanedKeys] refuses such a store.
          */
         val aliasPrefix: String = "org.idfoundry.oid4vcgo.key.",
         /**
@@ -540,11 +542,17 @@ public class AndroidKeystoreKeyStore(
      * Deletes every key this store holds except [except], and returns how
      * many it deleted. `Wallet.sweepOrphanedKeys` calls it with the keys
      * the wallet's credentials are bound to.
+     *
+     * It deletes only key pairs (`KeyStore.PrivateKeyEntry`) under
+     * [Options.aliasPrefix], as this store makes: a secret key under it —
+     * [FileCredentialStore]'s, under a custom
+     * [FileCredentialStore.Options.keyAlias], or the status cache's — is
+     * kept.
      */
     public fun deleteKeys(except: Set<String>): Int {
         var deleted = 0
         for (id in keyIDs()) {
-            if (id !in except) {
+            if (id !in except && keystore.entryInstanceOf(options.aliasPrefix + id, JavaKeyStore.PrivateKeyEntry::class.java)) {
                 deleteKey(id)
                 deleted++
             }
