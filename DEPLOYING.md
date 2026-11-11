@@ -75,7 +75,9 @@ each, not a deployment template" says what it does differently.
 - [ ] **Stores:** `issuer.Dependencies{Nonces: db.Nonces(),
   PreAuthorizedCodes: db.PreAuthorizedCodes(), DeferredTransactions:
   db.DeferredTransactions(), Notifications: db.Notifications(),
-  CredentialOffers: db.CredentialOffers(), …}`.
+  CredentialOffers: db.CredentialOffers(), …}`, on a `DB` with a
+  Sealer: under `AssuranceProduction` the stores holding holders' data
+  (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
 - [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording

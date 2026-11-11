@@ -22,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/weborigin"
+	"github.com/idfoundry/oid4vcgo/sealing"
 )
 
 // TransactionStatus is where a presentation request is in its life.
@@ -206,9 +207,22 @@ type StoreAssurance interface {
 // it's stored, as a TransactionCodec with a Sealer does. Under
 // AssuranceProduction, NewTransactions requires a store that seals
 // them, unless TransactionsConfig.UnsealedStore says the store is as
-// protected as the Verifier's own keys.
+// protected as the Verifier's own keys. A store may declare it with
+// sealing.Store's SealsRecords instead, as the issuer's stores do.
 type SealingStore interface {
 	SealsTransactions() bool
+}
+
+// sealsTransactions is whether store declares it seals transactions,
+// as a SealingStore or a sealing.Store.
+func sealsTransactions(store TransactionStore) bool {
+	switch s := store.(type) {
+	case SealingStore:
+		return s.SealsTransactions()
+	case sealing.Store:
+		return s.SealsRecords()
+	}
+	return false
 }
 
 // MaxProductionTransactionLifetime is the longest
@@ -620,7 +634,7 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 	if !ok || !asserter.Capabilities().Durable || !asserter.Capabilities().AtomicUpdate {
 		return errors.New("verifier: transactions: the store must implement verifier.StoreAssurance with Durable and AtomicUpdate under AssuranceProduction")
 	}
-	if sealing, ok := store.(SealingStore); (!ok || !sealing.SealsTransactions()) && !cfg.UnsealedStore {
+	if !sealsTransactions(store) && !cfg.UnsealedStore {
 		return errors.New("verifier: transactions: under AssuranceProduction, the store must seal transactions (verifier.SealingStore: a TransactionCodec with a Sealer, such as sealing.AESGCMSealer), or set unsealed_store where it's as protected as the Verifier's keys")
 	}
 	if cfg.Lifetime > MaxProductionTransactionLifetime {

@@ -517,6 +517,13 @@ func TestNewTransactions_Validates(t *testing.T) {
 			t.Errorf("%s store with UnsealedStore: %v", name, err)
 		}
 	}
+	// A store may say it seals as a sealing.Store does, too.
+	if _, err := verifier.NewTransactions(prod, recordSealingTransactionStore{store, assured, true}, sound); err != nil {
+		t.Errorf("a store declaring sealing.Store: %v", err)
+	}
+	if _, err := verifier.NewTransactions(prod, recordSealingTransactionStore{store, assured, false}, sound); err == nil {
+		t.Error("a store declaring sealing.Store's SealsRecords false: accepted")
+	}
 	long := sound
 	long.Lifetime = verifier.MaxProductionTransactionLifetime + time.Second
 	if _, err := verifier.NewTransactions(prod, assured, long); err == nil || !strings.Contains(err.Error(), "lifetime") {
@@ -549,6 +556,16 @@ func (unsealedTransactionStore) Capabilities() verifier.StoreCapabilities {
 }
 
 func (unsealedTransactionStore) SealsTransactions() bool { return false }
+
+// recordSealingTransactionStore declares whether it seals as a
+// sealing.Store, not a verifier.SealingStore.
+type recordSealingTransactionStore struct {
+	verifier.TransactionStore
+	verifier.StoreAssurance
+	seals bool
+}
+
+func (s recordSealingTransactionStore) SealsRecords() bool { return s.seals }
 
 func TestTransactions_HandlerEdges(t *testing.T) {
 	f := newTxFixture(t, func(c *verifier.TransactionsConfig) { c.Verify.Now = nil }) // the real clock

@@ -10,6 +10,7 @@ import (
 	fapi "github.com/idfoundry/fapigo"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/sealing"
 )
 
 // AssuranceLevel gates how strict New's validation of Config and
@@ -37,7 +38,11 @@ const (
 	// PreAuthorizedCodes), or an Update and Invalidate that must each
 	// happen at most once (DeferredTransactions) —
 	// CredentialOffers/Notifications are plain store/get operations,
-	// with nothing to assert atomicity for). The Token Request's DPoP
+	// with nothing to assert atomicity for). Those holding holders' data
+	// (CredentialOffers, DeferredTransactions, Notifications,
+	// PreAuthorizedCodes) must also implement sealing.Store and declare
+	// they seal their records, as sqlstore's do with a Sealer, unless
+	// Config.UnsealedStores accepts them unsealed. The Token Request's DPoP
 	// proof is the Authorization Server's to verify, under its own
 	// production bounds, replay record and nonces.
 	// Without a Nonce Endpoint, Limits.MaxProofAge must be at most
@@ -216,29 +221,46 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 }
 
 // checkProductionStores runs checkStoreAssurance on each store a
-// configured feature uses.
+// configured feature uses, and checkStoreSealing on those of them that
+// hold holders' data.
 func checkProductionStores(cfg Config, deps Dependencies) []error {
-	// Each store a configured feature uses, and whether consuming from
-	// it must be atomic.
+	// Each store a configured feature uses, whether consuming from it
+	// must be atomic, and whether it holds holders' data, which it must
+	// seal. A c_nonce record holds nothing of the holder's.
 	stores := []struct {
 		used          bool
 		name          string
 		store         any
 		atomicConsume bool
+		holderData    bool
 	}{
-		{!cfg.Endpoints.Nonce.IsZero(), "nonces", deps.Nonces, true},
-		{!cfg.CredentialOfferEndpoint.IsZero(), "credential_offers", deps.CredentialOffers, false},
-		{!cfg.Endpoints.DeferredCredential.IsZero(), "deferred_transactions", deps.DeferredTransactions, true},
-		{!cfg.Endpoints.Notification.IsZero(), "notifications", deps.Notifications, false},
-		{deps.PreAuthorizedCodes != nil, "pre_authorized_codes", deps.PreAuthorizedCodes, true},
+		{!cfg.Endpoints.Nonce.IsZero(), "nonces", deps.Nonces, true, false},
+		{!cfg.CredentialOfferEndpoint.IsZero(), "credential_offers", deps.CredentialOffers, false, true},
+		{!cfg.Endpoints.DeferredCredential.IsZero(), "deferred_transactions", deps.DeferredTransactions, true, true},
+		{!cfg.Endpoints.Notification.IsZero(), "notifications", deps.Notifications, false, true},
+		{deps.PreAuthorizedCodes != nil, "pre_authorized_codes", deps.PreAuthorizedCodes, true, true},
 	}
 	var errs []error
 	for _, st := range stores {
-		if st.used {
-			errs = append(errs, checkStoreAssurance(st.name, st.store, st.atomicConsume))
+		if !st.used {
+			continue
+		}
+		errs = append(errs, checkStoreAssurance(st.name, st.store, st.atomicConsume))
+		if st.holderData && !cfg.UnsealedStores {
+			errs = append(errs, checkStoreSealing(st.name, st.store))
 		}
 	}
 	return errs
+}
+
+// checkStoreSealing requires store to implement sealing.Store and
+// declare it seals its records, as verifier.NewTransactions requires of
+// its TransactionStore.
+func checkStoreSealing(name string, store any) error {
+	if s, ok := store.(sealing.Store); ok && s.SealsRecords() {
+		return nil
+	}
+	return fmt.Errorf("dependencies.%s holds holders' data: under AssuranceProduction it must seal its records (implement sealing.Store and declare SealsRecords: sqlstore's stores do when its DB has Options.Sealer, such as sealing.AESGCMSealer), or set config.unsealed_stores where the stores are as protected as the issuer's keys", name)
 }
 
 // checkProductionKeySources runs checkKeySourceAssurance on the
