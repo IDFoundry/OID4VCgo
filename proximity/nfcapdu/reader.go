@@ -276,9 +276,16 @@ func (t *type4Reader) writeMessage(message []byte) error {
 	return t.writeBinary(0, []byte{hi(len(message)), lo(len(message))})
 }
 
+// MaxTNEPWait bounds how long a reader waits, in all, for a tag's
+// answer to one TNEP message, whatever the tag advertises: TNEP lets a
+// service ask for up to 16 waits of about 27.5 seconds each (WT 63,
+// N_wait 15), minutes that a tag never answering would hold the reader
+// for. A holder here asks for 16 of 8 milliseconds (WT 16, N_wait 15).
+const MaxTNEPWait = 5 * time.Second
+
 // transact writes a TNEP message and polls for the tag's answer, at the
 // service's minimum waiting time, for as many waiting time extensions
-// as it allows.
+// as it allows, waiting MaxTNEPWait at most in all.
 func (t *type4Reader) transact(message []byte, timing tnepTiming) ([]byte, error) {
 	if len(message) > timing.maxMessage {
 		return nil, errors.New("nfcapdu: message exceeds the TNEP service's limit")
@@ -286,8 +293,14 @@ func (t *type4Reader) transact(message []byte, timing tnepTiming) ([]byte, error
 	if err := t.writeMessage(message); err != nil {
 		return nil, err
 	}
+	var waited time.Duration
 	for range timing.waits + 1 {
-		nlen, err := t.readBinary(0, 2, timing.wait())
+		wait := min(timing.wait(), MaxTNEPWait-waited)
+		if wait <= 0 {
+			break
+		}
+		waited += wait
+		nlen, err := t.readBinary(0, 2, wait)
 		if err != nil {
 			return nil, err
 		}

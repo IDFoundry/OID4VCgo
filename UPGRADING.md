@@ -120,6 +120,9 @@ CHANGELOG.md's BREAKING CHANGES sections.
   refuse a DeviceRequest asking for one document type twice**
   (`proximity.ErrCBORValidation` for the former), as readers here
   already refuse a DeviceResponse with two documents of one type.
+- **An NFC reader waits `nfcapdu.MaxTNEPWait` (5 seconds) at most for
+  a tag's answer to a TNEP message**, however long the tag's service
+  parameters ask for: up to TNEP's maximum, several minutes, before.
 
 ### Wallet Provider stores
 
