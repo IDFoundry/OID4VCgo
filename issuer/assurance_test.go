@@ -66,13 +66,17 @@ func (assuredDeferredTransactionStore) SealsRecords() bool { return true }
 func (assuredNotificationStore) SealsRecords() bool        { return true }
 func (assuredPreAuthorizedCodeStore) SealsRecords() bool   { return true }
 
-type (
-	unsealedNonceStore               struct{ assuredNonceStore }
-	unsealedCredentialOfferStore     struct{ assuredCredentialOfferStore }
-	unsealedDeferredTransactionStore struct{ assuredDeferredTransactionStore }
-	unsealedNotificationStore        struct{ assuredNotificationStore }
-	unsealedPreAuthorizedCodeStore   struct{ assuredPreAuthorizedCodeStore }
-)
+type unsealedNonceStore struct{ assuredNonceStore }
+
+type unsealedCredentialOfferStore struct{ assuredCredentialOfferStore }
+
+type unsealedDeferredTransactionStore struct {
+	assuredDeferredTransactionStore
+}
+
+type unsealedNotificationStore struct{ assuredNotificationStore }
+
+type unsealedPreAuthorizedCodeStore struct{ assuredPreAuthorizedCodeStore }
 
 func (unsealedNonceStore) SealsRecords() bool               { return false }
 func (unsealedCredentialOfferStore) SealsRecords() bool     { return false }
