@@ -139,6 +139,19 @@ func TestNewRefuses(t *testing.T) {
 			Subject: pkix.Name{CommonName: "WP"}, URIs: []*url.URL{id},
 			NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(-24 * time.Hour),
 		}), "isn't valid now"},
+		{"unsealed stores required sealed", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.RequireSealedStore = true
+		}, "Instances doesn't seal"},
+		{"one unsealed store required sealed", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.RequireSealedStore = true
+			sealAll(d)
+			d.Challenges = d.Challenges.(sealedChallenges).ChallengeStore
+		}, "Challenges doesn't seal"},
+		{"a store saying it doesn't seal", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.RequireSealedStore = true
+			sealAll(d)
+			d.InstanceKeys = sealedInstanceKeys{d.InstanceKeys, false}
+		}, "InstanceKeys doesn't seal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,6 +164,35 @@ func TestNewRefuses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The stores, saying they seal their records (SealingStore).
+type (
+	sealedInstances    struct{ walletprovider.InstanceStore }
+	sealedInstanceKeys struct {
+		walletprovider.InstanceKeyStore
+		seals bool
+	}
+	sealedChallenges struct{ walletprovider.ChallengeStore }
+)
+
+func (sealedInstances) SealsRecords() bool      { return true }
+func (s sealedInstanceKeys) SealsRecords() bool { return s.seals }
+func (sealedChallenges) SealsRecords() bool     { return true }
+
+func sealAll(d *walletprovider.Dependencies) {
+	d.Instances = sealedInstances{d.Instances}
+	d.InstanceKeys = sealedInstanceKeys{d.InstanceKeys, true}
+	d.Challenges = sealedChallenges{d.Challenges}
+}
+
+// TestNewRequireSealedStore: RequireSealedStore accepts stores that
+// all say they seal their records.
+func TestNewRequireSealedStore(t *testing.T) {
+	newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		c.RequireSealedStore = true
+		sealAll(d)
+	})
 }
 
 func TestNewAcceptsAnIntermediate(t *testing.T) {
