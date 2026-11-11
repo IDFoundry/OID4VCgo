@@ -19,13 +19,14 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // or _ "modernc.org/sqlite"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 sqlDB, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
 // A 32-byte key from your secret manager or KMS, never from the database.
-sealer, err := verifier.AESGCMSealer(sealingKey)
+sealer, err := sealing.AESGCMSealer(sealingKey)
 db, err := sqlstore.New(sqlDB, sqlstore.Postgres, sqlstore.Options{Sealer: sealer})
 if err := db.Migrate(ctx); err != nil { … } // or CheckSchema, if a deployment step migrates
 
@@ -40,10 +41,13 @@ deps := issuer.Dependencies{
 txs, err := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```
 
-The Sealer is any `sqlstore.Sealer`; `verifier.AESGCMSealer` makes one
+The Sealer is any `sqlstore.Sealer`; `sealing.AESGCMSealer` makes one
 from a 32-byte key for every store here, not only the verifier's (its
-result also satisfies `verifier.TransactionSealer`, for the verifier's
-`TransactionCodec`).
+result is a `sealing.Sealer`, which the verifier's `TransactionCodec`
+takes too). OID4VCgo releases before the `sealing` package have it as
+`verifier.AESGCMSealer`. With a Sealer, the issuer stores declare they
+seal their records (`sealing.Store`), which an issuer under
+`AssuranceProduction` requires of every store holding holders' data.
 
 walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
 `db.Grants()`, `db.Deferred()` and, with a Sealer, `db.Keys()`. Unlike
@@ -163,8 +167,10 @@ binding its records to additional data of its own. Sweep each. See
   isn't sealed whole: its `TransactionCodec`, with its own Sealer or the
   DB's, seals only the response decryption key and the verified claims,
   bound to the owner, same-device flag, browser binding hash, origin and
-  query, which stay readable. Its status, expiry and response_code hash
-  are unprotected, so the database must be trusted for their integrity. To change the key, use fapigo/sqlstore's `RotatingSealer`
+  query, and (`TransactionCodec` version 2) its status, expiry, nonce,
+  state and kid, which stay readable. Its response_code hash and last
+  error are unprotected, and a whole older copy of the record still
+  opens, so the database must be trusted for those. To change the key, use fapigo/sqlstore's `RotatingSealer`
   in two deploys, `RotatingSealer(old, new)` everywhere and then
   `RotatingSealer(new, old)`, so every instance opens the new key
   before any seals with it, and keep the previous key while records it

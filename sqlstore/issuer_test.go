@@ -64,6 +64,27 @@ func TestIssuerStoresDeclareProductionCapabilities(t *testing.T) {
 	}
 }
 
+// The issuer stores say they seal their records (sealing.Store's
+// SealsRecords) exactly when the DB has a Sealer.
+func TestIssuerStoresDeclareSealing(t *testing.T) {
+	type sealingStore interface{ SealsRecords() bool }
+	for _, sealed := range []bool{false, true} {
+		opts := sqlstore.Options{}
+		if sealed {
+			opts.Sealer = testSealer(t)
+		}
+		d := newSQLiteDB(t, opts)
+		for name, s := range map[string]sealingStore{
+			"Nonces": d.Nonces(), "PreAuthorizedCodes": d.PreAuthorizedCodes(), "DeferredTransactions": d.DeferredTransactions(),
+			"Notifications": d.Notifications(), "CredentialOffers": d.CredentialOffers(),
+		} {
+			if got := s.SealsRecords(); got != sealed {
+				t.Errorf("with a Sealer %t: %s.SealsRecords() = %t", sealed, name, got)
+			}
+		}
+	}
+}
+
 // Every field of every issuer record survives the store, an issued
 // Credential and a whole Credential Offer included.
 func TestIssuerRecordsRoundTrip(t *testing.T) {

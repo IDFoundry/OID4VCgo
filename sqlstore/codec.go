@@ -7,11 +7,11 @@ import (
 )
 
 // Sealer seals and opens the records a DB writes: an AEAD, such as
-// verifier.AESGCMSealer, or a call to a key management service. Open
+// sealing.AESGCMSealer, or a call to a key management service. Open
 // must refuse sealed data altered in any way, or sealed with other
 // additionalData: that's what binds each record to its table and key.
-// verifier.TransactionSealer is the same interface, so one sealer can
-// serve both a DB and the verifier's TransactionCodec.
+// sealing.Sealer (verifier.TransactionSealer) is the same interface, so
+// one sealer can serve both a DB and the verifier's TransactionCodec.
 type Sealer interface {
 	Seal(plaintext, additionalData []byte) ([]byte, error)
 	Open(sealed, additionalData []byte) ([]byte, error)

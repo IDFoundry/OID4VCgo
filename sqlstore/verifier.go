@@ -20,7 +20,7 @@ type TransactionStore struct {
 }
 
 // Transactions returns d's verifier.TransactionStore, encoding
-// transactions with codec. The codec's Sealer (verifier.AESGCMSealer,
+// transactions with codec. The codec's Sealer (sealing.AESGCMSealer,
 // with a key kept outside the database) seals each transaction's
 // response decryption key and the claims the holder disclosed: set one
 // wherever the database is shared, backed up or readable by more than

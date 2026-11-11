@@ -70,6 +70,10 @@ func (s *NonceStore) Consume(ctx context.Context, consumption issuer.NonceConsum
 // AtomicConsume.
 func (s *NonceStore) Capabilities() issuer.StoreCapabilities { return issuerCapabilities }
 
+// SealsRecords implements sealing.Store: whether the DB has a Sealer,
+// which seals every record the store writes.
+func (s *NonceStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
 // PreAuthorizedCodeStore is an issuer.PreAuthorizedCodeStore:
 // Dependencies.PreAuthorizedCodes. It keeps what the issuer gives it:
 // the hash of each code as its key, and the keyed hash of its
@@ -198,6 +202,10 @@ func (s *PreAuthorizedCodeStore) Invalidate(ctx context.Context, codeHash string
 // AtomicConsume.
 func (s *PreAuthorizedCodeStore) Capabilities() issuer.StoreCapabilities { return issuerCapabilities }
 
+// SealsRecords implements sealing.Store: whether the DB has a Sealer,
+// which seals every record the store writes.
+func (s *PreAuthorizedCodeStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
 // DeferredTransactionStore is an issuer.DeferredTransactionStore:
 // Dependencies.DeferredTransactions. Invalidate deletes the
 // transaction, its Credentials with it.
@@ -268,6 +276,10 @@ func (s *DeferredTransactionStore) Capabilities() issuer.StoreCapabilities {
 	return issuerCapabilities
 }
 
+// SealsRecords implements sealing.Store: whether the DB has a Sealer,
+// which seals every record the store writes.
+func (s *DeferredTransactionStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
 // NotificationStore is an issuer.NotificationStore:
 // Dependencies.Notifications.
 type NotificationStore struct {
@@ -305,6 +317,10 @@ func (s *NotificationStore) Get(ctx context.Context, notificationID string) (iss
 // Capabilities implements issuer.StoreAssurance: Durable (and
 // AtomicConsume, though it has nothing to consume).
 func (s *NotificationStore) Capabilities() issuer.StoreCapabilities { return issuerCapabilities }
+
+// SealsRecords implements sealing.Store: whether the DB has a Sealer,
+// which seals every record the store writes.
+func (s *NotificationStore) SealsRecords() bool { return s.t.d.sealer != nil }
 
 // CredentialOfferStore is an issuer.CredentialOfferStore:
 // Dependencies.CredentialOffers.
@@ -344,3 +360,7 @@ func (s *CredentialOfferStore) Get(ctx context.Context, reference string) (issue
 // Capabilities implements issuer.StoreAssurance: Durable (and
 // AtomicConsume, though it has nothing to consume).
 func (s *CredentialOfferStore) Capabilities() issuer.StoreCapabilities { return issuerCapabilities }
+
+// SealsRecords implements sealing.Store: whether the DB has a Sealer,
+// which seals every record the store writes.
+func (s *CredentialOfferStore) SealsRecords() bool { return s.t.d.sealer != nil }
