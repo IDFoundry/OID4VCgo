@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.77.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.77.0...v0.77.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **wallet:** list ES384 and ES512 among wallet_metadata's mdoc IssuerAuth algorithms ([2828f81](https://github.com/IDFoundry/OID4VCgo/commit/2828f8194a9e84be5550980d272e4b2087bbb7ff))
+
 ## [0.77.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.76.0...v0.77.0) (2026-11-12)
 
 
