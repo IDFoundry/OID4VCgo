@@ -63,20 +63,23 @@ check_suite_reachable() {
 # check_summary LOG_FILE EXCEPTIONS — reads LOG_FILE's own
 # "=== summary ===" block (one "<name> <STATUS>=<RESULT> (...)" line
 # per module, or "<name> ERROR: ..."/"<name> ... NOT RUN ..."),
-# comparing each module's own RESULT against "PASSED" by default, or
-# the override named for it in EXCEPTIONS (newline-separated
-# "name=RESULT" pairs). Prints every mismatch; returns 0 if there were
-# none.
+# comparing each module's own STATUS=RESULT against "FINISHED=PASSED"
+# by default, or FINISHED and the result named for it in EXCEPTIONS
+# (newline-separated "name=RESULT" pairs). Prints every mismatch, and
+# a summary with no module in it; returns 0 if there were none.
 check_summary() {
 	local log_file="$1" exceptions="$2"
-	local clean=0
+	local clean=0 count=0
 	local name result want
 	while IFS='|' read -r name result; do
 		[[ -z "$name" ]] && continue
+		count=$((count + 1))
 		want="$(printf '%s\n' "$exceptions" | grep "^${name}=" | tail -1 | cut -d'=' -f2)"
 		[[ -z "$want" ]] && want="PASSED"
-		if [[ "$result" != "$want" ]]; then
-			echo "  UNEXPECTED: $name = $result (want $want)"
+		# Every module must have run to completion: an INTERRUPTED
+		# module's result is no verdict, whatever it says.
+		if [[ "$result" != "FINISHED=$want" ]]; then
+			echo "  UNEXPECTED: $name = $result (want FINISHED=$want)"
 			clean=1
 		fi
 	done < <(awk '
@@ -111,12 +114,14 @@ check_summary() {
 				# a second real bug hit live in the same first run.
 				name = substr(line, 1, RSTART - 1)
 				gsub(/[ \t]+$/, "", name)
-				token = substr(line, RSTART, RLENGTH)
-				split(token, parts, "=")
-				print name "|" parts[2]
+				print name "|" substr(line, RSTART, RLENGTH)
 			}
 		}
 	' "$log_file")
+	if [[ $count -eq 0 ]]; then
+		echo "  UNEXPECTED: no module results in $log_file's summary"
+		clean=1
+	fi
 	return $clean
 }
 

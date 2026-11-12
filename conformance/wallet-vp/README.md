@@ -272,34 +272,49 @@ variant, and run under `dc_api.jwt` (see "dc_api.jwt").
 They're driven by a committed, repeatable tool,
 `conformance/wallet-vp/scripts/run-modules` (the same tool
 `conformance/verifier/scripts/run-sdjwt-modules`/`run-mdoc-module` are
-for the Verifier role), which creates two plans per credential format:
+for the Verifier role), which creates two plans per credential format
+and drives every module each plan's own module list names: the main
+plan, then the modules only the second lists. The second plan sets a
+real `credential_type` (`eudi_pid` under `sd_jwt_vc`, `mdl` under
+`iso_mdl`), in which the suite uses its own built-in DCQL query for
+that type: `all-mandatory-claims` is `@VariantNotApplicable` for
+`credential_type=custom`, the main plan's implicit value, and so are
+the PID claims-path modules and `age-over-18`.
 
-- **The main plan, 15 modules.** 7 positive-behavior modules
-  (`happy-flow`, `alternate-happy-flow`, `request-uri-method-post`,
-  `ignores-unusable-encryption-key`, `fewer-claims-than-available`,
-  `optional-credential-set`, `no-claims-in-dcql-query`) must answer
-  locally with a 200 and end `FINISHED`/`PASSED` (or `WARNING`).
-  8 negative-test modules: 5 (`redirect-uri-with-direct-post`,
-  `missing-nonce`, `unknown-transaction-data-type`,
-  `required-non-matching-credential`, `claim-not-in-credential`) must
-  send an OID4VP error response with the exact code
-  `negativeTestExpectedErrorCode` names (`invalid_request`,
-  `invalid_request`, `invalid_transaction_data`, `access_denied`,
-  `access_denied`), which the suite grades `PASSED`; 3
-  (`invalid-request-object-signature`, `mismatched-client-id`,
-  `invalid-client-id-prefix`) must be refused at this binary's own
-  `/authorize` call, before `response_uri` (a non-200 local response),
-  and end `FINISHED`/`REVIEW` once the script fills the suite's
-  screenshot placeholder.
-- **A second plan for `all-mandatory-claims`** (`allMandatoryClaimsTest`).
-  The module is `@VariantNotApplicable` for `credential_type=custom`,
-  the main plan's implicit value, so it needs a plan with a real
-  `credential_type` — `eudi_pid` under `sd_jwt_vc`, `mdl` under
-  `iso_mdl` — in which the suite uses its own built-in DCQL query for
-  that type. It's graded as a positive module. It was missed until a
-  run against the hosted suite found it.
+### Expected verdicts
 
-The script exits non-zero on any other outcome.
+Each module is graded on what the wallet did, the suite's status and
+result, and the module's log (`expectations.go`'s `grade`), and the
+script exits non-zero on any other outcome. A module the plan lists
+that `expectations` doesn't name fails the run: a module the suite
+adds is classified before it is trusted.
+
+| Wallet must | Suite verdict | Modules |
+| --- | --- | --- |
+| present (a local 200, no error response) | `FINISHED=PASSED` | `happy-flow`, `alternate-happy-flow`, `request-uri-method-post`, `ignores-unusable-encryption-key`, `fewer-claims-than-available`, `optional-credential-set`, `no-claims-in-dcql-query`, `all-mandatory-claims`; `pid-claims-path-array-index`, `pid-claims-path-array-all-elements`, `pid-claims-path-object-member` (`eudi_pid`); `age-over-18` (`mdl`); `multisigned-one-invalid-signature` (DC API, multi-signed) |
+| send `invalid_request` | `FINISHED=PASSED` | `redirect-uri-with-direct-post`, `missing-nonce` |
+| send `invalid_transaction_data` | `FINISHED=PASSED` | `unknown-transaction-data-type` |
+| send `access_denied` | `FINISHED=PASSED` | `required-non-matching-credential`, `claim-not-in-credential` |
+| refuse without answering the `response_uri` | `FINISHED=REVIEW` | `invalid-request-object-signature`, `invalid-request-object-typ`, `missing-request-object-typ`, `mismatched-client-id`, `invalid-client-id-prefix`, `wrong-expected-origins` (DC API) |
+
+A refusal can only end `REVIEW`: the suite waits for a screenshot of
+the wallet's error, which the script fills with a stand-in image. So
+for those modules the wallet's own action is the verdict that counts:
+a direct_post.jwt refusal is a non-200 from this binary's
+`/authorize`, a DC API one an answer carrying an `exception`. A wallet
+that presents a request it must refuse used to pass with only a
+`WARNING` line in the script's own log; it now fails the run. `REVIEW`
+also outranks `WARNING` in a module's result, so the log is read too:
+no module may log a `FAILURE` or a `WARNING`.
+
+`invalid-request-object-typ`, `missing-request-object-typ`,
+`age-over-18` and the three PID claims-path modules were listed by the
+suite's plans but never driven, until the plan's own module list
+became what the script drives. All pass. `age-over-18` first ended
+`WARNING` (`EnsureMostPreferredMdocDcqlClaimSetReturned`): the mDL
+fixture held no `age_over_18`, so the wallet could only return
+`birth_date`, the least preferred option. The fixture now carries
+`age_over_18`, and the wallet returns it.
 
 **`alternate-happy-flow`'s fragment relay is now automated too.** Its
 own fragment-carrying `redirect_uri` needs relaying real fragment

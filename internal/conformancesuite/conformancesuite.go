@@ -17,6 +17,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -285,8 +287,15 @@ func PlanInstances(httpClient *http.Client, apiBase, planID string) ([]string, e
 // suite-side — see
 // conformance/wallet-vp/scripts/run-modules's own doc comment for the
 // OID4VP Wallet role this is confirmed against.
+//
+// Result and Src are the entry's condition outcome ("SUCCESS",
+// "FAILURE", "WARNING", "INFO", "REVIEW", or empty for a plain log
+// line) and the condition (or module) that logged it, which
+// UnexpectedLogEntries reads.
 type LogEntry struct {
 	Msg            string `json:"msg"`
+	Result         string `json:"result"`
+	Src            string `json:"src"`
 	ImplicitSubmit *struct {
 		FullURL string `json:"fullUrl"`
 	} `json:"implicit_submit"`
@@ -313,6 +322,48 @@ func FetchModuleLog(httpClient *http.Client, apiBase, moduleID string) ([]LogEnt
 		return nil, err
 	}
 	return entries, nil
+}
+
+// UnexpectedLogEntries returns every entry of a module's log that
+// logged a FAILURE, or a WARNING from a condition allowedWarnings
+// doesn't name. The suite ranks REVIEW above WARNING in a module's
+// result (an image still needs looking at), so a REVIEW module can
+// hold warnings its result never shows: a driver grading on the result
+// alone has to read the log for them.
+func UnexpectedLogEntries(entries []LogEntry, allowedWarnings ...string) []LogEntry {
+	var unexpected []LogEntry
+	for _, e := range entries {
+		switch e.Result {
+		case "FAILURE":
+			unexpected = append(unexpected, e)
+		case "WARNING":
+			if !slices.Contains(allowedWarnings, e.Src) {
+				unexpected = append(unexpected, e)
+			}
+		}
+	}
+	return unexpected
+}
+
+// DescribeLogEntries renders entries as "RESULT src: msg", for an
+// error message.
+func DescribeLogEntries(entries []LogEntry) string {
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.Result + " " + e.Src + ": " + e.Msg
+	}
+	return strings.Join(lines, "; ")
+}
+
+// CheckFinished reports, as an error, a module whose status isn't
+// FINISHED or whose result isn't want: the one comparison every
+// role's driver makes between the suite's verdict and the one it
+// expects.
+func CheckFinished(status, result, want string) error {
+	if status != "FINISHED" || result != want {
+		return fmt.Errorf("the suite reports %s=%s, want FINISHED=%s", status, result, want)
+	}
+	return nil
 }
 
 // PathOf returns fullURL's own path component — the suite's own

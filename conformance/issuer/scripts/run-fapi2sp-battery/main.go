@@ -604,6 +604,17 @@ func runModule(httpClient *http.Client, cfg runModuleConfig, testName string, va
 	if err != nil {
 		return "ERROR: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 	}
+	// REVIEW outranks WARNING in a module's result, so a screenshot-gated
+	// module's warnings only show in its log.
+	if result == "REVIEW" {
+		entries, err := conformancesuite.FetchModuleLog(httpClient, cfg.apiBase, module.ID)
+		if err != nil {
+			return "ERROR: fetch module log: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
+		}
+		if unexpected := conformancesuite.UnexpectedLogEntries(entries); len(unexpected) > 0 {
+			return "ERROR: " + status + "=" + result + " but the log holds " + conformancesuite.DescribeLogEntries(unexpected) + moduleSuffix(cfg.apiBase, module.ID)
+		}
+	}
 	return status + "=" + result + moduleSuffix(cfg.apiBase, module.ID)
 }
 

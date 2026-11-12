@@ -213,19 +213,18 @@ specific reason to suspect drift, not just when something seems off.
 - **`verifier/`** — OID4VP 1.0 Final/HAIP Verifier role
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays
-  Wallet. **Confirmed live against a real, locally-run OIDF suite, all
-  12 of the plan's modules correct**: 6 positive-behavior modules
-  verify their presentation (including genuine
-  `request_uri_method=post` support, not a self-skip) and 6
-  negative-test modules have it rejected (5 SD-JWT VC corruptions plus
-  the `iso_mdl`-only `invalid-session-transcript`). `run-sdjwt-modules`
-  drives 11 of them under `sd_jwt_vc` and `run-mdoc-module` 4 under
-  `iso_mdl` (`happy-flow`, `request-uri-method-post`,
-  `request-uri-fetched-twice`, `invalid-session-transcript`). Every
-  module ends `FINISHED`/`REVIEW`, never `PASSED`: this binary answers
-  every response `200` and reports the verdict on its `/result` page,
-  and the suite then waits for a screenshot, whose upload placeholder
-  the scripts fill (they accept `PASSED` or `REVIEW`). Found and
+  Wallet. **Confirmed live against a real, locally-run OIDF suite**:
+  `run-sdjwt-modules` (`sd_jwt_vc`) and `run-mdoc-module` (`iso_mdl`)
+  drive every module the plan lists for their format, each graded
+  against an expected verdict (`verifier/README.md`'s table): a
+  presentation the Verifier must accept ends `FINISHED`/`REVIEW` (it
+  answers `200`, and the suite waits for a screenshot of its result
+  page, which the scripts fill) with the result page reporting it
+  verified; one it must refuse is answered `400`, which the suite
+  grades `FINISHED`/`PASSED` itself. The module's log must hold no
+  `FAILURE` or unexpected `WARNING`, and a module the plan lists with
+  no expected verdict fails the run. The two revocation modules aren't
+  driven: the harness checks no credential status. Found and
   fixed three real gaps along the way:
   `internal/jwe`'s Concat KDF never incorporated the sender's
   `apu`/`apv` header members, silently deriving the wrong CEK against
@@ -244,10 +243,14 @@ specific reason to suspect drift, not just when something seems off.
   `cmd/conformance-wallet-vp` stands up `wallet`'s own presentation
   half behind real HTTP; the suite plays Verifier. Confirmed live end
   to end against `cmd/conformance-verifier` itself, and **every
-  direct_post.jwt module is run live by `run-modules`**: 15 in the main
-  plan (7 positive, 8 negative) plus `all-mandatory-claims`, which only
-  applies under a real `credential_type` and so runs in a second plan
-  (`eudi_pid` for `sd_jwt_vc`, `mdl` for `iso_mdl`). The DC API-only
+  direct_post.jwt module is run live by `run-modules`**: every module
+  the main plan lists, plus those only a second plan under a real
+  `credential_type` lists (`eudi_pid` for `sd_jwt_vc`, `mdl` for
+  `iso_mdl`: `all-mandatory-claims`, the PID claims-path modules,
+  `age-over-18`), each graded on what the wallet did as well as the
+  suite's verdict and log (`wallet-vp/README.md`'s "Expected
+  verdicts"): a refusal can only end `REVIEW`, so a wallet that
+  presents where it must refuse is caught by its own action. The DC API-only
   modules 404 for this variant and run under dc_api.jwt. Five real
   gaps found and fixed along the way: the
   same x5c-header/self-signed-leaf pair already found for

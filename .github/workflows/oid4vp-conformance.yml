@@ -133,8 +133,9 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY" || true
 
-      # The suite grades the Verifier's modules from a screenshot of its
-      # result page; its own log says whether it verified each response.
+      # The Verifier's own log says why it verified or refused each
+      # response (the drivers grade its result page, the suite's verdict
+      # and the module log; see conformance/verifier/README.md).
       - name: Save the conformance verifier's log
         if: always()
         run: |
