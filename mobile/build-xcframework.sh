@@ -25,4 +25,16 @@ PATH="$PWD/build/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=13.0 gomobile bind \
 	-target=ios,iossimulator,macos -iosversion=15 \
 	-trimpath -ldflags="-s -w" "$@" \
 	-o "$OUT/Mobile.xcframework" .
+# gomobile writes no privacy manifest: each framework gets
+# ios/PrivacyInfo.xcprivacy, which declares the required-reason APIs
+# the Go archive calls (the runtime's clock, mach_absolute_time;
+# statuslist's cache, stat and file timestamps). A framework's resources
+# are at its root on iOS, under Resources on macOS.
+for fw in "$OUT"/Mobile.xcframework/*/Mobile.framework; do
+	if [ -d "$fw/Versions/A/Resources" ]; then
+		cp ios/PrivacyInfo.xcprivacy "$fw/Versions/A/Resources/"
+	else
+		cp ios/PrivacyInfo.xcprivacy "$fw/"
+	fi
+done
 echo "$OUT/Mobile.xcframework"

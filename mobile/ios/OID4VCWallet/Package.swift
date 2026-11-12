@@ -15,7 +15,7 @@ let package = Package(
     products: [.library(name: "OID4VCWallet", targets: ["OID4VCWallet"])],
     targets: [
         .binaryTarget(name: "Mobile", path: framework),
-        .target(name: "OID4VCWallet", dependencies: ["Mobile"]),
+        .target(name: "OID4VCWallet", dependencies: ["Mobile"], resources: [.copy("PrivacyInfo.xcprivacy")]),
         .testTarget(name: "OID4VCWalletTests", dependencies: ["OID4VCWallet", "Mobile"]),
     ]
 )

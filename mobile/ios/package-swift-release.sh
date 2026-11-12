@@ -39,6 +39,13 @@ if grep -rqs MobileTestEnv "$FRAMEWORK"; then
     echo "$FRAMEWORK is the mobiletest build: rebuild it without SKIP_FRAMEWORK_BUILD" >&2
     exit 1
 fi
+# Nor one without its privacy manifest, in every framework.
+for fw in "$FRAMEWORK"/*/Mobile.framework; do
+    if ! cmp -s PrivacyInfo.xcprivacy "$fw/PrivacyInfo.xcprivacy" && ! cmp -s PrivacyInfo.xcprivacy "$fw/Versions/A/Resources/PrivacyInfo.xcprivacy"; then
+        echo "$fw has no current PrivacyInfo.xcprivacy: rebuild it without SKIP_FRAMEWORK_BUILD" >&2
+        exit 1
+    fi
+done
 
 ZIP="$ASSETS/Mobile.xcframework.zip"
 rm -f "$ZIP"
@@ -63,7 +70,7 @@ let package = Package(
     products: [.library(name: "OID4VCWallet", targets: ["OID4VCWallet"])],
     targets: [
         $1,
-        .target(name: "OID4VCWallet", dependencies: ["Mobile"]),${2:-}
+        .target(name: "OID4VCWallet", dependencies: ["Mobile"], resources: [.copy("PrivacyInfo.xcprivacy")]),${2:-}
     ]
 )
 MANIFEST
