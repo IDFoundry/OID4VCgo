@@ -87,6 +87,10 @@ type config struct {
 	// over the Digital Credentials API, as untrusted_verifier
 	// (walletflow.Config.RequireSignedDCAPIRequests).
 	RequireSignedDCAPIRequests bool `json:"require_signed_dcapi_requests,omitempty"`
+	// AcceptX509SANDNS also answers Verifiers whose client_id has the
+	// x509_san_dns prefix, besides x509_hash; it needs VerifierRoots
+	// (walletflow.Config.AcceptX509SANDNS).
+	AcceptX509SANDNS bool `json:"accept_x509_san_dns,omitempty"`
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name (walletflow.Config.RequireIssuerName).
 	RequireIssuerName bool `json:"require_issuer_name,omitempty"`
@@ -493,7 +497,10 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, Development: cfg.Development, Locales: cfg.Locales,
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
 		ProofKeyByJWK: cfg.ProofKeyByJWK, RequireTrustedMdocReader: cfg.RequireTrustedMdocReader,
-		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
+	}
+	if cfg.AcceptX509SANDNS && cfg.VerifierRoots == "" {
+		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("accept_x509_san_dns needs verifier_roots: an x509_san_dns name is the Verifier's only through a chain to them"))
 	}
 	if cfg.ProofKeyByJWK && cfg.ProofKeyByIndex {
 		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("proof_key_by_jwk and proof_key_by_index name a proof's key in two ways; set one"))

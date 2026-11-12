@@ -34,6 +34,16 @@ standing in for the same-device launch and the browser:
 | A revoked SD-JWT VC (its status list entry invalid) | the verifier refuses it |
 | An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata, before the verifier has the metadata cached | the verifier refuses it |
 | A revoked mdoc | the verifier refuses it |
+| SD-JWT VC PID, `openid4vp` profile, the verifier's `client_id` `x509_san_dns:localhost`, by GET and by `request_uri_method=post`, to a wallet with `accept_x509_san_dns` | accepted |
+| The same `x509_san_dns` request to a wallet without `accept_x509_san_dns` | the wallet refuses |
+
+The `x509_san_dns` cases restart the verifier with
+`VERIFIER_CLIENTIDPREFIX=x509_san_dns` and
+`VERIFIER_ORIGINALCLIENTID=localhost`: its Access Certificate carries
+the dNSName `localhost`, the host of its `response_uri`, which
+OpenID4VP 1.0 §5.9.3 has the wallet require, and chains to the CA the
+wallet trusts for it. They use the `openid4vp` profile, since HAIP 1.0
+§5 has a Verifier use `x509_hash`.
 
 Each accepted case also completes the same-device return: the wallet
 follows the verifier's `redirect_uri`, and the verifier releases the

@@ -365,6 +365,16 @@ ecosystem, and record why:
   require and refuse `jwk` in place of. Set it only for an issuer that
   takes no index. ``WalletConfiguration/proofKeyByIndex``, which named
   the key by its index before that was the default, has no effect.
+- ``WalletConfiguration/acceptX509SANDNS``: also answers Verifiers
+  identified by the `x509_san_dns` client ID prefix, as some
+  deployments' Verifiers are, besides the `x509_hash` HAIP has Verifiers
+  use. The client ID's DNS name must be in the signing certificate,
+  which must chain to ``WalletConfiguration/verifierRoots``, and be the
+  host of the request's response URI. Every name in a certificate under
+  ``WalletConfiguration/verifierRoots`` is then a Verifier the wallet
+  answers: set it only where those roots certify Verifiers alone, or
+  with ``WalletConfiguration/verifierRequireEKU``. It needs
+  ``WalletConfiguration/verifierRoots``.
 - ``WalletConfiguration/acceptMDLSignerWithoutEKU`` and
   ``ProximityReaderConfiguration/acceptMDLSignerWithoutEKU``: also
   accept a document signer certificate with no extended key usage,

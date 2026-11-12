@@ -164,6 +164,15 @@ public struct WalletConfiguration: Codable, Sendable {
     /// index in the attestation, which is now the default: it has no
     /// effect, and can't be set with `proofKeyByJWK`.
     public var proofKeyByIndex: Bool
+    /// Also answers Verifiers whose client ID has the `x509_san_dns`
+    /// prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
+    /// 1.0 has Verifiers use: the DNS name must be one of the request's
+    /// signing certificate, which must chain to `verifierRoots`, and the
+    /// host of its response URI. Needs `verifierRoots`. Every name in a
+    /// certificate under `verifierRoots` is then a Verifier the wallet
+    /// answers, so set it only where those roots certify Verifiers alone,
+    /// or with `verifierRequireEKU`.
+    public var acceptX509SANDNS: Bool
     /// How an in-person response authenticates the mdoc. `.macPreferred`
     /// needs a key store that is also a `KeyAgreement`.
     public var proximityDeviceAuth: ProximityDeviceAuth
@@ -295,7 +304,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, developmentRoots: String = "", locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI, proofKeyByJWK: Bool = false, proofKeyByIndex: Bool = false,
-                tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
+                acceptX509SANDNS: Bool = false, tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
                 issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
@@ -326,6 +335,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.issuanceProfile = issuanceProfile
         self.proofKeyByJWK = proofKeyByJWK
         self.proofKeyByIndex = proofKeyByIndex
+        self.acceptX509SANDNS = acceptX509SANDNS
         self.proximityDeviceAuth = proximityDeviceAuth
         self.verifierRequireEKU = verifierRequireEKU
         self.registrarRequireEKU = registrarRequireEKU
@@ -362,6 +372,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case development, developmentRoots = "development_roots", locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case proofKeyByJWK = "proof_key_by_jwk", proofKeyByIndex = "proof_key_by_index"
+        case acceptX509SANDNS = "accept_x509_san_dns"
         case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
         case issuerRequireEKU = "issuer_require_eku", issuerMetadataRequireEKU = "issuer_metadata_require_eku"
@@ -404,6 +415,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
                   proofKeyByJWK: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByJWK) ?? false,
                   proofKeyByIndex: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByIndex) ?? false,
+                  acceptX509SANDNS: try c.decodeIfPresent(Bool.self, forKey: .acceptX509SANDNS) ?? false,
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",

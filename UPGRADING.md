@@ -45,6 +45,22 @@ CHANGELOG.md's BREAKING CHANGES sections.
   so nothing else changes. A wallet built on `wallet` that posts its
   own metadata to `FetchAuthorizationRequestPost` may want the same
   members.
+- **New, opt-in: the `x509_san_dns` Client Identifier Prefix**
+  (OpenID4VP 1.0 §5.9.3), for Verifiers that use it instead of
+  HAIP's `x509_hash`. Nothing changes unless you set
+  `wallet.Config.AcceptX509SANDNS`, `walletflow.Config.AcceptX509SANDNS`
+  (the mobile configuration's `accept_x509_san_dns`, `acceptX509SANDNS`
+  in the Swift and Kotlin libraries), or the `AcceptX509SANDNS` of
+  `wallet.ParseAuthorizationRequestParams`, `ParseDCAPIRequestParams`
+  or `ParseDCAPIRequestDataParams`. It needs a `VerifierTrust` that
+  verifies chains to anchors: `New` refuses it with none,
+  `NoVerifierTrust`, or an `X5CVerifierRoots` without `Roots`, and the
+  mobile configuration without `verifier_roots`. Every dNSName in a
+  certificate under those anchors then names a Verifier the wallet
+  answers, so set it only where they certify Verifiers alone, or with a
+  `LeafPolicy` (`verifier_require_eku`) telling Verifiers'
+  certificates apart. `walletflow` then lists `x509_san_dns` in the
+  `wallet_metadata` it posts.
 
 ## v0.75.3 → v0.76.0
 

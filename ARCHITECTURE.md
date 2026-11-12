@@ -1692,6 +1692,14 @@ changes whether *every* bullet below is `(done)`.
   redirect from it — the Verifier's reply is a 200 carrying JSON
   (§8.2), and following one would resend the response, and take the
   `redirect_uri` the user agent is sent to, from wherever it pointed.
+  Every parser binds the `client_id` to the chain-verified signing
+  leaf in one place (`bindClientID`): its `x509_hash`, or, with
+  `Config.AcceptX509SANDNS`, an `x509_san_dns` one of its dNSNames
+  (OpenID4VP §5.9.3), which outside the DC API must also be
+  `response_uri`'s host, checked before any error could be answered
+  there. `New` refuses the opt-in without a `VerifierTrust` that
+  verifies chains: unlike a hash, a name binds the request to whichever
+  certificate carries it.
   `Respond` does the whole answer in one call (`PresentCredentials`,
   `BuildDirectPostResponse`, `SubmitDirectPostResponse`), and
   `RespondSelection` does it for the credentials the holder chose.

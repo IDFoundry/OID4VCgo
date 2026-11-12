@@ -56,6 +56,25 @@ type Config struct {
 	// rejected under AssuranceProduction.
 	VerifierTrust VerifierTrust
 
+	// AcceptX509SANDNS also accepts Request Objects whose client_id has
+	// the x509_san_dns Client Identifier Prefix (OpenID4VP 1.0 §5.9.3),
+	// besides x509_hash: "x509_san_dns:<DNS name>", where the DNS name
+	// is a dNSName subject alternative name of the x5c leaf that signed
+	// the request, and, outside the DC API, response_uri's host. HAIP
+	// 1.0 §5 has Verifiers use x509_hash for signed requests, and asks
+	// Wallets to accept that; it doesn't forbid a Wallet accepting
+	// another prefix, which the Verifiers of some deployments use. Off,
+	// an x509_san_dns client_id is refused as one that isn't the leaf's
+	// x509_hash.
+	//
+	// The name binds the request to the Verifier only through the chain
+	// to VerifierTrust's anchors, so New refuses it without a
+	// VerifierTrust that verifies one: none, NoVerifierTrust, or an
+	// X5CVerifierRoots without Roots. Those anchors then vouch for every
+	// name in the certificates under them: anchor only Verifiers, or
+	// tell their certificates apart with X5CVerifierRoots.LeafPolicy.
+	AcceptX509SANDNS bool
+
 	// RequireSignedDCAPIRequests refuses unsigned OpenID4VP requests over
 	// the Digital Credentials API (ParseDCAPIRequestData's
 	// DCAPIProtocolUnsigned) with ErrUntrustedVerifier: their only
@@ -203,6 +222,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, err
 	}
 	if err := validateVerifierTrust(cfg.Assurance, cfg.VerifierTrust); err != nil {
+		return nil, err
+	}
+	if err := checkAcceptX509SANDNS(cfg); err != nil {
 		return nil, err
 	}
 

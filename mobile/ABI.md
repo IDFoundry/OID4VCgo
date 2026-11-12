@@ -43,7 +43,11 @@ Later within version 15 (an optional configuration key, so an older
 wrapper is unaffected), naming the key by its index is the default,
 `proof_key_by_index` has no effect, and `proof_key_by_jwk` names it in
 `jwk` instead; the Swift and Kotlin libraries have it from OID4VCWallet
-0.36.0, as `proofKeyByJWK`.
+0.36.0, as `proofKeyByJWK`. Also within version 15 (an optional
+configuration key, so an older wrapper is unaffected), a Wallet's
+`accept_x509_san_dns` answers Verifiers identified by the
+`x509_san_dns` Client Identifier Prefix; the Swift and Kotlin libraries
+have it from OID4VCWallet 0.36.0, as `acceptX509SANDNS`.
 
 Also within version 15, without bumping it (callback marks and a
 detail, so an older wrapper is unaffected): a `KeyStore.Sign` or
@@ -442,7 +446,7 @@ refused, and the Kotlin library's an `IOException` and a
  "verifier_require_eku": "", "registrar_require_eku": "", "issuer_require_eku": "", "issuer_metadata_require_eku": "",
  "mdoc_issuer_roots": "<PEM>", "mdoc_issuer_roots_by_doctype": {"org.iso.18013.5.1.mDL": "<PEM>"}, "mdoc_issuer_require_eku": "",
  "accept_mdl_signer_without_eku": false,
- "require_signed_dcapi_requests": false,
+ "require_signed_dcapi_requests": false, "accept_x509_san_dns": false,
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
  "proof_key_by_jwk": false,
@@ -566,6 +570,18 @@ over the Digital Credentials API (`StartDCAPIPresentation`) with
 support unsigned requests. The Kotlin library sets it
 (`requireSignedDCAPIRequests`); the Swift package doesn't, since Safari
 asks only with `org-iso-mdoc`.
+`accept_x509_san_dns` also answers a Verifier whose `client_id` is
+`x509_san_dns:<DNS name>` (OpenID4VP 1.0 §5.9.3), besides `x509_hash`,
+the prefix HAIP 1.0 §5 has Verifiers use: the name must be a dNSName of
+the certificate the request is signed with, which must chain to
+`verifier_roots`, and, for a request fetched from a link, the host of
+its `response_uri`. A Digital Credentials API request is bound to the
+calling origin by its `expected_origins` instead. The wallet metadata
+posted for `request_uri_method=post` then lists `x509_san_dns` too. It
+needs `verifier_roots` (`invalid_input` without), and is off by default:
+every name in a certificate under `verifier_roots` is then a Verifier
+the wallet answers, so set it only where those roots certify Verifiers
+alone, or with `verifier_require_eku`.
 `status_issuers` names, for each credential issuer (an SD-JWT VC's
 `iss`), the Status Issuers that may sign its status lists on its behalf,
 each recognized by a certificate under `issuer_roots` naming it (a URI,

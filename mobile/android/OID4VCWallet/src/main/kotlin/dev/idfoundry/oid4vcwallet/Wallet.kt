@@ -78,6 +78,19 @@ public data class WalletConfiguration(
      */
     @SerialName("require_signed_dcapi_requests") val requireSignedDCAPIRequests: Boolean = false,
     /**
+     * Also answers Verifiers whose client ID has the `x509_san_dns`
+     * prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
+     * 1.0 has Verifiers use: the DNS name must be one of the request's
+     * signing certificate, which must chain to [verifierRoots], and, for
+     * a request from a link, the host of its response URI; a Digital
+     * Credentials API request is bound to the calling origin by its
+     * `expected_origins` instead. Needs [verifierRoots]. Every name in a
+     * certificate under [verifierRoots] is then a Verifier the wallet
+     * answers, so set it only where those roots certify Verifiers alone,
+     * or with [verifierRequireEKU].
+     */
+    @SerialName("accept_x509_san_dns") val acceptX509SANDNS: Boolean = false,
+    /**
      * Relaxes what production requires, for a wallet talking to services
      * on a development machine. Never ship an app with it set. It lets
      * issuers, Authorization Servers, Verifiers and status lists be on

@@ -71,7 +71,7 @@ func (s *server) handleDCAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) answerDCAPI(r *http.Request, req dcapiRequest) dcapiAnswer {
 	authReq, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
-		Protocol: req.Protocol, Data: req.Data, Origin: req.Origin, VerifierTrust: s.trust,
+		Protocol: req.Protocol, Data: req.Data, Origin: req.Origin, VerifierTrust: s.trust, AcceptX509SANDNS: s.acceptSANDNS,
 	})
 	if err != nil {
 		log.Printf("parse dc api request: %v", err)

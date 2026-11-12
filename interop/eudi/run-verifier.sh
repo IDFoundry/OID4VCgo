@@ -101,34 +101,42 @@ CLIENT_ID_HASH="$(openssl x509 -in verifier-chain.pem -outform DER | openssl dgs
 # signs its Request Objects ES512 with a P-521 Access Certificate, as
 # its own docker-compose configures it.
 CLASSIFICATIONS='{"pid":{"vcts":["urn:eudi:pid:1"],"docTypes":["eu.europa.ec.eudi.pid.1"]},"qeaa":{"vcts":[],"docTypes":[]},"pubeaa":{"vcts":[],"docTypes":[]},"eaa":[]}'
-docker run -d --name "$CONTAINER" --platform linux/amd64 -p "127.0.0.1:$PORT:8443" ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
-  -v "$WORK:/certs:ro" -v "$WORK/bindings:/bindings:ro" -e SERVICE_BINDING_ROOT=/bindings \
-  -e SERVER_PORT=8443 -e SERVER_SSL_ENABLED=true \
-  -e SERVER_SSL_CERTIFICATE=file:/certs/tls-cert.pem -e SERVER_SSL_CERTIFICATE_PRIVATE_KEY=file:/certs/tls-key.pem \
-  -e JAVA_TOOL_OPTIONS=-XX:MaxDirectMemorySize=128M \
-  -e VERIFIER_VALIDATION_STATUSCHECK_ENABLED=true \
-  -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_POLICY=always_required \
-  -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_VCTS_0_VCT=urn:eudi:pid:1 \
-  -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_VCTS_0_URL="$SERVE_URL/type-metadata/pid" \
-  -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_INTEGRITY_ENABLED=true \
-  -e VERIFIER_PUBLICURL="$VERIFIER" \
-  -e VERIFIER_CLIENTIDPREFIX=x509_hash -e VERIFIER_ORIGINALCLIENTID="$CLIENT_ID_HASH" \
-  -e VERIFIER_INTENDEDUSES= -e VERIFIER_ATTESTATIONCLASSIFICATIONS="$CLASSIFICATIONS" \
-  -e VERIFIER_ACCESS_CERTIFICATE_SIGNING_ALGORITHM=ES512 \
-  -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE=file:///certs/keystore.p12 -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_TYPE=pkcs12 \
-  -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
-  -e VERIFIER_ACCESS_CERTIFICATE_ALIAS=access_certificate -e VERIFIER_ACCESS_CERTIFICATE_PASSWORD="$KEYSTORE_PASSWORD" \
-  "$VERIFIER_IMAGE" >/dev/null
-for _ in $(seq 1 150); do
-  if docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then break; fi
-  if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != true ]]; then break; fi
-  sleep 2
-done
-if ! docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then
-  docker logs "$CONTAINER" 2>&1 | grep -E 'APPLICATION FAILED|Reason|Caused by' | head -5 >&2 || true
-  echo "the verifier did not start; see $WORK/verifier.log" >&2
-  exit 2
-fi
+start_verifier() {  # $1 the Client Identifier Prefix, $2 the client_id without it
+  local prefix="$1" original="$2"
+  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    docker logs "$CONTAINER" >> "$WORK/verifier.log" 2>&1 || true
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  fi
+  docker run -d --name "$CONTAINER" --platform linux/amd64 -p "127.0.0.1:$PORT:8443" ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
+    -v "$WORK:/certs:ro" -v "$WORK/bindings:/bindings:ro" -e SERVICE_BINDING_ROOT=/bindings \
+    -e SERVER_PORT=8443 -e SERVER_SSL_ENABLED=true \
+    -e SERVER_SSL_CERTIFICATE=file:/certs/tls-cert.pem -e SERVER_SSL_CERTIFICATE_PRIVATE_KEY=file:/certs/tls-key.pem \
+    -e JAVA_TOOL_OPTIONS=-XX:MaxDirectMemorySize=128M \
+    -e VERIFIER_VALIDATION_STATUSCHECK_ENABLED=true \
+    -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_POLICY=always_required \
+    -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_VCTS_0_VCT=urn:eudi:pid:1 \
+    -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_VCTS_0_URL="$SERVE_URL/type-metadata/pid" \
+    -e VERIFIER_VALIDATION_SDJWTVC_TYPEMETADATA_RESOLUTION_INTEGRITY_ENABLED=true \
+    -e VERIFIER_PUBLICURL="$VERIFIER" \
+    -e VERIFIER_CLIENTIDPREFIX="$prefix" -e VERIFIER_ORIGINALCLIENTID="$original" \
+    -e VERIFIER_INTENDEDUSES= -e VERIFIER_ATTESTATIONCLASSIFICATIONS="$CLASSIFICATIONS" \
+    -e VERIFIER_ACCESS_CERTIFICATE_SIGNING_ALGORITHM=ES512 \
+    -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE=file:///certs/keystore.p12 -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_TYPE=pkcs12 \
+    -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
+    -e VERIFIER_ACCESS_CERTIFICATE_ALIAS=access_certificate -e VERIFIER_ACCESS_CERTIFICATE_PASSWORD="$KEYSTORE_PASSWORD" \
+    "$VERIFIER_IMAGE" >/dev/null
+  for _ in $(seq 1 150); do
+    if docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then break; fi
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != true ]]; then break; fi
+    sleep 2
+  done
+  if ! docker logs "$CONTAINER" 2>&1 | grep -q 'Started VerifierEndpointApplication'; then
+    docker logs "$CONTAINER" 2>&1 | grep -E 'APPLICATION FAILED|Reason|Caused by' | head -5 >&2 || true
+    echo "the verifier did not start; see $WORK/verifier.log" >&2
+    exit 2
+  fi
+}
+start_verifier x509_hash "$CLIENT_ID_HASH"
 
 start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, $3 optional status list index
   local config="$1" verifier_ca="$2" idx="${3:-0}"
@@ -362,6 +370,32 @@ else
     bad "the wallet answered ($(head -c 300 dcapi-answer.json))"
   fi
 fi
+
+# x509_san_dns (OpenID4VP 1.0 §5.9.3): the verifier again, now with the
+# client_id x509_san_dns:localhost, the Access Certificate's dNSName and
+# its response_uri's host. HAIP 1.0 §5 has a Verifier use x509_hash, so
+# these run under the verifier's openid4vp profile; the wallet accepts
+# the prefix only with accept_x509_san_dns, and on a POST fetch says so
+# in its wallet_metadata's client_id_prefixes_supported.
+echo "== x509_san_dns: the verifier restarted with client_id x509_san_dns:localhost"
+start_verifier x509_san_dns localhost
+jq '.accept_x509_san_dns = true' wallet-sdjwt.json > wallet-sdjwt-san-dns.json
+start_wallet wallet-sdjwt-san-dns.json verifier-ca.pem
+for method in get post; do
+  present "sdjwt-san-dns-$method" "$SDJWT_QUERY" openid4vp issuer-ca.pem "$method"
+  if jq -e '.client_id == "x509_san_dns:localhost"' init.json >/dev/null 2>&1; then ok "the request's client_id was x509_san_dns:localhost"
+  else bad "the request's client_id was x509_san_dns:localhost ($(jq -r '.client_id' init.json))"; fi
+done
+
+echo "== control: an x509_san_dns request, to a wallet not opted in"
+start_wallet wallet-sdjwt.json verifier-ca.pem
+if init_transaction "$SDJWT_QUERY" openid4vp issuer-ca.pem get; then
+  authorize san-dns-not-accepted.txt
+  result san-dns-not-accepted.json
+  wallet_refused san-dns-not-accepted.txt \
+    "wallet: parse authorization request: client_id \"x509_san_dns:localhost\" does not match x5c leaf's own x509_hash \"x509_hash:$CLIENT_ID_HASH\"" \
+    san-dns-not-accepted.json
+else bad "transaction initialized"; fi
 
 # Each check the verifier made, it made by fetching from serve: a run in
 # which it fetched nothing didn't check status or Type Metadata at all.

@@ -109,7 +109,9 @@ against the EUDI Wallet reference implementation's
 from its published image pinned by digest, configured as strictly as it
 allows: SD-JWT VC and mdoc presentations under its `haip` and
 `openid4vp` profiles and over the DC API, with the SD-JWT VC's Type
-Metadata checked and each credential's status list entry read, must be
+Metadata checked and each credential's status list entry read, and an
+SD-JWT VC presentation to the verifier configured with an
+`x509_san_dns` client_id, to a wallet opted in to that prefix, must be
 accepted, and controls (revoked credentials, a mismatched
 `vct#integrity`, untrusted CAs on either side, a replayed request, a
 mismatched `client_id`, an unheld credential) refused

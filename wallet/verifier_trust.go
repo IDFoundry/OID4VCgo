@@ -43,7 +43,10 @@ type VerifierTrust interface {
 // any purpose, is a Verifier this Wallet trusts. Roots must therefore
 // anchor only Verifier certificates — never x509.SystemCertPool(), or
 // an ecosystem CA that also issues issuer or wallet provider
-// certificates, unless LeafPolicy tells them apart.
+// certificates, unless LeafPolicy tells them apart. With
+// Config.AcceptX509SANDNS, every dNSName in those certificates is also
+// a Verifier name the Wallet will send presentations to, under the
+// same rule.
 type X5CVerifierRoots struct {
 	// Roots is the trust anchor set a Verifier's chain must verify
 	// against. REQUIRED.

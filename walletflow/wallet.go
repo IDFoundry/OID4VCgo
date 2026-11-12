@@ -195,6 +195,19 @@ type Config struct {
 	// Development: certrevocation.NoCheck{} declines.
 	VerifierTrust wallet.VerifierTrust
 
+	// AcceptX509SANDNS also answers Verifiers whose client_id has the
+	// x509_san_dns Client Identifier Prefix (OpenID4VP 1.0 §5.9.3), as
+	// some deployments' Verifiers use, besides x509_hash, which HAIP 1.0
+	// §5 has Verifiers use: the client_id's DNS name must be a dNSName
+	// of the certificate the request is signed with, and, outside the
+	// Digital Credentials API, the host of its response_uri (see
+	// wallet.Config.AcceptX509SANDNS). The wallet metadata a request_uri
+	// POST sends then lists it in client_id_prefixes_supported. The name
+	// is the Verifier's only through VerifierTrust's chain, so New
+	// refuses it without a VerifierTrust that verifies one
+	// (wallet.NoVerifierTrust, or none). Off by default.
+	AcceptX509SANDNS bool
+
 	// RegistrarRoots, if set, are the registrars whose registrations of
 	// Verifiers the wallet checks (the registration package): a
 	// request's registration, from its verifier_info, is reported with
@@ -504,8 +517,8 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
-		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
-		IssuerMetadataRoots:        cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		AcceptX509SANDNS: cfg.AcceptX509SANDNS, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
+		IssuerMetadataRoots: cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
 		IssuerMetadataRevocation:    cfg.IssuerMetadataRevocation,
 		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
 		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,

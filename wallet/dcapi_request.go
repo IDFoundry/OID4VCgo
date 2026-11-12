@@ -37,6 +37,10 @@ type ParseDCAPIRequestParams struct {
 	// NoVerifierTrust{} to opt out explicitly.
 	VerifierTrust VerifierTrust
 
+	// AcceptX509SANDNS also accepts the x509_san_dns Client Identifier
+	// Prefix, as ParseAuthorizationRequestParams.AcceptX509SANDNS does.
+	AcceptX509SANDNS bool
+
 	// Now is the time a signed request's exp and nbf are checked at;
 	// nil means time.Now.
 	Now func() time.Time
@@ -48,14 +52,22 @@ type ParseDCAPIRequestParams struct {
 //
 // It checks the Request Object as ParseAuthorizationRequest does — its
 // x5c chain with params.VerifierTrust, its signature, and that its
-// client_id is the x509_hash of the signing certificate — and then
-// what the DC API adds: response_type must be vp_token, response_mode
-// dc_api.jwt, and
+// client_id is the x509_hash of the signing certificate, or with
+// params.AcceptX509SANDNS an x509_san_dns one of its dNSName subject
+// alternative names — and then what the DC API adds: response_type
+// must be vp_token, response_mode dc_api.jwt, and
 // params.Origin must be one of the request's expected_origins
 // (Appendix A.2: "If the Origin does not match any of the entries in
 // expected_origins, the Wallet MUST return an error"). A request
 // carrying transaction_data is refused with a *RequestRejectedError,
 // as ParseAuthorizationRequest refuses it.
+//
+// An x509_san_dns DNS name isn't checked against the origin: OpenID4VP
+// 1.0 §5.9.3 exempts the DC API from its redirect_uri FQDN rule
+// ("applies unless the interaction is using the DC API"), since there
+// the response goes back through the platform to the calling origin,
+// which expected_origins, in the signed request, already binds it to
+// (Appendix A.2).
 //
 // Answer it with PresentCredentials, setting PresentationRequest.Origin
 // to the returned Origin (it binds the presentations to it, Appendix
@@ -70,7 +82,7 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 	if params.Origin == "" {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Origin is required")
 	}
-	cert, clientID, payload, err := verifyRequestObject(params.Request, params.VerifierTrust)
+	cert, payload, err := verifyRequestObject(params.Request, params.VerifierTrust)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
@@ -81,10 +93,10 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 	if err := checkRequestObjectClaims(wire, params.Now); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
-	if wire.ClientID != clientID {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: client_id %q does not match x5c leaf's own x509_hash %q", wire.ClientID, clientID)
+	if _, err := bindClientID(wire.ClientID, cert, params.AcceptX509SANDNS, params.VerifierTrust); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
-	return finishDCAPIRequest(wire, params.Origin, cert, clientID, true)
+	return finishDCAPIRequest(wire, params.Origin, cert, wire.ClientID, true)
 }
 
 // finishDCAPIRequest checks what every DC API request must carry and
@@ -177,7 +189,9 @@ func (w *Wallet) ParseDCAPIRequest(request, origin string) (AuthorizationRequest
 	if w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: request, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, Now: w.deps.Clock.Now})
+	return ParseDCAPIRequest(ParseDCAPIRequestParams{
+		Request: request, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, AcceptX509SANDNS: w.cfg.AcceptX509SANDNS, Now: w.deps.Clock.Now,
+	})
 }
 
 // The DC API protocol identifiers of OpenID4VP's three request forms
@@ -222,6 +236,11 @@ type ParseDCAPIRequestDataParams struct {
 	// for the unsigned one.
 	VerifierTrust VerifierTrust
 
+	// AcceptX509SANDNS also accepts the x509_san_dns Client Identifier
+	// Prefix in a signed or multi-signed request, as
+	// ParseDCAPIRequestParams.AcceptX509SANDNS does.
+	AcceptX509SANDNS bool
+
 	// Now is the time a signed request's exp and nbf are checked at;
 	// nil means time.Now.
 	Now func() time.Time
@@ -237,7 +256,8 @@ type ParseDCAPIRequestDataParams struct {
 //   - DCAPIProtocolMultiSigned: data.request's signatures are tried in
 //     order, and the first whose x5c chain VerifierTrust accepts and
 //     whose signature verifies authenticates the request: its protected
-//     header's client_id must be the leaf's x509_hash, and its
+//     header's client_id must be the leaf's x509_hash (or, with
+//     AcceptX509SANDNS, an x509_san_dns one of its names), and its
 //     verifier_info is the request's. client_id and verifier_info may
 //     appear only there, never in the payload (Appendix A.3.2.2).
 //     Signatures that don't verify are skipped, as long as one does.
@@ -272,7 +292,9 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 		if data.Request == "" {
 			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
 		}
-		return ParseDCAPIRequest(ParseDCAPIRequestParams{Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, Now: params.Now})
+		return ParseDCAPIRequest(ParseDCAPIRequestParams{
+			Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, AcceptX509SANDNS: params.AcceptX509SANDNS, Now: params.Now,
+		})
 	case DCAPIProtocolMultiSigned:
 		return parseMultiSignedDCAPIRequest(params)
 	case DCAPIProtocolUnsigned:
@@ -315,7 +337,7 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 	for i, sig := range data.Request.Signatures {
 		// Each signature over the one payload is a JWS of its own, in
 		// Compact Serialization (RFC 7515 §7.2.1, §5.1).
-		cert, clientID, payload, err := verifyRequestObject(sig.Protected+"."+data.Request.Payload+"."+sig.Signature, params.VerifierTrust)
+		cert, payload, err := verifyRequestObject(sig.Protected+"."+data.Request.Payload+"."+sig.Signature, params.VerifierTrust)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("signature %d: %w", i, err))
 			continue
@@ -329,10 +351,11 @@ func parseMultiSignedDCAPIRequest(params ParseDCAPIRequestDataParams) (Authoriza
 			errs = append(errs, fmt.Errorf("signature %d: malformed protected header", i))
 			continue
 		}
-		if header.ClientID != clientID {
-			errs = append(errs, fmt.Errorf("signature %d: client_id %q does not match x5c leaf's own x509_hash %q", i, header.ClientID, clientID))
+		if _, err := bindClientID(header.ClientID, cert, params.AcceptX509SANDNS, params.VerifierTrust); err != nil {
+			errs = append(errs, fmt.Errorf("signature %d: %w", i, err))
 			continue
 		}
+		clientID := header.ClientID
 		var wire wireRequestObjectPayload
 		if err := strictjson.Unmarshal(payload, &wire); err != nil {
 			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: parse payload: %w", err)
@@ -363,5 +386,7 @@ func (w *Wallet) ParseDCAPIRequestData(protocol string, data []byte, origin stri
 	if protocol != DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	return ParseDCAPIRequestData(ParseDCAPIRequestDataParams{Protocol: protocol, Data: data, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, Now: w.deps.Clock.Now})
+	return ParseDCAPIRequestData(ParseDCAPIRequestDataParams{
+		Protocol: protocol, Data: data, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, AcceptX509SANDNS: w.cfg.AcceptX509SANDNS, Now: w.deps.Clock.Now,
+	})
 }

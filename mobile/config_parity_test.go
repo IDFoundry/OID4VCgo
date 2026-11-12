@@ -28,7 +28,7 @@ func TestConfigKeysParity(t *testing.T) {
 
 	swift := between(t, "ios/OID4VCWallet/Sources/OID4VCWallet/Wallet.swift", "public struct WalletConfiguration", "enum CodingKeys", "\n    }\n")
 	var swiftKeys []string
-	for _, m := range regexp.MustCompile(`(\w+)(?:\s*=\s*"([a-z_]+)")?`).FindAllStringSubmatch(strings.Join(regexp.MustCompile(`case ([^\n]+)`).FindAllString(swift, -1), ","), -1) {
+	for _, m := range regexp.MustCompile(`(\w+)(?:\s*=\s*"([a-z0-9_]+)")?`).FindAllStringSubmatch(strings.Join(regexp.MustCompile(`case ([^\n]+)`).FindAllString(swift, -1), ","), -1) {
 		if m[1] == "case" {
 			continue
 		}
@@ -41,7 +41,7 @@ func TestConfigKeysParity(t *testing.T) {
 
 	kotlin := between(t, "android/OID4VCWallet/src/main/kotlin/dev/idfoundry/oid4vcwallet/Wallet.kt", "data class WalletConfiguration(", "", "\n) {")
 	var kotlinKeys []string
-	for _, m := range regexp.MustCompile(`(?m)^\s*(?:@\w+(?:\("([a-z_]+)"\))?\s+)*val (\w+)`).FindAllStringSubmatch(kotlin, -1) {
+	for _, m := range regexp.MustCompile(`(?m)^\s*(?:@\w+(?:\("([a-z0-9_]+)"\))?\s+)*val (\w+)`).FindAllStringSubmatch(kotlin, -1) {
 		key := m[1]
 		if key == "" {
 			key = m[2]

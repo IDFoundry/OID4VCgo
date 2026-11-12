@@ -31,6 +31,10 @@ This binary is a conformance-suite harness, not a wallet:
 - **Verifier trust is optional.** Without `verifier_trust_anchors_pem`
   it uses `wallet.NoVerifierTrust{}`, checking the request object's
   signature and `x509_hash` but no certificate chain.
+  `accept_x509_san_dns` also accepts an `x509_san_dns` client_id
+  (OpenID4VP 1.0 §5.9.3), as the EUDI interop run's verifier sends; it
+  needs `verifier_trust_anchors_pem`. The OIDF HAIP plan uses
+  `x509_hash` only.
 
 A wallet app uses `walletflow` (`StartPresentation`,
 `StartDCAPIPresentation`), or the mobile libraries over it.
