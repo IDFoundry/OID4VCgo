@@ -115,3 +115,42 @@ func TestBuildServerConfig_ServesMdocCRL(t *testing.T) {
 		t.Errorf("CRL signature: %v", err)
 	}
 }
+
+// TestBuildServerConfig_Production checks -production's server config:
+// the production setup's own keys, and key attestations trusted by the
+// CA that issued the leaf the suite signs them with, not by a key.
+func TestBuildServerConfig_Production(t *testing.T) {
+	r, err := generateRun("test", "https://conformance-issuer:8443")
+	if err != nil {
+		t.Fatalf("generateRun: %v", err)
+	}
+	r.production = true
+	raw, err := buildServerConfig(r)
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	var cfg struct {
+		KeyAttestation map[string]json.RawMessage `json:"key_attestation"`
+		Production     *serverProductionConfig    `json:"production"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p := cfg.Production; p == nil || p.DatabasePath == "" || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
+		t.Fatalf("production = %+v, want every field set", cfg.Production)
+	}
+	if _, ok := cfg.KeyAttestation["trusted_jwk"]; ok {
+		t.Error("key_attestation still trusts a key")
+	}
+	var anchorPEM string
+	if err := json.Unmarshal(cfg.KeyAttestation["trust_anchor_pem"], &anchorPEM); err != nil {
+		t.Fatalf("key_attestation.trust_anchor_pem: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(anchorPEM)) {
+		t.Fatal("key_attestation.trust_anchor_pem holds no certificate")
+	}
+	if _, err := parsePEMCert(t, r.keyAttestationLeafPEM).Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		t.Errorf("the key attestation leaf doesn't verify against the trust anchor: %v", err)
+	}
+}

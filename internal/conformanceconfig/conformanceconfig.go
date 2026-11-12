@@ -31,7 +31,13 @@ type KeyAttestationConfig struct {
 	// kid/x5c/trust_chain header mechanisms instead of one fixed key
 	// (see issuer.AttestationVerifier's own doc comment: "entirely this
 	// issuer's own trust policy").
-	TrustedJWK json.RawMessage `json:"trusted_jwk"`
+	TrustedJWK json.RawMessage `json:"trusted_jwk,omitempty"`
+
+	// TrustAnchorPEM, in place of TrustedJWK, trusts every Key
+	// Attestation whose x5c header chains to these CA certificates
+	// (PEM), with issuer.X5CAttestationVerifier, as a deployment does.
+	// cmd/conformance-issuer's production setup requires it.
+	TrustAnchorPEM string `json:"trust_anchor_pem,omitempty"`
 
 	// JWTProofRequiresKeyAttestation makes every advertised
 	// CredentialConfiguration's "jwt" proof type require a Key
