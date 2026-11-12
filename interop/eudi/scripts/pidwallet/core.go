@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -18,7 +16,6 @@ import (
 	"github.com/idfoundry/fapigo/storage/memstore"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -355,7 +352,9 @@ func (s *issuance) credentialRequest(ctx context.Context, cNonce string) (wallet
 		}
 		req.JWTProofs = []string{proof}
 	case "jwt":
-		proof, err := keyIndexProof(s.holders[0], s.offer.CredentialIssuer, cNonce, keyAttestation, time.Now())
+		// Its key named by kid "0", its index among attested_keys, as
+		// ETSI TS 119 472-3 has the issuer require.
+		proof, err := s.w.GenerateProofWithAttestedKeyIndex(s.holders[0], s.offer.CredentialIssuer, cNonce, keyAttestation, 0)
 		if err != nil {
 			return wallet.CredentialRequest{}, err
 		}
@@ -369,7 +368,7 @@ func (s *issuance) credentialRequest(ctx context.Context, cNonce string) (wallet
 			if err != nil {
 				return wallet.CredentialRequest{}, err
 			}
-			proof, err := keyIndexProof(k, s.offer.CredentialIssuer, cNonce, ka, time.Now())
+			proof, err := s.w.GenerateProofWithAttestedKeyIndex(k, s.offer.CredentialIssuer, cNonce, ka, 0)
 			if err != nil {
 				return wallet.CredentialRequest{}, err
 			}
@@ -379,21 +378,4 @@ func (s *issuance) credentialRequest(ctx context.Context, cNonce string) (wallet
 		return wallet.CredentialRequest{}, fmt.Errorf("unknown -proof %q", s.env.o.proof)
 	}
 	return req, nil
-}
-
-// keyIndexProof is a jwt proof (OpenID4VCI 1.0 Appendix F.1) signed by
-// the first of the keys keyAttestation attests, carrying it in its
-// key_attestation header and naming its key by kid "0", its index in
-// attested_keys, as ETSI TS 119 472-3 has the EUDI PID Issuer require
-// (and F.1 permits: kid, with no jwk or x5c beside it). Package wallet
-// conveys the key in jwk instead (GenerateProofWithKeyAttestation), so
-// this proof is built here.
-func keyIndexProof(signer crypto.Signer, credentialIssuer, nonce, keyAttestation string, now time.Time) (string, error) {
-	payload, err := json.Marshal(map[string]any{"aud": credentialIssuer, "iat": now.Unix(), "nonce": nonce})
-	if err != nil {
-		return "", err
-	}
-	return jose.Sign(jose.ES256, signer, map[string]any{
-		"typ": "openid4vci-proof+jwt", "kid": "0", "key_attestation": keyAttestation,
-	}, payload)
 }
