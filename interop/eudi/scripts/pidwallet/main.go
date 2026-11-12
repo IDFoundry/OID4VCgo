@@ -14,7 +14,8 @@
 //
 //	attestation  a Key Attestation, as the attestation proof type (Appendix F.3)
 //	jwt          a jwt proof whose key_attestation header carries one, its key named by kid "0",
-//	             the index of its key among attested_keys, as ETSI TS 119 472-3 has it
+//	             the index of its key among attested_keys, as ETSI TS 119 472-3 has it, as
+//	             wallet.Wallet.GenerateProofWithAttestedKeyIndex makes it
 //	jwk          the same, its key in jwk, as wallet.Wallet.GenerateProofWithKeyAttestation and
 //	             walletflow under Config.ProofKeyByJWK make it
 //	jwt-each     one jwt proof (kid "0") per key, each with a Key Attestation of its key alone
@@ -78,6 +79,10 @@ type result struct {
 	OfferAuthorizationServer string `json:"offer_authorization_server,omitempty"`
 	AuthorizationServers     int    `json:"authorization_servers"`
 	TokenType                string `json:"token_type,omitempty"`
+	// RequestEncryptionKeys are the metadata's
+	// credential_request_encryption keys, as observeRequestEncryptionKeys
+	// reports them.
+	RequestEncryptionKeys []observedKey `json:"request_encryption_keys,omitempty"`
 	// Challenges counts the Attestation Challenges fetched; DPoPNonces
 	// the responses that handed out a DPoP-Nonce, and DPoPNonceRetries
 	// those that refused a request for want of one (use_dpop_nonce).
@@ -95,6 +100,13 @@ type result struct {
 	StatusAfterRevoke string `json:"status_after_revoke,omitempty"`
 
 	Exchanges []exchange `json:"exchanges"`
+}
+
+// observedKey is what the run reports of an encryption key the issuer
+// publishes: the leniencies the wallet allows it.
+type observedKey struct {
+	Alg string `json:"alg"`
+	Kid bool   `json:"kid"`
 }
 
 // credentialReport is what the wallet's checks found of one credential.

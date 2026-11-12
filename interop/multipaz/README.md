@@ -41,6 +41,27 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 
 Each control is checked for its reason, not just for a failure.
 
+### What Multipaz sends that OID4VCgo is lenient about
+
+OID4VCgo accepts some inputs a specification says to refuse
+([SPECIFICATIONS.md](../../SPECIFICATIONS.md#known-leniencies)), so an
+implementation that started sending one would pass unnoticed. Where
+Multipaz sends OID4VCgo one of them, the run records what it sent, logs
+it on the case's `ok` line, and fails an `observed:` case if it differs
+from what Multipaz 0.102.0 sends (the values in
+[`Observed.kt`](driver/src/main/kotlin/oid4vcgo/interop/multipaz/Observed.kt)).
+`scripts/peer` records walletflow's side as the responses arrive; the
+driver records the PoPs its Multipaz wallet sends.
+
+| What | From | Multipaz 0.102.0 sends |
+|---|---|---|
+| The response encryption key's `alg` and `kid` in `client_metadata.jwks` (OpenID4VP 1.0 §8.3 requires `alg`) | its Verifier, cross-device and over the DC API | one key, `alg` `ECDH-ES`, with a `kid` |
+| `token_type`, to walletflow's DPoP-proved Token Request (walletflow would use a `Bearer` token as one) | its issuer's Authorization Server | `DPoP` |
+| `credential_request_encryption.jwks` (OpenID4VCI 1.0 §12.2.4 requires `kid`) | its issuer's metadata | none: request encryption isn't offered, so this isn't exercised |
+| The Client Attestation PoP's `iss` (draft-ietf-oauth-attestation-based-client-auth-07 §5.2 requires it) | its wallet, to `cmd/conformance-issuer` | the `client_id` |
+
+Each follows the specification, so none is a finding.
+
 ## How it's set up
 
 - **Two programs, whole messages.** [`driver`](driver) is a Kotlin

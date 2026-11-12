@@ -321,6 +321,19 @@ for proof in attestation jwt; do
   issued "mdoc-$proof" 1 "$MDOC_STATUS"
 done
 
+# What the issuer sends that the wallet is lenient about
+# (SPECIFICATIONS.md, "Known leniencies"): its
+# credential_request_encryption keys, whose kid OpenID4VCI 1.0 §12.2.4
+# requires and whose alg the wallet doesn't need. Asserted as v0.11.2
+# sends them, so a change is noticed. (Keycloak's token_type, the other
+# such value, is checked as DPoP for every issuance above.)
+REQUEST_ENCRYPTION_KEYS='[{"alg":"ECDH-ES","kid":true}]'
+echo "== observed: the issuer's credential_request_encryption keys"
+observed_keys="$(jq -c '.request_encryption_keys // []' result-sdjwt-jwt.json)"
+echo "        credential_request_encryption.jwks: $observed_keys"
+if [[ "$observed_keys" == "$REQUEST_ENCRYPTION_KEYS" ]]; then ok "as v0.11.2 sends them"
+else bad "as v0.11.2 sends them, $REQUEST_ENCRYPTION_KEYS: if a later image changed them, update README.md and this check"; fi
+
 for c in "$SDJWT jwt sdjwt $SDJWT_STATUS" "$MDOC attestation mdoc $MDOC_STATUS"; do
   read -r config proof format status <<< "$c"
   echo "== the issuer's Credential Offer, $format PID, $proof proof"

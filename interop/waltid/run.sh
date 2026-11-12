@@ -10,7 +10,9 @@
 #                                  encrypted (direct_post.jwt)
 #   Wallet2 ← our issuer           cmd/conformance-issuer (HAIP): a Wallet
 #                                  Attestation from a stand-in Wallet
-#                                  Provider, DPoP, both formats
+#                                  Provider, DPoP, both formats; then
+#                                  its dpop-nonces, deferred and
+#                                  key-attestation profiles
 #   Wallet2 → our verifier         those PIDs, to cmd/conformance-verifier:
 #                                  x509_hash, direct_post.jwt, each
 #                                  request_uri_method
@@ -78,6 +80,9 @@ BASE_PORT="${BASE_PORT:-21400}"
 ISSUER2_HTTP=$((BASE_PORT + 1)) VERIFIER2_HTTP=$((BASE_PORT + 2)) WALLET2_HTTP=$((BASE_PORT + 3))
 ISSUER2_PORT=$((BASE_PORT + 11)) VERIFIER2_PORT=$((BASE_PORT + 12))
 ISSUER_PORT=$((BASE_PORT + 21)) OFFERS_PORT=$((BASE_PORT + 22)) ATTESTER_PORT=$((BASE_PORT + 26))
+# OID4VCgo's issuer listens here, behind serve's tap on ISSUER_PORT,
+# which logs what Wallet2 sends it.
+ISSUER_INNER_PORT=$((BASE_PORT + 23))
 VERIFIER_PORT=$((BASE_PORT + 31)) # and the next three
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
@@ -86,7 +91,7 @@ NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
 for p in "$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT" \
-  "$ATTESTER_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
+  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -102,8 +107,10 @@ if [[ "$(uname)" = Linux ]]; then
 fi
 
 PIDS=()
+ISSUER_PID=""
 # shellcheck disable=SC2329 # run by the EXIT trap
 cleanup() {
+  if [[ -n "$ISSUER_PID" ]]; then kill "$ISSUER_PID" 2>/dev/null || true; wait "$ISSUER_PID" 2>/dev/null || true; fi
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do kill "$pid" 2>/dev/null || true; done
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do wait "$pid" 2>/dev/null || true; done
   for s in issuer2 verifier2 wallet2; do
@@ -154,9 +161,9 @@ cat wallet2-features.conf >> waltid/wallet-api2/config/_features.conf
 keytool -importcert -noprompt -alias oid4vcgo-waltid-interop -file ca.pem -keystore truststore.p12 \
   -storetype PKCS12 -storepass changeit >/dev/null
 # OID4VCgo's issuer, as interop/eudi/run-issuer.sh runs it, named $HOST
-# under the run's TLS certificate, listening where the containers reach
-# it.
-jq --arg issuer "https://$HOST:$ISSUER_PORT" --arg addr "$SERVE_BIND:$ISSUER_PORT" \
+# under the run's TLS certificate, on loopback behind serve's tap,
+# which listens where the containers reach it.
+jq --arg issuer "https://$HOST:$ISSUER_PORT" --arg addr "127.0.0.1:$ISSUER_INNER_PORT" \
   --rawfile cert tls-cert.pem --rawfile key tls-key.pem \
   '.issuer = $issuer | .listen_addr = $addr | .tls_certificate_pem = $cert | .tls_private_key_pem = $key' \
   issuer-files/issuer.json > issuer.json
@@ -174,10 +181,27 @@ run_service wallet2 "$WALLET2_IMAGE" wallet-api2 "$WALLET2_HTTP" 7006 -v "$WORK/
   -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/trust/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
 
 ./serve -dir . -proxy "127.0.0.1:$ISSUER2_PORT=http://127.0.0.1:$ISSUER2_HTTP" -proxy "127.0.0.1:$VERIFIER2_PORT=http://127.0.0.1:$VERIFIER2_HTTP" \
+  -tap "$SERVE_BIND:$ISSUER_PORT=https://127.0.0.1:$ISSUER_INNER_PORT" -tap-name "$HOST" \
   -attester "$SERVE_BIND:$ATTESTER_PORT" -attester-config issuer-files/driver.json -attester-mode attester-mode > serve.log 2>&1 &
 PIDS+=($!)
-./issuer -config issuer.json > issuer.log 2>&1 &
-PIDS+=($!)
+
+# start_issuer (re)starts OID4VCgo's issuer in a profile of
+# interop/eudi/run-issuer.sh's: issuer.json changed by the jq filter $2.
+start_issuer() {  # $1 the profile's name, $2 a jq filter
+  local name="$1" filter="$2"
+  if [[ -n "$ISSUER_PID" ]]; then kill "$ISSUER_PID" 2>/dev/null || true; wait "$ISSUER_PID" 2>/dev/null || true; fi
+  jq "$filter" issuer.json > "issuer-$name.json"
+  ./issuer -config "issuer-$name.json" >> "issuer-$name.log" 2>&1 &
+  ISSUER_PID=$!
+  for _ in $(seq 1 50); do
+    if curl -s -o /dev/null --max-time 1 --cacert ca.pem --resolve "$HOST:$ISSUER_INNER_PORT:127.0.0.1" \
+      "https://$HOST:$ISSUER_INNER_PORT/.well-known/openid-credential-issuer"; then return 0; fi
+    sleep 0.2
+  done
+  echo "the issuer did not start in profile $name; see $WORK/issuer-$name.log" >&2
+  exit 2
+}
+start_issuer base .
 for v in sdjwt mdoc untrusted-access untrusted-issuer; do
   ./verifier -config "verifier-$v.json" > "verifier-$v.log" 2>&1 &
   PIDS+=($!)
@@ -265,6 +289,19 @@ if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "credential" and (.received |
   ok "control: a credential from an issuer the wallet doesn't trust is refused, for its chain"
 else bad "control: a credential from an untrusted issuer: $(why receive-untrusted-issuer.json)"; fi
 
+# What Issuer2 sent of what SPECIFICATIONS.md's "Known leniencies"
+# concern, as the wallet's transport read it, asserted as 1.2.1 sends
+# it so that a change is noticed (README.md, "What walt.id sends"): a
+# DPoP token_type for each of its pre-authorized code tokens, and no
+# credential_request_encryption, so no request encryption key at all.
+for profile in eudiPidSdJwt eudiPidMdoc isoMdl; do
+  echo "        observed ($profile): $(jq -c '.observed | {token_types, issuer_metadata, credential_request_encryption}' "receive-$profile.json")"
+done
+if jq -s -e 'all(.[].observed; .token_types == ["DPoP"] and .issuer_metadata >= 1 and (.credential_request_encryption | not))' \
+    receive-eudiPidSdJwt.json receive-eudiPidMdoc.json receive-isoMdl.json >/dev/null; then
+  ok "observed: Issuer2's Token Responses are token_type DPoP, and its metadata has no credential_request_encryption"
+else bad "observed: what Issuer2 sends changed: $(jq -c -s '[.[].observed]' receive-eudiPidSdJwt.json receive-eudiPidMdoc.json receive-isoMdl.json | head -c 300)"; fi
+
 echo "### OID4VCgo's wallet → walt.id Verifier2"
 # session creates a Verifier2 session for DCQL query $2, signed and
 # encrypted unless $1 is "plain"; it prints the session's id and link.
@@ -291,6 +328,14 @@ for case in "pid eudiPidSdJwt $PID_QUERY" "mdl isoMdl $MDL_QUERY"; do
     ok "$name: presented to a signed x509_hash request, encrypted; Verifier2 accepted it"
   else bad "$name: wallet $(why "present-$name.json"), Verifier2 $status"; fi
 done
+# Its response encryption key, in each signed request's client_metadata:
+# one key, with the alg and kid OpenID4VP 1.0 §8.3 asks for, as 1.2.1
+# sends it (README.md, "What walt.id sends").
+echo "        observed: $(jq -c -s '[.[].observed.verifier_jwks]' present-pid.json present-mdl.json)"
+if jq -s -e 'all(.[].observed.verifier_jwks; length == 1 and .[0].alg == "ECDH-ES" and (.[0].kid | startswith("response-encryption-")))' \
+    present-pid.json present-mdl.json >/dev/null; then
+  ok "observed: Verifier2's response encryption JWK carries alg ECDH-ES and a kid"
+else bad "observed: Verifier2's response encryption JWK changed: $(jq -c -s '[.[].observed.verifier_jwks]' present-pid.json present-mdl.json)"; fi
 read -r id link <<< "$(session plain "$PID_QUERY")"
 wallet present-unsigned -issuer-ca ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" -request "$link"
 # Verifier2 serves this request object as plain JSON: the wallet must
@@ -396,6 +441,80 @@ if jq -e --arg want "$UNTRUSTED_ISSUER" '.status == "failed" and (.error | conta
     result-untrusted-issuer.json >/dev/null 2>&1; then
   ok "control: the verifier refuses a credential from an issuer it doesn't trust, for its chain"
 else bad "control: a credential from an issuer the verifier doesn't trust: $(why result-untrusted-issuer.json)"; fi
+
+echo "### walt.id Wallet2 ← OID4VCgo's issuer, its other profiles"
+# The base profile's issuances above, as the tap saw them. Of what
+# SPECIFICATIONS.md's "Known leniencies" concern, Wallet2 sends a Client
+# Attestation PoP with the iss draft-07 §5.2 requires (the client_id);
+# its DPoP proofs' jwk has no alg, which RFC 9449 doesn't ask for.
+# Asserted as 1.2.1 sends them, so that a change is noticed (README.md,
+# "What walt.id sends").
+grep ' tap: ' serve.log > tap-base.log || true
+SENT_TOKEN="\"/token\" 200 | pop iss=\"$CLIENT_ID\" claims=aud,exp,iat,iss,jti | dpop typ=\"dpop+jwt\" alg=\"ES256\" jwk.alg=absent nonce=false claims=htm,htu,iat,jti"
+echo "        observed: $(grep -F "$SENT_TOKEN" tap-base.log | head -1 | sed 's/.* tap: //')"
+if [[ "$(grep -cF "$SENT_TOKEN" tap-base.log)" -ge 2 ]] && ! grep -q 'pop iss=absent' tap-base.log; then
+  ok "observed: Wallet2's Client Attestation PoP names the client_id as iss, each time"
+else bad "observed: what Wallet2 sends the Token Endpoint changed: $(grep '"/token"' tap-base.log | head -3 | sed 's/.* tap: //' | tr '\n' ';')"; fi
+
+# receive_profile has a fresh Wallet2 wallet redeem an offer of the
+# SD-JWT VC PID from the issuer in profile $1; its answer is in
+# wallet2-$1.json, and what it sent, as the tap saw it, in tap-$1.log.
+receive_profile() {
+  local profile="$1" from
+  PROFILE_WALLET="$(wallet2)"
+  from="$(wc -l < serve.log)"
+  receive2 "$PROFILE_WALLET" "$(our_offer eu.europa.ec.eudi.pid_vc_sd_jwt)" "$CLIENT_ID" > "wallet2-$profile.json" || true
+  tail -n +"$((from + 1))" serve.log | grep ' tap: ' | sed 's/.* tap: //' > "tap-$profile.log" || true
+}
+
+start_issuer dpop-nonces '.dpop_nonces = true'
+receive_profile dpop-nonces
+# The issuer challenges at the Token Endpoint (400 use_dpop_nonce, with
+# a DPoP-Nonce, RFC 9449 §8) and the Credential Endpoint (401, §9);
+# Wallet2 retries each with the nonce.
+if jq -e '.credentialIds | length == 1' wallet2-dpop-nonces.json >/dev/null 2>&1 \
+    && grep -q '^POST "/token" 400 .*nonce=false.*dpop-nonce-sent' tap-dpop-nonces.log \
+    && grep -q '^POST "/token" 200 .*nonce=true' tap-dpop-nonces.log \
+    && grep -q '^POST "/credential" 401 .*nonce=false.*challenge=use_dpop_nonce' tap-dpop-nonces.log \
+    && grep -q '^POST "/credential" 200 .*nonce=true' tap-dpop-nonces.log; then
+  ok "dpop-nonces: issued; the Token and Credential Endpoints each asked for a DPoP nonce, and Wallet2 retried with it"
+else bad "dpop-nonces: $(head -c 300 wallet2-dpop-nonces.json); $(tr '\n' ';' < tap-dpop-nonces.log | head -c 600)"; fi
+
+start_issuer deferred '.deferred = true'
+receive_profile deferred
+# Wallet2 keeps the deferred credential's handle; resuming it polls the
+# Deferred Credential Endpoint once the interval the issuer asked for
+# has passed (earlier, it answers "deferred" without polling).
+handle="$(curl -sS --max-time 30 "$W/wallet/$PROFILE_WALLET/credentials/receive/deferred" | jq -r '.[0].id // empty' 2>/dev/null || true)"
+from="$(wc -l < serve.log)"
+if [[ -n "$handle" ]]; then
+  for _ in 1 2 3 4; do
+    curl -sS --max-time 90 -X POST "$W/wallet/$PROFILE_WALLET/credentials/receive/deferred/$handle" > wallet2-deferred-resumed.json || true
+    if ! jq -e '.type == "deferred"' wallet2-deferred-resumed.json >/dev/null 2>&1; then break; fi
+    sleep "$(jq -r '[.credentials[0].intervalSeconds // 5, 10] | min' wallet2-deferred-resumed.json)"
+  done
+fi
+tail -n +"$((from + 1))" serve.log | grep ' tap: ' | sed 's/.* tap: //' > tap-deferred-poll.log || true
+if [[ -n "$handle" ]] && grep -q '^POST "/credential" 202' tap-deferred.log \
+    && grep -q '^POST "/[a-z_-]*deferred[a-z_-]*" 200' tap-deferred-poll.log \
+    && jq -e '.type == "stored" and (.credentialIds | length == 1)' wallet2-deferred-resumed.json >/dev/null 2>&1; then
+  ok "deferred: deferred (202), then issued from the Deferred Credential Endpoint when Wallet2 resumed it"
+else bad "deferred: handle '$handle'; $(head -c 300 wallet2-deferred.json); $(head -c 300 wallet2-deferred-resumed.json 2>/dev/null); $(tr '\n' ';' < tap-deferred-poll.log | head -c 300)"; fi
+
+start_issuer key-attestation '.key_attestation.jwt_proof_requires_key_attestation = true'
+receive_profile key-attestation
+# Not a control: the Wallet2 service attaches no key attestation
+# provider, and its REST keys aren't the Crypto2 keys one needs
+# (README.md, "What isn't covered"), so it stops before its Credential
+# Request when the issuer requires a key attestation. If it's issued,
+# the run says so.
+KA_REFUSAL='Key attestation requires a Crypto2 holder key'
+if jq -e '.credentialIds | length == 1' wallet2-key-attestation.json >/dev/null 2>&1; then
+  echo "  note  key-attestation: issued: Wallet2 now sends a key attestation; make this a case"
+elif jq -e --arg want "$KA_REFUSAL" '.code == "400" and .message == $want' wallet2-key-attestation.json >/dev/null 2>&1 \
+    && ! grep -q '"/credential"' tap-key-attestation.log; then
+  echo "  note  key-attestation: not supported by Wallet2 1.2.1, which sent no Credential Request: $KA_REFUSAL"
+else bad "key-attestation: neither issued nor refused before its Credential Request: $(head -c 300 wallet2-key-attestation.json)"; fi
 
 if [[ "$fail" -eq 0 ]]; then echo "RESULT: every case passed, and every control refused"; else echo "RESULT: FAILED"; fi
 exit "$fail"

@@ -16,7 +16,15 @@ and our wallet against the PID Issuer ([last](#wallet--eudi-pid-issuer)).
 [eudi-srv-verifier-endpoint](https://github.com/eu-digital-identity-wallet/eudi-srv-verifier-endpoint),
 driving the verifier through its own REST API (`POST /ui/presentations`
 to start a transaction, `GET /ui/presentations/{id}` for the result) and
-standing in for the same-device launch and the browser:
+standing in for the same-device launch and the browser. The wallet
+fetches each Request Object as a wallet does, through
+`wallet.Wallet.FetchAuthorizationRequest` (or
+`FetchAuthorizationRequestPost`), and verifies the verifier's TLS
+certificate on every call it makes to it, against the certificate
+`scripts/setup` made for its listener (`verifier_tls_trust_anchors_pem`).
+Its engine `walletflow` presents through `walletflow` instead
+(`StartPresentation`, `Presentation.Respond`), as a wallet app does,
+with walletflow's own request fetch and `wallet_metadata`:
 
 | Case | Expected |
 |---|---|
@@ -36,6 +44,10 @@ standing in for the same-device launch and the browser:
 | A revoked mdoc | the verifier refuses it |
 | SD-JWT VC PID, `openid4vp` profile, the verifier's `client_id` `x509_san_dns:localhost`, by GET and by `request_uri_method=post`, to a wallet with `accept_x509_san_dns` | accepted |
 | The same `x509_san_dns` request to a wallet without `accept_x509_san_dns` | the wallet refuses |
+| walletflow: SD-JWT VC PID and mdoc PID, `haip` profile, by GET and by `request_uri_method=post` | accepted |
+| walletflow: the `x509_san_dns` SD-JWT VC cases, with `Config.AcceptX509SANDNS` | accepted |
+| The wallet doesn't trust the verifier's TLS certificate | the wallet refuses to fetch the request |
+| The verifier's response encryption key, `client_metadata.jwks` | as v0.12.0 sends it (below) |
 
 The `x509_san_dns` cases restart the verifier with
 `VERIFIER_CLIENTIDPREFIX=x509_san_dns` and
@@ -86,7 +98,14 @@ The verifier is run as strictly as it can be configured:
   is what each accepted case runs through.
 
 The run also checks the verifier fetched each status list and the Type
-Metadata, so a run in which it silently skipped a check fails. Fetching
+Metadata, so a run in which it silently skipped a check fails.
+
+The wallet is lenient about some of what it receives (SPECIFICATIONS.md,
+"Known leniencies"). Of that, the verifier sends its response
+encryption key, whose `alg` OpenID4VP 1.0 §8.3 requires and the wallet
+doesn't. The run reads it from a Request Object of a transaction of its
+own and asserts it as v0.12.0 sends it, an EC P-256 key with `alg`
+`ECDH-ES` and a `kid`, so a change is noticed; it follows the spec. Fetching
 a list shows the verifier read it, not that it verified it.
 
 What v0.12.0 doesn't check, whatever its configuration:
@@ -406,6 +425,13 @@ key attestation to a jwt proof only when the issuer requires one.
 Authorization Server and the Credential Issuer each require their own
 DPoP nonce.
 
+Of what the issuer is lenient about (SPECIFICATIONS.md, "Known
+leniencies"), the library sends a Client Attestation PoP, whose `iss`
+draft-07 §5.2 requires and FAPIgo's server doesn't. Each PAR and token
+request that carries one is checked for an `iss` naming the client_id,
+as the library sends it today, so a PoP without one fails the case
+rather than passing on the leniency unnoticed.
+
 Every key and certificate is throwaway, made per run by
 [`scripts/setup-issuer`](scripts/setup-issuer): the issuer's TLS
 certificate under its own CA, its SD-JWT VC signer under an issuer CA,
@@ -614,6 +640,14 @@ Attestation, each status valid for more than the issuer's 31-day
 preferred period. HAIP 1.0 §4.4.1 leaves an ecosystem room for such
 claims, and walletflow takes them through its `WalletProvider`, which
 `pidwallet`'s implements.
+
+Of what the wallet is lenient about (SPECIFICATIONS.md, "Known
+leniencies"), the issuer sends its `credential_request_encryption`
+keys, whose `kid` OpenID4VCI 1.0 §12.2.4 requires and the wallet
+doesn't, and Keycloak its `token_type`, which the wallet would take as
+`Bearer`. The run asserts the keys as v0.11.2 publishes them, one with
+`alg` `ECDH-ES` and a `kid`, and `token_type` `DPoP` for every
+issuance, so a change is noticed; both follow the specifications.
 
 ### Findings
 

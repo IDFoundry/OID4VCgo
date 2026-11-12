@@ -3,6 +3,7 @@ package oid4vcgo.interop.multipaz
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import io.ktor.server.engine.EmbeddedServer
@@ -95,6 +96,9 @@ class VciCases(
     private val tls: Tls,
     private val dir: File,
 ) : Checks() {
+    /** The iss of each Client Attestation PoP the last [receive] sent, "-" for none. */
+    private val popIssuers = mutableListOf<String>()
+
     suspend fun run(): Int {
         mpzWalletCases()
         goWalletCases()
@@ -113,6 +117,9 @@ class VciCases(
             check("$config, authorization code (PAR, PKCE, scope): issued to Multipaz's wallet (Wallet Attestation, DPoP, Key Attestation), under OID4VCgo's CA") {
                 val credential = receive(issuer, config, ATTESTER, preAuthorized = false).getOrThrow()
                 issuer.checkIssued(config, credential)
+            }
+            check("observed: $config, each Client Attestation PoP's iss is the client_id, as Multipaz sends it today") {
+                observed("PoP iss", popIssuers.distinct().joinToString(" | ").ifEmpty { null }, issuer.clientId)
             }
         }
         // Redeeming a pre-authorized code, Multipaz's wallet always asks
@@ -160,6 +167,7 @@ class VciCases(
         multipazLifetime: Boolean = false,
         preAuthorized: Boolean = true,
     ): Result<ByteString> {
+        popIssuers.clear()
         val offer = issuer.offer(config, preAuthorized)
         val attestationKey = signer(attester)
         val local = OpenID4VCILocalBackend(
@@ -180,6 +188,13 @@ class VciCases(
         val secureArea = SoftwareSecureArea.create(EphemeralStorage())
         val http = HttpClient(tls.ktorTrusting(issuer.tlsTrustPEM)) {
             install(HttpTimeout)
+            // The Client Attestation PoPs the wallet sends, for what
+            // the issuer is lenient about (see Observed).
+            install(createClientPlugin("ObservePoP") {
+                onRequest { request, _ ->
+                    request.headers[CLIENT_ATTESTATION_POP]?.let { popIssuers += popIssuer(it) }
+                }
+            })
             HttpResponseValidator {
                 validateResponse { response ->
                     if (!response.status.isSuccess()) issuerError = "${response.status.value} ${response.bodyAsText()}"
@@ -227,13 +242,23 @@ class VciCases(
         println("### OpenID4VCI: OID4VCgo's wallet (walletflow) → Multipaz issuer (in process)")
         MpzIssuer(tls, dir, pki).use { issuer ->
             for ((scope, label) in listOf("mDL" to "mDL", "core" to "PID")) {
+                val answers = mutableListOf<Reply>()
                 check("$label (scope $scope): issued to walletflow (Wallet Attestation, DPoP, Key Attestation), verified") {
                     val offers = issuer.offers(scope)
                     val problems = offers.mapNotNull { (configuration, offer) ->
                         val got = peer.call("wallet_receive", "request" to offer, "data" to issuer.rootPEM)
+                        answers += got
                         got.error?.let { "$configuration: $it" }
                     }
                     problems.firstOrNull()
+                }
+                // Each offer's issuance must have seen the same.
+                fun seen(name: String) = answers.map { it.observed[name] ?: "nothing" }.distinct().joinToString(" | ").ifEmpty { null }
+                check("observed: $label, the issuer's token_type, to walletflow's DPoP-proved Token Request, is as Multipaz sends it today") {
+                    observed("token_type", seen("token_type"), Observed.TOKEN_TYPE)
+                }
+                check("observed: $label, the issuer's credential_request_encryption is as Multipaz sends it today") {
+                    observed("credential_request_encryption.jwks", seen("request_enc_jwks"), Observed.REQUEST_ENC_JWKS)
                 }
             }
             check("control: Multipaz's issuer refuses a Wallet Attestation from an attester it doesn't trust") {
@@ -279,6 +304,12 @@ private class HourLongAttestations(
         return hourLong
     }
 }
+
+/** The header a Client Attestation PoP JWT travels in (draft-ietf-oauth-attestation-based-client-auth-07 §6.1). */
+private const val CLIENT_ATTESTATION_POP = "OAuth-Client-Attestation-PoP"
+
+/** A Client Attestation PoP's iss, "-" when it has none. */
+private fun popIssuer(pop: String): String = decodeJwt(pop).second["iss"]?.jsonPrimitive?.content ?: "-"
 
 /** A compact JWS's header and claims. */
 private fun decodeJwt(jwt: String): Pair<JsonObject, JsonObject> {

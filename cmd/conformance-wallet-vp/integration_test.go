@@ -222,9 +222,7 @@ func TestHandleAuthorize_FullRoundTripAgainstARealVerifier(t *testing.T) {
 	query := newTestQuery(t, "urn:eudi:pid:1")
 	_, ts, built, got := newFakeVerifierServer(t, wallet, query, issuerCA)
 
-	previousHTTPClient := httpClient
-	httpClient = ts.Client() // trust the httptest server's own cert for this binary's outbound calls
-	t.Cleanup(func() { httpClient = previousHTTPClient })
+	wallet.http = ts.Client() // trust the httptest server's own cert for this binary's outbound calls
 
 	requestURL := ts.URL + "/authorize?" + url.Values{
 		"client_id":   {built.ClientID},
@@ -271,9 +269,7 @@ func TestHandleAuthorize_SendsErrorResponseWhenPresentationFails(t *testing.T) {
 	query := newTestQuery(t, "urn:eudi:pid:this-vct-does-not-match-the-fixture-credential")
 	_, ts, built, got := newFakeVerifierServer(t, wallet, query, issuerCA)
 
-	previousHTTPClient := httpClient
-	httpClient = ts.Client()
-	t.Cleanup(func() { httpClient = previousHTTPClient })
+	wallet.http = ts.Client()
 
 	requestURL := ts.URL + "/authorize?" + url.Values{
 		"client_id":   {built.ClientID},
