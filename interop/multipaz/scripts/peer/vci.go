@@ -182,9 +182,11 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	if req.Trust == "other" {
 		prov = prov.other
 	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
+	// Through a recorder, of what the issuer sent (observe.go).
+	rec := newRecorder(&http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: p.vp.tlsRoots, MinVersion: tls.VersionTLS12},
-	}}
+	})
+	client := &http.Client{Timeout: 30 * time.Second, Transport: rec}
 	w, err := walletflow.New(walletflow.Config{
 		Development: true, ClientID: goClientID, IssuerRoots: roots, IssuanceProfile: walletflow.ProfileHAIP,
 	}, walletflow.Dependencies{Keys: p.keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client, Provider: prov})
@@ -197,13 +199,13 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	}
 	defer func() { _ = s.Close(ctx) }()
 	if err := s.RedeemPreAuthorizedCode(ctx, req.Msg); err != nil {
-		return reply{}, fmt.Errorf("token: %w", err)
+		return reply{Observed: rec.snapshot()}, fmt.Errorf("token: %w", err)
 	}
 	got, err := s.RequestCredentials(ctx)
 	if err != nil {
-		return reply{}, fmt.Errorf("credential: %w", err)
+		return reply{Observed: rec.snapshot()}, fmt.Errorf("credential: %w", err)
 	}
-	rep := reply{}
+	rep := reply{Observed: rec.snapshot()}
 	for _, f := range got.Failed {
 		return rep, fmt.Errorf("credential %s refused: %w", f.ConfigurationID, f.Err)
 	}

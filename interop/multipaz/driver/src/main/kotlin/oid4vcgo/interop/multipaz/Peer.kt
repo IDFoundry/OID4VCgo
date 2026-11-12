@@ -57,5 +57,8 @@ class Reply(val json: JsonObject) {
     val error: String? get() = string("error")
     val claims: Map<String, String>
         get() = json["claims"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content } ?: emptyMap()
+    /** What the other side sent that OID4VCgo is lenient about, as the peer recorded it (its observe.go). */
+    val observed: Map<String, String>
+        get() = json["observed"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content } ?: emptyMap()
     override fun toString() = json.toString()
 }

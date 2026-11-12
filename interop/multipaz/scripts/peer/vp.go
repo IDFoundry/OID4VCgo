@@ -226,45 +226,52 @@ func (s *vpState) stop() {
 // trusting Verifiers under the driver's reader CA (verifierCA "mpz")
 // or a CA it never issued under ("other"), and the driver's TLS
 // certificate, which is the peer's.
-func (p *peer) presentingWallet(verifierCA string) (*walletflow.Wallet, error) {
+// Its requests go through a recorder, of what the Verifier sent.
+func (p *peer) presentingWallet(verifierCA string) (*walletflow.Wallet, *recorder, error) {
 	roots := p.mpzReaderCA
 	if verifierCA == "other" {
 		roots = p.otherRoots
 	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
+	rec := newRecorder(&http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: p.vp.tlsRoots, MinVersion: tls.VersionTLS12},
-	}}
-	return walletflow.New(walletflow.Config{
+	})
+	w, err := walletflow.New(walletflow.Config{
 		Development: true, VerifierTrust: wallet.X5CVerifierRoots{Roots: roots},
-	}, walletflow.Dependencies{Keys: p.keys, Credentials: p.store, HTTP: client})
+	}, walletflow.Dependencies{Keys: p.keys, Credentials: p.store, HTTP: &http.Client{Timeout: 30 * time.Second, Transport: rec}})
+	return w, rec, err
 }
 
 // walletPresent answers a Verifier's openid4vp: request (req.Request)
 // with the held credentials it asks for, cross-device.
 func (p *peer) walletPresent(ctx context.Context, req request) (reply, error) {
-	w, err := p.presentingWallet(req.VerifierCA)
+	w, rec, err := p.presentingWallet(req.VerifierCA)
 	if err != nil {
 		return reply{}, err
 	}
 	pres, err := w.StartPresentation(ctx, req.Request)
 	if err != nil {
-		return reply{}, err
+		return reply{Observed: rec.snapshot()}, err
 	}
-	return respond(ctx, pres)
+	rep, err := respond(ctx, pres)
+	rep.Observed = rec.snapshot()
+	return rep, err
 }
 
 // walletDCAPI answers an OpenID4VP request over the Digital Credentials
 // API (req.Protocol, req.Data, from req.Origin).
 func (p *peer) walletDCAPI(ctx context.Context, req request) (reply, error) {
-	w, err := p.presentingWallet(req.VerifierCA)
+	w, _, err := p.presentingWallet(req.VerifierCA)
 	if err != nil {
 		return reply{}, err
 	}
+	observed := map[string]string{"verifier_jwks": dcapiVerifierJWKs(req.Data)}
 	pres, err := w.StartDCAPIPresentation(ctx, req.Protocol, []byte(req.Data), req.Origin)
 	if err != nil {
-		return reply{}, err
+		return reply{Observed: observed}, err
 	}
-	return respond(ctx, pres)
+	rep, err := respond(ctx, pres)
+	rep.Observed = observed
+	return rep, err
 }
 
 // respond answers pres with its default selection: the holder consents
