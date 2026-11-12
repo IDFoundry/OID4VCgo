@@ -13,7 +13,6 @@
 package conformanceverifier
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -706,7 +705,7 @@ func configureTrust(httpClient *http.Client, apiBase string, km *KeyMaterial) er
 		cfg.CredentialIssuerTrustAnchorsPEM = km.CredentialIssuerCACertPEM
 		cfg.StatusListTrustAnchorsPEM = km.CredentialIssuerCACertPEM
 	}
-	suiteCertPEM, err := fetchTLSCertificatePEM(apiBase)
+	suiteCertPEM, err := fetchTLSCertificatePEM(httpClient, apiBase)
 	if err != nil {
 		return fmt.Errorf("fetch the suite's tls certificate: %w", err)
 	}
@@ -716,29 +715,19 @@ func configureTrust(httpClient *http.Client, apiBase string, km *KeyMaterial) er
 	return nil
 }
 
-// fetchTLSCertificatePEM is the certificate the server at base's host
-// presents, PEM-encoded, read without verifying it: it's pinned, not
-// trusted by a chain.
-func fetchTLSCertificatePEM(base string) (string, error) {
-	u, err := url.Parse(base)
+// fetchTLSCertificatePEM is the certificate the suite at apiBase
+// presents, PEM-encoded, read over httpClient, which verifies none: it's
+// pinned, not trusted by a chain.
+func fetchTLSCertificatePEM(httpClient *http.Client, apiBase string) (string, error) {
+	resp, err := httpClient.Get(apiBase + "api/server") //nolint:gosec,noctx // apiBase is the operator's own -suite flag value, not attacker-controlled
 	if err != nil {
 		return "", err
 	}
-	host := u.Host
-	if u.Port() == "" {
-		host += ":443"
+	_ = resp.Body.Close()
+	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+		return "", fmt.Errorf("%s presented no TLS certificate", apiBase)
 	}
-	dialer := &tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // the certificate read here is pinned, not verified
-	conn, err := dialer.DialContext(context.Background(), "tcp", host)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = conn.Close() }()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	if len(certs) == 0 {
-		return "", fmt.Errorf("%s presented no certificate", host)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certs[0].Raw})), nil
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: resp.TLS.PeerCertificates[0].Raw})), nil
 }
 
 // fetchMdocIACARootPEM fetches the suite's own well-known mdoc IACA
