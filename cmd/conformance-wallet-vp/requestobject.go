@@ -5,7 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -99,12 +102,41 @@ func (s *server) fetchAndVerifyRequestObject(ctx context.Context, link wallet.Au
 	if err != nil {
 		return wallet.AuthorizationRequest{}, err
 	}
+	var req wallet.AuthorizationRequest
 	if link.RequestURIMethod != wallet.RequestURIMethodPost {
-		return w.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+		req, err = w.FetchAuthorizationRequest(ctx, link.RequestURI, link.ClientID)
+	} else {
+		walletNonce, nonceErr := newWalletNonce()
+		if nonceErr != nil {
+			return wallet.AuthorizationRequest{}, fmt.Errorf("generate wallet_nonce: %w", nonceErr)
+		}
+		req, err = w.FetchAuthorizationRequestPost(ctx, link.RequestURI, link.ClientID, walletNonce, json.RawMessage(walletMetadataForPost(s.acceptSANDNS)))
 	}
-	walletNonce, err := newWalletNonce()
+	if errors.Is(err, fapihttp.ErrUnexpectedStatus) {
+		err = fmt.Errorf("%w (the verifier answers: %s)", err, s.refusalBody(ctx, link.RequestURI))
+	}
+	return req, err
+}
+
+// maxRefusalBytes bounds what refusalBody reports of a Verifier's
+// refusal.
+const maxRefusalBytes = 4 << 10
+
+// refusalBody is what the Verifier answers a GET of requestURI with, to
+// report why it refused the fetch: fapihttp's error names only the
+// status, and the interop runs' controls (polaris-id's replay, for one)
+// check the Verifier's reason. Only ever asked of a request the Verifier
+// has already refused.
+func (s *server) refusalBody(ctx context.Context, requestURI string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURI, nil)
 	if err != nil {
-		return wallet.AuthorizationRequest{}, fmt.Errorf("generate wallet_nonce: %w", err)
+		return err.Error()
 	}
-	return w.FetchAuthorizationRequestPost(ctx, link.RequestURI, link.ClientID, walletNonce, json.RawMessage(walletMetadataForPost(s.acceptSANDNS)))
+	res, err := s.http.Do(req) //nolint:gosec // the request_uri the wallet just fetched, over the same verified client
+	if err != nil {
+		return err.Error()
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, maxRefusalBytes))
+	return fmt.Sprintf("status %d: %s", res.StatusCode, body)
 }
