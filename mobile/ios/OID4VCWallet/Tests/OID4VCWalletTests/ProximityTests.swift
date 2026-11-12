@@ -352,6 +352,35 @@ final class ProximityTests: XCTestCase {
         }
     }
 
+    /// Two `receive`s waiting at once (a session's idle wait and its
+    /// wait for the reader to end, after a response) each return: the
+    /// later doesn't replace the earlier, whose task would wait forever.
+    /// Messages go oldest first, `end` ends the rest, and a cancelled
+    /// one ends only itself.
+    func testMessageQueueConcurrentReceives() async throws {
+        let q = MessageQueue()
+        let first = Task { try await q.receive() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let second = Task { try await q.receive() }
+        let third = Task { try await q.receive() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(q.push(Data([1])))
+        let got = try await first.value
+        XCTAssertEqual(got, Data([1]))
+        third.cancel()
+        do {
+            _ = try await third.value
+            XCTFail("a cancelled receive returned")
+        } catch is CancellationError {}
+        q.end(ProximityTransportError("ended", peerEnded: true))
+        do {
+            _ = try await second.value
+            XCTFail("receive returned after the queue ended")
+        } catch let e as ProximityTransportError {
+            XCTAssertTrue(e.peerEnded)
+        }
+    }
+
     func testChunks() throws {
         for size in [0, 1, 18, 19, 20, 512, 10_000] {
             let message = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 7) })
