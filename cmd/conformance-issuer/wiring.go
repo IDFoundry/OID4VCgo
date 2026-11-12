@@ -21,9 +21,11 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/haip"
+	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -129,6 +131,10 @@ func newServers(cfg Config) (servers, error) {
 	}
 	issuerURL, parURL, authorizationURL, tokenURL, jwksURL, credentialURL, nonceURL :=
 		endpoints.issuer, endpoints.par, endpoints.authorization, endpoints.token, endpoints.jwks, endpoints.credential, endpoints.nonce
+	stores, err := newBackend(cfg)
+	if err != nil {
+		return servers{}, err
+	}
 
 	keyManager, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{
 		keys.AccessTokenSigning: fapi.ES256,
@@ -136,7 +142,7 @@ func newServers(cfg Config) (servers, error) {
 	if err != nil {
 		return servers{}, err
 	}
-	clientRepo, clientKeys, err := buildClientRegistration(cfg)
+	clientRepo, clientConfigs, clientKeys, err := buildClientRegistration(cfg)
 	if err != nil {
 		return servers{}, err
 	}
@@ -207,6 +213,9 @@ func newServers(cfg Config) (servers, error) {
 		srvDeps.AuthorizationCodeRARPolicy = server.AllowRequestedAuthorizationDetails{}
 	}
 	if srvDeps.AttesterTrust, err = attesterTrust(cfg); err != nil {
+		return servers{}, err
+	}
+	if resourceNonces, err = stores.authorizationServer(&srvCfg, &srvDeps, clientConfigs, resourceNonces); err != nil {
 		return servers{}, err
 	}
 	srv, err := server.New(srvCfg, srvDeps)
@@ -326,12 +335,15 @@ func newServers(cfg Config) (servers, error) {
 	if cfg.Offers != nil {
 		addOffers(&issCfg, &issDeps, endpoints.credentialOffer, limits.AccessTokenLifetime)
 	}
+	if err := stores.issuer(&issCfg, &issDeps); err != nil {
+		return servers{}, err
+	}
 	iss, err := issuer.New(issCfg, issDeps)
 	if err != nil {
 		return servers{}, fmt.Errorf("issuer.New: %w", err)
 	}
 
-	consent := newConsentHandler(srv, clientRepo, server.SystemClock{}, cfg.DefaultSubject)
+	consent := newConsentHandler(srv, srvDeps.Clients, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
 	public, err := newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, metadataSigningIdentity{Signer: issuerSigningKey, Cert: issuerCertificate})
 	if err != nil {
@@ -418,16 +430,18 @@ func resolveIssuerEndpoints(cfg Config) (issuerEndpoints, error) {
 
 // buildClientRegistration registers cfg.Client/Client2 (whichever are
 // set) as HAIP-profiled, Client-Attestation-authenticated clients, and
-// resolves both their own attester JWKS into one shared key source —
-// extracted out of newServerMux purely to keep its own cognitive
-// complexity down (the loop below, plus its own nested branches, was
-// newServerMux's second-largest contributor).
-func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository, clientKeys *ephemeral.ClientKeySource, err error) {
+// resolves both their own attester JWKS into one shared key source,
+// also returning the registrations themselves, which the production
+// setup keeps in its own database instead — extracted out of
+// newServerMux purely to keep its own cognitive complexity down (the
+// loop below, plus its own nested branches, was newServerMux's
+// second-largest contributor).
+func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository, clientConfigs []storage.RegisteredClientConfig, clientKeys *ephemeral.ClientKeySource, err error) {
 	fetcher, err := fapihttp.New(&http.Client{Timeout: httpFetchTimeout}, fapihttp.Config{
 		MaxResponseBytes: 1 << 20, RequestTimeout: httpFetchTimeout, MaxRedirects: 2,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// The clients register no keys of their own: they authenticate with
 	// Client Attestations, whose keys come from attesterTrust — never
@@ -445,22 +459,23 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 		clientCfg := haip.RecommendedWalletClient(fapi.ClientID(cc.ID), cc.ExpectedAttesterIssuer)
 		clientCfg.RedirectURIs, clientCfg.AllowedScopes = registeredRedirectURIs(cc.RedirectURIs), allowedScopes
 		if clientCfg.ApplicationType, err = cc.applicationType(); err != nil {
-			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, err)
+			return nil, nil, nil, fmt.Errorf("register client %s: %w", cc.ID, err)
 		}
 		if cfg.usesAuthorizationDetails() {
 			clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
 		}
 		c, regErr := storage.NewRegisteredClient(clientCfg)
 		if regErr != nil {
-			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
+			return nil, nil, nil, fmt.Errorf("register client %s: %w", cc.ID, regErr)
 		}
 		registeredClients = append(registeredClients, c)
+		clientConfigs = append(clientConfigs, clientCfg)
 	}
 	clientKeys, err = ephemeral.NewClientKeySource(fetcher, clientKeySpecs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return memstore.NewClientRepository(registeredClients), clientKeys, nil
+	return memstore.NewClientRepository(registeredClients), clientConfigs, clientKeys, nil
 }
 
 // buildMdocSigner picks the mdoc CredentialConfiguration's own signing
@@ -504,21 +519,60 @@ func buildMdocSigner(cfg Config, fallbackKey *ecdsa.PrivateKey, fallbackCert *x5
 // the AttestationVerifier issDeps needs, or nil when key attestation
 // isn't configured. Extracted out of newServerMux purely to keep its
 // own cognitive complexity down.
+//
+// Under Config.Production it instead sets the proof types production
+// takes without opting in to more (haip.RecommendedIssuerConfig): jwt
+// proofs carrying a key attestation in their key_attestation header,
+// and no attestation proof type, which issuer.New refuses there
+// without Config.AllowAttestationProofType.
 func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialConfiguration) (issuer.AttestationVerifier, error) {
 	if cfg.KeyAttestation == nil {
 		return nil, nil
 	}
-	trustedKey, err := jwk.ParsePublicKey(cfg.KeyAttestation.TrustedJWK)
+	verifier, err := keyAttestationVerifier(*cfg.KeyAttestation)
 	if err != nil {
-		return nil, fmt.Errorf("key attestation trusted jwk: %w", err)
+		return nil, err
 	}
 	for _, c := range credConfigs {
+		if cfg.Production != nil {
+			c.ProofTypesSupported = haip.RecommendedIssuerConfig().ProofTypesSupported
+			continue
+		}
 		c.ProofTypesSupported[oid4vci.ProofTypeAttestation] = haip.RecommendedAttestationProofType()
 		if cfg.KeyAttestation.JWTProofRequiresKeyAttestation {
 			c.ProofTypesSupported[oid4vci.ProofTypeJWT] = haip.RecommendedJWTKeyAttestationProofType()
 		}
 	}
+	return verifier, nil
+}
+
+// keyAttestationVerifier trusts the Key Attestations ka names: those
+// whose x5c chains to TrustAnchorPEM's certificates, from a single
+// Wallet Provider (the suite's emulated Wallet, whose attestations carry
+// no iss), or those TrustedJWK signs.
+func keyAttestationVerifier(ka conformanceconfig.KeyAttestationConfig) (issuer.AttestationVerifier, error) {
+	if ka.TrustAnchorPEM != "" {
+		roots, err := keyAttestationRoots(ka)
+		if err != nil {
+			return nil, err
+		}
+		// Key attestation certificate revocation isn't checked.
+		return issuer.X5CAttestationVerifier{Roots: roots, Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}, nil
+	}
+	trustedKey, err := jwk.ParsePublicKey(ka.TrustedJWK)
+	if err != nil {
+		return nil, fmt.Errorf("key attestation trusted jwk: %w", err)
+	}
 	return fixedKeyAttestationVerifier{pub: trustedKey, alg: jose.ES256}, nil
+}
+
+// keyAttestationRoots is ka.TrustAnchorPEM's certificates.
+func keyAttestationRoots(ka conformanceconfig.KeyAttestationConfig) (*x509.CertPool, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(ka.TrustAnchorPEM)) {
+		return nil, fmt.Errorf("config: key_attestation.trust_anchor_pem holds no PEM certificates")
+	}
+	return roots, nil
 }
 
 func registeredRedirectURIs(raw []string) []fapi.RegisteredRedirectURI {

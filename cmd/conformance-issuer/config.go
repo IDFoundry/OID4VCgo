@@ -143,6 +143,54 @@ type Config struct {
 	// scopes, and the consent grant each with a credential_identifier it
 	// mints (§6.2). Off, the authorization code flow is scope-based.
 	AuthorizationDetails bool `json:"authorization_details,omitempty"`
+
+	// Production, when set, runs the Authorization Server and the
+	// Credential Issuer under production assurance (see
+	// ProductionConfig). Only a binary built with the
+	// conformance_production build tag can: see production.go.
+	Production *ProductionConfig `json:"production,omitempty"`
+}
+
+// ProductionConfig is Config.Production: the production setup, run
+// under server.AssuranceProduction and issuer.AssuranceProduction with
+// what those require, rather than this binary's development wiring.
+// Its stores are sqlstore's and fapigo/sqlstore's, in one SQLite file,
+// with every record sealed; its access token signing key is loaded from
+// here; its proof types are jwt proofs carrying a key attestation
+// (haip.RecommendedIssuerConfig), with no attestation proof type; and
+// key attestations are trusted by their x5c chain
+// (KeyAttestationConfig.TrustAnchorPEM, required here) with their
+// status checked, as Wallet Attestations' are. It is still a test
+// harness: the database is a fresh file each run, and its keys come
+// from this configuration.
+type ProductionConfig struct {
+	// DatabasePath is the SQLite file the stores keep their records in,
+	// created when absent.
+	DatabasePath string `json:"database_path"`
+
+	// SealingKey is the 32-byte AES-256-GCM key, base64-encoded, every
+	// store seals its records with (sealing.AESGCMSealer).
+	SealingKey string `json:"sealing_key"`
+
+	// AccessTokenSigningKeyPEM is the Authorization Server's access
+	// token signing key: a P-256 private key, PEM-encoded.
+	AccessTokenSigningKeyPEM string `json:"access_token_signing_key_pem"`
+}
+
+// validateProduction checks Production, when set, holds what the
+// production setup needs.
+func validateProduction(cfg Config) error {
+	p := cfg.Production
+	if p == nil {
+		return nil
+	}
+	if p.DatabasePath == "" || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
+		return fmt.Errorf("config: production.database_path, production.sealing_key and production.access_token_signing_key_pem are all required when production is present")
+	}
+	if cfg.KeyAttestation == nil || cfg.KeyAttestation.TrustAnchorPEM == "" {
+		return fmt.Errorf("config: key_attestation.trust_anchor_pem is required when production is present: its jwt proofs carry key attestations, trusted by their x5c chain")
+	}
+	return nil
 }
 
 // usesAuthorizationDetails reports whether any token carries
@@ -304,8 +352,11 @@ func loadConfig(path string) (Config, error) {
 	if err := validateOffers(cfg.Offers); err != nil {
 		return Config{}, err
 	}
-	if cfg.KeyAttestation != nil && len(cfg.KeyAttestation.TrustedJWK) == 0 {
-		return Config{}, fmt.Errorf("config: key_attestation.trusted_jwk is required when key_attestation is present")
+	if ka := cfg.KeyAttestation; ka != nil && (len(ka.TrustedJWK) == 0) == (ka.TrustAnchorPEM == "") {
+		return Config{}, fmt.Errorf("config: exactly one of key_attestation.trusted_jwk and key_attestation.trust_anchor_pem is required when key_attestation is present")
+	}
+	if err := validateProduction(cfg); err != nil {
+		return Config{}, err
 	}
 	if cfg.DefaultSubject == "" {
 		cfg.DefaultSubject = "conformance-test-subject"

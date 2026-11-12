@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -22,6 +24,12 @@ type run struct {
 
 	// deferred sets cmd/conformance-issuer's Config.Deferred.
 	deferred bool
+
+	// production sets cmd/conformance-issuer's Config.Production: its
+	// production setup, which trusts key attestations by
+	// keyAttestationCAPEM rather than by keyAttestationKey's public
+	// half.
+	production bool
 
 	tlsCertPEM, tlsKeyPEM string
 
@@ -83,6 +91,7 @@ type run struct {
 	// verification already ignores x5c too.
 	keyAttestationKey     *ecdsa.PrivateKey
 	keyAttestationLeafPEM string
+	keyAttestationCAPEM   string
 
 	vct                       string
 	claims                    map[string]string
@@ -150,7 +159,7 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		return nil, fmt.Errorf("generate status list trust anchor: %w", err)
 	}
 
-	keyAttestationKey, _, keyAttestationLeafPEM, _, err := conformancecert.GenerateSignerAndCert(
+	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
 		"run-fapi2sp-battery-key-attestation-leaf", "run-fapi2sp-battery-key-attestation-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate key attestation key: %w", err)
@@ -225,6 +234,7 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		statusListTrustAnchorPEM: statusListTrustAnchorPEM,
 		keyAttestationKey:        keyAttestationKey,
 		keyAttestationLeafPEM:    keyAttestationLeafPEM,
+		keyAttestationCAPEM:      keyAttestationCAPEM,
 
 		vct:                       "urn:eudi:pid:1",
 		claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
@@ -326,6 +336,37 @@ type serverConfig struct {
 	Mdoc                              *conformanceconfig.MdocConfig           `json:"mdoc,omitempty"`
 	KeyAttestation                    *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
 	Deferred                          bool                                    `json:"deferred,omitempty"`
+	Production                        *serverProductionConfig                 `json:"production,omitempty"`
+}
+
+// serverProductionConfig mirrors cmd/conformance-issuer's
+// ProductionConfig.
+type serverProductionConfig struct {
+	DatabasePath             string `json:"database_path"`
+	SealingKey               string `json:"sealing_key"`
+	AccessTokenSigningKeyPEM string `json:"access_token_signing_key_pem"`
+}
+
+// productionDatabasePath is the production setup's SQLite file, in the
+// container's /tmp: a fresh one each time the container is recreated.
+const productionDatabasePath = "/tmp/conformance-issuer.sqlite"
+
+// buildProductionConfig generates the production setup's own sealing
+// and access token signing keys.
+func buildProductionConfig() (*serverProductionConfig, error) {
+	sealingKey := make([]byte, 32)
+	if _, err := rand.Read(sealingKey); err != nil {
+		return nil, err
+	}
+	signingKeyPEM, err := conformancecert.GenerateECKeyPEM()
+	if err != nil {
+		return nil, fmt.Errorf("generate access token signing key: %w", err)
+	}
+	return &serverProductionConfig{
+		DatabasePath:             productionDatabasePath,
+		SealingKey:               base64.StdEncoding.EncodeToString(sealingKey),
+		AccessTokenSigningKeyPEM: signingKeyPEM,
+	}, nil
 }
 
 type serverConfigClient struct {
@@ -381,6 +422,14 @@ func buildServerConfig(r *run) ([]byte, error) {
 		KeyAttestation: &conformanceconfig.KeyAttestationConfig{
 			TrustedJWK: json.RawMessage(keyAttestationTrustedJWK),
 		},
+	}
+	if r.production {
+		// Trusted by its x5c chain, as a deployment trusts a Wallet
+		// Provider's key attestations.
+		cfg.KeyAttestation = &conformanceconfig.KeyAttestationConfig{TrustAnchorPEM: r.keyAttestationCAPEM}
+		if cfg.Production, err = buildProductionConfig(); err != nil {
+			return nil, err
+		}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }

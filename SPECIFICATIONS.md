@@ -308,7 +308,10 @@ guard against a third party say so.
   registered client could otherwise have the server send users to a
   page of its own, which RFC 9700 §4.11.2 forbids before the user has
   authenticated. The conformance binaries run at development and
-  redirect, for the OIDF suite's negative modules. A Wallet sees the
+  redirect, for the OIDF suite's negative modules; under
+  `cmd/conformance-issuer`'s production setup those modules end
+  `REVIEW` instead, waiting for a screenshot of the error page
+  (`conformance/issuer/README.md`'s "Production setup"). A Wallet sees the
   browser stop at the error page; errors once the user is
   authenticated, a denial among them, are redirected as usual.
 - **An `org-iso-mdoc` Digital Credentials API answer that withholds a

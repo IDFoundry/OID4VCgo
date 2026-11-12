@@ -12,8 +12,9 @@ issuer", confirmed against the suite's own source at
 ## What not to copy
 
 This binary is a conformance-suite harness. It runs `fapigo/server` and
-`issuer` under development assurance with in-memory stores, and some of
-its settings exist only for the suite:
+`issuer` under development assurance with in-memory stores (except in
+its production setup, below: "Production setup"), and some of its
+settings exist only for the suite:
 
 - **Credentials without status, valid for a year.** It issues each
   credential with a 365-day `exp` and no `status` claim, so nothing can
@@ -26,7 +27,8 @@ its settings exist only for the suite:
   (`server.NoClientCertificateRevocationCheck{}`), and a 24-hour
   Wallet Attestation lifetime to suit the suite's fixtures.
 - **No HAIP profile check in `issuer.New`**: it doesn't set
-  `Config.Profile: haip.IssuerProfile{}`.
+  `Config.Profile: haip.IssuerProfile{}`, except in the production
+  setup.
 
 `examples/passport-vdc`'s issuer shows the HAIP profile, status lists
 and deferred issuance together.
@@ -168,7 +170,7 @@ Endpoint and validates what it returns.
 ## Runs
 
 `conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
-through `run_issuer` in `conformance/scripts/lib.sh`: five runs of
+through `run_issuer` in `conformance/scripts/lib.sh`: six runs of
 `run-fapi2sp-battery`, each regenerating the keys and config,
 restarting `cmd/conformance-issuer` and creating its own plan.
 
@@ -179,14 +181,105 @@ restarting `cmd/conformance-issuer` and creating its own plan.
 | Issuer mdoc | `-credential-format mdoc` | `mdocBattery`: `metadata-test`, `happy-flow` |
 | Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `mdocBattery` |
 | Issuer deferred | `-deferred` | `deferredBattery`: `metadata-test`, `happy-flow` |
+| Issuer production | `-production` | `productionBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 |
 
 The first four are the role's four certification profiles
 (`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
-deferred run is extra coverage of the Deferred Credential Endpoint.
-Every module must end `PASSED`, except in the two `haipBattery` runs
-`refresh-token` (`SKIPPED`) and
-`par-attempt-to-use-request_uri-for-different-client` (`REVIEW`), both
-explained under "Status: the generic FAPI2SP battery" below.
+deferred run is extra coverage of the Deferred Credential Endpoint,
+and the production run of the production setup (see "Production
+setup" below). Every module must end `PASSED`, except in the two
+`haipBattery` runs and the production run `refresh-token` (`SKIPPED`)
+and `par-attempt-to-use-request_uri-for-different-client` (`REVIEW`),
+both explained under "Status: the generic FAPI2SP battery" below, and
+the three modules "Production setup" lists in the production run.
+
+## Production setup
+
+With a `production` object in its configuration, `cmd/conformance-issuer`
+runs what a deployment runs (`ProductionConfig`, `production.go`), not
+its development wiring:
+
+- `fapigo/server` and `issuer` under `AssuranceProduction`, so
+  `server.New` and `issuer.New` refuse anything production must not run
+  with, and `issuer.New` runs the HAIP profile check
+  (`haip.IssuerProfile{}`).
+- Their stores in one SQLite file, created fresh in the container's
+  `/tmp` each run: `sqlstore`'s for the issuer (c_nonces, notifications,
+  deferred transactions) and `fapigo/sqlstore`'s for the Authorization
+  Server (clients, PAR transactions, grants, replay, revocation) and
+  the Credential Endpoint's DPoP nonces, every record sealed with one
+  AES-256-GCM key (`sealing.AESGCMSealer`), as sqlstore's "A whole
+  issuer deployment" wires them. One instance:
+  `server.DeploymentSingleInstance`.
+- The access token signing key loaded from the configuration and
+  declared durable, rather than one made per process.
+- An audit sink for each, logging every event.
+- Proof types `haip.RecommendedIssuerConfig()` gives: `jwt` proofs
+  that must carry a key attestation in their `key_attestation` header
+  (`key_attestations_required`), and no `attestation` proof type,
+  which `issuer.New` refuses under production without
+  `AllowAttestationProofType`. Key attestations are trusted by their
+  `x5c` chain against `key_attestation.trust_anchor_pem`
+  (`issuer.X5CAttestationVerifier`, one Wallet Provider), not by a
+  fixed key.
+- Wallet Attestations' and key attestations' status checked
+  (`haip.WalletAttestationStatusList`,
+  `issuer.StatusListAttestationStatus`, sharing one
+  `statuslist.Cache`). The suite's attestations carry no `status`
+  claim, so no list is ever fetched.
+
+It still declines certificate revocation checks for attestation
+signers, and issues credentials without status, as the development
+wiring does (see "What not to copy").
+
+`sqlstore` and `fapigo/sqlstore` are modules this one doesn't require,
+so the production setup builds only with the `conformance_production`
+build tag, in a Go workspace holding `./sqlstore`:
+
+```sh
+go work init . ./sqlstore
+go build -tags conformance_production ./cmd/conformance-issuer
+```
+
+A binary built without the tag refuses a `production` configuration.
+`run-fapi2sp-battery -production` writes the configuration and builds
+the container with the tag (the Dockerfile's `GO_BUILD_TAGS`), and
+drives `productionBattery`: the HAIP plan's whole module list, the 60
+`haipBattery` modules and `fail-invalid-key-attestation-signature`,
+which runs here with `jwt` proofs carrying a key attestation (its
+signature broken) rather than with the `attestation` proof type
+production doesn't offer. CI's `conformance-issuer-production` job
+builds it and runs its tests (`production_test.go`), and the daily
+OID4VCI workflow runs it against the suite ("Issuer production" in
+`run_issuer`).
+
+Every module ends as in "Issuer haip-battery", and
+`fail-invalid-key-attestation-signature` `PASSED`, except three,
+expected `REVIEW` rather than `PASSED`:
+
+| Module | Development | Production | Why |
+| --- | --- | --- | --- |
+| `fapi2-security-profile-final-ensure-unsigned-authorization-request-without-using-par-fails` | `PASSED` | `REVIEW` | The authorization request didn't use PAR, so the server refuses it before the user has authenticated. |
+| `fapi2-security-profile-final-par-attempt-reuse-request_uri` | `PASSED` | `REVIEW` | The `request_uri` was already used. |
+| `fapi2-security-profile-final-par-attempt-to-use-expired-request_uri` | `PASSED` | `REVIEW` | The `request_uri` has expired. |
+
+In each, the error comes before the user has authenticated, so under
+production the Authorization Server shows it on its own page instead
+of redirecting it to the client's redirect URI
+(`server.BuildAuthorizationErrorRedirect` refuses there; see
+[SPECIFICATIONS.md](../../SPECIFICATIONS.md#known-strictness)'s
+"Authorization errors before the user is authenticated"), and the
+suite, with no error back at the redirect URI, waits for a screenshot
+of the page. At development `consent.go` redirects these errors to the
+registered redirect URI, and the suite grades them `PASSED`
+itself. `TestProductionSetup_ShowsAuthorizationErrorsLocally` checks
+the production side. As for every `REVIEW` module, the script fails
+the module if its log holds a `FAILURE` or `WARNING`.
+
+Confirmed live against a fresh local suite (commit `410812ef`,
+2026-11-10), twice: every module as expected, no `FAILURE` or
+`WARNING` in any log; the development run on the same suite matched
+its own expectations.
 
 `-issuer-initiated` selects the plan's
 `vci_authorization_code_flow_variant=issuer_initiated`. For each
