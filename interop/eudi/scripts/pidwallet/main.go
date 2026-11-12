@@ -79,6 +79,10 @@ type result struct {
 	OfferAuthorizationServer string `json:"offer_authorization_server,omitempty"`
 	AuthorizationServers     int    `json:"authorization_servers"`
 	TokenType                string `json:"token_type,omitempty"`
+	// RequestEncryptionKeys are the metadata's
+	// credential_request_encryption keys, as observeRequestEncryptionKeys
+	// reports them.
+	RequestEncryptionKeys []observedKey `json:"request_encryption_keys,omitempty"`
 	// Challenges counts the Attestation Challenges fetched; DPoPNonces
 	// the responses that handed out a DPoP-Nonce, and DPoPNonceRetries
 	// those that refused a request for want of one (use_dpop_nonce).
@@ -96,6 +100,13 @@ type result struct {
 	StatusAfterRevoke string `json:"status_after_revoke,omitempty"`
 
 	Exchanges []exchange `json:"exchanges"`
+}
+
+// observedKey is what the run reports of an encryption key the issuer
+// publishes: the leniencies the wallet allows it.
+type observedKey struct {
+	Alg string `json:"alg"`
+	Kid bool   `json:"kid"`
 }
 
 // credentialReport is what the wallet's checks found of one credential.

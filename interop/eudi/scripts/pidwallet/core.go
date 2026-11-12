@@ -99,6 +99,7 @@ func (s *issuance) discover(ctx context.Context, res *result) error {
 		return err
 	}
 	res.AuthorizationServers = len(s.metadata.AuthorizationServers)
+	res.RequestEncryptionKeys = observeRequestEncryptionKeys(s.metadata)
 	if _, ok := s.metadata.CredentialConfigurationsSupported[s.configID]; !ok {
 		err = fmt.Errorf("the issuer has no configuration %q", s.configID)
 		res.fail("metadata", err)
@@ -378,4 +379,20 @@ func (s *issuance) credentialRequest(ctx context.Context, cNonce string) (wallet
 		return wallet.CredentialRequest{}, fmt.Errorf("unknown -proof %q", s.env.o.proof)
 	}
 	return req, nil
+}
+
+// observeRequestEncryptionKeys is each key of the metadata's
+// credential_request_encryption.jwks as the run reports it: its alg,
+// "" for none, which the wallet takes (SPECIFICATIONS.md, "Known
+// leniencies"), and whether it has a kid, which OpenID4VCI 1.0 §12.2.4
+// requires, but the wallet doesn't.
+func observeRequestEncryptionKeys(m oid4vci.Metadata) []observedKey {
+	if m.CredentialRequestEncryption == nil {
+		return nil
+	}
+	keys := make([]observedKey, 0, len(m.CredentialRequestEncryption.JWKS.Keys))
+	for _, k := range m.CredentialRequestEncryption.JWKS.Keys {
+		keys = append(keys, observedKey{Alg: string(k.Alg), Kid: k.Kid != ""})
+	}
+	return keys
 }
