@@ -3,86 +3,32 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
-	"strings"
-	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
-
-// httpClient is shared across every outbound call this binary makes
-// (fetching request_uri, POSTing the direct_post.jwt response,
-// following the HAIP redirect_uri) — TLS verification deliberately
-// skipped, matching the OIDF conformance suite's own documented
-// posture toward the implementation under test (its outbound client
-// trusts any certificate, see conformance/verifier/docker-compose.yml's
-// own comment): this binary calls back into whatever Verifier a live
-// suite run points it at, itself running on throwaway conformance-only
-// TLS material with no real trust chain, the same as this binary's own
-// listener cert. Confirmed live during local wallet<->verifier
-// smoke-testing (see conformance/wallet-vp/README.md) — without this,
-// Go's own default TLS verification rejects the paired
-// cmd/conformance-verifier's self-signed cert outright.
-//
-// Not a model for a wallet: the URLs it fetches (request_uri, the
-// response's redirect_uri) come from the Authorization Request and the
-// Verifier's reply, unverified when fetched, and the bodies are read
-// without a size limit. A wallet fetches request_uri through
-// wallet.Wallet.FetchAuthorizationRequest, whose hardened client
-// verifies TLS and bounds the body, the redirects and the addresses it
-// connects to, and hands redirect_uri to the user's browser.
-var httpClient = &http.Client{
-	Timeout:   30 * time.Second,
-	Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // deliberate — see this var's own doc comment
-}
 
 const contentTypeHeader = "Content-Type"
 
-func httpGetString(rawURL string) (string, error) {
-	resp, err := httpClient.Get(rawURL) //nolint:gosec,noctx // conformance harness only: rawURL is an unverified request_uri or redirect_uri from the suite (see httpClient)
+// httpGetString GETs rawURL with client, for following a Verifier's
+// redirect_uri as the browser would.
+func httpGetString(client *http.Client, rawURL string) (string, error) {
+	resp, err := client.Get(rawURL) //nolint:gosec,noctx // conformance harness only: rawURL is the Verifier's redirect_uri, which a browser would follow
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRequestObjectBytes))
 	if err != nil {
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GET %s: status %d: %s", rawURL, resp.StatusCode, body)
-	}
-	return string(body), nil
-}
-
-// httpPostFormString POSTs form as application/x-www-form-urlencoded
-// to rawURL with an Accept header naming the Request URI response's
-// own content type (§5.10), matching §5.10's exact POST semantics
-// (as opposed to postDirectPostResponse's own POST, a different
-// endpoint/content type entirely).
-func httpPostFormString(rawURL string, form url.Values) (string, error) {
-	req, err := http.NewRequest(http.MethodPost, rawURL, strings.NewReader(form.Encode())) //nolint:gosec,noctx // conformance harness only: rawURL is an unverified request_uri from the suite (see httpClient)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set(contentTypeHeader, "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/oauth-authz-req+jwt")
-	resp, err := httpClient.Do(req) //nolint:gosec // conformance harness only: the same unverified rawURL as above
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("POST %s: status %d: %s", rawURL, resp.StatusCode, body)
 	}
 	return string(body), nil
 }
@@ -93,6 +39,11 @@ type server struct {
 	trust wallet.VerifierTrust
 	// acceptSANDNS is Config.AcceptX509SANDNS.
 	acceptSANDNS bool
+	// http makes every call to the Verifier: Config.verifierHTTPClient.
+	http *http.Client
+	// flow is the walletflow engine's Wallet (Config.Engine), nil for
+	// the default engine.
+	flow *walletflow.Wallet
 }
 
 // handleAuthorize is this binary's own "server.authorization_endpoint"
@@ -111,9 +62,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	usePost := link.RequestURIMethod == wallet.RequestURIMethodPost
-
-	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost, s.trust, s.acceptSANDNS)
+	authReq, err := s.fetchAndVerifyRequestObject(r.Context(), link)
 	if err != nil {
 		// A *wallet.RequestRejectedError means the Request Object itself
 		// was authenticated (signature verified, client_id matches) —
@@ -191,7 +140,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI, err := submitDirectPostResponse(r.Context(), authReq.ResponseURI, responseJWE)
+	redirectURI, err := s.submitDirectPostResponse(r.Context(), authReq.ResponseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -202,7 +151,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if redirectURI == "" {
 		presentedLead = "<p>No redirect_uri was returned.</p>"
 	}
-	respondFollowingRedirect(w, "Presented", presentedLead, redirectURI)
+	s.respondFollowingRedirect(w, "Presented", presentedLead, redirectURI)
 }
 
 // respondFollowingRedirect writes w's own response page, following
@@ -220,14 +169,14 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 // Verifier-supplied values (redirect_uri, error descriptions)
 // unescaped, and its only consumer is run-modules' own substring
 // matching, so it never needs to render as HTML.
-func respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redirectURI string) {
+func (s *server) respondFollowingRedirect(w http.ResponseWriter, title, leadParagraph, redirectURI string) {
 	w.Header().Set(contentTypeHeader, "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if redirectURI == "" {
 		_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s</body></html>", title, leadParagraph)
 		return
 	}
-	if _, err := httpGetString(redirectURI); err != nil {
+	if _, err := httpGetString(s.http, redirectURI); err != nil {
 		log.Printf("follow redirect_uri %s: %v", redirectURI, err)
 	}
 	_, _ = fmt.Fprintf(w, "<html><body><h1>%s</h1>%s<p>Followed redirect_uri: %s</p></body></html>", title, leadParagraph, redirectURI)
@@ -269,21 +218,21 @@ func (s *server) respondWithError(w http.ResponseWriter, p errorResponseParams) 
 		return
 	}
 
-	redirectURI, err := submitDirectPostResponse(context.Background(), p.responseURI, responseJWE)
+	redirectURI, err := s.submitDirectPostResponse(context.Background(), p.responseURI, responseJWE)
 	if err != nil {
 		log.Printf("post direct_post.jwt error response: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 
-	respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", p.code, p.description), redirectURI)
+	s.respondFollowingRedirect(w, "Rejected", fmt.Sprintf("<p>Sent error response: %s: %s</p>", p.code, p.description), redirectURI)
 }
 
 // submitDirectPostResponse POSTs responseJWE to responseURI
 // (wallet.SubmitDirectPostResponse, OID4VP §8.3.1) and returns the
 // Verifier's redirect_uri, if it sent one (§8.2).
-func submitDirectPostResponse(ctx context.Context, responseURI, responseJWE string) (string, error) {
-	reply, err := wallet.SubmitDirectPostResponse(ctx, httpClient, responseURI, responseJWE)
+func (s *server) submitDirectPostResponse(ctx context.Context, responseURI, responseJWE string) (string, error) {
+	reply, err := wallet.SubmitDirectPostResponse(ctx, s.http, responseURI, responseJWE)
 	if err != nil {
 		return "", err
 	}

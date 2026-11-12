@@ -6,7 +6,10 @@
 # the Digital Credentials API, with the verifier checking each
 # credential's Token Status List and the SD-JWT VC's Type Metadata,
 # fetched over TLS it verifies; then controls that must be refused.
-# See README.md.
+# The wallet fetches each request as the wallet package does, verifying
+# the verifier's TLS certificate; the SD-JWT VC and mdoc presentations
+# run again through walletflow (its engine "walletflow"), as a wallet
+# app makes them. See README.md.
 #
 #   interop/eudi/run-verifier.sh
 #   VERIFIER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint:edge interop/eudi/run-verifier.sh
@@ -138,11 +141,16 @@ start_verifier() {  # $1 the Client Identifier Prefix, $2 the client_id without 
 }
 start_verifier x509_hash "$CLIENT_ID_HASH"
 
+# The wallet verifies the verifier's TLS certificate, which setup makes
+# self-signed for localhost, against TLS_ANCHOR: its own, unless a
+# control says otherwise.
+TLS_ANCHOR=tls-cert.pem
 start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, $3 optional status list index
   local config="$1" verifier_ca="$2" idx="${3:-0}"
   stop_wallet
-  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" --argjson idx "$idx" \
-    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca | .status_list_idx = $idx' "$config" > wallet.json
+  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" --argjson idx "$idx" --rawfile tls "$TLS_ANCHOR" \
+    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca | .status_list_idx = $idx
+     | .verifier_tls_trust_anchors_pem = $tls' "$config" > wallet.json
   ./wallet -config wallet.json >> wallet.log 2>&1 &
   WALLET_PID=$!
   for _ in $(seq 1 50); do
@@ -254,7 +262,7 @@ echo "== control: the same request again, after it was answered"
 authorize replay.txt
 # The answered transaction's own request_uri, which the verifier no
 # longer serves: the wallet's refusal names that fetch.
-replayed="fetch request_uri: GET $(jq -r '.request_uri' init.json): status 400"
+replayed="wallet: fetch authorization request: fetch request_uri: fapihttp: response has an unexpected status code: 400"
 if grep -q 'Presented' replay.txt; then bad "the verifier served the request twice"
 elif grep -qF "$replayed" replay.txt; then ok "refused: $replayed"
 else bad "refused, as $replayed ($(head -c 200 replay.txt | tr -s '\n' ' '))"; fi
@@ -302,6 +310,22 @@ else bad "transaction initialized"; fi
 # response_types_supported required), and signs the Request Object for
 # the aud its issuer names (OpenID4VP 1.0 §5.8, §5.10).
 present sdjwt-haip-post "$SDJWT_QUERY" haip issuer-ca.pem post
+
+# What the verifier sends that the wallet is lenient about
+# (SPECIFICATIONS.md, "Known leniencies"): its response encryption
+# key, whose alg OpenID4VP 1.0 §8.3 requires and the wallet doesn't.
+# Asserted as v0.12.0 sends it, so a change is noticed. Read from a
+# Request Object of its own transaction, which nothing answers.
+ENCRYPTION_KEYS='[{"kty":"EC","crv":"P-256","alg":"ECDH-ES","kid":true}]'
+echo "== observed: the verifier's response encryption key"
+if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+  curl -s --max-time 30 --cacert tls-cert.pem -o observed-request.jwt "$(jq -r '.request_uri' init.json)" || true
+  observed="$(jq -cR 'split(".")[1] | gsub("-"; "+") | gsub("_"; "/") | @base64d | fromjson
+    | [.client_metadata.jwks.keys[] | {kty, crv, alg: (.alg // "absent"), kid: has("kid")}]' observed-request.jwt 2>/dev/null || true)"
+  echo "        client_metadata.jwks: ${observed:-unreadable}"
+  if [[ "$observed" == "$ENCRYPTION_KEYS" ]]; then ok "as v0.12.0 sends it"
+  else bad "as v0.12.0 sends it, $ENCRYPTION_KEYS: if a later image changed it, update README.md and this check"; fi
+else bad "transaction initialized"; fi
 
 echo "== control: the wallet trusts an unrelated CA for the verifier"
 start_wallet wallet-sdjwt.json other-ca.pem
@@ -371,6 +395,38 @@ else
   fi
 fi
 
+# walletflow (the wallet's engine "walletflow"): the same PID
+# presentations, through walletflow.Wallet.StartPresentation and
+# Presentation.Respond, by GET and by request_uri_method=post, whose
+# wallet_metadata is walletflow's own. Each is accepted as above: the
+# wallet follows the redirect, and the verifier releases the vp_token
+# for its response_code.
+# present_walletflow is present, checking walletflow answered.
+present_walletflow() {  # present's arguments, its label starting walletflow-
+  present "$@"
+  if grep -q 'walletflow answered pid\.' "wallet-$1.txt"; then ok "walletflow answered the query"
+  else bad "walletflow answered the query"; fi
+}
+for format in sdjwt mdoc; do
+  jq '.engine = "walletflow"' "wallet-$format.json" > "wallet-$format-walletflow.json"
+done
+start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+present_walletflow walletflow-sdjwt-haip "$SDJWT_QUERY" haip issuer-ca.pem get
+present_walletflow walletflow-sdjwt-haip-post "$SDJWT_QUERY" haip issuer-ca.pem post
+start_wallet wallet-mdoc-walletflow.json verifier-ca.pem
+present_walletflow walletflow-mdoc-haip "$MDOC_QUERY" haip iaca.pem get
+present_walletflow walletflow-mdoc-haip-post "$MDOC_QUERY" haip iaca.pem post
+
+echo "== control: the wallet doesn't trust the verifier's TLS certificate"
+TLS_ANCHOR=other-ca.pem start_wallet wallet-sdjwt.json verifier-ca.pem
+if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+  authorize untrusted-tls.txt
+  result untrusted-tls.json
+  wallet_refused untrusted-tls.txt \
+    "wallet: fetch authorization request: fetch request_uri: fapihttp: Get \"$(jq -r '.request_uri' init.json)\": verifier tls certificate: x509: certificate signed by unknown authority" \
+    untrusted-tls.json
+else bad "transaction initialized"; fi
+
 # x509_san_dns (OpenID4VP 1.0 §5.9.3): the verifier again, now with the
 # client_id x509_san_dns:localhost, the Access Certificate's dNSName and
 # its response_uri's host. HAIP 1.0 §5 has a Verifier use x509_hash, so
@@ -380,11 +436,14 @@ fi
 echo "== x509_san_dns: the verifier restarted with client_id x509_san_dns:localhost"
 start_verifier x509_san_dns localhost
 jq '.accept_x509_san_dns = true' wallet-sdjwt.json > wallet-sdjwt-san-dns.json
-start_wallet wallet-sdjwt-san-dns.json verifier-ca.pem
-for method in get post; do
-  present "sdjwt-san-dns-$method" "$SDJWT_QUERY" openid4vp issuer-ca.pem "$method"
-  if jq -e '.client_id == "x509_san_dns:localhost"' init.json >/dev/null 2>&1; then ok "the request's client_id was x509_san_dns:localhost"
-  else bad "the request's client_id was x509_san_dns:localhost ($(jq -r '.client_id' init.json))"; fi
+jq '.engine = "walletflow"' wallet-sdjwt-san-dns.json > wallet-sdjwt-san-dns-walletflow.json
+for engine in "" walletflow; do
+  start_wallet "wallet-sdjwt-san-dns${engine:+-$engine}.json" verifier-ca.pem
+  for method in get post; do
+    present${engine:+_$engine} "${engine:+$engine-}sdjwt-san-dns-$method" "$SDJWT_QUERY" openid4vp issuer-ca.pem "$method"
+    if jq -e '.client_id == "x509_san_dns:localhost"' init.json >/dev/null 2>&1; then ok "the request's client_id was x509_san_dns:localhost"
+    else bad "the request's client_id was x509_san_dns:localhost ($(jq -r '.client_id' init.json))"; fi
+  done
 done
 
 echo "== control: an x509_san_dns request, to a wallet not opted in"

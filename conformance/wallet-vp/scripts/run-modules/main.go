@@ -75,6 +75,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -82,11 +83,14 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -159,6 +163,7 @@ type generatedConfig struct {
 	ListenAddr                     string         `json:"listen_addr"`
 	TLSCertificatePEM              string         `json:"tls_certificate_pem"`
 	VerifierTrustAnchorsPEM        string         `json:"verifier_trust_anchors_pem,omitempty"`
+	VerifierTLSTrustAnchorsPEM     string         `json:"verifier_tls_trust_anchors_pem,omitempty"`
 	TLSPrivateKeyPEM               string         `json:"tls_private_key_pem"`
 	CredentialIssuerPrivateKeyPEM  string         `json:"credential_issuer_private_key_pem"`
 	CredentialIssuerCertificatePEM string         `json:"credential_issuer_certificate_pem"`
@@ -415,6 +420,33 @@ func generateWalletVPFixtures(credentialFormat, mdocCRLBase string) (cfg generat
 	return cfg, issuerCACertPEM, nil
 }
 
+// suiteTLSCertificatePEM is the TLS certificate the suite at apiBase
+// serves, as PEM: the locally run suite's nginx certificate is
+// self-signed (and names no host Go can check it against, see
+// cmd/conformance-wallet-vp's verifier_tls_trust_anchors_pem), so it's
+// read off the connection, as one would pin it by hand.
+func suiteTLSCertificatePEM(apiBase string) (string, error) {
+	u, err := url.Parse(apiBase)
+	if err != nil {
+		return "", err
+	}
+	host := u.Host
+	if u.Port() == "" {
+		host = net.JoinHostPort(u.Hostname(), "443")
+	}
+	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second}, Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} //nolint:gosec // reading the certificate to pin, not trusting the connection
+	conn, err := dialer.DialContext(context.Background(), "tcp", host)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = conn.Close() }()
+	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return "", fmt.Errorf("%s presented no certificate", host)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certs[0].Raw})), nil
+}
+
 // writeConfigAndMaybeRestart writes cfg to configOutPath and, unless
 // skipDockerRestart, restarts the conformance-wallet-vp container and
 // waits for it to come back up — split out of main purely to keep it
@@ -520,6 +552,12 @@ func main() {
 		log.Fatalf("generate verifier CA: %v", err)
 	}
 	cfg.VerifierTrustAnchorsPEM = verifierCAPEM
+	// The wallet verifies the suite's TLS certificate on every call it
+	// makes to it, pinned: the one the suite serves -suite with, which
+	// its nginx also serves the suite network.
+	if cfg.VerifierTLSTrustAnchorsPEM, err = suiteTLSCertificatePEM(*apiBase); err != nil {
+		log.Fatalf("read the suite's TLS certificate: %v", err)
+	}
 	if err := writeConfigAndMaybeRestart(cfg, httpClient, *walletVPBase, *skipDockerRestart); err != nil {
 		log.Fatalf("%v", err)
 	}

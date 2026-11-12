@@ -52,8 +52,8 @@ The certified binaries run at development assurance:
 `cmd/conformance-issuer` builds its `issuer` and FAPIgo `server` with
 `AssuranceDevelopment`, `cmd/conformance-verifier` its `verifier`, and
 `cmd/conformance-wallet` its `wallet` and FAPIgo `client`;
-`cmd/conformance-wallet-vp` calls `wallet`'s request parsing directly,
-with no `wallet.Wallet` and so no assurance level. What production
+`cmd/conformance-wallet-vp` fetches each Request Object through a
+`wallet.Wallet` at `AssuranceDevelopment`. What production
 assurance adds, or a deployment uses instead, the OIDF runs don't
 exercise, in particular:
 
@@ -70,10 +70,13 @@ exercise, in particular:
 - `walletflow`: the suite drives `wallet` through
   `cmd/conformance-wallet` and `cmd/conformance-wallet-vp`, never
   `walletflow`, which the interop runs and the mobile libraries use.
-- Fetching a Request Object as a production wallet does:
-  `cmd/conformance-wallet-vp` fetches `request_uri` with its own HTTP
-  client, which skips TLS verification, rather than
-  `wallet.Wallet.FetchAuthorizationRequest`'s hardened one.
+- Fetching a Request Object entirely as a production wallet does:
+  `cmd/conformance-wallet-vp` fetches `request_uri` through
+  `wallet.Wallet.FetchAuthorizationRequest` (and
+  `FetchAuthorizationRequestPost`), verifying the suite's TLS
+  certificate, which `run-modules` pins, but over its own HTTP client,
+  which reaches the suite on its private Docker address where
+  `wallet`'s hardened one refuses it.
 - Authorization errors shown on the Authorization Server's own page:
   at development, `cmd/conformance-issuer` redirects them to a
   registered redirect URI for the suite's negative modules, which

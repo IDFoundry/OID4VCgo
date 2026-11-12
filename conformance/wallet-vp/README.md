@@ -15,14 +15,15 @@ standing in for the browser — see "dc_api.jwt" below.
 
 This binary is a conformance-suite harness, not a wallet:
 
-- **It fetches `request_uri` with its own HTTP client**, which skips TLS
-  verification (the suite serves throwaway certificates) and reads the
-  body without a size limit. The URL comes from the Authorization
-  Request before anything is verified. A wallet calls
-  `wallet.Wallet.FetchAuthorizationRequest` (or
-  `FetchAuthorizationRequestPost`), whose hardened `fapihttp` client
-  verifies TLS and bounds the body, the redirects and the addresses it
-  connects to.
+- **It fetches `request_uri` as a wallet does, but from anywhere its
+  driver points it.** The fetch is `wallet.Wallet.FetchAuthorizationRequest`
+  (or `FetchAuthorizationRequestPost`): its Content-Type checked, its
+  body bounded, no redirect followed. But it lets the `request_uri`'s
+  host be a loopback or private address, as the suite's and the interop
+  runs' Verifiers are, and its TLS client trusts only
+  `verifier_tls_trust_anchors_pem` — or, with that unset, any
+  certificate (it says so at startup). A wallet keeps `wallet`'s own
+  hardened `fapihttp` client, which refuses those addresses.
 - **It follows the response's `redirect_uri` itself**, with that same
   client. A wallet hands it to the user's browser, after checking it's
   https.
@@ -37,7 +38,11 @@ This binary is a conformance-suite harness, not a wallet:
   `x509_hash` only.
 
 A wallet app uses `walletflow` (`StartPresentation`,
-`StartDCAPIPresentation`), or the mobile libraries over it.
+`StartDCAPIPresentation`), or the mobile libraries over it. The config's
+`engine: "walletflow"` answers `/authorize` that way, from the fixture
+credential held in a `walletflow.Wallet` (`walletflow.go`); the EUDI
+interop run uses it. The conformance plans run the default engine,
+which drives the `wallet` package step by step.
 
 ## How the interaction model was confirmed
 
@@ -94,17 +99,22 @@ Verifier's security by. For every Verifier it talks to:
   is issued (not self-signed) by one of those anchors — OID4VP §5.9.3,
   HAIP 1.0 §5. The response is encrypted to the Request Object's own
   key, and every presentation is bound to its nonce and client_id.
-- **Not checked:** the Verifier's **TLS certificate**. Every outbound
-  call (fetching `request_uri`, posting the response, following
-  `redirect_uri`) skips TLS verification, because the OIDF suite and
-  `cmd/conformance-verifier` serve throwaway self-signed certificates.
-  A completed presentation says nothing about a Verifier's TLS setup;
-  test that with ordinary TLS tooling (`openssl s_client
-  -verify_return_error -CAfile ...`, `curl --cacert ...`).
+- **Checked against what the config names:** the Verifier's **TLS
+  certificate**, on every outbound call (fetching `request_uri`, posting
+  the response, following `redirect_uri`), against
+  `verifier_tls_trust_anchors_pem`. A server presenting one of those
+  certificates itself is trusted for any host name: that pins the OIDF
+  suite's nginx certificate, self-signed for the Common Name
+  `localhost` with no subjectAltName, which no host name check can
+  pass. Otherwise its chain must reach one of them for the URL's host
+  name. `scripts/run-modules` pins the certificate the suite serves it;
+  the EUDI interop run, its verifier's. With the field unset (a config
+  from `scripts/generate-config`, or polaris-id's interop script) TLS
+  isn't verified at all, and the binary logs a warning at startup.
 - **Not checked without anchors:** with `verifier_trust_anchors_pem`
   unset (e.g. a config from `scripts/generate-config`), the Request
   Object's certificate chain isn't checked at all. The binary logs a
-  warning at startup in that case, and always for TLS.
+  warning at startup in that case.
 
 This binary is also run daily, and on each release, against
 polaris-oid4vp, an independent Verifier, with four controls that must
