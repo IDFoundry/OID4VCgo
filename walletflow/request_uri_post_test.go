@@ -140,7 +140,7 @@ func TestStartPresentation_RequestURIMethod(t *testing.T) {
 			ClientIDPrefixes []string         `json:"client_id_prefixes_supported"`
 			ResponseTypes    []string         `json:"response_types_supported"`
 			ResponseModes    []string         `json:"response_modes_supported"`
-			Issuer           *string          `json:"issuer"`
+			Issuer           string           `json:"issuer"`
 		}
 		if err := json.Unmarshal([]byte(form.Get("wallet_metadata")), &metadata); err != nil {
 			t.Fatalf("wallet_metadata: %v", err)
@@ -151,13 +151,13 @@ func TestStartPresentation_RequestURIMethod(t *testing.T) {
 		if _, ok := metadata.VPFormats["mso_mdoc"]; !ok {
 			t.Errorf("wallet_metadata = %s, want mso_mdoc among its formats", form.Get("wallet_metadata"))
 		}
-		// RFC 8414 §2's required response_types_supported, the one
-		// response mode the wallet answers a fetched request in, and no
-		// issuer: the Request Object's aud is then
-		// https://self-issued.me/v2 (OpenID4VP 1.0 §5.8).
+		// RFC 8414 §2's required response_types_supported and issuer,
+		// and the one response mode the wallet answers a fetched request
+		// in. The issuer is the one aud the wallet accepts, which the
+		// Request Object then carries (OpenID4VP 1.0 §5.8).
 		if !slices.Equal(metadata.ResponseTypes, []string{"vp_token"}) ||
-			!slices.Equal(metadata.ResponseModes, []string{"direct_post.jwt"}) || metadata.Issuer != nil {
-			t.Errorf("wallet_metadata = %s, want response_types_supported [vp_token], response_modes_supported [direct_post.jwt] and no issuer",
+			!slices.Equal(metadata.ResponseModes, []string{"direct_post.jwt"}) || metadata.Issuer != "https://self-issued.me/v2" {
+			t.Errorf("wallet_metadata = %s, want response_types_supported [vp_token], response_modes_supported [direct_post.jwt] and issuer https://self-issued.me/v2",
 				form.Get("wallet_metadata"))
 		}
 	}

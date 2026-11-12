@@ -34,6 +34,17 @@ CHANGELOG.md's BREAKING CHANGES sections.
   (draft-ietf-oauth-attestation-based-client-auth-07 §6.3). Nothing to
   change, unless your `ClientAttestationSource` returns an attestation
   without a `sub`, which is now refused before the request is sent.
+- **The `wallet_metadata` walletflow posts with a `request_uri_method=post`
+  fetch now carries `response_types_supported` (`["vp_token"]`),
+  `response_modes_supported` (`["direct_post.jwt"]`) and `issuer`
+  (`"https://self-issued.me/v2"`).** OpenID4VP 1.0 §10 takes wallet
+  metadata from RFC 8414, which requires `issuer` and
+  `response_types_supported`, and a Verifier that parses it so, such as
+  the EUDI reference verifier, refused the fetch without them. The
+  `issuer` is the one Request Object `aud` the wallet accepts (§5.8),
+  so nothing else changes. A wallet built on `wallet` that posts its
+  own metadata to `FetchAuthorizationRequestPost` may want the same
+  members.
 
 ## v0.75.3 → v0.76.0
 
