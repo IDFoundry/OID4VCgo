@@ -248,8 +248,13 @@ specific reason to suspect drift, not just when something seems off.
   verified; one it must refuse is answered `400`, which the suite
   grades `FINISHED`/`PASSED` itself. The module's log must hold no
   `FAILURE` or unexpected `WARNING`, and a module the plan lists with
-  no expected verdict fails the run. The two revocation modules aren't
-  driven: the harness checks no credential status. Found and
+  no expected verdict fails the run. The harness checks every
+  credential's status: the two revocation modules (a revoked Token
+  Status List entry, and for `iso_mdl` an mdoc on its identifier list)
+  must be refused, and an accepted module must have fetched its
+  credential's status list, the suite's lists trusted by the same
+  anchors as the credentials (`verifier/README.md`'s "Credential
+  status"). Found and
   fixed three real gaps along the way:
   `internal/jwe`'s Concat KDF never incorporated the sender's
   `apu`/`apv` header members, silently deriving the wrong CEK against

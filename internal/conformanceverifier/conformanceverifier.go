@@ -13,11 +13,10 @@
 package conformanceverifier
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -89,7 +88,7 @@ type Config struct {
 	TLSPrivateKeyPEM     string          `json:"tls_private_key_pem"`
 	ClientCertificatePEM string          `json:"client_certificate_pem"`
 	ClientPrivateKeyPEM  string          `json:"client_private_key_pem"`
-	CredentialIssuerJWK  json.RawMessage `json:"credential_issuer_jwk"`
+	CredentialIssuerJWK  json.RawMessage `json:"credential_issuer_jwk,omitempty"`
 	CredentialFormat     string          `json:"credential_format,omitempty"`
 	VCT                  string          `json:"vct,omitempty"`
 	Claims               []string        `json:"claims,omitempty"`
@@ -100,23 +99,36 @@ type Config struct {
 	// RejectUnverifiedResponses is always set here: see
 	// cmd/conformance-verifier's Config, and DriveModule.
 	RejectUnverifiedResponses bool `json:"reject_unverified_responses"`
+
+	// The credential and status list trust Setup configures: see
+	// cmd/conformance-verifier's Config.
+	CredentialIssuerTrustAnchorsPEM   string `json:"credential_issuer_trust_anchors_pem,omitempty"`
+	StatusListTrustAnchorsPEM         string `json:"status_list_trust_anchors_pem,omitempty"`
+	StatusReferenceOptional           bool   `json:"status_reference_optional,omitempty"`
+	StatusListTLSPinnedCertificatePEM string `json:"status_list_tls_pinned_certificate_pem,omitempty"`
+	StatusListAllowPrivate            bool   `json:"status_list_allow_private,omitempty"`
 }
 
 // KeyMaterial is everything GenerateKeyMaterial produces: a caller
 // fills in Config's own remaining role-specific fields (CredentialFormat
-// etc.) before writing it out.
+// etc.) before writing it out. CredentialIssuerCACertPEM issued the
+// certificate CredentialIssuerPrivateJWK's x5c carries.
 type KeyMaterial struct {
 	Config                     Config
 	ClientCACertPEM            string
 	CredentialIssuerPrivateJWK jwk.SetEntry
+	CredentialIssuerCACertPEM  string
 }
 
 // GenerateKeyMaterial builds a fresh throwaway TLS listener cert, OID4VP
 // Client Identifier leaf+CA cert pair, and Credential Issuer signing
-// key — everything either script needs, mirroring
-// conformance/verifier/scripts/generate-config's own approach.
-// clientCN/clientCACN name the leaf/CA certs (each script uses its own,
-// so a stray container restart never trusts a mismatched cert).
+// key with a leaf certificate under a CA of its own — everything either
+// script needs. The suite signs its "dc+sd-jwt" credentials and their
+// Status List Tokens with that key, carrying the certificate as x5c
+// (VP1FinalGenerateJwtStatusListToken in the suite's source), so the
+// Verifier trusts both by the CA. clientCN/clientCACN name the leaf/CA
+// certs (each script uses its own, so a stray container restart never
+// trusts a mismatched cert).
 func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMaterial, error) {
 	_, keyPEM, certPEM, caCertPEM, err := conformancecert.GenerateSignerAndCert(clientCN, clientCACN)
 	if err != nil {
@@ -127,23 +139,19 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 		return KeyMaterial{}, fmt.Errorf("generate tls cert: %w", err)
 	}
 
-	issuerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	issuerKey, _, issuerCertPEM, issuerCACertPEM, err := conformancecert.GenerateSignerAndCert(clientCN+"-credential-issuer", clientCACN+"-credential-issuer")
 	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("generate credential issuer key: %w", err)
+		return KeyMaterial{}, fmt.Errorf("generate credential issuer key/certificate: %w", err)
 	}
-	issuerJWK, err := jwk.Marshal(&issuerKey.PublicKey)
+	issuerCert, err := conformancecert.ParseCertificatePEM(issuerCertPEM)
 	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("marshal credential issuer jwk: %w", err)
-	}
-	issuerJWKRaw, err := json.Marshal(issuerJWK)
-	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("marshal credential issuer jwk: %w", err)
+		return KeyMaterial{}, fmt.Errorf("parse credential issuer certificate: %w", err)
 	}
 	issuerPrivateJWKMaterial, err := jwk.MarshalPrivate(issuerKey)
 	if err != nil {
 		return KeyMaterial{}, fmt.Errorf("encode credential issuer private key: %w", err)
 	}
-	issuerPrivateJWK := jwk.SetEntry{JWK: issuerPrivateJWKMaterial, Alg: "ES256"}
+	issuerPrivateJWK := jwk.SetEntry{JWK: issuerPrivateJWKMaterial, Alg: "ES256", X5C: []string{base64.StdEncoding.EncodeToString(issuerCert.Raw)}}
 
 	return KeyMaterial{
 		Config: Config{
@@ -153,12 +161,12 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 			TLSPrivateKeyPEM:     tlsKeyPEM,
 			ClientCertificatePEM: certPEM,
 			ClientPrivateKeyPEM:  keyPEM,
-			CredentialIssuerJWK:  issuerJWKRaw,
 
 			RejectUnverifiedResponses: true,
 		},
 		ClientCACertPEM:            caCertPEM,
 		CredentialIssuerPrivateJWK: issuerPrivateJWK,
+		CredentialIssuerCACertPEM:  issuerCACertPEM,
 	}, nil
 }
 
@@ -635,12 +643,8 @@ func Setup(params SetupParams) (SetupResult, error) {
 	if params.Configure != nil {
 		params.Configure(&km.Config)
 	}
-	if km.Config.CredentialFormat == "mso_mdoc" {
-		mdocTrustAnchorPEM, fetchErr := fetchMdocIACARootPEM(httpClient, *params.Flags.APIBase)
-		if fetchErr != nil {
-			return SetupResult{}, fmt.Errorf("fetch mdoc iaca root: %w", fetchErr)
-		}
-		km.Config.MdocTrustAnchorPEM = mdocTrustAnchorPEM
+	if err := configureTrust(httpClient, *params.Flags.APIBase, &km); err != nil {
+		return SetupResult{}, err
 	}
 	if err := WriteConfig(km.Config); err != nil {
 		return SetupResult{}, fmt.Errorf("write config: %w", err)
@@ -677,6 +681,53 @@ func Setup(params SetupParams) (SetupResult, error) {
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
 
 	return SetupResult{HTTPClient: httpClient, PlanID: planID, Modules: modules}, nil
+}
+
+// configureTrust sets the issuer and status list trust km.Config's
+// format needs: the credential issuer's CA ("dc+sd-jwt"), or the
+// suite's IACA root ("mso_mdoc"), trusted for the credential and its
+// status and identifier lists alike. The lists are fetched from the
+// suite's own address on the Docker network, a private one, over TLS
+// pinned to the certificate the suite serves apiBase with: the same
+// nginx serves both, with one self-signed certificate naming only
+// "localhost", in its subject. A credential with no status reference is accepted, as
+// present-credential-without-status requires.
+func configureTrust(httpClient *http.Client, apiBase string, km *KeyMaterial) error {
+	cfg := &km.Config
+	if cfg.CredentialFormat == "mso_mdoc" {
+		mdocTrustAnchorPEM, err := fetchMdocIACARootPEM(httpClient, apiBase)
+		if err != nil {
+			return fmt.Errorf("fetch mdoc iaca root: %w", err)
+		}
+		cfg.MdocTrustAnchorPEM = mdocTrustAnchorPEM
+		cfg.StatusListTrustAnchorsPEM = mdocTrustAnchorPEM
+	} else {
+		cfg.CredentialIssuerTrustAnchorsPEM = km.CredentialIssuerCACertPEM
+		cfg.StatusListTrustAnchorsPEM = km.CredentialIssuerCACertPEM
+	}
+	suiteCertPEM, err := fetchTLSCertificatePEM(httpClient, apiBase)
+	if err != nil {
+		return fmt.Errorf("fetch the suite's tls certificate: %w", err)
+	}
+	cfg.StatusListTLSPinnedCertificatePEM = suiteCertPEM
+	cfg.StatusListAllowPrivate = true
+	cfg.StatusReferenceOptional = true
+	return nil
+}
+
+// fetchTLSCertificatePEM is the certificate the suite at apiBase
+// presents, PEM-encoded, read over httpClient, which verifies none: it's
+// pinned, not trusted by a chain.
+func fetchTLSCertificatePEM(httpClient *http.Client, apiBase string) (string, error) {
+	resp, err := httpClient.Get(apiBase + "api/server") //nolint:gosec,noctx // apiBase is the operator's own -suite flag value, not attacker-controlled
+	if err != nil {
+		return "", err
+	}
+	_ = resp.Body.Close()
+	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+		return "", fmt.Errorf("%s presented no TLS certificate", apiBase)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: resp.TLS.PeerCertificates[0].Raw})), nil
 }
 
 // fetchMdocIACARootPEM fetches the suite's own well-known mdoc IACA
