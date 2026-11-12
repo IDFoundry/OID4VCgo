@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,15 +45,22 @@ type ParseAuthorizationRequestParams struct {
 
 	// ClientID is REQUIRED: the "client_id" query parameter this
 	// Wallet was invoked with. Checked against both the Request
-	// Object's own "client_id" claim and — the only Client Identifier
-	// Prefix this function currently supports — the signing
-	// certificate's own "x509_hash:..." value (OID4VP §5.6.2).
+	// Object's own "client_id" claim and the signing certificate: its
+	// own "x509_hash:..." value, or with AcceptX509SANDNS an
+	// "x509_san_dns:<DNS name>" one of its dNSName subject alternative
+	// names (OpenID4VP 1.0 §5.9.3).
 	ClientID string
 
 	// VerifierTrust decides whether to trust the certificate chain the
 	// Request Object is signed with (OID4VP §5.9.3). REQUIRED — pass
 	// NoVerifierTrust{} to opt out explicitly.
 	VerifierTrust VerifierTrust
+
+	// AcceptX509SANDNS also accepts the x509_san_dns Client Identifier
+	// Prefix (OpenID4VP 1.0 §5.9.3): see Config.AcceptX509SANDNS. A
+	// request using it is refused under NoVerifierTrust, which verifies
+	// no chain.
+	AcceptX509SANDNS bool
 
 	// WalletNonce, when non-empty, is the "wallet_nonce" value this
 	// Wallet sent on a POST fetch of request_uri (§5.10) — the
@@ -232,9 +237,10 @@ type wireJWKKid struct {
 // params.RequestObject's "x5c" header with params.VerifierTrust (OID4VP
 // §5.9.3), verifies the JWS signature against its leaf (RFC9101 §5,
 // matching verifier.BuildAuthorizationRequest's own signed-JAR
-// convention on the building side), checks that leaf's SHA-256 hash
-// matches params.ClientID's own "x509_hash:..." value, and decodes the
-// verified payload. When
+// convention on the building side), checks params.ClientID is bound to
+// that leaf (its SHA-256 hash for "x509_hash:...", one of its dNSName
+// subject alternative names for "x509_san_dns:..." with
+// params.AcceptX509SANDNS), and decodes the verified payload. When
 // params.WalletNonce is non-empty, the returned Request Object's own
 // "wallet_nonce" claim MUST echo it back (§5.10.1) — this is checked
 // here, not left to the caller, since a missing/mismatched echo means
@@ -257,16 +263,19 @@ type wireJWKKid struct {
 // refused with a *RequestRejectedError, since it's authentic and can be
 // answered with an error response.
 //
-// Only the "x509_hash" Client Identifier Prefix is supported — the one
-// HAIP mandates, and the only one verifier.BuildAuthorizationRequest
-// itself produces.
+// The "x509_hash" Client Identifier Prefix is supported — the one HAIP
+// mandates, and the only one verifier.BuildAuthorizationRequest itself
+// produces — and with params.AcceptX509SANDNS "x509_san_dns", whose
+// DNS name response_uri's host must then be (OpenID4VP 1.0 §5.9.3).
+// Any other prefix is refused.
 func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (AuthorizationRequest, error) {
-	cert, clientID, payload, err := verifyRequestObject(params.RequestObject, params.VerifierTrust)
+	cert, payload, err := verifyRequestObject(params.RequestObject, params.VerifierTrust)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
-	if params.ClientID != clientID {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: client_id %q does not match x5c leaf's own x509_hash %q", params.ClientID, clientID)
+	dnsName, err := bindClientID(params.ClientID, cert, params.AcceptX509SANDNS, params.VerifierTrust)
+	if err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
 
 	var wire wireRequestObjectPayload
@@ -280,6 +289,12 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: payload client_id %q does not match %q", wire.ClientID, params.ClientID)
 	}
 	if err := checkResponseURI(wire.ResponseURI, params.AllowLoopbackHTTP); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
+	}
+	// Before any RequestRejectedError below, which is answered at
+	// response_uri: one not on the x509_san_dns name isn't the
+	// Verifier's to be answered at.
+	if err := checkResponseURIHost(wire.ResponseURI, dnsName); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse authorization request: %w", err)
 	}
 	if params.WalletNonce != "" && wire.WalletNonce != params.WalletNonce {
@@ -385,34 +400,33 @@ var ErrUntrustedVerifier = errors.New("untrusted verifier")
 
 // verifyRequestObject checks a signed Request Object: its typ, its x5c
 // chain with trust (OID4VP §5.9.3), and its signature by the chain's
-// leaf. It returns the leaf, the x509_hash Client Identifier the leaf
-// stands for (§5.9.3), and the verified payload.
-func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certificate, string, []byte, error) {
+// leaf. It returns the leaf, which the Client Identifier must then be
+// bound to (bindClientID), and the verified payload.
+func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certificate, []byte, error) {
 	header, _, err := jose.DecodeUnverified(requestObject)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("decode: %w", err)
+		return nil, nil, fmt.Errorf("decode: %w", err)
 	}
 	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, requestObjectTyp) {
-		return nil, "", nil, fmt.Errorf("typ = %q, want %q", typ, requestObjectTyp)
+		return nil, nil, fmt.Errorf("typ = %q, want %q", typ, requestObjectTyp)
 	}
 	if trust == nil {
-		return nil, "", nil, fmt.Errorf("VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
+		return nil, nil, fmt.Errorf("VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
 	chain, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 	cert, err := trust.VerifyVerifierChain(chain)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("%w: %w", ErrUntrustedVerifier, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrUntrustedVerifier, err)
 	}
 	algStr, _ := header["alg"].(string)
 	_, payload, err := jose.Verify(jose.Alg(algStr), cert.PublicKey, requestObject)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("signature verification failed: %w", err)
+		return nil, nil, fmt.Errorf("signature verification failed: %w", err)
 	}
-	hash := sha256.Sum256(cert.Raw)
-	return cert, "x509_hash:" + base64.RawURLEncoding.EncodeToString(hash[:]), payload, nil
+	return cert, payload, nil
 }
 
 // responseEncryption picks the response encryption key and enc from a
@@ -535,7 +549,8 @@ func (w *Wallet) FetchAuthorizationRequestPost(ctx context.Context, requestURI, 
 
 // ParseAuthorizationRequest is the package-level ParseAuthorizationRequest
 // with this Wallet's own configuration: Config.VerifierTrust, which it
-// therefore requires, Config.Fetch.AllowLoopbackHTTP for response_uri,
+// therefore requires, Config.AcceptX509SANDNS,
+// Config.Fetch.AllowLoopbackHTTP for response_uri,
 // and Dependencies.Clock for exp and nbf. Use it for a Request Object
 // obtained some other way than FetchAuthorizationRequest or
 // FetchAuthorizationRequestPost; walletNonce is the wallet_nonce sent
@@ -546,7 +561,7 @@ func (w *Wallet) ParseAuthorizationRequest(requestObject, clientID, walletNonce 
 	}
 	return ParseAuthorizationRequest(ParseAuthorizationRequestParams{
 		RequestObject: requestObject, ClientID: clientID, VerifierTrust: w.cfg.VerifierTrust, WalletNonce: walletNonce,
-		AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP, Now: w.deps.Clock.Now,
+		AcceptX509SANDNS: w.cfg.AcceptX509SANDNS, AllowLoopbackHTTP: w.cfg.Fetch.AllowLoopbackHTTP, Now: w.deps.Clock.Now,
 	})
 }
 

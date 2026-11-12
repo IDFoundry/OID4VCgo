@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -171,7 +172,7 @@ func servePostRequestObject(t *testing.T, echoNonce bool) (rawURL, clientID stri
 func TestFetchAndVerifyRequestObject_RejectsRedirectURI(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"redirect_uri": "https://wallet.example.com/callback"})
 	url := serveRequestObject(t, compact)
-	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
+	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{}, false)
 	if err == nil {
 		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying redirect_uri alongside response_uri")
 	}
@@ -193,7 +194,7 @@ func TestFetchAndVerifyRequestObject_RejectsRedirectURI(t *testing.T) {
 func TestFetchAndVerifyRequestObject_RejectsTransactionData(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, map[string]any{"transaction_data": []string{"eyJ0eXBlIjoidW5rbm93biJ9"}})
 	url := serveRequestObject(t, compact)
-	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
+	_, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{}, false)
 	if err == nil {
 		t.Fatal("fetchAndVerifyRequestObject accepted a request object carrying transaction_data")
 	}
@@ -209,7 +210,7 @@ func TestFetchAndVerifyRequestObject_RejectsTransactionData(t *testing.T) {
 func TestFetchAndVerifyRequestObject_AcceptsWellFormedRequest(t *testing.T) {
 	compact, clientID, _ := buildSignedRequestObject(t, nil)
 	url := serveRequestObject(t, compact)
-	req, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{})
+	req, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.NoVerifierTrust{}, false)
 	if err != nil {
 		t.Fatalf("fetchAndVerifyRequestObject: %v", err)
 	}
@@ -224,7 +225,7 @@ func TestFetchAndVerifyRequestObject_AcceptsWellFormedRequest(t *testing.T) {
 // "wallet_nonce" claim, and fetchAndVerifyRequestObject accepts it.
 func TestFetchAndVerifyRequestObject_POSTEchoesWalletNonce(t *testing.T) {
 	url, clientID := servePostRequestObject(t, true)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}); err != nil {
+	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}, false); err != nil {
 		t.Fatalf("fetchAndVerifyRequestObject: %v", err)
 	}
 }
@@ -236,7 +237,7 @@ func TestFetchAndVerifyRequestObject_POSTEchoesWalletNonce(t *testing.T) {
 // replay-mitigation the nonce exists for is theater, not enforcement.
 func TestFetchAndVerifyRequestObject_RejectsMissingWalletNonceEcho(t *testing.T) {
 	url, clientID := servePostRequestObject(t, false)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}); err == nil {
+	if _, err := fetchAndVerifyRequestObject(url, clientID, true, wallet.NoVerifierTrust{}, false); err == nil {
 		t.Error("fetchAndVerifyRequestObject accepted a POST response whose payload never echoed back the wallet_nonce it sent")
 	}
 }
@@ -315,7 +316,7 @@ func TestFetchAndVerifyRequestObject_ChecksTheChainAgainstAnchors(t *testing.T) 
 	unrelated, _ := testcert.CA(t, "unrelated-ca")
 	roots := x509.NewCertPool()
 	roots.AddCert(unrelated)
-	if _, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.X5CVerifierRoots{Roots: roots}); err == nil {
+	if _, err := fetchAndVerifyRequestObject(url, clientID, false, wallet.X5CVerifierRoots{Roots: roots}, false); err == nil {
 		t.Fatal("a Request Object whose chain doesn't reach the configured anchors was accepted")
 	}
 }
@@ -335,5 +336,27 @@ func TestConfigVerifierTrust(t *testing.T) {
 	}
 	if _, err := (Config{VerifierTrustAnchorsPEM: "not a certificate"}).verifierTrust(); err == nil {
 		t.Error("verifierTrust accepted anchors with no certificate")
+	}
+	if _, err := (Config{AcceptX509SANDNS: true}).verifierTrust(); err == nil || err.Error() != "accept_x509_san_dns needs verifier_trust_anchors_pem" {
+		t.Errorf("accept_x509_san_dns without anchors: %v", err)
+	}
+	if _, err := (Config{AcceptX509SANDNS: true, VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(); err != nil {
+		t.Errorf("accept_x509_san_dns with anchors: %v", err)
+	}
+}
+
+// The wallet_metadata a POST fetch sends lists x509_san_dns only with
+// accept_x509_san_dns.
+func TestWalletMetadataForPost_ClientIDPrefixes(t *testing.T) {
+	for accept, want := range map[bool][]string{false: {"x509_hash"}, true: {"x509_hash", "x509_san_dns"}} {
+		var m struct {
+			Prefixes []string `json:"client_id_prefixes_supported"`
+		}
+		if err := json.Unmarshal([]byte(walletMetadataForPost(accept)), &m); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(m.Prefixes, want) {
+			t.Errorf("accept_x509_san_dns %v: client_id_prefixes_supported = %q, want %q", accept, m.Prefixes, want)
+		}
 	}
 }

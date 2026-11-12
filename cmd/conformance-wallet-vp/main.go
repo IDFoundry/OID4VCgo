@@ -81,7 +81,7 @@ func main() {
 	if _, none := trust.(wallet.NoVerifierTrust); none {
 		log.Printf("WARNING: verifier_trust_anchors_pem is unset: the Verifier's Request Object certificate chain is not checked, only its signature and x509_hash client_id")
 	}
-	srv := &server{cred: cred, trust: trust}
+	srv := &server{cred: cred, trust: trust, acceptSANDNS: cfg.AcceptX509SANDNS}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", srv.handleAuthorize)

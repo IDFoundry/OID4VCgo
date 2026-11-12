@@ -200,10 +200,20 @@ func verifierFiles(put func(name, content string), curve string) error {
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
-	verifierCertPEM, err := conformancecert.IssueLeafCertPEM("oid4vcgo-eudi-interop-verifier", verifierKey, verifierCA, verifierCAKey)
+	// Its dNSName, localhost, the host of the verifier's response_uri,
+	// is the x509_san_dns client_id run-verifier.sh also configures it
+	// with (OpenID4VP 1.0 §5.9.3); an x509_hash client_id ignores it.
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "oid4vcgo-eudi-interop-verifier"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(statusListLifetime),
+	}, verifierCA, &verifierKey.PublicKey, verifierCAKey)
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
+	verifierCertPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 	put("verifier-key.pem", verifierKeyPEM)
 	put("verifier-chain.pem", verifierCertPEM+verifierCAPEM)
 	put("verifier-ca.pem", verifierCAPEM)

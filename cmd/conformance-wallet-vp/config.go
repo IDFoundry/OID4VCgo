@@ -35,6 +35,14 @@ type Config struct {
 	// issues the suite's Request Object signing certificate from.
 	VerifierTrustAnchorsPEM string `json:"verifier_trust_anchors_pem,omitempty"`
 
+	// AcceptX509SANDNS also accepts a Request Object whose client_id has
+	// the x509_san_dns Client Identifier Prefix (OpenID4VP 1.0 §5.9.3,
+	// wallet.ParseAuthorizationRequestParams.AcceptX509SANDNS), and lists
+	// it in the wallet_metadata a POST fetch sends. It needs
+	// VerifierTrustAnchorsPEM: the name binds the request to nothing
+	// without a verified chain.
+	AcceptX509SANDNS bool `json:"accept_x509_san_dns,omitempty"`
+
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
 	// SD-JWT VC (see credential.go).
 	CredentialIssuerPrivateKeyPEM string `json:"credential_issuer_private_key_pem"`
@@ -229,8 +237,12 @@ func (c Config) mdocCRL() ([]byte, error) {
 }
 
 // verifierTrust is how Request Object certificate chains are trusted:
-// against VerifierTrustAnchorsPEM, or not at all when it's unset.
+// against VerifierTrustAnchorsPEM, or not at all when it's unset, which
+// AcceptX509SANDNS refuses.
 func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
+	if c.AcceptX509SANDNS && c.VerifierTrustAnchorsPEM == "" {
+		return nil, fmt.Errorf("accept_x509_san_dns needs verifier_trust_anchors_pem")
+	}
 	if c.VerifierTrustAnchorsPEM == "" {
 		return wallet.NoVerifierTrust{}, nil
 	}

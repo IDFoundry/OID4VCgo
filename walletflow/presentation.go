@@ -178,7 +178,7 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 	if _, err := io.ReadFull(w.deps.Random, nonce[:]); err != nil {
 		return wallet.AuthorizationRequest{}, fmt.Errorf("wallet_nonce: %w", err)
 	}
-	return w.core.FetchAuthorizationRequestPost(ctx, link.RequestURI, link.ClientID, base64.RawURLEncoding.EncodeToString(nonce[:]), walletMetadata)
+	return w.core.FetchAuthorizationRequestPost(ctx, link.RequestURI, link.ClientID, base64.RawURLEncoding.EncodeToString(nonce[:]), walletMetadata(w.cfg.AcceptX509SANDNS))
 }
 
 // walletMetadata is the wallet metadata (OpenID4VP 1.0 §10) sent with a
@@ -187,7 +187,9 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // VerifyIssuedCredential accepted on receipt (ES256, ES384, ES512 or
 // EdDSA), its Key Binding JWT ES256; an mdoc's IssuerAuth likewise
 // (COSE -7 or -8), its DeviceSignature ES256 (-7). Requests are
-// accepted only from an x509_hash Client Identifier. Of the
+// accepted from an x509_hash Client Identifier, and with
+// Config.AcceptX509SANDNS an x509_san_dns one, which
+// client_id_prefixes_supported then lists too (§10.1). Of the
 // Authorization Server Metadata §10 takes the wallet's from, it carries
 // response_types_supported, which RFC 8414 §2 requires, and
 // response_modes_supported: the wallet answers a request it fetched
@@ -203,12 +205,18 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // authorization_encryption_* parameters, about the Authorization
 // Response, aren't either: the response's encryption follows the
 // Verifier's client_metadata.
-var walletMetadata = json.RawMessage(`{"vp_formats_supported":{` +
-	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","ES384","ES512","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
-	`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
-	`"client_id_prefixes_supported":["x509_hash"],` +
-	`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"],` +
-	`"issuer":"https://self-issued.me/v2"}`)
+func walletMetadata(acceptX509SANDNS bool) json.RawMessage {
+	prefixes := `["x509_hash"]`
+	if acceptX509SANDNS {
+		prefixes = `["x509_hash","x509_san_dns"]`
+	}
+	return json.RawMessage(`{"vp_formats_supported":{` +
+		`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","ES384","ES512","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
+		`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
+		`"client_id_prefixes_supported":` + prefixes + `,` +
+		`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"],` +
+		`"issuer":"https://self-issued.me/v2"}`)
+}
 
 // refuse tells the Verifier its authentic request r is refused, by an
 // error response to its response_uri (OpenID4VP §8.5), and returns

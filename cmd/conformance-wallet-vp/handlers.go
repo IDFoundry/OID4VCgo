@@ -91,6 +91,8 @@ func httpPostFormString(rawURL string, form url.Values) (string, error) {
 type server struct {
 	cred  wallet.HeldCredential
 	trust wallet.VerifierTrust
+	// acceptSANDNS is Config.AcceptX509SANDNS.
+	acceptSANDNS bool
 }
 
 // handleAuthorize is this binary's own "server.authorization_endpoint"
@@ -111,7 +113,7 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	usePost := link.RequestURIMethod == wallet.RequestURIMethodPost
 
-	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost, s.trust)
+	authReq, err := fetchAndVerifyRequestObject(link.RequestURI, link.ClientID, usePost, s.trust, s.acceptSANDNS)
 	if err != nil {
 		// A *wallet.RequestRejectedError means the Request Object itself
 		// was authenticated (signature verified, client_id matches) —

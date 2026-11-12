@@ -60,6 +60,7 @@ redirect flow.
 | [ISO/IEC 18013-5:2021][iso18013-5] §8.2–§8.3 (device engagement by QR or NFC, §8.2.2; BLE GATT and NFC data retrieval, §8.3.3.1.2), §9.1 (session encryption, §9.1.4 reader authentication), Annex B (reader authentication EKU 1.0.18013.5.1.6), Annex D (test vectors) | `proximity`, `proximity/nfcapdu`, `internal/readerauth` | First edition |
 | ISO/IEC 7816-4 command APDUs, and the NFC Forum's Type 4 Tag NDEF application, Connection Handover and TNEP, as ISO/IEC 18013-5 §8.2.2 and §8.3.3.1.2 use them | `proximity/nfcapdu` | As ISO/IEC 18013-5 references them |
 | OpenID4VP 1.0 Appendix A — the Digital Credentials API | `verifier`, `wallet`, `walletflow` (HAIP §5.2 profiles it: unsigned, signed and multi-signed requests) | Final |
+| OpenID4VP 1.0 §5.9.3 — the `x509_san_dns` Client Identifier Prefix | `wallet`, `walletflow`, `mobile`, opt-in (`AcceptX509SANDNS`, `accept_x509_san_dns`), never `verifier`. HAIP 1.0 §5 has a Verifier use, and a Wallet accept, `x509_hash` for signed requests, and doesn't forbid a Wallet another prefix; the Wallet accepts `x509_hash` either way | Final |
 | [W3C Digital Credentials][dcapi] | The browser API the DC API flows run over; this library builds and answers the requests, the platform invokes the API | Not pinned: what Safari and Chrome ship |
 | [RFC 9180 — HPKE][hpke] | `mdocdcapi` (ISO/IEC TS 18013-7 Annex C's response encryption) | Informational |
 
@@ -212,6 +213,18 @@ implementation that relies on the latitude. Most aren't needed for the
 security of an exchange both sides run as this library does; those that
 guard against a third party say so.
 
+- **An `x509_san_dns` request's `response_uri` must be on its DNS
+  name**, always (outside the DC API). OpenID4VP 1.0 §5.9.3 lets a
+  Wallet that "can establish trust in the Client Identifier ... e.g.
+  because the Client Identifier is contained in a list of trusted
+  Client Identifiers" let the Verifier choose it freely; the wallet
+  keeps no such list, so the response never goes to a host the
+  certificate doesn't name. The name must also be a dNSName of the
+  signing certificate exactly, without regard to case: a wildcard
+  dNSName matches no `client_id`, and a `client_id` that isn't a host
+  name (an IP address, a wildcard) is refused. And the prefix is
+  refused without trust anchors (`NoVerifierTrust`), since the name
+  alone binds the request to no one.
 - **A key attestation attesting more keys than `batch_size`** is
   refused (`invalid_proof`), though OpenID4VCI 1.0 Appendix F.3 only
   asks the Issuer to issue for each attested key, which `batch_size`

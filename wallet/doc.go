@@ -184,9 +184,11 @@
 // hardened fapihttp.Client, since request_uri comes from a QR code or
 // deep link anyone can make, and verify the result with the Wallet's
 // VerifierTrust; (*Wallet).ParseAuthorizationRequest does that
-// verification alone for a Request Object obtained otherwise. Only the
+// verification alone for a Request Object obtained otherwise. The
 // "x509_hash" Client Identifier Prefix is supported (HAIP's own
-// mandate, and the only one verifier itself produces). A DC API request arrives through the platform instead:
+// mandate, and the only one verifier itself produces), and with
+// Config.AcceptX509SANDNS "x509_san_dns" too (OpenID4VP 1.0 §5.9.3),
+// which New allows only with a VerifierTrust that verifies chains. A DC API request arrives through the platform instead:
 // (*Wallet).ParseDCAPIRequestData takes it as delivered, in any of
 // the three forms HAIP §5.2 requires a Wallet to support — unsigned,
 // signed, or multi-signed (JWS JSON Serialization, authenticated by the
