@@ -337,6 +337,14 @@ proofs, the Credential, Deferred Credential and Notification
 Endpoints), and stands in for the browser only at the issuer's consent
 page, whose form it submits.
 
+The wallet is registered as a native client (`application_type`
+`native`) with the EUDI wallet app's own redirect URI,
+`eu.europa.ec.euidi://authorization`, a private-use URI with an
+authority, which FAPIgo takes from v0.73.0: each authorization code
+case checks that PAR sends it and that the consent redirects to exactly
+it, the driver reading the authorization response from the redirect's
+`Location`, since no HTTP client follows such a URI.
+
 The wallet is configured as strictly as the issuer allows: PAR and
 DPoP required (DPoP binding the authorization code at PAR), the
 authorization response's `iss` required, Wallet Attestation client
@@ -572,10 +580,11 @@ The issuer is run as strictly as it can be configured:
 - Its PIDs carry a Token Status List entry. It allocates one only under
   a Credential Reuse Policy, which the stack leaves unset, so its PIDs
   carry none; the run sets `once_only` for both formats.
-- Keycloak's realm is the stack's, with two changes: the introspection
-  client's secret is the run's own, and the wallet's redirect URI,
-  `dev.idfoundry.oid4vcgo.interop:/callback`, is registered for
-  `eudiw-abca` (see Findings).
+- Keycloak's realm is the stack's, with one change: the introspection
+  client's secret is the run's own. The wallet is the realm's own
+  `eudiw-abca` client with the EUDI wallet app's redirect URI,
+  `eu.europa.ec.euidi://authorization`, which the realm registers for
+  it (see Findings); the run refuses a realm that no longer does.
 
 Every key, certificate and password is the run's own, made by
 [`scripts/pidsetup`](scripts/pidsetup) and the script: the TLS CA and
@@ -683,11 +692,17 @@ the issuer's v0.11.2 source:
    attestations always carry one.
 8. **Keycloak's registered redirect URIs for the wallet clients are
    private-use URIs with an authority**, such as
-   `eu.europa.ec.euidi://authorization`, which `fapigo/client` refuses:
-   RFC 8252 §7.1 has "only a single slash" after the scheme. The run
-   registers its own. The issuer's introspection client
-   (`pid-issuer-srv`) also introspects "without audience check", as
-   Keycloak logs, so it takes an access token issued for any client.
+   `eu.europa.ec.euidi://authorization`, where RFC 8252 §7.1 writes
+   "only a single slash" after the scheme. That is its description, not
+   a requirement, and since FAPIgo v0.73.0 `fapigo/client` and
+   `fapigo/server` take the form (an authority of letters, digits, `-`,
+   `.`, `_` and `~`, matched exactly), so the run uses this one, the
+   EUDI wallet app's, where it used to register one of its own; the
+   EUDI wallet library ↔ Issuer run registers it for a native client of
+   `cmd/conformance-issuer`. Not a deviation. The issuer's
+   introspection client (`pid-issuer-srv`) also introspects "without
+   audience check", as Keycloak logs, so it takes an access token
+   issued for any client.
 
 The wallet's own checks held throughout, and caught one thing while the
 run was set up: an mdoc whose `issuing_country` doesn't match its

@@ -53,9 +53,9 @@ STACK="$WORK/stack"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-eudi-pid}"
 ISSUER="https://localhost:$PORT/pid-issuer"
 CLIENT_ID=eudiw-abca
-# The wallet's redirect URI, a private-use scheme (RFC 8252 §7.1),
-# which the run registers for the client (see README.md).
-REDIRECT_URI=dev.idfoundry.oid4vcgo.interop:/callback
+# The wallet's redirect URI: the EUDI wallet app's, a private-use URI
+# scheme with an authority, which the realm registers for the client.
+REDIRECT_URI=eu.europa.ec.euidi://authorization
 
 for p in "$PORT" "$SERVE_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
@@ -139,15 +139,20 @@ INTROSPECTION_SECRET="$(openssl rand -hex 16)"
 STATUS_LIST_API_KEY="$(openssl rand -hex 16)"
 
 # Keycloak: the realm as the stack ships it, with the introspection
-# client's secret replaced and the wallet's redirect URI registered for
-# its client.
+# client's secret replaced. The wallet's client and its redirect URI
+# are the realm's own; the run refuses a realm that no longer registers
+# that redirect URI for it.
 mkdir -p "$STACK/realms" "$STACK/schema" "$STACK/keycloak-tls" "$STACK/haproxy-tls" "$STACK/status-list-certs" \
   "$STACK/bindings/tls-ca" "$STACK/status-list"
-jq --arg secret "$INTROSPECTION_SECRET" --arg redirect "$REDIRECT_URI" --arg client "$CLIENT_ID" '
-  .clients |= map(
-    if .clientId == "pid-issuer-srv" then .secret = $secret
-    elif .clientId == $client then .redirectUris += [$redirect]
-    else . end)' "$STACK/eudi/keycloak/realms/pid-issuer-realm-realm.json" > "$STACK/realms/pid-issuer-realm-realm.json"
+if ! jq -e --arg redirect "$REDIRECT_URI" --arg client "$CLIENT_ID" \
+  'any(.clients[]; .clientId == $client and (.redirectUris | index($redirect)))' \
+  "$STACK/eudi/keycloak/realms/pid-issuer-realm-realm.json" >/dev/null; then
+  echo "the realm doesn't register $REDIRECT_URI for $CLIENT_ID" >&2
+  exit 2
+fi
+jq --arg secret "$INTROSPECTION_SECRET" '
+  .clients |= map(if .clientId == "pid-issuer-srv" then .secret = $secret else . end)' \
+  "$STACK/eudi/keycloak/realms/pid-issuer-realm-realm.json" > "$STACK/realms/pid-issuer-realm-realm.json"
 cp "$STACK/eudi/keycloak/realms/pid-issuer-realm-users-0.json" "$STACK/realms/"
 cp "$STACK/eudi/keycloak/conf/keycloak.conf" "$STACK/keycloak.conf"
 cp keycloak-cert.pem keycloak-key.pem tls-ca.pem "$STACK/keycloak-tls/"

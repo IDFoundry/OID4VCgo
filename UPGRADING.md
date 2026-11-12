@@ -61,6 +61,24 @@ CHANGELOG.md's BREAKING CHANGES sections.
   `LeafPolicy` (`verifier_require_eku`) telling Verifiers'
   certificates apart. `walletflow` then lists `x509_san_dns` in the
   `wallet_metadata` it posts.
+- **A native app's redirect URI may be a private-use URI with an
+  authority**, `reverse.domain://name[/path]` (such as
+  `eu.europa.ec.euidi://authorization`, the EUDI wallet app's), as well
+  as RFC 8252 §7.1's `reverse.domain:/path`, through FAPIgo v0.73.0:
+  `walletflow.New` and the mobile `NewWallet` take one where they
+  refused it. The name is letters, digits, `-`, `.`, `_` and `~`, with
+  no port, userinfo or IP address, and the URI is matched exactly.
+  Nothing to change.
+
+### Issuer (`issuer`, `haip`)
+
+- **A native client (`storage.ApplicationTypeNative`) may register a
+  private-use redirect URI with an authority**, through FAPIgo
+  v0.73.0, as some deployed wallets do. Nothing to change. The
+  authority is any text the client registered, not a destination: a
+  consent page that shows where the browser goes next shows a
+  private-use URI's scheme, which names the app, not its authority as
+  a host.
 
 ## v0.75.3 → v0.76.0
 

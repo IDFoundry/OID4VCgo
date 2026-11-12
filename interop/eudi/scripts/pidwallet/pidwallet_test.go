@@ -81,7 +81,7 @@ func keycloakStub(t *testing.T, redirectURI string) *httptest.Server {
 }
 
 func TestLogin(t *testing.T) {
-	const redirect = "dev.idfoundry.oid4vcgo.interop:/callback"
+	const redirect = "eu.europa.ec.euidi://authorization"
 	srv := keycloakStub(t, redirect)
 	got, err := login(context.Background(), srv.Client(), srv.URL+"/auth", redirect, "tneal", "password")
 	if err != nil {

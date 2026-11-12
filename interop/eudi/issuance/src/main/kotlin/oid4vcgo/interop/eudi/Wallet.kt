@@ -151,7 +151,7 @@ class Wallet(
     /** The authorization code flow, with the End-User approving (or denying) on the consent page. */
     suspend fun Issuer.authorizeByCode(approve: Boolean = true): AuthorizedRequest {
         val prepared = prepareAuthorizationRequest().getOrThrow()
-        val response = consent(ssl, prepared.authorizationCodeURL.value.toURI(), cfg.subject, approve)
+        val response = consent(ssl, prepared.authorizationCodeURL.value.toURI(), cfg.redirectUri, cfg.subject, approve)
         if (response.error != null) throw AuthorizationRefused(response.error)
         return with(prepared) {
             authorizeWithAuthorizationCode(

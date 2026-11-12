@@ -70,9 +70,9 @@ is a complete, working app on this package to compare against.
   Show ``Issuance/offer`` (who is offering what) before going on.
 - ``WalletConfiguration/redirectURI`` uses the app's own scheme, a
   domain name in reverse order and a single slash, such as
-  `com.example.wallet:/callback`, registered in `CFBundleURLTypes`. Not
-  an https Universal Link, and not `myapp:/callback` or
-  `com.example.wallet://callback`. *Check:* `Wallet(...)` succeeds with
+  `com.example.wallet:/callback`, or an authority, such as
+  `com.example.wallet://callback`, registered in `CFBundleURLTypes`.
+  Not an https Universal Link, and not `myapp:/callback`. *Check:* `Wallet(...)` succeeds with
   your production configuration.
 - Pre-authorized code: ask for the PIN when ``Offer/txCode`` is set, and
   ask again when ``Issuance/redeemPreAuthorizedCode(pin:)`` throws a

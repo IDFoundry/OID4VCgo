@@ -27,7 +27,12 @@ private fun Run.checkPreAuthorizedTokenRequest() {
     ) { t.toString() }
 }
 
-/** PAR, then the authorization code Token Request: PKCE S256, DPoP, Wallet-attested. */
+/**
+ * PAR, then the authorization code Token Request: PKCE S256, DPoP,
+ * Wallet-attested, and the redirect URI the EUDI wallet app registers,
+ * a private-use URI with an authority (the consent's redirect to it is
+ * checked in [consent]).
+ */
 private fun Run.checkAuthorizationCodeRequests() {
     val par = wallet.recorder.to("/par").lastOrNull { it.status == 201 }
     expect(
@@ -35,6 +40,10 @@ private fun Run.checkAuthorizationCodeRequests() {
             par.form["code_challenge_method"] == "S256" && "code_challenge" in par.form,
         "PAR: PKCE S256, DPoP proof (binding the code), Wallet Attestation and PoP",
     ) { par.toString() }
+    expect(
+        par != null && par.form["redirect_uri"] == wallet.cfg.redirectUri,
+        "PAR: redirect_uri ${wallet.cfg.redirectUri}, a native client's private-use URI with an authority",
+    ) { par?.form?.get("redirect_uri").toString() }
     val t = wallet.recorder.to(TOKEN_PATH).lastOrNull { it.status == 200 }
     expect(
         t != null && t.form["grant_type"] == "authorization_code" && t.dpop && t.clientAttestation && "code_verifier" in t.form,

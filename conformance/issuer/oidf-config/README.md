@@ -19,7 +19,11 @@ objects (`id`, `redirect_uris`, `expected_attester_issuer`, and the
 attester's public keys in `attester_jwks` — or, to verify its `x5c`
 chain instead, its CA in `attester_trust_anchors_pem`) from whatever the OIDF suite's own
 test-configuration UI assigns when you create a test plan for
-`oid4vci-1_0-issuer-haip-test-plan`.
+`oid4vci-1_0-issuer-haip-test-plan`. A client's optional
+`application_type`, `web` by default, may be `native`, registering it
+as a native app whose `redirect_uris` may be private-use URIs
+(`com.example.wallet:/callback` or `com.example.wallet://callback`) or
+loopback http (RFC 8252); the suite's own wallet uses https.
 
 Every other value the generator produces is throwaway and safe to
 discard/regenerate.
