@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.0...sqlstore/v0.12.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.73.0 ([1d4e737](https://github.com/IDFoundry/OID4VCgo/commit/1d4e737b3c7fd034230d17462aa5d7f83402b40c))
+
 ## [0.12.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.11.1...sqlstore/v0.12.0) (2026-11-11)
 
 

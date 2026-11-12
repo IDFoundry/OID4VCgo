@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.77.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.76.0...v0.77.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **wallet:** walletflow names a key-attested jwt proof's key by index by default, so an issuer that takes the key only in jwk now refuses the proof. Set walletflow.Config.ProofKeyByJWK (mobile proof_key_by_jwk) for such an issuer, and drop Config.ProofKeyByIndex, which has no effect. See UPGRADING.md.
+
+### Features
+
+* **jose:** verify ES384 and ES512 signatures ([8c9e856](https://github.com/IDFoundry/OID4VCgo/commit/8c9e85682e9c352dfd5a474e30932aedd645590d))
+* **wallet:** accept the x509_san_dns Client Identifier Prefix, opt-in ([25e93f1](https://github.com/IDFoundry/OID4VCgo/commit/25e93f1d40b86b8ceb09daa85996f2acbd2ffdbe))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.73.0 ([1d4e737](https://github.com/IDFoundry/OID4VCgo/commit/1d4e737b3c7fd034230d17462aa5d7f83402b40c))
+* **wallet:** name a key-attested jwt proof's key by index by default ([f0558bc](https://github.com/IDFoundry/OID4VCgo/commit/f0558bc02cbf4daf0e59f68c04f8ed2a8567e9ae))
+* **wallet:** name an issuer in wallet_metadata ([915b0a7](https://github.com/IDFoundry/OID4VCgo/commit/915b0a739fd7d258ea85e8f7b83eea3f6e62bb20))
+* **wallet:** send client_id with an attested pre-authorized Token Request ([608d31f](https://github.com/IDFoundry/OID4VCgo/commit/608d31f8e3fabac460c9d0fd290707504c31f51b))
+* **wallet:** send response types and modes in wallet_metadata ([9cdbc80](https://github.com/IDFoundry/OID4VCgo/commit/9cdbc8080297ca1ae9ad420c0188a0554b8f0791))
+
 ## [0.76.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.75.3...v0.76.0) (2026-11-11)
 
 
