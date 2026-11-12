@@ -487,12 +487,16 @@ authentication needs none of them. Outside `development`, a
 [::1], or `NewWallet` is `invalid_input`: `ResumeIssuance` can't
 complete an https one. In `development` too, a private-use scheme must
 be a domain name in reverse order followed by a single slash,
-`reverse.domain:/path` (RFC 8252 §7.1), and no `redirect_uri` may carry
-a fragment or credentials: `myapp:/callback`,
-`com.example.wallet://callback` and `com.example.wallet:callback` are
-`invalid_input` at `NewWallet`. (Earlier within ABI 12 `NewWallet`
-took them, and every issuance that authenticated then failed as
-`protocol`.)
+`reverse.domain:/path` (RFC 8252 §7.1), or by an authority,
+`reverse.domain://name/path` (`com.example.wallet://callback`), whose
+name is letters, digits, `-`, `.`, `_` and `~`, with no port, userinfo
+or IP address; and no `redirect_uri` may carry a fragment or
+credentials: `myapp:/callback`, `com.example.wallet:callback` and
+`com.example.wallet://callback:443` are `invalid_input` at
+`NewWallet`. (Earlier within ABI 12 `NewWallet` took them, and every
+issuance that authenticated then failed as `protocol`. Before
+OID4VCgo v0.77.0, which pins FAPIgo v0.73.0, the authority form was
+`invalid_input` too.)
 `registrar_roots`, if set, are the registrars whose registrations of
 Verifiers the wallet checks (OpenID4VP `verifier_info`, OID4VCgo's
 `registration` format); without them, registrations are ignored.

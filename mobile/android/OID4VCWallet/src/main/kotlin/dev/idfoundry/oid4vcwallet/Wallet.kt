@@ -35,7 +35,8 @@ public data class WalletConfiguration(
     /**
      * Where the issuer's pages send the holder back to: a private-use URI
      * the app receives, in `reverse.domain:/path` form
-     * (`com.example.wallet:/callback`). Empty for a wallet that receives
+     * (`com.example.wallet:/callback`), or with an authority
+     * (`com.example.wallet://callback`). Empty for a wallet that receives
      * only pre-authorized codes.
      */
     @SerialName("redirect_uri") val redirectURI: String = "",

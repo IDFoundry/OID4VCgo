@@ -43,10 +43,14 @@ type Config struct {
 	// [::1] (RFC 8252 §7.1, §7.3), not an https link, which
 	// ResumeIssuance can't complete (see AuthorizationStore). At every
 	// assurance level, New refuses a RedirectURI fapigo/client wouldn't
-	// take: a private-use scheme is a reverse-order domain name and a
-	// single slash, reverse.domain:/path (com.example.wallet:/callback,
-	// not myapp:/callback or com.example.wallet://callback), and no
-	// redirect URI carries a fragment or credentials.
+	// take: a private-use scheme is a reverse-order domain name, then
+	// either a single slash, reverse.domain:/path
+	// (com.example.wallet:/callback, RFC 8252 §7.1's form), or an
+	// authority, reverse.domain://name[/path]
+	// (com.example.wallet://callback), the name of letters, digits, "-",
+	// ".", "_" and "~", with no port, userinfo or IP address — not
+	// myapp:/callback — and no redirect URI carries a fragment or
+	// credentials.
 	ClientID    string
 	RedirectURI string
 
@@ -614,9 +618,11 @@ func (w *Wallet) checkReceivingAtNew() error {
 // an attestation. It's client.Config's own redirect_uri check:
 // fapi.ParseRedirectURL admitting loopback http and a private-use
 // scheme, which must be a reverse-order domain name followed by a single
-// slash and the path, com.example.wallet:/callback (RFC 8252 §7.1) —
-// not myapp:/callback, com.example.wallet://callback or
-// com.example.wallet:callback — with no fragment or credentials; and,
+// slash and the path, com.example.wallet:/callback (RFC 8252 §7.1), or
+// by an authority, com.example.wallet://callback — not myapp:/callback,
+// com.example.wallet:callback, com.example.wallet:///callback or an
+// authority with a port, userinfo or IP address — with no fragment or
+// credentials; and,
 // under production assurance, a loopback one naming the IP literal
 // 127.0.0.1 or [::1] (§8.3).
 func (c Config) checkRedirectURIForm() error {
@@ -624,7 +630,7 @@ func (c Config) checkRedirectURIForm() error {
 		return nil
 	}
 	if _, err := fapi.ParseRedirectURL(c.RedirectURI, fapi.AllowLoopbackHTTP(), fapi.AllowPrivateUseScheme()); err != nil {
-		return fmt.Errorf("walletflow: Config.RedirectURI must be a private-use URI scheme in reverse.domain:/path form, such as com.example.wallet:/callback, or loopback http, with no fragment or credentials (RFC 8252 §7.1, §7.3): %w", err)
+		return fmt.Errorf("walletflow: Config.RedirectURI must be a private-use URI scheme in reverse.domain:/path or reverse.domain://name/path form, such as com.example.wallet:/callback, or loopback http, with no fragment or credentials (RFC 8252 §7.1, §7.3): %w", err)
 	}
 	if u, err := url.Parse(c.RedirectURI); err == nil && !c.Development && u.Scheme == "http" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
 		return errors.New("walletflow: outside Development, a loopback Config.RedirectURI names the IP literal 127.0.0.1 or [::1], not a host name (RFC 8252 §8.3)")

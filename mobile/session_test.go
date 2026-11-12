@@ -591,7 +591,8 @@ func TestSessions_ProductionRedirectURI(t *testing.T) {
 	for uri, ok := range map[string]bool{
 		"https://wallet.example/callback": false, // ResumeIssuance couldn't complete it
 		"myapp:/callback":                 false, // not a reverse-order domain name
-		"com.example.wallet://callback":   false, // an authority, not a path
+		"com.example.wallet://callback":   true,  // an authority, as deployed wallets register
+		"com.example.wallet://cb:443/x":   false, // an authority with a port
 		"com.example.wallet:/callback#f":  false,
 		"com.example.wallet:/callback":    true,
 		"http://127.0.0.1/callback":       true,

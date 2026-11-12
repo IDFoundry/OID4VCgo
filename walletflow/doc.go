@@ -29,7 +29,8 @@
 // declaring durable custody, and the authorization code grant a Durable
 // AuthorizationStore. Config.RedirectURI is a private-use URI scheme in
 // reverse.domain:/path form, such as com.example.wallet:/callback (RFC
-// 8252 §7.1), or loopback http (§7.3) — or, in Development only, https —
+// 8252 §7.1), or with an authority, com.example.wallet://callback, or
+// loopback http (§7.3) — or, in Development only, https —
 // with no fragment or credentials; New refuses anything else, since no
 // issuance could authenticate with it. walletflow owns the protocols:
 // every network request, every protocol message, and every check on

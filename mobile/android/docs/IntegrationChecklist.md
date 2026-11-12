@@ -80,9 +80,10 @@ is a complete, working app on this library to compare against.
   app, and each goes to `Wallet.startIssuance`. Show `offer` (who is
   offering what) before going on.
 - [ ] `redirectURI` uses the app's own scheme, a domain name in reverse
-  order and a single slash, such as `com.example.wallet:/callback`, and
-  an intent filter for that scheme. Not an https App Link, and not
-  `myapp:/callback` or `com.example.wallet://callback`. *Check:*
+  order and a single slash, such as `com.example.wallet:/callback`, or
+  an authority, such as `com.example.wallet://callback`, and an intent
+  filter for that scheme. Not an https App Link, and not
+  `myapp:/callback`. *Check:*
   `Wallet(...)` succeeds with your production configuration.
 - [ ] Pre-authorized code: ask for the PIN when `offer.txCode` is set,
   and ask again when `redeemPreAuthorizedCode` throws a retryable error.

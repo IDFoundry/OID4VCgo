@@ -148,9 +148,11 @@ SwiftUI, from `onOpenURL`. Outside development, resuming needs a
 `com.example.wallet:/callback`, so `Wallet` refuses an https Universal
 Link there. In development too, the scheme must be a domain name in
 reverse order followed by a single slash, `reverse.domain:/path`
-(RFC 8252 §7.1): `Wallet` refuses `myapp:/callback`,
-`com.example.wallet://callback` and `com.example.wallet:callback` as
-`invalidInput`, and any redirect URI with a fragment or credentials.
+(RFC 8252 §7.1), or by an authority, `reverse.domain://name/path`, the
+name with no port, userinfo or IP address: `Wallet` refuses
+`myapp:/callback`, `com.example.wallet:callback` and
+`com.example.wallet://callback:443` as `invalidInput`, and any redirect
+URI with a fragment or credentials.
 
 ```swift
 /// Completes an authorization the app was killed during, from the

@@ -9,6 +9,7 @@ import (
 	"github.com/idfoundry/fapigo/client"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -50,12 +51,17 @@ func issuanceClient(t testing.TB, w *Wallet, resumed bool) error {
 // after the Wallet Provider has been asked for an attestation.
 func TestNew_RedirectURIForm(t *testing.T) {
 	for _, uri := range []string{
-		"myapp:/callback",               // no dot: not a reverse-order domain name
-		"myapp://callback",              // and "callback" an authority
-		"com.example.wallet://callback", // two slashes: an authority
-		"com.example.wallet:callback",   // no slash
-		"com.example.wallet:/cb#frag",   // a fragment
-		"http://user@127.0.0.1/cb",      // credentials
+		"myapp:/callback",                // no dot: not a reverse-order domain name
+		"myapp://callback",               // and "callback" an authority
+		"com.example.wallet:callback",    // no slash
+		"com.example.wallet:///callback", // an empty authority
+		"com.example.wallet://cb:443/x",  // an authority with a port
+		"com.example.wallet://u@cb/x",    // userinfo
+		"com.example.wallet://127.0.0.1", // an IP address
+		"com.example.wallet://c%41b/x",   // a percent-escape
+		"com.example.wallet://cb#frag",   // a fragment
+		"com.example.wallet:/cb#frag",    // a fragment
+		"http://user@127.0.0.1/cb",       // credentials
 		"http://127.0.0.1/cb#x",
 		"javascript:/x",
 		"https://wallet.example/cb#x",
@@ -71,6 +77,24 @@ func TestNew_RedirectURIForm(t *testing.T) {
 	// configuration is wrong whatever the wallet does with it.
 	if _, err := New(Config{ClientID: "wallet", RedirectURI: "myapp:/callback"}, redirectDeps()); err == nil {
 		t.Error("New(RedirectURI myapp:/callback, no IssuerRoots) = nil error, want it refused")
+	}
+	// Both private-use forms fapigo/client takes: RFC 8252 §7.1's single
+	// slash, and the authority form deployed wallets register
+	// (eu.europa.ec.euidi://authorization, the EUDI reference wallet's).
+	for _, uri := range []string{"com.example.wallet:/callback", "com.example.wallet://callback", "eu.europa.ec.euidi://authorization"} {
+		for _, dev := range []bool{false, true} {
+			w, err := New(Config{
+				ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool(), Development: dev,
+				IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{},
+			}, redirectDeps())
+			if err != nil {
+				t.Errorf("New(RedirectURI %q, Development %v) = %v, want it taken", uri, dev, err)
+				continue
+			}
+			if err := issuanceClient(t, w, true); err != nil {
+				t.Errorf("RedirectURI %q, Development %v: a resumed issuance's client = %v", uri, dev, err)
+			}
+		}
 	}
 	// Development still takes localhost, as fapigo/client does below
 	// production assurance; production takes only the IP literals.
@@ -89,7 +113,7 @@ func TestNew_RedirectURIForm(t *testing.T) {
 func FuzzNativeRedirect(f *testing.F) {
 	for _, s := range []string{
 		"com.example.wallet:/cb", "http://127.0.0.1/cb", "http://[::1]:8/cb", "https://a/b", "HTTP://127.0.0.1/x",
-		"http://127.0.0.1%2f/x", "myapp:/cb", "com.example.wallet://cb", "com.example.wallet:cb", "http://localhost/cb",
+		"http://127.0.0.1%2f/x", "myapp:/cb", "com.example.wallet://cb", "com.example.wallet://cb:1/x", "com.example.wallet:cb", "http://localhost/cb",
 		"com.example.wallet:/cb#f", "http://u@127.0.0.1/cb", "Com.Example-1.wallet:/a?b=c",
 	} {
 		f.Add(s, false)

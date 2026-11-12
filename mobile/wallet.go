@@ -26,7 +26,8 @@ import (
 type config struct {
 	// ClientID and RedirectURI: the wallet's registration with
 	// Authorization Servers. RedirectURI is a private-use URI scheme in
-	// reverse.domain:/path form or loopback http
+	// reverse.domain:/path or reverse.domain://name/path form or loopback
+	// http
 	// (walletflow.Config.RedirectURI).
 	ClientID    string `json:"client_id"`
 	RedirectURI string `json:"redirect_uri"`
