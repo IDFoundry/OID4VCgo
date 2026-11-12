@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // What Multipaz sends walletflow that walletflow is lenient about
@@ -157,7 +159,7 @@ func describeJWKs(raw json.RawMessage) string {
 	var set struct {
 		Keys []map[string]any `json:"keys"`
 	}
-	if err := json.Unmarshal(raw, &set); err != nil {
+	if err := strictjson.Unmarshal(raw, &set); err != nil {
 		return "unreadable"
 	}
 	keys := make([]string, 0, len(set.Keys))
