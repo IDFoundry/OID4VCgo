@@ -11,9 +11,11 @@ suite plays Wallet, generating its own emulated test credentials
 (`vct: "urn:eudi:pid:1"`, claims including `given_name`/`family_name`/
 `birthdate`/... — see the suite's own
 `AbstractCreateSdJwtCredential.java`), so this binary needs no fixture
-credentials of its own, only a DCQL query and a trusted issuer key
-(`Config.CredentialIssuerJWK`) matching what the suite's own
-"Credential Issuer" > "Signing JWK" test configuration will sign with.
+credentials of its own, only a DCQL query and trust in the issuers
+that sign them: for `sd_jwt_vc`, the suite's "Credential Issuer" >
+"Signing JWK", which the drivers generate per run with an `x5c`
+certificate under a per-run CA; for `iso_mdl`, the suite's fixed IACA
+root (see "Credential status" below).
 
 ## What not to copy
 
@@ -33,10 +35,13 @@ them:
 - **No atomic completion.** A session's `done` flag is checked and set
   by the handler under a per-session lock, not by a store's atomic
   update, and only one process's memory holds it.
-- **Development assurance, no status check, no revocation.** It runs
-  under `verifier.AssuranceDevelopment`, sets `NoStatusCheck` (unless
-  an interop run's `status_list_trust_anchors_pem` turns the Token
-  Status List check on), and declines certificate revocation
+- **Development assurance, a test harness's status fetch, no
+  revocation.** It runs under `verifier.AssuranceDevelopment`. It
+  checks credential status when `status_list_trust_anchors_pem` is set
+  (the suite runs and the interop runs set it), but its fetch may
+  reach private or loopback addresses and, in the suite runs, trusts
+  the suite's TLS certificate by a pin rather than a chain, neither of
+  which production allows. It declines certificate revocation
   (`certrevocation.NoCheck{}`) for the suite's per-run issuers.
 
 A Verifier uses `verifier.Transactions` with a durable
@@ -90,12 +95,14 @@ A Verifier uses `verifier.Transactions` with a durable
   origins, and the page's post-back of the answer, verified against
   that origin; the outcome is the reply.
 
-The interop runs' fields (`credential_issuer_trust_anchors_pem`, the
-`status_list_*` fields, `dc_api_origins`) are documented in
-`cmd/conformance-verifier/config.go`; the suite's configuration leaves
-them unset. `interop/eudi/run-wallet.sh`, `interop/waltid/run.sh` and
-the Multipaz interop's peer (`interop/multipaz/scripts/peer/vp.go`)
-use them.
+The trust and status fields (`credential_issuer_trust_anchors_pem`,
+the `status_list_*` fields, `status_reference_optional`) and
+`dc_api_origins` are documented in
+`cmd/conformance-verifier/config.go`. The suite runs set the trust and
+status fields (`internal/conformanceverifier`'s `configureTrust`);
+`interop/eudi/run-wallet.sh`, `interop/waltid/run.sh` and the Multipaz
+interop's peer (`interop/multipaz/scripts/peer/vp.go`) set their own,
+requiring a status reference on every credential.
 
 ## Status
 
@@ -142,10 +149,12 @@ Each module is graded on three things (`conformanceverifier.Grade`):
   be refused;
 - this binary's own outcome, read from `GET /result/{id}`:
   `Verification succeeded` or `Verification failed` respectively;
-- the module's log (`GET /api/log/{id}`): no `FAILURE`, and no
-  `WARNING` but `EnsureVerifierFetchedRevocationList` on an accepted
-  module. `REVIEW` outranks `WARNING` in a result, so a warning would
-  otherwise go unseen.
+- the module's log (`GET /api/log/{id}`): no `FAILURE` and no
+  `WARNING`. `REVIEW` outranks `WARNING` in a result, so a warning would
+  otherwise go unseen. That includes
+  `EnsureVerifierFetchedRevocationList`, which an accepted module logs
+  as a warning when the Verifier never fetched the status list its
+  credential references.
 
 ### Expected verdicts
 
@@ -165,8 +174,8 @@ Each module is graded on three things (`conformanceverifier.Grade`):
 | `kb-jwt-iat-in-future` | yes | — | refuse | `FINISHED=PASSED` |
 | `wrong-vct` | yes | — | refuse | `FINISHED=PASSED` |
 | `invalid-session-transcript` | — | yes | refuse | `FINISHED=PASSED` |
-| `present-revoked-credential` | not driven | not driven | refuse | — |
-| `present-credential-on-identifier-list` | — | not driven | refuse | — |
+| `present-revoked-credential` | yes | yes | refuse | `FINISHED=PASSED` |
+| `present-credential-on-identifier-list` | — | yes | refuse | `FINISHED=PASSED` |
 
 `kb-jwt-iat-in-past` and `kb-jwt-iat-in-future` present a Key Binding
 JWT issued a year ago or a year from now. The suite's
@@ -178,15 +187,6 @@ library's clock-skew bound refuses a future `iat`). An earlier version
 of this file listed them as positive modules that verify; the
 Verifier's own log never said so.
 
-The two revocation modules aren't driven: this binary checks no
-credential status in the suite's runs (`NoStatusCheck`), so it can't
-refuse a revoked credential. That is also why an accepted module may
-log `EnsureVerifierFetchedRevocationList` (the suite's credentials
-carry a status reference the Verifier never fetches): the suite makes
-it a warning, as no specification makes the check mandatory. Driving
-them needs a `status_list` trust anchor for the suite's per-run
-issuer.
-
 `wrong-vct` and `present-credential-without-status` are newer than
 this repo's certification run, and pass.
 
@@ -196,6 +196,51 @@ setting `failErr` for an error mentioning "signature", and run
 `run-sdjwt-modules`. `invalid-kb-jwt-signature` and
 `invalid-credential-signature` then end `FINISHED=REVIEW` with the
 result page reporting `verified`, and the run exits 1.
+
+### Credential status
+
+Every credential the suite presents carries a revocation reference,
+except in `present-credential-without-status`: a Token Status List
+entry, or for `present-credential-on-identifier-list` an mdoc
+identifier list (ISO/IEC 18013-5 §12.3.6.4). Each module serves its
+own list, at a URI no earlier run used, so a cached copy can't answer
+for it. The suite runs check every one with a `verifier.StatusPolicy`
+(one `statuslist.Cache` for the process, as production requires), its
+signer bound to the credential's issuer as the library binds it:
+
+- `sd_jwt_vc`: the suite signs the Status List Token with the
+  credential's own key and `x5c` (`VP1FinalGenerateJwtStatusListToken`
+  in the suite's source). The drivers give the "Signing JWK" a
+  certificate under a CA generated per run, and trust that CA for the
+  credential (`credential_issuer_trust_anchors_pem`) and its status
+  list (`status_list_trust_anchors_pem`); the list's signer must hold
+  the key that signed the credential.
+- `iso_mdl`: the suite signs the CWT status list and the identifier
+  list with a certificate under the IACA root that issued the
+  document signer. The drivers trust that root for both, and the
+  signer must chain to the CA that signed the document signer
+  (§12.3.6.2's rule, `mdoc.StatusTrust`).
+
+The lists are fetched from the suite's address on the Docker network
+(`status_list_allow_private`) over TLS pinned to the certificate the
+suite serves its API with (`status_list_tls_pinned_certificate_pem`):
+the suite's self-signed certificate names `localhost` in its subject and has no subject alternative name. The pin and
+the private address are the transport, not the trust: each list is
+still verified against the anchors above. A credential with no status
+reference is accepted (`status_reference_optional`), as
+`present-credential-without-status` requires.
+
+The suite fails a revocation module whose Verifier never fetched the
+list, so refusing the presentation for another reason doesn't pass
+it; an accepted module whose list wasn't fetched logs a
+`EnsureVerifierFetchedRevocationList` warning, which fails it here.
+To check that the harness catches a Verifier that ignores status: set
+`Status: nil, NoStatusCheck: true` in `server.verify` in `handlers.go`
+and run both drivers. `present-revoked-credential` (and, for
+`iso_mdl`, `present-credential-on-identifier-list`) then ends
+`FINISHED=FAILED` with the result page reporting `verified`, every
+other accepted module carrying a status reference fails on the
+warning, and each run exits 1.
 
 ### Earlier findings
 

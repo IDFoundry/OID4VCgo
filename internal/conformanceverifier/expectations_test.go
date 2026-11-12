@@ -20,7 +20,7 @@ func TestGrade(t *testing.T) {
 		wantErr         bool
 	}{
 		{"accepted", Accept, "FINISHED", "REVIEW", outcomeVerified, nil, false},
-		{"accepted, the status list not fetched", Accept, "FINISHED", "REVIEW", outcomeVerified, statusWarning, false},
+		{"accepted, the status list not fetched", Accept, "FINISHED", "REVIEW", outcomeVerified, statusWarning, true},
 		{"refused", Refuse, "FINISHED", "PASSED", outcomeFailed, nil, false},
 		// V1: a negative module the Verifier answered 200 used to pass
 		// on REVIEW alone.
@@ -51,6 +51,11 @@ func TestExpectations_DrivenAndNotDrivenAreDisjoint(t *testing.T) {
 	for _, name := range []string{"oid4vp-1final-verifier-kb-jwt-iat-in-past", "oid4vp-1final-verifier-kb-jwt-iat-in-future"} {
 		if expectations[name] != Refuse {
 			t.Errorf("%s = %v, want Refuse (the suite's VP1FinalVerifierKbJwtIatIn* are negative modules)", name, expectations[name])
+		}
+	}
+	for _, name := range []string{"oid4vp-1final-verifier-present-revoked-credential", "oid4vp-1final-verifier-present-credential-on-identifier-list"} {
+		if expectations[name] != Refuse {
+			t.Errorf("%s = %v, want Refuse", name, expectations[name])
 		}
 	}
 }
