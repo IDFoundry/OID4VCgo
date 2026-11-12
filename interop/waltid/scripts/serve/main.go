@@ -13,7 +13,15 @@
 // "untrusted" for its other attester key, which the issuer doesn't
 // trust; it's read on each request, so a control switches it.
 //
-// Usage: go run ./interop/waltid/scripts/serve -dir DIR -proxy ADDR=URL ... -attester ADDR -attester-config FILE -attester-mode FILE
+// A -tap stands in front of an HTTPS service of OID4VCgo's (its
+// issuer, which walt.id's Wallet calls), dialing it as -tap-name under
+// the run's CA, and logs, with each exchange, what the leniencies in
+// SPECIFICATIONS.md ("Known leniencies") concern that the client sent:
+// each Client Attestation PoP JWT's iss and claim names, each DPoP
+// proof's header (and whether it carries a nonce), and the response's
+// status and DPoP-Nonce challenge. run.sh asserts them.
+//
+// Usage: go run ./interop/waltid/scripts/serve -dir DIR -proxy ADDR=URL ... -tap ADDR=URL -tap-name NAME -attester ADDR -attester-config FILE -attester-mode FILE
 //
 // Each request is logged.
 package main
@@ -25,6 +33,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -35,6 +44,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -61,12 +71,18 @@ func main() {
 	dir := flag.String("dir", "", "the directory setup wrote")
 	to := proxies{}
 	flag.Var(to, "proxy", "ADDR=URL: serve TLS on ADDR, proxying to URL (repeatable)")
+	taps := proxies{}
+	flag.Var(taps, "tap", "ADDR=URL: serve TLS on ADDR, proxying to the HTTPS URL and logging what the client sent (repeatable)")
+	tapName := flag.String("tap-name", "", "the TLS server name a -tap dials its URL as")
 	attester := flag.String("attester", "", "the attester's address")
 	attesterConfig := flag.String("attester-config", "", "setup-issuer's driver.json")
 	attesterMode := flag.String("attester-mode", "", `a file naming the attester key: "trusted" or "untrusted"`)
 	flag.Parse()
-	if *dir == "" || (len(to) == 0 && *attester == "") {
-		log.Fatal("-dir and a -proxy or -attester are required")
+	if *dir == "" || (len(to) == 0 && len(taps) == 0 && *attester == "") {
+		log.Fatal("-dir and a -proxy, -tap or -attester are required")
+	}
+	if len(taps) > 0 && *tapName == "" {
+		log.Fatal("-tap needs -tap-name")
 	}
 	pair, err := tls.LoadX509KeyPair(filepath.Join(*dir, "tls-cert.pem"), filepath.Join(*dir, "tls-key.pem"))
 	if err != nil {
@@ -86,6 +102,13 @@ func main() {
 			log.Printf("%s %q %q", addr, r.Method, r.URL.Path) // #nosec G706 -- quoted: a request can't forge a log line
 			rp.ServeHTTP(w, r)
 		}))
+	}
+	for addr, upstream := range taps {
+		h, err := tapHandler(*dir, *tapName, upstream)
+		if err != nil {
+			log.Fatal(err)
+		}
+		listen(addr, h)
 	}
 	if *attester != "" {
 		if *attesterConfig == "" || *attesterMode == "" {
@@ -187,4 +210,84 @@ func privateKey(jwk map[string]string) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 	return ecdsa.ParseRawPrivateKey(elliptic.P256(), d)
+}
+
+// tapHandler proxies to upstream, an HTTPS service whose certificate
+// names name under the run's CA (DIR/ca.pem), logging each exchange.
+func tapHandler(dir, name string, upstream *url.URL) (http.Handler, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "ca.pem")) // #nosec G304 -- setup's own file
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("%s/ca.pem holds no certificate", dir)
+	}
+	rp := httputil.NewSingleHostReverseProxy(upstream)
+	rp.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: name, MinVersion: tls.VersionTLS12}}
+	rp.ModifyResponse = func(res *http.Response) error {
+		log.Print(tapLine(res.Request, res))
+		return nil
+	}
+	return rp, nil
+}
+
+// tapLine describes one exchange: the request's path, what its Client
+// Attestation PoP and DPoP proof say, and the response's status and
+// DPoP nonce challenge.
+func tapLine(req *http.Request, res *http.Response) string {
+	parts := []string{fmt.Sprintf("tap: %s %q %d", req.Method, req.URL.Path, res.StatusCode)}
+	if pop := req.Header.Get("OAuth-Client-Attestation-PoP"); pop != "" {
+		_, claims := decodeJWT(pop)
+		iss := "absent"
+		if v, ok := claims["iss"]; ok {
+			iss = fmt.Sprintf("%q", fmt.Sprint(v))
+		}
+		parts = append(parts, fmt.Sprintf("pop iss=%s claims=%s", iss, names(claims)))
+	}
+	if dpop := req.Header.Get("DPoP"); dpop != "" {
+		header, claims := decodeJWT(dpop)
+		jwkAlg := "absent"
+		if k, ok := header["jwk"].(map[string]any); ok {
+			if a, ok := k["alg"]; ok {
+				jwkAlg = fmt.Sprintf("%q", fmt.Sprint(a))
+			}
+		}
+		_, nonce := claims["nonce"]
+		parts = append(parts, fmt.Sprintf("dpop typ=%q alg=%q jwk.alg=%s nonce=%t claims=%s",
+			fmt.Sprint(header["typ"]), fmt.Sprint(header["alg"]), jwkAlg, nonce, names(claims)))
+	}
+	if res.Header.Get("DPoP-Nonce") != "" {
+		parts = append(parts, "dpop-nonce-sent")
+	}
+	if strings.Contains(res.Header.Get("WWW-Authenticate"), "use_dpop_nonce") {
+		parts = append(parts, "challenge=use_dpop_nonce")
+	}
+	return strings.Join(parts, " | ")
+}
+
+// decodeJWT is a compact JWT's header and claims, unverified: the tap
+// only reports what was sent. Either is empty if it doesn't decode.
+func decodeJWT(compact string) (header, claims map[string]any) {
+	segments := strings.Split(compact, ".")
+	decode := func(i int) map[string]any {
+		m := map[string]any{}
+		if i < len(segments) {
+			if raw, err := base64.RawURLEncoding.DecodeString(segments[i]); err == nil {
+				_ = json.Unmarshal(raw, &m)
+			}
+		}
+		return m
+	}
+	return decode(0), decode(1)
+}
+
+// names is m's keys, sorted, comma-separated.
+func names(m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }
