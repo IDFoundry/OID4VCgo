@@ -32,6 +32,10 @@ services:
     build:
       context: ../..
       dockerfile: conformance/verifier/Dockerfile
+      args:
+        # conformance_production for the transactions engine's
+        # production store, which the drivers' -transactions sets.
+        GO_BUILD_TAGS: ${CONFORMANCE_VERIFIER_GO_BUILD_TAGS:-}
     hostname: conformance-verifier
     networks: [suite]
     ports:

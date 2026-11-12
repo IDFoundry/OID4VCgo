@@ -33,6 +33,9 @@ func TestGrade(t *testing.T) {
 		{"a logged failure", Accept, "FINISHED", "REVIEW", outcomeVerified, failure, true},
 		{"interrupted", Refuse, "INTERRUPTED", "PASSED", outcomeFailed, nil, true},
 		{"no expectation", 0, "FINISHED", "PASSED", outcomeFailed, nil, true},
+		{"skipped", Skip, "FINISHED", "SKIPPED", outcomePending, nil, false},
+		{"run where it must be skipped", Skip, "FINISHED", "REVIEW", outcomeVerified, nil, true},
+		{"skipped, yet answered", Skip, "FINISHED", "SKIPPED", outcomeVerified, nil, true},
 	}
 	for _, c := range cases {
 		err := Grade(c.exp, c.status, c.result, c.verifierOutcome, c.entries)
@@ -57,6 +60,36 @@ func TestExpectations_DrivenAndNotDrivenAreDisjoint(t *testing.T) {
 		if expectations[name] != Refuse {
 			t.Errorf("%s = %v, want Refuse", name, expectations[name])
 		}
+	}
+}
+
+func TestExpectationFor(t *testing.T) {
+	const post = "oid4vp-1final-verifier-request-uri-method-post"
+	if e, ok := expectationFor("", post); !ok || e != Accept {
+		t.Errorf("sessions engine: %s = %v, %v; want Accept", post, e, ok)
+	}
+	if e, ok := expectationFor(EngineTransactions, post); !ok || e != Skip {
+		t.Errorf("transactions engine: %s = %v, %v; want Skip", post, e, ok)
+	}
+	// Every other module expects the same of both engines.
+	for name, want := range expectations {
+		if _, overridden := transactionsExpectations[name]; overridden {
+			continue
+		}
+		if e, ok := expectationFor(EngineTransactions, name); !ok || e != want {
+			t.Errorf("transactions engine: %s = %v, want %v", name, e, want)
+		}
+	}
+	for name := range transactionsExpectations {
+		if _, ok := expectations[name]; !ok {
+			t.Errorf("%s overrides no module's expectation", name)
+		}
+	}
+	if _, ok := expectationFor(EngineTransactions, "oid4vp-1final-verifier-unknown"); ok {
+		t.Error("an unknown module has an expectation")
+	}
+	if Skip.String() == "no expectation" {
+		t.Error("Skip has no description")
 	}
 }
 

@@ -71,9 +71,13 @@ setup" for the verdicts and where they differ from the development
 runs. What production assurance adds, or a deployment uses instead,
 the OIDF runs still don't exercise, in particular:
 
-- The other roles under production assurance: `cmd/conformance-verifier`,
-  `cmd/conformance-wallet` and `cmd/conformance-wallet-vp` run only at
-  development.
+- The wallet roles under production assurance: `cmd/conformance-wallet`
+  and `cmd/conformance-wallet-vp` run only at development. The
+  Verifier's does run under production, through `verifier.Transactions`:
+  the daily OID4VP workflow's "Verifier transactions" legs serve the
+  Verifier plan's whole module list for both formats with
+  `cmd/conformance-verifier`'s transactions engine, over a sealed
+  SQLite store (`verifier/README.md`'s "Transactions engine").
 - The issuer's production setup beyond its single-instance SQLite
   stores: PostgreSQL, several instances sharing them
   (`DeploymentHorizontallyScaled`), status lists for the credentials
@@ -82,8 +86,16 @@ the OIDF runs still don't exercise, in particular:
   (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
   suite's attestations carry no `status` claim, so the status checks
   are configured but never fetch a list.
-- `verifier.Transactions`: `cmd/conformance-verifier` keeps its own
-  sessions and calls `verifier.Verifier` directly.
+- What `verifier.Transactions` does beyond those legs: fetching the
+  Request Object with `request_uri_method=post` (it serves `GET`
+  alone, so the suite skips `request-uri-method-post` for it), the
+  cross-device flow (the legs begin same-device requests), its Digital
+  Credentials API requests (`BeginDCAPI`, `BeginMdocDCAPI`; the suite
+  runs drive no `dc_api.jwt` Verifier list), PostgreSQL and several
+  instances sharing a store, and `TransactionsConfig.Status`'s own
+  production check of the status list fetch: the suite serves its
+  lists from a private Docker address, so the legs run the same status
+  policy as the `Accept`.
 - `walletflow`: the suite drives `wallet` through
   `cmd/conformance-wallet` and `cmd/conformance-wallet-vp`, never
   `walletflow`, which the interop runs and the mobile libraries use.

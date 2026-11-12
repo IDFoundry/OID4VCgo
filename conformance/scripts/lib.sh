@@ -318,6 +318,19 @@ run_verifier() {
 
 	run_go_self_graded "Verifier mdoc" "$WORKDIR/verifier-mdoc.log" \
 		go run ./conformance/verifier/scripts/run-mdoc-module
+
+	# Not certification profiles: the same plan served through
+	# verifier.Transactions (cmd/conformance-verifier's transactions
+	# engine) under production assurance, over a sealed SQLite store
+	# (built with the conformance_production tag). Every module's
+	# expected verdict is the legs' above, except request-uri-method-post,
+	# which the suite skips: Transactions serves the Request Object by
+	# GET alone (conformance/verifier/README.md's "Transactions engine").
+	run_go_self_graded "Verifier transactions sd_jwt_vc" "$WORKDIR/verifier-transactions-sdjwt.log" \
+		go run ./conformance/verifier/scripts/run-sdjwt-modules -transactions
+
+	run_go_self_graded "Verifier transactions mdoc" "$WORKDIR/verifier-transactions-mdoc.log" \
+		go run ./conformance/verifier/scripts/run-mdoc-module -transactions
 	return 0
 }
 

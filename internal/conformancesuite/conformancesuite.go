@@ -301,6 +301,10 @@ type LogEntry struct {
 	} `json:"implicit_submit"`
 	Upload     string `json:"upload"`
 	RedirectTo string `json:"redirect_to"`
+	// RedirectURI is the redirect_uri a Verifier's response endpoint
+	// returned, which the OpenID4VP Verifier plan logs for the tester's
+	// browser to visit.
+	RedirectURI string `json:"redirect_uri"`
 }
 
 // FetchModuleLog returns every log entry GET /api/log/{moduleID} has

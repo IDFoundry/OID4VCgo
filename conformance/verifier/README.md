@@ -17,13 +17,20 @@ that sign them: for `sd_jwt_vc`, the suite's "Credential Issuer" >
 certificate under a per-run CA; for `iso_mdl`, the suite's fixed IACA
 root (see "Credential status" below).
 
+It has two engines (`engine` in its config). The default, `sessions`,
+is this binary's own session store calling `verifier.Verifier`
+directly; the interop runs use it. `transactions` serves the same plan
+through `verifier.Transactions`, a deployment's API, under production
+assurance in the suite runs: see "Transactions engine" below.
+
 ## What not to copy
 
-This binary is a conformance-suite harness. It drives `verifier`'s
-lower-level API (`BuildAuthorizationRequest`,
+This binary is a conformance-suite harness. Its default engine drives
+`verifier`'s lower-level API (`BuildAuthorizationRequest`,
 `ParseDirectPostJWTResponse`, `VerifyResponse`) because those are what
 the suite grades, and it skips everything a deployment needs around
-them:
+them (the transactions engine has what the first three of these lack,
+and is still a harness: see its section):
 
 - **No session binding.** It keeps its own in-memory session map rather
   than a `verifier.Transactions`. The `redirect_uri` it returns names
@@ -51,6 +58,9 @@ A Verifier uses `verifier.Transactions` with a durable
 `examples/passport-vdc`'s verifier is wired that way.
 
 ## Endpoints
+
+These are the default engine's; the transactions engine's are under
+"Transactions engine".
 
 - `GET /authorize` — creates a session (the DCQL query to ask for) and
   redirects to
@@ -158,11 +168,15 @@ Each module is graded on three things (`conformanceverifier.Grade`):
 
 ### Expected verdicts
 
+The transactions engine's legs expect the same of every module but
+`request-uri-method-post`, which the suite skips for it (see
+"Transactions engine").
+
 | Module | `sd_jwt_vc` | `iso_mdl` | Verifier must | Suite verdict |
 | --- | --- | --- | --- | --- |
 | `happy-flow` | yes | yes | accept | `FINISHED=REVIEW` |
 | `minimal-cnf-jwk` | yes | — | accept | `FINISHED=REVIEW` |
-| `request-uri-method-post` | yes | yes | accept | `FINISHED=REVIEW` |
+| `request-uri-method-post` | yes | yes | accept (transactions engine: skipped, no presentation) | `FINISHED=REVIEW` (transactions engine: `FINISHED=SKIPPED`) |
 | `request-uri-fetched-twice` | yes | yes | accept | `FINISHED=REVIEW` |
 | `present-credential-without-status` | yes | yes | accept | `FINISHED=REVIEW` |
 | `invalid-kb-jwt-signature` | yes | — | refuse | `FINISHED=PASSED` |
@@ -241,6 +255,104 @@ and run both drivers. `present-revoked-credential` (and, for
 `FINISHED=FAILED` with the result page reporting `verified`, every
 other accepted module carrying a status reference fails on the
 warning, and each run exits 1.
+
+### Transactions engine
+
+`run-sdjwt-modules -transactions` and `run-mdoc-module -transactions`
+(the OID4VP workflow's "Verifier transactions" legs) run the same plan
+with `engine: "transactions"`: `verifier.Transactions` serves the whole
+flow, and this binary adds only what a Verifier's frontend adds
+(`cmd/conformance-verifier/transactions.go`):
+
+- `GET /authorize` begins a same-device request
+  (`Transactions.BeginWith`, `SameDevice`), its browser binding a fresh
+  random value set as a `Secure`, `HttpOnly` cookie, and redirects to
+  `Begun.Link`.
+- `GET /request/{id}` is `Transactions.RequestObjectHandler`, and
+  `POST /response` (the `response_uri`) is
+  `Transactions.ResponseHandler`: answer routing by `kid`, `state`,
+  verification against the request's own nonce and key, atomic
+  completion, a 400 for any refused answer, a replay included, and for
+  a verified one 200 with the `redirect_uri` HAIP 1.0 §5.1 requires.
+- `GET /result?response_code=...` is that `redirect_uri`
+  (`TransactionsConfig.RedirectURI`): it redeems the code for the
+  browser holding the binding (`Transactions.Redeem`) and shows the
+  result.
+- `GET /result/{id}` shows the bound browser its request
+  (`Transactions.Lookup`): "Verification succeeded" once redeemed,
+  "Verification failed" with `LastError` when its latest answer was
+  refused, otherwise "Pending".
+
+The drivers act as the browser: they keep `/authorize`'s cookie, visit
+the `redirect_uri` the suite logs for the tester (rewritten from the
+Verifier's address on the suite's network to `-verifier-base`), and
+read `/result/{id}` with the same cookie. An accepted module whose
+`response_code` wasn't redeemed by that browser reads "Pending" and
+fails.
+
+In the suite runs it runs under `verifier.AssuranceProduction`
+(`Config.Production`, built with the `conformance_production` tag),
+with:
+
+- a durable, atomically updated store, sealed: `sqlstore`'s
+  `TransactionStore` over a SQLite file, each transaction encoded by a
+  `verifier.TransactionCodec` (version 2) whose `Sealer` is
+  `sealing.AESGCMSealer` under a key generated per run;
+- a CA-issued client certificate, an `https` `response_uri`,
+  `crypto/rand`, A128GCM and A256GCM, issuer key resolvers that verify
+  `x5c`/`x5chain` chains against the run's own anchors, and
+  `IssuerAuthorized` allowing the trusted issuer the configured `vct`
+  or doctype alone;
+- the same status policy as the default engine (one `statuslist.Cache`,
+  the suite's lists trusted by the credential's issuer anchors, a
+  missing reference accepted).
+
+What production requires that the suite can't satisfy, and what runs
+instead:
+
+- **The status policy runs as the `Accept`, not as
+  `TransactionsConfig.Status`.** Under production, `NewTransactions`
+  refuses a `Status` whose `Fetcher` isn't `HardenedForProduction`, and
+  the suite serves its status lists from its own container on the
+  private Docker network this binary shares with it, which needs
+  `AllowPrivate`. So the same `StatusPolicy` is checked in
+  `TransactionsConfig.Accept` with `NoStatusCheck` set (the
+  alternative the library documents, as `verifier.RequireValidStatus`
+  does, whose `Fetcher` is the caller's to harden): it checks what
+  `Status` would,
+  on the same answers, before the request completes, and a refusal is
+  recorded the same way. Its TLS is pinned to the suite's certificate,
+  as for the default engine (`pinnedTLSConfig`). Production's own
+  check of the `Fetcher` is the one thing not exercised.
+- **No certificate revocation** (`certrevocation.NoCheck{}`) for the
+  issuers' and the status list signers' certificates, a decision
+  production accepts: the suite's per-run CAs and its IACA publish no
+  CRL.
+
+Nothing falls back to development assurance.
+
+The transactions engine serves the Request Object by `GET` alone:
+`Transactions.RequestObjectHandler` answers `POST` with 405, and
+`Begin`'s links carry no `request_uri_method`. So
+`request-uri-method-post` ends `FINISHED=SKIPPED` (the suite skips it
+when the request doesn't ask for `request_uri_method=post`), and is
+expected to; OpenID4VP §5.10 and `wallet_nonce` stay covered by the
+default engine only. It also serves no Digital Credentials API (the
+default engine's `/dcapi/` routes are for interop runs; the suite runs
+drive no `dc_api.jwt` Verifier list).
+
+Under the transactions engine the expected verdicts were reached by
+both legs: `sd_jwt_vc` 13 modules at their verdict and
+`request-uri-method-post` skipped, `iso_mdl` 6 and the same skip. To
+check the legs catch a Transactions wiring that's wrong: make the
+`Accept` in `setStatusCheck` (`transactions.go`) return nil, and
+`run-sdjwt-modules -transactions` exits 1 with
+`present-revoked-credential` `FINISHED=FAILED` and every accepted
+module carrying a status reference failing on
+`EnsureVerifierFetchedRevocationList`'s warning; or make
+`handleRedirectBack` show success without `Transactions.Redeem`, and
+`run-mdoc-module -transactions` exits 1 with every accepted module's
+result page "Pending".
 
 ### Earlier findings
 

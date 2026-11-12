@@ -13,6 +13,7 @@
 package conformanceverifier
 
 import (
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -23,6 +24,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
@@ -107,6 +109,38 @@ type Config struct {
 	StatusReferenceOptional           bool   `json:"status_reference_optional,omitempty"`
 	StatusListTLSPinnedCertificatePEM string `json:"status_list_tls_pinned_certificate_pem,omitempty"`
 	StatusListAllowPrivate            bool   `json:"status_list_allow_private,omitempty"`
+
+	// Engine and Production select cmd/conformance-verifier's
+	// transactions engine under its production setup (-transactions).
+	Engine     string            `json:"engine,omitempty"`
+	Production *ProductionConfig `json:"production,omitempty"`
+}
+
+// ProductionConfig mirrors cmd/conformance-verifier's own.
+type ProductionConfig struct {
+	DatabasePath string `json:"database_path"`
+	SealingKey   string `json:"sealing_key"`
+}
+
+// EngineTransactions is cmd/conformance-verifier's Config.Engine for
+// verifier.Transactions.
+const EngineTransactions = "transactions"
+
+// productionDatabasePath is the production store's SQLite file, in the
+// container's /tmp: a fresh one each time the container is recreated.
+const productionDatabasePath = "/tmp/conformance-verifier.sqlite"
+
+// productionBuildTags builds cmd/conformance-verifier with its
+// production store (the Dockerfile's GO_BUILD_TAGS).
+const productionBuildTags = "conformance_production"
+
+// newProductionConfig is a production setup with a fresh sealing key.
+func newProductionConfig() (*ProductionConfig, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return &ProductionConfig{DatabasePath: productionDatabasePath, SealingKey: base64.StdEncoding.EncodeToString(key)}, nil
 }
 
 // KeyMaterial is everything GenerateKeyMaterial produces: a caller
@@ -203,10 +237,16 @@ func WriteConfig(cfg Config) error {
 // image is unchanged, so the choice is made here). The intermittent
 // missing upload placeholders this was first meant to fix were the
 // suite getting a module's first request before WAITING (DriveModule).
-func RestartContainer() error {
+// buildTags is the Dockerfile's GO_BUILD_TAGS (docker-compose.yml takes
+// it from CONFORMANCE_VERIFIER_GO_BUILD_TAGS): productionBuildTags for
+// the transactions engine's production store, "" otherwise.
+func RestartContainer(buildTags string) error {
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("find docker: %w", err)
+	}
+	if err := os.Setenv("CONFORMANCE_VERIFIER_GO_BUILD_TAGS", buildTags); err != nil {
+		return err
 	}
 	if err := runDocker(dockerPath, "compose", "-f", DockerComposeFile, "build"); err != nil {
 		return err
@@ -336,8 +376,17 @@ const placeholderPNGDataURI = "data:image/png;base64," +
 // ending the module REVIEW), while one it refuses is answered 400 and
 // the suite grades the module itself, without a screenshot. The
 // result is then graded against the module's Expectation (Grade).
-func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testName string, moduleVariant map[string]string) ModuleResult {
-	res := ModuleResult{TestName: testName, Expected: expectations[testName]}
+//
+// The driver is the browser that asked: it keeps /authorize's cookies
+// (the transactions engine's browser binding), and once the suite
+// shows the Verifier's redirect_uri for it to visit, visits it, as the
+// browser the Wallet sends back does — which redeems a same-device
+// response_code under the transactions engine — before reading the
+// result page with the same cookies.
+func DriveModule(setup SetupResult, testName string, moduleVariant map[string]string) ModuleResult {
+	httpClient, apiBase, verifierBase, planID := setup.HTTPClient, setup.APIBase, setup.VerifierBase, setup.PlanID
+	expected, _ := expectationFor(setup.Engine, testName)
+	res := ModuleResult{TestName: testName, Expected: expected}
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, moduleVariant)
 	if err != nil {
 		res.Err = fmt.Errorf("create module instance: %w", err)
@@ -352,8 +401,16 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 		return res
 	}
 
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	// browser carries the cookies /authorize sets, the same jar for
+	// every request a browser would make to the Verifier.
 	noRedirect := &http.Client{
 		Transport:     httpClient.Transport,
+		Jar:           jar,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	authorizeResp, err := noRedirect.Get(verifierBase + "/authorize")
@@ -392,12 +449,18 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 		res.Err = fmt.Errorf("fill upload placeholder: %w", err)
 		return res
 	}
+	// After the placeholder, which the suite creates only once it has
+	// logged the redirect_uri of a response the Verifier answered 200.
+	if err := visitRedirectURI(httpClient, noRedirect, setup, module.ID); err != nil {
+		res.Err = err
+		return res
+	}
 	res.Status, res.Result, err = conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, restartTimeout)
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	res.VerifierOutcome, err = verifierOutcome(httpClient, verifierBase, sessionID)
+	res.VerifierOutcome, err = verifierOutcome(noRedirect, verifierBase, sessionID)
 	if err != nil {
 		res.Err = err
 		return res
@@ -409,6 +472,38 @@ func DriveModule(httpClient *http.Client, apiBase, verifierBase, planID, testNam
 	}
 	res.Err = Grade(res.Expected, res.Status, res.Result, res.VerifierOutcome, entries)
 	return res
+}
+
+// visitRedirectURI visits, with browser, the redirect_uri the
+// Verifier's response endpoint returned for moduleID, which the suite
+// logs for the tester's browser to visit: the address the Verifier
+// gave it on the suite's network, rewritten to setup.VerifierBase. A
+// module whose response the Verifier refused logs none. Any other
+// address is never visited.
+func visitRedirectURI(httpClient, browser *http.Client, setup SetupResult, moduleID string) error {
+	entries, err := conformancesuite.FetchModuleLog(httpClient, setup.APIBase, moduleID)
+	if err != nil {
+		return fmt.Errorf("fetch module log: %w", err)
+	}
+	for _, e := range entries {
+		if e.RedirectURI == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(e.RedirectURI, setup.VerifierInternalBase+"/")
+		if !ok {
+			return fmt.Errorf("the suite logged a redirect_uri %q outside %s", e.RedirectURI, setup.VerifierInternalBase)
+		}
+		resp, err := browser.Get(setup.VerifierBase + "/" + rest)
+		if err != nil {
+			return fmt.Errorf("visit the redirect_uri: %w", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("visit the redirect_uri: status %d", resp.StatusCode)
+		}
+		return nil
+	}
+	return nil
 }
 
 // sessionIDOf is the cmd/conformance-verifier session a deep link's
@@ -476,12 +571,13 @@ type ModuleResult struct {
 }
 
 // DriveModules drives every module of the plan's own module list
-// (planModules, as CreatePlan returned it) that expectations names, in
-// the plan's order and against moduleVariant, logging each outcome as
-// it completes. A module the plan lists but expectations doesn't name
-// fails the run (a new suite module is classified before it is
+// (setup.Modules, as CreatePlan returned it) that expectations names,
+// in the plan's order and against moduleVariant, logging each outcome
+// as it completes. A module the plan lists but expectations doesn't
+// name fails the run (a new suite module is classified before it is
 // trusted), unless notDriven gives the reason it isn't driven.
-func DriveModules(httpClient *http.Client, apiBase, verifierBase, planID string, planModules []conformancesuite.PlanModule, moduleVariant map[string]string) []ModuleResult {
+func DriveModules(setup SetupResult, moduleVariant map[string]string) []ModuleResult {
+	planModules := setup.Modules
 	results := make([]ModuleResult, 0, len(planModules))
 	seen := make(map[string]bool, len(planModules))
 	for _, m := range planModules {
@@ -494,8 +590,8 @@ func DriveModules(httpClient *http.Client, apiBase, verifierBase, planID string,
 			continue
 		}
 		var res ModuleResult
-		if _, known := expectations[m.TestModule]; known {
-			res = DriveModule(httpClient, apiBase, verifierBase, planID, m.TestModule, moduleVariant)
+		if _, known := expectationFor(setup.Engine, m.TestModule); known {
+			res = DriveModule(setup, m.TestModule, moduleVariant)
 		} else {
 			res = ModuleResult{TestName: m.TestModule, Err: errors.New("the plan lists a module with no expectation: classify it in internal/conformanceverifier")}
 		}
@@ -588,6 +684,7 @@ type Flags struct {
 	VerifierInternalBase *string
 	Alias                *string
 	SkipDockerRestart    *bool
+	Transactions         *bool
 }
 
 // DefineFlags registers Flags, defaulting -alias to defaultAlias. Call
@@ -599,6 +696,7 @@ func DefineFlags(defaultAlias string) Flags {
 		VerifierInternalBase: flag.String("verifier-internal-base", "https://conformance-verifier:8443", "cmd/conformance-verifier's own suite-network-internal base URL"),
 		Alias:                flag.String("alias", defaultAlias, "suite plan alias"),
 		SkipDockerRestart:    flag.Bool("skip-docker-restart", false, "skip restarting the conformance-verifier container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)"),
+		Transactions:         flag.Bool("transactions", false, "run cmd/conformance-verifier's transactions engine (verifier.Transactions) under its production setup: production assurance over a sealed SQLite store, built with the conformance_production tag"),
 	}
 }
 
@@ -627,6 +725,13 @@ type SetupResult struct {
 	HTTPClient *http.Client
 	PlanID     string
 	Modules    []conformancesuite.PlanModule
+
+	// APIBase, VerifierBase and VerifierInternalBase are the flags':
+	// the suite's base URL, and cmd/conformance-verifier's from this
+	// host and on the suite's network.
+	APIBase, VerifierBase, VerifierInternalBase string
+	// Engine is cmd/conformance-verifier's Config.Engine.
+	Engine string
 }
 
 // Setup runs every step both scripts need before they can start
@@ -646,13 +751,21 @@ func Setup(params SetupParams) (SetupResult, error) {
 	if err := configureTrust(httpClient, *params.Flags.APIBase, &km); err != nil {
 		return SetupResult{}, err
 	}
+	buildTags := ""
+	if *params.Flags.Transactions {
+		km.Config.Engine = EngineTransactions
+		if km.Config.Production, err = newProductionConfig(); err != nil {
+			return SetupResult{}, fmt.Errorf("generate the production setup: %w", err)
+		}
+		buildTags = productionBuildTags
+	}
 	if err := WriteConfig(km.Config); err != nil {
 		return SetupResult{}, fmt.Errorf("write config: %w", err)
 	}
-	log.Printf("wrote %s (credential_format=%s)", ConfigOutPath, params.PlanCredentialFormat)
+	log.Printf("wrote %s (credential_format=%s, engine=%q)", ConfigOutPath, params.PlanCredentialFormat, km.Config.Engine)
 
 	if !*params.Flags.SkipDockerRestart {
-		if err := RestartContainer(); err != nil {
+		if err := RestartContainer(buildTags); err != nil {
 			return SetupResult{}, fmt.Errorf("restart conformance-verifier container: %w", err)
 		}
 		log.Print("restarted conformance-verifier container, waiting for it to come up")
@@ -680,7 +793,11 @@ func Setup(params SetupParams) (SetupResult, error) {
 	log.Printf("created plan %s (alias %s)", planID, *params.Flags.Alias)
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
 
-	return SetupResult{HTTPClient: httpClient, PlanID: planID, Modules: modules}, nil
+	return SetupResult{
+		HTTPClient: httpClient, PlanID: planID, Modules: modules,
+		APIBase: *params.Flags.APIBase, VerifierBase: *params.Flags.VerifierBase, VerifierInternalBase: *params.Flags.VerifierInternalBase,
+		Engine: km.Config.Engine,
+	}, nil
 }
 
 // configureTrust sets the issuer and status list trust km.Config's
