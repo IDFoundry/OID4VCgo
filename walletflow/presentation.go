@@ -186,10 +186,10 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // makes it. An SD-JWT VC's issuer signature is one
 // VerifyIssuedCredential accepted on receipt (ES256, ES384, ES512 or
 // EdDSA), its Key Binding JWT ES256; an mdoc's IssuerAuth likewise
-// (COSE -7 or -8), its DeviceSignature ES256 (-7). Requests are
-// accepted from an x509_hash Client Identifier, and with
-// Config.AcceptX509SANDNS an x509_san_dns one, which
-// client_id_prefixes_supported then lists too (§10.1). Of the
+// (COSE ES256 -7, ES384 -35, ES512 -36 or EdDSA -8), its
+// DeviceSignature ES256 (-7). Requests are accepted from an x509_hash
+// Client Identifier, and with Config.AcceptX509SANDNS an x509_san_dns
+// one, which client_id_prefixes_supported then lists too (§10.1). Of the
 // Authorization Server Metadata §10 takes the wallet's from, it carries
 // response_types_supported, which RFC 8414 §2 requires, and
 // response_modes_supported: the wallet answers a request it fetched
@@ -212,7 +212,7 @@ func walletMetadata(acceptX509SANDNS bool) json.RawMessage {
 	}
 	return json.RawMessage(`{"vp_formats_supported":{` +
 		`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","ES384","ES512","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
-		`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
+		`"mso_mdoc":{"issuerauth_alg_values":[-7,-35,-36,-8],"deviceauth_alg_values":[-7]}},` +
 		`"client_id_prefixes_supported":` + prefixes + `,` +
 		`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"],` +
 		`"issuer":"https://self-issued.me/v2"}`)

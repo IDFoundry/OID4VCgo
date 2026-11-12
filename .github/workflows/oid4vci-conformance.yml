@@ -58,7 +58,9 @@ jobs:
     # See the sibling oid4vp-conformance.yml's own identical comment —
     # this half runs the Issuer's own full 60-module battery four times
     # (default/issuer-initiated x sd_jwt_vc/mdoc), a deferred-issuance
-    # run, and the Wallet's own six runs, all against a freshly-built
+    # run, a run of its production setup (the whole plan again, built
+    # with the conformance_production tag), and the Wallet's own six
+    # runs, all against a freshly-built
     # conformance-issuer
     # container. 90 minutes gives real headroom over this repo's own
     # observed runtime without inheriting the old combined job's own

@@ -52,32 +52,55 @@ The certified binaries run at development assurance:
 `cmd/conformance-issuer` builds its `issuer` and FAPIgo `server` with
 `AssuranceDevelopment`, `cmd/conformance-verifier` its `verifier`, and
 `cmd/conformance-wallet` its `wallet` and FAPIgo `client`;
-`cmd/conformance-wallet-vp` calls `wallet`'s request parsing directly,
-with no `wallet.Wallet` and so no assurance level. What production
-assurance adds, or a deployment uses instead, the OIDF runs don't
-exercise, in particular:
+`cmd/conformance-wallet-vp` fetches each Request Object through a
+`wallet.Wallet` at `AssuranceDevelopment`.
 
-- The issuer proof setup production takes without opting in: `jwt`
-  proofs carrying a key attestation in their `key_attestation` header
-  (`haip.RecommendedJWTKeyAttestationProofType`), with no `attestation`
-  proof type. The suite's issuer plans run plain `jwt` proofs beside
-  the `attestation` proof type, which `issuer.New` refuses under
-  production without `AllowAttestationProofType` (see
-  [SPECIFICATIONS.md](../SPECIFICATIONS.md#known-strictness)). The
-  EUDI issuance interop runs `jwt` with `key_attestation`.
+One uncertified run covers the issuer's production setup: the daily
+OID4VCI workflow's "Issuer production" leg runs
+`cmd/conformance-issuer` with its `production` configuration (built
+with the `conformance_production` tag), its `issuer` and FAPIgo
+`server` under `AssuranceProduction` with sealed SQLite stores
+(`sqlstore`, `fapigo/sqlstore`), an access token key loaded from its
+configuration, audit sinks, and Wallet Attestation and key attestation
+status checks, taking only `jwt` proofs carrying a key attestation in
+their `key_attestation` header (`haip.RecommendedIssuerConfig`), with
+no `attestation` proof type, and trusting key attestations by their
+`x5c` chain (`issuer.X5CAttestationVerifier`). It drives the HAIP
+issuer plan's whole module list; see `issuer/README.md`'s "Production
+setup" for the verdicts and where they differ from the development
+runs. What production assurance adds, or a deployment uses instead,
+the OIDF runs still don't exercise, in particular:
+
+- The other roles under production assurance: `cmd/conformance-verifier`,
+  `cmd/conformance-wallet` and `cmd/conformance-wallet-vp` run only at
+  development.
+- The issuer's production setup beyond its single-instance SQLite
+  stores: PostgreSQL, several instances sharing them
+  (`DeploymentHorizontallyScaled`), status lists for the credentials
+  it issues, and certificate revocation checks on Wallet Attestation
+  and key attestation signers, which it declines
+  (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
+  suite's attestations carry no `status` claim, so the status checks
+  are configured but never fetch a list.
 - `verifier.Transactions`: `cmd/conformance-verifier` keeps its own
   sessions and calls `verifier.Verifier` directly.
 - `walletflow`: the suite drives `wallet` through
   `cmd/conformance-wallet` and `cmd/conformance-wallet-vp`, never
   `walletflow`, which the interop runs and the mobile libraries use.
-- Fetching a Request Object as a production wallet does:
-  `cmd/conformance-wallet-vp` fetches `request_uri` with its own HTTP
-  client, which skips TLS verification, rather than
-  `wallet.Wallet.FetchAuthorizationRequest`'s hardened one.
-- Authorization errors shown on the Authorization Server's own page:
-  at development, `cmd/conformance-issuer` redirects them to a
-  registered redirect URI for the suite's negative modules, which
-  production refuses.
+- Fetching a Request Object entirely as a production wallet does:
+  `cmd/conformance-wallet-vp` fetches `request_uri` through
+  `wallet.Wallet.FetchAuthorizationRequest` (and
+  `FetchAuthorizationRequestPost`), verifying the suite's TLS
+  certificate, which `run-modules` pins, but over its own HTTP client,
+  which reaches the suite on its private Docker address where
+  `wallet`'s hardened one refuses it.
+- Authorization errors shown on the Authorization Server's own page
+  are checked only as far as the suite's `REVIEW` verdict goes: under
+  the issuer's production setup the modules that end on that page wait
+  for a screenshot of it, which the scripts don't upload, so no one
+  checks what the page says. At development `cmd/conformance-issuer`
+  redirects them to a registered redirect URI, which production
+  refuses.
 
 ## Interop with polaris-oid4vp
 
@@ -225,8 +248,13 @@ specific reason to suspect drift, not just when something seems off.
   verified; one it must refuse is answered `400`, which the suite
   grades `FINISHED`/`PASSED` itself. The module's log must hold no
   `FAILURE` or unexpected `WARNING`, and a module the plan lists with
-  no expected verdict fails the run. The two revocation modules aren't
-  driven: the harness checks no credential status. Found and
+  no expected verdict fails the run. The harness checks every
+  credential's status: the two revocation modules (a revoked Token
+  Status List entry, and for `iso_mdl` an mdoc on its identifier list)
+  must be refused, and an accepted module must have fetched its
+  credential's status list, the suite's lists trusted by the same
+  anchors as the credentials (`verifier/README.md`'s "Credential
+  status"). Found and
   fixed three real gaps along the way:
   `internal/jwe`'s Concat KDF never incorporated the sender's
   `apu`/`apv` header members, silently deriving the wrong CEK against
@@ -415,14 +443,16 @@ specific reason to suspect drift, not just when something seems off.
   (a human-review negative test) — no `FAILURE`s; the daily run
   expects the same of the 60-module battery.
   **Runs**: the daily OID4VCI workflow (`run_issuer` in
-  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` five
+  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` six
   times — `haipBattery` with no flags and with `-issuer-initiated`
   (the script sends each OID4VCI module's Credential Offer to the
   suite's `credential_offer_endpoint` itself), `mdocBattery`
   (`metadata-test`, `happy-flow`) with `-credential-format mdoc` with
-  and without `-issuer-initiated`, and `deferredBattery` (the same two
-  modules) with `-deferred`. The first four are the role's four
-  certification profiles; see `issuer/README.md`'s "Runs".
+  and without `-issuer-initiated`, `deferredBattery` (the same two
+  modules) with `-deferred`, and `productionBattery` (the plan's 61)
+  with `-production`, against the production setup. The first four
+  are the role's four certification profiles; see
+  `issuer/README.md`'s "Runs".
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-issuer-test-plan`
   is driven too**, via `run-fapi2sp-battery -base-plan` — the same 21
   module classes already covered above (no FAPI2SP battery in this

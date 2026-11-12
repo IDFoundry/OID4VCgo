@@ -60,6 +60,25 @@ func (a perClientAttesterAnchors) TrustAnchors(_ context.Context, client storage
 	return a[client.ID()], nil
 }
 
+// Capabilities implements keys.KeySourceAssurance, which
+// server.AssuranceProduction requires of X5CAttesterChain's trust
+// anchors: the anchors are held in memory, so nothing is fetched.
+func (perClientAttesterAnchors) Capabilities() keys.KeySourceCapabilities {
+	return keys.KeySourceCapabilities{LiveFetchHardened: true}
+}
+
+// attesterRoots is every client's attester_trust_anchors_pem in one
+// pool, or an empty pool for clients trusting registered attester keys.
+func attesterRoots(cfg Config) *x509.CertPool {
+	roots := x509.NewCertPool()
+	for _, cc := range []*ConfigClient{&cfg.Client, cfg.Client2} {
+		if cc != nil {
+			roots.AppendCertsFromPEM([]byte(cc.AttesterTrustAnchorsPEM))
+		}
+	}
+	return roots
+}
+
 // attesterKeys registers each client's attester_jwks as its attester's
 // keys, under the client's expected_attester_issuer: fapigo resolves an
 // attestation's key by the Attester the client is registered with,

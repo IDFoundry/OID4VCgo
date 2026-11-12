@@ -148,8 +148,12 @@ func TestStartPresentation_RequestURIMethod(t *testing.T) {
 		if _, ok := metadata.VPFormats["dc+sd-jwt"]; !ok {
 			t.Errorf("wallet_metadata = %s, want dc+sd-jwt among its formats", form.Get("wallet_metadata"))
 		}
-		if _, ok := metadata.VPFormats["mso_mdoc"]; !ok {
+		if f, ok := metadata.VPFormats["mso_mdoc"]; !ok {
 			t.Errorf("wallet_metadata = %s, want mso_mdoc among its formats", form.Get("wallet_metadata"))
+		} else if !slices.Equal(f.IssuerAuthAlgValues, []int64{-7, -35, -36, -8}) {
+			// The IssuerAuth algorithms VerifyIssuedCredential accepts:
+			// ES256, ES384, ES512 and EdDSA.
+			t.Errorf("mso_mdoc issuerauth_alg_values = %v, want [-7 -35 -36 -8]", f.IssuerAuthAlgValues)
 		}
 		// RFC 8414 §2's required response_types_supported and issuer,
 		// and the one response mode the wallet answers a fetched request

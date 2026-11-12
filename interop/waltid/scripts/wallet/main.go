@@ -11,24 +11,33 @@
 //
 // The result, written to -out as JSON, says how far the run got and
 // what it saw; run.sh decides whether that's what the case expects.
+// Its "observed" records what walt.id sent of what SPECIFICATIONS.md's
+// "Known leniencies" concern, read off the wire by the wallet's HTTP
+// transport: each Token Response's token_type, each encryption JWK's
+// alg and kid in the issuer's credential_request_encryption, and in
+// a Verifier's request object's client_metadata.
 //
 // Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] -offer URL [-request URL] -out FILE
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -49,6 +58,104 @@ type result struct {
 	Received []received `json:"received"`
 	Failed   []string   `json:"failed,omitempty"`
 	QueryIDs []string   `json:"query_ids,omitempty"`
+	Observed *observed  `json:"observed"`
+}
+
+// observed is what the transport saw walt.id send: token_types, one per
+// Token Response; IssuerMetadata, how many JSON Credential Issuer
+// Metadata documents it read, and RequestEncryption whether one had
+// credential_request_encryption; RequestEncryptionJWKs, that member's
+// jwks keys; and VerifierJWKs, the request object's client_metadata.jwks
+// keys. Each key is {"alg": ..., "kid": ...}, "absent" for a member it
+// lacks.
+type observed struct {
+	mu                    sync.Mutex
+	TokenTypes            []string            `json:"token_types"`
+	IssuerMetadata        int                 `json:"issuer_metadata"`
+	RequestEncryption     bool                `json:"credential_request_encryption"`
+	RequestEncryptionJWKs []map[string]string `json:"request_encryption_jwks"`
+	VerifierJWKs          []map[string]string `json:"verifier_jwks"`
+}
+
+// recorder is an http.RoundTripper recording into observed what each
+// response says.
+type recorder struct {
+	next http.RoundTripper
+	seen *observed
+}
+
+func (r recorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	res, err := r.next.RoundTrip(req)
+	if err != nil {
+		return res, err
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	_ = res.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	res.Body = io.NopCloser(bytes.NewReader(body))
+	r.seen.record(req, res.Header.Get("Content-Type"), body)
+	return res, nil
+}
+
+func (o *observed) record(req *http.Request, contentType string, body []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	switch {
+	case strings.HasPrefix(contentType, "application/oauth-authz-req+jwt"):
+		var claims struct {
+			ClientMetadata struct {
+				JWKS struct {
+					Keys []map[string]any `json:"keys"`
+				} `json:"jwks"`
+			} `json:"client_metadata"`
+		}
+		if segments := strings.Split(string(body), "."); len(segments) == 3 {
+			if raw, err := base64.RawURLEncoding.DecodeString(segments[1]); err == nil && json.Unmarshal(raw, &claims) == nil {
+				o.VerifierJWKs = append(o.VerifierJWKs, members(claims.ClientMetadata.JWKS.Keys)...)
+			}
+		}
+	case strings.Contains(req.URL.Path, "/.well-known/openid-credential-issuer"):
+		var meta struct {
+			Encryption *struct {
+				JWKS struct {
+					Keys []map[string]any `json:"keys"`
+				} `json:"jwks"`
+			} `json:"credential_request_encryption"`
+		}
+		if json.Unmarshal(body, &meta) != nil {
+			return
+		}
+		o.IssuerMetadata++
+		if meta.Encryption != nil {
+			o.RequestEncryption = true
+			o.RequestEncryptionJWKs = append(o.RequestEncryptionJWKs, members(meta.Encryption.JWKS.Keys)...)
+		}
+	default:
+		var token struct {
+			TokenType *string `json:"token_type"`
+		}
+		if json.Unmarshal(body, &token) == nil && token.TokenType != nil {
+			o.TokenTypes = append(o.TokenTypes, *token.TokenType)
+		}
+	}
+}
+
+// members is each key's alg and kid, "absent" for one it lacks.
+func members(keys []map[string]any) []map[string]string {
+	out := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		m := map[string]string{}
+		for _, name := range []string{"alg", "kid"} {
+			m[name] = "absent"
+			if v, ok := k[name]; ok {
+				m[name] = fmt.Sprint(v)
+			}
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 type received struct {
@@ -82,6 +189,7 @@ func main() {
 
 func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request string) (res result) {
 	res.Stage = "setup"
+	res.Observed = &observed{}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	fail := func(err error) result {
@@ -105,7 +213,7 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 		return fail(fmt.Errorf("-resolve %q isn't HOST=ADDR", resolve))
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	client := &http.Client{Transport: &http.Transport{
+	client := &http.Client{Transport: recorder{seen: res.Observed, next: &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if h, port, err := net.SplitHostPort(address); err == nil && ok && h == host {
@@ -113,7 +221,7 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 			}
 			return dialer.DialContext(ctx, network, address)
 		},
-	}}
+	}}}
 	w, err := walletflow.New(walletflow.Config{
 		IssuerRoots: issuerRoots, Development: true, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
 	}, walletflow.Dependencies{Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client})

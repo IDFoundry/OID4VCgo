@@ -23,6 +23,9 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | Wallet2 ← OID4VCgo's issuer | SD-JWT VC PID: Wallet Attestation and PoP, DPoP, pre-authorized code | issued |
 | | mdoc PID, the same | issued |
 | | The Wallet Attestation from an attester the issuer doesn't trust | the issuer refuses (`invalid_client`) |
+| | SD-JWT VC PID, the issuer's `dpop-nonces` profile | issued: the Token and Credential Endpoints each ask for a DPoP nonce, and Wallet2 retries with it |
+| | SD-JWT VC PID, its `deferred` profile | deferred (202), then issued from the Deferred Credential Endpoint when Wallet2 resumes the handle |
+| | SD-JWT VC PID, its `key-attestation` profile | a note, not a case: Wallet2 stops before its Credential Request (see "What isn't covered") |
 | Wallet2 → OID4VCgo's verifier | That SD-JWT VC PID, `x509_hash`, `direct_post.jwt`, `request_uri_method` none, `get` and `post` | verified |
 | | That mdoc PID | verified, only the requested elements disclosed |
 | | The verifier's Access Certificate under an unrelated CA | Wallet2 refuses (`X509TrustAnchorMismatch`) |
@@ -41,7 +44,34 @@ OID4VCgo's side is `walletflow` ([`scripts/wallet`](scripts/wallet)),
 `cmd/conformance-verifier` and `cmd/conformance-issuer`, the latter two
 configured as in [`../eudi`](../eudi/README.md): the issuer is the EUDI
 issuer run's ([`setup-issuer`](../eudi/scripts/setup-issuer)), under
-HAIP.
+HAIP. Wallet2 receives from it in the base profile, then, each from a
+fresh Wallet2 wallet, in three more of
+[`../eudi/run-issuer.sh`](../eudi/run-issuer.sh)'s profiles, the issuer
+restarted with its config changed as there: `dpop-nonces`
+(`dpop_nonces`), `deferred` (`deferred`) and `key-attestation`
+(`key_attestation.jwt_proof_requires_key_attestation`).
+
+## What walt.id sends
+
+Where SPECIFICATIONS.md's "Known leniencies" let OID4VCgo accept less
+than a specification asks, the run records what walt.id sends and
+asserts it as 1.2.1 sends it, so that a change is noticed. Wallet2's
+requests to OID4VCgo's issuer go through a tap in
+[`scripts/serve`](scripts/serve), which logs each Client Attestation
+PoP's `iss` and claims and each DPoP proof's header; the wallet's
+transport ([`scripts/wallet`](scripts/wallet)) records what Issuer2 and
+Verifier2 send it.
+
+| From | What | Seen with 1.2.1 |
+|---|---|---|
+| Wallet2 | Client Attestation PoP (draft-07 §5.2 requires `iss`) | `iss` the `client_id`; claims `aud`, `exp`, `iat`, `iss`, `jti` |
+| Wallet2 | DPoP proof | `typ` `dpop+jwt`, `ES256`, its `jwk` without `alg` (RFC 9449 asks for none); a `nonce` only once asked for one |
+| Issuer2 | Token Response `token_type` | `DPoP` |
+| Issuer2 | `credential_request_encryption` (§12.2.4 requires a `kid` on each key) | none: Issuer2 doesn't take encrypted Credential Requests, so there's no key to check |
+| Verifier2 | response encryption JWK (OpenID4VP 1.0 §8.3 requires `alg`) | one key, `alg` `ECDH-ES`, `kid` `response-encryption-…` |
+
+None of these is a deviation: walt.id sends each as the specification
+asks.
 
 ## How it's set up
 
@@ -132,6 +162,20 @@ Observations, not deviations:
 - Verifier2's issuer trust (finding 3), its DC API flows, and Wallet2's
   checks of the credentials it's issued.
 - Wallet2 receiving from Issuer2: walt.id with itself.
+- Wallet2 with key attestations: the issuer's `key-attestation` profile
+  is a note, not a case. Wallet2's library adds a key attestation to a
+  `jwt` proof only from a `KeyAttestationProvider` attached to the
+  wallet (`waltid-openid4vc-wallet`'s `KeyAttestationProvider.kt`,
+  `keyAttestationForProof`: "Issuer requires key attestation but no
+  wallet-provider service is configured"), and at 1.2.1 nothing in the
+  Wallet2 service (`waltid-services/waltid-wallet-api2`) attaches one:
+  `attachKeyAttestationProvider` is called only by the demo apps and
+  the ITB conformance runner. Before that, it refuses the REST API's
+  keys, which aren't Crypto2 keys (`WalletCredentialIssuance.kt`,
+  `resolveProofHolderBindings`: "Key attestation requires a Crypto2
+  holder key"), which is the refusal the run sees, with no Credential
+  Request sent. If a later Wallet2 is issued the credential, the run
+  says so.
 
 ## Running it
 

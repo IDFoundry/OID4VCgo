@@ -297,12 +297,10 @@ func (s *server) verify(r *http.Request, sess *session, parsed verifier.ParsedRe
 		IssuerKeys: s.issuerKeys, MdocIssuerKeys: s.mdocIssuerKeys,
 		ResponseEncryptionKey: sess.decryptionKey,
 		MaxKeyBindingAge:      maxKeyBindingAge,
-		// Without Config.StatusListTrustAnchorsPEM, no status check,
-		// decided explicitly: the suite's test credentials' revocation
-		// isn't what it grades, and their issuer, generated per run,
-		// serves no status list a hardened fetcher could reach. A
-		// deployment sets Status (a verifier.StatusPolicy), which runs
-		// before any Accept.
+		// Config.StatusListTrustAnchorsPEM turns the status check on,
+		// as the suite's runs and the interop runs do; without it, no
+		// status check, decided explicitly. A deployment sets Status
+		// (a verifier.StatusPolicy), which runs before any Accept.
 		Status:        s.status,
 		NoStatusCheck: s.status == nil,
 	}

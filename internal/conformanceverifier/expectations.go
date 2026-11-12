@@ -64,41 +64,32 @@ var expectations = map[string]Expectation{
 	"oid4vp-1final-verifier-kb-jwt-iat-in-past":   Refuse,
 	"oid4vp-1final-verifier-kb-jwt-iat-in-future": Refuse,
 	"oid4vp-1final-verifier-wrong-vct":            Refuse,
+	// A credential whose Token Status List entry, or (an mdoc) whose
+	// identifier list, the suite serves as revoked: the suite fails the
+	// module if the Verifier never fetched the list
+	// (EnsureVerifierFetchedRevocationList at FAILURE), so refusing it
+	// for another reason doesn't pass.
+	"oid4vp-1final-verifier-present-revoked-credential":            Refuse,
+	"oid4vp-1final-verifier-present-credential-on-identifier-list": Refuse,
 }
-
-// notStatusChecked is why the revocation modules aren't driven.
-const notStatusChecked = "cmd/conformance-verifier checks no credential status in the suite's runs (NoStatusCheck), so it can't refuse a revoked credential; driving this module needs a status_list trust anchor for the suite's per-run issuer"
 
 // notDriven names the plan's modules this repo doesn't drive, with why.
 // A module the plan lists that is in neither this nor expectations
 // fails the run.
-var notDriven = map[string]string{
-	"oid4vp-1final-verifier-present-revoked-credential":            notStatusChecked,
-	"oid4vp-1final-verifier-present-credential-on-identifier-list": notStatusChecked,
-}
-
-// acceptWarnings are the WARNING conditions a module that must be
-// accepted may log (REVIEW hides them in its result), each for a known
-// reason:
-//
-//   - EnsureVerifierFetchedRevocationList: the suite's credentials
-//     carry a status reference the Verifier never fetches, as it
-//     checks no status in these runs (see notStatusChecked). The suite
-//     makes this a warning, not a failure, as no specification makes
-//     the check mandatory.
-var acceptWarnings = []string{"EnsureVerifierFetchedRevocationList"}
+var notDriven = map[string]string{}
 
 // Grade compares one driven module's outcome with what expected says:
 // the suite's status and result, the Verifier's own outcome as its
 // result page reports it, and the module's log, which must hold no
-// FAILURE and no WARNING but those acceptWarnings allows an accepted
-// module.
+// FAILURE and no WARNING. An accepted module's credential references a
+// status list the Verifier must fetch, so even
+// EnsureVerifierFetchedRevocationList's warning, which says it didn't,
+// fails it.
 func Grade(expected Expectation, status, result, verifierOutcome string, entries []conformancesuite.LogEntry) error {
 	var wantResult, wantOutcome string
-	var allowed []string
 	switch expected {
 	case Accept:
-		wantResult, wantOutcome, allowed = "REVIEW", outcomeVerified, acceptWarnings
+		wantResult, wantOutcome = "REVIEW", outcomeVerified
 	case Refuse:
 		wantResult, wantOutcome = "PASSED", outcomeFailed
 	default:
@@ -111,7 +102,7 @@ func Grade(expected Expectation, status, result, verifierOutcome string, entries
 	if verifierOutcome != wantOutcome {
 		errs = append(errs, fmt.Errorf("the verifier's result page reports %q, want %q", verifierOutcome, wantOutcome))
 	}
-	if unexpected := conformancesuite.UnexpectedLogEntries(entries, allowed...); len(unexpected) > 0 {
+	if unexpected := conformancesuite.UnexpectedLogEntries(entries); len(unexpected) > 0 {
 		errs = append(errs, fmt.Errorf("the module's log holds %s", conformancesuite.DescribeLogEntries(unexpected)))
 	}
 	return errors.Join(errs...)

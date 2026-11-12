@@ -29,6 +29,10 @@ services:
     build:
       context: ../..
       dockerfile: conformance/issuer/Dockerfile
+      args:
+        # conformance_production for the production setup, which
+        # run-fapi2sp-battery -production sets.
+        GO_BUILD_TAGS: ${CONFORMANCE_ISSUER_GO_BUILD_TAGS:-}
     hostname: conformance-issuer
     networks: [suite]
     ports:

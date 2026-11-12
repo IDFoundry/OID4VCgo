@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -108,35 +109,58 @@ type Config struct {
 	// the result page's outcome, leave it unset.
 	RejectUnverifiedResponses bool `json:"reject_unverified_responses"`
 
-	// The fields below are for interop runs against other wallets
-	// (interop/eudi/run-wallet.sh), not the OIDF suite, whose
-	// configuration leaves them unset.
+	// The fields below configure trust and status checking for the
+	// OIDF suite runs (internal/conformanceverifier) and for interop
+	// runs against other wallets (interop/eudi/run-wallet.sh and the
+	// rest).
 
 	// CredentialIssuerTrustAnchorsPEM, when set, trusts a "dc+sd-jwt"
 	// Credential Issuer by its x5c chain to one of these CA
 	// certificates (verifier.X5CIssuerKeyResolver) instead of by
 	// CredentialIssuerJWK: exactly one of the two is REQUIRED for
-	// "dc+sd-jwt".
+	// "dc+sd-jwt". Both kinds of run set it: the suite's runs give the
+	// suite's "Signing JWK" an x5c chain to a CA generated per run.
 	CredentialIssuerTrustAnchorsPEM string `json:"credential_issuer_trust_anchors_pem"`
 
 	// StatusListTrustAnchorsPEM, when set, turns on the Token Status
-	// List check (verifier.StatusPolicy): every presented credential
-	// must carry a status reference, its Status List Token must be
-	// signed by the credential's own issuer, chaining to one of these
-	// CA certificates, and its status must be valid. Unset, no status
-	// is checked: the OIDF suite's per-run issuer publishes no status
-	// list.
+	// List check (verifier.StatusPolicy): a presented credential's
+	// Status List Token (or an mdoc's identifier list) must be signed
+	// by the credential's own issuer, chaining to one of these CA
+	// certificates, and its status must be valid. Unset, no status is
+	// checked (NoStatusCheck). The suite's runs set it to the CA of the
+	// suite's "Signing JWK" ("dc+sd-jwt": that key signs the suite's
+	// status lists too) or to MdocTrustAnchorPEM ("mso_mdoc": that IACA
+	// issues the suite's list signers).
 	StatusListTrustAnchorsPEM string `json:"status_list_trust_anchors_pem"`
+
+	// StatusReferenceOptional, with StatusListTrustAnchorsPEM, accepts a
+	// credential that carries no status reference, as the suite's
+	// present-credential-without-status module requires. Unset, such a
+	// credential is refused (StatusPolicy.RequireReference), as the
+	// interop runs expect.
+	StatusReferenceOptional bool `json:"status_reference_optional"`
 
 	// StatusListTLSTrustAnchorsPEM, if set, are the CA certificates
 	// the status list fetch trusts for TLS, in place of the system
 	// roots.
 	StatusListTLSTrustAnchorsPEM string `json:"status_list_tls_trust_anchors_pem"`
 
+	// StatusListTLSPinnedCertificatePEM, if set instead, is the one TLS
+	// server certificate the status list fetch accepts, compared byte
+	// for byte, whatever host it names: the suite's runs pin the
+	// suite's own self-signed certificate, which names no host the
+	// suite serves its lists at.
+	StatusListTLSPinnedCertificatePEM string `json:"status_list_tls_pinned_certificate_pem"`
+
 	// StatusListAllowLoopback lets the status list fetch reach a
 	// loopback address, as a local run's status lists are served on
 	// localhost.
 	StatusListAllowLoopback bool `json:"status_list_allow_loopback"`
+
+	// StatusListAllowPrivate lets the status list fetch reach a private
+	// address, as the suite serves its lists from its own container on
+	// the Docker network this binary shares with it.
+	StatusListAllowPrivate bool `json:"status_list_allow_private"`
 
 	// DCAPIOrigins, when set, enables the Digital Credentials API
 	// endpoints (POST /dcapi/request, POST /dcapi/response/{id}): each
@@ -163,10 +187,23 @@ func loadConfig(path string) (Config, error) {
 	if err := cfg.checkFormat(); err != nil {
 		return Config{}, err
 	}
-	if cfg.StatusListTrustAnchorsPEM == "" && (cfg.StatusListTLSTrustAnchorsPEM != "" || cfg.StatusListAllowLoopback) {
-		return Config{}, fmt.Errorf("config: status_list_tls_trust_anchors_pem and status_list_allow_loopback need status_list_trust_anchors_pem")
+	if err := cfg.checkStatus(); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// checkStatus checks the status list settings: each needs
+// StatusListTrustAnchorsPEM, and the two TLS trusts exclude each other.
+func (c Config) checkStatus() error {
+	if c.StatusListTrustAnchorsPEM == "" && (c.StatusListTLSTrustAnchorsPEM != "" || c.StatusListTLSPinnedCertificatePEM != "" ||
+		c.StatusListAllowLoopback || c.StatusListAllowPrivate || c.StatusReferenceOptional) {
+		return fmt.Errorf("config: status_list_tls_trust_anchors_pem, status_list_tls_pinned_certificate_pem, status_list_allow_loopback, status_list_allow_private and status_reference_optional need status_list_trust_anchors_pem")
+	}
+	if c.StatusListTLSTrustAnchorsPEM != "" && c.StatusListTLSPinnedCertificatePEM != "" {
+		return fmt.Errorf("config: set status_list_tls_trust_anchors_pem or status_list_tls_pinned_certificate_pem, not both")
+	}
+	return nil
 }
 
 // checkFormat checks the settings CredentialFormat's credential needs.
@@ -229,7 +266,9 @@ func (c Config) sdJWTVCIssuerKeys() (verifier.SDJWTVCIssuerKeyResolver, error) {
 const statusListFetchTimeout = 30 * time.Second
 
 // statusPolicy is the Token Status List check StatusListTrustAnchorsPEM
-// turns on: nil when it's unset.
+// turns on: nil when it's unset. Its Cache is the process's one, as
+// production requires; each suite module serves its list at a URI no
+// other used, so a cached list never stands in for a module's fetch.
 func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
 	if c.StatusListTrustAnchorsPEM == "" {
 		return nil, nil
@@ -238,21 +277,65 @@ func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	fetcher := statuslist.Fetcher{AllowLoopback: c.StatusListAllowLoopback}
-	if c.StatusListTLSTrustAnchorsPEM != "" {
+	fetcher := statuslist.Fetcher{AllowLoopback: c.StatusListAllowLoopback, AllowPrivate: c.StatusListAllowPrivate}
+	tlsConfig, err := c.statusListTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	if tlsConfig != nil {
+		fetcher.HTTP = &http.Client{
+			Timeout:   statusListFetchTimeout,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		}
+	}
+	return &verifier.StatusPolicy{
+		Checker: statuslist.Checker{
+			Fetcher: fetcher,
+			Roots:   roots,
+			// No revocation check of the list signers' certificates:
+			// the suite's and the interop runs' throwaway CAs publish
+			// no CRL.
+			Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+			Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
+		},
+		RequireReference: !c.StatusReferenceOptional,
+	}, nil
+}
+
+// statusListTLSConfig is the TLS configuration the status list fetch
+// uses: nil for the system roots.
+func (c Config) statusListTLSConfig() (*tls.Config, error) {
+	switch {
+	case c.StatusListTLSTrustAnchorsPEM != "":
 		tlsRoots, err := certPool("status_list_tls_trust_anchors_pem", c.StatusListTLSTrustAnchorsPEM)
 		if err != nil {
 			return nil, err
 		}
-		fetcher.HTTP = &http.Client{
-			Timeout:   statusListFetchTimeout,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12}},
+		return &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12}, nil
+	case c.StatusListTLSPinnedCertificatePEM != "":
+		pinned, err := conformancecert.ParseCertificatePEM(c.StatusListTLSPinnedCertificatePEM)
+		if err != nil {
+			return nil, fmt.Errorf("status_list_tls_pinned_certificate_pem: %w", err)
 		}
+		return pinnedTLSConfig(pinned), nil
 	}
-	return &verifier.StatusPolicy{
-		Checker:          statuslist.Checker{Fetcher: fetcher, Roots: roots},
-		RequireReference: true,
-	}, nil
+	return nil, nil
+}
+
+// pinnedTLSConfig accepts exactly one server certificate, pinned, in
+// place of chain and host name verification.
+func pinnedTLSConfig(pinned *x509.Certificate) *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// Verified by VerifyConnection instead, against the pin.
+		InsecureSkipVerify: true, //nolint:gosec // G402: VerifyConnection below accepts the pinned certificate alone
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 || !cs.PeerCertificates[0].Equal(pinned) {
+				return errors.New("the status list server's certificate isn't the pinned one")
+			}
+			return nil
+		},
+	}
 }
 
 // certPool parses pemStr, the value of the config field named field,
