@@ -6,10 +6,17 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testjose"
@@ -70,6 +77,69 @@ func TestVerifyIssuedCredential_ES384ES512(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("VerifyIssuedCredential = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An mdoc whose IssuerAuth a document signer signed ES384 with a P-384
+// key, or ES512 with a P-521 one, is accepted on receipt: the
+// algorithms walletflow's wallet_metadata lists in
+// issuerauth_alg_values.
+func TestVerifyIssuedCredential_MdocES384ES512(t *testing.T) {
+	ca, caKey := testcert.CAWithSubject(t, pkix.Name{CommonName: "issued mdoc alg test CA", Country: []string{"SG"}})
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	holder, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := oid4vci.CredentialConfigurationMetadata{Format: mdoc.CredentialFormat, DocType: issuedDocType, CryptographicBindingMethodsSupported: []string{"cose_key"}}
+	for name, tc := range map[string]struct {
+		alg   cose.Alg
+		curve elliptic.Curve
+	}{
+		"ES384 by P-384": {cose.ES384, elliptic.P384()},
+		"ES512 by P-521": {cose.ES512, elliptic.P521()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+				SerialNumber:       big.NewInt(7),
+				Subject:            pkix.Name{CommonName: "issued mdoc alg test issuer", Country: []string{"SG"}},
+				NotBefore:          now.Add(-time.Hour),
+				NotAfter:           now.Add(24 * time.Hour),
+				UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
+			}, ca, &key.PublicKey, caKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signed, err := mdoc.Issue(key, tc.alg, mdoc.Claims{
+				DocType:    issuedDocType,
+				NameSpaces: map[string]map[string]interface{}{"org.iso.18013.5.1": {"given_name": "Alice"}},
+				DeviceKey:  &holder.PublicKey,
+				Signed:     now, ValidFrom: now, ValidUntil: now.Add(time.Hour),
+			}, mdoc.IssueOptions{X5Chain: [][]byte{der}})
+			if err != nil {
+				t.Fatalf("mdoc.Issue: %v", err)
+			}
+			raw, err := signed.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+				Configuration: conf, Credential: base64.RawURLEncoding.EncodeToString(raw),
+				HolderKey: &holder.PublicKey, IssuerRoots: roots,
+			})
+			if err != nil {
+				t.Fatalf("VerifyIssuedCredential: %v", err)
+			}
+			if ns, _ := got.Claims["org.iso.18013.5.1"].(map[string]interface{}); ns["given_name"] != "Alice" {
+				t.Errorf("given_name = %v", got.Claims)
 			}
 		})
 	}

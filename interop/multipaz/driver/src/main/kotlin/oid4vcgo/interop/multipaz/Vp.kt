@@ -85,9 +85,14 @@ class VpCases(
         println("### OpenID4VP: OID4VCgo's wallet (walletflow) → Multipaz verifier (VerificationSession)")
         Verifier(tls, pki).use { verifier ->
             for (format in listOf(SD_JWT, MSO_MDOC)) {
+                var answer: Reply? = null
                 check("$format, cross-device, signed x509_hash request, direct_post.jwt: Multipaz verified it") {
-                    val (answer, result) = verifier.ask(peer, format, "mpz")
-                    answer.error ?: checkPresentation(result.get(30, TimeUnit.SECONDS), format)
+                    val (a, result) = verifier.ask(peer, format, "mpz")
+                    answer = a
+                    a.error ?: checkPresentation(result.get(30, TimeUnit.SECONDS), format)
+                }
+                check("observed: $format, cross-device, the Verifier's response encryption key is as Multipaz sends it today") {
+                    observed("client_metadata.jwks", answer?.observed?.get("verifier_jwks"), Observed.VERIFIER_JWKS)
                 }
             }
             check("control: the wallet refuses a Verifier under a CA it doesn't trust") {
@@ -98,8 +103,12 @@ class VpCases(
             }
         }
         for (format in listOf(SD_JWT, MSO_MDOC)) {
+            var answer: Reply? = null
             check("$format, Digital Credentials API (openid4vp-v1-signed): Multipaz verified it") {
-                goWalletDCAPI(format)
+                goWalletDCAPI(format) { answer = it }
+            }
+            check("observed: $format, Digital Credentials API, the Verifier's response encryption key is as Multipaz sends it today") {
+                observed("client_metadata.jwks", answer?.observed?.get("verifier_jwks"), Observed.VERIFIER_JWKS_DCAPI)
             }
         }
     }
@@ -157,8 +166,8 @@ class VpCases(
         return started.string("base_url")!!
     }
 
-    /** walletflow answers Multipaz's Verifier over the DC API. */
-    private suspend fun goWalletDCAPI(format: String): String? {
+    /** walletflow answers Multipaz's Verifier over the DC API, handing [answered] the peer's answer. */
+    private suspend fun goWalletDCAPI(format: String, answered: (Reply) -> Unit): String? {
         val session = VerificationUtil.generateVerificationSessionForDcql(
             requestTypes = listOf(VerificationSession.RequestType.DC_OPENID4VP),
             dcql = dcql(format),
@@ -171,6 +180,7 @@ class VpCases(
             "wallet_dcapi", "protocol" to protocol, "data" to request["data"].toString(),
             "origin" to VP_ORIGIN, "verifier_ca" to "mpz",
         )
+        answered(answer)
         answer.error?.let { return "the wallet: $it" }
         val record = session.processDcResponse(buildJsonObject {
             put("protocol", JsonPrimitive(protocol))

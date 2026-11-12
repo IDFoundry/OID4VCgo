@@ -12,10 +12,12 @@
 // lists, through POST /dcapi (dcapi.go), with the driver standing in
 // for the browser — see conformance/wallet-vp/README.md.
 //
-// It's a conformance harness: it doesn't verify the Verifier's TLS
-// certificate, and checks the Verifier's Request Object certificate
-// chain only against the config's verifier_trust_anchors_pem — see
-// the README's "What a passing run shows".
+// It's a conformance harness: it verifies the Verifier's TLS
+// certificate only against the config's verifier_tls_trust_anchors_pem,
+// and its Request Object certificate chain only against
+// verifier_trust_anchors_pem — see the README's "What a passing run
+// shows". Config.Engine "walletflow" answers /authorize through
+// walletflow instead of the wallet package directly (walletflow.go).
 package main
 
 import (
@@ -34,8 +36,8 @@ func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
 	conformanceusage.Set("conformance-wallet-vp -config <file>",
 		"A test harness for the OIDF conformance suite's wallet (OID4VP) plan,\n"+
-			"not a wallet to model one on: it doesn't verify the Verifier's TLS\n"+
-			"certificate, and presents fixture credentials. Build a wallet on\n"+
+			"not a wallet to model one on: it trusts the Verifiers its config\n"+
+			"names, and presents fixture credentials. Build a wallet on\n"+
 			"the wallet package, or on the mobile libraries.")
 	flag.Parse()
 	if *configPath == "" {
@@ -75,16 +77,30 @@ func main() {
 	if err != nil {
 		log.Fatalf("verifier trust: %v", err)
 	}
+	client, tlsVerified, err := cfg.verifierHTTPClient()
+	if err != nil {
+		log.Fatalf("verifier http client: %v", err)
+	}
 	// A conformance harness, not a Wallet to judge a Verifier's
 	// security by: say what a completed presentation doesn't show.
-	log.Printf("WARNING: this harness does not verify the Verifier's TLS certificate")
+	if !tlsVerified {
+		log.Printf("WARNING: verifier_tls_trust_anchors_pem is unset: the Verifier's TLS certificate is not verified")
+	}
 	if _, none := trust.(wallet.NoVerifierTrust); none {
 		log.Printf("WARNING: verifier_trust_anchors_pem is unset: the Verifier's Request Object certificate chain is not checked, only its signature and x509_hash client_id")
 	}
-	srv := &server{cred: cred, trust: trust, acceptSANDNS: cfg.AcceptX509SANDNS}
+	srv := &server{cred: cred, trust: trust, acceptSANDNS: cfg.AcceptX509SANDNS, http: client}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /authorize", srv.handleAuthorize)
+	if cfg.Engine == engineWalletflow {
+		if srv.flow, err = newFlow(cfg, cred, trust, client); err != nil {
+			log.Fatalf("walletflow engine: %v", err)
+		}
+		log.Printf("engine: walletflow")
+		mux.HandleFunc("GET /authorize", srv.handleAuthorizeWalletflow)
+	} else {
+		mux.HandleFunc("GET /authorize", srv.handleAuthorize)
+	}
 	// The DC API stand-in: see handleDCAPI. It presents the fixture
 	// credential to anyone who asks, for any origin they name.
 	mux.HandleFunc("POST /dcapi", srv.handleDCAPI)

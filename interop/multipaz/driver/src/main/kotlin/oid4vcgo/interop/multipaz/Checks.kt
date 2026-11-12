@@ -26,6 +26,21 @@ abstract class Checks {
         if (problem == null) ok(what + (reason?.let { " ($it)" } ?: "")) else bad("$what: $problem")
     }
 
+    /**
+     * null if [got], what Multipaz sent of [name], is [want], what it
+     * sends today, or what changed: OID4VCgo is lenient about it
+     * (SPECIFICATIONS.md, "Known leniencies"), so a change would pass
+     * unnoticed otherwise.
+     */
+    protected fun observed(name: String, got: String?, want: String): String? = when (got) {
+        null -> "nothing observed of $name"
+        want -> {
+            reason = "$name: $got"
+            null
+        }
+        else -> "$name was \"$want\", now \"$got\": Multipaz changed what it sends; update README.md's \"What it found\" and Observed"
+    }
+
     /** null if [r] failed with an error containing [want], or what it did instead. */
     protected fun refusal(r: Reply, want: String): String? = refusal(r.error, r.toString(), want)
 

@@ -238,6 +238,28 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# the Deferred Credential Endpoint. 0 exceptions.
 	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -deferred
+
+	# Not a certification profile either: cmd/conformance-issuer's
+	# production setup (Config.Production, built with the
+	# conformance_production tag) — production assurance for the
+	# Authorization Server and the Credential Issuer, sealed SQLite
+	# stores, and jwt proofs that must carry a key attestation, with no
+	# attestation proof type. It drives the plan's whole module list:
+	# haipBattery's 60 and fail-invalid-key-attestation-signature, which
+	# runs here with jwt proofs. Three modules expect REVIEW where
+	# haip-battery expects PASSED: under production, an authorization
+	# error before the user has authenticated (an unknown, reused or
+	# expired request_uri; a request that didn't use PAR) is shown on
+	# the Authorization Server's own page, not redirected
+	# (SPECIFICATIONS.md's "Known strictness"), so the suite waits for a
+	# screenshot of that page. Its log must still hold no FAILURE or
+	# WARNING (run-fapi2sp-battery reads a REVIEW module's log).
+	local production_exceptions="$haip_exceptions
+fapi2-security-profile-final-ensure-unsigned-authorization-request-without-using-par-fails=REVIEW
+fapi2-security-profile-final-par-attempt-reuse-request_uri=REVIEW
+fapi2-security-profile-final-par-attempt-to-use-expired-request_uri=REVIEW"
+	run_go_checked "Issuer production" "$WORKDIR/issuer-production.log" "$production_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -production
 	return 0
 }
 

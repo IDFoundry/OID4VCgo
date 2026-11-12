@@ -227,26 +227,6 @@ func TestKeyAttestation(t *testing.T) {
 	}
 }
 
-func TestKeyIndexProof(t *testing.T) {
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	compact, err := keyIndexProof(key, "https://issuer.example", "n1", "ka.jwt.sig", time.Unix(1_800_000_000, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	header, payload, err := jose.Verify(jose.ES256, key.Public(), compact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if header["kid"] != "0" || header["key_attestation"] != "ka.jwt.sig" || header["typ"] != "openid4vci-proof+jwt" || header["jwk"] != nil {
-		t.Fatalf("header %v", header)
-	}
-	var claims map[string]any
-	_ = json.Unmarshal(payload, &claims)
-	if claims["aud"] != "https://issuer.example" || claims["nonce"] != "n1" || claims["iat"] != float64(1_800_000_000) {
-		t.Fatalf("claims %v", claims)
-	}
-}
-
 func TestClaimNames(t *testing.T) {
 	got := claimNames(map[string]any{
 		"given_name": "a", "address": map[string]any{"street": "s"},

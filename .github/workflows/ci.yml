@@ -216,6 +216,36 @@ jobs:
           version: v2.12
           working-directory: sqlstore
 
+  # cmd/conformance-issuer's production setup (production.go) keeps its
+  # records in sqlstore, a module of its own, so it builds only with the
+  # conformance_production tag in a workspace holding both modules: the
+  # root jobs' ./... never compiles it. The OIDF suite runs it in
+  # oid4vci-conformance.yml; this checks it builds, and its tests.
+  conformance-issuer-production:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: sqlstore/go.sum
+
+      - name: go work
+        run: go work init . ./sqlstore
+
+      - name: go vet
+        run: go vet -tags conformance_production ./cmd/conformance-issuer
+
+      - name: go test (race)
+        run: go test -race -tags conformance_production ./cmd/conformance-issuer
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12
+          args: --build-tags conformance_production ./cmd/conformance-issuer/...
+
   # mobile/ is its own Go module too: the gomobile boundary (see
   # mobile/MOBILE.md), which needs golang.org/x/mobile.
   mobile:

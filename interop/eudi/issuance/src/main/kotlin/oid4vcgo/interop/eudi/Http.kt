@@ -7,6 +7,9 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -14,6 +17,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.security.KeyStore
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.Collections
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
@@ -28,6 +32,8 @@ data class Exchange(
     val requestContentType: String?,
     val dpop: Boolean,
     val clientAttestation: Boolean,
+    // The Client Attestation PoP's iss claim: null without a PoP, "" for a PoP without one.
+    val attestationPoPIss: String?,
     val authorizationScheme: String?,
     val status: Int,
     val responseContentType: String?,
@@ -47,6 +53,20 @@ class Recorder {
     fun clear() = exchanges.clear()
 
     fun to(path: String) = exchanges.filter { it.path == path }
+}
+
+/** A JWT's string claim [name], unverified: "" when it has none, or isn't a JWT. */
+fun jwtStringClaim(
+    jwt: String,
+    name: String,
+): String {
+    val payload = jwt.split('.').getOrNull(1) ?: return ""
+    return runCatching {
+        Json.parseToJsonElement(String(Base64.getUrlDecoder().decode(payload), Charsets.UTF_8))
+            .jsonObject[name]
+            ?.jsonPrimitive
+            ?.contentOrNull
+    }.getOrNull().orEmpty()
 }
 
 /** An SSL context trusting only [anchors]: the wallet verifies the issuer's TLS certificate. */
@@ -73,6 +93,7 @@ fun walletHttpClient(
                         requestContentType = request.content.contentType?.withoutParameters()?.toString(),
                         dpop = request.headers["DPoP"] != null,
                         clientAttestation = request.headers["OAuth-Client-Attestation"] != null && request.headers["OAuth-Client-Attestation-PoP"] != null,
+                        attestationPoPIss = request.headers["OAuth-Client-Attestation-PoP"]?.let { jwtStringClaim(it, "iss") },
                         authorizationScheme = request.headers["Authorization"]?.substringBefore(' '),
                         status = response.status.value,
                         responseContentType = response.headers[CONTENT_TYPE]?.substringBefore(';')?.trim(),

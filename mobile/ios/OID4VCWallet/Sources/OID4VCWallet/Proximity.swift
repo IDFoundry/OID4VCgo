@@ -438,6 +438,10 @@ public final class ProximityPresentation: @unchecked Sendable {
             throw error
         }
         finish(.presented(linkable: answer.linkable), letReaderEnd: true)
+        // run's idle wait for a reader message is over: finish's own wait
+        // for the reader to end reads now. Cancelled after the state is
+        // final, run's CancellationError changes nothing.
+        task?.cancel()
         return Responded(linkable: answer.linkable, linkableCredentials: answer.linkableCredentials ?? [])
     }
 

@@ -117,6 +117,10 @@ type reply struct {
 	BaseURL  string   `json:"base_url,omitempty"`
 	QueryIDs []string `json:"query_ids,omitempty"`
 	Verifier string   `json:"verifier,omitempty"`
+
+	// Observed is what the other side sent that walletflow is lenient
+	// about (observe.go), by name.
+	Observed map[string]string `json:"observed,omitempty"`
 }
 
 func main() {

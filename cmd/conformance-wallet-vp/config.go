@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
@@ -42,6 +47,29 @@ type Config struct {
 	// VerifierTrustAnchorsPEM: the name binds the request to nothing
 	// without a verified chain.
 	AcceptX509SANDNS bool `json:"accept_x509_san_dns,omitempty"`
+
+	// VerifierTLSTrustAnchorsPEM, if set, are the certificates the
+	// Verifier's TLS server certificate is verified against on every
+	// call this binary makes to it: fetching request_uri, posting the
+	// response, following redirect_uri. A server presenting one of
+	// these certificates itself is trusted for any host name (pinned):
+	// the OIDF suite's nginx certificate is self-signed for the Common
+	// Name localhost, without the subjectAltName Go checks a host name
+	// against, and the suite is reached as localhost.emobix.co.uk.
+	// Otherwise the server's chain must reach one of them, for the
+	// URL's host name. Unset, TLS isn't verified, and the binary says
+	// so at startup: a config written before this field existed (the
+	// polaris-id interop script's) still runs.
+	VerifierTLSTrustAnchorsPEM string `json:"verifier_tls_trust_anchors_pem,omitempty"`
+
+	// Engine is what answers GET /authorize: "" or "wallet" (the
+	// default) drives the wallet package directly, step by step;
+	// "walletflow" holds the fixture credential in a walletflow.Wallet
+	// and answers through walletflow.Wallet.StartPresentation and
+	// Presentation.Respond, as a wallet app does, with walletflow's own
+	// request_uri fetch and wallet_metadata (see walletflow.go). The
+	// conformance plans run the default; the EUDI interop run both.
+	Engine string `json:"engine,omitempty"`
 
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
 	// SD-JWT VC (see credential.go).
@@ -155,6 +183,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.HolderPrivateKeyPEM == "" {
 		return Config{}, fmt.Errorf("config: holder_private_key_pem is required")
 	}
+	if cfg.Engine != "" && cfg.Engine != engineWallet && cfg.Engine != engineWalletflow {
+		return Config{}, fmt.Errorf("config: engine %q is neither %q nor %q", cfg.Engine, engineWallet, engineWalletflow)
+	}
 	if (cfg.StatusListURI == "") != (cfg.StatusListIdx == nil) {
 		return Config{}, fmt.Errorf("config: status_list_uri and status_list_idx must be set together")
 	}
@@ -251,6 +282,79 @@ func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
 		return nil, fmt.Errorf("verifier_trust_anchors_pem holds no certificate")
 	}
 	return wallet.X5CVerifierRoots{Roots: roots}, nil
+}
+
+// verifierHTTPClient is the client every call to the Verifier goes
+// through, verifying its TLS certificate against
+// VerifierTLSTrustAnchorsPEM, or, with none, not at all; verified
+// reports which.
+func (c Config) verifierHTTPClient() (client *http.Client, verified bool, err error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if c.VerifierTLSTrustAnchorsPEM == "" {
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec // no anchors configured: see VerifierTLSTrustAnchorsPEM, and the warning main logs
+	} else {
+		anchors, err := parseCertificatesPEM(c.VerifierTLSTrustAnchorsPEM)
+		if err != nil {
+			return nil, false, fmt.Errorf("verifier_tls_trust_anchors_pem: %w", err)
+		}
+		// Go verifies a chain only for a host name, which a pinned
+		// certificate needn't name, so verifyVerifierTLS does it all.
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec // verifyVerifierTLS verifies every handshake instead
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { return verifyVerifierTLS(anchors, cs) }
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}, c.VerifierTLSTrustAnchorsPEM != "", nil
+}
+
+// parseCertificatesPEM is every CERTIFICATE block in s, of which there
+// must be at least one.
+func parseCertificatesPEM(s string) ([]*x509.Certificate, error) {
+	var certs []*x509.Certificate
+	rest := []byte(s)
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("holds no certificate")
+	}
+	return certs, nil
+}
+
+// verifyVerifierTLS accepts cs when its server presented one of anchors
+// itself, or a chain to one of them that verifies for the host name it
+// was dialed as.
+func verifyVerifierTLS(anchors []*x509.Certificate, cs tls.ConnectionState) error {
+	if len(cs.PeerCertificates) == 0 {
+		return errors.New("verifier tls certificate: the server presented none")
+	}
+	leaf := cs.PeerCertificates[0]
+	roots := x509.NewCertPool()
+	for _, a := range anchors {
+		if bytes.Equal(a.Raw, leaf.Raw) {
+			return nil
+		}
+		roots.AddCert(a)
+	}
+	intermediates := x509.NewCertPool()
+	for _, c := range cs.PeerCertificates[1:] {
+		intermediates.AddCert(c)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, DNSName: cs.ServerName}); err != nil {
+		return fmt.Errorf("verifier tls certificate: %w", err)
+	}
+	return nil
 }
 
 // checkMdoc checks the settings the "mso_mdoc" fixture credential

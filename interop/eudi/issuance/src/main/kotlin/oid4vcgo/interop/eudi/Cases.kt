@@ -25,6 +25,24 @@ private fun Run.checkPreAuthorizedTokenRequest() {
         t != null && t.form["grant_type"] == PRE_AUTHORIZED && t.dpop && t.clientAttestation && PRE_AUTHORIZED_CODE in t.form,
         "token request: pre-authorized code grant, DPoP proof, Wallet Attestation and PoP",
     ) { t.toString() }
+    checkAttestationPoPIss(t, "token request")
+}
+
+/**
+ * The Client Attestation PoP's iss, which draft-07 §5.2 requires and
+ * FAPIgo's server doesn't (SPECIFICATIONS.md, "Known leniencies"): the
+ * library names the client_id, as it does today, so a PoP without one
+ * fails here rather than passing on the leniency unnoticed.
+ */
+private fun Run.checkAttestationPoPIss(
+    e: Exchange?,
+    what: String,
+) {
+    val iss = e?.attestationPoPIss
+    expect(
+        iss == wallet.cfg.clientId,
+        "$what: Client Attestation PoP iss is the client_id, as eudi-lib-jvm-openid4vci-kt sends it (observed: ${iss?.ifEmpty { "absent" } ?: "no PoP"})",
+    ) { "want ${wallet.cfg.clientId}: update README.md's findings if the library changed" }
 }
 
 /**
@@ -49,6 +67,8 @@ private fun Run.checkAuthorizationCodeRequests() {
         t != null && t.form["grant_type"] == "authorization_code" && t.dpop && t.clientAttestation && "code_verifier" in t.form,
         "token request: authorization code, PKCE verifier, DPoP proof, Wallet Attestation and PoP",
     ) { t.toString() }
+    checkAttestationPoPIss(par, "PAR")
+    checkAttestationPoPIss(t, "token request")
 }
 
 /** Every Credential Request used a fresh c_nonce, a DPoP-bound token, and (un)encrypted bodies as asked. */

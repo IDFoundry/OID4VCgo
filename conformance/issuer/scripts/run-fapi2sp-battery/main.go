@@ -267,12 +267,24 @@ var deferredBattery = []string{
 var keyAttestationBattery = []string{
 	metadataTestName,
 	happyFlowTestName,
-	"oid4vci-1_0-issuer-fail-invalid-key-attestation-signature",
+	keyAttestationSignatureTestName,
 }
+
+// keyAttestationSignatureTestName is the module that runs only where a
+// proof carries a key attestation.
+const keyAttestationSignatureTestName = "oid4vci-1_0-issuer-fail-invalid-key-attestation-signature"
+
+// productionBattery, driven under -production: the plan's whole module
+// list, haipBattery and fail-invalid-key-attestation-signature, against
+// cmd/conformance-issuer's production setup. Every module's jwt proof
+// carries a key attestation there, so that module runs with them
+// rather than under the attestation proof type, which production
+// doesn't offer.
+var productionBattery = append(slices.Clone(haipBattery), keyAttestationSignatureTestName)
 
 // planFor is the suite plan, module battery and plan variant the flags
 // select.
-func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan bool) (planName string, battery []string, planVariant map[string]string) {
+func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan, production bool) (planName string, battery []string, planVariant map[string]string) {
 	planName = "oid4vci-1_0-issuer-haip-test-plan"
 	battery = haipBattery
 	switch {
@@ -282,6 +294,8 @@ func planFor(credentialFormat, proofTypeHint, encryption string, deferred, baseP
 		battery = keyAttestationBattery
 	case deferred:
 		battery = deferredBattery
+	case production:
+		battery = productionBattery
 	}
 	planVariant = map[string]string{"credential_format": credentialFormat} //nolint:gosec // a suite variant selector value, not a credential
 	if basePlan {
@@ -310,12 +324,12 @@ func planFor(credentialFormat, proofTypeHint, encryption string, deferred, baseP
 // prepareIssuer generates this run's identities, writes
 // cmd/conformance-issuer's config for them to configOut and, unless
 // skipRestart, restarts its container and waits for it.
-func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut string, deferred, skipRestart bool) *run {
+func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut string, deferred, production, skipRestart bool) *run {
 	run, err := generateRun(alias, issuerBaseURL)
 	if err != nil {
 		log.Fatalf("generate run: %v", err)
 	}
-	run.deferred = deferred
+	run.deferred, run.production = deferred, production
 
 	serverConfig, err := buildServerConfig(run)
 	if err != nil {
@@ -339,7 +353,7 @@ func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut stri
 	log.Printf("wrote %s", configOut)
 
 	if !skipRestart {
-		if err := restartIssuerContainer(); err != nil {
+		if err := restartIssuerContainer(production); err != nil {
 			log.Fatalf("restart conformance-issuer container: %v", err)
 		}
 		log.Printf("restarted conformance-issuer container, waiting for it to come up")
@@ -361,14 +375,18 @@ func main() {
 	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
 	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
 	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the 2 modules in deferredBattery, which follow the 202 to the Deferred Credential Endpoint")
+	production := flag.Bool("production", false, "run cmd/conformance-issuer's production setup (Config.Production: production assurance, sealed SQLite stores, jwt proofs that must carry a key attestation and no attestation proof type), built with the conformance_production tag, and drive the plan's whole module list (productionBattery)")
 	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
 	flag.Parse()
+	if *production && *credentialProofTypeHint != "jwt" {
+		log.Fatalf("-production offers jwt proofs alone: -credential-proof-type-hint must be jwt")
+	}
 
-	planName, battery, planVariant := planFor(*credentialFormat, *credentialProofTypeHint, *credentialEncryption, *deferred, *basePlan)
+	planName, battery, planVariant := planFor(*credentialFormat, *credentialProofTypeHint, *credentialEncryption, *deferred, *basePlan, *production)
 
 	httpClient := insecureSuiteHTTPClient()
 
-	run := prepareIssuer(httpClient, *alias, *issuerBaseURL, *configOut, *deferred, *skipDockerRestart)
+	run := prepareIssuer(httpClient, *alias, *issuerBaseURL, *configOut, *deferred, *production, *skipDockerRestart)
 
 	planConfig, err := buildPlanConfig(run, *credentialFormat, *credentialProofTypeHint)
 	if err != nil {
@@ -459,7 +477,11 @@ func insecureSuiteHTTPClient() *http.Client {
 // confirmed live: a real server-side fix already present in source
 // appeared not to work at all, until rebuilding revealed the running
 // container predated it by hours.
-func restartIssuerContainer() error {
+//
+// production builds the image with the conformance_production tag, for
+// cmd/conformance-issuer's production setup (the Dockerfile's
+// GO_BUILD_TAGS argument, from CONFORMANCE_ISSUER_GO_BUILD_TAGS).
+func restartIssuerContainer(production bool) error {
 	// NOSONAR: go:S4036 -- this is a local developer CLI tool, run
 	// directly from a shell (never a network-facing or multi-tenant
 	// service): resolving "docker" walks the invoking developer's own
@@ -472,6 +494,11 @@ func restartIssuerContainer() error {
 		return fmt.Errorf("find docker: %w", err)
 	}
 	cmd := exec.Command(dockerPath, "compose", "-f", "conformance/issuer/docker-compose.yml", "up", "-d", "--build", "--force-recreate") //nolint:gosec // dockerPath comes from exec.LookPath, args are fixed literals — see the NOSONAR comment above for the full justification
+	buildTags := ""
+	if production {
+		buildTags = "conformance_production"
+	}
+	cmd.Env = append(os.Environ(), "CONFORMANCE_ISSUER_GO_BUILD_TAGS="+buildTags)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
