@@ -39,7 +39,14 @@ if grep -rqs MobileTestEnv "$FRAMEWORK"; then
     echo "$FRAMEWORK is the mobiletest build: rebuild it without SKIP_FRAMEWORK_BUILD" >&2
     exit 1
 fi
-# Nor one without its privacy manifest, in every framework.
+# Nor one without its privacy manifest, in every framework. The
+# package's own declares the same: Mobile is a static archive, linked
+# into each target that uses the package, an app extension too, which
+# gets the package's resource bundle but not Mobile.framework's.
+cmp -s PrivacyInfo.xcprivacy OID4VCWallet/Sources/OID4VCWallet/PrivacyInfo.xcprivacy || {
+    echo "OID4VCWallet/Sources/OID4VCWallet/PrivacyInfo.xcprivacy differs from PrivacyInfo.xcprivacy" >&2
+    exit 1
+}
 for fw in "$FRAMEWORK"/*/Mobile.framework; do
     if ! cmp -s PrivacyInfo.xcprivacy "$fw/PrivacyInfo.xcprivacy" && ! cmp -s PrivacyInfo.xcprivacy "$fw/Versions/A/Resources/PrivacyInfo.xcprivacy"; then
         echo "$fw has no current PrivacyInfo.xcprivacy: rebuild it without SKIP_FRAMEWORK_BUILD" >&2

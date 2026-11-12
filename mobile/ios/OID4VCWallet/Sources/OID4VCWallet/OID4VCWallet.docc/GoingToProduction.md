@@ -399,12 +399,14 @@ ecosystem, and record why:
   credential, and keep it: loading it on the offer's preview tells
   whoever serves it that the offer was opened.
 - The package and `Mobile.framework` each ship a privacy manifest,
-  which Xcode merges into the app's privacy report. Between them they
-  declare the required-reason APIs they call: system boot time (35F9.1,
+  which Xcode merges into the app's privacy report. Each declares the
+  required-reason APIs the library calls: system boot time (35F9.1,
   measuring elapsed time) and file timestamps (C617.1, files in the
-  app's container). They collect no data and don't track. Your app's
-  own manifest covers what the app itself calls, and the data it
-  collects.
+  app's container). The package's covers each target that links it,
+  an extension too: `Mobile`'s Go code is linked into each one, but
+  only the app embeds `Mobile.framework`. They collect no data and
+  don't track. Your app's own manifest covers what the app itself
+  calls, and the data it collects.
 
 ### The build
 
