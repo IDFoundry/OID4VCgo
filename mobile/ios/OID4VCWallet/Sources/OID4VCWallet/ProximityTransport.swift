@@ -178,7 +178,11 @@ final class MessageQueue: @unchecked Sendable {
 
     private let lock = NSLock()
     private var messages: [Data] = []
-    private var waiter: CheckedContinuation<Data, any Error>?
+    /// The `receive`s waiting, oldest first: each message goes to the
+    /// oldest. Each is kept, never overwritten by a later one, so each
+    /// is resumed (a dropped continuation never is, and its task waits
+    /// forever), and a cancelled one resumes only its own.
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Data, any Error>)] = []
     private var ended: (any Error)?
 
     /// Queues message for `receive`. False when `capacity` messages are
@@ -187,8 +191,8 @@ final class MessageQueue: @unchecked Sendable {
     func push(_ message: Data) -> Bool {
         lock.lock()
         if ended != nil { lock.unlock(); return true }
-        if let w = waiter {
-            waiter = nil
+        if !waiters.isEmpty {
+            let w = waiters.removeFirst().continuation
             lock.unlock()
             w.resume(returning: message)
             return true
@@ -207,14 +211,17 @@ final class MessageQueue: @unchecked Sendable {
     func end(_ error: any Error) {
         lock.lock()
         if ended == nil { ended = error }
-        let w = messages.isEmpty ? waiter : nil
-        if w != nil { waiter = nil }
+        // A waiter means no message is queued: push gives it any.
+        let ws = waiters.map(\.continuation)
+        waiters = []
+        let e = ended!
         lock.unlock()
-        w?.resume(throwing: error)
+        for w in ws { w.resume(throwing: e) }
     }
 
     func receive() async throws -> Data {
-        try await withTaskCancellationHandler {
+        let id = UUID()
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Data, any Error>) in
                 lock.lock()
                 if !messages.isEmpty {
@@ -228,14 +235,14 @@ final class MessageQueue: @unchecked Sendable {
                     lock.unlock()
                     c.resume(throwing: CancellationError())
                 } else {
-                    waiter = c
+                    waiters.append((id, c))
                     lock.unlock()
                 }
             }
         } onCancel: {
             lock.lock()
-            let w = waiter
-            waiter = nil
+            let i = waiters.firstIndex { $0.id == id }
+            let w = i.map { waiters.remove(at: $0).continuation }
             lock.unlock()
             w?.resume(throwing: CancellationError())
         }
