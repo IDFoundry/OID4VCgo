@@ -24,6 +24,7 @@ standing in for the same-device launch and the browser:
 | The same, `openid4vp` profile | accepted |
 | mdoc PID, `haip` profile | accepted |
 | mdoc PID, `openid4vp` profile | accepted |
+| SD-JWT VC PID and mdoc PID, `haip` profile, `request_uri_method=post` | accepted |
 | mdoc PID over the Digital Credentials API (`openid4vp-v1-signed`) | accepted |
 | The answered request launched again | refused |
 | The verifier trusts an unrelated issuer CA | the verifier refuses the credential |
@@ -36,7 +37,14 @@ standing in for the same-device launch and the browser:
 
 Each accepted case also completes the same-device return: the wallet
 follows the verifier's `redirect_uri`, and the verifier releases the
-`vp_token` only for that `response_code`. Each control is checked for
+`vp_token` only for that `response_code`. With `request_uri_method=post`
+the wallet posts its `wallet_metadata`, which the EUDI verifier reads
+as RFC 8414 Authorization Server metadata and refuses without `issuer`
+and `response_types_supported`, or without `x509_hash` among its
+`client_id_prefixes_supported`. The wallet, like walletflow, names
+`https://self-issued.me/v2` as its `issuer`, having no identifier of
+its own, so the Request Object's `aud` is that value under either of
+OpenID4VP 1.0 §5.8's rules. Each control is checked for
 its reason, not just for a failure: a verifier's refusal by the error
 its transaction's events give (`TypeMetadataResolutionFailure`,
 `IssuerCertificateIsNotTrusted`, `StatusNotValid`,
@@ -102,14 +110,6 @@ Every key, certificate and document is throwaway, made per run by
 
 What isn't covered:
 
-- `request_uri_method` post: the EUDI verifier refuses a
-  `wallet_metadata` without `issuer` and `response_types_supported`
-  (it parses it as RFC 8414 Authorization Server metadata, which
-  requires both), and `cmd/conformance-wallet-vp`, like walletflow,
-  sends `response_types_supported` but no `issuer`: a wallet with no
-  identifier of its own leaves the Request Object's `aud` at
-  `https://self-issued.me/v2` (OpenID4VP 1.0 §5.8), and OpenID4VP's
-  static configuration (§13.1) has none either.
 - Plain `direct_post`: `cmd/conformance-wallet-vp` always encrypts its
   response.
 - ISO/IEC 18013-7 Annex C (`org-iso-mdoc`): the EUDI verifier has no

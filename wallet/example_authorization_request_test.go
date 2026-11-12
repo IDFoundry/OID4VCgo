@@ -140,7 +140,8 @@ func ExampleWallet_FetchAuthorizationRequest() {
 		return
 	}
 	walletMetadata := json.RawMessage(`{"vp_formats_supported":{"dc+sd-jwt":{"sd-jwt_alg_values":["ES256"],"kb-jwt_alg_values":["ES256"]}},` +
-		`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"]}`)
+		`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"],` +
+		`"issuer":"https://self-issued.me/v2"}`)
 	if _, err := w.FetchAuthorizationRequestPost(context.Background(), requestURIServer.URL, v.ClientID(),
 		base64.RawURLEncoding.EncodeToString(nonce), walletMetadata); err != nil {
 		fmt.Println("FetchAuthorizationRequestPost:", err)

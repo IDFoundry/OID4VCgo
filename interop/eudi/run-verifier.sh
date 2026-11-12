@@ -289,6 +289,12 @@ if init_transaction "$UNHELD_QUERY" haip iaca.pem get; then
   else bad "the verifier received access_denied, for holding no mDL ($(head -c 300 unheld.json); $(head -c 300 unheld.txt))"; events; fi
 else bad "transaction initialized"; fi
 
+# request_uri_method=post: the wallet posts its wallet_metadata, which
+# the verifier reads as RFC 8414 metadata (issuer and
+# response_types_supported required), and signs the Request Object for
+# the aud its issuer names (OpenID4VP 1.0 §5.8, §5.10).
+present sdjwt-haip-post "$SDJWT_QUERY" haip issuer-ca.pem post
+
 echo "== control: the wallet trusts an unrelated CA for the verifier"
 start_wallet wallet-sdjwt.json other-ca.pem
 if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
@@ -329,6 +335,7 @@ refused mdoc-revoked "$MDOC_QUERY" iaca.pem \
 start_wallet wallet-mdoc.json verifier-ca.pem
 present mdoc-haip "$MDOC_QUERY" haip iaca.pem get
 present mdoc-openid4vp "$MDOC_QUERY" openid4vp iaca.pem get
+present mdoc-haip-post "$MDOC_QUERY" haip iaca.pem post
 
 echo "== mdoc over the Digital Credentials API"
 ORIGIN=https://verifier.example.com
