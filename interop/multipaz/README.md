@@ -82,7 +82,12 @@ Each control is checked for its reason, not just for a failure.
   with the same key, so the issuer trusts that key for them too.
   Multipaz's wallet is `OpenID4VCI.createClientFromOffer` with that
   backend, its Wallet Attestations valid for an hour (the backend is the
-  Wallet Provider's side; its own are valid for 2000 days, a control).
+  Wallet Provider's side; its own are valid for 2000 days, a control):
+  each is the backend's own attestation, every claim kept, signed again
+  with its `exp` an hour after its `iat`, so the control's attestation
+  differs from the passing one in its lifetime alone. The issuer gives
+  every failed check of an attestation the same `invalid_client`
+  description, so that's what pins the control's reason.
   Multipaz's issuer runs in the driver from its published libraries
   (`multipaz-openid4vci`'s routes on Netty, over TLS), signing with the
   driver's document signer and trusting the peer's Wallet Provider, which

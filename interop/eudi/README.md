@@ -36,7 +36,13 @@ standing in for the same-device launch and the browser:
 
 Each accepted case also completes the same-device return: the wallet
 follows the verifier's `redirect_uri`, and the verifier releases the
-`vp_token` only for that `response_code`.
+`vp_token` only for that `response_code`. Each control is checked for
+its reason, not just for a failure: a verifier's refusal by the error
+its transaction's events give (`TypeMetadataResolutionFailure`,
+`IssuerCertificateIsNotTrusted`, `StatusNotValid`,
+`DocumentHasBeenRevoked`), with the wallet seeing `InvalidVpToken`; a
+wallet's by its own error. A refusal for anything else, or the run's
+own failure, fails the control.
 
 The verifier is run as strictly as it can be configured:
 
@@ -72,7 +78,8 @@ What v0.12.0 doesn't check, whatever its configuration:
   a cache miss. So the mismatched-integrity control runs first, on a
   cold cache, and the run presents the same credential again once the
   cache is warm: that is accepted, and the run notes it without failing,
-  and says so if a later image refuses it.
+  and says so if a later image refuses it for its integrity. Refused
+  for anything else, it fails.
 
 Every key, certificate and document is throwaway, made per run by
 [`scripts/setup`](scripts/setup):
@@ -193,7 +200,9 @@ verifier answers the response with a `redirect_uri` carrying a
 `response_code`, and releases the result once, for that code
 (`/result/{id}/redeem`), with how the wallet fetched the Request Object.
 The released claims must be the two asked for and none of the PID's
-others.
+others. Each control is checked for its reason: OID4VCgo's verifier's
+error, or the EUDI library's (`InvalidJarJwt`, `UnexpectedOrigin`, ...),
+not just a failure; the driver failing isn't a refusal.
 
 ### Findings
 
@@ -528,9 +537,9 @@ and acknowledges it at the Notification Endpoint.
 | A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR |
 | A Key Attestation whose `key_storage_status` is revoked | the issuer refuses the proof |
 | walletflow, under `ProfileHAIP` with its default proof: one PID, then a batch of three | issued and verified, status `VALID` |
-| A `jwt` proof naming its key in `jwk`, as `GenerateProofWithKeyAttestation` makes it | refused (a note, not a failure: see Findings) |
-| walletflow naming the proof's key in `jwk` (`Config.ProofKeyByJWK`) | refused (a note: see Findings) |
-| A batch of one `jwt` proof per key | refused (a note: see Findings) |
+| A `jwt` proof naming its key in `jwk`, as `GenerateProofWithKeyAttestation` makes it | refused, `invalid_proof` naming `kid` (a note, not a failure: see Findings) |
+| walletflow naming the proof's key in `jwk` (`Config.ProofKeyByJWK`) | refused, the same (a note: see Findings) |
+| A batch of one `jwt` proof per key | refused, `invalid_proof`: at most one proof (a note: see Findings) |
 
 A Wallet Attestation and a Key Attestation are each other's controls'
 twins: the same Wallet Provider, the same status list, another index.

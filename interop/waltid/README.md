@@ -28,6 +28,15 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | The verifier's Access Certificate under an unrelated CA | Wallet2 refuses (`X509TrustAnchorMismatch`) |
 | | The verifier trusts an unrelated issuer CA | the verifier refuses the credential |
 
+Each control is checked for its reason, not just for a failure:
+OID4VCgo's own error for its refusals (an untrusted chain, a request
+object that isn't signed), and walt.id's error for Wallet2's
+(`X509TrustAnchorMismatch`); a failure of the run itself (setup, TLS)
+isn't a refusal. Wallet2 reports only the issuer's `invalid_client`,
+not its description, so the untrusted attester control also checks
+that the stand-in attester signed with its other key: the cases before
+it, which pass, differ in that alone.
+
 OID4VCgo's side is `walletflow` ([`scripts/wallet`](scripts/wallet)),
 `cmd/conformance-verifier` and `cmd/conformance-issuer`, the latter two
 configured as in [`../eudi`](../eudi/README.md): the issuer is the EUDI

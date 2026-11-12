@@ -77,6 +77,70 @@ var polarisRequireIssuerName = map[string]bool{
 
 type polarisGap struct{ layer, clause, note string }
 
+// polarisStatus is the reason the expected refusals below give for a
+// refusal by RequireValidStatus, which carries no Reason of its own.
+const polarisStatus Reason = "status"
+
+// polarisRefusal is why a vector must be refused: the Reason the package
+// gives (polarisStatus for RequireValidStatus), and text its error must
+// contain, naming the one check the vector targets. A refusal for another
+// Reason, or without that text, was made for something else, which the
+// verdict alone wouldn't show.
+type polarisRefusal struct {
+	reason Reason
+	detail string
+}
+
+// polarisExpectedRefusals maps every refusal vector at the pinned commit to
+// the refusal it must get. A refusal vector missing from it fails the test:
+// moving the pin means reading each new vector and saying why it must fail.
+var polarisExpectedRefusals = map[string]polarisRefusal{
+	"issuer-crit":              {ReasonMalformed, "decode issuer jwt: jose: JWS names a critical header extension this package does not understand"},
+	"kb-crit":                  {ReasonHolderBinding, "verify key binding JWT signature: jose: JWS names a critical header extension this package does not understand"},
+	"kb-aud-array":             {ReasonHolderBinding, "key binding JWT is for another request: its aud does not match the expected audience"},
+	"kb-aud-no-prefix":         {ReasonHolderBinding, "key binding JWT is for another request: its aud does not match the expected audience"},
+	"digest-twice":             {ReasonInvalidCredential, "appears more than once in the SD-JWT"},
+	"claim-overwrite":          {ReasonInvalidCredential, `claim "given_name" already exists at this level`},
+	"disclosed-exp":            {ReasonInvalidCredential, `registered claim "exp" must not be selectively disclosable`},
+	"disclosed-iss":            {ReasonInvalidCredential, `registered claim "iss" must not be selectively disclosable`},
+	"disclosure-four-elements": {ReasonMalformed, "disclosure array has 4 elements, want 2 or 3"},
+	"disclosure-named-sd":      {ReasonMalformed, `disclosure claim name "_sd" is reserved`},
+	"kb-typ-jwt":               {ReasonHolderBinding, `key binding JWT typ is "JWT", want "kb+jwt"`},
+	"kb-alg-none":              {ReasonHolderBinding, `verify key binding JWT signature: jose: header alg "none" does not match expected`},
+	"kb-alg-hs256":             {ReasonHolderBinding, `verify key binding JWT signature: jose: header alg "HS256" does not match expected`},
+	"kb-iat-nan":               {ReasonHolderBinding, "unmarshal key binding claims: invalid character 'N'"},
+	"kb-exp-string":            {ReasonHolderBinding, "key binding JWT exp claim is not a number"},
+	"issuer-sig-der":           {ReasonInvalidCredential, "verify issuer JWT: ecdsafixed: signature has length 70, want 64"},
+	"x5c-self-signed":          {ReasonUntrustedIssuer, "leaf certificate must not be self-signed"},
+	"x5c-includes-anchor":      {ReasonUntrustedIssuer, "is self-issued: the trust anchor must not be included"},
+	"x5c-unknown-root":         {ReasonUntrustedIssuer, "does not verify against a trusted root: x509: certificate signed by unknown authority"},
+	"x5c-leaf-expired":         {ReasonUntrustedIssuer, "does not verify against a trusted root: x509: certificate has expired or is not yet valid"},
+	"x5c-intermediate-not-ca":  {ReasonUntrustedIssuer, "parent certificate cannot sign this kind of certificate"},
+	// A KB-JWT without aud, or without nonce, is refused by the comparison
+	// with the expected value, which an absent claim fails.
+	"kb-aud-missing":              {ReasonHolderBinding, "key binding JWT is for another request: its aud does not match the expected audience"},
+	"kb-nonce-missing":            {ReasonHolderBinding, "key binding JWT is for another request: its nonce does not match the expected value"},
+	"x5c-leaf-names-other-issuer": {ReasonUntrustedIssuer, `iss "https://issuer.example" isn't a URI of the signing certificate`},
+	"x5c-leaf-names-other-host":   {ReasonUntrustedIssuer, `iss "https://issuer.example" isn't a URI of the signing certificate`},
+	"x5c-leaf-uri-beats-host":     {ReasonUntrustedIssuer, `iss "https://issuer.example" isn't a URI of the signing certificate`},
+	// polarisServe answers nothing for this vector's uri, as the file has
+	// it: the fetch of that uri must be what failed.
+	"status-list-unreachable":   {polarisStatus, "statuslist: fetch https://issuer.example/statuslists/1:"},
+	"status-list-not-a-token":   {polarisStatus, "statuslist: decode token: jose: not a compact JWS"},
+	"status-list-lst-truncated": {polarisStatus, "statuslist: decompress: unexpected EOF"},
+	"status-list-wrong-key":     {polarisStatus, "token signer isn't the referenced token's issuer"},
+	// The list at another issuer's uri is signed by that issuer's key,
+	// which can't be bound to the credential's issuer.
+	"status-list-no-authority": {polarisStatus, "token signer isn't the referenced token's issuer"},
+	// The vector means a list that expired before the verification instant
+	// (draft-ietf-oauth-status-list §8.3 step 4.c), but its token's exp is
+	// also 23 hours before its own iat, and a token whose exp isn't after
+	// its iat is refused before exp is compared with now. So this is what it
+	// tests here; internal/jwtdate's tests cover "token is expired".
+	"status-list-expired":        {polarisStatus, "statuslist: token exp isn't after its iat"},
+	"status-list-index-past-end": {polarisStatus, "statuslist: index 16 is out of bounds"},
+}
+
 type polarisFile struct {
 	Version  string          `json:"version"`
 	Settings polarisSettings `json:"settings"`
@@ -199,6 +263,16 @@ func TestPolarisNegativeVectors(t *testing.T) {
 			t.Errorf("known gap %q is not a refusal in this file: remove it from polarisKnownGaps", id)
 		}
 	}
+	for _, v := range refusals {
+		if _, ok := polarisExpectedRefusals[v.ID]; !ok {
+			t.Errorf("refusal %q (layer %s) is not in polarisExpectedRefusals: add the refusal it must get", v.ID, v.Layer)
+		}
+	}
+	for id := range polarisExpectedRefusals {
+		if !slices.ContainsFunc(refusals, func(v polarisVector) bool { return v.ID == id }) {
+			t.Errorf("%q in polarisExpectedRefusals is not a refusal in this file: remove it", id)
+		}
+	}
 	for id := range polarisRequireIssuerName {
 		if !slices.ContainsFunc(refusals, func(v polarisVector) bool { return v.ID == id && v.Trust == "x5c" }) {
 			t.Errorf("%q in polarisRequireIssuerName is not an x5c refusal in this file", id)
@@ -213,9 +287,13 @@ func TestPolarisNegativeVectors(t *testing.T) {
 					skipped++
 					t.Skipf("skipped by layer %s: %s", v.Layer, why)
 				}
-				got, why := run.judge(t, v)
+				got, reason, why := run.judge(t, v)
 				gap, listed := polarisKnownGaps[v.ID]
+				want, hasWant := polarisExpectedRefusals[v.ID]
 				switch {
+				case got == "reject" && got == v.Expected && hasWant && (reason != want.reason || !strings.Contains(why, want.detail)):
+					failed++
+					t.Errorf("fail: %s is refused, but for something else: %s, want %s containing %q", v.ID, why, want.reason, want.detail)
 				case got == v.Expected && listed:
 					failed++
 					t.Errorf("fail: %s is now %sed, as the file says, but is in polarisKnownGaps: remove it from the map", v.ID, got)
@@ -249,10 +327,11 @@ type polarisRun struct {
 	issuerPub crypto.PublicKey
 }
 
-// judge gives one vector to the package and returns "accept" or "reject"
-// and why. An error that isn't the package refusing the presentation (a
-// mistake in this test's own setup) fails the test.
-func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
+// judge gives one vector to the package and returns "accept" or "reject",
+// the refusal's Reason (polarisStatus for the status check's), and why. An
+// error that isn't the package refusing the presentation (a mistake in this
+// test's own setup) fails the test.
+func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict string, reason Reason, why string) {
 	t.Helper()
 	meta, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: []string{r.settings.VCT}})
 	if err != nil {
@@ -303,7 +382,7 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 		if !errors.As(err, &refused) {
 			t.Fatalf("%s: VerifyResponse failed for a reason other than refusing the presentation: %v", v.ID, err)
 		}
-		return "reject", fmt.Sprintf("%s: %s", refused.Reason(), err)
+		return "reject", refused.Reason(), fmt.Sprintf("%s: %s", refused.Reason(), err)
 	}
 	if len(result.Credentials) != 1 {
 		t.Fatalf("%s: VerifyResponse accepted %d credentials, want 1", v.ID, len(result.Credentials))
@@ -312,10 +391,10 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict, why string) {
 		// A refusal here is the status check's: nothing else in this call can
 		// fail, as the roots and the reference are set.
 		if err := r.requireValidStatus(t, result.Credentials[0], v, now); err != nil {
-			return "reject", "status: " + err.Error()
+			return "reject", polarisStatus, "status: " + err.Error()
 		}
 	}
-	return "accept", "verified"
+	return "accept", "", "verified"
 }
 
 // requireValidStatus checks vc's status as a deployment that requires one

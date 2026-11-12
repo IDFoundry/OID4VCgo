@@ -216,6 +216,9 @@ fail=0
 ok() { echo "  ok    $1"; }
 bad() { echo "  FAIL  $1"; fail=1; }
 JSON='Content-Type: application/json'
+# Why OID4VCgo refuses a chain to a CA it doesn't trust, in the wallet
+# and the verifier alike.
+UNTRUSTED_ISSUER='certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority'
 
 # issuer2_offer is a pre-authorized code offer of Issuer2's profile $1.
 issuer2_offer() {
@@ -254,8 +257,12 @@ for profile in eudiPidSdJwt eudiPidMdoc isoMdl; do
   else bad "$profile: $(why "receive-$profile.json")"; fi
 done
 wallet receive-untrusted-issuer -issuer-ca other-ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)"
-if jq -e '.stage != "done" and (.received | length == 0) and (.failed[0] // .error | test("certificate"))' receive-untrusted-issuer.json >/dev/null; then
-  ok "control: a credential from an issuer the wallet doesn't trust is refused ($(jq -r '.failed[0] // .error' receive-untrusted-issuer.json | cut -c1-120))"
+# Refused as the credential is checked, for its issuer's chain: not
+# before it was issued, and not for anything else about it.
+if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "credential" and (.received | length == 0)
+    and (.error | contains("is invalid: wallet: verify issued credential: issuer certificate: " + $want))' \
+    receive-untrusted-issuer.json >/dev/null; then
+  ok "control: a credential from an issuer the wallet doesn't trust is refused, for its chain"
 else bad "control: a credential from an untrusted issuer: $(why receive-untrusted-issuer.json)"; fi
 
 echo "### OID4VCgo's wallet → walt.id Verifier2"
@@ -286,13 +293,19 @@ for case in "pid eudiPidSdJwt $PID_QUERY" "mdl isoMdl $MDL_QUERY"; do
 done
 read -r id link <<< "$(session plain "$PID_QUERY")"
 wallet present-unsigned -issuer-ca ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" -request "$link"
-if jq -e '.stage == "request"' present-unsigned.json >/dev/null && [[ "$(session_status "$id")" != SUCCESSFUL ]]; then
-  ok "control: an unsigned request naming an x509_hash client is refused ($(jq -r '.error' present-unsigned.json | cut -c1-120))"
+# Verifier2 serves this request object as plain JSON: the wallet must
+# refuse it as the request_uri's answer, for not being a signed one.
+if jq -e '.stage == "request" and (.received | length == 1)
+    and (.error | contains("fetch request_uri: fapihttp: response has an unexpected content type: got \"application/json\", want \"application/oauth-authz-req+jwt\""))' \
+    present-unsigned.json >/dev/null && [[ "$(session_status "$id")" != SUCCESSFUL ]]; then
+  ok "control: an unsigned request naming an x509_hash client is refused, as no signed request object"
 else bad "control: an unsigned x509_hash request: $(why present-unsigned.json)"; fi
 wallet present-untrusted-verifier -issuer-ca ca.pem -verifier-ca other-ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" \
   -request "$(session signed "$PID_QUERY" | cut -d' ' -f2)"
-if jq -e '.stage == "request" and (.error | test("untrusted verifier"))' present-untrusted-verifier.json >/dev/null; then
-  ok "control: a Verifier whose Access Certificate the wallet doesn't trust is refused"
+if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "request" and (.received | length == 1)
+    and (.error | contains("parse authorization request: untrusted verifier: wallet: verifier certificate: " + $want))' \
+    present-untrusted-verifier.json >/dev/null; then
+  ok "control: a Verifier whose Access Certificate the wallet doesn't trust is refused, for its chain"
 else bad "control: an untrusted Verifier: $(why present-untrusted-verifier.json)"; fi
 
 W="http://127.0.0.1:$WALLET2_HTTP"
@@ -344,9 +357,16 @@ echo untrusted > attester-mode
 other="$(wallet2)"
 receive2 "$other" "$(our_offer eu.europa.ec.eudi.pid_vc_sd_jwt)" "$CLIENT_ID" > wallet2-receive-untrusted-attester.json || true
 echo trusted > attester-mode
-if grep -q invalid_client wallet2-receive-untrusted-attester.json && ! jq -e '.credentialIds | length > 0' wallet2-receive-untrusted-attester.json >/dev/null 2>&1; then
-  ok "control: a Wallet Attestation from an attester the issuer doesn't trust is refused"
-else bad "control: the issuer took a Wallet Attestation from an untrusted attester"; fi
+# Wallet2 reports the issuer's error code alone, not its description,
+# so the reason is pinned by what differs from the cases above, which
+# pass: the stand-in attester signed with its other key, and the
+# issuer answered the Token Request, where Wallet2 presents the
+# attestation, with 401 invalid_client.
+if grep -q 'attester: untrusted attestation for' serve.log \
+    && jq -e '.code == "401" and .message == "invalid_client" and .cause1_exception == "TokenRequestException"' \
+      wallet2-receive-untrusted-attester.json >/dev/null 2>&1; then
+  ok "control: a Wallet Attestation from an attester the issuer doesn't trust is refused (invalid_client at the Token Request)"
+else bad "control: a Wallet Attestation from an untrusted attester: $(head -c 300 wallet2-receive-untrusted-attester.json)"; fi
 
 echo "### walt.id Wallet2 → OID4VCgo's verifier, with those PIDs"
 for method in none get post; do
@@ -363,14 +383,19 @@ if jq -e '.status == "verified" and (.credentials.cred1["eu.europa.ec.eudi.pid.1
 else bad "mdoc pid: $(why result-mdoc.json)"; fi
 present2 "$holder" "$(authorize $((VERIFIER_PORT + 2)) get)" > wallet2-present-untrusted-access.json || true
 redeem wallet2-present-untrusted-access.json result-untrusted-access.json
-if grep -q X509TrustAnchorMismatch wallet2-present-untrusted-access.json && ! jq -e '.status == "verified"' result-untrusted-access.json >/dev/null 2>&1; then
-  ok "control: Wallet2 doesn't answer a Verifier whose Access Certificate it doesn't trust"
-else bad "control: Wallet2 answered an untrusted Verifier"; fi
+if jq -e '.id == "SignedAuthorizationRequestValidationException" and (.message | contains("X509TrustAnchorMismatch"))' \
+    wallet2-present-untrusted-access.json >/dev/null 2>&1 \
+    && jq -e '.status == "no redirect_to"' result-untrusted-access.json >/dev/null 2>&1; then
+  ok "control: Wallet2 doesn't answer a Verifier whose Access Certificate it doesn't trust (X509TrustAnchorMismatch)"
+else bad "control: a Verifier whose Access Certificate Wallet2 doesn't trust: $(head -c 300 wallet2-present-untrusted-access.json)"; fi
 present2 "$holder" "$(authorize $((VERIFIER_PORT + 3)) get)" > wallet2-present-untrusted-issuer.json || true
 redeem wallet2-present-untrusted-issuer.json result-untrusted-issuer.json
-if ! jq -e '.status == "verified"' result-untrusted-issuer.json >/dev/null 2>&1; then
-  ok "control: the verifier refuses a credential from an issuer it doesn't trust ($(why result-untrusted-issuer.json))"
-else bad "control: the verifier accepted a credential from an untrusted issuer"; fi
+# Refused by the verifier, for the issuer's chain: not a presentation
+# that never arrived, nor one refused for something else.
+if jq -e --arg want "$UNTRUSTED_ISSUER" '.status == "failed" and (.error | contains("verifier: resolve issuer key: " + $want))' \
+    result-untrusted-issuer.json >/dev/null 2>&1; then
+  ok "control: the verifier refuses a credential from an issuer it doesn't trust, for its chain"
+else bad "control: a credential from an issuer the verifier doesn't trust: $(why result-untrusted-issuer.json)"; fi
 
 if [[ "$fail" -eq 0 ]]; then echo "RESULT: every case passed, and every control refused"; else echo "RESULT: FAILED"; fi
 exit "$fail"

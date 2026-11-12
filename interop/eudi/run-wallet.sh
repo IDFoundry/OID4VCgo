@@ -159,25 +159,51 @@ present() {  # $1 name, $2 verifier, $3 request_uri_method; then driver options
   else bad "the released claims ($(jq -c '.credentials' "result-$name.json" | cut -c1-300))"; fi
 }
 
-# refused runs a redirect-flow presentation the verifier must refuse.
-refused() {  # $1 name, $2 verifier; then driver options
-  local name="$1" verifier="$2"; shift 2
+# verifier_refused checks the verifier's outcome in $1 is a refusal
+# whose error contains $2: one for another reason, or no outcome at all
+# (the driver failed, the response never arrived), isn't.
+verifier_refused() {  # $1 the verifier's outcome, $2 why
+  local result="$1" want="$2"
+  if jq -e --arg want "$want" '.status == "failed" and (.error | contains($want))' "$result" >/dev/null; then
+    ok "the verifier refused it: $want"
+  else bad "the verifier refused it, for $want ($(why "$result"))"; fi
+}
+
+# refused runs a redirect-flow presentation the verifier must refuse,
+# for an error containing $3.
+refused() {  # $1 name, $2 verifier, $3 why; then driver options
+  local name="$1" verifier="$2" want="$3"; shift 3
   echo "== control: $name"
   drive "$name" redirect --uri "$(authorize "$verifier" post)" "$@"
   if ! jq -e '.resolved' "$name.json" >/dev/null; then bad "the wallet presented ($(explain "$name.json"))"; return; fi
   redeem "$name"
-  if jq -e '.status == "failed"' "result-$name.json" >/dev/null; then ok "the verifier refused it: $(jq -r '.error' "result-$name.json" | cut -c1-200)"
-  else bad "the verifier refused it ($(why "result-$name.json"))"; fi
+  verifier_refused "result-$name.json" "$want"
 }
 
-# wallet_refuses runs a request the wallet must refuse to resolve.
-wallet_refuses() {  # $1 name, $2 launch URI; then driver options
-  local name="$1" uri="$2"; shift 2
+# wallet_refused checks the driver's outcome in $1 is the wallet library
+# refusing to resolve the request, for an error containing $2: not the
+# driver failing, nor a refusal for another reason.
+wallet_refused() {  # $1 the driver's outcome, $2 why
+  local outcome="$1" want="$2"
+  if jq -e --arg want "$want" '.resolved == false and .stage == "resolve" and (.error | contains($want))' "$outcome" >/dev/null; then
+    ok "the wallet refused: $(explain "$outcome")"
+  else bad "the wallet refused, for $want ($(jq -c . "$outcome" | cut -c1-300))"; fi
+}
+
+# wallet_refuses runs a request the wallet must refuse to resolve, for
+# an error containing $3.
+wallet_refuses() {  # $1 name, $2 launch URI, $3 why; then driver options
+  local name="$1" uri="$2" want="$3"; shift 3
   echo "== control: $name"
   drive "$name" redirect --uri "$uri" "$@"
-  if jq -e '.resolved == false and .stage == "resolve"' "$name.json" >/dev/null; then ok "the wallet refused: $(explain "$name.json")"
-  else bad "the wallet refused ($(jq -c . "$name.json" | cut -c1-300))"; fi
+  wallet_refused "$name.json" "$want"
 }
+
+# Why OID4VCgo's verifier refuses each control.
+UNTRUSTED_ISSUER='verifier: resolve issuer key: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority'
+REVOKED="verifier: credential status: statuslist: the referenced token's status is INVALID (revoked)"
+KB_JWT_FOR="verifier: verify: a presentation isn't bound to this request: sdjwtvc: key binding JWT: sdjwtvc: key binding JWT is for another request:"
+DEVICE_SIGNATURE="verifier: verify device signature: a presentation isn't bound to this request: mdoc: verify DeviceSignature: cose: ES256 signature verification failed"
 
 # dcapi starts a Digital Credentials API session on verifier $1, runs
 # the driver as the platform's wallet with --origin, and posts its
@@ -214,9 +240,11 @@ if jq -e '(.client_id_prefixes_supported | index("x509_hash")) and .vp_formats_s
 else bad "its wallet_metadata ($(jq -c . wallet-metadata.json | cut -c1-400))"; fi
 
 echo "== the response_code redeemed again"
-code="$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' \
+code="$(curl -sk --max-time 30 -o redeem-again.json -w '%{http_code}' \
   "$(jq -r '.redirect_uri | sub("\\?response_code="; "/redeem?response_code=")' sdjwt-post.json)")"
-if [[ "$code" = 403 ]]; then ok "refused (HTTP $code)"; else bad "refused (HTTP $code)"; fi
+if [[ "$code" = 403 ]] && jq -e '.error == "no result for this response_code"' redeem-again.json >/dev/null 2>&1; then
+  ok "refused (HTTP $code, no result for this response_code)"
+else bad "refused (HTTP $code: $(head -c 200 redeem-again.json))"; fi
 
 present sdjwt-get "$SDJWT_VERIFIER" get "${SDJWT[@]}"
 if jq -e '.request_uri_fetch | .method == "GET" and (has("wallet_nonce") | not)' result-sdjwt-get.json >/dev/null; then
@@ -243,35 +271,44 @@ if jq -e '.status == "verified"' result-sdjwt-dcapi.json >/dev/null && released 
   ok "the verifier verified the response the wallet assembled ($(jq -r '.encryption' sdjwt-dcapi.json))"
 else bad "the verifier verified it ($(explain sdjwt-dcapi.json); $(why result-sdjwt-dcapi.json))"; fi
 echo "== control: the same Digital Credentials API answer posted again"
-code="$(curl -sk --max-time 30 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+code="$(curl -sk --max-time 30 -o dcapi-again.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
   --data-binary @answer-sdjwt-dcapi.json "$SDJWT_VERIFIER/dcapi/response/$(jq -r '.id' request-sdjwt-dcapi.json)")"
-if [[ "$code" = 409 ]]; then ok "refused (HTTP $code)"; else bad "refused (HTTP $code)"; fi
+if [[ "$code" = 409 ]] && jq -e '.error == "the request has already been answered"' dcapi-again.json >/dev/null 2>&1; then
+  ok "refused (HTTP $code, the request has already been answered)"
+else bad "refused (HTTP $code: $(head -c 200 dcapi-again.json))"; fi
 
-refused revoked "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant revoked
-refused untrusted-issuer "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant untrusted-issuer
-refused kb-jwt-wrong-nonce "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant wrong-nonce
-refused kb-jwt-wrong-aud "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant wrong-audience
-refused no-kb-jwt "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant no-key-binding
-refused unrequested-claim "$SDJWT_VERIFIER" "${SDJWT[@]}" --variant extra-claim
+refused revoked "$SDJWT_VERIFIER" "$REVOKED" "${SDJWT[@]}" --variant revoked
+refused untrusted-issuer "$SDJWT_VERIFIER" "$UNTRUSTED_ISSUER" "${SDJWT[@]}" --variant untrusted-issuer
+refused kb-jwt-wrong-nonce "$SDJWT_VERIFIER" "$KB_JWT_FOR its nonce does not match the expected value" "${SDJWT[@]}" --variant wrong-nonce
+refused kb-jwt-wrong-aud "$SDJWT_VERIFIER" "$KB_JWT_FOR its aud does not match the expected audience" "${SDJWT[@]}" --variant wrong-audience
+refused no-kb-jwt "$SDJWT_VERIFIER" "verifier: verify: sdjwtvc: key binding is required but no Key Binding JWT was presented" \
+  "${SDJWT[@]}" --variant no-key-binding
+refused unrequested-claim "$SDJWT_VERIFIER" 'verifier: the presentation discloses claims the query didn'"'"'t ask for: "birth_date"' \
+  "${SDJWT[@]}" --variant extra-claim
 
 echo "== control: the holder declines"
 drive decline redirect --uri "$(authorize "$SDJWT_VERIFIER" post)" "${SDJWT[@]}" --variant decline
 redeem decline
-if jq -e '.status == "failed" and (.error | test("access_denied"))' result-decline.json >/dev/null; then
+if jq -e '.status == "failed" and .error == "verifier: wallet returned error \"access_denied\""' result-decline.json >/dev/null; then
   ok "the verifier received the wallet's access_denied"
 else bad "the verifier received access_denied ($(explain decline.json); $(why result-decline.json))"; fi
 
 echo "== control: the same response posted again, after it was answered"
 drive replay redirect --uri "$(authorize "$SDJWT_VERIFIER" post)" "${SDJWT[@]}" --variant replay
 redeem replay
-if jq -e '.status == "verified"' result-replay.json >/dev/null && jq -e '.replay_status == 400' replay.json >/dev/null; then
-  ok "the first was verified, the replay refused (HTTP 400)"
-else bad "the replay refused ($(jq -c '{dispatch, replay_status}' replay.json); $(why result-replay.json))"; fi
+# The answered session is no longer pending: nothing decrypts the replay.
+if jq -e '.status == "verified"' result-replay.json >/dev/null \
+    && jq -e '.replay_status == 400 and (.replay_body | startswith("response did not decrypt against any pending session"))' replay.json >/dev/null; then
+  ok "the first was verified, the replay refused (HTTP 400, response did not decrypt against any pending session)"
+else bad "the replay refused ($(jq -c '{dispatch, replay_status, replay_body}' replay.json); $(why result-replay.json))"; fi
 
-wallet_refuses untrusted-verifier "$(authorize "$SDJWT_VERIFIER" post)" "${SDJWT[@]}" --verifier-ca other-ca.pem
-wallet_refuses http-request-uri "$(authorize "$SDJWT_VERIFIER" post | sed 's/request_uri=https%3A/request_uri=http%3A/')" "${SDJWT[@]}"
+wallet_refuses untrusted-verifier "$(authorize "$SDJWT_VERIFIER" post)" 'InvalidJarJwt(cause=Untrusted x5c)' \
+  "${SDJWT[@]}" --verifier-ca other-ca.pem
+wallet_refuses http-request-uri "$(authorize "$SDJWT_VERIFIER" post | sed 's/request_uri=https%3A/request_uri=http%3A/')" \
+  "threw IllegalArgumentException: URL must use HTTPS: http://localhost:$PORT/request/" "${SDJWT[@]}"
 wallet_refuses client-id-mismatch \
   "$(authorize "$SDJWT_VERIFIER" post | sed -E 's/client_id=x509_hash%3A[A-Za-z0-9_-]+/client_id=x509_hash%3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/')" \
+  'InvalidJarJwt(cause=ClientId mismatch. JAR request x509_hash:AAAAAAAAAAAAAAAA' \
   "${SDJWT[@]}"
 
 # The verifier builds a session's Request Object on its first fetch and
@@ -283,27 +320,33 @@ for prefetch in post get; do
   request_uri="$(printf '%b' "${request_uri//%/\\x}")"
   if [[ "$prefetch" = post ]]; then
     curl -sk --max-time 30 -o /dev/null -X POST --data-urlencode wallet_nonce=an-earlier-wallet-nonce "$request_uri"
-    wallet_refuses request-object-with-another-wallet-nonce "$uri" "${SDJWT[@]}"
+    wallet_refuses request-object-with-another-wallet-nonce "$uri" \
+      'InvalidJarJwt(cause=Mismatch of wallet_nonce. Expected ' "${SDJWT[@]}"
+    if ! jq -e '.error | endswith(", actual an-earlier-wallet-nonce)")' request-object-with-another-wallet-nonce.json >/dev/null; then
+      bad "the Request Object carried the earlier wallet_nonce ($(explain request-object-with-another-wallet-nonce.json))"
+    fi
   else
     curl -sk --max-time 30 -o /dev/null "$request_uri"
-    wallet_refuses request-object-without-the-wallet-nonce "$uri" "${SDJWT[@]}"
+    wallet_refuses request-object-without-the-wallet-nonce "$uri" \
+      'InvalidJarJwt(cause=Mismatch of wallet_nonce. Expected ' "${SDJWT[@]}"
+    if ! jq -e '.error | endswith(", actual null)")' request-object-without-the-wallet-nonce.json >/dev/null; then
+      bad "the Request Object carried no wallet_nonce ($(explain request-object-without-the-wallet-nonce.json))"
+    fi
   fi
 done
 
 echo "== control: a signed Digital Credentials API request under the openid4vp-v1-unsigned protocol"
 dcapi "$SDJWT_VERIFIER" dcapi-unsigned-protocol "$ORIGIN" "${SDJWT[@]}" --protocol openid4vp-v1-unsigned
-if jq -e '.resolved == false and .stage == "resolve"' dcapi-unsigned-protocol.json >/dev/null; then ok "the wallet refused: $(explain dcapi-unsigned-protocol.json)"
-else bad "the wallet refused ($(jq -c . dcapi-unsigned-protocol.json | cut -c1-300))"; fi
+wallet_refused dcapi-unsigned-protocol.json \
+  'DcApiExchangeProtocolNotMatchesReceivedRequest(cause=Exchange protocol is openid4vp-v1-unsigned but request is not Unsigned.)'
 
 echo "== control: a Digital Credentials API request from another origin"
 dcapi "$SDJWT_VERIFIER" dcapi-other-origin https://attacker.example "${SDJWT[@]}"
-if jq -e '.resolved == false and .stage == "resolve"' dcapi-other-origin.json >/dev/null; then ok "the wallet refused: $(explain dcapi-other-origin.json)"
-else bad "the wallet refused ($(jq -c . dcapi-other-origin.json | cut -c1-300))"; fi
+wallet_refused dcapi-other-origin.json UnexpectedOrigin
 
 echo "== control: a Digital Credentials API presentation whose KB-JWT aud is the client_id, not origin:<origin>"
 dcapi "$SDJWT_VERIFIER" dcapi-wrong-aud "$ORIGIN" "${SDJWT[@]}" --variant wrong-audience
-if jq -e '.status == "failed"' result-dcapi-wrong-aud.json >/dev/null; then ok "the verifier refused it: $(jq -r '.error' result-dcapi-wrong-aud.json | cut -c1-200)"
-else bad "the verifier refused it ($(why result-dcapi-wrong-aud.json))"; fi
+verifier_refused result-dcapi-wrong-aud.json "$KB_JWT_FOR its aud does not match the expected audience"
 
 echo "#### mdoc (mso_mdoc)"
 present mdoc-post "$MDOC_VERIFIER" post "${MDOC[@]}"
@@ -315,16 +358,17 @@ if jq -e '.status == "verified"' result-mdoc-dcapi.json >/dev/null && released r
   ok "the verifier verified the response the wallet assembled ($(jq -r '.encryption' mdoc-dcapi.json))"
 else bad "the verifier verified it ($(explain mdoc-dcapi.json); $(why result-mdoc-dcapi.json))"; fi
 
-refused mdoc-revoked "$MDOC_VERIFIER" "${MDOC[@]}" --variant revoked
-refused mdoc-untrusted-issuer "$MDOC_VERIFIER" "${MDOC[@]}" --variant untrusted-issuer
-refused mdoc-transcript-wrong-nonce "$MDOC_VERIFIER" "${MDOC[@]}" --variant wrong-nonce
-refused mdoc-transcript-wrong-client-id "$MDOC_VERIFIER" "${MDOC[@]}" --variant wrong-audience
-refused mdoc-unrequested-element "$MDOC_VERIFIER" "${MDOC[@]}" --variant extra-claim
+refused mdoc-revoked "$MDOC_VERIFIER" "$REVOKED" "${MDOC[@]}" --variant revoked
+refused mdoc-untrusted-issuer "$MDOC_VERIFIER" "$UNTRUSTED_ISSUER" "${MDOC[@]}" --variant untrusted-issuer
+refused mdoc-transcript-wrong-nonce "$MDOC_VERIFIER" "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-nonce
+refused mdoc-transcript-wrong-client-id "$MDOC_VERIFIER" "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-audience
+refused mdoc-unrequested-element "$MDOC_VERIFIER" \
+  'verifier: the presentation discloses data elements the query didn'"'"'t ask for: "eu.europa.ec.eudi.pid.1/birth_date"' \
+  "${MDOC[@]}" --variant extra-claim
 
 echo "== control: an mdoc over the Digital Credentials API whose SessionTranscript names the client_id, not the origin"
 dcapi "$MDOC_VERIFIER" mdoc-dcapi-wrong-origin "$ORIGIN" "${MDOC[@]}" --variant wrong-audience
-if jq -e '.status == "failed"' result-mdoc-dcapi-wrong-origin.json >/dev/null; then ok "the verifier refused it: $(jq -r '.error' result-mdoc-dcapi-wrong-origin.json | cut -c1-200)"
-else bad "the verifier refused it ($(why result-mdoc-dcapi-wrong-origin.json))"; fi
+verifier_refused result-mdoc-dcapi-wrong-origin.json "$DEVICE_SIGNATURE"
 
 # Each status check the verifier made, it made by fetching from serve:
 # a run in which it fetched nothing checked no status at all.

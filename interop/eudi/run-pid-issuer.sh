@@ -368,24 +368,29 @@ check revoked-sdjwt "the wallet reads it as INVALID once revoked" '.status_after
 echo "== control: metadata signed under a CA the wallet doesn't trust"
 wallet untrusted-metadata -issuer "$ISSUER" -config "$SDJWT" -metadata-roots other-ca.pem
 check untrusted-metadata "the wallet refuses the metadata ($(why untrusted-metadata))" \
-  '(.ok | not) and .step == "metadata" and (.error | test("unknown authority"))'
+  '(.ok | not) and .step == "metadata"
+   and (.error | contains("signed metadata: signer certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"))'
 
 echo "== control: credentials whose IACA the wallet doesn't trust"
 for c in "$SDJWT sdjwt" "$MDOC mdoc"; do
   read -r config format <<< "$c"
   wallet "untrusted-$format" -issuer "$ISSUER" -config "$config" -proof attestation -issuer-roots other-ca.pem
   check "untrusted-$format" "the wallet refuses the $format PID ($(why "untrusted-$format"))" \
-    '(.ok | not) and .step == "verify" and (.credentials | length == 1) and (.credentials[0].verified | not)'
+    '(.ok | not) and .step == "verify" and (.credentials | length == 1) and (.credentials[0].verified | not)
+     and (.error | contains("wallet: verify issued credential: issuer certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"))'
 done
 
 echo "== control: a Wallet Attestation whose client_status is revoked"
 wallet revoked-wallet -issuer "$ISSUER" -config "$SDJWT" -proof attestation -wallet-status-idx 1
-check revoked-wallet "Keycloak refuses the PAR ($(why revoked-wallet))" '(.ok | not) and .step == "par"'
+# Keycloak says no more than that authentication failed; the case differs
+# from the ones above, which pass, only in the attestation's status.
+check revoked-wallet "Keycloak refuses the PAR ($(why revoked-wallet))" \
+  '(.ok | not) and .step == "par" and (.error | contains("invalid_response: Authentication failed."))'
 
 echo "== control: a Key Attestation whose key_storage_status is revoked"
 wallet revoked-keys -issuer "$ISSUER" -config "$SDJWT" -proof attestation -key-storage-status-idx 1
 check revoked-keys "the issuer refuses the proof ($(why revoked-keys))" \
-  '(.ok | not) and .step == "credential" and (.error | test("invalid_proof"))'
+  '(.ok | not) and .step == "credential" and (.error | contains("invalid_proof: Key Storage Status is not valid"))'
 
 # Both attestations' status lists are fetched from serve: a run in
 # which nothing fetched them checked neither.
@@ -393,21 +398,31 @@ echo "== Keycloak and the issuer fetched the Wallet Provider's status list"
 if grep -q 'served GET /statuslists/jwt$' serve.log; then ok "fetched /statuslists/jwt"; else bad "fetched /statuslists/jwt"; fi
 
 # Not controls: what OpenID4VCI 1.0 allows a wallet, which this issuer
-# refuses (README.md, "Findings"). Each says if a later image accepts.
+# refuses (README.md, "Findings"). Each says if a later image accepts,
+# and fails if it's refused for anything but the finding: these differ
+# from the cases above, which pass, only in what the finding is about.
+# known_refusal NAME WHAT WHY: a note if result-NAME.json was accepted
+# or refused at the Credential Endpoint for an error containing WHY.
+known_refusal() {
+  local name="$1" what="$2" want="$3"
+  if jq -e '.ok' "result-$name.json" >/dev/null; then note "accepted: the issuer now takes $what; README.md's finding is fixed"
+  elif jq -e --arg want "$want" '.step == "credential" and (.error | contains($want))' "result-$name.json" >/dev/null; then
+    note "refused, as expected of v0.11.2 ($(why "$name"))"
+  else bad "accepted, or refused for the finding ($want): $(why "$name")"; fi
+}
+
 echo "== a jwt proof naming its key in jwk, as GenerateProofWithKeyAttestation makes it"
 wallet jwk-proof -issuer "$ISSUER" -config "$SDJWT" -proof jwk
-if jq -e '.ok' result-jwk-proof.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
-else note "refused, as expected of v0.11.2 ($(why jwk-proof))"; fi
+JWK_PROOF_REFUSED='credential error response: invalid_proof: JWT Proof with `key_attestation` must contain header `kid` with value `0`'
+known_refusal jwk-proof "a jwk-keyed proof" "$JWK_PROOF_REFUSED"
 
 echo "== walletflow, under ProfileHAIP, naming the proof's key in jwk (Config.ProofKeyByJWK)"
 wallet walletflow-jwk -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -proof jwk
-if jq -e '.ok' result-walletflow-jwk.json >/dev/null; then note "accepted: the issuer now takes a jwk-keyed proof; README.md's finding is fixed"
-else note "refused, as expected of v0.11.2 ($(why walletflow-jwk))"; fi
+known_refusal walletflow-jwk "a jwk-keyed proof" "$JWK_PROOF_REFUSED"
 
 echo "== a batch of one key proof per credential (OpenID4VCI 1.0 §8.2, §12.2.4)"
 wallet proof-per-key -issuer "$ISSUER" -config "$SDJWT" -proof jwt-each -batch 2
-if jq -e '.ok' result-proof-per-key.json >/dev/null; then note "accepted: the issuer now takes several proofs; README.md's finding is fixed"
-else note "refused, as expected of v0.11.2 ($(why proof-per-key))"; fi
+known_refusal proof-per-key "several proofs" 'credential error response: invalid_proof: You can provide at most 1 proof'
 
 if [[ "$fail" -eq 0 ]]; then echo "RESULT: every issuance succeeded and verified, and every control was refused"; else echo "RESULT: FAILED"; fi
 exit "$fail"

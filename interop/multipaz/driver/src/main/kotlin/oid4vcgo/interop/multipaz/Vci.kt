@@ -19,6 +19,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import org.multipaz.asn1.OID
@@ -50,6 +51,7 @@ import org.multipaz.rpc.backend.BackendEnvironment
 import org.multipaz.sdjwt.SdJwt
 import org.multipaz.securearea.KeyAttestation
 import org.multipaz.webtoken.buildJwt
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import org.multipaz.securearea.CreateKeySettings
 import org.multipaz.securearea.SecureAreaProvider
@@ -58,6 +60,7 @@ import org.multipaz.server.common.ServerConfiguration
 import org.multipaz.server.common.ServerEnvironment
 import org.multipaz.server.common.installServerEnvironment
 import org.multipaz.storage.ephemeral.EphemeralStorage
+import org.multipaz.util.fromBase64Url
 import org.multipaz.util.toBase64
 import java.io.File
 import java.net.ServerSocket
@@ -70,6 +73,13 @@ private const val UNTRUSTED_ATTESTER = "mpz-other-attester"
 
 /** What a control that wasn't refused did. */
 private const val ISSUED = "a credential was issued"
+
+/**
+ * cmd/conformance-issuer's answer to a Wallet Attestation that fails its
+ * own checks (signature, iss, sub, exp, lifetime): a 401 invalid_client.
+ */
+private const val ATTESTATION_REFUSED =
+    "401 {\"error\":\"invalid_client\",\"error_description\":\"client attestation verification failed\"}"
 
 /**
  * OpenID4VCI 1.0 between Multipaz and OID4VCgo, pre-authorized code
@@ -120,9 +130,17 @@ class VciCases(
         }
         // Multipaz's local backend's own Wallet Attestations are valid
         // for 2000 days; the issuer accepts one valid for at most a day.
+        // This is the authorization code case above, which passes, with
+        // the local backend's attestation as it makes it: the one there
+        // is this one with its exp brought to an hour
+        // (HourLongAttestations), so the lifetime is the only
+        // difference. The issuer gives every failed check of the
+        // attestation itself (signature, iss, sub, exp, lifetime) the
+        // same description, so that difference is what pins the reason;
+        // the refusal must be its invalid_client for the attestation.
         check("control: the issuer refuses a Wallet Attestation valid for 2000 days, as Multipaz's local backend makes them") {
-            val result = receive(issuer, issuer.sdjwtConfiguration, ATTESTER, multipazLifetime = true)
-            refusal(result.exceptionOrNull()?.message, ISSUED, "client attestation verification failed")
+            val result = receive(issuer, issuer.sdjwtConfiguration, ATTESTER, multipazLifetime = true, preAuthorized = false)
+            refusal(result.exceptionOrNull()?.message, ISSUED, ATTESTATION_REFUSED)
         }
     }
 
@@ -151,7 +169,7 @@ class VciCases(
             walletName = "Multipaz interop wallet",
             walletLink = "https://github.com/openwallet-foundation/multipaz",
         )
-        val backend = if (multipazLifetime) local else HourLongAttestations(local, attestationKey, issuer.clientId)
+        val backend = if (multipazLifetime) local else HourLongAttestations(local, attestationKey)
         var issuerError: String? = null
         val preferences = OpenID4VCIClientPreferences(
             clientId = issuer.clientId,
@@ -230,19 +248,44 @@ class VciCases(
  * Multipaz's local backend with its Wallet Attestations valid for an
  * hour, not its own 2000 days: OpenID4VCIBackend is the Wallet
  * Provider's side, which sets their lifetime; the wallet's protocol
- * (the PoP, DPoP, the requests) stays Multipaz's.
+ * (the PoP, DPoP, the requests) stays Multipaz's. Each is the local
+ * backend's own attestation, every header and claim kept (x5c, cnf,
+ * nonce, wallet_name, wallet_link, ...), signed again by the same key
+ * with its exp an hour after its iat: the 2000-day control's
+ * attestation but for its lifetime.
  */
 private class HourLongAttestations(
     private val local: OpenID4VCIBackend,
     private val key: AsymmetricKey.X509Certified,
-    private val clientId: String,
 ) : OpenID4VCIBackend by local {
-    override suspend fun createJwtWalletAttestation(keyAttestation: KeyAttestation): String =
-        buildJwt(type = "oauth-client-attestation+jwt", key = key, expiresIn = 1.hours) {
-            put("iss", key.subject)
-            put("sub", clientId)
-            put("cnf", buildJsonObject { put("jwk", keyAttestation.publicKey.toJwk()) })
+    override suspend fun createJwtWalletAttestation(keyAttestation: KeyAttestation): String {
+        val real = local.createJwtWalletAttestation(keyAttestation)
+        val (header, claims) = decodeJwt(real)
+        check(claims.getValue("exp").jsonPrimitive.long - claims.getValue("iat").jsonPrimitive.long > 1.days.inWholeSeconds) {
+            "the local backend's own attestation is valid for at most a day: $claims"
         }
+        val lifetime = 1.hours
+        val hourLong = buildJwt(type = header.getValue("typ").jsonPrimitive.content, key = key, expiresIn = lifetime) {
+            for ((name, value) in claims) if (name != "iat" && name != "exp") put(name, value)
+        }
+        // Nothing but iat and exp may differ from the local backend's
+        // own, and exp only by the lifetime.
+        val (newHeader, newClaims) = decodeJwt(hourLong)
+        check(newHeader == header) { "the header changed: $header, now $newHeader" }
+        check(newClaims - "iat" - "exp" == claims - "iat" - "exp") { "the claims changed: $claims, now $newClaims" }
+        check(newClaims.getValue("exp").jsonPrimitive.long == newClaims.getValue("iat").jsonPrimitive.long + lifetime.inWholeSeconds) {
+            "exp isn't iat + $lifetime: $newClaims"
+        }
+        return hourLong
+    }
+}
+
+/** A compact JWS's header and claims. */
+private fun decodeJwt(jwt: String): Pair<JsonObject, JsonObject> {
+    val parts = jwt.split(".")
+    check(parts.size == 3) { "not a compact JWS" }
+    fun part(i: Int) = Json.parseToJsonElement(parts[i].fromBase64Url().decodeToString()).jsonObject
+    return part(0) to part(1)
 }
 
 /** The Multipaz client's BackendEnvironment: these interfaces and nothing else. */
