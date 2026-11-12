@@ -371,7 +371,9 @@ final class ProximityTests: XCTestCase {
         do {
             _ = try await third.value
             XCTFail("a cancelled receive returned")
-        } catch is CancellationError {}
+        } catch is CancellationError {
+            // Expected: cancelling it resumes only it, with CancellationError.
+        }
         q.end(ProximityTransportError("ended", peerEnded: true))
         do {
             _ = try await second.value
