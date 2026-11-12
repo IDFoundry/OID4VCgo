@@ -110,11 +110,15 @@ data class AuthorizationResponse(
  * The End-User's part of the authorization code flow: the browser opens
  * [authorizationUrl], the issuer's consent page, and the user approves
  * (or denies) every scope it asks for, as a browser submitting the form
- * would. Returns the authorization response the issuer redirects to.
+ * would. Returns the authorization response the issuer redirects to,
+ * which must be [redirectUri] exactly, with the response as its query:
+ * a private-use URI no HTTP client follows, so it's read from the
+ * redirect's Location.
  */
 fun consent(
     ssl: SSLContext,
     authorizationUrl: URI,
+    redirectUri: String,
     subject: String,
     approve: Boolean,
 ): AuthorizationResponse {
@@ -141,6 +145,7 @@ fun consent(
         checkNotNull(decision.headers().firstValue("Location").orElse(null)) {
             "the consent decision answered ${decision.statusCode()} without a redirect: ${decision.body().take(300)}"
         }
+    check(location.startsWith("$redirectUri?")) { "the consent redirected to $location, not to $redirectUri" }
     val query =
         URI(location).rawQuery.orEmpty().split('&').filter { it.isNotEmpty() }.associate {
             val (k, v) = it.split('=', limit = 2) + ""

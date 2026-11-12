@@ -10,6 +10,7 @@ import (
 	"os"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/storage"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
@@ -189,12 +190,30 @@ func validateOffers(o *OffersConfig) error {
 //
 // fapigo/server's attester trust strategy is server-wide, so Client and
 // Client2 must use the same one.
+//
+// ApplicationType is "web" (the default, when empty) or "native": a
+// native client may register a native app's redirect URIs (RFC 8252),
+// such as a private-use URI scheme, com.example.wallet:/callback or
+// com.example.wallet://callback (storage.ApplicationTypeNative).
 type ConfigClient struct {
 	ID                      string          `json:"id"`
+	ApplicationType         string          `json:"application_type,omitempty"`
 	RedirectURIs            []string        `json:"redirect_uris"`
 	ExpectedAttesterIssuer  string          `json:"expected_attester_issuer"`
 	AttesterTrustAnchorsPEM string          `json:"attester_trust_anchors_pem,omitempty"`
 	AttesterJWKS            json.RawMessage `json:"attester_jwks,omitempty"`
+}
+
+// applicationType is c's storage.ApplicationType, or an error for a
+// value ApplicationType doesn't take.
+func (c ConfigClient) applicationType() (storage.ApplicationType, error) {
+	switch c.ApplicationType {
+	case "", "web":
+		return storage.ApplicationTypeWeb, nil
+	case "native":
+		return storage.ApplicationTypeNative, nil
+	}
+	return 0, fmt.Errorf("application_type %q isn't web or native", c.ApplicationType)
 }
 
 // usesAttesterTrustAnchors reports whether c trusts its attester by
@@ -300,6 +319,9 @@ func loadConfig(path string) (Config, error) {
 func validateConfigClient(field string, c ConfigClient) error {
 	if c.ID == "" || len(c.RedirectURIs) == 0 || c.ExpectedAttesterIssuer == "" {
 		return fmt.Errorf("config: %s.id, %s.redirect_uris and %s.expected_attester_issuer are all required", field, field, field)
+	}
+	if _, err := c.applicationType(); err != nil {
+		return fmt.Errorf("config: %s.%w", field, err)
 	}
 	attesterJWKSEmpty := len(c.AttesterJWKS) == 0 || string(c.AttesterJWKS) == "null"
 	if c.usesAttesterTrustAnchors() == !attesterJWKSEmpty {

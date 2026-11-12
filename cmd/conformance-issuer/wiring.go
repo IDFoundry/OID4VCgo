@@ -444,6 +444,9 @@ func buildClientRegistration(cfg Config) (clientRepo *memstore.ClientRepository,
 		}
 		clientCfg := haip.RecommendedWalletClient(fapi.ClientID(cc.ID), cc.ExpectedAttesterIssuer)
 		clientCfg.RedirectURIs, clientCfg.AllowedScopes = registeredRedirectURIs(cc.RedirectURIs), allowedScopes
+		if clientCfg.ApplicationType, err = cc.applicationType(); err != nil {
+			return nil, nil, fmt.Errorf("register client %s: %w", cc.ID, err)
+		}
 		if cfg.usesAuthorizationDetails() {
 			clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
 		}

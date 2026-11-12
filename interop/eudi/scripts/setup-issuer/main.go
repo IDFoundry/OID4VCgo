@@ -52,8 +52,11 @@ const (
 	sdjwtScope           = "eu.europa.ec.eudi.pid_vc_sd_jwt"
 	mdocScope            = "eu.europa.ec.eudi.pid_mso_mdoc"
 
-	clientID    = "oid4vcgo-eudi-interop-wallet"
-	redirectURI = "https://wallet.example.com/callback"
+	clientID = "oid4vcgo-eudi-interop-wallet"
+	// The EUDI reference wallet app's own redirect URI, a private-use
+	// URI scheme with an authority, which the issuer registers for a
+	// native client.
+	redirectURI = "eu.europa.ec.euidi://authorization"
 	subject     = "eudi-interop-subject"
 
 	attesterIssuer = "https://wallet-provider.example.com"
@@ -93,6 +96,7 @@ type issuerConfig struct {
 
 type issuerClient struct {
 	ID                      string   `json:"id"`
+	ApplicationType         string   `json:"application_type"`
 	RedirectURIs            []string `json:"redirect_uris"`
 	ExpectedAttesterIssuer  string   `json:"expected_attester_issuer"`
 	AttesterTrustAnchorsPEM string   `json:"attester_trust_anchors_pem"`
@@ -256,7 +260,7 @@ func run(dir string, port, offersPort int) error {
 		ListenAddr: net.JoinHostPort(loopback, strconv.Itoa(port)), Issuer: issuerURL,
 		TLSCertificatePEM: tlsCertPEM, TLSPrivateKeyPEM: tlsKeyPEM,
 		Client: issuerClient{
-			ID: clientID, RedirectURIs: []string{redirectURI},
+			ID: clientID, ApplicationType: "native", RedirectURIs: []string{redirectURI},
 			ExpectedAttesterIssuer: attesterIssuer, AttesterTrustAnchorsPEM: attesterCAPEM,
 		},
 		CredentialIssuerSigningKeyPEM:     issuerKeyPEM,

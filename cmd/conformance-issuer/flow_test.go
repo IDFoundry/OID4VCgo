@@ -389,7 +389,9 @@ func setupFullFlowTestWithConfig(t *testing.T, cfg Config, clientID, defaultSubj
 	}
 
 	cfg.Client.ID = clientID
-	cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
+	if len(cfg.Client.RedirectURIs) == 0 {
+		cfg.Client.RedirectURIs = []string{"https://client.example.com/callback"}
+	}
 	cfg.Client.ExpectedAttesterIssuer = "https://attester.example.com"
 	cfg.Client.AttesterJWKS = attesterJWKS
 	cfg.DefaultSubject = defaultSubject

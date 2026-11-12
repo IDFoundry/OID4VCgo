@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -231,5 +232,73 @@ func requestCredentialViaRealClient(t *testing.T, ctx context.Context, httpClien
 	}
 	if len(credResult.Credentials) != 1 {
 		t.Fatalf("Credentials = %v, want exactly 1", credResult.Credentials)
+	}
+}
+
+// eudiWalletRedirectURI is the EUDI reference wallet app's redirect
+// URI: a private-use URI scheme with an authority, which its issuers
+// register for it (interop/eudi/README.md).
+const eudiWalletRedirectURI = "eu.europa.ec.euidi://authorization"
+
+// A native client registering a private-use redirect URI with an
+// authority, as the EUDI reference wallet does, completes the
+// authorization code flow: PAR takes the URI, the consent redirects to
+// exactly it, and the code redeems. Any other spelling of it is refused,
+// since a redirect URI matches only as registered.
+func TestFullFlow_NativeClientWithAuthorityRedirect(t *testing.T) {
+	now := time.Now()
+	base := baseTestConfig(t)
+	base.Client.ApplicationType = "native"
+	base.Client.RedirectURIs = []string{eudiWalletRedirectURI}
+	httpClient, cfg, attesterKey, _ := setupFullFlowTestWithConfig(t, base, "native-wallet-client", "native-wallet-subject")
+	ctx := context.Background()
+
+	km, attestationJWT := buildRealClientAttestation(t, ctx, attesterKey, cfg, now)
+	c := buildRealClientForAttestationAuth(t, cfg, httpClient, km, attestationJWT)
+	session, err := c.BeginAuthorization(ctx, client.BeginAuthorizationRequest{Scope: []string{cfg.Scope}})
+	if err != nil {
+		t.Fatalf("BeginAuthorization: %v", err)
+	}
+	redirectURL := driveConsentToCallback(t, httpClient, cfg.Issuer, session.URL().String(), cfg.DefaultSubject, cfg.Scope)
+	if got := (&url.URL{Scheme: redirectURL.Scheme, Host: redirectURL.Host, Path: redirectURL.Path}).String(); got != eudiWalletRedirectURI {
+		t.Fatalf("the consent redirected to %q, want %q", redirectURL, eudiWalletRedirectURI)
+	}
+	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery, Session: session.Handle()})
+	if err != nil {
+		t.Fatalf("CompleteAuthorization: %v", err)
+	}
+	success, ok := result.(client.CompletionSuccess)
+	if !ok {
+		t.Fatalf("CompleteAuthorization result = %T, want client.CompletionSuccess", result)
+	}
+	requestCredentialViaRealClient(t, ctx, httpClient, cfg, c, success)
+
+	for _, other := range []string{eudiWalletRedirectURI + "/", "eu.europa.ec.euidi:/authorization", "eu.europa.ec.euidi://other"} {
+		otherCfg := cfg
+		otherCfg.Client.RedirectURIs = []string{other}
+		km, attestationJWT := buildRealClientAttestation(t, ctx, attesterKey, otherCfg, now)
+		oc := buildRealClientForAttestationAuth(t, otherCfg, httpClient, km, attestationJWT)
+		if _, err := oc.BeginAuthorization(ctx, client.BeginAuthorizationRequest{Scope: []string{cfg.Scope}}); err == nil {
+			t.Errorf("BeginAuthorization with redirect_uri %q, registered %q: nil error, want PAR to refuse it", other, eudiWalletRedirectURI)
+		}
+	}
+}
+
+// A web client can't use a private-use redirect URI, even one it
+// registered: PAR refuses it. application_type "native" is what admits
+// one.
+func TestFullFlow_WebClientRefusedPrivateUseRedirect(t *testing.T) {
+	now := time.Now()
+	ctx := context.Background()
+	for _, appType := range []string{"", "web"} {
+		base := baseTestConfig(t)
+		base.Client.ApplicationType = appType
+		base.Client.RedirectURIs = []string{eudiWalletRedirectURI}
+		httpClient, cfg, attesterKey, _ := setupFullFlowTestWithConfig(t, base, "web-client", "web-subject")
+		km, attestationJWT := buildRealClientAttestation(t, ctx, attesterKey, cfg, now)
+		c := buildRealClientForAttestationAuth(t, cfg, httpClient, km, attestationJWT)
+		if _, err := c.BeginAuthorization(ctx, client.BeginAuthorizationRequest{Scope: []string{cfg.Scope}}); err == nil {
+			t.Errorf("application_type %q, redirect_uri %s: BeginAuthorization = nil error, want PAR to refuse it", appType, eudiWalletRedirectURI)
+		}
 	}
 }

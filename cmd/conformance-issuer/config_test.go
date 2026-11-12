@@ -92,6 +92,7 @@ func TestLoadConfig_RejectsMissingRequiredFields(t *testing.T) {
 		"claims":                                func(c *Config) { c.Claims = nil },
 		"scope":                                 func(c *Config) { c.Scope = "" },
 		"credential_configuration_id":           func(c *Config) { c.CredentialConfigurationID = "" },
+		"client.application_type":               func(c *Config) { c.Client.ApplicationType = "browser" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
