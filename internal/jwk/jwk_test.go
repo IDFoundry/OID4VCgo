@@ -126,12 +126,12 @@ func TestMarshalRejectsUnsupportedKeyType(t *testing.T) {
 }
 
 func TestMarshalRejectsUnsupportedCurve(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
 	if _, err := Marshal(&key.PublicKey); err == nil {
-		t.Errorf("Marshal accepted a non-P-256 curve")
+		t.Errorf("Marshal accepted a P-224 key")
 	}
 }
 
@@ -293,7 +293,7 @@ func TestThumbprintRejectsUnsupportedKty(t *testing.T) {
 }
 
 func TestThumbprintRejectsUnsupportedCurve(t *testing.T) {
-	if _, err := (JWK{Kty: "EC", Crv: "P-384", X: "AA", Y: "AA"}).Thumbprint(); err == nil {
+	if _, err := (JWK{Kty: "EC", Crv: "P-224", X: "AA", Y: "AA"}).Thumbprint(); err == nil {
 		t.Errorf("Thumbprint accepted an unsupported EC curve")
 	}
 	if _, err := (JWK{Kty: "OKP", Crv: "X25519", X: "AA"}).Thumbprint(); err == nil {

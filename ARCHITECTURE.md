@@ -80,7 +80,8 @@ it directly, so OID4VCgo cannot construct a request for a purpose FAPIgo
 hasn't defined (credential signing, Key Binding JWT signing, key/wallet
 attestation signing). Rather than block `credential/sdjwtvc` on a
 FAPIgo change, it signs and verifies through this repo's own
-`internal/jose` (RFC 7515 compact JWS, ES256 + EdDSA for now) against a
+`internal/jose` (RFC 7515 compact JWS: signing ES256 and EdDSA,
+verifying ES384 and ES512 as well) against a
 plain `crypto.Signer` instead. This is a real, deliberate divergence from
 "reuse FAPIgo's `keys` package everywhere" — revisit it if/when FAPIgo
 grows the purposes credential issuance needs, but don't assume that will

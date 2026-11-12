@@ -9,7 +9,7 @@
 // optional raw-DEFLATE compression ("zip":"DEF", RFC 7516). This is
 // exactly §10's own worked example combination (Appendix I.1's
 // "alg":"ECDH-ES", enc_values_supported: ["A128GCM"]) and, like
-// internal/jose's own ES256/EdDSA scope, is meant to be extended only
+// internal/jose's own small algorithm set, is meant to be extended only
 // when a real need arises (ECDH-ES+A*KW key wrapping, RSA-OAEP) rather
 // than pre-built speculatively. Decrypt does read a sender's own
 // "apu"/"apv" header members into the Concat KDF's own OtherInfo when

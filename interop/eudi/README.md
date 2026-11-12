@@ -62,6 +62,10 @@ The verifier is run as strictly as it can be configured:
 - Each transaction names the issuer CA it trusts (`issuer_chain`); with
   no trust validator configured, the verifier would otherwise trust any
   issuer.
+- It signs its Request Objects ES512 with a P-521 Access Certificate
+  (`VERIFIER_ACCESS_CERTIFICATE_SIGNING_ALGORITHM`), as the verifier's
+  own docker-compose configures it, so the wallet's ES512 verification
+  is what each accepted case runs through.
 
 The run also checks the verifier fetched each status list and the Type
 Metadata, so a run in which it silently skipped a check fails. Fetching
@@ -89,7 +93,8 @@ Every key, certificate and document is throwaway, made per run by
   1 invalid);
 - the PID's Type Metadata;
 - the verifier's Access Certificate (its Request Object signing key, a
-  leaf under a CA the wallet trusts; EUDI refuses a self-signed one), its
+  P-521 leaf under a CA the wallet trusts; EUDI refuses a self-signed
+  one), its
   TLS listener, and a Relying Party registration certificate, which EUDI
   refuses a transaction without;
 - `scripts/serve`'s TLS certificate, for `host.docker.internal`, under

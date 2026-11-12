@@ -10,6 +10,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
 // X5CIssuerKeyResolver implements SDJWTVCIssuerKeyResolver by
@@ -199,7 +200,7 @@ func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, hea
 			return nil, "", nil, err
 		}
 	}
-	alg, err := sdjwtvcAlgForKey(leaf.PublicKey)
+	alg, err := jose.AlgForKey(leaf.PublicKey)
 	if err != nil {
 		return nil, "", nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,14 +26,22 @@ const (
 	// ES256 is ECDSA using P-256 and SHA-256 (RFC 7518 §3.4).
 	ES256 Alg = "ES256"
 
+	// ES384 is ECDSA using P-384 and SHA-384 (RFC 7518 §3.4). Verify
+	// only: Sign refuses it.
+	ES384 Alg = "ES384"
+
+	// ES512 is ECDSA using P-521 and SHA-512 (RFC 7518 §3.4). Verify
+	// only: Sign refuses it.
+	ES512 Alg = "ES512"
+
 	// EdDSA is pure EdDSA over Ed25519 (RFC 8037 §3.1) — the digest
 	// parameter Sign/Verify take is the raw signing input, not a
 	// pre-hash, since Ed25519 signs the message itself.
 	EdDSA Alg = "EdDSA"
 )
 
-// IsSupported reports whether alg is one Sign/Verify actually
-// implement — the same set signBytes/verifyBytes switch on. Every
+// IsSupported reports whether alg is one Sign (and so Verify) actually
+// implements — the same set signBytes switches on. Every
 // jose.Alg-typed configuration field across this module
 // (verifier.Config.SigningAlg, wallet.Config.ProofSigningAlg,
 // issuer.SDJWTSigner.Alg) is otherwise only checked for non-empty at
@@ -51,6 +60,56 @@ func IsSupported(alg Alg) bool {
 	default:
 		return false
 	}
+}
+
+// IsVerifiable reports whether alg is one Verify implements: those
+// IsSupported reports, plus ES384 and ES512, which this module accepts
+// from others (HAIP 1.0 §7 makes ES256 a minimum, not a ceiling) but
+// never signs with. A list of algorithms this module advertises it
+// verifies, such as proof_signing_alg_values_supported, is checked
+// against it.
+func IsVerifiable(alg Alg) bool {
+	if IsSupported(alg) {
+		return true
+	}
+	_, ok := ecdsaAlgs[alg]
+	return ok
+}
+
+// AlgForKey is the one algorithm Verify accepts with pub: ES256, ES384
+// or ES512 for an ECDSA key on P-256, P-384 or P-521 (RFC 7518 §3.4
+// pairs each with its curve), and EdDSA for an Ed25519 key. A caller
+// verifying under a key it has already trusted (a certificate's, a cnf
+// claim's) takes the algorithm from the key this way, never from the
+// token's own header.
+func AlgForKey(pub crypto.PublicKey) (Alg, error) {
+	switch k := pub.(type) {
+	case *ecdsa.PublicKey:
+		for alg, p := range ecdsaAlgs {
+			if k.Curve == p.curve {
+				return alg, nil
+			}
+		}
+		return "", fmt.Errorf("jose: unsupported ECDSA curve %s", k.Curve.Params().Name)
+	case ed25519.PublicKey:
+		return EdDSA, nil
+	default:
+		return "", fmt.Errorf("jose: unsupported public key type %T", pub)
+	}
+}
+
+// ecdsaAlg is an ECDSA JWS algorithm's curve and digest (RFC 7518
+// §3.4): each algorithm verifies with keys on its own curve only.
+type ecdsaAlg struct {
+	curve elliptic.Curve
+	size  int // bytes in each of R and S in the JWS signature
+	hash  func([]byte) []byte
+}
+
+var ecdsaAlgs = map[Alg]ecdsaAlg{
+	ES256: {elliptic.P256(), 32, func(b []byte) []byte { d := sha256.Sum256(b); return d[:] }},
+	ES384: {elliptic.P384(), 48, func(b []byte) []byte { d := sha512.Sum384(b); return d[:] }},
+	ES512: {elliptic.P521(), 66, func(b []byte) []byte { d := sha512.Sum512(b); return d[:] }},
 }
 
 // b64 is RFC 7515 §2 base64url: any byte outside its alphabet, line
@@ -252,21 +311,21 @@ func decodeHeader(encHeader string) (map[string]any, error) {
 }
 
 func verifyBytes(alg Alg, pub crypto.PublicKey, signingInput, sig []byte) error {
-	switch alg {
-	case ES256:
+	if p, ok := ecdsaAlgs[alg]; ok {
 		ecPub, ok := pub.(*ecdsa.PublicKey)
-		if !ok || ecPub.Curve != elliptic.P256() {
-			return errors.New("jose: ES256 requires a P-256 public key")
+		if !ok || ecPub.Curve != p.curve {
+			return fmt.Errorf("jose: %s requires a %s public key", alg, p.curve.Params().Name)
 		}
-		der, err := ecdsafixed.ToDER(sig, 32)
+		der, err := ecdsafixed.ToDER(sig, p.size)
 		if err != nil {
 			return err
 		}
-		digest := sha256.Sum256(signingInput)
-		if !ecdsa.VerifyASN1(ecPub, digest[:], der) {
-			return errors.New("jose: ES256 signature verification failed")
+		if !ecdsa.VerifyASN1(ecPub, p.hash(signingInput), der) {
+			return fmt.Errorf("jose: %s signature verification failed", alg)
 		}
 		return nil
+	}
+	switch alg {
 	case EdDSA:
 		edPub, ok := pub.(ed25519.PublicKey)
 		// ed25519.Verify panics on a key of another length, which a

@@ -201,7 +201,8 @@ trust check.
   (`credential/mdoc`'s package doc, "Algorithm and curve support"). A
   proximity holder generates its own ephemeral key on P-256, and the
   Digital Credentials API's HPKE suite (Annex C) is DHKEM(P-256) as
-  specified. JOSE (SD-JWT VC, JWT status lists) stays ES256 and EdDSA.
+  specified. JOSE (SD-JWT VC, JWT status lists) verifies ES256, ES384,
+  ES512 and EdDSA too, but signs ES256 and EdDSA only.
 
 ## Known strictness
 
@@ -323,7 +324,16 @@ Confirmed directly against HAIP 1.0's text (not paraphrased from memory):
   §4.3) — i.e. conditional on flow, not unconditional the way FAPI 2.0
   Security Profile Final otherwise treats it.
 - **Cryptography**: HAIP §7 overrides FAPI 2.0 Security Profile Final
-  §5.4.1 clause 1's algorithm requirements with its own.
+  §5.4.1 clause 1's algorithm requirements with its own: ES256 "at a
+  minimum", for every entity. OID4VCgo signs its JWSs with ES256 (or
+  EdDSA, where a caller configures it), and verifies ES256, ES384
+  (P-384), ES512 (P-521) and EdDSA (Ed25519) wherever it verifies one:
+  Request Objects, SD-JWT VC Issuer-signed JWTs and Key Binding JWTs,
+  Token Status List JWTs, signed Credential Issuer Metadata, jwt
+  proofs and key attestations. Each ECDSA algorithm verifies with a
+  key on its own curve only (RFC 7518 §3.4), and the algorithm is taken
+  from the trusted key, not from the token's header. An issuer's
+  `proof_signing_alg_values_supported` may list ES384 and ES512.
 
 ## Scope note
 

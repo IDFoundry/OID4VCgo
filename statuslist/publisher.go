@@ -26,7 +26,7 @@ import (
 // for P-256 and EdDSA for Ed25519 in either form, and ES384 for P-384
 // and ES512 for P-521 in the CWT form only — an mdoc issuer's IACA
 // material may be on those curves (ISO/IEC 18013-5 §9.1.2.4), but this
-// module's JWTs are ES256 or EdDSA. A Publisher whose signer is on
+// module signs JWTs with ES256 or EdDSA only. A Publisher whose signer is on
 // P-384 or P-521 sets DefaultForm to FormCWT, and answers a request
 // for the JWT form alone 406 Not Acceptable.
 //

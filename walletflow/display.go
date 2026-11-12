@@ -250,8 +250,9 @@ type CredentialStatus struct {
 // fetched and checked too, its signer bound to the mdoc's issuer as
 // §12.3.6.2 requires: under the Certificate its MSO names, if any, and
 // otherwise through the CA that signed its document signer. On it, the
-// mdoc is StatusInvalid (revoked). A list signed other than with ES256
-// or EdDSA (Ed25519) doesn't verify: an error, not a status.
+// mdoc is StatusInvalid (revoked). A list signed other than with ES256,
+// ES384, ES512 or EdDSA (Ed25519) doesn't verify: an error, not a
+// status.
 //
 // Revocation on a list is final: an MSO revoked stays so (§12.3.6.1),
 // and a Token Status List's INVALID, unlike SUSPENDED, isn't temporary

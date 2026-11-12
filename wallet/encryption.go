@@ -125,7 +125,7 @@ func encryptRequestBody(body []byte, reqEnc *RequestEncryption) (encoded []byte,
 		return nil, "", fmt.Errorf("request_encryption.recipient_jwk: %w", err)
 	}
 	ecPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
+	if !ok || ecPub.Curve != elliptic.P256() {
 		return nil, "", fmt.Errorf("request_encryption.recipient_jwk must be an EC P-256 key")
 	}
 	// The Issuer's own published JWK carries its own "kid" (issuer's

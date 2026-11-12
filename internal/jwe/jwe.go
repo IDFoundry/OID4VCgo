@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -108,6 +109,9 @@ func Encrypt(recipientPub *ecdsa.PublicKey, enc Enc, payload []byte, opts Encryp
 		return "", fmt.Errorf("jwe: unsupported zip %q", opts.Zip)
 	}
 
+	if recipientPub == nil || recipientPub.Curve != elliptic.P256() {
+		return "", errors.New("jwe: the recipient key must be an EC P-256 key")
+	}
 	recipientECDH, err := recipientPub.ECDH()
 	if err != nil {
 		return "", fmt.Errorf("jwe: recipient public key: %w", err)

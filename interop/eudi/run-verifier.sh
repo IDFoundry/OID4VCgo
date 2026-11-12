@@ -72,7 +72,7 @@ echo "verifier  $VERIFIER_IMAGE"
 
 (cd "$SRC" && go build -o "$WORK/wallet" ./cmd/conformance-wallet-vp \
   && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
-  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL")
+  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521)
 cd "$WORK"
 ./serve -dir . -addr "$SERVE_BIND:$SERVE_PORT" > serve.log 2>&1 &
 SERVE_PID=$!
@@ -97,7 +97,9 @@ CLIENT_ID_HASH="$(openssl x509 -in verifier-chain.pem -outform DER | openssl dgs
 # instead. Status checks are on (the default); Type Metadata is
 # required for every SD-JWT VC, resolved from serve and checked against
 # the credential's vct#integrity. The self-signed profile, which would
-# make the verifier's HTTP client trust any certificate, stays off.
+# make the verifier's HTTP client trust any certificate, stays off. It
+# signs its Request Objects ES512 with a P-521 Access Certificate, as
+# its own docker-compose configures it.
 CLASSIFICATIONS='{"pid":{"vcts":["urn:eudi:pid:1"],"docTypes":["eu.europa.ec.eudi.pid.1"]},"qeaa":{"vcts":[],"docTypes":[]},"pubeaa":{"vcts":[],"docTypes":[]},"eaa":[]}'
 docker run -d --name "$CONTAINER" --platform linux/amd64 -p "127.0.0.1:$PORT:8443" ${ADD_HOST[@]+"${ADD_HOST[@]}"} \
   -v "$WORK:/certs:ro" -v "$WORK/bindings:/bindings:ro" -e SERVICE_BINDING_ROOT=/bindings \
@@ -112,7 +114,7 @@ docker run -d --name "$CONTAINER" --platform linux/amd64 -p "127.0.0.1:$PORT:844
   -e VERIFIER_PUBLICURL="$VERIFIER" \
   -e VERIFIER_CLIENTIDPREFIX=x509_hash -e VERIFIER_ORIGINALCLIENTID="$CLIENT_ID_HASH" \
   -e VERIFIER_INTENDEDUSES= -e VERIFIER_ATTESTATIONCLASSIFICATIONS="$CLASSIFICATIONS" \
-  -e VERIFIER_ACCESS_CERTIFICATE_SIGNING_ALGORITHM=ES256 \
+  -e VERIFIER_ACCESS_CERTIFICATE_SIGNING_ALGORITHM=ES512 \
   -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE=file:///certs/keystore.p12 -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_TYPE=pkcs12 \
   -e VERIFIER_ACCESS_CERTIFICATE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
   -e VERIFIER_ACCESS_CERTIFICATE_ALIAS=access_certificate -e VERIFIER_ACCESS_CERTIFICATE_PASSWORD="$KEYSTORE_PASSWORD" \

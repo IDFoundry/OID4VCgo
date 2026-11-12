@@ -8,12 +8,12 @@ import (
 )
 
 func TestMarshalJWK_RejectsUnsupportedCurve(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
 	if _, err := marshalJWK(&key.PublicKey); err == nil {
-		t.Errorf("marshalJWK accepted a non-P-256 EC key")
+		t.Errorf("marshalJWK accepted a P-224 key")
 	}
 }
 

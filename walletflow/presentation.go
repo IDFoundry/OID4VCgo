@@ -184,9 +184,9 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // walletMetadata is the wallet metadata (OpenID4VP 1.0 §10) sent with
 // a request_uri POST: what a presentation can be, as the wallet package
 // makes it. An SD-JWT VC's issuer signature is one VerifyIssuedCredential
-// accepted on receipt (ES256 or EdDSA), its Key Binding JWT ES256; an
-// mdoc's IssuerAuth likewise (COSE -7 or -8), its DeviceSignature ES256
-// (-7). Requests are accepted only from an x509_hash Client Identifier.
+// accepted on receipt (ES256, ES384, ES512 or EdDSA), its Key Binding
+// JWT ES256; an mdoc's IssuerAuth likewise (COSE -7 or -8), its
+// DeviceSignature ES256 (-7). Requests are accepted only from an x509_hash Client Identifier.
 // Of the Authorization Server Metadata §10 takes the wallet's from, it
 // carries response_types_supported, which RFC 8414 §2 requires, and
 // response_modes_supported: the wallet answers a request it fetched
@@ -201,7 +201,7 @@ func (w *Wallet) fetchAuthorizationRequest(ctx context.Context, link wallet.Auth
 // Response, aren't either: the response's encryption follows the
 // Verifier's client_metadata.
 var walletMetadata = json.RawMessage(`{"vp_formats_supported":{` +
-	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
+	`"dc+sd-jwt":{"sd-jwt_alg_values":["ES256","ES384","ES512","EdDSA"],"kb-jwt_alg_values":["ES256"]},` +
 	`"mso_mdoc":{"issuerauth_alg_values":[-7,-8],"deviceauth_alg_values":[-7]}},` +
 	`"client_id_prefixes_supported":["x509_hash"],` +
 	`"response_types_supported":["vp_token"],"response_modes_supported":["direct_post.jwt"]}`)

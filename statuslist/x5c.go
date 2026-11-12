@@ -94,13 +94,9 @@ func verifyX5C(ctx context.Context, token string, roots *x509.CertPool, opts Ver
 	if err != nil {
 		return signedToken{}, err
 	}
-	eddsa, err := certchain.SignerKeyIsEdDSA(leaf.PublicKey)
+	alg, err := jose.AlgForKey(leaf.PublicKey)
 	if err != nil {
 		return signedToken{}, fmt.Errorf("statuslist: token signer: %w", err)
-	}
-	alg := jose.ES256
-	if eddsa {
-		alg = jose.EdDSA
 	}
 	parsed, err := verifyToken(token, leaf.PublicKey, alg, opts)
 	if err != nil {

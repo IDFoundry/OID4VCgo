@@ -147,10 +147,13 @@ type marshaledKey struct {
 }
 
 // marshalKey encodes pub as a public JWK and its thumbprint, refusing a
-// key type the attestations can't carry.
+// key other than the P-256 and Ed25519 keys a wallet signs with.
 func marshalKey(pub crypto.PublicKey) (marshaledKey, error) {
 	if pub == nil {
 		return marshaledKey{}, fmt.Errorf("%w: a key is required", ErrInvalidRequest)
+	}
+	if _, err := certchain.SignerKeyIsEdDSA(pub); err != nil {
+		return marshaledKey{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	k, err := jwk.Marshal(pub)
 	if err != nil {

@@ -3,6 +3,9 @@ package walletprovider_test
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
@@ -91,6 +94,19 @@ func TestRegisterRefuses(t *testing.T) {
 	t.Run("no key", func(t *testing.T) {
 		ch := h.challenge(walletprovider.PurposeRegistration)
 		_, err := h.p.Register(context.Background(), walletprovider.RegisterRequest{Challenge: ch, Evidence: evidence(t, kindFake, ch, &key.PublicKey)})
+		if !errors.Is(err, walletprovider.ErrInvalidRequest) {
+			t.Fatalf("Register = %v, want ErrInvalidRequest", err)
+		}
+	})
+	// A wallet signs its requests ES256 or EdDSA, so a P-384 key, which
+	// a JWK can now carry, is no registration key.
+	t.Run("P-384 key", func(t *testing.T) {
+		p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch := h.challenge(walletprovider.PurposeRegistration)
+		_, err = h.p.Register(context.Background(), walletprovider.RegisterRequest{Challenge: ch, RegistrationKey: &p384.PublicKey, Evidence: evidence(t, kindFake, ch, &p384.PublicKey)})
 		if !errors.Is(err, walletprovider.ErrInvalidRequest) {
 			t.Fatalf("Register = %v, want ErrInvalidRequest", err)
 		}
