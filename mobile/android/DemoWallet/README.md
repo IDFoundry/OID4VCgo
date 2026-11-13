@@ -80,6 +80,12 @@ Android 10 other apps can write the external files directory. The other test ext
 for its links, and a release build mustn't let any app replace its
 trust roots, wipe it, or skip a link's confirmation.
 
+Built with `-Pdemo.config=<file>`, the APK carries that configuration
+as `assets/demo-config.json`, which any build applies at its first
+launch, and again only when a newer APK bundles another: it's part of
+the signed package, so no other app can replace it.
+`build-shareable.sh` uses it for an APK to hand a tester (below).
+
 ```json
 {"wallet": {"client_id": "…", "redirect_uri": "…", "issuer_roots": "<PEM>",
             "verifier_roots": "<PEM>", "mdoc_reader_roots": "<PEM>", "development": true},
@@ -350,6 +356,23 @@ endpoint, as the script's header shows.
 The app links the release Go library, `../../build/release/mobile.aar`
 (`../../build-aar.sh`).
 
-Running it against the passport-vdc demo, as the iOS demo's
-`run-device.sh` does, hasn't been tried on Android yet, and has no
-script.
+## An APK for a remote tester
+
+`build-shareable.sh` builds an APK configured for the passport-vdc
+demo served on public URLs, as the iOS demo's `run-device.sh` gives
+the iPhone app, so a tester installs it by opening the file on the
+phone, without adb:
+
+```sh
+PROVIDER_URL=https://provider.example.com \
+  STATE=../../../examples/passport-vdc/.demo-state-device ./build-shareable.sh [out-dir]
+```
+
+It writes `oid4vcgo-demowallet.apk` and its SHA-256 to out-dir
+(`build/shareable`). The APK is debug-signed: installed over a build
+signed by another machine's debug key, Android refuses it, so the
+tester uninstalls that first. Its configuration includes the demo
+verifier's in-person reader key, so reader mode works: anyone with
+the APK holds that key, which only this demo's wallets trust. The
+tester also needs the demo's pages behind Cloudflare Access to upload
+a passport and get an offer.

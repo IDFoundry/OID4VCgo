@@ -17,7 +17,8 @@ import java.io.File
  * /config, or run-passport-vdc.sh builds for the passport-vdc demo. It
  * comes from the launch intent's `config` extra, or from
  * `demo-config.json` in the app's external files directory (`adb push`),
- * and is remembered for later launches.
+ * or, built in with `-Pdemo.config` (build-shareable.sh), from the APK's
+ * own assets/demo-config.json, and is remembered for later launches.
  */
 @Serializable
 data class DemoConfiguration(
@@ -62,6 +63,9 @@ data class DemoConfiguration(
     companion object {
         private const val PREFS = "demo"
         private const val KEY = "demo-configuration"
+        /** The bundled configuration last applied, so a newer APK's applies once. */
+        private const val BUNDLED = "demo-bundled-configuration"
+        private const val ASSET = "demo-config.json"
 
         /**
          * The Certificate Revocation Lists the app last fetched
@@ -82,12 +86,19 @@ data class DemoConfiguration(
          * build only: below Android 10 (API 29) any app holding
          * `WRITE_EXTERNAL_STORAGE` can write the external files
          * directory, and so replace a release build's trust roots.
+         * Without either, a configuration bundled in the APK (part of
+         * the signed package, so any build reads it) is applied once:
+         * at the first launch, and again only when a newer APK bundles
+         * another.
          */
         fun load(context: Context, intent: Intent?): DemoConfiguration? {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val debuggable = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
             val pushed = context.getExternalFilesDir(null)?.takeIf { debuggable }?.let { File(it, "demo-config.json") }
-            val given = intent?.getStringExtra("config") ?: pushed?.takeIf { it.isFile }?.readText()?.also { pushed.delete() }
+            val bundled = runCatching { context.assets.open(ASSET).bufferedReader().use { it.readText() } }.getOrNull()
+            val given = intent?.getStringExtra("config")
+                ?: pushed?.takeIf { it.isFile }?.readText()?.also { pushed.delete() }
+                ?: bundled?.takeIf { it != prefs.getString(BUNDLED, null) }?.also { prefs.edit().putString(BUNDLED, it).apply() }
             if (given != null) {
                 runCatching { json.decodeFromString(serializer(), given) }.getOrNull()?.let {
                     val edit = prefs.edit().putString(KEY, given)
