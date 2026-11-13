@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.78.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.77.1...v0.78.0) (2026-11-13)
+
+
+### Features
+
+* **verifier:** serve request_uri_method=post through Transactions ([08ade6a](https://github.com/IDFoundry/OID4VCgo/commit/08ade6a5685e6733861004180984d03bfc9f34ce))
+
 ## [0.77.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.77.0...v0.77.1) (2026-11-12)
 
 
