@@ -317,7 +317,16 @@ for those modules the wallet's own action is the verdict that counts:
 a direct_post.jwt refusal is a non-200 from this binary's
 `/authorize`, a DC API one an answer carrying an `exception`. A wallet
 that presents a request it must refuse used to pass with only a
-`WARNING` line in the script's own log; it now fails the run. `REVIEW`
+`WARNING` line in the script's own log; it now fails the run. A
+refusal must also be for the module's reason: each refuse module
+names what the wallet's refusal text (the non-200's body, or the
+exception's message) must hold (`expectation.refusal`): the Request
+Object's signature failing, its `typ` (`jwt`, or none), a payload
+`client_id` that isn't the request's, a `client_id` with an unknown
+prefix (the wallet accepts only `x509_hash`, so it reports it as not
+the `x5c` leaf's), or an origin not in `expected_origins`. A wallet
+refusing for any other reason, an unreachable `request_uri` say, fails
+the module. `REVIEW`
 also outranks `WARNING` in a module's result, so the log is read too:
 no module may log a `FAILURE` or a `WARNING`.
 

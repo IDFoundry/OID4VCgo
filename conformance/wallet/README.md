@@ -390,7 +390,17 @@ own outcome is graded too (`gradeDriver` in
 | Modules | Driver must | Suite verdict |
 | --- | --- | --- |
 | the 4 `oid4vci-1_0-wallet-test-*` modules, `happy-path`, `happy-path-no-dpop-nonce`, `happy-path-no-mtls-endpoint-aliases`, `token-endpoint-response-without-expires_in`, `token-type-case-insensitivity`, `rs-dpop-auth-scheme-case-insensitivity` | complete the flow without an error | `FINISHED=PASSED` |
-| `discovery-issuer-mismatch`, `remove-authorization-response-iss`, `invalid-authorization-response-iss`, `ensure-authorization-response-with-invalid-state-fails`, `ensure-authorization-response-with-invalid-missing-state-fails` | abandon the flow with an error (`walletMustAbandon`) | `FINISHED=PASSED` |
+| `discovery-issuer-mismatch`, `remove-authorization-response-iss`, `invalid-authorization-response-iss`, `ensure-authorization-response-with-invalid-state-fails`, `ensure-authorization-response-with-invalid-missing-state-fails` | abandon the flow with the error `walletMustAbandon` names | `FINISHED=PASSED` |
+
+Each of those five must be abandoned for its own reason, since the
+suite grades it `PASSED` whatever stops the wallet: a metadata
+`issuer` that isn't the one fetched for (RFC 8414 §3.3, the wallet's
+own error), and otherwise the `fapigo/client` `*client.Error` with
+the expected code and description: `invalid_response`, "authorization
+response is missing iss" or "authorization response iss does not
+match expected issuer" (RFC 9207), and `invalid_request`, "callback
+state does not match this user agent's session" or "callback is
+missing state".
 
 A driver error on a module whose flow must complete used to be
 appended to a `PASSED` line and ignored; it now fails the module, as

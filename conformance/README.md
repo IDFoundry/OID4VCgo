@@ -65,11 +65,14 @@ configuration, audit sinks, and Wallet Attestation and key attestation
 status checks, taking only `jwt` proofs carrying a key attestation in
 their `key_attestation` header (`haip.RecommendedIssuerConfig`), with
 no `attestation` proof type, and trusting key attestations by their
-`x5c` chain (`issuer.X5CAttestationVerifier`). It drives the HAIP
-issuer plan's whole module list; see `issuer/README.md`'s "Production
-setup" for the verdicts and where they differ from the development
-runs. What production assurance adds, or a deployment uses instead,
-the OIDF runs still don't exercise, in particular:
+`x5c` chain (`issuer.X5CAttestationVerifier`). It drives every entry
+of the HAIP issuer plan's module list — its 61 modules, `happy-flow`
+and `fail-unknown-credential-configuration` under both plain and
+encrypted credential requests, 63 runs — for `sd_jwt_vc`,
+wallet-initiated, immediate issuance; see `issuer/README.md`'s
+"Production setup" for the verdicts and where they differ from the
+development runs. What production assurance adds, or a deployment
+uses instead, the OIDF runs still don't exercise, in particular:
 
 - The wallet roles under production assurance: `cmd/conformance-wallet`
   and `cmd/conformance-wallet-vp` run only at development. The
@@ -82,10 +85,34 @@ the OIDF runs still don't exercise, in particular:
   stores: PostgreSQL, several instances sharing them
   (`DeploymentHorizontallyScaled`), status lists for the credentials
   it issues, and certificate revocation checks on Wallet Attestation
-  and key attestation signers, which it declines
+  and key attestation signers and on the signers of the status lists
+  their `status` claims name, which it declines
   (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
   suite's attestations carry no `status` claim, so the status checks
   are configured but never fetch a list.
+- The issuer's production setup for anything but `sd_jwt_vc`,
+  wallet-initiated, immediate issuance: the "Issuer production" leg
+  drives no `mdoc`, deferred or `issuer_initiated` run, which the
+  development legs cover.
+- DPoP nonces at the issuer: `cmd/conformance-issuer` supports them
+  (`dpop_nonces`, at PAR, `/token` and the Credential Endpoint), but no
+  leg turns them on, development or production, so the suite never
+  retries with a `DPoP-Nonce` against it.
+- Refresh tokens: the issuer's registered clients aren't granted
+  `offline_access`, so `fapigo/server` issues none and the suite skips
+  `fapi2-security-profile-final-refresh-token`; `cmd/conformance-wallet`
+  never refreshes either.
+- Key attestations as a deployment trusts them, in the development
+  issuer legs: they offer the standalone `attestation` proof type and
+  trust key attestations by one fixed public key
+  (`key_attestation.trusted_jwk`), not by an `x5c` chain. Only the
+  production leg takes `jwt` proofs with an `x5c`-trusted key
+  attestation.
+- A wallet's own checks of what it's issued: `cmd/conformance-wallet`
+  doesn't verify the credentials the suite issues it (it checks only
+  how many arrive), and calls the suite's Nonce, Credential, Deferred
+  Credential and Notification Endpoints at fixed paths under the
+  module's URL, not at the ones its Credential Issuer Metadata names.
 - What `verifier.Transactions` does beyond those legs: narrowing the
   Request Object to a posted `wallet_metadata` (the suite's
   `request_uri_method=post` fetch carries only a `wallet_nonce`; the
