@@ -4,8 +4,11 @@
 // Presentations 1.0 Final/HAIP: Test a verifier") — the suite plays
 // Wallet, driving this binary's real Authorization Request
 // construction, request_uri hosting, and direct_post.jwt response
-// verification. See conformance/verifier/README.md for how to run it
-// against a live suite and what's been confirmed so far.
+// verification. Config.Engine picks whether its own session store
+// drives verifier.Verifier directly (the default) or
+// verifier.Transactions serves the whole flow (transactions.go). See
+// conformance/verifier/README.md for how to run it against a live
+// suite and what's been confirmed so far.
 package main
 
 import (
@@ -30,10 +33,10 @@ func main() {
 	configPath := flag.String("config", "", "path to the JSON config file")
 	conformanceusage.Set("conformance-verifier -config <file>",
 		"A test harness for the OIDF conformance suite's verifier plan, not a\n"+
-			"deployment model: it runs under development assurance, checks no\n"+
-			"certificate revocation, and keeps its transactions in memory. Never\n"+
-			"deploy it or copy its wiring; DEPLOYING.md is the checklist for a\n"+
-			"production Verifier.")
+			"deployment model: by default it runs under development assurance,\n"+
+			"checks no certificate revocation, and keeps its transactions in\n"+
+			"memory. Never deploy it or copy its wiring; DEPLOYING.md is the\n"+
+			"checklist for a production Verifier.")
 	flag.Parse()
 	if *configPath == "" {
 		log.Fatal("-config is required")
@@ -44,12 +47,11 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	srv, err := newServer(cfg)
+	mux, clientID, err := newHandler(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("verifier client_id: %s", srv.v.ClientID())
-	mux := srv.routes()
+	log.Printf("verifier client_id: %s (engine %q)", clientID, cfg.Engine)
 
 	tlsCert, err := cfg.tlsCertificate()
 	if err != nil {
@@ -65,38 +67,56 @@ func main() {
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
 }
 
-// newServer builds the Verifier and the server cfg describes.
+// newServer builds the Verifier and the server cfg describes: the
+// sessions engine's.
 func newServer(cfg Config) (*server, error) {
-	clientCert, clientKey, err := cfg.clientCertificateAndKey()
+	issuerKeys, mdocIssuerKeys, err := cfg.issuerKeyResolvers()
 	if err != nil {
-		return nil, fmt.Errorf("client certificate: %w", err)
-	}
-	issuerKeys, err := cfg.sdJWTVCIssuerKeys()
-	if err != nil {
-		return nil, fmt.Errorf("credential issuer: %w", err)
+		return nil, err
 	}
 	status, err := cfg.statusPolicy()
 	if err != nil {
 		return nil, fmt.Errorf("status: %w", err)
 	}
-	var mdocIssuerKeys verifier.MdocIssuerKeyResolver
-	if cfg.CredentialFormat == "mso_mdoc" {
-		mdocTrustAnchorPool, err := cfg.mdocTrustAnchorPool()
-		if err != nil {
-			return nil, fmt.Errorf("mdoc trust anchor: %w", err)
-		}
-		// No revocation check: the OIDF suite generates its own IACA
-		// and document signer for each run, and publishes no CRL for
-		// them that this binary could fetch.
-		mdocIssuerKeys = verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool, Revocation: certrevocation.NoCheck{}}
+	v, err := newVerifier(cfg, verifier.AssuranceDevelopment)
+	if err != nil {
+		return nil, err
+	}
+	return &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys, mdocIssuerKeys: mdocIssuerKeys, status: status}, nil
+}
+
+// issuerKeyResolvers is the "dc+sd-jwt" and "mso_mdoc" issuer trust
+// cfg configures.
+func (c Config) issuerKeyResolvers() (verifier.SDJWTVCIssuerKeyResolver, verifier.MdocIssuerKeyResolver, error) {
+	issuerKeys, err := c.sdJWTVCIssuerKeys()
+	if err != nil {
+		return nil, nil, fmt.Errorf("credential issuer: %w", err)
+	}
+	if c.CredentialFormat != "mso_mdoc" {
+		return issuerKeys, nil, nil
+	}
+	mdocTrustAnchorPool, err := c.mdocTrustAnchorPool()
+	if err != nil {
+		return nil, nil, fmt.Errorf("mdoc trust anchor: %w", err)
+	}
+	// No revocation check: the OIDF suite generates its own IACA and
+	// document signer for each run, and publishes no CRL for them that
+	// this binary could fetch.
+	return issuerKeys, verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool, Revocation: certrevocation.NoCheck{}}, nil
+}
+
+// newVerifier builds the verifier.Verifier cfg describes, at assurance.
+func newVerifier(cfg Config, assurance verifier.AssuranceLevel) (*verifier.Verifier, error) {
+	clientCert, clientKey, err := cfg.clientCertificateAndKey()
+	if err != nil {
+		return nil, fmt.Errorf("client certificate: %w", err)
 	}
 	responseURI, err := fapi.ParseEndpointURL(cfg.BaseURL + "/response")
 	if err != nil {
 		return nil, fmt.Errorf("response_uri: %w", err)
 	}
-
 	v, err := verifier.New(verifier.Config{
-		Assurance:          verifier.AssuranceDevelopment,
+		Assurance:          assurance,
 		ClientCertificate:  clientCert,
 		ResponseURI:        responseURI,
 		SigningAlg:         jose.ES256,
@@ -109,7 +129,7 @@ func newServer(cfg Config) (*server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verifier.New: %w", err)
 	}
-	return &server{cfg: cfg, v: v, sessions: newSessionStore(), issuerKeys: issuerKeys, mdocIssuerKeys: mdocIssuerKeys, status: status}, nil
+	return v, nil
 }
 
 // vpFormatsSupported builds this Verifier's own "client_metadata" >

@@ -25,6 +25,10 @@ const (
 	// grades PASSED itself, with no screenshot, and the result page
 	// reports the failure.
 	Refuse
+	// Skip: the suite skips the module, the Verifier's request lacking
+	// what it tests, so no presentation reaches the Verifier: SKIPPED,
+	// with the result page still pending.
+	Skip
 )
 
 func (e Expectation) String() string {
@@ -33,8 +37,33 @@ func (e Expectation) String() string {
 		return "accept: FINISHED=REVIEW, verified"
 	case Refuse:
 		return "refuse: FINISHED=PASSED, failed"
+	case Skip:
+		return "skip: FINISHED=SKIPPED, pending"
 	}
 	return "no expectation"
+}
+
+// transactionsExpectations are where the transactions engine
+// (cmd/conformance-verifier's Config.Engine "transactions") differs
+// from expectations: verifier.Transactions serves the Request Object
+// by GET alone (RequestObjectHandler; Begin's links carry no
+// request_uri_method), so the suite skips request-uri-method-post,
+// whose summary says it's skipped when the Verifier's authorization
+// request doesn't ask for request_uri_method=post.
+var transactionsExpectations = map[string]Expectation{
+	"oid4vp-1final-verifier-request-uri-method-post": Skip,
+}
+
+// expectationFor is what testName expects of the Verifier under
+// engine, and whether it has an expectation at all.
+func expectationFor(engine, testName string) (Expectation, bool) {
+	if engine == EngineTransactions {
+		if e, ok := transactionsExpectations[testName]; ok {
+			return e, true
+		}
+	}
+	e, ok := expectations[testName]
+	return e, ok
 }
 
 // expectations names every module of the plan this repo drives, under
@@ -92,6 +121,8 @@ func Grade(expected Expectation, status, result, verifierOutcome string, entries
 		wantResult, wantOutcome = "REVIEW", outcomeVerified
 	case Refuse:
 		wantResult, wantOutcome = "PASSED", outcomeFailed
+	case Skip:
+		wantResult, wantOutcome = "SKIPPED", outcomePending
 	default:
 		return errors.New("the module has no expectation")
 	}

@@ -54,6 +54,6 @@ func main() {
 
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
-	results := conformanceverifier.DriveModules(setup.HTTPClient, *flags.APIBase, *flags.VerifierBase, setup.PlanID, setup.Modules, moduleVariant)
+	results := conformanceverifier.DriveModules(setup, moduleVariant)
 	conformanceverifier.PrintSummaryAndExit(results, *flags.APIBase, setup.PlanID)
 }

@@ -167,6 +167,58 @@ type Config struct {
 	// request is for one of these origins, and lists them all as its
 	// expected_origins.
 	DCAPIOrigins []string `json:"dc_api_origins"`
+
+	// Engine selects what serves the presentation flow: "" (or
+	// "sessions") for this binary's own session store calling
+	// verifier.Verifier directly, the default every interop run uses;
+	// "transactions" for verifier.Transactions, a deployment's API,
+	// whose own handlers serve the Request Object and the response
+	// endpoint (see transactions.go). The transactions engine serves
+	// the redirect flow alone: no request_uri_method=post, no
+	// /result/{id}/redeem, no /dcapi/ routes.
+	Engine string `json:"engine"`
+
+	// Production, with the transactions engine, runs it under
+	// verifier.AssuranceProduction with a sealed, durable
+	// TransactionStore (sqlstore over SQLite): only a binary built with
+	// the conformance_production tag can (see production.go).
+	Production *ProductionConfig `json:"production,omitempty"`
+}
+
+// ProductionConfig is Config.Production.
+type ProductionConfig struct {
+	// DatabasePath is the SQLite file the transactions are kept in.
+	DatabasePath string `json:"database_path"`
+	// SealingKey is the base64 32-byte AES-256-GCM key
+	// (sealing.AESGCMSealer) each transaction's response decryption
+	// key and result are sealed with.
+	SealingKey string `json:"sealing_key"`
+}
+
+// Engines Config.Engine names.
+const (
+	engineSessions     = "sessions"
+	engineTransactions = "transactions"
+)
+
+// checkEngine checks Engine and Production.
+func (c Config) checkEngine() error {
+	switch c.Engine {
+	case "", engineSessions:
+		if c.Production != nil {
+			return fmt.Errorf("config: production needs engine %q", engineTransactions)
+		}
+	case engineTransactions:
+		if len(c.DCAPIOrigins) != 0 {
+			return fmt.Errorf("config: engine %q serves no Digital Credentials API: leave dc_api_origins unset", engineTransactions)
+		}
+		if p := c.Production; p != nil && (p.DatabasePath == "" || p.SealingKey == "") {
+			return fmt.Errorf("config: production.database_path and production.sealing_key are both required")
+		}
+	default:
+		return fmt.Errorf("config: unsupported engine %q", c.Engine)
+	}
+	return nil
 }
 
 func loadConfig(path string) (Config, error) {
@@ -188,6 +240,9 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	if err := cfg.checkStatus(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.checkEngine(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil

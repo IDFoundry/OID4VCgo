@@ -74,16 +74,17 @@ for dir in "${modules[@]}"; do
 done
 
 # CI's conformance-issuer-production job lints cmd/conformance-issuer's
-# production setup too: the conformance_production tag, in a workspace
-# holding the root module and sqlstore.
+# and cmd/conformance-verifier's production setups too: the
+# conformance_production tag, in a workspace holding the root module
+# and sqlstore.
 if [[ $# -eq 0 ]]; then
   gover=$(go_version .)
   export GOTOOLCHAIN="go$gover"
   bin="${XDG_CACHE_HOME:-$HOME/.cache}/oid4vcgo-lint/golangci-lint-$lint_version-go$gover"
   work=$(mktemp -d)
   printf 'go %s\n\nuse (\n\t%s\n\t%s/sqlstore\n)\n' "$gover" "$root" "$root" >"$work/go.work"
-  echo "== cmd/conformance-issuer (conformance_production): golangci-lint $lint_version, go$gover"
-  if ! GOWORK="$work/go.work" "$bin" run --build-tags conformance_production ./cmd/conformance-issuer/...; then fail=1; fi
+  echo "== cmd/conformance-issuer, cmd/conformance-verifier (conformance_production): golangci-lint $lint_version, go$gover"
+  if ! GOWORK="$work/go.work" "$bin" run --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/...; then fail=1; fi
   rm -rf "$work"
 fi
 
