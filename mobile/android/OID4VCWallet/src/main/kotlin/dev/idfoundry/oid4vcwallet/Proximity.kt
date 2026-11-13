@@ -287,7 +287,16 @@ public class ProximityPresentation internal constructor(
             within(timeouts.connect, "no reader connected") { transport.connect() }
             advance(State.WaitingForReader, State.Connected)
             val first = within(timeouts.request, "the reader sent no request") { transport.receive() }
-            if (handleMessage(first).event != "request") return
+            // An "ended" event has finished the session; any other ("none")
+            // carried no request, so nothing would ever end it.
+            val event = handleMessage(first).event
+            if (event != "request") {
+                if (event != "ended") {
+                    sendTermination()
+                    finish(State.Failed(WalletException.from(Exception("[protocol] the reader's first message carried no request"))))
+                }
+                return
+            }
             val request = decode<RequestJSON>(handle.request()).toRequest()
             if (!advance(State.Connected, State.RequestReceived(request))) return
             // The holder decides; meanwhile the reader can only end the

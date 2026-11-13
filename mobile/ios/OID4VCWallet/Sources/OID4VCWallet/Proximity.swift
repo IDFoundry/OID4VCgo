@@ -326,7 +326,16 @@ public final class ProximityPresentation: @unchecked Sendable {
             try await within(timeouts.connectSeconds, "no reader connected") { try await self.transport.connect() }
             broadcast.update(.connected) { if case .waitingForReader = $0 { true } else { false } }
             let first = try await within(timeouts.requestSeconds, "the reader sent no request") { try await self.transport.receive() }
-            guard try await handleMessage(first) == "request" else { return }
+            // An "ended" event has finished the session; any other ("none")
+            // carried no request, so nothing would ever end it.
+            let event = try await handleMessage(first)
+            guard event == "request" else {
+                if event != "ended" {
+                    await sendTermination()
+                    finish(.failed(WalletError(text: "[protocol] the reader's first message carried no request")))
+                }
+                return
+            }
             let request = try decode(RequestJSON.self, handle.request()).request
             guard broadcast.update(.requestReceived(request), if: { if case .connected = $0 { true } else { false } }) else { return }
             // The holder decides; meanwhile the reader can only end the
