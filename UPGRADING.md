@@ -7,7 +7,7 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
-## v0.77.1 → next
+## v0.77.1 → v0.78.0
 
 ### Verifier (`verifier`)
 
