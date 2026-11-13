@@ -19,9 +19,14 @@ to start a transaction, `GET /ui/presentations/{id}` for the result) and
 standing in for the same-device launch and the browser. The wallet
 fetches each Request Object as a wallet does, through
 `wallet.Wallet.FetchAuthorizationRequest` (or
-`FetchAuthorizationRequestPost`), and verifies the verifier's TLS
-certificate on every call it makes to it, against the certificate
-`scripts/setup` made for its listener (`verifier_tls_trust_anchors_pem`).
+`FetchAuthorizationRequestPost`), and checks the verifier's TLS
+certificate on every call it makes to it: the anchor
+(`verifier_tls_trust_anchors_pem`) is the verifier's own leaf, the
+certificate `scripts/setup` made for its listener, and a server that
+presents that very certificate is accepted whatever host name it was
+dialed as (`cmd/conformance-wallet-vp`'s `verifyVerifierTLS`); only a
+chain to an anchor is checked for the host name. So this pins the
+verifier's certificate rather than verifying its name.
 Its engine `walletflow` presents through `walletflow` instead
 (`StartPresentation`, `Presentation.Respond`), as a wallet app does,
 with walletflow's own request fetch and `wallet_metadata`:
@@ -198,13 +203,21 @@ request through `verifier.Transactions`, the API a deployment uses
 `request_uri_method=post`, the wallet's POST carries its
 `wallet_metadata`, to which the Request Object's `client_metadata` is
 narrowed, and the result is released only to the browser holding the
-request's cookie, at the `redirect_uri`. Each is configured as strictly
-as the binary allows: the issuer trusted by its x5c chain to the run's
-CA (or IACA), never a pinned key; every credential's Token Status List
-checked, a status reference required, the list signed by the
-credential's issuer and fetched over TLS it verifies; holder binding
-required; a disclosed claim the query didn't ask for refused. The run
-also checks that the status lists were fetched.
+request's cookie, at the `redirect_uri`. All three run at development
+assurance (`verifier.AssuranceDevelopment`): the binary's production
+mode, which takes the transactions engine and a build with the
+`conformance_production` tag, isn't used here, and each verifier's
+status list fetches may reach loopback (`status_list_allow_loopback`),
+where [`scripts/serve`](scripts/serve) serves the lists. Within that:
+the issuer trusted by its x5c chain to the run's CA (or IACA), never a
+pinned key; every credential's Token Status List checked, a status
+reference required, the list signed by the credential's issuer and
+fetched over TLS it verifies; holder binding required; a disclosed
+claim the query didn't ask for refused. No certificate's revocation is
+checked: both engines take `certrevocation.NoCheck` for the issuer's
+and the status list signer's certificates, as the run's throwaway CAs
+publish no CRL. The run also checks that the status lists were
+fetched.
 
 | Case | Expected |
 |---|---|
@@ -327,9 +340,10 @@ The verifier, not the library, sets the limits here:
 - ISO/IEC TS 18013-7 Annex C (`org-iso-mdoc`): the library is
   OpenID4VP only.
 - A `response_code` bound to the browser that started the request
-  outside the one `verifier.Transactions` case, and the issuer
-  certificates' revocation (CRLs): `cmd/conformance-verifier`'s default
-  engine has neither (see `conformance/verifier/README.md`).
+  outside the one `verifier.Transactions` case: `cmd/conformance-verifier`'s
+  default engine has none (see `conformance/verifier/README.md`).
+- The revocation (CRLs) of the issuer's and the status list signer's
+  certificates: both engines check none (`certrevocation.NoCheck`).
 
 Run it locally (Go, a JDK 21 or later, jq, curl and openssl):
 
@@ -346,11 +360,19 @@ the work directory's keys.
 ### Moving the pins
 
 The driver pins every dependency in
-[`presentation/build.gradle.kts`](presentation/build.gradle.kts), and
-its lockfiles pin the transitive ones. To move one, read the release's
-changes, set the version, then `./gradlew dependencies --write-locks`
-in `presentation/`. Nothing moves them automatically, and the weekly
-run doesn't test the libraries' newest releases.
+[`presentation/build.gradle.kts`](presentation/build.gradle.kts), its
+lockfiles pin the transitive ones, and `gradle/verification-metadata.xml`
+records each one's checksum. To move one, read the release's changes,
+set the version, then, in `presentation/`, with an empty Gradle cache
+so that Gradle fetches, and records, every artifact and POM a clean
+runner does:
+
+```sh
+GRADLE_USER_HOME="$(mktemp -d)" ./gradlew --write-verification-metadata sha256 --write-locks dependencies installDist
+```
+
+and review the new checksums. Nothing moves them automatically, and
+the weekly run doesn't test the libraries' newest releases.
 
 ## EUDI wallet library ↔ Issuer
 
@@ -409,12 +431,12 @@ The issuer runs in four configurations in turn, its profiles:
 | base | Credential Request and Response encryption (ECDH-ES, A128GCM/A256GCM, DEF), both formats | issued, verified, both bodies `application/jwt` |
 | base | signed Credential Issuer Metadata required, trusted by the issuer's CA | issued, verified |
 | base | signed metadata, the wallet trusting an unrelated CA | the wallet refuses the metadata |
-| base | a Wallet Attestation under an untrusted attester CA, at the Token Endpoint and at PAR | refused with 401 |
-| base | an attestation proof whose key attestation an untrusted key signed | refused, `invalid_proof` |
+| base | a Wallet Attestation under an untrusted attester CA, at the Token Endpoint and at PAR | refused: 401 `invalid_client`, "no matching attester key" |
+| base | an attestation proof whose key attestation an untrusted key signed | refused: `invalid_proof`, "attestation 0: verification failed" |
 | base | the End-User denies consent | `access_denied` |
 | base | an SD-JWT VC checked against an unrelated CA; an mdoc against an unrelated IACA | the wallet side refuses each |
 | key-attestation | jwt proof with a key attestation of two keys, SD-JWT VC, authorization code; of one, mdoc, pre-authorized code | one credential per attested key |
-| key-attestation | a jwt proof whose key attestation an untrusted key signed | refused, `invalid_proof` |
+| key-attestation | a jwt proof whose key attestation an untrusted key signed | refused: `invalid_proof`, "attestation 0: verification failed" |
 | deferred | SD-JWT VC, polled at once | deferred, then issued with a `notification_id` |
 | deferred | mdoc batch, polled after the interval the issuer asked for | deferred, then issued |
 | deferred | with Request and Response encryption | deferred, then issued, encrypted |
@@ -433,6 +455,20 @@ key attestation to a jwt proof only when the issuer requires one.
 `deferred` defers every request, and `dpop-nonces` has the
 Authorization Server and the Credential Issuer each require their own
 DPoP nonce.
+
+Each control is checked for its reason, from the issuer's error
+response as the driver recorded it, not only from the library's
+error, which for a 401 carries none (finding 3). FAPIgo describes a
+Wallet Attestation whose attester it has no key for as "no matching
+attester key", apart from the attestation's other checks, and the
+passing cases differ from those controls in the attester's key and
+certificate alone. The issuer trusts one
+key for key attestations, so one signed by another fails its own
+verification, whose description ("attestation 0: verification
+failed") also covers its time claims: the controls build their key
+attestations as the passing cases do, the signing key the one
+difference. A nonce, a missing `exp` or a proof key the attestation
+doesn't attest each has a description of its own.
 
 Of what the issuer is lenient about (SPECIFICATIONS.md, "Known
 leniencies"), the library sends a Client Attestation PoP, whose `iss`
@@ -495,7 +531,7 @@ unrelated CAs and keys of the controls.
    `AccessTokenRequestFailed("Token request failed with 401 Unauthorized", "N/A")`,
    for PAR as well, so the wallet can't tell an untrusted attestation
    from any other failure. The request is refused either way; the
-   controls read the 401 from the exchange itself.
+   controls read the 401's error object from the exchange itself.
 
 The run found nothing to fix in OID4VCgo's issuer beyond the `use` of
 finding 1.
@@ -557,15 +593,40 @@ and review the new checksums: Gradle records what Maven Central serves.
 [`run-pid-issuer.sh`](run-pid-issuer.sh) has OID4VCgo's wallet obtain
 PIDs from
 [eudi-srv-pid-issuer](https://github.com/eu-digital-identity-wallet/eudi-srv-pid-issuer)
-v0.11.2, run as the stack its own `docker-compose/` defines:
-[`pid-issuer/compose.yaml`](pid-issuer/compose.yaml) is that file, with
+v0.11.2, run as the stack its own `docker-compose/` defines, with
 Keycloak 26 and its attestation-based client authentication extension
 (`abca-keycloak-ext` 0.2.0), the status list service
-(`eudi-srv-statuslist-py` v0.9.0), Postgres and HAProxy. The wallet is
-[`scripts/pidwallet`](scripts/pidwallet): the `wallet` package and
-`fapigo/client`, used as walletflow uses them (engine `core`), or
-walletflow itself (engine `walletflow`). It stands in for the holder's
-browser too, signing the test user in on Keycloak's login page.
+(`eudi-srv-statuslist-py` v0.9.0), Postgres and HAProxy.
+[`pid-issuer/compose.yaml`](pid-issuer/compose.yaml) reproduces that
+file, not as it is: besides every image pinned by digest, every key,
+certificate and password made for the run, and HAProxy alone published,
+on loopback, it differs in
+
+- the `insecure` Spring profile, off, and TLS verified: Keycloak trusts
+  the run's TLS CA (`KC_TRUSTSTORE_PATHS`), and the issuer's JVM too,
+  through the image's `ca-certificates` binding (`SERVICE_BINDING_ROOT`);
+- a Credential Reuse Policy (`once_only`) for both PID formats, without
+  which the issuer allocates no status list entry, so its PIDs carry no
+  status (finding 6);
+- the issuer's registration certificate (`ISSUER_WRPRC`), the run's own
+  rather than the one the file embeds, and its display name, without
+  the logo;
+- `-XX:MaxDirectMemorySize=128M` for the issuer's JVM, where the file
+  sets 64M;
+- HAProxy's file descriptor limit (`ulimits`), which a GitHub runner's
+  containers need raised;
+- Keycloak's extension mounted as a provider jar, rather than built into
+  an image of its own.
+
+The wallet is [`scripts/pidwallet`](scripts/pidwallet): the `wallet`
+package and `fapigo/client`, used as walletflow uses them (engine
+`core`), or walletflow itself (engine `walletflow`). Not all of `core`
+is walletflow's code: its status check (`checkStatus` in
+[`scripts/pidwallet/verify.go`](scripts/pidwallet/verify.go)) is a
+copy of the signer trust walletflow's `CheckStatus` applies, kept by
+hand, which the `walletflow` engine runs itself. It stands in for the
+holder's browser too,
+signing the test user in on Keycloak's login page.
 
 Every issuance runs the authorization code flow: PAR with PKCE, a
 Wallet Attestation at the PAR and token endpoints (its PoP carrying a

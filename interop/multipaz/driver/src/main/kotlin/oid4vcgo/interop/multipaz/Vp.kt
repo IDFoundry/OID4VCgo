@@ -14,6 +14,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.multipaz.crypto.Algorithm
 import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.crypto.Crypto
+import org.multipaz.crypto.EcPrivateKey
+import org.multipaz.crypto.JsonWebSignature
 import org.multipaz.documenttype.knowntypes.DrivingLicense
 import org.multipaz.presentment.digitalCredentialsPresentment
 import org.multipaz.presentment.uriSchemePresentment
@@ -30,6 +32,7 @@ import java.net.InetSocketAddress
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import kotlin.time.Clock
 
@@ -37,6 +40,12 @@ private const val VP_ORIGIN = "https://verifier.interop.example"
 private const val PID_VCT = "urn:eudi:pid:1"
 private const val SD_JWT = "dc+sd-jwt"
 private const val MSO_MDOC = "mso_mdoc"
+
+/** Why Multipaz's Verifier refuses a Key Binding JWT with another nonce. */
+private const val KB_NONCE_REFUSED = "IllegalStateException: Failed verification of nonce"
+
+/** Why Multipaz's Verifier refuses an mdoc DeviceSignature over another session transcript. */
+private const val DEVICE_SIGNATURE_REFUSED = "IllegalStateException: Device authentication signature failed to verify"
 
 /** The claims every OpenID4VP Verifier asks for, of the PID or the mDL. */
 private val VP_CLAIMS = listOf("family_name", "given_name")
@@ -100,6 +109,39 @@ class VpCases(
             }
             check("control: the wallet refuses an x509_hash client_id naming another certificate than the request's") {
                 refusal(verifier.ask(peer, SD_JWT, "mpz", clientIdOf = pki.otherReader).first, "x509_hash")
+            }
+            // Negative presentations: walletflow answers the session's
+            // request changed in one claim and signed again, and
+            // Multipaz's Verifier checks the response against its
+            // session, as it would a presentation made for another
+            // request. The cases above, which pass, differ in that
+            // claim alone.
+            check("control: Multipaz's Verifier refuses an SD-JWT VC whose Key Binding JWT names another nonce") {
+                val (a, result) = verifier.ask(peer, SD_JWT, "mpz", served = Served(pki.reader, ::otherNonce))
+                a.error?.let { return@check "the wallet: $it" }
+                refusal(verifierError(result), "verified", KB_NONCE_REFUSED)
+            }
+            check("control: Multipaz's Verifier refuses an mdoc whose DeviceSignature is over another session transcript (another nonce)") {
+                val (a, result) = verifier.ask(peer, MSO_MDOC, "mpz", served = Served(pki.reader, ::otherNonce))
+                a.error?.let { return@check "the wallet: $it" }
+                refusal(verifierError(result), "verified", DEVICE_SIGNATURE_REFUSED)
+            }
+            // README finding 2: the Key Binding JWT's aud isn't checked.
+            // The request names another Verifier the wallet trusts, under
+            // the same root, which signs it, so the KB-JWT's aud is that
+            // Verifier's client_id; noted while Multipaz accepts it, and
+            // failed once it doesn't, so the finding is revisited.
+            known("Multipaz's Verifier accepts an SD-JWT VC whose Key Binding JWT names another Verifier as aud (README finding 2)") {
+                val siblingId = x509Hash(pki.sibling)
+                val served = Served(pki.sibling) { claims -> JsonObject(claims + ("client_id" to JsonPrimitive(siblingId))) }
+                val (a, result) = verifier.ask(peer, SD_JWT, "mpz", served = served)
+                a.error?.let { return@known "the wallet: $it" }
+                verifierError(result)?.let {
+                    return@known "Multipaz's Verifier now refuses it ($it): README finding 2 has changed; make this a control"
+                }
+                checkPresentation(result.get(), SD_JWT)?.let { return@known it }
+                reason = "verified, the KB-JWT's aud $siblingId, the session's client_id ${x509Hash(pki.reader)}"
+                null
             }
         }
         for (format in listOf(SD_JWT, MSO_MDOC)) {
@@ -226,10 +268,28 @@ private fun dcql(format: String): String {
  * the hash of [clientIdOf]'s certificate: the reader's own, unless a
  * control names another.
  */
-private suspend fun identity(pki: Pki, clientIdOf: AsymmetricKey.X509Certified = pki.reader): VerifierIdentity {
-    val leaf = clientIdOf.certChain.certificates.first()
-    return VerifierIdentity(pki.reader, "x509_hash:" + Crypto.digest(Algorithm.SHA256, leaf.encoded.toByteArray()).toBase64Url())
-}
+private suspend fun identity(pki: Pki, clientIdOf: AsymmetricKey.X509Certified = pki.reader): VerifierIdentity =
+    VerifierIdentity(pki.reader, x509Hash(clientIdOf))
+
+/** The x509_hash client_id of [key]'s certificate. */
+private suspend fun x509Hash(key: AsymmetricKey.X509Certified): String =
+    "x509_hash:" + Crypto.digest(Algorithm.SHA256, key.certChain.certificates.first().encoded.toByteArray()).toBase64Url()
+
+/** Why Multipaz's Verifier refused the response, as "Exception: message", or null if it verified it. */
+private fun verifierError(result: CompletableFuture<List<VerifiedPresentation>>): String? =
+    try {
+        result.get(30, TimeUnit.SECONDS)
+        null
+    } catch (e: ExecutionException) {
+        val cause = e.cause ?: e
+        "${cause::class.simpleName}: ${cause.message}"
+    }
+
+/** A request's claims with another nonce. */
+private fun otherNonce(claims: JsonObject) = JsonObject(claims + ("nonce" to JsonPrimitive("not-" + claims["nonce"]!!.jsonPrimitive.content)))
+
+/** How the request a control serves differs from its session's: its claims changed by [change], signed by [signer]. */
+private class Served(val signer: AsymmetricKey.X509CertifiedExplicit, val change: (JsonObject) -> JsonObject)
 
 /**
  * Multipaz's cross-device Verifier: a VerificationSession, served over
@@ -242,6 +302,7 @@ private class Verifier(tls: Tls, private val pki: Pki) : AutoCloseable {
     }
     private val base = "https://localhost:${server.address.port}"
     private var session: VerificationSession? = null
+    private var requestJwt = ""
     private var result = CompletableFuture<List<VerifiedPresentation>>()
 
     init {
@@ -253,14 +314,16 @@ private class Verifier(tls: Tls, private val pki: Pki) : AutoCloseable {
     /**
      * Has walletflow (the peer, trusting Verifiers under [verifierCA])
      * answer a new request for [format], its client_id naming
-     * [clientIdOf]'s certificate; the result is Multipaz's verification
-     * of the response, once it arrives.
+     * [clientIdOf]'s certificate, or, if [served], the session's request
+     * changed and signed as it says; the result is Multipaz's
+     * verification of the response, once it arrives.
      */
     suspend fun ask(
         peer: Peer,
         format: String,
         verifierCA: String,
         clientIdOf: AsymmetricKey.X509Certified = pki.reader,
+        served: Served? = null,
     ): Pair<Reply, CompletableFuture<List<VerifiedPresentation>>> {
         val identity = identity(pki, clientIdOf)
         result = CompletableFuture()
@@ -271,14 +334,21 @@ private class Verifier(tls: Tls, private val pki: Pki) : AutoCloseable {
             origin = base,
             responseUri = "$base/response",
         )
-        val link = "openid4vp://?client_id=" + URLEncoder.encode(identity.clientId, Charsets.UTF_8) +
+        val original = Json.parseToJsonElement(
+            session!!.find<VerificationSession.OpenID4VPUriSchemeRequest>().openID4VPRequest,
+        ).jsonObject["request"]!!.jsonPrimitive.content
+        requestJwt = served?.let {
+            val info = JsonWebSignature.getInfo(original)
+            JsonWebSignature.sign(it.signer.privateKey as EcPrivateKey, Algorithm.ESP256, it.change(info.claimsSet), info.type, it.signer.certChain)
+        } ?: original
+        val clientId = JsonWebSignature.getInfo(requestJwt).claimsSet["client_id"]!!.jsonPrimitive.content
+        val link = "openid4vp://?client_id=" + URLEncoder.encode(clientId, Charsets.UTF_8) +
             "&request_uri=" + URLEncoder.encode("$base/request", Charsets.UTF_8)
         return peer.call("wallet_present", "request" to link, "verifier_ca" to verifierCA) to result
     }
 
     private fun serveRequest(exchange: HttpExchange) {
-        val request = session!!.find<VerificationSession.OpenID4VPUriSchemeRequest>().openID4VPRequest
-        val jwt = Json.parseToJsonElement(request).jsonObject["request"]!!.jsonPrimitive.content
+        val jwt = requestJwt
         exchange.responseHeaders.add("Content-Type", "application/oauth-authz-req+jwt")
         val body = jwt.toByteArray()
         exchange.sendResponseHeaders(200, body.size.toLong())

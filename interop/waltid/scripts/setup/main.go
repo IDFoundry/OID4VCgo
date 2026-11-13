@@ -22,6 +22,7 @@
 //	issuer2-profiles.conf         appended to Issuer2's issuer2-profiles.conf: its signing key and chains
 //	issuer2-service.conf          appended to issuer-service.conf: its base URL, anonymous pre-authorized code
 //	verifier2-service.conf        appended to Verifier2's verifier-service.conf: x509_hash client, key, base URL
+//	verifier2-key.pem             that key, for the wallet's negative presentations to sign Verifier2's request again
 //	wallet2-service.conf          appended to Wallet2's wallet-service.conf: the CA, the attester
 //	wallet2-features.conf         appended to Wallet2's _features.conf: no login, no database
 //	verifier-sdjwt.json           cmd/conformance-verifier: an SD-JWT VC PID
@@ -217,6 +218,13 @@ func verifier2File(put func(name, content string), ca authority, p ports) error 
 	if err != nil {
 		return err
 	}
+	// The wallet's negative presentations (scripts/wallet's -tamper)
+	// sign Verifier2's request again with it.
+	keyPEM, err := conformancecert.ECKeyPEM(key)
+	if err != nil {
+		return err
+	}
+	put("verifier2-key.pem", keyPEM)
 	put("verifier2-service.conf", hocon(
 		"clientId", "x509_hash:"+base64.RawURLEncoding.EncodeToString(hash[:]),
 		"urlPrefix", httpsURL("localhost", p.verifier2)+"/verification-session",

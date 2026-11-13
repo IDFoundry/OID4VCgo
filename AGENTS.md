@@ -171,7 +171,14 @@ and this file isn't the place they're kept in sync.
 Besides the OIDF suite, `polaris-interop.yml`, `eudi-interop.yml`,
 `waltid-interop.yml` and `multipaz-interop.yml` run OID4VCgo against
 independent implementations on each pull request, daily and on each
-release, with negative controls asserted by their reasons.
+release, with negative controls asserted by their reasons: the
+refusing side's own error, or, where it gives none that tells, by
+elimination, documented beside the control (the refused case differs
+from a passing one in one thing alone), as for Keycloak's refusal of a
+revoked Wallet Attestation in the EUDI PID Issuer run and Wallet2's
+of an untrusted attester's in the walt.id run. Where the other side
+accepts what it should refuse, a known upstream gap, the run notes it
+instead of failing, and fails once that changes.
 `conformance/README.md`'s "Interop with …" sections and
 `interop/<implementation>/README.md` hold their cases, the other
 side's deviations (found by these runs, and reported upstream only

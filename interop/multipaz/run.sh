@@ -51,7 +51,7 @@ status=0
   -setup-issuer "$WORK/setup-issuer" -issuer "$WORK/issuer" -dir "$WORK" \
   > "$WORK/driver.log" 2>&1 || status=$?
 # The driver's own lines; Multipaz's debug logging stays in driver.log.
-grep -E '^(###|  ok|  FAIL|RESULT)' "$WORK/driver.log" || true
+grep -E '^(###|  ok|  FAIL|  known|RESULT)' "$WORK/driver.log" || true
 if [[ $status -ne 0 ]]; then
   grep -E '^RESULT' "$WORK/driver.log" >/dev/null || { echo "the driver failed; see $WORK/driver.log" >&2; tail -20 "$WORK/driver.log" >&2; }
 fi

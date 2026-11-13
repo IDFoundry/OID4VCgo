@@ -5,6 +5,7 @@ import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.statement.bodyAsText
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -41,6 +42,9 @@ data class Exchange(
     val wwwAuthenticate: String?,
     // A form request's parameters: the values of those in [FORM_VALUES], "" for the rest.
     val form: Map<String, String>,
+    // An error response's error and error_description (RFC 6749 §5.2): null for a success, or a body without them.
+    val error: String? = null,
+    val errorDescription: String? = null,
 )
 
 // Parameters whose values a case checks; the rest (codes, verifiers, tokens) aren't recorded.
@@ -69,6 +73,13 @@ fun jwtStringClaim(
     }.getOrNull().orEmpty()
 }
 
+/** An OAuth error response's error and error_description, or null if [body] isn't a JSON object. */
+private fun errorObject(body: String): Pair<String?, String?>? =
+    runCatching {
+        val o = Json.parseToJsonElement(body).jsonObject
+        o["error"]?.jsonPrimitive?.contentOrNull to o["error_description"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
 /** An SSL context trusting only [anchors]: the wallet verifies the issuer's TLS certificate. */
 fun sslContext(anchors: List<X509Certificate>): SSLContext {
     val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
@@ -86,6 +97,8 @@ fun walletHttpClient(
         createClientPlugin("Recorder") {
             onResponse { response ->
                 val request = response.call.request
+                // ktor saves a response's body, so reading it here leaves it for the library.
+                val errorObject = if (response.status.value >= 400) errorObject(response.bodyAsText()) else null
                 recorder.exchanges +=
                     Exchange(
                         method = request.method.value,
@@ -103,6 +116,8 @@ fun walletHttpClient(
                             (request.content as? FormDataContent)?.formData?.let { p ->
                                 p.names().associateWith { if (it in FORM_VALUES) p[it].orEmpty() else "" }
                             } ?: emptyMap(),
+                        error = errorObject?.first,
+                        errorDescription = errorObject?.second,
                     )
             }
         }

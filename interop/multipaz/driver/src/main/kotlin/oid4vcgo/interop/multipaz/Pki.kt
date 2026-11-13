@@ -17,14 +17,16 @@ import kotlin.time.Duration.Companion.hours
  * Multipaz's own certificates, from its own generators: an IACA and a
  * document signer for its holder's mDL, and two reader roots, each
  * with a reader certificate: the one OID4VCgo's holder trusts, and one
- * it doesn't.
+ * it doesn't. The trusted root has a second reader certificate,
+ * [sibling], another Verifier the holder trusts.
  */
 class Pki private constructor(
     val iaca: X509Cert,
     val ds: AsymmetricKey.X509Certified,
     val readerRoot: X509Cert,
-    val reader: AsymmetricKey.X509Certified,
+    val reader: AsymmetricKey.X509CertifiedExplicit,
     val otherReader: AsymmetricKey.X509Certified,
+    val sibling: AsymmetricKey.X509CertifiedExplicit,
 ) {
     companion object {
         suspend fun create(): Pki {
@@ -52,7 +54,9 @@ class Pki private constructor(
                 validUntil = until,
             )
 
-            suspend fun reader(name: String): Pair<X509Cert, AsymmetricKey.X509Certified> {
+            // A root and a reader certificate under it for each name, the first named for the root.
+            suspend fun reader(vararg names: String): Pair<X509Cert, List<AsymmetricKey.X509CertifiedExplicit>> {
+                val name = names.first()
                 val rootKey = Crypto.createEcPrivateKey(EcCurve.P256)
                 val root = MdocUtil.generateReaderRootCertificate(
                     readerRootKey = AsymmetricKey.anonymous(rootKey),
@@ -62,26 +66,29 @@ class Pki private constructor(
                     validUntil = until,
                     crlUrl = "https://github.com/IDFoundry/OID4VCgo/crl",
                 )
-                val key = Crypto.createEcPrivateKey(EcCurve.P256)
-                val cert = MdocUtil.generateReaderCertificate(
-                    readerRootKey = AsymmetricKey.X509CertifiedExplicit(X509CertChain(listOf(root)), rootKey),
-                    readerKey = key.publicKey,
-                    subject = X500Name.fromName("C=US,CN=$name"),
-                    dnsName = null,
-                    serial = ASN1Integer.fromRandom(numBits = 128),
-                    validFrom = from,
-                    validUntil = until,
-                )
-                return root to AsymmetricKey.X509CertifiedExplicit(X509CertChain(listOf(cert, root)), key)
+                return root to names.map { readerName ->
+                    val key = Crypto.createEcPrivateKey(EcCurve.P256)
+                    val cert = MdocUtil.generateReaderCertificate(
+                        readerRootKey = AsymmetricKey.X509CertifiedExplicit(X509CertChain(listOf(root)), rootKey),
+                        readerKey = key.publicKey,
+                        subject = X500Name.fromName("C=US,CN=$readerName"),
+                        dnsName = null,
+                        serial = ASN1Integer.fromRandom(numBits = 128),
+                        validFrom = from,
+                        validUntil = until,
+                    )
+                    AsymmetricKey.X509CertifiedExplicit(X509CertChain(listOf(cert, root)), key)
+                }
             }
-            val (readerRoot, reader) = reader("Multipaz interop reader")
-            val (_, otherReader) = reader("Multipaz interop untrusted reader")
+            val (readerRoot, readers) = reader("Multipaz interop reader", "Multipaz interop second reader")
+            val (_, others) = reader("Multipaz interop untrusted reader")
             return Pki(
                 iaca = iaca,
                 ds = AsymmetricKey.X509CertifiedExplicit(X509CertChain(listOf(ds)), dsKey),
                 readerRoot = readerRoot,
-                reader = reader,
-                otherReader = otherReader,
+                reader = readers[0],
+                otherReader = others[0],
+                sibling = readers[1],
             )
         }
     }

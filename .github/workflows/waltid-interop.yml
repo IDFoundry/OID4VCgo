@@ -76,6 +76,7 @@ jobs:
             ${{ runner.temp }}/waltid-work/result-*.json
             ${{ runner.temp }}/waltid-work/receive-*.json
             ${{ runner.temp }}/waltid-work/present-*.json
+            ${{ runner.temp }}/waltid-work/tamper-*.json
             ${{ runner.temp }}/waltid-work/wallet2-*.json
           retention-days: 14
 
