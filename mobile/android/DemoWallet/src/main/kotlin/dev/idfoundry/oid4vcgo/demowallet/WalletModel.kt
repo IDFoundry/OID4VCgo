@@ -945,6 +945,8 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         private set
     private var inPersonJob: Job? = null
     private var armingJob: Job? = null
+    /** Closing the session closeInPerson ended, until it lets go of the radios. */
+    private var closingJob: Job? = null
     /** How presenting in person engages the reader, as chosen in the app's settings: QR by default. */
     var inPersonEngagement by mutableStateOf(
         prefs.getString(ENGAGEMENT, null).let { saved -> InPersonEngagement.entries.firstOrNull { it.name == saved } } ?: InPersonEngagement.QR,
@@ -985,6 +987,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         if (busy || inPerson != null || armingJob?.isActive == true) return
         notice = null
         armingJob = viewModelScope.launch {
+        // The last session may still hold Bluetooth: after a share it
+        // waits for the reader to disconnect.
+        closingJob?.join()
         try {
             val p = startInPerson(wallet)
             inPerson = p
@@ -1104,7 +1109,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         releaseNfcForeground()
         val session = inPerson
         session?.cancel()
-        if (session != null) viewModelScope.launch { session.close() }
+        if (session != null) closingJob = viewModelScope.launch { session.close() }
         inPersonJob?.cancel()
         inPerson = null
         inPersonState = null

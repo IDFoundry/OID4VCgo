@@ -152,6 +152,19 @@ say. `ProximityTimeouts` sets how long it waits: by default 60 seconds
 for a reader to connect, 30 for its request, and 300 for the holder to
 decide.
 
+The state turns final before the session lets go of Bluetooth: after
+`Presented`, it waits up to 5 seconds for the reader to disconnect.
+Before starting the next session, wait on `awaitClosed()`:
+
+```kotlin
+// Ends presentation and starts the next session once it has let go of Bluetooth.
+suspend fun restart(presentation: ProximityPresentation, wallet: Wallet, context: Context): ProximityPresentation {
+    presentation.cancel()
+    presentation.awaitClosed()
+    return wallet.startProximityPresentation(context)
+}
+```
+
 ## Read as the verifier
 
 A `ProximityReader` needs no `Wallet`: give it the IACAs whose mdocs it

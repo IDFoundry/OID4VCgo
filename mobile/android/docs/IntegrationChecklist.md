@@ -174,6 +174,8 @@ is a complete, working app on this library to compare against.
   elements, then call `respond(document, credentialID, elements)` or
   `decline()`. On a final state, show the outcome.
 - [ ] `cancel()` when the holder leaves the screen.
+- [ ] Before starting the next session, wait on the last one's
+  `awaitClosed()`, so two never hold Bluetooth at once.
 - [ ] *Check:* on two phones, a reader scanning the code gets the
   elements the holder chose, and nothing else.
 
