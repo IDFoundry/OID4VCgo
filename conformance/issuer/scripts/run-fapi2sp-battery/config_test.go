@@ -116,41 +116,75 @@ func TestBuildServerConfig_ServesMdocCRL(t *testing.T) {
 	}
 }
 
-// TestBuildServerConfig_Production checks -production's server config:
-// the production setup's own keys, and key attestations trusted by the
-// CA that issued the leaf the suite signs them with, not by a key.
+// TestBuildServerConfig_Production checks -production's server config
+// carries the production setup's own keys, and that development's
+// carries none.
 func TestBuildServerConfig_Production(t *testing.T) {
+	for _, production := range []bool{false, true} {
+		cfg := serverConfigFor(t, production)
+		p := cfg.Production
+		if !production {
+			if p != nil {
+				t.Errorf("development config holds production = %+v", p)
+			}
+			continue
+		}
+		if p == nil || p.DatabasePath == "" || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
+			t.Fatalf("production = %+v, want every field set", p)
+		}
+	}
+}
+
+// TestBuildServerConfig_NoncesAndKeyAttestationTrust checks every
+// setup, development and production alike, requires DPoP nonces and
+// trusts key attestations by the CA that issued the leaf the suite
+// signs them with, not by a key.
+func TestBuildServerConfig_NoncesAndKeyAttestationTrust(t *testing.T) {
+	for _, production := range []bool{false, true} {
+		cfg := serverConfigFor(t, production)
+		if !cfg.DPoPNonces {
+			t.Errorf("production=%v: dpop_nonces is off", production)
+		}
+		if _, ok := cfg.KeyAttestation["trusted_jwk"]; ok {
+			t.Errorf("production=%v: key_attestation still trusts a key", production)
+		}
+		var anchorPEM string
+		if err := json.Unmarshal(cfg.KeyAttestation["trust_anchor_pem"], &anchorPEM); err != nil {
+			t.Fatalf("production=%v: key_attestation.trust_anchor_pem: %v", production, err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM([]byte(anchorPEM)) {
+			t.Fatalf("production=%v: key_attestation.trust_anchor_pem holds no certificate", production)
+		}
+		if _, err := parsePEMCert(t, cfg.run.keyAttestationLeafPEM).Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+			t.Errorf("production=%v: the key attestation leaf doesn't verify against the trust anchor: %v", production, err)
+		}
+	}
+}
+
+// decodedServerConfig is the part of buildServerConfig's output the
+// tests above read, with the run it was built from.
+type decodedServerConfig struct {
+	KeyAttestation map[string]json.RawMessage `json:"key_attestation"`
+	DPoPNonces     bool                       `json:"dpop_nonces"`
+	Production     *serverProductionConfig    `json:"production"`
+	run            *run
+}
+
+func serverConfigFor(t *testing.T, production bool) decodedServerConfig {
+	t.Helper()
 	r, err := generateRun("test", "https://conformance-issuer:8443")
 	if err != nil {
 		t.Fatalf("generateRun: %v", err)
 	}
-	r.production = true
+	r.production = production
 	raw, err := buildServerConfig(r)
 	if err != nil {
 		t.Fatalf("buildServerConfig: %v", err)
 	}
-	var cfg struct {
-		KeyAttestation map[string]json.RawMessage `json:"key_attestation"`
-		Production     *serverProductionConfig    `json:"production"`
-	}
+	cfg := decodedServerConfig{run: r}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if p := cfg.Production; p == nil || p.DatabasePath == "" || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
-		t.Fatalf("production = %+v, want every field set", cfg.Production)
-	}
-	if _, ok := cfg.KeyAttestation["trusted_jwk"]; ok {
-		t.Error("key_attestation still trusts a key")
-	}
-	var anchorPEM string
-	if err := json.Unmarshal(cfg.KeyAttestation["trust_anchor_pem"], &anchorPEM); err != nil {
-		t.Fatalf("key_attestation.trust_anchor_pem: %v", err)
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM([]byte(anchorPEM)) {
-		t.Fatal("key_attestation.trust_anchor_pem holds no certificate")
-	}
-	if _, err := parsePEMCert(t, r.keyAttestationLeafPEM).Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
-		t.Errorf("the key attestation leaf doesn't verify against the trust anchor: %v", err)
-	}
+	return cfg
 }

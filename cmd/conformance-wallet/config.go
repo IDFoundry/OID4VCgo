@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -47,6 +46,16 @@ type walletRun struct {
 	keyAttestationKey     *ecdsa.PrivateKey
 	keyAttestationKeyPEM  string // persisted by -save-run, see attesterKeyPEM's own doc comment
 	keyAttestationLeafPEM string
+
+	// credentialIssuerCAPEM issued the certificate the suite signs the
+	// SD-JWT VCs it issues with (credential.signing_jwk's x5c), and
+	// statusListCAPEM the one it signs its Token Status Lists with
+	// (server.jwks's x5c): the wallet verifies each credential it
+	// receives, and its status, under them (verify.go). The suite signs
+	// mdocs, and their CWT status lists, under its own IACA root
+	// instead, which verify.go fetches from it.
+	credentialIssuerCAPEM string
+	statusListCAPEM       string
 
 	// proofType selects which of the three Credential Request proof
 	// strategies (proof.go) this run uses for every module it drives —
@@ -101,7 +110,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// rejects one that is) — a throwaway CA-issued leaf, mirroring the
 	// attester's own leaf/CA shape, satisfies this the same way
 	// cmd/conformance-wallet-vp's own credential-issuer cert does.
-	credentialSigningKey, _, credentialSigningLeafPEM, _, err := conformancecert.GenerateSignerAndCert(
+	credentialSigningKey, _, credentialSigningLeafPEM, credentialIssuerCAPEM, err := conformancecert.GenerateSignerAndCert(
 		"oid4vcgo-wallet-credential-issuer-leaf", "oid4vcgo-wallet-credential-issuer-ca")
 	if err != nil {
 		return nil, fmt.Errorf("generate credential signing key/cert: %w", err)
@@ -114,15 +123,20 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// server.jwks is the suite's own emulated Authorization Server
 	// signing key set — required in the submitted config (confirmed
 	// live: LoadServerJWKs fails "Couldn't find a JWK set in
-	// configuration" without it), regardless of ClientAuthType.
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// configuration" without it), regardless of ClientAuthType. The
+	// suite also signs its HAIP Token Status List (the status_list its
+	// SD-JWT VCs reference) with it, refusing to without an x5c
+	// (VCIGenerateJwtStatusListToken), so it gets a CA-issued leaf too.
+	serverKey, _, serverLeafPEM, statusListCAPEM, err := conformancecert.GenerateSignerAndCert(
+		"oid4vcgo-wallet-status-list-leaf", "oid4vcgo-wallet-status-list-ca")
 	if err != nil {
-		return nil, fmt.Errorf("generate server signing key: %w", err)
+		return nil, fmt.Errorf("generate server signing key/cert: %w", err)
 	}
-	serverJWK, err := privateJWK(serverKey, "oid4vcgo-wallet-server-key")
+	serverJWK, err := privateJWKWithX5C(serverKey, serverLeafPEM)
 	if err != nil {
 		return nil, fmt.Errorf("build server jwk: %w", err)
 	}
+	serverJWK["kid"] = "oid4vcgo-wallet-server-key"
 
 	planConfig, err := json.Marshal(map[string]any{
 		"alias": alias,
@@ -174,6 +188,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 		scope: cfg.scope, credentialConfigurationID: cfg.credentialConfigurationID,
 		attesterKey: attesterKey, attesterKeyPEM: attesterKeyPEM, attesterCAPEM: attesterCAPEM, attesterLeafPEM: attesterLeafPEM,
 		keyAttestationKey: keyAttestationKey, keyAttestationKeyPEM: keyAttestationKeyPEM, keyAttestationLeafPEM: keyAttestationLeafPEM,
+		credentialIssuerCAPEM: credentialIssuerCAPEM, statusListCAPEM: statusListCAPEM,
 		proofType:  cfg.proofType,
 		planConfig: planConfig,
 	}, nil
@@ -220,23 +235,6 @@ func privateJWKWithX5C(key *ecdsa.PrivateKey, leafCertPEM string) (map[string]an
 		"kty": pub.Kty, "crv": pub.Crv, "x": pub.X, "y": pub.Y, "alg": "ES256",
 		"d":   base64.RawURLEncoding.EncodeToString(d),
 		"x5c": []string{base64.StdEncoding.EncodeToString(cert.Raw)},
-	}, nil
-}
-
-// privateJWK builds a plain private EC P-256 JWK (kty/crv/x/y/d/kid,
-// no x5c) — the shape server.jwks needs.
-func privateJWK(key *ecdsa.PrivateKey, kid string) (map[string]any, error) {
-	pub, err := jwk.Marshal(&key.PublicKey)
-	if err != nil {
-		return nil, err
-	}
-	d, err := key.Bytes()
-	if err != nil {
-		return nil, fmt.Errorf("encode private scalar: %w", err)
-	}
-	return map[string]any{
-		"kty": pub.Kty, "crv": pub.Crv, "x": pub.X, "y": pub.Y, "alg": "ES256",
-		"d": base64.RawURLEncoding.EncodeToString(d), "kid": kid,
 	}, nil
 }
 

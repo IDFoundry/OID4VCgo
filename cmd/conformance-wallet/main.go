@@ -29,7 +29,7 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -215,13 +215,13 @@ func main() {
 	flag.StringVar(&driveCfg.runStatePath, "run-state", "", "path to the file -save-run wrote, for -drive-only to reconstruct this run's own private key material")
 	flag.StringVar(&driveCfg.offerURL, "offer-url", "", "the issuer_initiated Credential Offer redirect URL (haip-vci://... or https://...) shown/logged by the module you created by hand, for -drive-only")
 	flag.StringVar(&driveCfg.moduleURL, "module-url", "", "the wallet_initiated module instance's own base URL (e.g. https://www.certification.openid.net/test/a/<alias>), as shown on its own page in the suite's web UI, for -drive-only — mutually exclusive with -offer-url, since wallet_initiated conveys no Credential Offer at all")
-	flag.StringVar(&driveCfg.testName, "drive-test-name", testNameCredentialIssuance, "the suite testName of the module instance -drive-only is driving — only affects whether the Attestation Challenge Endpoint is wired up (see batteryModulePrefix)")
+	flag.StringVar(&driveCfg.testName, "drive-test-name", testNameCredentialIssuance, "the suite testName of the module instance -drive-only is driving, for its log")
 	flag.IntVar(&driveCfg.numCreds, "drive-num-creds", 1, "number of credentials to request in -drive-only mode — 2 for oid4vci-1_0-wallet-test-batch-credential-issuance, 1 for everything else")
 	flag.BoolVar(&driveCfg.encrypted, "drive-encrypted", false, "whether -drive-only should request/expect §10 Credential Request/Response encryption — set this for an immediate+encrypted module instance")
 	conformanceusage.Set("conformance-wallet [flags]",
 		"A test harness that drives the wallet package through the OIDF\n"+
 			"conformance suite's wallet (OID4VCI) plans, not a wallet to model\n"+
-			"one on: it skips TLS verification of the throwaway suite instance\n"+
+			"one on: it trusts the suite's TLS certificate as it first finds it\n"+
 			"and runs under development assurance. Build a wallet on the wallet\n"+
 			"package, or on the mobile libraries.")
 	flag.Parse()
@@ -262,19 +262,34 @@ func main() {
 	}
 }
 
-func insecureSuiteHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // talks only to a locally-run, throwaway OIDF conformance suite instance
-		},
+// suiteHTTPClient is the client every call to the suite at suiteURL
+// goes through, its admin API's and the wallet's alike: it accepts the
+// suite only when it presents the TLS certificate it presented first,
+// pinned as one would by hand (the locally run suite's certificate is
+// self-signed and names no host it is reached by, so nothing could
+// verify it otherwise).
+func suiteHTTPClient(ctx context.Context, suiteURL string) (*http.Client, error) {
+	cert, err := conformancesuite.ServerCertificate(ctx, suiteURL)
+	if err != nil {
+		return nil, fmt.Errorf("read the suite's tls certificate: %w", err)
 	}
+	fingerprint := sha256.Sum256(cert.Raw)
+	log.Printf("pinned the suite's tls certificate %q (sha-256 %x)", cert.Subject, fingerprint)
+	return conformancesuite.PinnedHTTPClient(cert), nil
 }
 
 func run(cfg runConfig) error {
 	ctx := context.Background()
-	httpClient := insecureSuiteHTTPClient()
+	httpClient, err := suiteHTTPClient(ctx, cfg.apiBase)
+	if err != nil {
+		return err
+	}
 
 	walletRun, err := newWalletRun(cfg)
+	if err != nil {
+		return err
+	}
+	trust, err := newIssuerTrust(ctx, walletRun, cfg.apiBase, httpClient)
 	if err != nil {
 		return err
 	}
@@ -295,7 +310,7 @@ func run(cfg runConfig) error {
 	log.Printf("created plan %s (alias %s), %d module instances enumerated", planID, walletRun.alias, len(modules))
 	log.Printf("plan detail: %splan-detail.html?plan=%s", cfg.apiBase, planID)
 
-	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, OfferWallet: offerWallet}
+	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, Trust: trust, OfferWallet: offerWallet}
 	summary := driveAllModules(ctx, runner, modules, scopeModules, planID)
 
 	log.Printf("=== summary ===")
@@ -461,6 +476,7 @@ type moduleRunner struct {
 	HTTPClient  *http.Client
 	APIBase     string
 	WalletRun   *walletRun
+	Trust       issuerTrust
 	OfferWallet *wallet.Wallet
 }
 
@@ -503,7 +519,7 @@ func (r moduleRunner) runModule(ctx context.Context, planID, testName string, va
 		return "ERROR: wait for module ready: " + err.Error()
 	}
 
-	driverErr := r.driveModule(ctx, module, testName, numCreds, encrypted, offer)
+	driverErr := r.driveModule(ctx, module, numCreds, encrypted, offer)
 
 	status, result, err := conformancesuite.WaitUntilFinished(r.HTTPClient, r.APIBase, module.ID, 45*time.Second)
 	moduleRef := " (module " + module.ID + ", " + r.APIBase + "api/log/" + module.ID + ")"

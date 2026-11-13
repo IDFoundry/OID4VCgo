@@ -204,10 +204,17 @@ run_issuer() {
 	#
 	# 1 SKIPPED (refresh-token — the suite skips it when the
 	# authorization_code exchange returns no refresh token, and
-	# fapigo/server issues one only for an offline_access grant, which
-	# cmd/conformance-issuer's clients aren't registered for), 1 REVIEW
+	# fapigo/server issues one only for a grant whose scope includes
+	# offline_access, which the suite never requests under the VCI
+	# plans: it takes client.scope from the credential configuration's
+	# scope, a single scope-token, and hides the field — see
+	# conformance/issuer/README.md's "refresh-token"), 1 REVIEW
 	# (par-attempt-to-use-request_uri-for-different-client — a
 	# screenshot-gated module, see conformance/issuer/README.md).
+	#
+	# Every run's cmd/conformance-issuer requires DPoP nonces at PAR,
+	# /token and the Credential Endpoint, and trusts key attestations
+	# by their x5c chain (run-fapi2sp-battery's buildServerConfig).
 	# attempt-reuse-authorization-code-after-one-second used to be a
 	# third exception (WARNING) until wiring.go's own shared
 	# revocationStore fix — see conformance/issuer/README.md's own
@@ -283,6 +290,21 @@ fapi2-security-profile-final-par-attempt-reuse-request_uri=REVIEW
 fapi2-security-profile-final-par-attempt-to-use-expired-request_uri=REVIEW"
 	run_go_checked "Issuer production" "$WORKDIR/issuer-production.log" "$production_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -production
+
+	# The production setup under the other three certification-profile
+	# axes: issuer_initiated drives the whole plan again, with the same
+	# exceptions; mdoc and deferred issuance drive vciBattery, whose
+	# modules end as at development (none of them ends on the
+	# Authorization Server's own error page): all PASS, but for the
+	# deferred run's encrypted happy-flow WARNING, the suite's.
+	run_go_checked "Issuer production issuer-initiated" "$WORKDIR/issuer-production-issuer-initiated.log" "$production_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -production -issuer-initiated
+
+	run_go_checked "Issuer production mdoc" "$WORKDIR/issuer-production-mdoc.log" "$vci_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -production -credential-format mdoc
+
+	run_go_checked "Issuer production deferred" "$WORKDIR/issuer-production-deferred.log" "$deferred_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -production -deferred
 	return 0
 }
 
@@ -300,7 +322,12 @@ run_wallet() {
 	# needed, not as part of the daily certification-profile report.
 	#
 	# Every one of these 6 has always run 100% clean (all module
-	# instances FINISHED/PASSED) — no known exceptions.
+	# instances FINISHED/PASSED) — no known exceptions. In each, the
+	# wallet reads its endpoints from the Credential Issuer's and the
+	# Authorization Server's metadata, pins the suite's TLS
+	# certificate, and verifies every credential it receives (its
+	# signature, certificate chain, holder binding and status list
+	# entry), failing the module when one doesn't verify.
 	run_go_checked "Wallet default (jwt, sd_jwt_vc)" "$WORKDIR/wallet-default.log" "" \
 		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER"
 
@@ -332,6 +359,14 @@ run_wallet() {
 
 	run_go_checked "Wallet mdoc issuer-initiated (by_reference)" "$WORKDIR/wallet-mdoc-issuer-initiated-by-reference.log" "" \
 		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -credential-format mdoc -issuer-initiated -credential-offer-variant by_reference
+
+	# Not a certification profile: HAIP 1.0 §4.5.1's "Wallets MUST
+	# support key attestations", each proof a jwt proof carrying a Key
+	# Attestation in its key_attestation header (OID4VCI Appendix D.1),
+	# against the suite's fixture that requires one.
+	run_go_checked "Wallet key attestation (jwt-key-attestation)" "$WORKDIR/wallet-jwt-key-attestation.log" "" \
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -proof-type jwt-key-attestation \
+			-credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest
 	return 0
 }
 

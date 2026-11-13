@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -36,34 +35,21 @@ import (
 // confirmed live, so a fixed choice is enough; no runtime negotiation.
 const encryptionEnc = jwe.A128GCM
 
-// credentialRequestEncryptionJWK fetches moduleURL's own Credential
-// Issuer Metadata (via wallet.Wallet.FetchCredentialIssuerMetadata,
-// promoted from this function's own earlier hand-rolled fetch+decode —
-// see wallet/discovery.go) and returns the first key of its own
+// credentialRequestEncryptionJWK returns the first key of metadata's
 // credential_request_encryption.jwks — the Issuer's own encryption
 // public key a Wallet encrypts a Credential Request to (§10,
 // RequestEncryption.RecipientJWK's own doc comment).
-func credentialRequestEncryptionJWK(ctx context.Context, w *wallet.Wallet, moduleURL string) (json.RawMessage, error) {
-	// The trailing slash matters here too — the same "aud"/CredentialIssuer
-	// trailing-slash convention this binary already found applies to the
-	// metadata request path itself (confirmed live: without it, the
-	// suite's own metadata handler rejects the request as "does not
-	// match expected URL path").
-	metadata, err := w.FetchCredentialIssuerMetadata(ctx, moduleURL+"/")
-	if err != nil {
-		return nil, err
-	}
+func credentialRequestEncryptionJWK(metadata oid4vci.Metadata) (json.RawMessage, error) {
 	if metadata.CredentialRequestEncryption == nil || len(metadata.CredentialRequestEncryption.JWKS.Keys) == 0 {
 		return nil, fmt.Errorf("credential issuer metadata publishes no credential_request_encryption.jwks.keys")
 	}
 	return json.Marshal(metadata.CredentialRequestEncryption.JWKS.Keys[0])
 }
 
-// newWallet builds a wallet.Wallet for the Nonce/Credential/Notification
-// Endpoint calls driveModule needs — httpClient is the same
-// suite-trusting client used for everything else in this binary, so
-// the Nonce Endpoint's own unauthenticated call reaches the same
-// module instance the rest of the flow already established.
+// newWallet builds a wallet.Wallet for the metadata, Nonce, Credential
+// and Notification Endpoint calls driveModule needs — httpClient is the
+// same client, pinning the suite's TLS certificate, used for everything
+// else in this binary.
 func newWallet(httpClient *http.Client) (*wallet.Wallet, error) {
 	return wallet.New(wallet.Config{
 		Assurance:       wallet.AssuranceDevelopment,
@@ -84,23 +70,13 @@ func newWallet(httpClient *http.Client) (*wallet.Wallet, error) {
 	})
 }
 
-// buildClient constructs a fapigo/client.Client for module — every
-// endpoint this run needs lives at a fixed path under module.URL
-// (par/authorize/token/nonce/challenge/credential/deferred_credential/
-// notification, confirmed directly against the suite's own
-// AbstractVCIWalletTest.handleClientRequestForPath), so this hardcodes
-// them the same way wallet_client_flow_test.go already does against a
-// real fapigo/server instance, rather than running full RFC 8414
-// discovery for a shape that never varies.
-func buildClient(ctx context.Context, run *walletRun, module conformancesuite.SuiteModule, testName string, httpClient *http.Client) (*client.Client, error) {
-	// The trailing slash matters here too, for the same reason it does
-	// for CredentialIssuer in driveModule: the suite's own issuer
-	// identifier (what it compares a Client Attestation PoP's own
-	// "aud" claim against) is published with one — confirmed live
-	// ("ValidateClientAttestationProofJwtAudience: aud claim... did
-	// not match the authorization server issuer" without it).
-	expectedIssuer := module.URL + "/"
-	issuer, err := fapi.ParseIssuerURL(expectedIssuer)
+// buildClient constructs a fapigo/client.Client for the Authorization
+// Server asIssuer names (the Credential Issuer Metadata's
+// authorization_servers entry), from its RFC 8414 metadata: its
+// endpoints, and its Attestation Challenge Endpoint when it publishes
+// one.
+func buildClient(ctx context.Context, run *walletRun, asIssuer string, httpClient *http.Client) (*client.Client, error) {
+	issuer, err := fapi.ParseIssuerURL(asIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("parse issuer URL: %w", err)
 	}
@@ -119,7 +95,7 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	if err != nil {
 		return nil, fmt.Errorf("build discovery wallet: %w", err)
 	}
-	metadata, err := discoveryWallet.FetchAuthorizationServerMetadata(ctx, expectedIssuer)
+	metadata, err := discoveryWallet.FetchAuthorizationServerMetadata(ctx, asIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("fetch authorization server metadata: %w", err)
 	}
@@ -154,22 +130,16 @@ func buildClient(ctx context.Context, run *walletRun, module conformancesuite.Su
 	if err != nil {
 		return nil, fmt.Errorf("mint client attestation: %w", err)
 	}
-	// The HAIP plan's generic FAPI2SP client battery reuses
-	// AbstractFAPI2SPFinalClientTest as-is — a class hierarchy with no
-	// knowledge of draft-ietf-oauth-attestation-based-client-auth-07 §8
-	// at all, confirmed by its own source carrying no "challenge"
-	// handling (only unrelated PKCE "code_challenge" conditions). It
-	// never wires up the /challenge endpoint the 4 VCIWallet* modules
-	// all do, so a client that calls it there hits the suite's own
-	// catch-all TestDispatcher — "Got unexpected HTTP call to
-	// challenge" — confirmed live. §5.2's own "challenge" claim in the
-	// PoP JWT is optional (only sent when a fresh challenge exists), so
-	// the battery gets a plain, unchallenged attestation source.
+	// draft-ietf-oauth-attestation-based-client-auth-07 §8: a Client
+	// Attestation PoP carries a challenge from the Authorization
+	// Server's Challenge Endpoint when its metadata publishes one
+	// (challenge_endpoint), as the suite's does for
+	// oid4vci-1_0-wallet-test-client-attestation-challenge alone.
 	attestation := client.StaticAttestation(attestationJWT)
-	if !strings.HasPrefix(testName, batteryModulePrefix) {
+	if metadata.ChallengeEndpoint != "" {
 		attestation = attestationAndChallengeSource{
 			AttestationSource: attestation,
-			challengeSource:   challengeSource{httpClient: httpClient, endpoint: module.URL + clientAttestationChallengePath},
+			challengeSource:   challengeSource{httpClient: httpClient, endpoint: metadata.ChallengeEndpoint},
 		}
 	}
 
@@ -279,12 +249,8 @@ const (
 // (§9.1/§9.2) until first carries either issued credentials, or the
 // suite's own emulated Issuer accepts a fresh transaction_id and
 // interval): first is the still-pending CredentialRequest.
-func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wallet.ProtectedResourceClient, module conformancesuite.SuiteModule, first wallet.CredentialResult) (wallet.CredentialResult, error) {
-	deferredEndpoint, err := fapi.ParseEndpointURL(module.URL + "/deferred_credential")
-	if err != nil {
-		return wallet.CredentialResult{}, fmt.Errorf("parse deferred credential endpoint: %w", err)
-	}
-
+func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wallet.ProtectedResourceClient, deferredEndpoint fapi.URL, first wallet.CredentialResult) (wallet.CredentialResult, error) {
+	var err error
 	result := first
 	for attempt := 0; attempt < maxDeferredPollAttempts; attempt++ {
 		interval := result.Interval
@@ -314,46 +280,66 @@ func pollDeferredCredential(ctx context.Context, w *wallet.Wallet, resource wall
 }
 
 // driveModule drives one module instance through the full flow this
-// binary's own scope covers. offer is non-nil only for the
-// issuer_initiated flow variant (already resolved by runModule, since
-// it has to be captured before this module even reaches WAITING — see
-// credentialoffer.go) — when set, its own issuer_state (if any) is
-// echoed back on the PAR request (OID4VCI §5.1.3) and its own
-// credential_configuration_ids[0] is used in place of
-// run.credentialConfigurationID, matching what a spec-faithful wallet
-// actually resolves the offer for.
-func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.SuiteModule, testName string, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
+// binary's own scope covers, reading every endpoint from the Credential
+// Issuer's metadata and its Authorization Server's, as a wallet does:
+// the Credential Issuer is the offer's credential_issuer, or for the
+// wallet_initiated variant the module's own, known out of band. offer
+// is non-nil only for the issuer_initiated flow variant (already
+// resolved by runModule, since it has to be captured before this module
+// even reaches WAITING — see credentialoffer.go) — when set, its own
+// issuer_state (if any) is echoed back on the PAR request (OID4VCI
+// §5.1.3) and its own credential_configuration_ids[0] is used in place
+// of run.credentialConfigurationID, matching what a spec-faithful
+// wallet actually resolves the offer for. Every credential issued is
+// verified before the flow goes on to its notification
+// (verifyCredentials).
+func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.SuiteModule, numCreds int, encrypted bool, offer *oid4vci.CredentialOffer) error {
 	run, httpClient := r.WalletRun, r.HTTPClient
-	resource, err := r.authorizeAndGetProtectedResource(ctx, module, testName, offer)
-	if err != nil {
-		return err
-	}
-
 	w, err := newWallet(httpClient)
 	if err != nil {
 		return fmt.Errorf("build wallet: %w", err)
 	}
-
-	nonceEndpoint, err := fapi.ParseEndpointURL(module.URL + "/nonce")
-	if err != nil {
-		return fmt.Errorf("parse nonce endpoint: %w", err)
+	// The trailing slash matters: the suite publishes its Credential
+	// Issuer Identifier with one, and §12.2.2's well-known URL keeps
+	// it.
+	credentialIssuer := module.URL + "/"
+	credentialConfigurationID := run.credentialConfigurationID
+	if offer != nil {
+		credentialIssuer = offer.CredentialIssuer
+		if len(offer.CredentialConfigurationIDs) > 0 {
+			credentialConfigurationID = offer.CredentialConfigurationIDs[0]
+		}
 	}
-	nonceResult, err := w.RequestNonce(ctx, nonceEndpoint)
+	metadata, err := w.FetchCredentialIssuerMetadata(ctx, credentialIssuer)
+	if err != nil {
+		return fmt.Errorf("fetch credential issuer metadata: %w", err)
+	}
+	configuration, ok := metadata.CredentialConfigurationsSupported[credentialConfigurationID]
+	if !ok {
+		return fmt.Errorf("credential issuer metadata has no credential configuration %q", credentialConfigurationID)
+	}
+	if metadata.NonceEndpoint == nil {
+		return fmt.Errorf("credential issuer metadata publishes no nonce_endpoint")
+	}
+
+	resource, err := r.authorizeAndGetProtectedResource(ctx, metadata, offer)
+	if err != nil {
+		return err
+	}
+
+	nonceResult, err := w.RequestNonce(ctx, *metadata.NonceEndpoint)
 	if err != nil {
 		return fmt.Errorf("request nonce: %w", err)
 	}
 
-	credentialEndpoint, err := fapi.ParseEndpointURL(module.URL + "/credential")
-	if err != nil {
-		return fmt.Errorf("parse credential endpoint: %w", err)
-	}
-	credRequest, err := buildWalletCredentialRequest(ctx, w, credentialRequestParams{
-		Run: run, Module: module, NumCreds: numCreds, Encrypted: encrypted, CNonce: nonceResult.CNonce, Offer: offer,
+	credRequest, holders, err := buildWalletCredentialRequest(w, credentialRequestParams{
+		Run: run, Metadata: metadata, CredentialConfigurationID: credentialConfigurationID,
+		NumCreds: numCreds, Encrypted: encrypted, CNonce: nonceResult.CNonce,
 	})
 	if err != nil {
 		return err
 	}
-	credResult, err := w.RequestCredential(ctx, resource, credentialEndpoint, credRequest)
+	credResult, err := w.RequestCredential(ctx, resource, metadata.CredentialEndpoint, credRequest)
 	if err != nil {
 		return fmt.Errorf("request credential: %w", err)
 	}
@@ -363,7 +349,10 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 		// no credentials yet, just a transaction_id/interval — poll the
 		// Deferred Credential Endpoint until the suite's own emulated
 		// Issuer actually issues them.
-		credResult, err = pollDeferredCredential(ctx, w, resource, module, credResult)
+		if metadata.DeferredCredentialEndpoint == nil {
+			return fmt.Errorf("the credential was deferred, but the credential issuer metadata publishes no deferred_credential_endpoint")
+		}
+		credResult, err = pollDeferredCredential(ctx, w, resource, *metadata.DeferredCredentialEndpoint, credResult)
 		if err != nil {
 			return fmt.Errorf("poll deferred credential: %w", err)
 		}
@@ -371,13 +360,15 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 	if len(credResult.Credentials) != numCreds {
 		return fmt.Errorf("credential response carries %d credentials, want %d", len(credResult.Credentials), numCreds)
 	}
+	if err := verifyCredentials(ctx, r.Trust, configuration, credResult.Credentials, holders); err != nil {
+		return fmt.Errorf("verify issued credentials: %w", err)
+	}
 
 	if credResult.NotificationID != "" {
-		notificationEndpoint, err := fapi.ParseEndpointURL(module.URL + "/notification")
-		if err != nil {
-			return fmt.Errorf("parse notification endpoint: %w", err)
+		if metadata.NotificationEndpoint == nil {
+			return fmt.Errorf("the credential response carries a notification_id, but the credential issuer metadata publishes no notification_endpoint")
 		}
-		if err := w.RequestNotification(ctx, resource, notificationEndpoint, wallet.NotificationRequest{
+		if err := w.RequestNotification(ctx, resource, *metadata.NotificationEndpoint, wallet.NotificationRequest{
 			NotificationID: credResult.NotificationID,
 			Event:          oid4vci.NotificationEventCredentialAccepted,
 		}); err != nil {
@@ -389,24 +380,36 @@ func (r moduleRunner) driveModule(ctx context.Context, module conformancesuite.S
 }
 
 // authorizeAndGetProtectedResource is driveModule's own PAR ->
-// authorize -> token half — split out purely to keep driveModule under
-// the linter's own cognitive complexity ceiling. offer's own
-// issuer_state (if any) is echoed back on the PAR request (OID4VCI
-// §5.1.3), matching what a spec-faithful wallet does for the
-// issuer_initiated flow variant.
-func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, module conformancesuite.SuiteModule, testName string, offer *oid4vci.CredentialOffer) (wallet.ProtectedResourceClient, error) {
+// authorize -> token half, at the Authorization Server metadata's
+// authorization_servers names (the offer's, when its grant picks one),
+// or the Credential Issuer itself when it names none (§12.2.4), asking
+// for the Credential Issuer as the resource (RFC 8707) — split out
+// purely to keep driveModule under the linter's own cognitive
+// complexity ceiling. offer's own issuer_state (if any) is echoed back
+// on the PAR request (OID4VCI §5.1.3), matching what a spec-faithful
+// wallet does for the issuer_initiated flow variant.
+func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, metadata oid4vci.Metadata, offer *oid4vci.CredentialOffer) (wallet.ProtectedResourceClient, error) {
 	run, httpClient := r.WalletRun, r.HTTPClient
-	c, err := buildClient(ctx, run, module, testName, httpClient)
+	asIssuer := metadata.CredentialIssuer.String()
+	if len(metadata.AuthorizationServers) > 0 {
+		asIssuer = metadata.AuthorizationServers[0].String()
+	}
+	var grant *oid4vci.GrantAuthorizationCode
+	if offer != nil && offer.Grants != nil {
+		grant = offer.Grants.AuthorizationCode
+	}
+	if grant != nil && grant.AuthorizationServer != "" {
+		asIssuer = grant.AuthorizationServer
+	}
+	c, err := buildClient(ctx, run, asIssuer, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("build client: %w", err)
 	}
 
-	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}, Resource: []string{module.URL + "/"}}
-	if offer != nil && offer.Grants != nil && offer.Grants.AuthorizationCode != nil {
-		if issuerState := offer.Grants.AuthorizationCode.IssuerState; issuerState != "" {
-			if err := extension.Set(&beginReq.Extensions, oid4vci.IssuerStateExtension, issuerState); err != nil {
-				return nil, fmt.Errorf("set issuer_state extension: %w", err)
-			}
+	beginReq := client.BeginAuthorizationRequest{Scope: []string{run.scope}, Resource: []string{metadata.CredentialIssuer.String()}}
+	if grant != nil && grant.IssuerState != "" {
+		if err := extension.Set(&beginReq.Extensions, oid4vci.IssuerStateExtension, grant.IssuerState); err != nil {
+			return nil, fmt.Errorf("set issuer_state extension: %w", err)
 		}
 	}
 	session, err := c.BeginAuthorization(ctx, beginReq)
@@ -435,35 +438,33 @@ func (r moduleRunner) authorizeAndGetProtectedResource(ctx context.Context, modu
 // per-call inputs — split out from a flat parameter list purely to
 // stay under the linter's own parameter-count ceiling.
 type credentialRequestParams struct {
-	Run       *walletRun
-	Module    conformancesuite.SuiteModule
-	NumCreds  int
-	Encrypted bool
-	CNonce    string
-	Offer     *oid4vci.CredentialOffer
+	Run                       *walletRun
+	Metadata                  oid4vci.Metadata
+	CredentialConfigurationID string
+	NumCreds                  int
+	Encrypted                 bool
+	CNonce                    string
 }
 
 // buildWalletCredentialRequest builds the CredentialRequest driveModule
 // sends, including its p.Run.proofType-specific proof material and
-// optional §10 request/response encryption — split out purely to keep
-// driveModule under the linter's own cognitive complexity ceiling.
-func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p credentialRequestParams) (wallet.CredentialRequest, error) {
-	run, module, numCreds, encrypted, cNonce, offer := p.Run, p.Module, p.NumCreds, p.Encrypted, p.CNonce, p.Offer
-	credentialConfigurationID := run.credentialConfigurationID
-	if offer != nil && len(offer.CredentialConfigurationIDs) > 0 {
-		credentialConfigurationID = offer.CredentialConfigurationIDs[0]
-	}
+// optional §10 request/response encryption, and returns the public
+// keys it proved possession of, which the credentials must be bound to
+// — split out purely to keep driveModule under the linter's own
+// cognitive complexity ceiling.
+func buildWalletCredentialRequest(w *wallet.Wallet, p credentialRequestParams) (wallet.CredentialRequest, []crypto.PublicKey, error) {
+	run, numCreds, cNonce := p.Run, p.NumCreds, p.CNonce
+	credentialIssuer := p.Metadata.CredentialIssuer.String()
 	credRequest := wallet.CredentialRequest{
-		CredentialConfigurationID: credentialConfigurationID,
-		// The trailing slash matters: it must match the Credential
-		// Issuer Identifier exactly as the suite's own metadata
-		// publishes it (confirmed live: "credential_issuer":
-		// ".../<alias>/" — with a trailing slash), since this becomes
-		// the jwt-type proof's own "aud" claim. Unused for the
-		// attestation proof type below, but harmless to leave set.
-		CredentialIssuer: module.URL + "/",
+		CredentialConfigurationID: p.CredentialConfigurationID,
+		// The Credential Issuer Identifier exactly as its metadata
+		// publishes it (with a trailing slash, for the suite), since
+		// this becomes the jwt-type proof's own "aud" claim. Unused for
+		// the attestation proof type below, but harmless to leave set.
+		CredentialIssuer: credentialIssuer,
 		Nonce:            cNonce,
 	}
+	var signers []crypto.Signer
 	switch run.proofType {
 	case proofStrategyAttestation:
 		// HAIP §4.5.1 Key Attestation (Appendix D/F.3): one Key
@@ -472,13 +473,14 @@ func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p crede
 		// proof needed, see buildKeyAttestationProof's own doc comment.
 		attestedKeys, genErr := generateAttestedKeys(numCreds)
 		if genErr != nil {
-			return wallet.CredentialRequest{}, fmt.Errorf("generate attested keys: %w", genErr)
+			return wallet.CredentialRequest{}, nil, fmt.Errorf("generate attested keys: %w", genErr)
 		}
 		attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, false)
 		if err != nil {
-			return wallet.CredentialRequest{}, fmt.Errorf("build key attestation proof: %w", err)
+			return wallet.CredentialRequest{}, nil, fmt.Errorf("build key attestation proof: %w", err)
 		}
 		credRequest.Attestation = attestationJWT
+		signers = attestedKeys
 
 	case proofStrategyJWTKeyAttestation:
 		// Appendix D.1's nested case: an ordinary jwt-type proof per
@@ -496,52 +498,59 @@ func buildWalletCredentialRequest(ctx context.Context, w *wallet.Wallet, p crede
 		// fails that check for numCreds>1, while one shared attestation
 		// naming every key passes regardless of which proof's copy the
 		// suite happens to validate.
-		jwtProofs, err := buildJWTKeyAttestationProofs(w, run, module, numCreds, cNonce)
+		jwtProofs, attestedKeys, err := buildJWTKeyAttestationProofs(w, run, credentialIssuer, numCreds, cNonce)
 		if err != nil {
-			return wallet.CredentialRequest{}, err
+			return wallet.CredentialRequest{}, nil, err
 		}
 		credRequest.JWTProofs = jwtProofs
+		signers = attestedKeys
 
 	default:
 		holderKeys, err := generateHolderKeys(numCreds)
 		if err != nil {
-			return wallet.CredentialRequest{}, err
+			return wallet.CredentialRequest{}, nil, err
 		}
 		credRequest.Keys = holderKeys
+		signers = holderKeys
 	}
-	if encrypted {
-		recipientJWK, encErr := credentialRequestEncryptionJWK(ctx, w, module.URL)
+	if p.Encrypted {
+		recipientJWK, encErr := credentialRequestEncryptionJWK(p.Metadata)
 		if encErr != nil {
-			return wallet.CredentialRequest{}, fmt.Errorf("fetch credential request encryption key: %w", encErr)
+			return wallet.CredentialRequest{}, nil, fmt.Errorf("credential request encryption key: %w", encErr)
 		}
 		credRequest.RequestEncryption = &wallet.RequestEncryption{RecipientJWK: recipientJWK, Enc: encryptionEnc}
 		credRequest.ResponseEncryption = &wallet.ResponseEncryption{Enc: encryptionEnc}
 	}
-	return credRequest, nil
+	holders := make([]crypto.PublicKey, len(signers))
+	for i, signer := range signers {
+		holders[i] = signer.Public()
+	}
+	return credRequest, holders, nil
 }
 
 // buildJWTKeyAttestationProofs builds one jwt-type proof per credential,
 // each embedding the same Key Attestation JWT covering every attested
 // key — see buildWalletCredentialRequest's proofStrategyJWTKeyAttestation
-// case for why the attestation is shared rather than per-key.
-func buildJWTKeyAttestationProofs(w *wallet.Wallet, run *walletRun, module conformancesuite.SuiteModule, numCreds int, cNonce string) ([]string, error) {
+// case for why the attestation is shared rather than per-key — and
+// returns the attested keys.
+func buildJWTKeyAttestationProofs(w *wallet.Wallet, run *walletRun, credentialIssuer string, numCreds int, cNonce string) ([]string, []crypto.Signer, error) {
 	attestedKeys, err := generateAttestedKeys(numCreds)
 	if err != nil {
-		return nil, fmt.Errorf("generate attested keys: %w", err)
+		return nil, nil, fmt.Errorf("generate attested keys: %w", err)
 	}
 	attestationJWT, err := buildKeyAttestationProof(w, run, attestedKeys, cNonce, true)
 	if err != nil {
-		return nil, fmt.Errorf("build key attestation proof: %w", err)
+		return nil, nil, fmt.Errorf("build key attestation proof: %w", err)
 	}
 	jwtProofs := make([]string, numCreds)
 	for i, signer := range attestedKeys {
-		proof, err := w.GenerateProofWithKeyAttestation(signer, module.URL+"/", cNonce, attestationJWT)
+		proof, err := w.GenerateProofWithKeyAttestation(signer, credentialIssuer, cNonce, attestationJWT)
 		if err != nil {
-			return nil, fmt.Errorf("generate jwt proof with key attestation %d: %w", i, err)
+			return nil, nil, fmt.Errorf("generate jwt proof with key attestation %d: %w", i, err)
 		}
 		jwtProofs[i] = proof
 	}
-	return jwtProofs, nil
+	return jwtProofs, attestedKeys, nil
 }
 
 // generateHolderKeys generates n fresh P-256 holder keys for the

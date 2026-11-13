@@ -59,9 +59,11 @@ jobs:
     # this half runs the Issuer's own full 60-module battery twice
     # (default/issuer-initiated, sd_jwt_vc), the plan's 21
     # OID4VCI-specific modules four times (mdoc default/issuer-initiated,
-    # sd_jwt_vc and mdoc deferred), a run of its production setup (the whole plan again, built
-    # with the conformance_production tag), and the Wallet's own six
-    # runs, all against a freshly-built
+    # sd_jwt_vc and mdoc deferred), four runs of its production setup
+    # (built with the conformance_production tag: the whole plan,
+    # wallet- and issuer-initiated, and the 21 under mdoc and
+    # deferred), and the Wallet's own seven runs (its six profiles and
+    # jwt proofs carrying key attestations), all against a freshly-built
     # conformance-issuer
     # container. 90 minutes gives real headroom over this repo's own
     # observed runtime without inheriting the old combined job's own

@@ -16,13 +16,9 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 )
 
-// clientAttestationChallengePath matches the suite's own fixed
-// "challenge" path (AbstractVCIWalletTest.handleClientRequestForPath)
-// exactly.
-const (
-	clientAttestationLifetime      = 5 * time.Minute
-	clientAttestationChallengePath = "/challenge"
-)
+// clientAttestationLifetime is how long this run's own Client
+// Attestation JWT stays valid.
+const clientAttestationLifetime = 5 * time.Minute
 
 // mintClientAttestationJWT builds and signs this run's own Client
 // Attestation JWT (draft-07 §5.1): a reusable, pre-issued credential
