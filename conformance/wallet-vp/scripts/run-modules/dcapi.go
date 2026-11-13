@@ -13,6 +13,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // The dc_api.jwt module lists (-response-mode dc_api.jwt) of
@@ -180,6 +181,9 @@ func driveDCAPI(httpClient *http.Client, apiBase, walletVPBase, planID string, m
 
 	res.action = dcapiAction(answer)
 	if res.action == actionRefused {
+		res.refusal = dcapiRefusal(answer)
+	}
+	if res.action == actionRefused {
 		if entry, ok := pollUpload(httpClient, apiBase, module.ID, uploadTimeout); ok {
 			if err := postPlaceholder(httpClient, apiBase, module.ID, entry); err != nil {
 				res.err = fmt.Errorf("fill upload placeholder: %w", err)
@@ -197,7 +201,7 @@ func driveDCAPI(httpClient *http.Client, apiBase, walletVPBase, planID string, m
 		res.err = fmt.Errorf("fetch module log: %w", err)
 		return res
 	}
-	res.err = grade(res.expected, res.action, res.status, res.result, entries)
+	res.err = grade(res.expected, res.action, res.refusal, res.status, res.result, entries)
 	return res
 }
 
@@ -213,6 +217,22 @@ func dcapiAction(answer dcapiAnswer) walletAction {
 		return actionSentError(answer.SentError)
 	}
 	return actionPresented
+}
+
+// dcapiRefusal is the text a DC API answer that refused the request
+// carries: its exception's name and message, as the page's rejected
+// promise would show them.
+func dcapiRefusal(answer dcapiAnswer) string {
+	var result struct {
+		Exception struct {
+			Name    string `json:"name"`
+			Message string `json:"message"`
+		} `json:"exception"`
+	}
+	if err := strictjson.Unmarshal(answer.Result, &result); err != nil {
+		return string(answer.Result)
+	}
+	return result.Exception.Name + ": " + result.Exception.Message
 }
 
 // pollBrowserAPIRequest waits for the module's browser API request.

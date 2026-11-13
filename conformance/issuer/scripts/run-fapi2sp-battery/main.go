@@ -111,7 +111,10 @@ var haipBattery = []string{
 	// in keyAttestationBattery instead). fail-unsupported-encryption-
 	// algorithm's own ModuleListEntry pins
 	// vci_credential_encryption=encrypted itself (VCIIssuerTestPlanHaip.java's
-	// own 3rd entry) — no extra flag or plan variant needed to reach it,
+	// own 3rd entry, which lists happy-flow and
+	// fail-unknown-credential-configuration again too, so both run under
+	// plain and encrypted: see batteryRuns) — no extra flag or plan
+	// variant needed to reach it,
 	// unlike the base plan's own single, caller-chosen encryption
 	// variant (see baseBattery's own doc comment); cmd/conformance-issuer
 	// already advertises request/response encryption unconditionally
@@ -318,7 +321,7 @@ func planFor(credentialFormat, proofTypeHint, encryption string, deferred, baseP
 // prepareIssuer generates this run's identities, writes
 // cmd/conformance-issuer's config for them to configOut and, unless
 // skipRestart, restarts its container and waits for it.
-func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut string, deferred, production, skipRestart bool) *run {
+func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, issuerHost, configOut string, deferred, production, skipRestart bool) *run {
 	run, err := generateRun(alias, issuerBaseURL)
 	if err != nil {
 		log.Fatalf("generate run: %v", err)
@@ -351,7 +354,7 @@ func prepareIssuer(httpClient *http.Client, alias, issuerBaseURL, configOut stri
 			log.Fatalf("restart conformance-issuer container: %v", err)
 		}
 		log.Printf("restarted conformance-issuer container, waiting for it to come up")
-		if err := waitForIssuerReady(httpClient, issuerBaseURL); err != nil {
+		if err := waitForIssuerReady(httpClient, issuerHost); err != nil {
 			log.Fatalf("wait for conformance-issuer: %v", err)
 		}
 	}
@@ -362,11 +365,12 @@ func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
 	alias := flag.String("alias", "oid4vcgo-issuer", "suite plan alias — also the callback path segment; must match cmd/conformance-issuer's own registered redirect_uris")
 	issuerBaseURL := flag.String("issuer", "https://conformance-issuer:8443", "cmd/conformance-issuer's own externally-reachable base URL (suite-network-internal hostname)")
+	issuerHost := flag.String("issuer-host", defaultIssuerHost(), "cmd/conformance-issuer's host-published base URL, polled for readiness: https://localhost:$CONFORMANCE_ISSUER_HOST_PORT by default, the port conformance/issuer/docker-compose.yml publishes it on (19448 when unset)")
 	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
 	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
 	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc drives the plan's 21 OID4VCI-specific modules (vciBattery), since the 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
-	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
+	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries pin it themselves regardless of this flag (\"plain\", and \"encrypted\" again for happy-flow, fail-unknown-credential-configuration and fail-unsupported-encryption-algorithm); cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
 	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature): none of the 40 FAPI2SP-generic battery modules care which proof type is used")
 	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the plan's 21 OID4VCI-specific modules (vciBattery), which follow the 202 to the Deferred Credential Endpoint; combines with -credential-format mdoc")
 	production := flag.Bool("production", false, "run cmd/conformance-issuer's production setup (Config.Production: production assurance, sealed SQLite stores, jwt proofs that must carry a key attestation and no attestation proof type), built with the conformance_production tag, and drive the plan's whole module list (productionBattery)")
@@ -380,7 +384,7 @@ func main() {
 
 	httpClient := insecureSuiteHTTPClient()
 
-	run := prepareIssuer(httpClient, *alias, *issuerBaseURL, *configOut, *deferred, *production, *skipDockerRestart)
+	run := prepareIssuer(httpClient, *alias, *issuerBaseURL, *issuerHost, *configOut, *deferred, *production, *skipDockerRestart)
 
 	planConfig, err := buildPlanConfig(run, *credentialFormat, *credentialProofTypeHint)
 	if err != nil {
@@ -419,37 +423,75 @@ func main() {
 	defer cancelUnblock()
 	go unblockImplicitCallbacks(unblockCtx, httpClient, *apiBase, planID)
 
-	inScope := make(map[string]bool, len(battery))
-	for _, name := range battery {
-		inScope[name] = true
-	}
-
 	runCfg := runModuleConfig{
-		apiBase: *apiBase, planID: planID, issuerInitiated: *issuerInitiated,
+		apiBase: *apiBase, planID: planID, issuerInitiated: *issuerInitiated, deferred: *deferred,
 		issuerBaseURL: *issuerBaseURL, credentialConfigurationID: credentialConfigurationID,
 	}
-	summary := make(map[string]string)
-	for _, m := range modules {
-		if !inScope[m.TestModule] {
-			continue
-		}
-		if _, already := summary[m.TestModule]; already {
-			continue
-		}
-		log.Printf("--- %s ---", m.TestModule)
-		outcome := runModule(httpClient, runCfg, m.TestModule, m.Variant)
-		summary[m.TestModule] = outcome
-		log.Printf("%s: %s", m.TestModule, outcome)
+	runs, missing := batteryRuns(modules, battery)
+	outcomes := make([]string, len(runs))
+	for i, r := range runs {
+		log.Printf("--- %s ---", r.key)
+		outcomes[i] = runModule(httpClient, runCfg, r.module.TestModule, r.module.Variant)
+		log.Printf("%s: %s", r.key, outcomes[i])
 	}
 
 	log.Printf("=== summary ===")
-	for _, name := range battery {
-		outcome, ran := summary[name]
-		if !ran {
-			outcome = "NOT RUN (not found in plan's own module list)"
-		}
-		log.Printf("%-90s %s", name, outcome)
+	for i, r := range runs {
+		log.Printf("%-100s %s", r.key, outcomes[i])
 	}
+	for _, name := range missing {
+		log.Printf("%-100s %s", name, "NOT RUN (not found in plan's own module list)")
+	}
+}
+
+// batteryRun is one module instance of the plan this binary drives:
+// the plan's own entry, and the name its result is reported under.
+type batteryRun struct {
+	module conformancesuite.PlanModule
+	key    string
+}
+
+// batteryRuns is every entry of the plan's module list whose testName
+// battery holds, in the plan's order, each under its moduleKey, and
+// the battery's testNames the plan doesn't list at all. A testName the
+// plan lists under several variants is driven under each: the HAIP
+// plan lists happy-flow and fail-unknown-credential-configuration under
+// vci_credential_encryption=plain and again under encrypted. Only an
+// entry repeating an earlier one's key is dropped.
+func batteryRuns(modules []conformancesuite.PlanModule, battery []string) (runs []batteryRun, missing []string) {
+	listed := make(map[string]bool, len(modules))
+	seen := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		listed[m.TestModule] = true
+		if !slices.Contains(battery, m.TestModule) {
+			continue
+		}
+		key := moduleKey(m.TestModule, m.Variant)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		runs = append(runs, batteryRun{module: m, key: key})
+	}
+	for _, name := range battery {
+		if !listed[name] {
+			missing = append(missing, name)
+		}
+	}
+	return runs, missing
+}
+
+// moduleKey is the name a module instance's result is reported, and
+// conformance/scripts/lib.sh's exceptions keyed, under: its testName,
+// followed for an OID4VCI-specific module by its
+// vci_credential_encryption ("<name> [plain]", "<name> [encrypted]"),
+// the variant the HAIP plan lists some of them under twice. The
+// fapi2-security-profile-final-* modules keep their bare testName.
+func moduleKey(testName string, variant map[string]string) string {
+	if enc := variant["vci_credential_encryption"]; enc != "" && strings.HasPrefix(testName, vciIssuerTestNamePrefix) {
+		return testName + " [" + enc + "]"
+	}
+	return testName
 }
 
 func insecureSuiteHTTPClient() *http.Client {
@@ -498,17 +540,25 @@ func restartIssuerContainer(production bool) error {
 	return cmd.Run()
 }
 
-// waitForIssuerReady polls issuerBaseURL's own OID4VCI metadata
-// endpoint through the suite's own reverse proxy (the host only ever
-// reaches this binary at the suite's own published port from outside
-// the suite's docker network — apiBase's own host, not issuerBaseURL's
-// suite-internal hostname, is reachable from here) — simplest reliable
-// readiness signal: this loops on the host-published port instead,
-// since that's the only address this script itself can dial.
-func waitForIssuerReady(httpClient *http.Client, _ string) error {
+// defaultIssuerHost is where conformance/issuer/docker-compose.yml
+// publishes cmd/conformance-issuer on the host: CONFORMANCE_ISSUER_HOST_PORT,
+// or 19448.
+func defaultIssuerHost() string {
+	port := os.Getenv("CONFORMANCE_ISSUER_HOST_PORT")
+	if port == "" {
+		port = "19448"
+	}
+	return "https://localhost:" + port
+}
+
+// waitForIssuerReady polls cmd/conformance-issuer's OID4VCI metadata
+// endpoint at issuerHost, its host-published port: issuerBaseURL's
+// suite-internal hostname isn't reachable from the host, so that port
+// is the only address this script itself can dial.
+func waitForIssuerReady(httpClient *http.Client, issuerHost string) error {
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://localhost:19448/.well-known/openid-credential-issuer", nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, strings.TrimSuffix(issuerHost, "/")+"/.well-known/openid-credential-issuer", nil)
 		if err == nil {
 			res, doErr := httpClient.Do(req)
 			if doErr == nil {
@@ -580,6 +630,7 @@ type runModuleConfig struct {
 	apiBase                   string
 	planID                    string
 	issuerInitiated           bool
+	deferred                  bool
 	issuerBaseURL             string
 	credentialConfigurationID string
 }
@@ -626,17 +677,41 @@ func runModule(httpClient *http.Client, cfg runModuleConfig, testName string, va
 		return "ERROR: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 	}
 	// REVIEW outranks WARNING in a module's result, so a screenshot-gated
-	// module's warnings only show in its log.
-	if result == "REVIEW" {
+	// module's warnings only show in its log; and a WARNING result
+	// passes only with the one warning knownSuiteWarnings expects of it.
+	if result == "REVIEW" || result == "WARNING" {
 		entries, err := conformancesuite.FetchModuleLog(httpClient, cfg.apiBase, module.ID)
 		if err != nil {
 			return "ERROR: fetch module log: " + err.Error() + moduleSuffix(cfg.apiBase, module.ID)
 		}
-		if unexpected := conformancesuite.UnexpectedLogEntries(entries); len(unexpected) > 0 {
+		allowed := knownSuiteWarnings(moduleKey(testName, variant), cfg.deferred)
+		if unexpected := conformancesuite.UnexpectedLogEntries(entries, allowed...); len(unexpected) > 0 {
 			return "ERROR: " + status + "=" + result + " but the log holds " + conformancesuite.DescribeLogEntries(unexpected) + moduleSuffix(cfg.apiBase, module.ID)
 		}
 	}
 	return status + "=" + result + moduleSuffix(cfg.apiBase, module.ID)
+}
+
+// happyFlowEncryptedKey is the encrypted happy-flow entry's moduleKey.
+const happyFlowEncryptedKey = happyFlowTestName + " [encrypted]"
+
+// knownSuiteWarnings are the WARNING conditions the suite logs for the
+// module reported as key through no fault of cmd/conformance-issuer's,
+// which its result may then show (conformance/scripts/lib.sh expects
+// that WARNING): any other warning fails it.
+//
+// Under -deferred, the encrypted happy-flow's second Credential Request
+// asks for its response compressed (zip=DEF), but the Deferred
+// Credential Request it then sends carries a credential_response_encryption
+// without zip (OID4VCI §9.1: that request's own parameters encrypt the
+// Deferred Credential Response), so the issuer rightly doesn't
+// compress that response; VCICheckCredentialResponseCompression then
+// checks it against the first request's zip=DEF and warns.
+func knownSuiteWarnings(key string, deferred bool) []string {
+	if deferred && key == happyFlowEncryptedKey {
+		return []string{"VCICheckCredentialResponseCompression"}
+	}
+	return nil
 }
 
 // multipleClientsTestName is the module that, under issuer_initiated,

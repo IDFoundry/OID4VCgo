@@ -339,8 +339,10 @@ func TestHandleResponse_RejectUnverifiedResponses(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "redirect_uri") {
 		t.Fatalf("an unverified presentation = %d %s, want 400 without a redirect_uri", rec.Code, rec.Body)
 	}
-	if page := get(mux, "/result/"+sess.id); !strings.Contains(page.Body.String(), "Verification failed") {
-		t.Fatalf("result page = %s, want the failure", page.Body)
+	// The page names the refusal's verifier.Reason, for the drivers to
+	// grade why the Verifier refused.
+	if page := get(mux, "/result/"+sess.id).Body.String(); !strings.Contains(page, "Verification failed") || !strings.Contains(page, "<pre>reason: malformed</pre>") {
+		t.Fatalf("result page = %s, want the failure and its reason", page)
 	}
 
 	// A Wallet's error response is answered as before: it was processed.

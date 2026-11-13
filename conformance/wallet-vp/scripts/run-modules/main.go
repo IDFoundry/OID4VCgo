@@ -263,9 +263,12 @@ type moduleResult struct {
 	moduleID string
 	expected expectation
 	action   walletAction
-	status   string
-	result   string
-	err      error
+	// refusal is the text the wallet refused the request with, when
+	// action is actionRefused.
+	refusal string
+	status  string
+	result  string
+	err     error
 }
 
 const (
@@ -510,7 +513,7 @@ func buildDCQLCredential(cfg generatedConfig) planDCQLCredential {
 
 func main() {
 	apiBase := flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL")
-	walletVPBase := flag.String("walletvp-base", "https://localhost:19447", "cmd/conformance-wallet-vp's own host-published base URL")
+	walletVPBase := flag.String("walletvp-base", defaultWalletVPBase(), "cmd/conformance-wallet-vp's own host-published base URL: https://localhost:$CONFORMANCE_WALLET_VP_HOST_PORT by default, the port conformance/wallet-vp/docker-compose.yml publishes it on (19447 when unset)")
 	walletVPInternalBase := flag.String("walletvp-internal-base", "https://conformance-wallet-vp:8443", "cmd/conformance-wallet-vp's own suite-network-internal base URL")
 	mdocCRLBase := flag.String("mdoc-crl-base", "http://conformance-wallet-vp:8080", "where the suite reaches cmd/conformance-wallet-vp's plain-HTTP IACA CRL listener (suite-network-internal), for the -credential-format iso_mdl Document Signer certificate's CRL distribution point")
 	alias := flag.String("alias", "oid4vcgo-wallet-vp", "suite plan alias")
@@ -678,6 +681,9 @@ func main() {
 // line is res as one summary line.
 func (res moduleResult) line() string {
 	s := fmt.Sprintf("wallet %s, %s=%s (want %s)", res.action, res.status, res.result, res.expected)
+	if res.refusal != "" {
+		s += fmt.Sprintf(" refusal %q", res.refusal)
+	}
 	if res.moduleID != "" {
 		s += " module " + res.moduleID
 	}
@@ -754,6 +760,9 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 	driveBody, _ := io.ReadAll(driveResp.Body)
 	_ = driveResp.Body.Close()
 	res.action = directPostAction(driveResp.StatusCode == http.StatusOK, string(driveBody))
+	if res.action == actionRefused {
+		res.refusal = strings.TrimSpace(string(driveBody))
+	}
 
 	// alternate-happy-flow's own fragment-carrying redirect_uri — see
 	// this file's own package doc comment. cmd/conformance-wallet-vp's
@@ -793,7 +802,7 @@ func driveOne(httpClient *http.Client, apiBase, walletVPBase, planID, testName s
 		res.err = fmt.Errorf("fetch module log: %w", err)
 		return res
 	}
-	res.err = grade(exp, res.action, res.status, res.result, entries)
+	res.err = grade(exp, res.action, res.refusal, res.status, res.result, entries)
 	return res
 }
 
@@ -962,6 +971,17 @@ func generateClientJWK(ca *x509.Certificate, caKey *ecdsa.PrivateKey) (jwk.SetEn
 		Kid: "wallet-vp-test-client-sig", Use: "sig", Alg: "ES256",
 		X5C: []string{base64.StdEncoding.EncodeToString(cert.Raw)},
 	}, nil
+}
+
+// defaultWalletVPBase is where dockerComposeYML publishes
+// cmd/conformance-wallet-vp on the host: CONFORMANCE_WALLET_VP_HOST_PORT,
+// or 19447.
+func defaultWalletVPBase() string {
+	port := os.Getenv("CONFORMANCE_WALLET_VP_HOST_PORT")
+	if port == "" {
+		port = "19447"
+	}
+	return "https://localhost:" + port
 }
 
 func restartContainer() error {

@@ -11,6 +11,10 @@ func TestGrade(t *testing.T) {
 	statusWarning := []conformancesuite.LogEntry{{Result: "WARNING", Src: "EnsureVerifierFetchedRevocationList"}}
 	otherWarning := []conformancesuite.LogEntry{{Result: "WARNING", Src: "ValidateRequestObjectIat"}}
 	failure := []conformancesuite.LogEntry{{Result: "FAILURE", Src: "ValidateRequestObjectSignatureAgainstX5cHeader"}}
+	// A refusal the page reports, as cmd/conformance-verifier writes
+	// it, for the kb-jwt-signature module's expected refusal.
+	const kbSignature = "oid4vp-1final-verifier-invalid-kb-jwt-signature"
+	const kbSignatureRefusal = "reason: holder_binding\nverifier: verify response: credential query \"cred1\": verifier: verify: sdjwtvc: key binding JWT: sdjwtvc: verify key binding JWT signature: jose: ES256 signature verification failed"
 	cases := []struct {
 		name            string
 		exp             Expectation
@@ -38,10 +42,58 @@ func TestGrade(t *testing.T) {
 		{"skipped, yet answered", Skip, "FINISHED", "SKIPPED", outcomeVerified, nil, true},
 	}
 	for _, c := range cases {
-		err := Grade(c.exp, c.status, c.result, c.verifierOutcome, c.entries)
+		err := Grade(c.exp, refusals[kbSignature], c.status, c.result, c.verifierOutcome, kbSignatureRefusal, c.entries)
 		if (err != nil) != c.wantErr {
 			t.Errorf("%s: Grade = %v, want error %v", c.name, err, c.wantErr)
 		}
+	}
+}
+
+// TestGrade_RefusalReason checks a Refuse module passes only on a
+// refusal for the reason it tests: the suite grades any refusal
+// PASSED.
+func TestGrade_RefusalReason(t *testing.T) {
+	const name = "oid4vp-1final-verifier-invalid-kb-jwt-nonce"
+	want := refusals[name]
+	cases := []struct {
+		name, refusal string
+		wantErr       bool
+	}{
+		{"the nonce", "the answer was refused: a credential's holder binding failed (holder_binding)\nreason: holder_binding\nverifier: verify response: credential query \"cred1\": verifier: verify: a presentation isn't bound to this request: sdjwtvc: key binding JWT: sdjwtvc: key binding JWT is for another request: its nonce does not match the expected value", false},
+		{"another holder binding check", "reason: holder_binding\nverifier: verify response: sdjwtvc: key binding JWT is too old", true},
+		{"another reason", "reason: untrusted_issuer\nverifier: verify response: x5c: certificate signed by unknown authority", true},
+		{"no reason shown", "", true},
+	}
+	for _, c := range cases {
+		err := Grade(Refuse, want, "FINISHED", "PASSED", outcomeFailed, c.refusal, nil)
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: Grade = %v, want error %v", c.name, err, c.wantErr)
+		}
+	}
+	if err := Grade(Refuse, nil, "FINISHED", "PASSED", outcomeFailed, "reason: holder_binding", nil); err == nil {
+		t.Error("a Refuse module with no expected refusal passed")
+	}
+}
+
+// TestRefusals_EveryRefuseModule checks every Refuse module names its
+// expected refusal, and only those do.
+func TestRefusals_EveryRefuseModule(t *testing.T) {
+	for name, e := range expectations {
+		if _, ok := refusals[name]; ok != (e == Refuse) {
+			t.Errorf("%s: %v, refusal classified %v", name, e, ok)
+		}
+	}
+	for name, want := range refusals {
+		if len(want) == 0 {
+			t.Errorf("%s: no expected refusal text", name)
+		}
+	}
+}
+
+func TestPreText(t *testing.T) {
+	page := "<html><body><h1>Verification failed</h1><pre>reason: holder_binding</pre><pre>a &#34;quoted&#34; &lt;error&gt;</pre></body></html>"
+	if got, want := preText(page), "reason: holder_binding\na \"quoted\" <error>"; got != want {
+		t.Errorf("preText = %q, want %q", got, want)
 	}
 }
 
@@ -91,6 +143,10 @@ func TestSessionIDOf(t *testing.T) {
 func TestModuleResultLine(t *testing.T) {
 	line := ModuleResult{TestName: "m", Expected: Refuse, Status: "FINISHED", Result: "REVIEW", VerifierOutcome: outcomeVerified}.line()
 	if !strings.Contains(line, "FINISHED=REVIEW verifier=verified (want refuse") {
+		t.Fatalf("line = %q", line)
+	}
+	line = ModuleResult{TestName: "m", Expected: Refuse, Status: "FINISHED", Result: "PASSED", VerifierOutcome: outcomeFailed, VerifierRefusal: "reason: x"}.line()
+	if !strings.Contains(line, `refusal "reason: x"`) {
 		t.Fatalf("line = %q", line)
 	}
 }

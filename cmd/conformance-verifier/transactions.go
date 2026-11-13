@@ -10,6 +10,7 @@ import (
 	"html"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/storage"
@@ -56,6 +57,13 @@ type txServer struct {
 	v     *verifier.Verifier
 	txs   *verifier.Transactions
 	query dcql.Query
+
+	// refusals is each request's latest refusal, as refusalLines
+	// gives it (OnRefused): the result page shows it under LastError,
+	// which records only a fixed description of its Reason, so the
+	// drivers can grade why the Verifier refused, not only that it
+	// did. A test harness's page: a deployment shows LastError alone.
+	refusals sync.Map // request ID -> []string
 }
 
 // newTxServer builds the transactions engine cfg describes: under
@@ -88,6 +96,7 @@ func newTxServer(cfg Config) (*txServer, error) {
 	if err != nil {
 		return nil, err
 	}
+	t := &txServer{cfg: cfg, v: v, query: query}
 	txCfg := verifier.TransactionsConfig{
 		RequestURIBase: cfg.BaseURL + "/request",
 		// Each link asks for request_uri_method=post (OpenID4VP 1.0
@@ -104,14 +113,14 @@ func newTxServer(cfg Config) (*txServer, error) {
 		OnRefused: func(_ context.Context, id string, err error) {
 			// Quoted: its text may carry values the answer's sender chose.
 			log.Printf("transaction %s: answer refused: %q", id, err.Error())
+			t.refusals.Store(id, refusalLines(err))
 		},
 	}
 	setStatusCheck(&txCfg, status, assurance)
-	txs, err := verifier.NewTransactions(v, store, txCfg)
-	if err != nil {
+	if t.txs, err = verifier.NewTransactions(v, store, txCfg); err != nil {
 		return nil, err
 	}
-	return &txServer{cfg: cfg, v: v, txs: txs, query: query}, nil
+	return t, nil
 }
 
 // issuerAuthorized is the issuer authorization
@@ -283,12 +292,31 @@ func (t *txServer) writeView(w http.ResponseWriter, view verifier.TransactionVie
 		writeResultPage(w, http.StatusOK, "Verification failed", fmt.Sprintf("the request ended without a result (status %d): %s", view.Status, view.LastError))
 	default:
 		if view.Status == verifier.TransactionPending && view.LastError != "" {
-			writeResultPage(w, http.StatusOK, "Verification failed", view.LastError)
+			lines := []string{view.LastError}
+			if refusal, ok := t.refusals.Load(view.ID); ok {
+				lines = append(lines, refusal.([]string)...)
+			}
+			writeResultPage(w, http.StatusOK, "Verification failed", lines...)
 			return
 		}
 		writeResultPage(w, http.StatusOK, "Pending", fmt.Sprintf("request %s has no verified result yet", view.ID))
 	}
 }
+
+// refusalLines is how a result page reports err, a refused answer: its
+// verifier.Reason, on a line of its own as "reason: <reason>" when it
+// carries one, and its text.
+func refusalLines(err error) []string {
+	var verr *verifier.Error
+	if errors.As(err, &verr) {
+		return []string{refusalReasonPrefix + string(verr.Reason()), err.Error()}
+	}
+	return []string{err.Error()}
+}
+
+// refusalReasonPrefix starts the result page line naming a refusal's
+// verifier.Reason.
+const refusalReasonPrefix = "reason: "
 
 // writeResultPage writes a plain HTML page headed heading, each of
 // lines escaped in its own <pre>.
