@@ -115,8 +115,25 @@ final class InPersonModel {
     private var reader: ProximityReader?
 
     func share(_ model: WalletModel) {
-        guard presentation == nil, let wallet = model.wallet else { return }
+        guard presentation == nil, !starting, let wallet = model.wallet else { return }
         notice = nil
+        starting = true
+        Task {
+            // The last session may still hold Bluetooth: after a share it
+            // waits for the reader to disconnect.
+            if let closing { try? await closing.awaitClosed() }
+            closing = nil
+            starting = false
+            start(wallet, model)
+        }
+    }
+
+    /// The session closeSharing ended, until it lets go of Bluetooth.
+    private var closing: ProximityPresentation?
+    private var starting = false
+
+    private func start(_ wallet: Wallet, _ model: WalletModel) {
+        guard presentation == nil else { return }
         do {
             let p = try wallet.startProximityPresentation(modes: model.bleModes)
             presentation = p
@@ -155,6 +172,7 @@ final class InPersonModel {
 
     func closeSharing() {
         presentation?.cancel()
+        if let presentation { closing = presentation }
         watch?.cancel()
         presentation = nil
         state = nil
