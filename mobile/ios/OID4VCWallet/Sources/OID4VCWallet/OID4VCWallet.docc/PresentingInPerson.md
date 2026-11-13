@@ -123,7 +123,9 @@ or as `Duration`s, on iOS 16 and later
 The state turns final before the session lets go of Bluetooth: after
 `.presented`, it waits up to 5 seconds for the reader to disconnect.
 Before starting the next session, wait on
-``ProximityPresentation/awaitClosed()``:
+``ProximityPresentation/awaitClosed()``, in a task: it can take those 5
+seconds, so don't hold the UI up on it (show the next session as
+starting instead):
 
 ```swift
 /// Ends `presentation` and starts the next session once it has let go
