@@ -1629,6 +1629,22 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   ends too unless its NFC side is NFC-only retrieval: an NFC handover
   needs BLE as well. An NFC presentation not yet tapped has no
   transport, and stays armed.
+- **A chunk that isn't confirmed ends the session:** the GATT server
+  waits up to 5 s for `onNotificationSent` after each chunk, and the
+  GATT client as long for each write. With a reader whose Bluetooth was
+  turned off while the response was being sent, no confirmation came.
+  The wait's timeout is a cancellation in Kotlin, so `respond` let it
+  pass as its caller's own and the session stayed in `Responding`. The
+  transports now throw their own error instead: the session fails as
+  `ConnectionLost` (`BluetoothUnavailable` when this device's adapter
+  is off), and a GATT server whose session has failed sends no further
+  chunk. A disconnection reported while a chunk waits is acted on at
+  the next chunk or at that timeout, not sooner: a reader that
+  disconnects just after the last chunk has been sent the response,
+  and the session stays `Presented`. In a GATT client, a device that
+  stops answering mid-setup now costs one attempt, as a disconnecting
+  one does. Cancelling the caller of `respond` mid-send still leaves
+  `Responding` until `cancel()`.
 
 ### Phase 10 findings: the iOS SDK
 

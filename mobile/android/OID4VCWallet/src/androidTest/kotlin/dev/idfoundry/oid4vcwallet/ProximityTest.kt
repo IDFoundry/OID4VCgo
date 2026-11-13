@@ -550,6 +550,34 @@ class ProximityTest {
         }
     }
 
+    /** A response the transport can't deliver fails the session as a lost connection, and `respond` throws that. */
+    @Test
+    fun anUndeliveredResponseFailsTheSession(): Unit = runBlocking {
+        val s = setup()
+        val (holderEnd, readerEnd) = PipeTransport.pair()
+        val lost = java.util.concurrent.atomic.AtomicBoolean()
+        val losing = object : ProximityTransport by holderEnd {
+            override suspend fun send(message: ByteArray) {
+                if (lost.get()) throw ProximityTransportException("a notification wasn't confirmed")
+                holderEnd.send(message)
+            }
+        }
+        val holder = s.wallet.startProximityPresentation(timeouts, losing, setOf(ProximityBLEMode.PERIPHERAL_SERVER))
+        val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name", "given_name")), timeouts, readerEnd)
+        awaitRequest(holder)
+        lost.set(true)
+        try {
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+            throw AssertionError("an undelivered response was reported presented")
+        } catch (e: ProximityException) {
+            assertEquals(ProximityException.Reason.ConnectionLost, e.reason)
+        }
+        val error = (holder.state.value as? ProximityPresentation.State.Failed)?.error as? ProximityException
+            ?: throw AssertionError("holder: ${holder.state.value}")
+        assertEquals(ProximityException.Reason.ConnectionLost, error.reason)
+        reader.cancel()
+    }
+
     @Test
     fun readerCancels(): Unit = runBlocking {
         val (holder, reader) = start(setup())

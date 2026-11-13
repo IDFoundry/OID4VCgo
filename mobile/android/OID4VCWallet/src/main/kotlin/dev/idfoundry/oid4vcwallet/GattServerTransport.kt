@@ -22,7 +22,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
 
@@ -234,9 +234,14 @@ internal class GattServerTransport(
         for (chunk in BleChunks.split(message, BleChunks.characteristicSize(mtu))) notify(server2Client, chunk)
     }
 
-    /** Notifies [value] on [characteristic] and waits until it's sent. */
+    /**
+     * Notifies [value] on [characteristic] and waits until it's sent. A
+     * session that has failed sends nothing more, and a notification the
+     * stack doesn't confirm in time ends the session: the reader has
+     * gone without a disconnection being reported.
+     */
     private suspend fun notify(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-        failure?.takeIf { it.bluetoothUnavailable }?.let { throw it }
+        failure?.let { throw it }
         val device = peer ?: throw ProximityTransportException("no device connected")
         val s = server ?: throw ProximityTransportException("the session ended")
         while (notified.tryReceive().isSuccess) Unit // a stale one
@@ -249,7 +254,9 @@ internal class GattServerTransport(
             s.notifyCharacteristicChanged(device, characteristic, false)
         }
         if (!queued) throw ProximityTransportException("a notification couldn't be sent")
-        val status = withTimeout(NOTIFICATION_TIMEOUT_MS) { notified.receive() }
+        // Not withTimeout: its TimeoutCancellationException is a
+        // cancellation, which a caller takes as its own and lets pass.
+        val status = withTimeoutOrNull(NOTIFICATION_TIMEOUT_MS) { notified.receive() } ?: throw unconfirmed()
         if (status != BluetoothGatt.GATT_SUCCESS) throw ProximityTransportException("a notification failed ($status)")
     }
 
@@ -263,9 +270,24 @@ internal class GattServerTransport(
         }
 
     /**
+     * Why a notification wasn't confirmed in time, with the session
+     * ended for it: what ended the session meanwhile, else Bluetooth
+     * being off, else the reader having stopped answering.
+     */
+    private fun unconfirmed(): ProximityTransportException {
+        failure?.let { return it }
+        if (closed) return ProximityTransportException("the session ended")
+        val e = disconnectionFailure(manager).takeIf { it.bluetoothUnavailable }
+            ?: ProximityTransportException("a notification wasn't confirmed")
+        fail(e)
+        return failure ?: e
+    }
+
+    /**
      * Ends the session with [e], once: [connect] and [receive] throw it,
-     * and [send] too when Bluetooth is off, so a response being sent then
-     * fails as that rather than as a lost connection.
+     * and so does [send] before its next chunk. Bluetooth turning off
+     * also ends the wait for a chunk's confirmation, so a response being
+     * sent then fails as that rather than as a lost connection.
      */
     private fun fail(e: ProximityTransportException) {
         synchronized(this) {
