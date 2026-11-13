@@ -108,9 +108,11 @@ this binary answers every Credential Request 202 with a
 `transaction_id` and `interval`, and its Deferred Credential Endpoint
 issues on the Wallet's first poll. `TestFullFlow_DeferredIssuance`
 drives that end to end, and the daily OID4VCI conformance workflow's
-"Issuer deferred" run (`run-fapi2sp-battery -deferred`: metadata-test
-and happy-flow) drives it against the suite, which follows a 202 to
-the Deferred Credential Endpoint once.
+"Issuer deferred" and "Issuer mdoc deferred" runs
+(`run-fapi2sp-battery -deferred`, with and without
+`-credential-format mdoc`) drive the plan's 21 OID4VCI-specific
+modules against it: each one that makes a Credential Request follows
+the 202 to the Deferred Credential Endpoint.
 
 Building the full-flow test surfaced three real bugs, all fixed
 alongside it:
@@ -161,16 +163,19 @@ under `fapi_profile=vci_haip` specifically (not just the base,
 non-HAIP profile it was first driven under) via
 `run-fapi2sp-battery`'s own `haipBattery` list. The Deferred Credential
 Endpoint has no module of its own among the plan's
-`oid4vci-1_0-issuer-*` modules; it's covered by the "Issuer deferred"
-run instead (`run-fapi2sp-battery -deferred`, see "Runs" below):
-`cmd/conformance-issuer` defers every Credential Request, and the
-suite's `happy-flow` follows the 202 to the Deferred Credential
-Endpoint and validates what it returns.
+`oid4vci-1_0-issuer-*` modules, and the plan has no issuance-mode
+variant (`vci_credential_issuance_mode` belongs to the Wallet plan);
+the suite takes whichever response the issuer gives
+(`VCICheckForDeferredCredentialResponse`). It's covered by the deferred
+runs instead (`run-fapi2sp-battery -deferred`, see "Runs" below):
+`cmd/conformance-issuer` defers every Credential Request, and every
+OID4VCI-specific module follows the 202 to the Deferred Credential
+Endpoint, checks its `interval`, and validates what it returns.
 
 ## Runs
 
 `conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
-through `run_issuer` in `conformance/scripts/lib.sh`: six runs of
+through `run_issuer` in `conformance/scripts/lib.sh`: seven runs of
 `run-fapi2sp-battery`, each regenerating the keys and config,
 restarting `cmd/conformance-issuer` and creating its own plan.
 
@@ -178,20 +183,75 @@ restarting `cmd/conformance-issuer` and creating its own plan.
 | --- | --- | --- |
 | Issuer haip-battery | none | `haipBattery`, 60 |
 | Issuer issuer-initiated | `-issuer-initiated` | `haipBattery`, 60 |
-| Issuer mdoc | `-credential-format mdoc` | `mdocBattery`: `metadata-test`, `happy-flow` |
-| Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `mdocBattery` |
-| Issuer deferred | `-deferred` | `deferredBattery`: `metadata-test`, `happy-flow` |
+| Issuer mdoc | `-credential-format mdoc` | `vciBattery`, 21 |
+| Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `vciBattery`, 21 |
+| Issuer deferred | `-deferred` | `vciBattery`, 21 |
+| Issuer mdoc deferred | `-credential-format mdoc -deferred` | `vciBattery`, 21 |
 | Issuer production | `-production` | `productionBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 |
 
 The first four are the role's four certification profiles
 (`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
-deferred run is extra coverage of the Deferred Credential Endpoint,
+deferred runs are extra coverage of the Deferred Credential Endpoint,
 and the production run of the production setup (see "Production
 setup" below). Every module must end `PASSED`, except in the two
 `haipBattery` runs and the production run `refresh-token` (`SKIPPED`)
 and `par-attempt-to-use-request_uri-for-different-client` (`REVIEW`),
 both explained under "Status: the generic FAPI2SP battery" below, and
 the three modules "Production setup" lists in the production run.
+
+`vciBattery` is the plan's 21 OID4VCI-specific modules, every
+`oid4vci-1_0-issuer-*` one. The plan's `credential_format` variant
+(`sd_jwt_vc` or `mdoc`) changes how the suite validates what these
+modules are issued (`ParseMdocCredentialFromVCIIssuance` and the mdoc
+MSO, Document Signer and CRL checks; in `batch-issuance` the mdoc
+dataset and device-key checks), and deferral changes every Credential
+Request they make; the 40 `fapi2-security-profile-final-*` modules
+don't declare `credential_format` (the plan's last module-list entry
+leaves it out of their variants) and never reach issuance, so those
+runs don't repeat them. `fail-invalid-key-attestation-signature`
+selects the `attestation` proof type itself when the issuer offers
+it, as `cmd/conformance-issuer`'s development setup does, so it runs
+in every `vciBattery` run with a key attestation whose signature it
+breaks.
+
+Each module's verdict in the `vciBattery` runs, against the `sd_jwt_vc`
+immediate-issuance run ("Issuer haip-battery"):
+
+| Module | sd_jwt_vc immediate | mdoc | mdoc issuer-initiated | sd_jwt_vc deferred | mdoc deferred |
+| --- | --- | --- | --- | --- | --- |
+| `metadata-test` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `metadata-test-signed` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `happy-flow` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `happy-flow-additional-requests` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `happy-flow-multiple-clients` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `happy-flow-skip-notification` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `batch-issuance` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-nonce` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-jwt-proof-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-key-attestation-signature` | not driven (`productionBattery`: `PASSED`) | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-client-attestation-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-client-attestation-pop-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-client-attestation-exp-in-past` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-client-attestation-no-sub` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-client-attestation-pop-wrong-aud` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-mismatched-client-attestation-pop-key` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-missing-proof` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-unsupported-encryption-algorithm` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-unknown-credential-configuration` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-unknown-credential-identifier` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-on-access-token-in-query` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+
+(Module names without their `oid4vci-1_0-issuer-` prefix.) No module
+needs an exception, so `lib.sh` grades every one against `PASSED`.
+Confirmed live twice against a fresh local suite (commit `410812ef`,
+image built 2026-11-12), with the other three runs on the same suite
+matching their own expectations: in the deferred runs every Credential Request
+was answered 202 with `transaction_id` and `interval`
+(`VCICheckForDeferredCredentialResponse`,
+`VCIEnsureIntervalPresentInDeferredResponse`) and the credential
+validated from the Deferred Credential Endpoint's response, and in the
+mdoc runs the suite parsed and validated an `mso_mdoc` credential,
+`batch-issuance` included.
 
 ## Production setup
 
@@ -900,9 +960,10 @@ discipline:**
   ("scope is not valid for this client") before ever reaching the
   Credential Endpoint. Fixed by appending `cfg.Mdoc.Scope` when present.
 - **Live, twice for stability**: `run-fapi2sp-battery -credential-format
-  mdoc` drives the 2 already-known-working sanity modules
-  (`mdocBattery` — `metadata-test`, `happy-flow`) under the mdoc
-  crossing; the other 40 FAPI2SP-generic battery modules don't
+  mdoc` drove the 2 already-known-working sanity modules
+  (`metadata-test`, `happy-flow`) under the mdoc crossing (**update**:
+  it now drives all 21 OID4VCI-specific modules, `vciBattery`, see
+  "Runs"); the other 40 FAPI2SP-generic battery modules don't
   exercise credential issuance format at all (`vciCredentialFormat` is
   read into `AbstractVCIIssuerTestModule` but never branched on
   anywhere else in the suite's own source), so re-running them under

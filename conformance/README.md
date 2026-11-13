@@ -455,13 +455,13 @@ specific reason to suspect drift, not just when something seems off.
   (a human-review negative test) — no `FAILURE`s; the daily run
   expects the same of the 60-module battery.
   **Runs**: the daily OID4VCI workflow (`run_issuer` in
-  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` six
+  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` seven
   times — `haipBattery` with no flags and with `-issuer-initiated`
   (the script sends each OID4VCI module's Credential Offer to the
-  suite's `credential_offer_endpoint` itself), `mdocBattery`
-  (`metadata-test`, `happy-flow`) with `-credential-format mdoc` with
-  and without `-issuer-initiated`, `deferredBattery` (the same two
-  modules) with `-deferred`, and `productionBattery` (the plan's 61)
+  suite's `credential_offer_endpoint` itself), `vciBattery` (the
+  plan's 21 OID4VCI-specific modules) with `-credential-format mdoc`
+  with and without `-issuer-initiated`, with `-deferred`, and with
+  both, and `productionBattery` (the plan's 61)
   with `-production`, against the production setup. The first four
   are the role's four certification profiles; see
   `issuer/README.md`'s "Runs".
