@@ -64,28 +64,13 @@ func TestExpectations_DrivenAndNotDrivenAreDisjoint(t *testing.T) {
 }
 
 func TestExpectationFor(t *testing.T) {
+	// Run under either engine: the transactions engine's requests ask
+	// for request_uri_method=post (TransactionsConfig.RequestURIMethodPost).
 	const post = "oid4vp-1final-verifier-request-uri-method-post"
-	if e, ok := expectationFor("", post); !ok || e != Accept {
-		t.Errorf("sessions engine: %s = %v, %v; want Accept", post, e, ok)
+	if e, ok := expectationFor(post); !ok || e != Accept {
+		t.Errorf("%s = %v, %v; want Accept", post, e, ok)
 	}
-	if e, ok := expectationFor(EngineTransactions, post); !ok || e != Skip {
-		t.Errorf("transactions engine: %s = %v, %v; want Skip", post, e, ok)
-	}
-	// Every other module expects the same of both engines.
-	for name, want := range expectations {
-		if _, overridden := transactionsExpectations[name]; overridden {
-			continue
-		}
-		if e, ok := expectationFor(EngineTransactions, name); !ok || e != want {
-			t.Errorf("transactions engine: %s = %v, want %v", name, e, want)
-		}
-	}
-	for name := range transactionsExpectations {
-		if _, ok := expectations[name]; !ok {
-			t.Errorf("%s overrides no module's expectation", name)
-		}
-	}
-	if _, ok := expectationFor(EngineTransactions, "oid4vp-1final-verifier-unknown"); ok {
+	if _, ok := expectationFor("oid4vp-1final-verifier-unknown"); ok {
 		t.Error("an unknown module has an expectation")
 	}
 	if Skip.String() == "no expectation" {

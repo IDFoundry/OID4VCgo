@@ -174,8 +174,10 @@ type Config struct {
 	// "transactions" for verifier.Transactions, a deployment's API,
 	// whose own handlers serve the Request Object and the response
 	// endpoint (see transactions.go). The transactions engine serves
-	// the redirect flow alone: no request_uri_method=post, no
-	// /result/{id}/redeem, no /dcapi/ routes.
+	// the redirect flow alone, each request asking for
+	// request_uri_method=post (an interop run's ?request_uri_method=
+	// choice is the default engine's): no /result/{id}/redeem, no
+	// /dcapi/ routes.
 	Engine string `json:"engine"`
 
 	// Production, with the transactions engine, runs it under

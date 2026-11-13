@@ -113,15 +113,19 @@ func (b *txBrowser) begin() (string, wallet.AuthorizationRequest) {
 		b.t.Fatalf("Location = %q, want an openid4vp:// link", rec.Header().Get("Location"))
 	}
 	requestURI, err := url.Parse(link.Query().Get("request_uri"))
-	if err != nil || !strings.HasPrefix(requestURI.Path, "/request/") || link.Query().Has("request_uri_method") {
-		b.t.Fatalf("link = %q, want a /request/{id} request_uri and no request_uri_method", link)
+	if err != nil || !strings.HasPrefix(requestURI.Path, "/request/") || link.Query().Get("request_uri_method") != "post" {
+		b.t.Fatalf("link = %q, want a /request/{id} request_uri and request_uri_method=post", link)
 	}
-	object := b.do(http.MethodGet, requestURI.Path, nil)
+	// Fetched as the suite's Wallet fetches it (OpenID4VP 1.0 §5.10).
+	const walletNonce = "wallet-nonce"
+	object := b.do(http.MethodPost, requestURI.Path, url.Values{
+		"wallet_nonce": {walletNonce}, "wallet_metadata": {`{"vp_formats_supported":{"dc+sd-jwt":{},"mso_mdoc":{}}}`},
+	})
 	if object.Code != http.StatusOK || object.Header().Get("Content-Type") != "application/oauth-authz-req+jwt" {
-		b.t.Fatalf("GET %s = %d %q", requestURI.Path, object.Code, object.Header().Get("Content-Type"))
+		b.t.Fatalf("POST %s = %d %q", requestURI.Path, object.Code, object.Header().Get("Content-Type"))
 	}
 	req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
-		RequestObject: object.Body.String(), ClientID: link.Query().Get("client_id"), VerifierTrust: wallet.NoVerifierTrust{},
+		RequestObject: object.Body.String(), ClientID: link.Query().Get("client_id"), VerifierTrust: wallet.NoVerifierTrust{}, WalletNonce: walletNonce,
 	})
 	if err != nil {
 		b.t.Fatalf("ParseAuthorizationRequest: %v", err)
@@ -161,8 +165,9 @@ func checkTransactionsFlow(t *testing.T, s txTestSetup) {
 	b := &txBrowser{t: t, mux: mux}
 
 	id, req := b.begin()
-	if rec := b.do(http.MethodPost, "/request/"+id, url.Values{"wallet_nonce": {"n"}}); rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /request/%s = %d, want 405: Transactions serves request_uri by GET alone", id, rec.Code)
+	// A Wallet that doesn't support POST fetches by GET (OpenID4VP 1.0 §5.1).
+	if rec := b.do(http.MethodGet, "/request/"+id, nil); rec.Code != http.StatusOK {
+		t.Fatalf("GET /request/%s = %d, want 200", id, rec.Code)
 	}
 	if page := b.do(http.MethodGet, "/result/"+id, nil); !strings.Contains(page.Body.String(), "<h1>Pending</h1>") {
 		t.Fatalf("result page before an answer = %s, want Pending", page.Body)

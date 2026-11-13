@@ -155,6 +155,25 @@ trust check.
   an EC P-256 key with `alg` absent and uses it for ECDH-ES, as it does
   for an Issuer's credential request encryption key (OpenID4VCI 1.0
   §10): a key whose `alg` names another algorithm is still passed over.
+- **A Verifier's `request_uri_method=post`.** With
+  `TransactionsConfig.RequestURIMethodPost`, `verifier.Transactions`
+  answers a request_uri POST (OpenID4VP 1.0 §5.10) with a Request
+  Object carrying its `wallet_nonce`, and still serves `GET` to a
+  Wallet that doesn't support POST (§5.1). Where it reads the spec
+  loosely: its links carry no `client_metadata`, which §5.1 says a
+  Verifier asking for `post` SHOULD add when it has no other means to
+  convey its capabilities (the Request Object carries them, and §5.10.1
+  has the Wallet use only its parameters; a link with the response key
+  and formats in it makes a denser QR code); a `wallet_metadata`
+  without `vp_formats_supported`, which §10.1 makes REQUIRED, is
+  accepted and narrows nothing, as is one without
+  `client_id_prefixes_supported`, whose §10.1 default,
+  `pre-registered`, would refuse §5.10's own example; and a `jwks` for
+  an encrypted Request Object is ignored, §5.10.1 answering with "a
+  signed, optionally encrypted, request object". A refused POST is an
+  HTTP 400 (413, 415) with RFC 6749's `invalid_request`: §5.10.2
+  defines no error code, only that the Wallet terminates on any HTTP
+  error, and §8.5's codes are the Wallet's.
 - **Request encryption JWKs without `kid`.** OpenID4VCI 1.0 §12.2.4
   requires a `kid` on each key in an Issuer's
   `credential_request_encryption.jwks`. The wallet takes the first EC

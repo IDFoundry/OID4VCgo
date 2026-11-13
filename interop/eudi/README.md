@@ -192,7 +192,13 @@ IACA), and carries a Token Status List reference.
 
 Two verifiers run, one asking for the SD-JWT VC PID (`dc+sd-jwt`,
 `urn:eudi:pid:1`), one for the mdoc PID (`eu.europa.ec.eudi.pid.1`),
-each for `family_name` and `given_name`. Each is configured as strictly
+each for `family_name` and `given_name`. A third serves the SD-JWT VC
+request through `verifier.Transactions`, the API a deployment uses
+(`cmd/conformance-verifier`'s transactions engine): its links ask for
+`request_uri_method=post`, the wallet's POST carries its
+`wallet_metadata`, to which the Request Object's `client_metadata` is
+narrowed, and the result is released only to the browser holding the
+request's cookie, at the `redirect_uri`. Each is configured as strictly
 as the binary allows: the issuer trusted by its x5c chain to the run's
 CA (or IACA), never a pinned key; every credential's Token Status List
 checked, a status reference required, the list signed by the
@@ -207,6 +213,7 @@ also checks that the status lists were fetched.
 | SD-JWT VC, no `request_uri_method` | accepted; fetched with GET |
 | SD-JWT VC, `post` to a wallet that supports only GET | accepted; fetched with GET |
 | SD-JWT VC, a wallet that encrypts only with A256GCM | accepted, encrypted with A256GCM |
+| SD-JWT VC through `verifier.Transactions` (`TransactionsConfig.RequestURIMethodPost`) | accepted; fetched with a form POST, the result released to the browser that began the request |
 | SD-JWT VC over the Digital Credentials API (`openid4vp-v1-signed`, `dc_api.jwt`) | accepted |
 | mdoc, `request_uri_method=post` and `get` | accepted |
 | mdoc over the Digital Credentials API | accepted |
@@ -290,7 +297,8 @@ and HAIP 1.0 Final:
   `responseEncryptionConfiguration`. The run's wallet supports both, so
   what it sent was true. It also sends `issuer` and
   `response_types_supported`, which the EUDI verifier requires (see
-  above); this verifier ignores `wallet_metadata`, and the run checks
+  above); the default engine ignores `wallet_metadata`
+  (`verifier.Transactions` narrows its Request Object to it), and the run checks
   its `client_id_prefixes_supported`, `vp_formats_supported` and
   `request_object_signing_alg_values_supported`.
 
@@ -318,9 +326,10 @@ The verifier, not the library, sets the limits here:
   resolve Type Metadata.
 - ISO/IEC TS 18013-7 Annex C (`org-iso-mdoc`): the library is
   OpenID4VP only.
-- A `response_code` bound to the browser that started the request, and
-  the issuer certificates' revocation (CRLs): `cmd/conformance-verifier`
-  has neither (see `conformance/verifier/README.md`).
+- A `response_code` bound to the browser that started the request
+  outside the one `verifier.Transactions` case, and the issuer
+  certificates' revocation (CRLs): `cmd/conformance-verifier`'s default
+  engine has neither (see `conformance/verifier/README.md`).
 
 Run it locally (Go, a JDK 21 or later, jq, curl and openssl):
 
@@ -328,8 +337,8 @@ Run it locally (Go, a JDK 21 or later, jq, curl and openssl):
 interop/eudi/run-wallet.sh
 ```
 
-`PORT`, `MDOC_PORT` and `SERVE_PORT` (20443, 20444 and 20445) move the
-listeners, and `WORK` keeps the run's files. Every key, certificate and
+`PORT`, `MDOC_PORT`, `SERVE_PORT` and `TX_PORT` (20443 to 20446) move
+the listeners, and `WORK` keeps the run's files. Every key, certificate and
 document is throwaway, made per run by [`scripts/setup`](scripts/setup)
 and the driver; CI uploads the logs and the verifiers' answers, never
 the work directory's keys.

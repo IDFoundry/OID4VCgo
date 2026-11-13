@@ -3,6 +3,7 @@ package verifier
 import (
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"path"
 
@@ -25,12 +26,32 @@ const requestObjectMediaType = "application/oauth-authz-req+jwt"
 // puts in each link — mount it under TransactionsConfig.RequestURIBase,
 // e.g. mux.Handle("GET /request-objects/{id}", t.RequestObjectHandler()).
 // The request's ID is the {id} path value, or the last path segment.
-// Only GET is supported: Begin's links don't ask for
-// request_uri_method=post.
+// It serves GET, and, with TransactionsConfig.RequestURIMethodPost,
+// POST (OpenID4VP 1.0 §5.10; mount it for both methods then, e.g.
+// mux.Handle("/request-objects/{id}", …)): any other method is 405.
+//
+// A POST's body must be application/x-www-form-urlencoded (§5.10), of
+// at most 32 KiB, with at most one wallet_nonce and one
+// wallet_metadata; it's answered with RequestObjectPost's Request
+// Object. One refused — its form malformed, too large, or of another
+// media type, or its wallet_metadata refused (a *WalletMetadataError)
+// — is answered 400 (413 too large, 415 another media type) with a
+// JSON invalid_request error: §5.10.2 defines no error codes of its
+// own ("If the Verifier responds with any HTTP error response, the
+// Wallet MUST terminate the process"), and §8.5's are the Wallet's, so
+// RFC 6749 §5.2's invalid_request is used. Either method answers 404
+// for a request that's unknown, expired or a Digital Credentials API
+// one; a POST the Verifier fails to sign a Request Object for, 500
+// server_error.
 func (t *Transactions) RequestObjectHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+		post := r.Method == http.MethodPost && t.cfg.RequestURIMethodPost
+		if r.Method != http.MethodGet && !post {
+			allow := http.MethodGet
+			if t.cfg.RequestURIMethodPost {
+				allow += ", " + http.MethodPost
+			}
+			w.Header().Set("Allow", allow)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -38,8 +59,27 @@ func (t *Transactions) RequestObjectHandler() http.Handler {
 		if id == "" {
 			id = path.Base(r.URL.Path)
 		}
-		object, err := t.RequestObject(r.Context(), id)
-		if err != nil {
+		var object string
+		var err error
+		if post {
+			fetch, status, description := readRequestURIPost(w, r)
+			if status != 0 {
+				writeRequestURIPostError(w, status, description)
+				return
+			}
+			object, err = t.RequestObjectPost(r.Context(), id, fetch)
+		} else {
+			object, err = t.RequestObject(r.Context(), id)
+		}
+		var metadataErr *WalletMetadataError
+		switch {
+		case errors.As(err, &metadataErr):
+			writeRequestURIPostError(w, http.StatusBadRequest, metadataErr.Reason)
+			return
+		case errors.As(err, new(*serverFault)):
+			writeServerError(w)
+			return
+		case err != nil:
 			http.NotFound(w, r)
 			return
 		}
@@ -48,6 +88,52 @@ func (t *Transactions) RequestObjectHandler() http.Handler {
 		w.Header().Set(headerCacheControl, cacheNoStore)
 		_, _ = w.Write([]byte(object)) // #nosec G705 -- a JWT this Verifier signed, served as application/oauth-authz-req+jwt with nosniff, never HTML
 	})
+}
+
+// maxRequestURIPostBytes bounds a request_uri POST's body: a
+// wallet_nonce and a Wallet's metadata, form-encoded.
+const maxRequestURIPostBytes = 32 << 10
+
+// formMediaType is the media type of a request_uri POST (OpenID4VP
+// 1.0 §5.10).
+const formMediaType = "application/x-www-form-urlencoded"
+
+// readRequestURIPost reads r, a request_uri POST (OpenID4VP 1.0
+// §5.10), or returns the status and description to refuse it with.
+func readRequestURIPost(w http.ResponseWriter, r *http.Request) (RequestURIPost, int, string) {
+	if mediaType, _, err := mime.ParseMediaType(r.Header.Get(headerContentType)); err != nil || mediaType != formMediaType {
+		return RequestURIPost{}, http.StatusUnsupportedMediaType, "a request_uri POST must be " + formMediaType
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestURIPostBytes)
+	if err := r.ParseForm(); err != nil {
+		if errors.As(err, new(*http.MaxBytesError)) {
+			return RequestURIPost{}, http.StatusRequestEntityTooLarge, "the request_uri POST is too large"
+		}
+		return RequestURIPost{}, http.StatusBadRequest, "the request_uri POST's form is malformed"
+	}
+	nonces, metadata := r.PostForm["wallet_nonce"], r.PostForm["wallet_metadata"]
+	if len(nonces) > 1 || len(metadata) > 1 {
+		return RequestURIPost{}, http.StatusBadRequest, "the request_uri POST repeats wallet_nonce or wallet_metadata"
+	}
+	var post RequestURIPost
+	if len(nonces) == 1 {
+		post.WalletNonce = nonces[0]
+	}
+	if len(metadata) == 1 {
+		post.WalletMetadata = []byte(metadata[0])
+	}
+	return post, 0, ""
+}
+
+// writeRequestURIPostError refuses a request_uri POST with status and
+// an invalid_request error (RFC 6749 §5.2) described by description:
+// OpenID4VP 1.0 §5.10.2 has the Wallet terminate on any HTTP error,
+// and defines no error codes of its own.
+func writeRequestURIPostError(w http.ResponseWriter, status int, description string) {
+	w.Header().Set(headerContentType, mediaTypeJSON)
+	w.Header().Set(headerCacheControl, cacheNoStore)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_request", "error_description": description})
 }
 
 // maxResponseBodyBytes bounds a direct_post body: the encrypted
@@ -105,10 +191,7 @@ func (t *Transactions) ResponseHandler() http.Handler {
 			// A same-device request's Answered carries its redirect_uri.
 		case errors.As(err, new(*serverFault)):
 			// The Verifier's own failure, not the answer's.
-			w.Header().Set(headerContentType, mediaTypeJSON)
-			w.Header().Set(headerCacheControl, cacheNoStore)
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_error"})
+			writeServerError(w)
 			return
 		case err != nil:
 			// The same reply whether the request is unknown, answered,
@@ -127,6 +210,15 @@ func (t *Transactions) ResponseHandler() http.Handler {
 		}
 		writeResponseJSON(w, body)
 	})
+}
+
+// writeServerError answers a request the Verifier failed on itself,
+// such as its TransactionStore: a 500 server_error.
+func writeServerError(w http.ResponseWriter) {
+	w.Header().Set(headerContentType, mediaTypeJSON)
+	w.Header().Set(headerCacheControl, cacheNoStore)
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "server_error"})
 }
 
 func writeResponseJSON(w http.ResponseWriter, body map[string]string) {

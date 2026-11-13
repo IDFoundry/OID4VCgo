@@ -90,7 +90,12 @@ func newTxServer(cfg Config) (*txServer, error) {
 	}
 	txCfg := verifier.TransactionsConfig{
 		RequestURIBase: cfg.BaseURL + "/request",
-		RedirectURI:    cfg.BaseURL + "/result",
+		// Each link asks for request_uri_method=post (OpenID4VP 1.0
+		// §5.10), as the default engine's do: the suite's
+		// request-uri-method-post module runs only for a request that
+		// does.
+		RequestURIMethodPost: true,
+		RedirectURI:          cfg.BaseURL + "/result",
 		Verify: verifier.VerifyResponseRequest{
 			IssuerKeys: issuerKeys, MdocIssuerKeys: mdocIssuerKeys,
 			MaxKeyBindingAge: maxKeyBindingAge,
@@ -162,7 +167,21 @@ func (t *txServer) routes() *http.ServeMux {
 	mux.HandleFunc("GET /authorize", t.handleAuthorize)
 	// No method in the patterns: Transactions' handlers answer the
 	// methods they don't support themselves (405).
-	mux.Handle("/request/{id}", t.txs.RequestObjectHandler())
+	requestObjects := t.txs.RequestObjectHandler()
+	mux.HandleFunc("/request/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// How the Wallet fetched it, which an interop run checks
+		// (OpenID4VP 1.0 §5.10). Only a method the handler serves is
+		// named: the sender chose the rest of the request.
+		method := "another method"
+		switch r.Method {
+		case http.MethodGet:
+			method = http.MethodGet
+		case http.MethodPost:
+			method = http.MethodPost
+		}
+		log.Printf("request object fetched with %s", method)
+		requestObjects.ServeHTTP(w, r)
+	})
 	mux.Handle("/response", t.txs.ResponseHandler())
 	mux.HandleFunc("GET /result", t.handleRedirectBack)
 	mux.HandleFunc("GET /result/{id}", t.handleResult)

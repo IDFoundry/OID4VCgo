@@ -7,6 +7,32 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.77.1 → next
+
+### Verifier (`verifier`)
+
+- **New, opt-in: `request_uri_method=post` for `verifier.Transactions`**
+  (OpenID4VP 1.0 §5.10). Nothing changes unless you set
+  `TransactionsConfig.RequestURIMethodPost`. With it, `Begin`'s links
+  carry `request_uri_method=post`, and `RequestObjectHandler` answers
+  a Wallet's POST (`application/x-www-form-urlencoded`, at most
+  32 KiB) with the Request Object signed for that fetch: its
+  `wallet_nonce`, and a `client_metadata` narrowed to the formats,
+  algorithms and `enc` values its `wallet_metadata` shares with the
+  Verifier. A `wallet_metadata` that isn't a JSON object, or shares
+  nothing the request can be made with, is refused with a 400
+  `invalid_request`. A Wallet that doesn't support POST fetches with
+  `GET` (§5.1), which is still served. Mount the handler for both
+  methods (`mux.Handle("/request-objects/{id}", …)`, not
+  `"GET /request-objects/{id}"`), and set the option on every instance
+  serving the `request_uri` before any of them begins a request with
+  it: one without it answers a POST with 405, and a Wallet stops at an
+  HTTP error (§5.10.2). `RequestObjectPost` does the same for a
+  handler of your own. Nothing new is stored: each POST re-signs with
+  the transaction's own nonce, `state` and response key, so
+  `TransactionCodec` and `sqlstore` are unchanged, and a record from
+  either version is read by the other.
+
 ## v0.76.0 → v0.77.0
 
 ### Wallet (`wallet`, `walletflow`, `mobile`)
