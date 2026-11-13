@@ -56,8 +56,7 @@ the holder dismissed the prompt — is `cancelled` rather than
 `platform`, and a Wallet Provider callback's (or `CreateKey`'s) starting
 with `[refused:code]` is `platform` with the provider's error code as
 its detail (`instance_revoked`, say); see Callbacks the app implements.
-The Swift and Kotlin libraries mark both from the release after
-OID4VCWallet 0.34.0.
+The Swift and Kotlin libraries mark both from OID4VCWallet 0.35.0.
 
 Version 14 (OID4VCWallet 0.25.0) has a ProximityReader decide whether
 a verified document's revocation status is checked: its configuration's
