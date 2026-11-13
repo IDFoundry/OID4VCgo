@@ -1513,7 +1513,19 @@ changes whether *every* bullet below is `(done)`.
   `direct_post.jwt` response by its `kid` and verifies it once,
   `Redeem` exchanges a same-device `response_code` only in the browser
   that began the session, and `RequestObjectHandler`/`ResponseHandler`
-  expose the two Wallet-facing endpoints. `BeginDCAPI` and
+  expose the two Wallet-facing endpoints. `RequestObjectHandler`
+  serves `GET`; with `TransactionsConfig.RequestURIMethodPost` the
+  links ask for `request_uri_method=post` and it serves `POST` too
+  (OpenID4VP 1.0 §5.10, `RequestObjectPost`): each POST is answered
+  with the Request Object re-signed for that fetch, with the
+  transaction's own nonce, `state` and response key (so nothing new
+  is stored, and `TransactionCodec` is unchanged), its `wallet_nonce`,
+  and a `client_metadata` narrowed to the formats, algorithms and
+  `enc` values the posted `wallet_metadata` shares with the Verifier,
+  refused (400) when they share none. The opt-in is the
+  configuration's, not each request's: the methods an endpoint
+  answers are the endpoint's, and a per-request flag would be one more
+  field every `TransactionStore` must keep. `BeginDCAPI` and
   `HandleDCAPIResponse` do the same for a signed request over the
   Digital Credentials API: the request is bound to the one page origin
   it's made from (its only `expected_origins` entry, and the answer's

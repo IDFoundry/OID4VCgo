@@ -86,11 +86,11 @@ the OIDF runs still don't exercise, in particular:
   (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
   suite's attestations carry no `status` claim, so the status checks
   are configured but never fetch a list.
-- What `verifier.Transactions` does beyond those legs: fetching the
-  Request Object with `request_uri_method=post` (it serves `GET`
-  alone, so the suite skips `request-uri-method-post` for it), the
-  cross-device flow (the legs begin same-device requests), its Digital
-  Credentials API requests (`BeginDCAPI`, `BeginMdocDCAPI`; the suite
+- What `verifier.Transactions` does beyond those legs: narrowing the
+  Request Object to a posted `wallet_metadata` (the suite's
+  `request_uri_method=post` fetch carries only a `wallet_nonce`; the
+  EUDI interop run posts one), the cross-device flow (the legs begin
+  same-device requests), its Digital Credentials API requests (`BeginDCAPI`, `BeginMdocDCAPI`; the suite
   runs drive no `dc_api.jwt` Verifier list), PostgreSQL and several
   instances sharing a store, and `TransactionsConfig.Status`'s own
   production check of the status list fetch: the suite serves its
@@ -161,8 +161,9 @@ The same workflow runs three more directions. The EUDI wallet library
 for presentation,
 [eudi-lib-jvm-openid4vp-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt),
 presents SD-JWT VC and mdoc PIDs to `cmd/conformance-verifier`, over
-the redirect flow and the DC API, from a pinned JVM driver
-(`interop/eudi/run-wallet.sh`). The EUDI wallet library for issuance,
+the redirect flow and the DC API, from a pinned JVM driver, and the
+SD-JWT VC through `verifier.Transactions` with
+`request_uri_method=post` (`interop/eudi/run-wallet.sh`). The EUDI wallet library for issuance,
 [eudi-lib-jvm-openid4vci-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vci-kt),
 obtains credentials from `cmd/conformance-issuer`: both formats, by the
 pre-authorized code and the authorization code flows, with every proof

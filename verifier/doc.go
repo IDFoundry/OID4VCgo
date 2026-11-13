@@ -128,7 +128,11 @@
 // for every requested type, VerifyResponseRequest.IssuerAuthorized
 // decides that per presentation (SD-JWT VC draft-19 §7.7).
 // Transactions hosts each request's Request Object at its request_uri
-// (RequestObjectHandler). Invoking the Digital Credentials API itself,
+// (RequestObjectHandler), fetched by GET, and with
+// TransactionsConfig.RequestURIMethodPost by POST too (OpenID4VP 1.0
+// §5.10): the links then ask for request_uri_method=post, and a POST
+// gets a Request Object signed for it, carrying its wallet_nonce, with
+// a client_metadata narrowed to its wallet_metadata. Invoking the Digital Credentials API itself,
 // in the page, is the caller's: BeginDCAPI and BeginMdocDCAPI give the
 // request to hand it, and HandleDCAPIResponse and
 // HandleMdocDCAPIResponse take its answer. See ARCHITECTURE.md for

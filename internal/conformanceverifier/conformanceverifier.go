@@ -385,7 +385,7 @@ const placeholderPNGDataURI = "data:image/png;base64," +
 // result page with the same cookies.
 func DriveModule(setup SetupResult, testName string, moduleVariant map[string]string) ModuleResult {
 	httpClient, apiBase, verifierBase, planID := setup.HTTPClient, setup.APIBase, setup.VerifierBase, setup.PlanID
-	expected, _ := expectationFor(setup.Engine, testName)
+	expected, _ := expectationFor(testName)
 	res := ModuleResult{TestName: testName, Expected: expected}
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, moduleVariant)
 	if err != nil {
@@ -590,7 +590,7 @@ func DriveModules(setup SetupResult, moduleVariant map[string]string) []ModuleRe
 			continue
 		}
 		var res ModuleResult
-		if _, known := expectationFor(setup.Engine, m.TestModule); known {
+		if _, known := expectationFor(m.TestModule); known {
 			res = DriveModule(setup, m.TestModule, moduleVariant)
 		} else {
 			res = ModuleResult{TestName: m.TestModule, Err: errors.New("the plan lists a module with no expectation: classify it in internal/conformanceverifier")}

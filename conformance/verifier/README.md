@@ -168,15 +168,14 @@ Each module is graded on three things (`conformanceverifier.Grade`):
 
 ### Expected verdicts
 
-The transactions engine's legs expect the same of every module but
-`request-uri-method-post`, which the suite skips for it (see
+The transactions engine's legs expect the same of every module (see
 "Transactions engine").
 
 | Module | `sd_jwt_vc` | `iso_mdl` | Verifier must | Suite verdict |
 | --- | --- | --- | --- | --- |
 | `happy-flow` | yes | yes | accept | `FINISHED=REVIEW` |
 | `minimal-cnf-jwk` | yes | — | accept | `FINISHED=REVIEW` |
-| `request-uri-method-post` | yes | yes | accept (transactions engine: skipped, no presentation) | `FINISHED=REVIEW` (transactions engine: `FINISHED=SKIPPED`) |
+| `request-uri-method-post` | yes | yes | accept | `FINISHED=REVIEW` |
 | `request-uri-fetched-twice` | yes | yes | accept | `FINISHED=REVIEW` |
 | `present-credential-without-status` | yes | yes | accept | `FINISHED=REVIEW` |
 | `invalid-kb-jwt-signature` | yes | — | refuse | `FINISHED=PASSED` |
@@ -268,7 +267,9 @@ flow, and this binary adds only what a Verifier's frontend adds
   (`Transactions.BeginWith`, `SameDevice`), its browser binding a fresh
   random value set as a `Secure`, `HttpOnly` cookie, and redirects to
   `Begun.Link`.
-- `GET /request/{id}` is `Transactions.RequestObjectHandler`, and
+- `GET|POST /request/{id}` is `Transactions.RequestObjectHandler`
+  (`request_uri_method=post`, `TransactionsConfig.RequestURIMethodPost`;
+  each fetch's method is logged), and
   `POST /response` (the `response_uri`) is
   `Transactions.ResponseHandler`: answer routing by `kid`, `state`,
   verification against the request's own nonce and key, atomic
@@ -331,19 +332,25 @@ instead:
 
 Nothing falls back to development assurance.
 
-The transactions engine serves the Request Object by `GET` alone:
-`Transactions.RequestObjectHandler` answers `POST` with 405, and
-`Begin`'s links carry no `request_uri_method`. So
-`request-uri-method-post` ends `FINISHED=SKIPPED` (the suite skips it
-when the request doesn't ask for `request_uri_method=post`), and is
-expected to; OpenID4VP §5.10 and `wallet_nonce` stay covered by the
-default engine only. It also serves no Digital Credentials API (the
-default engine's `/dcapi/` routes are for interop runs; the suite runs
-drive no `dc_api.jwt` Verifier list).
+The transactions engine sets `TransactionsConfig.RequestURIMethodPost`:
+`Begin`'s links ask for `request_uri_method=post`, and
+`Transactions.RequestObjectHandler` answers the suite's POST
+(OpenID4VP 1.0 §5.10) with a Request Object re-signed for it, carrying
+the `wallet_nonce` it posted (the suite's
+`EnsureWalletNonceClaimMatchesPostedValue`), with the transaction's
+own nonce, `state` and response key. So `request-uri-method-post`
+runs, and ends `FINISHED=REVIEW` with the result page reporting it
+verified, as under the default engine; `request-uri-fetched-twice`
+checks a second fetch is served too. The suite posts no
+`wallet_metadata`, so its narrowing of `client_metadata` is covered by
+`verifier`'s own tests and the EUDI interop run (`interop/eudi`). The
+engine serves no Digital Credentials API (the default engine's
+`/dcapi/` routes are for interop runs; the suite runs drive no
+`dc_api.jwt` Verifier list).
 
 Under the transactions engine the expected verdicts were reached by
-both legs: `sd_jwt_vc` 13 modules at their verdict and
-`request-uri-method-post` skipped, `iso_mdl` 6 and the same skip. To
+both legs: `sd_jwt_vc` all 14 modules at their verdict,
+`request-uri-method-post` included, and `iso_mdl` all 7. To
 check the legs catch a Transactions wiring that's wrong: make the
 `Accept` in `setStatusCheck` (`transactions.go`) return nil, and
 `run-sdjwt-modules -transactions` exits 1 with

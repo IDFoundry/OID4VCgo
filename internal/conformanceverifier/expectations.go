@@ -43,31 +43,19 @@ func (e Expectation) String() string {
 	return "no expectation"
 }
 
-// transactionsExpectations are where the transactions engine
-// (cmd/conformance-verifier's Config.Engine "transactions") differs
-// from expectations: verifier.Transactions serves the Request Object
-// by GET alone (RequestObjectHandler; Begin's links carry no
-// request_uri_method), so the suite skips request-uri-method-post,
-// whose summary says it's skipped when the Verifier's authorization
-// request doesn't ask for request_uri_method=post.
-var transactionsExpectations = map[string]Expectation{
-	"oid4vp-1final-verifier-request-uri-method-post": Skip,
-}
-
-// expectationFor is what testName expects of the Verifier under
-// engine, and whether it has an expectation at all.
-func expectationFor(engine, testName string) (Expectation, bool) {
-	if engine == EngineTransactions {
-		if e, ok := transactionsExpectations[testName]; ok {
-			return e, true
-		}
-	}
+// expectationFor is what testName expects of the Verifier, and whether
+// it has an expectation at all. Both engines of cmd/conformance-verifier
+// expect the same: the transactions engine sets
+// verifier.TransactionsConfig.RequestURIMethodPost, so its requests ask
+// for request_uri_method=post as the default engine's do, and the suite
+// runs request-uri-method-post for it too.
+func expectationFor(testName string) (Expectation, bool) {
 	e, ok := expectations[testName]
 	return e, ok
 }
 
 // expectations names every module of the plan this repo drives, under
-// either credential_format, with what it expects of the Verifier —
+// either credential_format and either engine, with what it expects of the Verifier —
 // from each module's summary and base class in the suite's source
 // (src/main/java/net/openid/conformance/vp1finalverifier/: an
 // AbstractVP1FinalVerifierNegativeTest subclass must be refused). The

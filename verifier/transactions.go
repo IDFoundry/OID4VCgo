@@ -248,6 +248,18 @@ type TransactionsConfig struct {
 	// request_uri.
 	RequestURIBase string
 
+	// RequestURIMethodPost lets a Wallet fetch the Request Object with
+	// POST (OpenID4VP 1.0 §5.10): Begin's links carry
+	// request_uri_method=post, and RequestObjectHandler (or
+	// RequestObjectPost) answers a POST with a Request Object signed
+	// for that fetch, carrying the wallet_nonce it was sent and a
+	// client_metadata narrowed to its wallet_metadata. A Wallet that
+	// doesn't support POST fetches with GET (§5.1), which is still
+	// served. false serves GET alone, and the links carry no
+	// request_uri_method. It's set for every instance serving the
+	// request_uri, since one without it refuses a POST (405).
+	RequestURIMethodPost bool
+
 	// Lifetime bounds how long a request stays answerable, from Begin.
 	// A same-device response_code expires with its request, not
 	// Lifetime after the answer: one answered just before the request
@@ -402,7 +414,8 @@ type TransactionsConfig struct {
 // leave the request open, so they can't be used to cancel it.
 //
 // It covers the redirect flows (cross-device and same-device) with
-// request_uri fetched by GET, and over the Digital Credentials API both
+// request_uri fetched by GET, or by POST too with
+// TransactionsConfig.RequestURIMethodPost, and over the Digital Credentials API both
 // signed OpenID4VP requests (BeginDCAPI, HandleDCAPIResponse) and ISO/IEC
 // TS 18013-7 Annex C org-iso-mdoc ones (BeginMdocDCAPI,
 // HandleMdocDCAPIResponse). Use the
@@ -772,10 +785,11 @@ func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun,
 	if err := t.create(ctx, tx); err != nil {
 		return Begun{}, err
 	}
-	link := "openid4vp://?" + url.Values{
-		"client_id": {t.v.ClientID()}, "request_uri": {t.cfg.RequestURIBase + "/" + id},
-	}.Encode()
-	return Begun{ID: id, Link: link}, nil
+	params := url.Values{"client_id": {t.v.ClientID()}, "request_uri": {t.cfg.RequestURIBase + "/" + id}}
+	if t.cfg.RequestURIMethodPost {
+		params.Set("request_uri_method", "post")
+	}
+	return Begun{ID: id, Link: "openid4vp://?" + params.Encode()}, nil
 }
 
 // Begin is BeginWith with query, browserBinding and sameDevice as its
@@ -793,18 +807,91 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 // stopped answering would tell them the holder had presented. An answer
 // a Wallet sends to a request that's no longer pending is refused.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
-	tx, err := t.get(ctx, id)
+	tx, err := t.servable(ctx, id)
 	if err != nil {
 		return "", err
 	}
+	return tx.RequestObject, nil
+}
+
+// servable is the request id, whose Request Object is served at its
+// request_uri (see RequestObject).
+func (t *Transactions) servable(ctx context.Context, id string) (Transaction, error) {
+	tx, err := t.get(ctx, id)
+	if err != nil {
+		return Transaction{}, err
+	}
 	if tx.Origin != "" {
 		// A Digital Credentials API request goes to the page, not to a request_uri.
-		return "", ErrTransactionUnknown
+		return Transaction{}, ErrTransactionUnknown
 	}
 	if !t.now().Before(tx.ExpiresAt) {
-		return "", ErrTransactionExpired
+		return Transaction{}, ErrTransactionExpired
 	}
-	return tx.RequestObject, nil
+	return tx, nil
+}
+
+// ErrRequestURIMethodPostDisabled is RequestObjectPost's refusal
+// without TransactionsConfig.RequestURIMethodPost.
+var ErrRequestURIMethodPostDisabled = errors.New("verifier: transactions: a request_uri POST needs TransactionsConfig.RequestURIMethodPost")
+
+// RequestURIPost is a Wallet's request_uri POST (OpenID4VP 1.0 §5.10):
+// its form parameters.
+type RequestURIPost struct {
+	// WalletNonce is the wallet_nonce parameter, or "": the Request
+	// Object then carries it as its wallet_nonce claim (§5.10: "When
+	// received, the Verifier MUST use it as the wallet_nonce value in
+	// the signed authorization request object").
+	WalletNonce string
+
+	// WalletMetadata is the wallet_metadata parameter, a JSON object of
+	// the Wallet's metadata (§10), or nil.
+	WalletMetadata []byte
+}
+
+// RequestObjectPost is RequestObject for a Wallet's request_uri POST
+// (OpenID4VP 1.0 §5.10), which TransactionsConfig.RequestURIMethodPost
+// enables: the request id's Request Object, signed for this fetch. It
+// has the nonce, state and response encryption key every fetch of the
+// request gets, so an answer to it is answered as one to the request,
+// and adds post.WalletNonce as its wallet_nonce. With
+// post.WalletMetadata, its client_metadata lists only the formats,
+// algorithms and enc values both the Wallet and this Verifier support;
+// a wallet_metadata that isn't a JSON object, or leaves nothing the
+// request can be made with, is refused with a *WalletMetadataError (see
+// fitWalletMetadata's rules in wallet_metadata.go). A jwks asking for
+// an encrypted Request Object is ignored: §5.10.1 has the Verifier
+// answer with "a signed, optionally encrypted, request object".
+//
+// It's served as RequestObject is, until the request expires, however
+// many times it's fetched and whatever the request's status.
+func (t *Transactions) RequestObjectPost(ctx context.Context, id string, post RequestURIPost) (string, error) {
+	if !t.cfg.RequestURIMethodPost {
+		return "", ErrRequestURIMethodPostDisabled
+	}
+	tx, err := t.servable(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	req := authorizationRequest{
+		query: tx.Query, state: tx.State, nonce: tx.Nonce, encKey: tx.ResponseDecryptionKey, walletNonce: post.WalletNonce,
+	}
+	if post.WalletMetadata != nil {
+		if req.fit, err = t.v.fitWalletMetadata(post.WalletMetadata, tx.Query); err != nil {
+			return "", err
+		}
+	}
+	if tx.ResponseDecryptionKey == nil {
+		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s has no response decryption key", id)}
+	}
+	object, kid, err := t.v.signAuthorizationRequest(req)
+	switch {
+	case err != nil:
+		return "", &serverFault{fmt.Errorf("verifier: transactions: %w", err)}
+	case kid != tx.KeyID:
+		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s's response decryption key isn't the one its KeyID names", id)}
+	}
+	return object, nil
 }
 
 // Answered is an answer that verified and completed its request.

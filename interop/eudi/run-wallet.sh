@@ -18,16 +18,18 @@ SRC="${OID4VCGO_SRC:-$(cd "$HERE/../.." && pwd)}"
 PORT="${PORT:-20443}"
 MDOC_PORT="${MDOC_PORT:-20444}"
 SERVE_PORT="${SERVE_PORT:-20445}"
+TX_PORT="${TX_PORT:-20446}"
 WORK="${WORK:-$(mktemp -d)}"
 SDJWT_VERIFIER="https://localhost:$PORT"
 MDOC_VERIFIER="https://localhost:$MDOC_PORT"
 SERVE_URL="https://localhost:$SERVE_PORT"
+TX_VERIFIER="https://localhost:$TX_PORT"
 # The page origin the Digital Credentials API requests are for.
 ORIGIN=https://verifier.oid4vcgo-interop.example
 
-for p in "$PORT" "$MDOC_PORT" "$SERVE_PORT"; do
+for p in "$PORT" "$MDOC_PORT" "$SERVE_PORT" "$TX_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    echo "port $p is in use; set PORT / MDOC_PORT / SERVE_PORT" >&2
+    echo "port $p is in use; set PORT / MDOC_PORT / SERVE_PORT / TX_PORT" >&2
     exit 2
   fi
 done
@@ -78,6 +80,17 @@ verifier_config "$MDOC_PORT" --rawfile ca iaca.pem \
     mdoc_claims: ["family_name", "given_name"], mdoc_trust_anchor_pem: $ca,
     status_list_trust_anchors_pem: $ca, status_list_tls_trust_anchors_pem: $serve_ca, status_list_allow_loopback: true,
     dc_api_origins: [$origin]}' > verifier-mdoc.json
+# The SD-JWT VC verifier again, served by verifier.Transactions (the
+# transactions engine), whose links ask for request_uri_method=post
+# (TransactionsConfig.RequestURIMethodPost). It serves no Digital
+# Credentials API.
+# shellcheck disable=SC2016
+verifier_config "$TX_PORT" --rawfile ca issuer-ca.pem \
+  '{listen_addr: $addr, base_url: $base, tls_certificate_pem: $tls_cert, tls_private_key_pem: $tls_key,
+    client_certificate_pem: $client_cert, client_private_key_pem: $client_key,
+    credential_issuer_trust_anchors_pem: $ca, vct: "urn:eudi:pid:1", claims: ["family_name", "given_name"],
+    status_list_trust_anchors_pem: $ca, status_list_tls_trust_anchors_pem: $serve_ca, status_list_allow_loopback: true,
+    engine: "transactions"}' > verifier-transactions.json
 
 ./serve -dir . -addr "127.0.0.1:$SERVE_PORT" > serve.log 2>&1 &
 PIDS+=($!)
@@ -85,7 +98,11 @@ PIDS+=($!)
 PIDS+=($!)
 ./verifier -config verifier-mdoc.json > verifier-mdoc.log 2>&1 &
 PIDS+=($!)
-for url in "$SDJWT_VERIFIER/authorize" "$MDOC_VERIFIER/authorize" "$SERVE_URL/statuslists/jwt"; do
+./verifier -config verifier-transactions.json > verifier-transactions.log 2>&1 &
+PIDS+=($!)
+# The transactions engine's /authorize begins a request: its readiness
+# is probed at /result/{id}, which answers 404 for an unknown one.
+for url in "$SDJWT_VERIFIER/authorize" "$MDOC_VERIFIER/authorize" "$TX_VERIFIER/result/probe" "$SERVE_URL/statuslists/jwt"; do
   for _ in $(seq 1 50); do
     if curl -sk -o /dev/null --max-time 1 "$url"; then continue 2; fi
     sleep 0.2
@@ -264,6 +281,28 @@ else bad "request_uri_method post to a wallet without post: fetched with $(jq -c
 present sdjwt-a256gcm "$SDJWT_VERIFIER" post "${SDJWT[@]}" --enc A256GCM
 if jq -e '.encryption == "ECDH-ES/A256GCM"' sdjwt-a256gcm.json >/dev/null; then ok "the response was encrypted with A256GCM"
 else bad "the response was encrypted with A256GCM ($(jq -r '.encryption' sdjwt-a256gcm.json))"; fi
+
+# verifier.Transactions: /authorize binds the request to this browser
+# by a cookie, the wallet POSTs to the request_uri with its
+# wallet_metadata (to which Transactions narrows the Request Object's
+# client_metadata) and wallet_nonce, and the redirect back, in the
+# same browser, redeems the response_code for the result page.
+echo "== SD-JWT VC through verifier.Transactions, request_uri_method=post"
+uri="$(curl -sk --max-time 30 -c tx-cookies.txt -o /dev/null -w '%{redirect_url}' "$TX_VERIFIER/authorize")"
+drive sdjwt-transactions redirect --uri "$uri" "${SDJWT[@]}"
+if jq -e '.dispatch == "accepted"' sdjwt-transactions.json >/dev/null; then
+  ok "the wallet resolved the request and the verifier took the response ($(jq -r '.encryption' sdjwt-transactions.json))"
+else bad "the wallet presented ($(explain sdjwt-transactions.json))"; fi
+# This verifier's only request, fetched once.
+fetches="$(grep 'request object fetched with ' verifier-transactions.log | sed 's/.*fetched with //' | tr '\n' ' ')"
+if [[ "$fetches" = "POST " ]]; then ok "the wallet fetched the request with POST"
+else bad "the wallet fetched the request with POST (fetched with: ${fetches:-nothing})"; fi
+curl -sk --max-time 30 -b tx-cookies.txt -o result-sdjwt-transactions.html "$(jq -r '.redirect_uri // empty' sdjwt-transactions.json)" || true
+if grep -q '<h1>Verification succeeded</h1>' result-sdjwt-transactions.html \
+    && grep -q 'Dupont' result-sdjwt-transactions.html && grep -q 'Jean' result-sdjwt-transactions.html \
+    && ! grep -qE 'birth_date|nationalities|issuing_country|issuing_authority' result-sdjwt-transactions.html; then
+  ok "the verifier verified it and released the requested claims, and only those, to the browser that asked"
+else bad "the verifier verified it ($(head -c 300 result-sdjwt-transactions.html))"; fi
 
 echo "== SD-JWT VC over the Digital Credentials API (openid4vp-v1-signed)"
 dcapi "$SDJWT_VERIFIER" sdjwt-dcapi "$ORIGIN" "${SDJWT[@]}"
