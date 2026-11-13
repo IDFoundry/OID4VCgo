@@ -210,7 +210,7 @@ run_issuer() {
 	local haip_exceptions='fapi2-security-profile-final-refresh-token=SKIPPED
 fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client=REVIEW'
 	run_go_checked "Issuer haip-battery" "$WORKDIR/issuer-haip.log" "$haip_exceptions" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER"
 
 	# Same 60-module battery, same two exceptions (both unrelated to
 	# the authorization_code_flow_variant), just driven with the HAIP
@@ -219,25 +219,27 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# Credential Offer itself before polling it, see
 	# submitCredentialOffer's own doc comment.
 	run_go_checked "Issuer issuer-initiated" "$WORKDIR/issuer-issuer-initiated.log" "$haip_exceptions" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -issuer-initiated
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -issuer-initiated
 
-	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc
+	# mdoc and deferred issuance drive the plan's 21 OID4VCI-specific
+	# modules (vciBattery), not the FAPI2SP battery, which never reaches
+	# credential issuance. Every module is expected to pass, as in the
+	# sd_jwt_vc immediate runs (conformance/issuer/README.md's "Runs").
+	local vci_exceptions=''
+	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "$vci_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc
 
-	# 0 exceptions: mdoc restricts the driven module set to the 2
-	# sanity-check modules (mdocBattery) regardless of flow variant,
-	# same restriction "Issuer mdoc" above has — this just drives that
-	# same pair under issuer_initiated instead, completing the Issuer
-	# side's own 2x2 matrix.
-	run_go_checked "Issuer mdoc issuer-initiated" "$WORKDIR/issuer-mdoc-issuer-initiated.log" "" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -credential-format mdoc -issuer-initiated
+	run_go_checked "Issuer mdoc issuer-initiated" "$WORKDIR/issuer-mdoc-issuer-initiated.log" "$vci_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc -issuer-initiated
 
-	# Not a separate certification profile: this repo's own coverage of
-	# deferred issuance (OID4VCI §9). cmd/conformance-issuer defers every
-	# Credential Request, and the suite's happy-flow follows the 202 to
-	# the Deferred Credential Endpoint. 0 exceptions.
-	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -deferred
+	# Not certification profiles: deferred issuance (OID4VCI §9).
+	# cmd/conformance-issuer defers every Credential Request, and each
+	# module follows the 202 to the Deferred Credential Endpoint.
+	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "$vci_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -deferred
+
+	run_go_checked "Issuer mdoc deferred" "$WORKDIR/issuer-mdoc-deferred.log" "$vci_exceptions" \
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc -deferred
 
 	# Not a certification profile either: cmd/conformance-issuer's
 	# production setup (Config.Production, built with the
@@ -259,7 +261,7 @@ fapi2-security-profile-final-ensure-unsigned-authorization-request-without-using
 fapi2-security-profile-final-par-attempt-reuse-request_uri=REVIEW
 fapi2-security-profile-final-par-attempt-to-use-expired-request_uri=REVIEW"
 	run_go_checked "Issuer production" "$WORKDIR/issuer-production.log" "$production_exceptions" \
-		go run ./conformance/issuer/scripts/run-fapi2sp-battery -production
+		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -production
 	return 0
 }
 

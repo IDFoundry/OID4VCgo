@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -68,8 +69,8 @@ import (
 
 // metadataTestName/happyFlowTestName are the two already-known-passing
 // sanity-check modules every battery variant (haipBattery, baseBattery,
-// mdocBattery) drives first or exclusively — named once here rather
-// than repeating the literal in all three.
+// vciBattery, keyAttestationBattery) drives first — named once here
+// rather than repeating the literal in each.
 const (
 	metadataTestName  = "oid4vci-1_0-issuer-metadata-test"
 	happyFlowTestName = "oid4vci-1_0-issuer-happy-flow"
@@ -91,11 +92,11 @@ const (
 // VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules() itself applies —
 // not guessed, and cross-checked against every module's own
 // @PublishTestModule testName. The one HAIP-plan class not listed
-// here, fail-invalid-key-attestation-signature, self-skips under this
-// battery's own default jwt proof type — see keyAttestationBattery,
-// which drives it (and the whole plan) under the attestation proof
-// type instead, where it's genuinely applicable. 60 (this battery) + 1
-// (keyAttestationBattery) = the plan's own full 61.
+// here, fail-invalid-key-attestation-signature, is added by
+// haipPlanBattery, vciBattery and keyAttestationBattery (the suite picks
+// the attestation proof type for it whenever the issuer offers one,
+// whatever the proof type hint). 60 (this battery) + 1 = the plan's own
+// full 61.
 var haipBattery = []string{
 	// Sanity check: already-passing modules, confirming the freshly
 	// generated config/keys are behavior-preserving.
@@ -224,46 +225,35 @@ var baseBattery = []string{
 	"oid4vci-1_0-issuer-fail-on-access-token-in-query",
 }
 
-// mdocBattery is driven instead of haipBattery/baseBattery when
-// -credential-format=mdoc — just the 2 already-known-working sanity
-// modules, confirming cmd/conformance-issuer's own new MdocSigner
-// wiring and mso_mdoc CredentialConfiguration issue a genuinely valid
-// credential (DocType/NameSpaces/DeviceKey binding/IssuerAuth signature
-// — real structural validation, see
-// ParseMdocCredentialFromVCIIssuance.java) live against the suite, on
-// top of the unit-level proof cmd/conformance-issuer's own
-// TestFullFlow_MdocCredentialIssuance already gives. The other 40
-// FAPI2SP-generic battery modules (PAR/DPoP/token-endpoint edge cases)
-// don't exercise credential issuance format at all — vciCredentialFormat
-// is read into AbstractVCIIssuerTestModule but never branched on
-// anywhere else in the suite's own source — so re-running them under
-// mdoc would just re-prove what haipBattery already proved under
-// sd_jwt_vc, not new coverage.
-var mdocBattery = []string{
-	metadataTestName,
-	happyFlowTestName,
-}
+// vciBattery is the plan's OID4VCI-specific modules: every
+// oid4vci-1_0-issuer-* module, haipBattery's 20 and
+// fail-invalid-key-attestation-signature. It's driven under
+// -credential-format mdoc and under -deferred, where what these modules
+// check differs from haipBattery's sd_jwt_vc, immediate-issuance runs:
+// the suite validates an mso_mdoc credential with its own conditions
+// (ParseMdocCredentialFromVCIIssuance, the batch-issuance mdoc dataset
+// and device-key checks), and follows a 202 with transaction_id to the
+// Deferred Credential Endpoint wherever it makes a Credential Request.
+// The 40 fapi2-security-profile-final-* modules aren't driven there: the
+// plan pins credential_format out of their variants
+// (VCIIssuerTestPlanHaip's last ModuleListEntry), and they never reach
+// the Credential Endpoint's issuance.
+//
+// fail-invalid-key-attestation-signature prefers the attestation proof
+// type over vci.credential_proof_type_hint, and cmd/conformance-issuer's
+// development setup offers it, so the module runs here with a key
+// attestation whose signature it breaks.
+var vciBattery = append(slices.DeleteFunc(slices.Clone(haipBattery), func(name string) bool {
+	return !strings.HasPrefix(name, vciIssuerTestNamePrefix)
+}), keyAttestationSignatureTestName)
 
 // keyAttestationBattery, driven under
-// -credential-proof-type-hint=attestation: the same 2 sanity modules
-// mdocBattery drives (metadata-test, and happy-flow as a positive
-// attestation-proof sanity check — proving a genuinely valid Key
-// Attestation JWT issues a credential, not just that an invalid one is
-// rejected), plus the one negative test this whole battery variant
-// exists for. Restricted the same way mdocBattery is, for the same
-// reason: the other 40 FAPI2SP-generic modules don't exercise proof
-// type at all.
-// deferredBattery, driven under -deferred: the same 2 sanity modules
-// mdocBattery drives, against a cmd/conformance-issuer that defers
-// every Credential Request (Config.Deferred). The suite follows a 202
-// with transaction_id to the Deferred Credential Endpoint once and
-// validates what it returns, so happy-flow proves the whole deferred
-// flow — 202 with interval, the deferred 200, the notification.
-var deferredBattery = []string{
-	metadataTestName,
-	happyFlowTestName,
-}
-
+// -credential-proof-type-hint=attestation: the 2 sanity modules
+// (metadata-test, and happy-flow as a positive attestation-proof sanity
+// check — proving a genuinely valid Key Attestation JWT issues a
+// credential, not just that an invalid one is rejected), plus the one
+// negative test this whole battery variant exists for. The other 40
+// FAPI2SP-generic modules don't exercise proof type at all.
 var keyAttestationBattery = []string{
 	metadataTestName,
 	happyFlowTestName,
@@ -274,26 +264,30 @@ var keyAttestationBattery = []string{
 // proof carries a key attestation.
 const keyAttestationSignatureTestName = "oid4vci-1_0-issuer-fail-invalid-key-attestation-signature"
 
-// productionBattery, driven under -production: the plan's whole module
-// list, haipBattery and fail-invalid-key-attestation-signature, against
+// haipPlanBattery is the plan's whole module list, haipBattery and
+// fail-invalid-key-attestation-signature, driven by the sd_jwt_vc,
+// immediate-issuance runs (wallet- and issuer-initiated), where
+// cmd/conformance-issuer's development setup offers the attestation
+// proof type that module then uses.
+var haipPlanBattery = append(slices.Clone(haipBattery), keyAttestationSignatureTestName)
+
+// productionBattery, driven under -production: haipPlanBattery against
 // cmd/conformance-issuer's production setup. Every module's jwt proof
-// carries a key attestation there, so that module runs with them
-// rather than under the attestation proof type, which production
-// doesn't offer.
-var productionBattery = append(slices.Clone(haipBattery), keyAttestationSignatureTestName)
+// carries a key attestation there, so fail-invalid-key-attestation-signature
+// runs with them rather than under the attestation proof type, which
+// production doesn't offer.
+var productionBattery = haipPlanBattery
 
 // planFor is the suite plan, module battery and plan variant the flags
 // select.
 func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan, production bool) (planName string, battery []string, planVariant map[string]string) {
 	planName = "oid4vci-1_0-issuer-haip-test-plan"
-	battery = haipBattery
+	battery = haipPlanBattery
 	switch {
-	case credentialFormat == "mdoc":
-		battery = mdocBattery
+	case credentialFormat == "mdoc", deferred:
+		battery = vciBattery
 	case proofTypeHint == "attestation":
 		battery = keyAttestationBattery
-	case deferred:
-		battery = deferredBattery
 	case production:
 		battery = productionBattery
 	}
@@ -371,10 +365,10 @@ func main() {
 	configOut := flag.String("config-out", "conformance/issuer/oidf-config/haip.config.json", "path to write cmd/conformance-issuer's own generated server config to")
 	skipDockerRestart := flag.Bool("skip-docker-restart", false, "skip restarting the conformance-issuer container after writing the new config (for repeat runs against a container already restarted once)")
 	basePlan := flag.Bool("base-plan", false, "drive the suite's own base (non-HAIP) \"oid4vci-1_0-issuer-test-plan\" instead of the default HAIP plan — see baseBattery's own doc comment")
-	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc restricts the driven module set to the 2 sanity-check modules (mdocBattery), since the other 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
+	credentialFormat := flag.String("credential-format", "sd_jwt_vc", "credential_format variant to drive: \"sd_jwt_vc\" (default) or \"mdoc\" — mdoc drives the plan's 21 OID4VCI-specific modules (vciBattery), since the 40 FAPI2SP-generic battery modules don't exercise credential issuance format at all and are already proven under sd_jwt_vc")
 	credentialEncryption := flag.String("credential-encryption", "plain", "vci_credential_encryption variant to drive with -base-plan: \"plain\" (default) or \"encrypted\" — only meaningful with -base-plan, since the HAIP plan's own module list entries always pin \"plain\" themselves regardless of this flag; cmd/conformance-issuer already supports encrypted responses unconditionally, so this just lets oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm (self-SKIPPED under \"plain\") actually run")
-	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature), the same restriction -credential-format mdoc applies, and for the same reason: none of the other 40 FAPI2SP-generic battery modules care which proof type is used")
-	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the 2 modules in deferredBattery, which follow the 202 to the Deferred Credential Endpoint")
+	credentialProofTypeHint := flag.String("credential-proof-type-hint", "jwt", "vci.credential_proof_type_hint to drive with: \"jwt\" (default) or \"attestation\" — attestation restricts the driven module set to the 3 modules in keyAttestationBattery (metadata-test, happy-flow, fail-invalid-key-attestation-signature): none of the 40 FAPI2SP-generic battery modules care which proof type is used")
+	deferred := flag.Bool("deferred", false, "configure cmd/conformance-issuer to defer every Credential Request (OID4VCI §9) and drive the plan's 21 OID4VCI-specific modules (vciBattery), which follow the 202 to the Deferred Credential Endpoint; combines with -credential-format mdoc")
 	production := flag.Bool("production", false, "run cmd/conformance-issuer's production setup (Config.Production: production assurance, sealed SQLite stores, jwt proofs that must carry a key attestation and no attestation proof type), built with the conformance_production tag, and drive the plan's whole module list (productionBattery)")
 	issuerInitiated := flag.Bool("issuer-initiated", false, "drive the HAIP plan's issuer_initiated flow variant instead of the default wallet_initiated one — this binary must construct and submit a Credential Offer to the suite's own exposed credential_offer_endpoint before each module can proceed, see submitCredentialOffer's own doc comment")
 	flag.Parse()
@@ -707,9 +701,9 @@ func submitCredentialOffer(httpClient *http.Client, apiBase, moduleID, issuerBas
 	if err != nil {
 		return fmt.Errorf("get exposed values: %w", err)
 	}
-	endpoint := exposed["credential_offer_endpoint"]
-	if endpoint == "" {
-		return fmt.Errorf("module has no exposed credential_offer_endpoint")
+	endpoint, err := onSuite(apiBase, exposed["credential_offer_endpoint"])
+	if err != nil {
+		return err
 	}
 
 	issuerState, err := randomIssuerState()
@@ -740,6 +734,27 @@ func submitCredentialOffer(httpClient *http.Client, apiBase, moduleID, issuerBas
 		return fmt.Errorf("submit credential offer: status %d: %s", status, body)
 	}
 	return nil
+}
+
+// onSuite readdresses the suite's exposed credential_offer_endpoint to
+// apiBase, keeping its path and query: the suite names it under its own
+// BASE_URL (https://localhost.emobix.co.uk:8443), which reaches it from
+// the host only when the suite is published on port 8443 — the same
+// readdressing unblock.go does for implicit-submit URLs.
+func onSuite(apiBase, endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("module has no exposed credential_offer_endpoint")
+	}
+	base, err := url.Parse(apiBase)
+	if err != nil {
+		return "", fmt.Errorf("parse suite url: %w", err)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse credential_offer_endpoint: %w", err)
+	}
+	u.Scheme, u.Host = base.Scheme, base.Host
+	return u.String(), nil
 }
 
 // randomIssuerState generates a fresh issuer_state value (RFC 7519-style
