@@ -336,6 +336,75 @@ if jq -s -e 'all(.[].observed.verifier_jwks; length == 1 and .[0].alg == "ECDH-E
     present-pid.json present-mdl.json >/dev/null; then
   ok "observed: Verifier2's response encryption JWK carries alg ECDH-ES and a kid"
 else bad "observed: Verifier2's response encryption JWK changed: $(jq -c -s '[.[].observed.verifier_jwks]' present-pid.json present-mdl.json)"; fi
+
+# Negative presentations: the wallet's transport changes the SD-JWT VC
+# presentation on its way to Verifier2 (scripts/wallet/tamper.go). It
+# relays the response through a key of its own, so the relay case,
+# which changes nothing else, must be accepted; each other case differs
+# from it in one change, which Verifier2 must refuse. The query asks for
+# birthdate too, the PID's one selectively disclosable claim, so there
+# is a disclosure to change.
+TAMPER_QUERY='{"credentials": [{"id": "pid", "format": "dc+sd-jwt", "meta": {"vct_values": ["urn:eudi:pid:1"]}, "claims": [{"path": ["family_name"]}, {"path": ["birthdate"]}]}]}'
+session_info() {
+  local id="$1"
+  curl -sS --max-time 30 "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/$id/info"
+}
+tamper() {  # $1 mode: the session's info in tamper-$1-info.json, the wallet's outcome in tamper-$1.json
+  local mode="$1" id link
+  read -r id link <<< "$(session signed "$TAMPER_QUERY")"
+  wallet "tamper-$mode" -issuer-ca ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" -request "$link" \
+    -tamper "$mode" -verifier2-key verifier2-key.pem
+  session_info "$id" > "tamper-$mode-info.json"
+}
+tampered() {  # $1 mode: what was changed, Verifier2's answer and the session's status
+  echo "$(jq -c '.tampered | {changed, reply}' "tamper-$1.json" 2>/dev/null | head -c 400), session $(jq -r '.status' "tamper-$1-info.json" 2>/dev/null)"
+}
+tamper relay
+if jq -e '.stage == "done" and .tampered.changed == "nothing" and .tampered.reply.status == 200' tamper-relay.json >/dev/null \
+    && jq -e '.status == "SUCCESSFUL"' tamper-relay-info.json >/dev/null; then
+  ok "pid, relayed through the transport's own key and changed in nothing else: Verifier2 accepted it"
+else bad "pid, relayed: $(why tamper-relay.json); $(tampered relay)"; fi
+# refused_by_policy checks Verifier2 refused the presentation $1 changed
+# by its VP policy $2: its answer to the response, which the wallet sees,
+# and the session's status.
+refused_by_policy() {  # $1 mode, $2 the policy, $3 what was changed
+  local mode="$1" policy="$2" changed="$3"
+  if jq -e --arg c "$changed" --arg p "Presentation validation failed. Failed VP policies: pid/dc+sd-jwt/$2" \
+      '.stage == "response" and (.tampered.changed | startswith($c)) and .tampered.reply.status == 400
+       and (.tampered.reply.body | fromjson | .error == "invalid_request" and .error_description == $p)' \
+      "tamper-$mode.json" >/dev/null 2>&1 \
+      && jq -e '.status == "FAILED"' "tamper-$mode-info.json" >/dev/null 2>&1; then
+    ok "control: Verifier2 refuses a presentation whose $changed is another (400 invalid_request, VP policy $policy)"
+  else bad "control: $changed changed: $(why "tamper-$mode.json"); $(tampered "$mode")"; fi
+}
+tamper nonce
+refused_by_policy nonce nonce-check "KB-JWT nonce"
+tamper aud
+refused_by_policy aud audience-check "KB-JWT aud"
+# A disclosure whose digest the Issuer-signed JWT doesn't carry (RFC
+# 9901 §7.1): refused, for its digest. Verifier2 answers it as a
+# dependency being unavailable (503 temporarily_unavailable), which
+# tells a Wallet to try again, not as an invalid presentation: README
+# finding 7, asserted as 1.2.1 answers so that a change is noticed.
+tamper disclosure
+DISCLOSURE_REFUSAL='Verification could not be completed because a dependency was unavailable: Invalid disclosures: 1 disclosures provided but only 0 are reachable from the payload hashes. Per RFC 9901 §7.1 step 5 this SD-JWT MUST be rejected.'
+if jq -e --arg want "$DISCLOSURE_REFUSAL" '.stage == "response" and (.tampered.changed | startswith("disclosure "))
+     and .tampered.reply.status == 503
+     and (.tampered.reply.body | fromjson | .error == "temporarily_unavailable" and .error_description == $want)' \
+    tamper-disclosure.json >/dev/null 2>&1 \
+    && jq -e '.status == "FAILED"' tamper-disclosure-info.json >/dev/null 2>&1; then
+  ok "control: Verifier2 refuses a presentation with a changed disclosure, for its digest (as 503 temporarily_unavailable: README finding 7)"
+else bad "control: a changed disclosure: $(why tamper-disclosure.json); $(tampered disclosure)"; fi
+# README finding 3: Verifier2 checks an SD-JWT VC's signature against
+# its own x5c, not that the chain reaches a trust anchor. A known
+# upstream gap, so a note, not a failure; but the run fails if it
+# changes, so that the finding and this note are revisited.
+tamper issuer
+if jq -e '.stage == "done" and .tampered.changed == "Issuer-signed JWT signed by a self-signed certificate" and .tampered.reply.status == 200' \
+    tamper-issuer.json >/dev/null 2>&1 && jq -e '.status == "SUCCESSFUL"' tamper-issuer-info.json >/dev/null 2>&1; then
+  echo "  note  Verifier2 accepts a PID signed again by a self-signed certificate nobody configured it with (README finding 3): $(tampered issuer)"
+else bad "a PID signed by a self-signed certificate: README finding 3 has changed (Verifier2 no longer accepts it); make it a control: $(why tamper-issuer.json); $(tampered issuer)"; fi
+
 read -r id link <<< "$(session plain "$PID_QUERY")"
 wallet present-unsigned -issuer-ca ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" -request "$link"
 # Verifier2 serves this request object as plain JSON: the wallet must

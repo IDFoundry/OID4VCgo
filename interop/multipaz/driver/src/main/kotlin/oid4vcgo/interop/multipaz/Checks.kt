@@ -27,6 +27,22 @@ abstract class Checks {
     }
 
     /**
+     * Runs a case Multipaz is known to get wrong (README.md, "What it
+     * found"): [block] returns null while it still does, noted rather
+     * than failed, or what changed, which fails, so the finding is
+     * revisited.
+     */
+    protected inline fun known(what: String, block: () -> String?) {
+        reason = null
+        val problem = try {
+            block()
+        } catch (e: Exception) {
+            "${e::class.simpleName}: ${e.message}"
+        }
+        if (problem == null) println("  known $what" + (reason?.let { " ($it)" } ?: "")) else bad("$what: $problem")
+    }
+
+    /**
      * null if [got], what Multipaz sent of [name], is [want], what it
      * sends today, or what changed: OID4VCgo is lenient about it
      * (SPECIFICATIONS.md, "Known leniencies"), so a change would pass

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +60,21 @@ func TestRecorder(t *testing.T) {
 	}
 	if got := dcapiVerifierJWKs(`{"request":"` + requestObject + `"}`); got != "alg=-,kid=present" {
 		t.Errorf("dcapiVerifierJWKs = %q", got)
+	}
+}
+
+func TestRecorderRefusesAnOversizedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxObservedBody+1))
+	}))
+	defer srv.Close()
+	client := &http.Client{Transport: newRecorder(http.DefaultTransport)}
+	res, err := client.Get(srv.URL)
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatal("a body past maxObservedBody was handed on, cut short")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("err = %v", err)
 	}
 }

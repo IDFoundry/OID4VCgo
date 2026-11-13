@@ -150,7 +150,11 @@ an independent OpenID4VP 1.0 + HAIP verifier, using its author's script
 presentation must be accepted, and four controls refused — a replayed
 request, a `client_id` that isn't the signed request's, an issuer CA the
 verifier doesn't trust, and a verifier CA the wallet doesn't trust. The
-OIDF suite has no negative wallet-side cases like those.
+OIDF suite has no negative wallet-side cases like those. The script's
+wallet config sets no `verifier_tls_trust_anchors_pem`, so the wallet
+there doesn't verify the verifier's TLS certificate (it says so at
+startup): these cases test the request object's signature and chain,
+not TLS.
 
 It runs on each pull request (outside `mobile/`), with the wallet built
 from the pull request's checkout, so a regression shows before it's
@@ -225,7 +229,11 @@ presenting them to Verifier2 (a signed `x509_hash` request, the
 response encrypted), and walt.id's Wallet obtaining PIDs from
 `cmd/conformance-issuer` (HAIP, with a Wallet Attestation and DPoP) and
 presenting them to `cmd/conformance-verifier`; controls (untrusted
-issuers, Verifiers and attesters, an unsigned request) refused. It runs
+issuers, Verifiers and attesters, an unsigned request, and
+presentations to Verifier2 whose Key Binding JWT `nonce` or `aud`, or
+a disclosure, was changed on the way) refused. Verifier2 accepts a PID
+under a certificate nobody configured it with, a known gap the run
+notes, failing if it changes. It runs
 on each pull request, daily and on each release against the pinned
 images, and weekly against walt.id's `latest` images. See
 [`interop/waltid/README.md`](../interop/waltid/README.md) for the cases,
@@ -250,7 +258,11 @@ Multipaz's issuer (Wallet Attestation, DPoP, Key Attestation proofs).
 The messages pass whole between the two programs, with no radio.
 Controls (untrusted readers, Verifiers, issuers and attesters, a
 DeviceResponse over another session transcript, an answer for another
-origin, a mismatched `x509_hash` client_id) are refused. It runs on each pull request,
+origin, a mismatched `x509_hash` client_id, and, to Multipaz's
+Verifier, a Key Binding JWT naming another nonce and an mDL signed over
+another session transcript) are refused. Multipaz's Verifier accepts a
+Key Binding JWT naming another Verifier as `aud`, a known gap the run
+notes, failing if it changes. It runs on each pull request,
 daily and on each release against the pinned release, and weekly
 against Multipaz's newest release on Maven Central. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the

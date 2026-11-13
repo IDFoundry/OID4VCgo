@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -46,10 +47,15 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return res, err
 	}
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxObservedBody))
+	// One byte past the bound shows a body that exceeds it: an error,
+	// not a body cut short and handed on as if whole.
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxObservedBody+1))
 	_ = res.Body.Close()
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxObservedBody {
+		return nil, fmt.Errorf("peer: the response from %s exceeds %d bytes", req.URL.Redacted(), maxObservedBody)
 	}
 	res.Body = io.NopCloser(bytes.NewReader(body))
 	contentType := res.Header.Get("Content-Type")

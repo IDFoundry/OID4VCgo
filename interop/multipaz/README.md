@@ -32,6 +32,9 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 | | PID and mDL over the Digital Credentials API | Multipaz verifies it |
 | | The Verifier under a CA the wallet doesn't trust | the wallet refuses it |
 | | An `x509_hash` client_id naming another certificate than the one signing the request | the wallet refuses it |
+| | The request's nonce changed (signed again by the Verifier's key), so the SD-JWT VC's Key Binding JWT names another nonce | Multipaz refuses it (`Failed verification of nonce`) |
+| | The same for the mDL, so its DeviceSignature is over another session transcript | Multipaz refuses it (`Device authentication signature failed to verify`) |
+| | The request names and is signed by another Verifier the wallet trusts, so the Key Binding JWT's `aud` is another client_id | known, not a control: Multipaz accepts it (finding 2); the run fails if that changes |
 | Multipaz wallet ← `cmd/conformance-issuer`, OpenID4VCI 1.0 | SD-JWT VC PID and mdoc PID, authorization code (PAR, PKCE, `scope`), Wallet Attestation and PoP, DPoP, Key Attestation proof | issued, under OID4VCgo's CAs |
 | | A pre-authorized code: Multipaz asks for the configuration by `authorization_details`, then requests it by `credential_configuration_id` | the issuer refuses it (§8.2: use `credential_identifier`) |
 | | A Wallet Attestation from an attester the issuer doesn't trust | the issuer refuses it (`invalid_client`) |
@@ -77,8 +80,12 @@ Each follows the specification, so none is a finding.
   the work directory at start.
 - **OID4VCgo's holder** is `walletflow`, as the mobile libraries use it,
   with the mDL in its store and a key store whose keys agree keys, as a
-  phone's do, for deviceMac. It runs in development: it fetches nothing
-  here. **Its readers** run under production assurance; `proximity`'s
+  phone's do, for deviceMac. In person and for Annex C it runs in
+  development and fetches nothing. The OpenID4VP and OpenID4VCI
+  wallets are walletflow instances of their own, also in development,
+  which do fetch: request objects, metadata, tokens and credentials,
+  over TLS to the peer's certificate on loopback. **Its readers** run
+  under production assurance; `proximity`'s
   binds the IACA to the mDL document type and, by default, requires the
   mDL document signer extended key usage.
 - **Multipaz's holder** is `Iso18013Presentment` with a
@@ -91,7 +98,11 @@ Each follows the specification, so none is a finding.
   the binary OIDF-certified as a Verifier, an `x509_hash` client under
   OID4VCgo's reader CA, which the peer starts per case. Multipaz's is a
   `VerificationSession` the driver serves over HTTPS on loopback, signing
-  as an `x509_hash` client with its reader certificate. Both serve the
+  as an `x509_hash` client with its reader certificate. For the negative
+  presentations to it, the driver serves the session's request changed
+  in one claim and signed again (by the reader's key, or by a second
+  reader certificate under the same root), and the session verifies
+  walletflow's response as it would any other. Both serve the
   peer's certificate for `localhost`, which `walletflow`'s development
   fetcher reaches by name.
 - **OpenID4VCI.** OID4VCgo's issuer is `cmd/conformance-issuer` as
@@ -129,7 +140,13 @@ Seen running Multipaz 0.102.0; none reported upstream.
    request (the control above).
 2. **Multipaz's Verifier doesn't check a Key Binding JWT's `aud` or
    `iat`** (`verifyOpenID4VPResponse` passes checks that accept any,
-   the audience one marked TODO), and its
+   the audience one marked TODO). The run shows it: walletflow answers
+   a request that names, and is signed by, another Verifier under the
+   same root, so its Key Binding JWT's `aud` is that Verifier's
+   `x509_hash` client_id, and Multipaz's `VerificationSession`, whose
+   client_id is its own, verifies it (a `known` line, not a control).
+   It does check the nonce, and an mdoc's DeviceSignature over the
+   session transcript (the controls above). Its
    OpenID4VP verification takes the SD-JWT VC issuer's key from `x5c`
    without a trust anchor: the run checks the chain itself.
 3. **Multipaz's wallet always encrypts with `A128GCM`**, whatever

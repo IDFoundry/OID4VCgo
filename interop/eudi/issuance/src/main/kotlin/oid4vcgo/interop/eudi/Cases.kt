@@ -136,6 +136,34 @@ private suspend fun Run.notifyAccepted(
     expect(n?.status == 204 && n.authorizationScheme == "DPoP" && n.dpop, "notification credential_accepted answered 204") { n.toString() }
 }
 
+/** FAPIgo's error_description for a Wallet Attestation whose attester it has no key for. */
+private const val UNTRUSTED_ATTESTER = "no matching attester key"
+
+/**
+ * The issuer's error_description for a key attestation (the first, in
+ * the first proof) that fails its own verification. The issuer trusts
+ * one configured key, so an attestation signed by another fails its
+ * signature here; the description also covers its time claims, but the
+ * controls build their attestations as the passing cases do
+ * ([Proofs.attestation], [Proofs.jwtWithKeyAttestation]), with the
+ * signing key the one difference. Not a nonce (invalid_nonce), a
+ * missing exp, or a proof key the attestation doesn't attest: those
+ * have descriptions of their own.
+ */
+private const val UNTRUSTED_KEY_ATTESTATION = "attestation 0: verification failed"
+
+/** A Credential Endpoint refusal of the proof's key attestation, for its signature. */
+private fun Run.refusedAsUntrustedKeyAttestation(t: Throwable): Boolean {
+    val response = wallet.recorder.to(CREDENTIAL_PATH).lastOrNull()
+    return (
+        t is CredentialIssuanceError.InvalidProof &&
+            response?.status == 400 && response.error == "invalid_proof" && response.errorDescription == UNTRUSTED_KEY_ATTESTATION
+    ).also { if (!it) recorded(response) }
+}
+
+/** Shows what the issuer answered, when a control's reason isn't the one it expects. */
+fun recorded(e: Exchange?) = println("        the issuer answered: ${e?.let { "${it.method} ${it.path} ${it.status} ${it.error} \"${it.errorDescription}\"" } ?: "nothing"}")
+
 private fun isOAuthError(
     t: Throwable,
     code: String,
@@ -149,8 +177,16 @@ suspend fun baseCases(run: Run) {
     val mdoc = run.wallet.cfg.mdocConfigurationId
 
     // invalid_client is a 401 (RFC 6749 §5.2), whose error object the
-    // library doesn't read (README finding 3): the exchange shows it.
-    fun refusedWith401(path: String) = run.wallet.recorder.to(path).lastOrNull()?.status == 401
+    // library doesn't read (README finding 3): the exchange records it.
+    // FAPIgo describes an attestation whose attester it finds no key
+    // for as "no matching attester key", apart from the attestation's
+    // other checks; and the cases above, which pass, differ from these
+    // controls in the attester's key and certificate alone.
+    fun refusedAsUntrustedAttester(path: String) =
+        run.wallet.recorder.to(path).lastOrNull().let {
+            (it != null && it.status == 401 && it.error == "invalid_client" && it.errorDescription == UNTRUSTED_ATTESTER)
+                .also { refused -> if (!refused) recorded(it) }
+        }
 
     var replayOffer = ""
     run.case("pre-authorized code, SD-JWT VC, jwt proof, offer by value") {
@@ -319,20 +355,32 @@ suspend fun baseCases(run: Run) {
         fromOffer(uri, WalletOptions(signedMetadataTrust = cfg.otherCa))
     }
 
-    run.control("a Wallet Attestation from an attester the issuer doesn't trust, pre-authorized code", "the Token Endpoint refuses it with 401", { refusedWith401(TOKEN_PATH) }) {
+    run.control(
+        "a Wallet Attestation from an attester the issuer doesn't trust, pre-authorized code",
+        "the Token Endpoint refuses it: 401 invalid_client, \"$UNTRUSTED_ATTESTER\"",
+        { refusedAsUntrustedAttester(TOKEN_PATH) },
+    ) {
         val client = walletAttestation(cfg.clientId, cfg.attesterIssuer, cfg.otherAttesterKey, cfg.otherAttesterX5c)
         val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri, WalletOptions(client = client))
         with(this) { issuer.authorizeByPreAuthorizedCode() }
     }
 
-    run.control("a Wallet Attestation from an attester the issuer doesn't trust, authorization code", "PAR refuses it with 401", { refusedWith401("/par") }) {
+    run.control(
+        "a Wallet Attestation from an attester the issuer doesn't trust, authorization code",
+        "PAR refuses it: 401 invalid_client, \"$UNTRUSTED_ATTESTER\"",
+        { refusedAsUntrustedAttester("/par") },
+    ) {
         val client = walletAttestation(cfg.clientId, cfg.attesterIssuer, cfg.otherAttesterKey, cfg.otherAttesterX5c)
         val issuer = walletInitiated(listOf(sdjwt), WalletOptions(client = client))
         with(this) { issuer.authorizeByCode() }
     }
 
-    run.control("a key attestation from a signer the issuer doesn't trust", "the Credential Endpoint refuses the proof", { it is CredentialIssuanceError.InvalidProof }) {
+    run.control(
+        "a key attestation from a signer the issuer doesn't trust",
+        "the Credential Endpoint refuses the proof: invalid_proof, \"$UNTRUSTED_KEY_ATTESTATION\"",
+        { run.refusedAsUntrustedKeyAttestation(it) },
+    ) {
         val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
@@ -381,7 +429,11 @@ suspend fun keyAttestationCases(run: Run) {
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
         run.issueAndVerify(issuer, authorized, mdoc, Proofs.jwtWithKeyAttestation(cfg.keyAttestationKey))
     }
-    run.control("a jwt proof's key attestation from a signer the issuer doesn't trust", "the Credential Endpoint refuses the proof", { it is CredentialIssuanceError.InvalidProof }) {
+    run.control(
+        "a jwt proof's key attestation from a signer the issuer doesn't trust",
+        "the Credential Endpoint refuses the proof: invalid_proof, \"$UNTRUSTED_KEY_ATTESTATION\"",
+        { run.refusedAsUntrustedKeyAttestation(it) },
+    ) {
         val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
         val issuer = fromOffer(uri)
         val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }

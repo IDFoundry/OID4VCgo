@@ -45,10 +45,13 @@ func login(ctx context.Context, base *http.Client, authURL, redirectURI, user, p
 		if err != nil {
 			return "", err
 		}
-		page, err := io.ReadAll(io.LimitReader(res.Body, maxPageBytes))
+		page, err := io.ReadAll(io.LimitReader(res.Body, maxPageBytes+1))
 		_ = res.Body.Close()
 		if err != nil {
 			return "", err
+		}
+		if len(page) > maxPageBytes {
+			return "", fmt.Errorf("login: the page at %s exceeds %d bytes", res.Request.URL.Redacted(), maxPageBytes)
 		}
 		switch {
 		case res.StatusCode >= 300 && res.StatusCode < 400:

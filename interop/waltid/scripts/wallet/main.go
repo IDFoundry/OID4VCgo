@@ -17,7 +17,12 @@
 // alg and kid in the issuer's credential_request_encryption, and in
 // a Verifier's request object's client_metadata.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] -offer URL [-request URL] -out FILE
+// With -tamper, the transport changes the presentation on its way to
+// Verifier2, for the negative presentations a correct Verifier must
+// refuse (tamper.go); the result's "tampered" records the change and
+// Verifier2's answer to it.
+//
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] -offer URL [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
 package main
 
 import (
@@ -59,6 +64,15 @@ type result struct {
 	Failed   []string   `json:"failed,omitempty"`
 	QueryIDs []string   `json:"query_ids,omitempty"`
 	Observed *observed  `json:"observed"`
+	Tampered *tampered  `json:"tampered,omitempty"`
+}
+
+// tampered is what -tamper changed of the presentation, and Verifier2's
+// answer to it.
+type tampered struct {
+	Mode    string `json:"mode"`
+	Changed string `json:"changed"`
+	Reply   *reply `json:"reply"`
 }
 
 // observed is what the transport saw walt.id send: token_types, one per
@@ -77,6 +91,9 @@ type observed struct {
 	VerifierJWKs          []map[string]string `json:"verifier_jwks"`
 }
 
+// maxRecordedBody bounds what the recorder reads of a response.
+const maxRecordedBody = 4 << 20
+
 // recorder is an http.RoundTripper recording into observed what each
 // response says.
 type recorder struct {
@@ -89,10 +106,15 @@ func (r recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return res, err
 	}
-	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	// One byte past the bound shows a body that exceeds it: an error,
+	// not a body cut short and handed on as if whole.
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxRecordedBody+1))
 	_ = res.Body.Close()
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxRecordedBody {
+		return nil, fmt.Errorf("wallet: the response from %s exceeds %d bytes", req.URL.Redacted(), maxRecordedBody)
 	}
 	res.Body = io.NopCloser(bytes.NewReader(body))
 	r.seen.record(req, res.Header.Get("Content-Type"), body)
@@ -173,11 +195,16 @@ func main() {
 	flag.Var(&offered, "offer", "a credential offer to redeem (repeatable)")
 	request := flag.String("request", "", "a Verifier's openid4vp request to answer")
 	out := flag.String("out", "", "where to write the result")
+	tamper := flag.String("tamper", "", "change the presentation on its way to Verifier2: "+strings.Join(tamperModes, ", "))
+	verifier2Key := flag.String("verifier2-key", "", "Verifier2's request object key, for -tamper")
 	flag.Parse()
+	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
+		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
+	}
 	if *tlsCA == "" || *issuerCA == "" || *verifierCA == "" || len(offered) == 0 || *out == "" {
 		log.Fatal("-tls-ca, -issuer-ca, -verifier-ca, -offer and -out are required")
 	}
-	res := run(*tlsCA, *issuerCA, *verifierCA, *resolve, offered, *request)
+	res := run(*tlsCA, *issuerCA, *verifierCA, *resolve, offered, *request, *tamper, *verifier2Key)
 	raw, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		log.Fatal(err)
@@ -187,7 +214,7 @@ func main() {
 	}
 }
 
-func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request string) (res result) {
+func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request, tamper, verifier2Key string) (res result) {
 	res.Stage = "setup"
 	res.Observed = &observed{}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -213,7 +240,7 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 		return fail(fmt.Errorf("-resolve %q isn't HOST=ADDR", resolve))
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	client := &http.Client{Transport: recorder{seen: res.Observed, next: &http.Transport{
+	var transport http.RoundTripper = recorder{seen: res.Observed, next: &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if h, port, err := net.SplitHostPort(address); err == nil && ok && h == host {
@@ -221,10 +248,20 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request 
 			}
 			return dialer.DialContext(ctx, network, address)
 		},
-	}}}
+	}}
+	keys := &keyring{KeyStore: walletflow.NewMemoryKeyStore()}
+	var t *tamperer
+	if tamper != "" {
+		if t, err = newTamperer(transport, tamper, verifier2Key, keys); err != nil {
+			return fail(err)
+		}
+		transport = t
+		defer func() { res.Tampered = t.outcome() }()
+	}
+	client := &http.Client{Transport: transport}
 	w, err := walletflow.New(walletflow.Config{
 		IssuerRoots: issuerRoots, Development: true, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
-	}, walletflow.Dependencies{Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client})
+	}, walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client})
 	if err != nil {
 		return fail(err)
 	}

@@ -1,6 +1,8 @@
 // Every configuration's versions are locked (gradle.lockfile, the
-// plugins' in buildscript-gradle.lockfile). After changing a
-// dependency: ./gradlew dependencies --write-locks
+// plugins' in buildscript-gradle.lockfile), and each artifact's
+// checksum recorded (gradle/verification-metadata.xml). After changing
+// a dependency, from an empty Gradle cache:
+//   ./gradlew --write-verification-metadata sha256 --write-locks dependencies installDist
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 buildscript {

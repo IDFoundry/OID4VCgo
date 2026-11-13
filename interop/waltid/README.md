@@ -18,6 +18,11 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | The wallet trusts an unrelated issuer CA | the wallet refuses the credential |
 | OID4VCgo's wallet → Verifier2 | SD-JWT VC PID, signed `x509_hash` request, response encrypted (`direct_post.jwt`) | Verifier2 accepts it |
 | | mDL, the same | Verifier2 accepts it |
+| | SD-JWT VC PID, relayed: the response encrypted to a key of the wallet transport's own, then again to Verifier2's, unchanged | Verifier2 accepts it |
+| | That, the Key Binding JWT's `nonce` another | Verifier2 refuses it (VP policy `nonce-check`) |
+| | That, the Key Binding JWT's `aud` another `x509_hash` | Verifier2 refuses it (VP policy `audience-check`) |
+| | That, a disclosure's value changed (its digest no longer the Issuer's) | Verifier2 refuses it (`Invalid disclosures`), as `503 temporarily_unavailable` (finding 7) |
+| | That, the Issuer-signed JWT signed again under a self-signed certificate | a note, not a case: Verifier2 accepts it (finding 3); the run fails if that changes |
 | | The request unsigned, naming its `x509_hash` client | the wallet refuses |
 | | The wallet trusts an unrelated Verifier CA | the wallet refuses |
 | Wallet2 ← OID4VCgo's issuer | SD-JWT VC PID: Wallet Attestation and PoP, DPoP, pre-authorized code | issued |
@@ -33,9 +38,12 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 
 Each control is checked for its reason, not just for a failure:
 OID4VCgo's own error for its refusals (an untrusted chain, a request
-object that isn't signed), and walt.id's error for Wallet2's
-(`X509TrustAnchorMismatch`); a failure of the run itself (setup, TLS)
-isn't a refusal. Wallet2 reports only the issuer's `invalid_client`,
+object that isn't signed), walt.id's error for Wallet2's
+(`X509TrustAnchorMismatch`), and for Verifier2's the error it answers
+the wallet's response with (`invalid_request`, naming the VP policy
+that failed) and the session's status (`FAILED`); a failure of the
+run itself (setup, TLS) isn't a refusal. Wallet2 reports only the
+issuer's `invalid_client`,
 not its description, so the untrusted attester control also checks
 that the stand-in attester signed with its other key: the cases before
 it, which pass, differ in that alone.
@@ -98,6 +106,20 @@ asks.
   `client_id`, so the stand-in ([`scripts/serve`](scripts/serve)) signs
   for the one OID4VCgo's issuer registers, with its attester key and
   `x5c`, and Wallet2 is told that `client_id` when it redeems the offer.
+- **Negative presentations.** OID4VCgo's wallet builds its
+  presentation as always; its transport ([`scripts/wallet`](scripts/wallet)'s
+  `-tamper`, `tamper.go`) changes it on its way to Verifier2, as an
+  attacker relaying it would, nothing of it in the library. The
+  response is encrypted to Verifier2, so the transport replaces the
+  request object's `client_metadata.jwks` with a key of its own
+  (keeping the `kid`) and signs the request again with Verifier2's
+  key and `x5c` (setup's `verifier2-key.pem`); it then decrypts the
+  wallet's response, makes its one change (signing the Key Binding JWT
+  again with the wallet's own holder key, its `sd_hash` recomputed),
+  and encrypts it again to Verifier2's key. An SD-JWT VC's Key Binding
+  JWT doesn't cover the encryption key, so the relayed case, which
+  changes nothing else, is accepted, and each control differs from it
+  in its one change.
 - **Sessions.** Verifier2 signs its request and asks for an encrypted
   response only when the session says so (`signed_request`,
   `encrypted_response`); otherwise it serves an unsigned request object
@@ -120,10 +142,14 @@ Seen running walt.id 1.2.1; none reported upstream.
 3. **Verifier2 doesn't check the issuer by default.** Its default
    credential policy checks the signature against the credential's own
    `x5c`, not that the chain reaches a trust anchor: it accepted
-   credentials from the run's CA, which it was never told about. Its
-   other policies (`allowed-issuer`, an ETSI trust list, a VICAL) don't
-   take X.509 roots, so the run tests Verifier2's handling of OID4VCgo's
-   wallet's presentation, not its issuer trust.
+   credentials from the run's CA, which it was never told about, and,
+   the run shows, a PID whose Issuer-signed JWT the wallet's transport
+   signed again with a fresh key under a self-signed certificate (the
+   session `SUCCESSFUL`, the response answered 200). Its other
+   policies (`allowed-issuer`, an ETSI trust list, a VICAL) don't take
+   X.509 roots, so the run tests Verifier2's handling of OID4VCgo's
+   wallet's presentation, not its issuer trust; the self-signed case is
+   a note, and fails the run if Verifier2 starts refusing it.
 
 Observations, not deviations:
 
@@ -152,6 +178,22 @@ Observations, not deviations:
    (draft-ietf-oauth-attestation-based-client-auth-07 §5.1). So every
    Wallet Attestation in the run is OID4VCgo's stand-in's, not walt.id's
    or EUDI's.
+
+Found by the negative presentations:
+
+7. **Verifier2 refuses a disclosure the Issuer didn't sign as a
+   dependency being unavailable.** Given an SD-JWT VC presentation one
+   of whose disclosures has another value, so that its digest isn't in
+   the Issuer-signed JWT, Verifier2 refuses it (RFC 9901 §7.1), but
+   answers the response with `503` `temporarily_unavailable`,
+   "Verification could not be completed because a dependency was
+   unavailable: Invalid disclosures: …", where its other refusals of a
+   presentation are `400` `invalid_request`. `temporarily_unavailable`
+   tells the Wallet the failure is transient (RFC 6749 §4.1.2.1: the
+   server is "unable to handle the request due to a temporary
+   overloading or maintenance"), and the presentation can never
+   verify. The session is `FAILED`, so the refusal holds; the run
+   asserts the answer as 1.2.1 gives it, so that a change is noticed.
 
 ## What isn't covered
 
