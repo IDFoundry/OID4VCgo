@@ -88,9 +88,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -429,25 +427,11 @@ func generateWalletVPFixtures(credentialFormat, mdocCRLBase string) (cfg generat
 // cmd/conformance-wallet-vp's verifier_tls_trust_anchors_pem), so it's
 // read off the connection, as one would pin it by hand.
 func suiteTLSCertificatePEM(apiBase string) (string, error) {
-	u, err := url.Parse(apiBase)
+	cert, err := conformancesuite.ServerCertificate(context.Background(), apiBase)
 	if err != nil {
 		return "", err
 	}
-	host := u.Host
-	if u.Port() == "" {
-		host = net.JoinHostPort(u.Hostname(), "443")
-	}
-	dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: 10 * time.Second}, Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}} //nolint:gosec // reading the certificate to pin, not trusting the connection
-	conn, err := dialer.DialContext(context.Background(), "tcp", host)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = conn.Close() }()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	if len(certs) == 0 {
-		return "", fmt.Errorf("%s presented no certificate", host)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certs[0].Raw})), nil
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})), nil
 }
 
 // writeConfigAndMaybeRestart writes cfg to configOutPath and, unless

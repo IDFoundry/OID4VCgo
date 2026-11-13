@@ -245,7 +245,8 @@ var baseBattery = []string{
 // fail-invalid-key-attestation-signature prefers the attestation proof
 // type over vci.credential_proof_type_hint, and cmd/conformance-issuer's
 // development setup offers it, so the module runs here with a key
-// attestation whose signature it breaks.
+// attestation whose signature it breaks; under -production, which
+// offers jwt proofs carrying a key attestation alone, with those.
 var vciBattery = append(slices.DeleteFunc(slices.Clone(haipBattery), func(name string) bool {
 	return !strings.HasPrefix(name, vciIssuerTestNamePrefix)
 }), keyAttestationSignatureTestName)
@@ -282,7 +283,10 @@ var haipPlanBattery = append(slices.Clone(haipBattery), keyAttestationSignatureT
 var productionBattery = haipPlanBattery
 
 // planFor is the suite plan, module battery and plan variant the flags
-// select.
+// select. -production picks productionBattery only for the sd_jwt_vc,
+// immediate-issuance runs: with -credential-format mdoc or -deferred it
+// drives vciBattery like the development runs, against the production
+// setup prepareIssuer configures whatever the battery.
 func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan, production bool) (planName string, battery []string, planVariant map[string]string) {
 	planName = "oid4vci-1_0-issuer-haip-test-plan"
 	battery = haipPlanBattery

@@ -26,9 +26,7 @@ type run struct {
 	deferred bool
 
 	// production sets cmd/conformance-issuer's Config.Production: its
-	// production setup, which trusts key attestations by
-	// keyAttestationCAPEM rather than by keyAttestationKey's public
-	// half.
+	// production setup.
 	production bool
 
 	tlsCertPEM, tlsKeyPEM string
@@ -70,27 +68,20 @@ type run struct {
 	statusListTrustAnchorPEM string
 
 	// keyAttestationKey signs the suite's own dynamically-minted Key
-	// Attestation JWTs (Appendix D.1) — its public half is what
-	// cmd/conformance-issuer's own KeyAttestationConfig.TrustedJWK
-	// trusts (buildServerConfig), and its private half is what the
+	// Attestation JWTs (Appendix D.1): its private half is what the
 	// suite's own key_attestation_jwks plan-config field needs
-	// (buildPlanConfig) so it can actually sign one. Used by
+	// (buildPlanConfig) so it can actually sign one, with
+	// keyAttestationLeafPEM as that key's x5c (AbstractSignJWT.java's
+	// "errorIfX5cMissing" path refuses to sign a Key Attestation JWT
+	// without one, requirements HAIPA-D.1/OID4VCI-1FINALA-D.1).
+	// cmd/conformance-issuer trusts those attestations by their x5c
+	// chain to keyAttestationCAPEM (KeyAttestationConfig.TrustAnchorPEM,
+	// issuer.X5CAttestationVerifier), in every setup, as a deployment
+	// trusts a Wallet Provider's key attestations — never by the key
+	// itself. Used by
 	// oid4vci-1_0-issuer-fail-invalid-key-attestation-signature (and,
 	// as a positive sanity check, happy-flow under
 	// -credential-proof-type-hint=attestation).
-	// keyAttestationLeafPEM's own x5c must be embedded in
-	// key_attestation_jwks the same way attesterLeafPEM's is for
-	// client_attestation.attester_jwks — confirmed live:
-	// AbstractSignJWT.java's own "errorIfX5cMissing" path rejects
-	// signing a Key Attestation JWT outright too ("A x5c entry is
-	// required in the client's signing key but isn't present in the
-	// configuration", requirements HAIPA-D.1/OID4VCI-1FINALA-D.1).
-	// Which of the two cmd/conformance-issuer trusts depends on the
-	// leg: the development legs' KeyAttestationConfig.TrustedJWK is
-	// this key's bare public JWK, and their AttestationVerifier never
-	// looks at x5c; -production's TrustAnchorPEM is keyAttestationCAPEM,
-	// and issuer.X5CAttestationVerifier trusts the attestation by that
-	// x5c chain alone.
 	keyAttestationKey     *ecdsa.PrivateKey
 	keyAttestationLeafPEM string
 	keyAttestationCAPEM   string
@@ -338,6 +329,7 @@ type serverConfig struct {
 	Mdoc                              *conformanceconfig.MdocConfig           `json:"mdoc,omitempty"`
 	KeyAttestation                    *conformanceconfig.KeyAttestationConfig `json:"key_attestation,omitempty"`
 	Deferred                          bool                                    `json:"deferred,omitempty"`
+	DPoPNonces                        bool                                    `json:"dpop_nonces,omitempty"`
 	Production                        *serverProductionConfig                 `json:"production,omitempty"`
 }
 
@@ -380,15 +372,16 @@ type serverConfigClient struct {
 
 // buildServerConfig builds cmd/conformance-issuer's own config.json —
 // both registered clients trust the same attester CA (see run's own
-// doc comment).
+// doc comment). Every setup has the Authorization Server (PAR and Token
+// Endpoints) and the Credential Endpoint require DPoP nonces of their
+// own issuing (RFC 9449 §8, §9), as FAPIgo's own cmd/conformance-as
+// does: the suite retries each of those requests on a use_dpop_nonce
+// challenge (AbstractFAPI2SPFinalServerTestModule's PAR and token
+// endpoint loops, AbstractVCIIssuerTestModule.requestProtectedResourceUsingDpop).
 func buildServerConfig(r *run) ([]byte, error) {
-	keyAttestationTrustedJWK, err := publicJWK(&r.keyAttestationKey.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("build key attestation trusted jwk: %w", err)
-	}
-
 	cfg := serverConfig{
 		Deferred:          r.deferred,
+		DPoPNonces:        true,
 		ListenAddr:        ":8443",
 		Issuer:            r.issuerBaseURL,
 		TLSCertificatePEM: r.tlsCertPEM,
@@ -421,14 +414,12 @@ func buildServerConfig(r *run) ([]byte, error) {
 			CRLPEM:                    r.mdocCRLPEM,
 			CRLListenAddr:             mdocCRLListenAddr,
 		},
-		KeyAttestation: &conformanceconfig.KeyAttestationConfig{
-			TrustedJWK: json.RawMessage(keyAttestationTrustedJWK),
-		},
-	}
-	if r.production {
 		// Trusted by its x5c chain, as a deployment trusts a Wallet
 		// Provider's key attestations.
-		cfg.KeyAttestation = &conformanceconfig.KeyAttestationConfig{TrustAnchorPEM: r.keyAttestationCAPEM}
+		KeyAttestation: &conformanceconfig.KeyAttestationConfig{TrustAnchorPEM: r.keyAttestationCAPEM},
+	}
+	if r.production {
+		var err error
 		if cfg.Production, err = buildProductionConfig(); err != nil {
 			return nil, err
 		}
@@ -502,12 +493,10 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 		return nil, fmt.Errorf("build attester private jwks: %w", err)
 	}
 	// key_attestation_jwks is the suite's own signer for the Key
-	// Attestation JWTs it mints when driving under
-	// -credential-proof-type-hint=attestation (HAIP §4.5.1, a distinct
-	// requirement from Wallet Attestation client auth) —
-	// cmd/conformance-issuer's own KeyAttestationConfig.TrustedJWK
-	// trusts this same key's public half on the development legs, and
-	// TrustAnchorPEM its x5c chain under -production (buildServerConfig).
+	// Attestation JWTs it mints (HAIP §4.5.1, a distinct requirement
+	// from Wallet Attestation client auth) — cmd/conformance-issuer
+	// trusts them by the x5c chain this key's entry carries
+	// (buildServerConfig).
 	keyAttestationJWKS, err := privateJWKSet(r.keyAttestationKey, "run-fapi2sp-battery-key-attestation-key", r.keyAttestationLeafPEM)
 	if err != nil {
 		return nil, fmt.Errorf("build key attestation private jwks: %w", err)

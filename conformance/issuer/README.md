@@ -33,22 +33,18 @@ settings exist only for the suite:
 - **No HAIP profile check in `issuer.New`**: it doesn't set
   `Config.Profile: haip.IssuerProfile{}`, except in the production
   setup.
-- **No DPoP nonces** in any run: `dpop_nonces` (PAR, `/token` and the
-  Credential Endpoint) is left off by every `run-fapi2sp-battery`
-  configuration, development and production, so the suite never has
-  to retry with a `DPoP-Nonce`.
-- **No refresh tokens**: its registered clients aren't granted
-  `offline_access`, so `fapigo/server` issues none and the suite skips
+- **No refresh tokens**: under the VCI plans the suite takes the scope
+  from the credential configuration's single scope-token and never
+  asks for `offline_access`, and `fapigo/server` grants no scope that
+  wasn't requested, so it issues none and the suite skips
   `fapi2-security-profile-final-refresh-token`; the `refresh_token`
-  grant at `/token` is never driven.
-- **The `attestation` proof type, and key attestations trusted by one
-  key** (development runs): it offers the standalone `attestation`
-  proof type, which `issuer.New` refuses under production without
-  `AllowAttestationProofType`, and trusts key attestations by a bare
-  public JWK (`key_attestation.trusted_jwk`), never their `x5c` chain.
-  The production setup does neither; it runs only `sd_jwt_vc`,
-  wallet-initiated, immediate issuance, though (no `mdoc`, deferred or
-  `issuer_initiated` run).
+  grant at `/token` is never driven (see "Status: the generic FAPI2SP
+  battery").
+- **The `attestation` proof type** (development runs): it offers the
+  standalone `attestation` proof type besides `jwt`, which `issuer.New`
+  refuses under production without `AllowAttestationProofType`; it is
+  the suite's only coverage of the Appendix F.3 path (see "Runs"). Key
+  attestations are trusted by their `x5c` chain in every run.
 
 `examples/passport-vdc`'s issuer shows the HAIP profile, status lists
 and deferred issuance together.
@@ -106,7 +102,8 @@ listener whose `POST /offers` mints Credential Offers;
 `authorization_details` has PAR take openid_credential
 `authorization_details` and the consent grant each with a
 `credential_identifier` it mints; `dpop_nonces` has PAR, `/token` and
-the protected endpoints require DPoP nonces; and
+the protected endpoints require DPoP nonces (`run-fapi2sp-battery`
+turns it on in every OIDF run too: see "Runs"); and
 `key_attestation.jwt_proof_requires_key_attestation` has the jwt proof
 type require a key attestation.
 
@@ -196,9 +193,35 @@ Endpoint, checks its `interval`, and validates what it returns.
 ## Runs
 
 `conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
-through `run_issuer` in `conformance/scripts/lib.sh`: seven runs of
+through `run_issuer` in `conformance/scripts/lib.sh`: ten runs of
 `run-fapi2sp-battery`, each regenerating the keys and config,
 restarting `cmd/conformance-issuer` and creating its own plan.
+
+Every run's `cmd/conformance-issuer` is configured as a deployment
+would be in two respects that used to be left to the production run
+or off altogether:
+
+- **DPoP nonces** (`dpop_nonces`): the Authorization Server's PAR and
+  Token Endpoints and the Credential Endpoint each require a DPoP
+  nonce of their own issuing (RFC 9449 §8, §9), as FAPIgo's own
+  `cmd/conformance-as` does by default; under the production setup
+  the nonces are kept in the sealed `fapigo/sqlstore` stores. The
+  suite answers a `use_dpop_nonce` challenge by retrying with the
+  nonce at each of them (`AbstractFAPI2SPFinalServerTestModule`'s PAR
+  and token endpoint loops, `AbstractVCIIssuerTestModule.requestProtectedResourceUsingDpop`;
+  the Nonce Endpoint takes no DPoP proof), and every module's
+  verdict is unchanged with them on.
+- **Key attestations trusted by their `x5c` chain** to
+  `key_attestation.trust_anchor_pem` (`issuer.X5CAttestationVerifier`),
+  not by the suite's signing key itself: development runs used to
+  trust one fixed public key whatever `x5c` the attestation carried.
+  The development setup still offers the `attestation` proof type
+  besides `jwt` (`haip.RecommendedAttestationProofType`): the HAIP
+  plan doesn't need it, since `fail-invalid-key-attestation-signature`
+  passes with `jwt` proofs carrying a key attestation under the
+  production setup, but it is the only coverage the issuer's Appendix
+  F.3 path gets from the suite, which picks it for that module
+  whenever it is offered.
 
 Each run drives every entry of the plan's module list whose module is
 in its battery. The plan lists `happy-flow` and
@@ -220,18 +243,23 @@ name once, so the two encrypted entries never ran.)
 | Issuer deferred | `-deferred` | `vciBattery`, 21 (23 runs) |
 | Issuer mdoc deferred | `-credential-format mdoc -deferred` | `vciBattery`, 21 (23 runs) |
 | Issuer production | `-production` | `productionBattery`: `haipPlanBattery`, 61 (63 runs) |
+| Issuer production issuer-initiated | `-production -issuer-initiated` | `productionBattery`, 61 (63 runs) |
+| Issuer production mdoc | `-production -credential-format mdoc` | `vciBattery`, 21 (23 runs) |
+| Issuer production deferred | `-production -deferred` | `vciBattery`, 21 (23 runs) |
 
 The first four are the role's four certification profiles
 (`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
 deferred runs are extra coverage of the Deferred Credential Endpoint,
-and the production run of the production setup (see "Production
-setup" below). Every module must end `PASSED`, except in the two
-`haipPlanBattery` runs and the production run `refresh-token` (`SKIPPED`)
+and the production runs of the production setup (see "Production
+setup" below) along each axis the certification profiles vary.
+Every module must end `PASSED`, except in the two
+`haipPlanBattery` runs and the two `productionBattery` runs
+`refresh-token` (`SKIPPED`)
 and `par-attempt-to-use-request_uri-for-different-client` (`REVIEW`),
 both explained under "Status: the generic FAPI2SP battery" below,
-the three modules "Production setup" lists in the production run, and
-the encrypted `happy-flow` in the two deferred runs (`WARNING`, the
-suite's; see below).
+the three modules "Production setup" lists in the two
+`productionBattery` runs, and the encrypted `happy-flow` in the three
+deferred runs (`WARNING`, the suite's; see below).
 
 `vciBattery` is the plan's 21 OID4VCI-specific modules, every
 `oid4vci-1_0-issuer-*` one. The plan's `credential_format` variant
@@ -292,7 +320,7 @@ carries a `credential_response_encryption` without `zip`, and OID4VCI
 Response, so the issuer doesn't compress it.
 `VCICheckCredentialResponseCompression` checks the response against
 the first request's `zip` and warns. `lib.sh` expects that `WARNING`
-for that module in the deferred runs, and `run-fapi2sp-battery` fails
+for that module in the deferred runs, production's included, and `run-fapi2sp-battery` fails
 it if its log holds any other warning (`knownSuiteWarnings`). Every
 other module needs no exception, so `lib.sh` grades it against
 `PASSED`.
@@ -333,8 +361,12 @@ its development wiring:
   which `issuer.New` refuses under production without
   `AllowAttestationProofType`. Key attestations are trusted by their
   `x5c` chain against `key_attestation.trust_anchor_pem`
-  (`issuer.X5CAttestationVerifier`, one Wallet Provider), not by a
-  fixed key.
+  (`issuer.X5CAttestationVerifier`, one Wallet Provider), as in every
+  run.
+- DPoP nonces at PAR, `/token` and the Credential Endpoint, as in
+  every run, kept in `fapigo/sqlstore`'s sealed nonce stores: the
+  Authorization Server's in one, the Credential Endpoint's in another
+  (`fapigo_rs_` tables), never shared.
 - Wallet Attestations' and key attestations' status checked
   (`haip.WalletAttestationStatusList`,
   `issuer.StatusListAttestationStatus`, sharing one
@@ -394,6 +426,20 @@ Confirmed live against a fresh local suite (commit `410812ef`,
 2026-11-10), twice: every module as expected, no `FAILURE` or
 `WARNING` in any log; the development run on the same suite matched
 its own expectations.
+
+The production setup runs along the certification profiles' other
+axes too: `-production -issuer-initiated` drives `productionBattery`
+with the same exceptions (the three error-page modules are
+`fapi2-security-profile-final-*` ones, which ignore the flow variant),
+and `-production -credential-format mdoc` and `-production -deferred`
+drive `vciBattery`, every module ending as at development (the
+encrypted `happy-flow` `WARNING` in the deferred run, every other
+`PASSED`): none of the 21 ends on the Authorization Server's own
+error page. Their 21 plain entries were confirmed live (commit
+`410812ef`, 2026-11-13), all `PASSED`; the encrypted entries run in
+CI.
+`fail-invalid-key-attestation-signature` runs in all three with `jwt`
+proofs carrying the broken key attestation.
 
 `-issuer-initiated` selects the plan's
 `vci_authorization_code_flow_variant=issuer_initiated`. For each
@@ -882,10 +928,7 @@ bug, not a missing feature.
 **Final result, 42/42 modules run live, twice for stability — identical
 outcomes both times** (and what `lib.sh` expects of today's
 60-module `haipBattery`): every module `PASSED` except one expected
-`SKIPPED` (`refresh-token` — the suite skips it when the authorization
-code exchange returns no refresh token, and `fapigo/server` issues one
-only for a grant whose scope includes `offline_access`, which the
-clients here aren't registered for), and one expected `REVIEW`
+`SKIPPED` (`refresh-token` — see below), and one expected `REVIEW`
 (`par-attempt-to-use-request_uri-for-different-client` — a negative
 test the suite grades via human-review screenshot upload, which
 `unblock.go`'s own placeholder-fill path resolves to `REVIEW` rather
@@ -894,6 +937,25 @@ already returns the correct `400 invalid_request_uri` error locally,
 this is purely an unresolved suite-side grading limitation, the same
 class already documented for Wallet-VP/Verifier's own negative
 tests). No `FAILURE`s, no modules left `WAITING`.
+
+**`refresh-token` stays `SKIPPED`, and can't be made to run by
+configuration on this side.** The module skips when the
+authorization code exchange returns no refresh token
+(`ExtractRefreshTokenFromTokenResponse`), and `fapigo/server` issues
+one only for a grant whose scope includes `offline_access`
+(`issueOptionalRefreshToken`), granting no scope the client didn't
+request (`validateGrantedScopeSubset`). Registering `offline_access`
+for the clients isn't enough: under the VCI plans the suite never asks
+for it. `AbstractVCIIssuerTestModule` hides `client.scope` and
+`client2.scope` for `fapi_profile` `vci` and `vci_haip`, and
+`VCIDetermineCredentialConfigurationTransferMethod` sets the scope to
+the requested credential configuration's own `scope`, which
+`VCIValidateCredentialConfigurationScopeSyntax` requires to be a single
+RFC 6749 scope-token, so `IdentityCredential offline_access` can't be
+smuggled in through the metadata either (confirmed against the suite
+at commit `410812ef`). Running it would take the issuer issuing
+refresh tokens without `offline_access`, a library policy change, not
+a harness one.
 
 ## Status: the base (non-HAIP) `oid4vci-1_0-issuer-test-plan` (21 modules)
 
@@ -920,9 +982,10 @@ for real.**
 
 `fail-invalid-key-attestation-signature` is now genuinely `PASSED`,
 not self-`SKIPPED` — `cmd/conformance-issuer` now wires a real
-`AttestationVerifier` (`fixedKeyAttestationVerifier`, trusting one
-fixed public key — a conformance fixture's own trust policy, not a
-real deployment's) and additively advertises the `attestation` proof
+`AttestationVerifier` (then `fixedKeyAttestationVerifier`, trusting
+one fixed public key; every run now trusts key attestations by their
+`x5c` chain, `issuer.X5CAttestationVerifier`, see "Runs") and
+additively advertises the `attestation` proof
 type (OID4VCI Appendix F.3) alongside `jwt` on the same `dc+sd-jwt`
 `CredentialConfiguration` — a Wallet may use either, and
 `issuer.RequestCredential` already dispatches per-request on which

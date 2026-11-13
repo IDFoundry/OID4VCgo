@@ -19,18 +19,63 @@ any of three Credential Request proof strategies via `-proof-type`
 This binary is a one-shot conformance-suite driver, not a wallet. It
 uses `wallet` and `fapigo/client` directly, under development assurance
 (`wallet.AssuranceDevelopment`, `client.AssuranceDevelopment`), with
-software keys held in memory, and skips TLS verification (below). A
+software keys held in memory, and trusts the suite's TLS certificate
+as it first finds it (below). A
 wallet app uses `walletflow` (or the mobile libraries over it), whose
 zero `Config` is production: durable stores, a revocation choice per
 trust role and a hardened HTTP client.
 
 ## TLS
 
-This binary skips TLS verification for every call it makes: it talks
-only to a locally run OIDF conformance suite, whose Credential Issuer
-and Authorization Server serve throwaway self-signed certificates. A
-passing run says nothing about an Issuer's TLS setup. A Wallet built on
-the `wallet` package verifies TLS through its own `fapihttp` client.
+This binary pins the suite's TLS certificate: at startup it reads the
+certificate the suite at `-suite` presents (`-drive-only`: the module
+or offer URL's host), logs its SHA-256, and from then on every call it
+makes, to the suite's admin API and to its emulated Authorization
+Server and Credential Issuer alike, must be answered with that exact
+certificate (`conformancesuite.PinnedHTTPClient`), whatever host name
+it was reached by. The locally run suite's nginx certificate is
+self-signed for the Common Name `localhost`, without a subjectAltName,
+and is reached as `localhost.emobix.co.uk`, so nothing could verify it
+by name; `conformance/wallet-vp`'s `run-modules` pins it the same way.
+A passing run says nothing about an Issuer's TLS setup. A Wallet built
+on the `wallet` package verifies TLS through its own `fapihttp`
+client.
+
+## Verifying what it receives
+
+Every credential the suite issues is verified before the flow goes on
+(`verify.go`), as a wallet must before keeping one, and a credential
+that doesn't verify fails the module:
+`wallet.VerifyIssuedCredential` checks its signature and certificate
+chain, its type (`vct` or `doctype`) and validity, and that it is
+bound to one of the keys the Credential Request proved, each key
+binding exactly one credential; an mdoc also gets ISO/IEC 18013-5's
+document signer checks. Then, since the suite's HAIP credentials
+reference its Token Status List, the entry must read `VALID`
+(`statuslist.Checker.RequireValid`); a status naming another mechanism
+fails it.
+
+The trust is configured as a deployment's wallet would be, out of
+band: an SD-JWT VC must chain to the CA that issued the certificate in
+the `credential.signing_jwk` this run gives the suite, and its status
+list to the CA of the `server.jwks` key the suite signs that list with
+(which therefore carries a CA-issued `x5c`: the suite refuses to sign
+a status list without one). The suite signs every mdoc, and its CWT
+status list, with its own document signer and list signer under its
+own IACA root, which it serves at `/mdoc-iaca-root.pem` for wallets to
+configure; this binary fetches it from there over the pinned
+connection, and checks the list's signer as ISO/IEC 18013-5 §12.3.6.2
+says (`mdoc.StatusTrust`). Certificate revocation isn't checked.
+
+Nor is the SD-JWT VC's `iss` bound to the Credential Issuer Identifier
+(`VerifyIssuedCredentialParams.CredentialIssuer`, off by default:
+OID4VCI 1.0 §14.4 leaves that binding to the Wallet). The suite's
+credentials can't pass it: they name `iss` without the trailing `/`
+its metadata's `credential_issuer` carries
+(`https://…/test/a/<alias>` against `https://…/test/a/<alias>/`),
+so the two differ by simple string comparison (§12.2.4's rule for
+identifiers). The trust anchors are this run's own, so they bind the
+credential to the suite regardless.
 
 ## Why this binary is a one-shot CLI tool, not a server
 
@@ -46,8 +91,16 @@ itself, and `authorizationEndpoint()` auto-issues a code and redirects
 immediately (no consent screen at all — an exhaustive search of the
 whole package found zero REVIEW/screenshot gates either). So this
 binary is the HTTP *client*, the same shape as FAPIgo's own
-`cmd/conformance-client` — every endpoint path is fixed and hardcoded
-against the module's own base URL, and `followAuthorizationRedirect`
+`cmd/conformance-client`. It finds every endpoint as a wallet does:
+from the Credential Issuer's metadata (`wallet.Wallet.FetchCredentialIssuerMetadata`,
+for the offer's `credential_issuer`, or under `wallet_initiated` the
+module's own URL, known out of band): its `credential_endpoint`,
+`nonce_endpoint`, `deferred_credential_endpoint`,
+`notification_endpoint` and `authorization_servers`; and from that
+Authorization Server's RFC 8414 metadata its PAR, authorization and
+token endpoints, and its `challenge_endpoint` where it publishes one
+(only `client-attestation-challenge` does, and only there does the
+Client Attestation PoP carry a challenge). `followAuthorizationRedirect`
 (`flow.go`) plays the "browser" itself, mirroring
 `cmd/conformance-client`'s identical mechanism for the same
 no-consent shape.
@@ -364,8 +417,9 @@ fetches from the module's own endpoint).
 
 `conformance/scripts/run-oid4vci.sh` (and `run-all.sh`) drive this role
 through `run_wallet` in `conformance/scripts/lib.sh`: six runs of
-`cmd/conformance-wallet`, one per certification profile, each all 23
-module instances, with no expected exceptions:
+`cmd/conformance-wallet`, one per certification profile, and a seventh
+for HAIP 1.0 §4.5.1's key attestations, each all 23 module instances,
+with no expected exceptions:
 
 | Run | Flags |
 | --- | --- |
@@ -375,9 +429,15 @@ module instances, with no expected exceptions:
 | Wallet mdoc | `-credential-format mdoc -credential-configuration-id eu.europa.ec.eudi.pid.mdoc.1 -scope eudi.pid.mdoc.1` |
 | Wallet mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` |
 | Wallet mdoc issuer-initiated (by_reference) | `-credential-format mdoc -issuer-initiated -credential-offer-variant by_reference` |
+| Wallet key attestation (jwt-key-attestation) | `-proof-type jwt-key-attestation -credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest` |
 
-`-proof-type` and `-base-plan` aren't certification profiles and are
-run by hand.
+The last isn't a certification profile: HAIP 1.0 §4.5.1 has Wallets
+support key attestations, which this run sends the way a HAIP issuer's
+production setup takes them, each `jwt` proof carrying a Key
+Attestation in its `key_attestation` header (OID4VCI Appendix D.1), to
+the suite's fixture requiring one. `-proof-type attestation` (the
+standalone `attestation` proof type, Appendix F.3) and `-base-plan`
+are run by hand.
 
 ### Expected verdicts
 

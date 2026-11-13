@@ -55,8 +55,8 @@ The certified binaries run at development assurance:
 `cmd/conformance-wallet-vp` fetches each Request Object through a
 `wallet.Wallet` at `AssuranceDevelopment`.
 
-One uncertified run covers the issuer's production setup: the daily
-OID4VCI workflow's "Issuer production" leg runs
+Uncertified runs cover the issuer's production setup: the daily
+OID4VCI workflow's four "Issuer production" legs run
 `cmd/conformance-issuer` with its `production` configuration (built
 with the `conformance_production` tag), its `issuer` and FAPIgo
 `server` under `AssuranceProduction` with sealed SQLite stores
@@ -65,14 +65,18 @@ configuration, audit sinks, and Wallet Attestation and key attestation
 status checks, taking only `jwt` proofs carrying a key attestation in
 their `key_attestation` header (`haip.RecommendedIssuerConfig`), with
 no `attestation` proof type, and trusting key attestations by their
-`x5c` chain (`issuer.X5CAttestationVerifier`). It drives every entry
-of the HAIP issuer plan's module list — its 61 modules, `happy-flow`
-and `fail-unknown-credential-configuration` under both plain and
-encrypted credential requests, 63 runs — for `sd_jwt_vc`,
-wallet-initiated, immediate issuance; see `issuer/README.md`'s
+`x5c` chain (`issuer.X5CAttestationVerifier`). They drive every
+entry of the HAIP issuer plan's module list — its 61 modules,
+`happy-flow` and `fail-unknown-credential-configuration` under both
+plain and encrypted credential requests, 63 runs — wallet- and
+issuer-initiated, and its 21 OID4VCI-specific modules (23 runs) under
+`mdoc` and under deferred issuance; see `issuer/README.md`'s
 "Production setup" for the verdicts and where they differ from the
-development runs. What production assurance adds, or a deployment
-uses instead, the OIDF runs still don't exercise, in particular:
+development runs. Every issuer run, development and production,
+requires DPoP nonces at PAR, the token endpoint and the Credential
+Endpoint, and trusts key attestations by their `x5c` chain. What
+production assurance adds, or a deployment uses instead, the OIDF
+runs still don't exercise, in particular:
 
 - The wallet roles under production assurance: `cmd/conformance-wallet`
   and `cmd/conformance-wallet-vp` run only at development. The
@@ -90,29 +94,12 @@ uses instead, the OIDF runs still don't exercise, in particular:
   (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
   suite's attestations carry no `status` claim, so the status checks
   are configured but never fetch a list.
-- The issuer's production setup for anything but `sd_jwt_vc`,
-  wallet-initiated, immediate issuance: the "Issuer production" leg
-  drives no `mdoc`, deferred or `issuer_initiated` run, which the
-  development legs cover.
-- DPoP nonces at the issuer: `cmd/conformance-issuer` supports them
-  (`dpop_nonces`, at PAR, `/token` and the Credential Endpoint), but no
-  leg turns them on, development or production, so the suite never
-  retries with a `DPoP-Nonce` against it.
-- Refresh tokens: the issuer's registered clients aren't granted
-  `offline_access`, so `fapigo/server` issues none and the suite skips
+- Refresh tokens: under the VCI plans the suite takes the scope from
+  the credential configuration's single scope-token and never asks for
+  `offline_access`, and `fapigo/server` grants no scope that wasn't
+  requested, so it issues no refresh token and the suite skips
   `fapi2-security-profile-final-refresh-token`; `cmd/conformance-wallet`
   never refreshes either.
-- Key attestations as a deployment trusts them, in the development
-  issuer legs: they offer the standalone `attestation` proof type and
-  trust key attestations by one fixed public key
-  (`key_attestation.trusted_jwk`), not by an `x5c` chain. Only the
-  production leg takes `jwt` proofs with an `x5c`-trusted key
-  attestation.
-- A wallet's own checks of what it's issued: `cmd/conformance-wallet`
-  doesn't verify the credentials the suite issues it (it checks only
-  how many arrive), and calls the suite's Nonce, Credential, Deferred
-  Credential and Notification Endpoints at fixed paths under the
-  module's URL, not at the ones its Credential Issuer Metadata names.
 - What `verifier.Transactions` does beyond those legs: narrowing the
   Request Object to a posted `wallet_metadata` (the suite's
   `request_uri_method=post` fetch carries only a `wallet_nonce`; the
@@ -495,14 +482,15 @@ specific reason to suspect drift, not just when something seems off.
   (a human-review negative test) — no `FAILURE`s; the daily run
   expects the same of the 60-module battery.
   **Runs**: the daily OID4VCI workflow (`run_issuer` in
-  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` seven
+  `conformance/scripts/lib.sh`) drives `run-fapi2sp-battery` ten
   times — `haipBattery` with no flags and with `-issuer-initiated`
   (the script sends each OID4VCI module's Credential Offer to the
   suite's `credential_offer_endpoint` itself), `vciBattery` (the
   plan's 21 OID4VCI-specific modules) with `-credential-format mdoc`
   with and without `-issuer-initiated`, with `-deferred`, and with
-  both, and `productionBattery` (the plan's 61)
-  with `-production`, against the production setup. The first four
+  both, and, against the production setup (`-production`),
+  `productionBattery` (the plan's 61) wallet- and issuer-initiated
+  and `vciBattery` under `mdoc` and under `-deferred`. The first four
   are the role's four certification profiles; see
   `issuer/README.md`'s "Runs".
   **Update: the suite's own base (non-HAIP) `oid4vci-1_0-issuer-test-plan`
@@ -626,7 +614,13 @@ specific reason to suspect drift, not just when something seems off.
   `conformance/scripts/lib.sh`) drives the role's six certification
   profiles, each all 22 module instances: `sd_jwt_vc` and `mdoc`, each
   `wallet_initiated`, `issuer_initiated` by value and
-  `issuer_initiated` by reference (see `wallet/README.md`'s "Runs").
+  `issuer_initiated` by reference, and a seventh run with
+  `-proof-type jwt-key-attestation` (see `wallet/README.md`'s "Runs").
+  In each, the wallet reads its endpoints from the Credential Issuer's
+  and Authorization Server's metadata, pins the suite's TLS
+  certificate, and verifies every credential it receives (signature,
+  chain, holder binding, status list entry) before the module can
+  pass.
   `issuer_initiated_dc_api` isn't
   covered: it needs the Digital Credentials API on the issuance side,
   which no driver here stands in for.

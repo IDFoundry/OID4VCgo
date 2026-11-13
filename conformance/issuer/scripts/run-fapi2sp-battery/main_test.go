@@ -57,20 +57,24 @@ func TestBatteryRuns(t *testing.T) {
 }
 
 // TestPlanFor_VCIBattery checks -credential-format mdoc and -deferred,
-// alone and together, drive every oid4vci-1_0-issuer-* module the HAIP
-// plan lists and no fapi2-security-profile-final-* module.
+// alone and together, at development and under -production, drive
+// every oid4vci-1_0-issuer-* module the HAIP plan lists and no
+// fapi2-security-profile-final-* module.
 func TestPlanFor_VCIBattery(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		format   string
-		deferred bool
+		name       string
+		format     string
+		deferred   bool
+		production bool
 	}{
-		{"mdoc", "mdoc", false},
-		{"deferred", "sd_jwt_vc", true},
-		{"mdoc deferred", "mdoc", true},
+		{"mdoc", "mdoc", false, false},
+		{"deferred", "sd_jwt_vc", true, false},
+		{"mdoc deferred", "mdoc", true, false},
+		{"production mdoc", "mdoc", false, true},
+		{"production deferred", "sd_jwt_vc", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			planName, battery, variant := planFor(tc.format, "jwt", "plain", tc.deferred, false, false)
+			planName, battery, variant := planFor(tc.format, "jwt", "plain", tc.deferred, false, tc.production)
 			if planName != "oid4vci-1_0-issuer-haip-test-plan" {
 				t.Errorf("plan = %q", planName)
 			}

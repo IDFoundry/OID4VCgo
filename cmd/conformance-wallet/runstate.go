@@ -36,6 +36,9 @@ type persistedRun struct {
 
 	KeyAttestationKeyPEM  string `json:"key_attestation_key_pem"`
 	KeyAttestationLeafPEM string `json:"key_attestation_leaf_pem"`
+
+	CredentialIssuerCAPEM string `json:"credential_issuer_ca_pem"`
+	StatusListCAPEM       string `json:"status_list_ca_pem"`
 }
 
 // saveRunState writes run's own private key material and identifiers
@@ -50,6 +53,8 @@ func saveRunState(path string, run *walletRun) error {
 		AttesterLeafPEM:       run.attesterLeafPEM,
 		KeyAttestationKeyPEM:  run.keyAttestationKeyPEM,
 		KeyAttestationLeafPEM: run.keyAttestationLeafPEM,
+		CredentialIssuerCAPEM: run.credentialIssuerCAPEM,
+		StatusListCAPEM:       run.statusListCAPEM,
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -96,5 +101,7 @@ func loadRunState(path string) (*walletRun, error) {
 		keyAttestationKey:     keyAttestationKey,
 		keyAttestationKeyPEM:  p.KeyAttestationKeyPEM,
 		keyAttestationLeafPEM: p.KeyAttestationLeafPEM,
+		credentialIssuerCAPEM: p.CredentialIssuerCAPEM,
+		statusListCAPEM:       p.StatusListCAPEM,
 	}, nil
 }

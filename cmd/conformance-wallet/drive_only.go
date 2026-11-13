@@ -66,7 +66,18 @@ func runDriveOnly(cfg driveOnlyConfig) error {
 	}
 
 	ctx := context.Background()
-	httpClient := insecureSuiteHTTPClient()
+	suiteURL := cfg.moduleURL
+	if suiteURL == "" {
+		suiteURL = cfg.offerURL
+	}
+	httpClient, err := suiteHTTPClient(ctx, suiteURL)
+	if err != nil {
+		return err
+	}
+	trust, err := newIssuerTrust(ctx, run, suiteURL, httpClient)
+	if err != nil {
+		return err
+	}
 
 	var module conformancesuite.SuiteModule
 	var offer *oid4vci.CredentialOffer
@@ -90,8 +101,8 @@ func runDriveOnly(cfg driveOnlyConfig) error {
 	}
 	log.Printf("driving %s at %s (numCreds=%d, encrypted=%v)", cfg.testName, module.URL, cfg.numCreds, cfg.encrypted)
 
-	runner := moduleRunner{HTTPClient: httpClient, WalletRun: run}
-	if err := runner.driveModule(ctx, module, cfg.testName, cfg.numCreds, cfg.encrypted, offer); err != nil {
+	runner := moduleRunner{HTTPClient: httpClient, WalletRun: run, Trust: trust}
+	if err := runner.driveModule(ctx, module, cfg.numCreds, cfg.encrypted, offer); err != nil {
 		return fmt.Errorf("drive module: %w", err)
 	}
 	log.Printf("drove %s to completion — check the module's own page in the suite's web UI for its graded verdict", cfg.testName)
