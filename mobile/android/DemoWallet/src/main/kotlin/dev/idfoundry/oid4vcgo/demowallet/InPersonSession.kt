@@ -35,6 +35,10 @@ sealed interface InPersonSession {
         override suspend fun respond(answers: List<MdocPresentation.Answer>) { p.respond(answers) }
         override suspend fun decline() = p.decline()
         override fun cancel() = p.cancel()
+        override suspend fun close() {
+            p.cancel()
+            p.awaitClosed()
+        }
     }
 
     class Nfc(private val owner: NfcPresentation) : InPersonSession {

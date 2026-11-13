@@ -174,6 +174,9 @@ is a complete, working app on this package to compare against.
   state, show the outcome.
 - ``ProximityPresentation/cancel()`` when the holder leaves the screen;
   keep the app in the foreground during a session.
+- Before starting the next session, wait on the last one's
+  ``ProximityPresentation/awaitClosed()``, so two never hold Bluetooth
+  at once.
 - *Check:* on two devices, a reader scanning the code gets the elements
   the holder chose, and nothing else. (<doc:PresentingInPerson>)
 

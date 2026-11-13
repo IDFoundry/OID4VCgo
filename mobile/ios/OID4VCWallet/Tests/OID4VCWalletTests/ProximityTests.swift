@@ -10,6 +10,13 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
     weak var peer: PipeTransport?
     /// Whether the other end connects at all: false for a reader that never comes.
     var peerConnects = true
+    /// Whether closing this end ends the other's: false for a reader that
+    /// stays connected after the response, never disconnecting.
+    var closingEndsPeer = true
+    /// Whether `close` was called.
+    private let closedLock = NSLock()
+    private var isClosed = false
+    var closed: Bool { closedLock.withLock { isClosed } }
 
     static func pair() -> (PipeTransport, PipeTransport) {
         let a = PipeTransport()
@@ -33,9 +40,10 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
     func receive() async throws -> Data { try await inbox.receive() }
 
     func close() {
+        closedLock.withLock { isClosed = true }
         let ended = ProximityTransportError("the other end closed", peerEnded: true)
         inbox.end(ended)
-        peer?.inbox.end(ended)
+        if closingEndsPeer { peer?.inbox.end(ended) }
     }
 }
 
@@ -227,6 +235,70 @@ final class ProximityTests: XCTestCase {
         guard case .declined = holder.state else { return XCTFail("holder: \(holder.state)") }
         let result = try await final(reader.states) { $0.isFinal }
         guard case .declined = result else { return XCTFail("reader: \(result)") }
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+    }
+
+    /// After a response, the state is final at once, but the transport
+    /// stays open until the reader disconnects or `readerEndSeconds`
+    /// pass: `awaitClosed` returns only after it closed.
+    func testAwaitClosedWaitsForTheReaderAfterAPresentation() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let (holder, reader) = try start(&s)
+        // A reader that stays connected: the holder's end must time out.
+        s.pipes[1].closingEndsPeer = false
+        _ = try await request(holder)
+        try await holder.respond(document: 0, credentialID: s.mdocID,
+                                 elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+        let started = Date()
+        guard case .presented = holder.state else { return XCTFail("holder: \(holder.state)") }
+        _ = try await final(reader.states) { $0.isFinal }
+        XCTAssertFalse(s.pipes[0].closed, "closed before the reader could end")
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+        let waited = Date().timeIntervalSince(started)
+        XCTAssertGreaterThan(waited, ProximityPresentation.readerEndSeconds - 1)
+        XCTAssertLessThan(waited, ProximityPresentation.readerEndSeconds + 5)
+        // Again, once closed: at once.
+        try await holder.awaitClosed()
+    }
+
+    /// Once the reader disconnects after the response, it closes then,
+    /// without waiting out `readerEndSeconds`.
+    func testAwaitClosedAfterThePresentationWhenTheReaderEnds() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let (holder, reader) = try start(&s)
+        _ = try await request(holder)
+        try await holder.respond(document: 0, credentialID: s.mdocID,
+                                 elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+        let started = Date()
+        _ = try await final(reader.states) { $0.isFinal }
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+        XCTAssertLessThan(Date().timeIntervalSince(started), ProximityPresentation.readerEndSeconds - 1)
+    }
+
+    /// `cancel` returns at once; `awaitClosed` once the transport closed.
+    /// A cancelled wait throws, and leaves the session closing.
+    func testAwaitClosedAfterCancel() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let (holder, _) = try start(&s)
+        _ = try await request(holder)
+        let waiter = Task { try await holder.awaitClosed() }
+        waiter.cancel()
+        do {
+            try await waiter.value
+            XCTFail("a cancelled wait returned")
+        } catch is CancellationError {
+            // Expected: the wait ends; the session doesn't.
+        }
+        holder.cancel()
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+        guard case .cancelled = holder.state else { return XCTFail("holder: \(holder.state)") }
     }
 
     func testUnrequestedElementRefused() async throws {

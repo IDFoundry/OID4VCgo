@@ -120,6 +120,21 @@ seconds, on iOS 15 and later
 or as `Duration`s, on iOS 16 and later
 (``ProximityTimeouts/init(connect:request:idle:)``).
 
+The state turns final before the session lets go of Bluetooth: after
+`.presented`, it waits up to 5 seconds for the reader to disconnect.
+Before starting the next session, wait on
+``ProximityPresentation/awaitClosed()``:
+
+```swift
+/// Ends `presentation` and starts the next session once it has let go
+/// of Bluetooth.
+func restart(_ presentation: ProximityPresentation, wallet: Wallet) async throws -> ProximityPresentation {
+    presentation.cancel()
+    try await presentation.awaitClosed()
+    return try wallet.startProximityPresentation()
+}
+```
+
 ### Read as the verifier
 
 A ``ProximityReader`` needs no ``Wallet``: give it the IACAs whose
