@@ -181,20 +181,20 @@ restarting `cmd/conformance-issuer` and creating its own plan.
 
 | Run | Flags | Modules |
 | --- | --- | --- |
-| Issuer haip-battery | none | `haipBattery`, 60 |
-| Issuer issuer-initiated | `-issuer-initiated` | `haipBattery`, 60 |
+| Issuer haip-battery | none | `haipPlanBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 |
+| Issuer issuer-initiated | `-issuer-initiated` | `haipPlanBattery`, 61 |
 | Issuer mdoc | `-credential-format mdoc` | `vciBattery`, 21 |
 | Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `vciBattery`, 21 |
 | Issuer deferred | `-deferred` | `vciBattery`, 21 |
 | Issuer mdoc deferred | `-credential-format mdoc -deferred` | `vciBattery`, 21 |
-| Issuer production | `-production` | `productionBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 |
+| Issuer production | `-production` | `productionBattery`: `haipPlanBattery`, 61 |
 
 The first four are the role's four certification profiles
 (`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
 deferred runs are extra coverage of the Deferred Credential Endpoint,
 and the production run of the production setup (see "Production
 setup" below). Every module must end `PASSED`, except in the two
-`haipBattery` runs and the production run `refresh-token` (`SKIPPED`)
+`haipPlanBattery` runs and the production run `refresh-token` (`SKIPPED`)
 and `par-attempt-to-use-request_uri-for-different-client` (`REVIEW`),
 both explained under "Status: the generic FAPI2SP battery" below, and
 the three modules "Production setup" lists in the production run.
@@ -211,8 +211,8 @@ leaves it out of their variants) and never reach issuance, so those
 runs don't repeat them. `fail-invalid-key-attestation-signature`
 selects the `attestation` proof type itself when the issuer offers
 it, as `cmd/conformance-issuer`'s development setup does, so it runs
-in every `vciBattery` run with a key attestation whose signature it
-breaks.
+in every `vciBattery` run, and in the two `haipPlanBattery` runs, with
+a key attestation whose signature it breaks.
 
 Each module's verdict in the `vciBattery` runs, against the `sd_jwt_vc`
 immediate-issuance run ("Issuer haip-battery"):
@@ -228,7 +228,7 @@ immediate-issuance run ("Issuer haip-battery"):
 | `batch-issuance` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-invalid-nonce` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-invalid-jwt-proof-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
-| `fail-invalid-key-attestation-signature` | not driven (`productionBattery`: `PASSED`) | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-invalid-key-attestation-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-invalid-client-attestation-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-invalid-client-attestation-pop-signature` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-client-attestation-exp-in-past` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |

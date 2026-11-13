@@ -92,11 +92,11 @@ const (
 // VCIIssuerTestPlanHaip.vciFapi2SPFinalTestModules() itself applies —
 // not guessed, and cross-checked against every module's own
 // @PublishTestModule testName. The one HAIP-plan class not listed
-// here, fail-invalid-key-attestation-signature, is driven by
-// vciBattery, keyAttestationBattery and productionBattery instead
-// (the suite now picks the attestation proof type for it whenever the
-// issuer offers one, whatever the proof type hint). 60 (this battery)
-// + 1 = the plan's own full 61.
+// here, fail-invalid-key-attestation-signature, is added by
+// haipPlanBattery, vciBattery and keyAttestationBattery (the suite picks
+// the attestation proof type for it whenever the issuer offers one,
+// whatever the proof type hint). 60 (this battery) + 1 = the plan's own
+// full 61.
 var haipBattery = []string{
 	// Sanity check: already-passing modules, confirming the freshly
 	// generated config/keys are behavior-preserving.
@@ -264,19 +264,25 @@ var keyAttestationBattery = []string{
 // proof carries a key attestation.
 const keyAttestationSignatureTestName = "oid4vci-1_0-issuer-fail-invalid-key-attestation-signature"
 
-// productionBattery, driven under -production: the plan's whole module
-// list, haipBattery and fail-invalid-key-attestation-signature, against
+// haipPlanBattery is the plan's whole module list, haipBattery and
+// fail-invalid-key-attestation-signature, driven by the sd_jwt_vc,
+// immediate-issuance runs (wallet- and issuer-initiated), where
+// cmd/conformance-issuer's development setup offers the attestation
+// proof type that module then uses.
+var haipPlanBattery = append(slices.Clone(haipBattery), keyAttestationSignatureTestName)
+
+// productionBattery, driven under -production: haipPlanBattery against
 // cmd/conformance-issuer's production setup. Every module's jwt proof
-// carries a key attestation there, so that module runs with them
-// rather than under the attestation proof type, which production
-// doesn't offer.
-var productionBattery = append(slices.Clone(haipBattery), keyAttestationSignatureTestName)
+// carries a key attestation there, so fail-invalid-key-attestation-signature
+// runs with them rather than under the attestation proof type, which
+// production doesn't offer.
+var productionBattery = haipPlanBattery
 
 // planFor is the suite plan, module battery and plan variant the flags
 // select.
 func planFor(credentialFormat, proofTypeHint, encryption string, deferred, basePlan, production bool) (planName string, battery []string, planVariant map[string]string) {
 	planName = "oid4vci-1_0-issuer-haip-test-plan"
-	battery = haipBattery
+	battery = haipPlanBattery
 	switch {
 	case credentialFormat == "mdoc", deferred:
 		battery = vciBattery

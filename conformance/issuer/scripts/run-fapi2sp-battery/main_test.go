@@ -47,8 +47,8 @@ func TestPlanFor_VCIBattery(t *testing.T) {
 // TestPlanFor_DefaultBatteries checks the runs vciBattery doesn't
 // change keep their batteries.
 func TestPlanFor_DefaultBatteries(t *testing.T) {
-	if _, b, _ := planFor("sd_jwt_vc", "jwt", "plain", false, false, false); len(b) != 60 {
-		t.Errorf("haip battery has %d modules, want 60", len(b))
+	if _, b, _ := planFor("sd_jwt_vc", "jwt", "plain", false, false, false); len(b) != 61 || !slices.Contains(b, keyAttestationSignatureTestName) {
+		t.Errorf("haip battery has %d modules, want the plan's 61 with %s", len(b), keyAttestationSignatureTestName)
 	}
 	if _, b, _ := planFor("sd_jwt_vc", "jwt", "plain", false, false, true); len(b) != 61 {
 		t.Errorf("production battery has %d modules, want 61", len(b))
