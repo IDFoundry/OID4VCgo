@@ -49,7 +49,8 @@ and is still a harness: see its section):
   reach private or loopback addresses and, in the suite runs, trusts
   the suite's TLS certificate by a pin rather than a chain, neither of
   which production allows. It declines certificate revocation
-  (`certrevocation.NoCheck{}`) for the suite's per-run issuers.
+  (`certrevocation.NoCheck{}`) for the credential issuers and status
+  list signers (see "No certificate revocation" below).
 
 A Verifier uses `verifier.Transactions` with a durable
 `verifier.TransactionStore` (encoded with `verifier.TransactionCodec`),
@@ -152,13 +153,26 @@ module `REVIEW`: the only verdict the suite gives a Verifier that
 accepted a presentation. Interop runs leave the option unset: they
 redeem the result page's outcome instead.
 
-Each module is graded on three things (`conformanceverifier.Grade`):
+Each module is graded on these (`conformanceverifier.Grade`):
 
 - the suite's status and result: `FINISHED=REVIEW` for a module whose
   presentation must be accepted, `FINISHED=PASSED` for one that must
   be refused;
 - this binary's own outcome, read from `GET /result/{id}`:
   `Verification succeeded` or `Verification failed` respectively;
+- for a module whose presentation must be refused, why: the result
+  page shows the refusal's `verifier.Reason` (`reason: holder_binding`,
+  for a `*verifier.Error`) and its text, under either engine (the
+  transactions engine's page adds what `OnRefused` was given to
+  `LastError`'s fixed description), and each such module names the
+  reason and the part of the text it must hold
+  (`internal/conformanceverifier`'s `refusals`): a Key Binding JWT
+  signature, nonce, `aud`, `iat` or `sd_hash`, the credential's
+  signature, its `vct`, an mdoc device signature over another session
+  transcript, a revoked status list entry or an identifier list entry.
+  The suite grades a refusal `PASSED` whatever its reason, so a
+  Verifier refusing for another one (an untrusted issuer, a
+  configuration mistake) would otherwise pass;
 - the module's log (`GET /api/log/{id}`): no `FAILURE` and no
   `WARNING`. `REVIEW` outranks `WARNING` in a result, so a warning would
   otherwise go unseen. That includes
@@ -327,8 +341,12 @@ instead:
   check of the `Fetcher` is the one thing not exercised.
 - **No certificate revocation** (`certrevocation.NoCheck{}`) for the
   issuers' and the status list signers' certificates, a decision
-  production accepts: the suite's per-run CAs and its IACA publish no
-  CRL.
+  production accepts. For `sd_jwt_vc` that's this harness's choice,
+  not a limit of the suite: the credential issuer CA the suite signs
+  its credentials and status lists under is one
+  `internal/conformanceverifier.GenerateKeyMaterial` generates each
+  run, and it publishes no CRL for it. For `mso_mdoc` the suite
+  generates its own IACA and Document Signer each run.
 
 Nothing falls back to development assurance.
 

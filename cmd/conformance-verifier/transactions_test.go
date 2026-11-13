@@ -206,8 +206,14 @@ func checkTransactionsFlow(t *testing.T, s txTestSetup) {
 	if rec := b.answer(req, s.held, "another nonce"); rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "redirect_uri") {
 		t.Fatalf("a presentation with the wrong nonce = %d %s, want 400 without a redirect_uri", rec.Code, rec.Body)
 	}
-	if page := b.do(http.MethodGet, "/result/"+id, nil); !strings.Contains(page.Body.String(), "<h1>Verification failed</h1>") {
-		t.Fatalf("result page = %s, want failed", page.Body)
+	// The page shows LastError's fixed description, then the refusal's
+	// verifier.Reason and its own text (OnRefused), which the drivers
+	// grade by.
+	page := b.do(http.MethodGet, "/result/"+id, nil).Body.String()
+	for _, want := range []string{"<h1>Verification failed</h1>", "(holder_binding)</pre>", "<pre>reason: holder_binding</pre>", "nonce"} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("result page = %s, want it to hold %q", page, want)
+		}
 	}
 }
 

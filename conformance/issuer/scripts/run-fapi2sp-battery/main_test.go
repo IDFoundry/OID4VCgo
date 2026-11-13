@@ -4,7 +4,57 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 )
+
+// TestBatteryRuns checks a testName the plan lists under both
+// vci_credential_encryption values is driven, and reported, under
+// each: VCIIssuerTestPlanHaip lists happy-flow and
+// fail-unknown-credential-configuration under plain and again under
+// encrypted, and only the plain ones used to run.
+func TestBatteryRuns(t *testing.T) {
+	plain := map[string]string{"vci_credential_encryption": "plain"}
+	encrypted := map[string]string{"vci_credential_encryption": "encrypted"}
+	const unknownConfig = "oid4vci-1_0-issuer-fail-unknown-credential-configuration"
+	const unsupportedEnc = "oid4vci-1_0-issuer-fail-unsupported-encryption-algorithm"
+	const discovery = "fapi2-security-profile-final-discovery-end-point-verification"
+	modules := []conformancesuite.PlanModule{
+		{TestModule: metadataTestName},
+		{TestModule: happyFlowTestName, Variant: plain},
+		{TestModule: unknownConfig, Variant: plain},
+		{TestModule: happyFlowTestName, Variant: encrypted},
+		{TestModule: unknownConfig, Variant: encrypted},
+		{TestModule: unsupportedEnc, Variant: encrypted},
+		{TestModule: discovery, Variant: plain},
+		{TestModule: unsupportedEnc, Variant: encrypted},        // a repeat
+		{TestModule: "fapi2-security-profile-final-happy-flow"}, // not in this battery
+	}
+	battery := []string{metadataTestName, happyFlowTestName, unknownConfig, unsupportedEnc, discovery, "oid4vci-1_0-issuer-batch-issuance"}
+	runs, missing := batteryRuns(modules, battery)
+	keys := make([]string, 0, len(runs))
+	for _, r := range runs {
+		keys = append(keys, r.key)
+	}
+	want := []string{
+		metadataTestName,
+		happyFlowTestName + " [plain]",
+		unknownConfig + " [plain]",
+		happyFlowTestName + " [encrypted]",
+		unknownConfig + " [encrypted]",
+		unsupportedEnc + " [encrypted]",
+		discovery,
+	}
+	if !slices.Equal(keys, want) {
+		t.Fatalf("keys = %q, want %q", keys, want)
+	}
+	if runs[3].module.Variant["vci_credential_encryption"] != "encrypted" {
+		t.Errorf("the encrypted happy-flow runs under %v", runs[3].module.Variant)
+	}
+	if !slices.Equal(missing, []string{"oid4vci-1_0-issuer-batch-issuance"}) {
+		t.Errorf("missing = %q", missing)
+	}
+}
 
 // TestPlanFor_VCIBattery checks -credential-format mdoc and -deferred,
 // alone and together, drive every oid4vci-1_0-issuer-* module the HAIP

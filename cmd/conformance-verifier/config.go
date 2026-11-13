@@ -308,9 +308,13 @@ func (c Config) sdJWTVCIssuerKeys() (verifier.SDJWTVCIssuerKeyResolver, error) {
 		if err != nil {
 			return nil, err
 		}
-		// No revocation check of the issuer's certificate: an interop
-		// run's throwaway CA publishes no CRL. The credential's own
-		// revocation is its status list's.
+		// No revocation check of the issuer's certificate, by this
+		// harness's choice: the CA it's given is a throwaway one with
+		// no CRL — in the suite runs the one
+		// internal/conformanceverifier.GenerateKeyMaterial generates
+		// (it publishes none, though it could), in the interop runs
+		// each script's own. The credential's own revocation is its
+		// status list's.
 		return verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, nil
 	}
 	if !c.hasCredentialIssuerJWK() {
@@ -349,9 +353,11 @@ func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
 		Checker: statuslist.Checker{
 			Fetcher: fetcher,
 			Roots:   roots,
-			// No revocation check of the list signers' certificates:
-			// the suite's and the interop runs' throwaway CAs publish
-			// no CRL.
+			// No revocation check of the list signers' certificates,
+			// by this harness's choice: a "dc+sd-jwt" list is signed
+			// under the same throwaway credential issuer CA
+			// (sdJWTVCIssuerKeys), which publishes no CRL; an mdoc
+			// list under the suite's own per-run IACA.
 			Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
 			Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
 		},

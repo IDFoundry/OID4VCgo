@@ -39,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/idfoundry/fapigo/client"
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
@@ -521,29 +522,77 @@ func (r moduleRunner) runModule(ctx context.Context, planID, testName string, va
 	return status + "=" + result + moduleRef
 }
 
+// abandonment is why the wallet must abandon a module's flow: the
+// fapigo/client error it must stop with (code, and description, its
+// PublicDescription exactly), or, for a failure before the client
+// exists, text its error must hold.
+type abandonment struct {
+	code        client.ErrorCode
+	description string
+	text        string
+}
+
 // walletMustAbandon are the modules whose flow the wallet must abandon:
 // the FAPI2SP client battery's negative modules, whose suite-emulated
 // Authorization Server sends a bad discovery document or authorization
-// response. For these, driveModule returning an error is the pass
-// condition; for every other module, it is a failure.
-var walletMustAbandon = map[string]bool{
-	"fapi2-security-profile-final-client-test-discovery-issuer-mismatch":                                      true,
-	"fapi2-security-profile-final-client-test-remove-authorization-response-iss":                              true,
-	"fapi2-security-profile-final-client-test-invalid-authorization-response-iss":                             true,
-	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails":         true,
-	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": true,
+// response. For these, driveModule returning the error named here is
+// the pass condition — an error for any other reason (an unreachable
+// endpoint, a key it couldn't load) fails the module, as the suite
+// would grade it PASSED all the same; for every other module, any
+// error is a failure.
+var walletMustAbandon = map[string]abandonment{
+	// RFC 8414 §3.3: the metadata's issuer isn't the one it was fetched
+	// for (wallet.Wallet.FetchAuthorizationServerMetadata).
+	"fapi2-security-profile-final-client-test-discovery-issuer-mismatch": {
+		text: "fetch authorization server metadata: wallet: fetch authorization server metadata: issuer ",
+	},
+	// RFC 9207 §2.4: iss missing from, or not the issuer's in, the
+	// authorization response.
+	"fapi2-security-profile-final-client-test-remove-authorization-response-iss": {
+		code: client.ErrorInvalidResponse, description: "authorization response is missing iss",
+	},
+	"fapi2-security-profile-final-client-test-invalid-authorization-response-iss": {
+		code: client.ErrorInvalidResponse, description: "authorization response iss does not match expected issuer",
+	},
+	// RFC 6749 §10.12: state missing from, or not the session's in, the
+	// authorization response.
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
+		code: client.ErrorInvalidRequest, description: "callback state does not match this user agent's session",
+	},
+	"fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": {
+		code: client.ErrorInvalidRequest, description: "callback is missing state",
+	},
 }
 
 // gradeDriver reports, as an error, a driver outcome testName doesn't
-// expect: an error from a module whose flow must complete, or none from
-// one whose flow the wallet must abandon. The suite's own verdict is
-// graded separately (conformance/scripts/lib.sh's check_summary).
+// expect: an error from a module whose flow must complete, none from
+// one whose flow the wallet must abandon, or one abandoning it for
+// another reason than walletMustAbandon names. The suite's own verdict
+// is graded separately (conformance/scripts/lib.sh's check_summary).
 func gradeDriver(testName string, driverErr error) error {
+	want, mustAbandon := walletMustAbandon[testName]
 	switch {
-	case walletMustAbandon[testName] && driverErr == nil:
+	case mustAbandon && driverErr == nil:
 		return errors.New("the wallet completed a flow it must abandon")
-	case !walletMustAbandon[testName] && driverErr != nil:
+	case !mustAbandon && driverErr != nil:
 		return fmt.Errorf("driver: %w", driverErr)
+	case mustAbandon:
+		return want.check(driverErr)
+	}
+	return nil
+}
+
+// check reports whether err abandons the flow for the reason a names.
+func (a abandonment) check(err error) error {
+	if a.code == "" {
+		if a.text == "" || !strings.Contains(err.Error(), a.text) {
+			return fmt.Errorf("the wallet abandoned the flow with %q, want an error holding %q", err, a.text)
+		}
+		return nil
+	}
+	var clientErr *client.Error
+	if !errors.As(err, &clientErr) || clientErr.Code() != a.code || clientErr.PublicDescription() != a.description {
+		return fmt.Errorf("the wallet abandoned the flow with %q, want fapigo/client's %s: %s", err, a.code, a.description)
 	}
 	return nil
 }

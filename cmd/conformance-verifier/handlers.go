@@ -508,7 +508,7 @@ func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sess.failErr != nil {
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Verification failed</h1><pre>%s</pre></body></html>", html.EscapeString(sess.failErr.Error()))
+		writeResultPage(w, http.StatusOK, "Verification failed", refusalLines(sess.failErr)...)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "<html><body><h1>Verification succeeded</h1><ul>")

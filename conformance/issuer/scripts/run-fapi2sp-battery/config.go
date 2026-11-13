@@ -84,11 +84,13 @@ type run struct {
 	// AbstractSignJWT.java's own "errorIfX5cMissing" path rejects
 	// signing a Key Attestation JWT outright too ("A x5c entry is
 	// required in the client's signing key but isn't present in the
-	// configuration", requirements HAIPA-D.1/OID4VCI-1FINALA-D.1),
-	// even though cmd/conformance-issuer's own AttestationVerifier
-	// never looks at x5c — this repo's own KeyAttestationConfig.TrustedJWK
-	// is a bare public JWK, matching how server-side client-attestation
-	// verification already ignores x5c too.
+	// configuration", requirements HAIPA-D.1/OID4VCI-1FINALA-D.1).
+	// Which of the two cmd/conformance-issuer trusts depends on the
+	// leg: the development legs' KeyAttestationConfig.TrustedJWK is
+	// this key's bare public JWK, and their AttestationVerifier never
+	// looks at x5c; -production's TrustAnchorPEM is keyAttestationCAPEM,
+	// and issuer.X5CAttestationVerifier trusts the attestation by that
+	// x5c chain alone.
 	keyAttestationKey     *ecdsa.PrivateKey
 	keyAttestationLeafPEM string
 	keyAttestationCAPEM   string
@@ -504,7 +506,8 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 	// -credential-proof-type-hint=attestation (HAIP §4.5.1, a distinct
 	// requirement from Wallet Attestation client auth) —
 	// cmd/conformance-issuer's own KeyAttestationConfig.TrustedJWK
-	// trusts this same key's public half (buildServerConfig).
+	// trusts this same key's public half on the development legs, and
+	// TrustAnchorPEM its x5c chain under -production (buildServerConfig).
 	keyAttestationJWKS, err := privateJWKSet(r.keyAttestationKey, "run-fapi2sp-battery-key-attestation-key", r.keyAttestationLeafPEM)
 	if err != nil {
 		return nil, fmt.Errorf("build key attestation private jwks: %w", err)

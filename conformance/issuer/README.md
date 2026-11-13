@@ -25,10 +25,30 @@ settings exist only for the suite:
   (see `issuer/issuertest` for the contracts a durable store passes).
 - **No certificate revocation** for Wallet Attestation signers
   (`server.NoClientCertificateRevocationCheck{}`), and a 24-hour
-  Wallet Attestation lifetime to suit the suite's fixtures.
+  Wallet Attestation lifetime to suit the suite's fixtures. The
+  production setup declines it too, for those signers, key attestation
+  signers and the signers of the status lists their `status` claims
+  name (`certrevocation.NoCheck{}` in `production.go`'s
+  `statusChecker`).
 - **No HAIP profile check in `issuer.New`**: it doesn't set
   `Config.Profile: haip.IssuerProfile{}`, except in the production
   setup.
+- **No DPoP nonces** in any run: `dpop_nonces` (PAR, `/token` and the
+  Credential Endpoint) is left off by every `run-fapi2sp-battery`
+  configuration, development and production, so the suite never has
+  to retry with a `DPoP-Nonce`.
+- **No refresh tokens**: its registered clients aren't granted
+  `offline_access`, so `fapigo/server` issues none and the suite skips
+  `fapi2-security-profile-final-refresh-token`; the `refresh_token`
+  grant at `/token` is never driven.
+- **The `attestation` proof type, and key attestations trusted by one
+  key** (development runs): it offers the standalone `attestation`
+  proof type, which `issuer.New` refuses under production without
+  `AllowAttestationProofType`, and trusts key attestations by a bare
+  public JWK (`key_attestation.trusted_jwk`), never their `x5c` chain.
+  The production setup does neither; it runs only `sd_jwt_vc`,
+  wallet-initiated, immediate issuance, though (no `mdoc`, deferred or
+  `issuer_initiated` run).
 
 `examples/passport-vdc`'s issuer shows the HAIP profile, status lists
 and deferred issuance together.
@@ -111,8 +131,9 @@ drives that end to end, and the daily OID4VCI conformance workflow's
 "Issuer deferred" and "Issuer mdoc deferred" runs
 (`run-fapi2sp-battery -deferred`, with and without
 `-credential-format mdoc`) drive the plan's 21 OID4VCI-specific
-modules against it: each one that makes a Credential Request follows
-the 202 to the Deferred Credential Endpoint.
+modules against it (23 runs: see "Runs"): each one that makes a
+Credential Request follows the 202 to the Deferred Credential
+Endpoint.
 
 Building the full-flow test surfaced three real bugs, all fixed
 alongside it:
@@ -179,15 +200,26 @@ through `run_issuer` in `conformance/scripts/lib.sh`: seven runs of
 `run-fapi2sp-battery`, each regenerating the keys and config,
 restarting `cmd/conformance-issuer` and creating its own plan.
 
+Each run drives every entry of the plan's module list whose module is
+in its battery. The plan lists `happy-flow` and
+`fail-unknown-credential-configuration` twice, under
+`vci_credential_encryption=plain` and again, with
+`fail-unsupported-encryption-algorithm`, under `encrypted`, so a
+battery's 61 or 21 modules are 63 or 23 runs. The script reports an
+OID4VCI-specific module as `<testName> [plain]` or
+`<testName> [encrypted]` (`moduleKey`), and `lib.sh`'s exceptions
+name it that way. (Until this was fixed, the script ran each module
+name once, so the two encrypted entries never ran.)
+
 | Run | Flags | Modules |
 | --- | --- | --- |
-| Issuer haip-battery | none | `haipPlanBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 |
-| Issuer issuer-initiated | `-issuer-initiated` | `haipPlanBattery`, 61 |
-| Issuer mdoc | `-credential-format mdoc` | `vciBattery`, 21 |
-| Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `vciBattery`, 21 |
-| Issuer deferred | `-deferred` | `vciBattery`, 21 |
-| Issuer mdoc deferred | `-credential-format mdoc -deferred` | `vciBattery`, 21 |
-| Issuer production | `-production` | `productionBattery`: `haipPlanBattery`, 61 |
+| Issuer haip-battery | none | `haipPlanBattery`: `haipBattery` and `fail-invalid-key-attestation-signature`, 61 (63 runs) |
+| Issuer issuer-initiated | `-issuer-initiated` | `haipPlanBattery`, 61 (63 runs) |
+| Issuer mdoc | `-credential-format mdoc` | `vciBattery`, 21 (23 runs) |
+| Issuer mdoc issuer-initiated | `-credential-format mdoc -issuer-initiated` | `vciBattery`, 21 (23 runs) |
+| Issuer deferred | `-deferred` | `vciBattery`, 21 (23 runs) |
+| Issuer mdoc deferred | `-credential-format mdoc -deferred` | `vciBattery`, 21 (23 runs) |
+| Issuer production | `-production` | `productionBattery`: `haipPlanBattery`, 61 (63 runs) |
 
 The first four are the role's four certification profiles
 (`sd_jwt_vc`/`mdoc` × `wallet_initiated`/`issuer_initiated`); the
@@ -196,8 +228,10 @@ and the production run of the production setup (see "Production
 setup" below). Every module must end `PASSED`, except in the two
 `haipPlanBattery` runs and the production run `refresh-token` (`SKIPPED`)
 and `par-attempt-to-use-request_uri-for-different-client` (`REVIEW`),
-both explained under "Status: the generic FAPI2SP battery" below, and
-the three modules "Production setup" lists in the production run.
+both explained under "Status: the generic FAPI2SP battery" below,
+the three modules "Production setup" lists in the production run, and
+the encrypted `happy-flow` in the two deferred runs (`WARNING`, the
+suite's; see below).
 
 `vciBattery` is the plan's 21 OID4VCI-specific modules, every
 `oid4vci-1_0-issuer-*` one. The plan's `credential_format` variant
@@ -236,13 +270,32 @@ immediate-issuance run ("Issuer haip-battery"):
 | `fail-client-attestation-pop-wrong-aud` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-mismatched-client-attestation-pop-key` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-missing-proof` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
-| `fail-unsupported-encryption-algorithm` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `fail-unsupported-encryption-algorithm` (encrypted only) | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-unknown-credential-configuration` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
+| `happy-flow` (encrypted) | `PASSED` | `PASSED` | `PASSED` | `WARNING` | `WARNING` |
+| `fail-unknown-credential-configuration` (encrypted) | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-unknown-credential-identifier` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 | `fail-on-access-token-in-query` | `PASSED` | `PASSED` | `PASSED` | `PASSED` | `PASSED` |
 
-(Module names without their `oid4vci-1_0-issuer-` prefix.) No module
-needs an exception, so `lib.sh` grades every one against `PASSED`.
+(Module names without their `oid4vci-1_0-issuer-` prefix; the rows
+without "(encrypted)" are the `plain` entries.) The encrypted entries'
+verdicts are from a fresh local suite (`release-v5.3.4`, revision
+`410812e`, image built 2026-11-13); they're the same in the
+`issuer_initiated` and production runs.
+
+The encrypted `happy-flow`'s `WARNING` in the deferred runs is the
+suite's, not the issuer's. Its second Credential Request asks for its
+response compressed (`credential_response_encryption.zip` `DEF`), and
+is deferred; the Deferred Credential Request the suite then sends
+carries a `credential_response_encryption` without `zip`, and OID4VCI
+§9.1 has that request's own parameters encrypt the Deferred Credential
+Response, so the issuer doesn't compress it.
+`VCICheckCredentialResponseCompression` checks the response against
+the first request's `zip` and warns. `lib.sh` expects that `WARNING`
+for that module in the deferred runs, and `run-fapi2sp-battery` fails
+it if its log holds any other warning (`knownSuiteWarnings`). Every
+other module needs no exception, so `lib.sh` grades it against
+`PASSED`.
 Confirmed live twice against a fresh local suite (commit `410812ef`,
 image built 2026-11-12), with the other three runs on the same suite
 matching their own expectations: in the deferred runs every Credential Request
@@ -304,8 +357,9 @@ go build -tags conformance_production ./cmd/conformance-issuer
 A binary built without the tag refuses a `production` configuration.
 `run-fapi2sp-battery -production` writes the configuration and builds
 the container with the tag (the Dockerfile's `GO_BUILD_TAGS`), and
-drives `productionBattery`: the HAIP plan's whole module list, the 60
-`haipBattery` modules and `fail-invalid-key-attestation-signature`,
+drives `productionBattery`: the HAIP plan's whole module list, all 63
+entries (see "Runs"), the 60 `haipBattery` modules and
+`fail-invalid-key-attestation-signature`,
 which runs here with `jwt` proofs carrying a key attestation (its
 signature broken) rather than with the `attestation` proof type
 production doesn't offer. CI's `conformance-issuer-production` job

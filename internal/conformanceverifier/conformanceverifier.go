@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
@@ -460,7 +461,7 @@ func DriveModule(setup SetupResult, testName string, moduleVariant map[string]st
 		res.Err = err
 		return res
 	}
-	res.VerifierOutcome, err = verifierOutcome(noRedirect, verifierBase, sessionID)
+	res.VerifierOutcome, res.VerifierRefusal, err = verifierOutcome(noRedirect, verifierBase, sessionID)
 	if err != nil {
 		res.Err = err
 		return res
@@ -470,7 +471,7 @@ func DriveModule(setup SetupResult, testName string, moduleVariant map[string]st
 		res.Err = fmt.Errorf("fetch module log: %w", err)
 		return res
 	}
-	res.Err = Grade(res.Expected, res.Status, res.Result, res.VerifierOutcome, entries)
+	res.Err = Grade(res.Expected, refusals[testName], res.Status, res.Result, res.VerifierOutcome, res.VerifierRefusal, entries)
 	return res
 }
 
@@ -532,29 +533,50 @@ const (
 // verifierOutcome reads what cmd/conformance-verifier decided for
 // sessionID from its result page (GET /result/{id}, the page the
 // suite's screenshot stands for): the Verifier's own verdict, which
-// the suite can't see when it answered 200.
-func verifierOutcome(httpClient *http.Client, verifierBase, sessionID string) (string, error) {
+// the suite can't see when it answered 200, and, when it failed, the
+// page's text saying why.
+func verifierOutcome(httpClient *http.Client, verifierBase, sessionID string) (outcome, refusal string, err error) {
 	resp, err := httpClient.Get(verifierBase + "/result/" + url.PathEscape(sessionID)) //nolint:gosec,noctx // verifierBase is the operator's own -verifier-base flag
 	if err != nil {
-		return "", fmt.Errorf("GET result page: %w", err)
+		return "", "", fmt.Errorf("GET result page: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read result page: %w", err)
+		return "", "", fmt.Errorf("read result page: %w", err)
 	}
 	page := string(body)
 	switch {
 	case resp.StatusCode != http.StatusOK:
-		return "", fmt.Errorf("GET result page: status %d", resp.StatusCode)
+		return "", "", fmt.Errorf("GET result page: status %d", resp.StatusCode)
 	case strings.Contains(page, "<h1>Verification succeeded</h1>"):
-		return outcomeVerified, nil
+		return outcomeVerified, "", nil
 	case strings.Contains(page, "<h1>Verification failed</h1>"):
-		return outcomeFailed, nil
+		return outcomeFailed, preText(page), nil
 	case strings.Contains(page, "<h1>Pending</h1>"):
-		return outcomePending, nil
+		return outcomePending, "", nil
 	}
-	return "", fmt.Errorf("result page reports no outcome: %.200s", page)
+	return "", "", fmt.Errorf("result page reports no outcome: %.200s", page)
+}
+
+// preText is the text of page's <pre> elements, unescaped, one per
+// line: where cmd/conformance-verifier's result page says why a
+// presentation failed.
+func preText(page string) string {
+	var lines []string
+	for {
+		_, rest, ok := strings.Cut(page, "<pre>")
+		if !ok {
+			break
+		}
+		text, after, ok := strings.Cut(rest, "</pre>")
+		if !ok {
+			break
+		}
+		lines = append(lines, html.UnescapeString(text))
+		page = after
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ModuleResult is one DriveModule call's outcome: the suite's
@@ -567,6 +589,9 @@ type ModuleResult struct {
 	Status          string
 	Result          string
 	VerifierOutcome string
+	// VerifierRefusal is the result page's text saying why the
+	// Verifier refused the presentation, when it did.
+	VerifierRefusal string
 	Err             error
 }
 
@@ -603,6 +628,9 @@ func DriveModules(setup SetupResult, moduleVariant map[string]string) []ModuleRe
 
 func (res ModuleResult) line() string {
 	verdict := fmt.Sprintf("%s=%s verifier=%s (want %s)", res.Status, res.Result, res.VerifierOutcome, res.Expected)
+	if res.VerifierRefusal != "" {
+		verdict += fmt.Sprintf(" refusal %q", res.VerifierRefusal)
+	}
 	if res.ModuleID != "" {
 		verdict += " module " + res.ModuleID
 	}
@@ -692,12 +720,23 @@ type Flags struct {
 func DefineFlags(defaultAlias string) Flags {
 	return Flags{
 		APIBase:              flag.String("suite", "https://localhost:8443/", "OIDF conformance suite base URL"),
-		VerifierBase:         flag.String("verifier-base", "https://localhost:19446", "cmd/conformance-verifier's own host-published base URL"),
+		VerifierBase:         flag.String("verifier-base", hostBase("CONFORMANCE_VERIFIER_HOST_PORT", "19446"), "cmd/conformance-verifier's own host-published base URL: https://localhost:$CONFORMANCE_VERIFIER_HOST_PORT by default, the port conformance/verifier/docker-compose.yml publishes it on (19446 when unset)"),
 		VerifierInternalBase: flag.String("verifier-internal-base", "https://conformance-verifier:8443", "cmd/conformance-verifier's own suite-network-internal base URL"),
 		Alias:                flag.String("alias", defaultAlias, "suite plan alias"),
 		SkipDockerRestart:    flag.Bool("skip-docker-restart", false, "skip restarting the conformance-verifier container after writing the new config (only safe when the container is already running with matching key material from a prior run of this exact binary)"),
 		Transactions:         flag.Bool("transactions", false, "run cmd/conformance-verifier's transactions engine (verifier.Transactions) under its production setup: production assurance over a sealed SQLite store, built with the conformance_production tag"),
 	}
+}
+
+// hostBase is https://localhost on the port portEnv names, or on
+// defaultPort when it's unset: where a harness's docker-compose.yml
+// publishes its container on the host.
+func hostBase(portEnv, defaultPort string) string {
+	port := os.Getenv(portEnv)
+	if port == "" {
+		port = defaultPort
+	}
+	return "https://localhost:" + port
 }
 
 // SetupParams is Setup's own input — everything a caller needs to

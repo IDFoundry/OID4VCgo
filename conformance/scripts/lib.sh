@@ -65,8 +65,13 @@ check_suite_reachable() {
 # per module, or "<name> ERROR: ..."/"<name> ... NOT RUN ..."),
 # comparing each module's own STATUS=RESULT against "FINISHED=PASSED"
 # by default, or FINISHED and the result named for it in EXCEPTIONS
-# (newline-separated "name=RESULT" pairs). Prints every mismatch, and
-# a summary with no module in it; returns 0 if there were none.
+# (newline-separated "name=RESULT" pairs). A name is the summary's own,
+# compared as a fixed string: run-fapi2sp-battery reports an
+# OID4VCI-specific module as "<testName> [<vci_credential_encryption>]"
+# (the HAIP plan lists some under both plain and encrypted), and
+# cmd/conformance-wallet as "<testName> [<crossing>]". Prints every
+# mismatch, and a summary with no module in it; returns 0 if there
+# were none.
 check_summary() {
 	local log_file="$1" exceptions="$2"
 	local clean=0 count=0
@@ -74,7 +79,7 @@ check_summary() {
 	while IFS='|' read -r name result; do
 		[[ -z "$name" ]] && continue
 		count=$((count + 1))
-		want="$(printf '%s\n' "$exceptions" | grep "^${name}=" | tail -1 | cut -d'=' -f2)"
+		want="$(printf '%s\n' "$exceptions" | awk -v n="$name=" 'index($0, n) == 1 { w = substr($0, length(n) + 1) } END { print w }')"
 		[[ -z "$want" ]] && want="PASSED"
 		# Every module must have run to completion: an INTERRUPTED
 		# module's result is no verdict, whatever it says.
@@ -209,10 +214,16 @@ run_issuer() {
 	# "Update" note — so it's expected to PASS like everything else now.
 	local haip_exceptions='fapi2-security-profile-final-refresh-token=SKIPPED
 fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client=REVIEW'
+	# run-fapi2sp-battery drives every entry of the plan's module list:
+	# 63, its 61 modules with happy-flow and
+	# fail-unknown-credential-configuration listed under
+	# vci_credential_encryption=plain and again under encrypted. It
+	# reports an OID4VCI-specific module as "<testName> [plain]" or
+	# "<testName> [encrypted]", the names exceptions use.
 	run_go_checked "Issuer haip-battery" "$WORKDIR/issuer-haip.log" "$haip_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER"
 
-	# Same 60-module battery, same two exceptions (both unrelated to
+	# Same 63 entries, same two exceptions (both unrelated to
 	# the authorization_code_flow_variant), just driven with the HAIP
 	# plan's own issuer_initiated variant instead of the default
 	# wallet_initiated one — this binary submits each module's own
@@ -222,9 +233,11 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -issuer-initiated
 
 	# mdoc and deferred issuance drive the plan's 21 OID4VCI-specific
-	# modules (vciBattery), not the FAPI2SP battery, which never reaches
-	# credential issuance. Every module is expected to pass, as in the
-	# sd_jwt_vc immediate runs (conformance/issuer/README.md's "Runs").
+	# modules (vciBattery: 23 entries, with the encrypted happy-flow and
+	# fail-unknown-credential-configuration), not the FAPI2SP battery,
+	# which never reaches credential issuance. Every module is expected
+	# to pass, as in the sd_jwt_vc immediate runs
+	# (conformance/issuer/README.md's "Runs"), except under deferral.
 	local vci_exceptions=''
 	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "$vci_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc
@@ -234,11 +247,18 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 
 	# Not certification profiles: deferred issuance (OID4VCI §9).
 	# cmd/conformance-issuer defers every Credential Request, and each
-	# module follows the 202 to the Deferred Credential Endpoint.
-	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "$vci_exceptions" \
+	# module follows the 202 to the Deferred Credential Endpoint. The
+	# encrypted happy-flow ends WARNING, the suite's: its compressed
+	# request's Deferred Credential Request asks for no compression
+	# (zip), yet VCICheckCredentialResponseCompression expects the
+	# Deferred Credential Response compressed. run-fapi2sp-battery
+	# fails the module if its log holds any other warning
+	# (knownSuiteWarnings; conformance/issuer/README.md's "Runs").
+	local deferred_exceptions='oid4vci-1_0-issuer-happy-flow [encrypted]=WARNING'
+	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "$deferred_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -deferred
 
-	run_go_checked "Issuer mdoc deferred" "$WORKDIR/issuer-mdoc-deferred.log" "$vci_exceptions" \
+	run_go_checked "Issuer mdoc deferred" "$WORKDIR/issuer-mdoc-deferred.log" "$deferred_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc -deferred
 
 	# Not a certification profile either: cmd/conformance-issuer's
@@ -246,8 +266,9 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# conformance_production tag) — production assurance for the
 	# Authorization Server and the Credential Issuer, sealed SQLite
 	# stores, and jwt proofs that must carry a key attestation, with no
-	# attestation proof type. It drives the plan's whole module list:
-	# haipBattery's 60 and fail-invalid-key-attestation-signature, which
+	# attestation proof type. It drives the plan's whole module list,
+	# all 63 entries: haipBattery's 60 modules and
+	# fail-invalid-key-attestation-signature, which
 	# runs here with jwt proofs. Three modules expect REVIEW where
 	# haip-battery expects PASSED: under production, an authorization
 	# error before the user has authenticated (an unknown, reused or
@@ -281,10 +302,10 @@ run_wallet() {
 	# Every one of these 6 has always run 100% clean (all module
 	# instances FINISHED/PASSED) — no known exceptions.
 	run_go_checked "Wallet default (jwt, sd_jwt_vc)" "$WORKDIR/wallet-default.log" "" \
-		go run ./cmd/conformance-wallet
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER"
 
 	run_go_checked "Wallet issuer-initiated" "$WORKDIR/wallet-issuer-initiated.log" "" \
-		go run ./cmd/conformance-wallet -issuer-initiated
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -issuer-initiated
 
 	# Same issuer_initiated flow variant, but vci_credential_offer_variant
 	# =by_reference instead of the default by_value — the suite hands
@@ -292,10 +313,10 @@ run_wallet() {
 	# which wallet.Wallet.ResolveCredentialOffer already dereferences
 	# unconditionally.
 	run_go_checked "Wallet issuer-initiated (by_reference)" "$WORKDIR/wallet-issuer-initiated-by-reference.log" "" \
-		go run ./cmd/conformance-wallet -issuer-initiated -credential-offer-variant by_reference
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -issuer-initiated -credential-offer-variant by_reference
 
 	run_go_checked "Wallet mdoc" "$WORKDIR/wallet-mdoc.log" "" \
-		go run ./cmd/conformance-wallet -credential-format mdoc \
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -credential-format mdoc \
 			-credential-configuration-id eu.europa.ec.eudi.pid.mdoc.1 -scope eudi.pid.mdoc.1
 
 	# The mdoc row's own issuer_initiated x by_value/by_reference pair,
@@ -307,19 +328,19 @@ run_wallet() {
 	# comment warns about isn't actually load-bearing for these two
 	# module instances specifically (both FINISHED=PASSED as run).
 	run_go_checked "Wallet mdoc issuer-initiated" "$WORKDIR/wallet-mdoc-issuer-initiated.log" "" \
-		go run ./cmd/conformance-wallet -credential-format mdoc -issuer-initiated
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -credential-format mdoc -issuer-initiated
 
 	run_go_checked "Wallet mdoc issuer-initiated (by_reference)" "$WORKDIR/wallet-mdoc-issuer-initiated-by-reference.log" "" \
-		go run ./cmd/conformance-wallet -credential-format mdoc -issuer-initiated -credential-offer-variant by_reference
+		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -credential-format mdoc -issuer-initiated -credential-offer-variant by_reference
 	return 0
 }
 
 run_verifier() {
 	run_go_self_graded "Verifier sd_jwt_vc" "$WORKDIR/verifier-sdjwt.log" \
-		go run ./conformance/verifier/scripts/run-sdjwt-modules
+		go run ./conformance/verifier/scripts/run-sdjwt-modules -suite "$CONFORMANCE_SERVER"
 
 	run_go_self_graded "Verifier mdoc" "$WORKDIR/verifier-mdoc.log" \
-		go run ./conformance/verifier/scripts/run-mdoc-module
+		go run ./conformance/verifier/scripts/run-mdoc-module -suite "$CONFORMANCE_SERVER"
 
 	# Not certification profiles: the same plan served through
 	# verifier.Transactions (cmd/conformance-verifier's transactions
@@ -330,10 +351,10 @@ run_verifier() {
 	# (TransactionsConfig.RequestURIMethodPost; conformance/verifier/
 	# README.md's "Transactions engine").
 	run_go_self_graded "Verifier transactions sd_jwt_vc" "$WORKDIR/verifier-transactions-sdjwt.log" \
-		go run ./conformance/verifier/scripts/run-sdjwt-modules -transactions
+		go run ./conformance/verifier/scripts/run-sdjwt-modules -suite "$CONFORMANCE_SERVER" -transactions
 
 	run_go_self_graded "Verifier transactions mdoc" "$WORKDIR/verifier-transactions-mdoc.log" \
-		go run ./conformance/verifier/scripts/run-mdoc-module -transactions
+		go run ./conformance/verifier/scripts/run-mdoc-module -suite "$CONFORMANCE_SERVER" -transactions
 	return 0
 }
 
@@ -343,16 +364,16 @@ run_wallet_vp() {
 	# Credentials API, run-modules standing in for the browser — see
 	# conformance/wallet-vp/README.md's "Scope" section).
 	run_go_self_graded "Wallet-VP sd_jwt_vc" "$WORKDIR/wallet-vp-sdjwt.log" \
-		go run ./conformance/wallet-vp/scripts/run-modules
+		go run ./conformance/wallet-vp/scripts/run-modules -suite "$CONFORMANCE_SERVER"
 
 	run_go_self_graded "Wallet-VP iso_mdl" "$WORKDIR/wallet-vp-mdoc.log" \
-		go run ./conformance/wallet-vp/scripts/run-modules -credential-format iso_mdl
+		go run ./conformance/wallet-vp/scripts/run-modules -suite "$CONFORMANCE_SERVER" -credential-format iso_mdl
 
 	run_go_self_graded "Wallet-VP sd_jwt_vc dc_api" "$WORKDIR/wallet-vp-sdjwt-dcapi.log" \
-		go run ./conformance/wallet-vp/scripts/run-modules -response-mode dc_api.jwt
+		go run ./conformance/wallet-vp/scripts/run-modules -suite "$CONFORMANCE_SERVER" -response-mode dc_api.jwt
 
 	run_go_self_graded "Wallet-VP iso_mdl dc_api" "$WORKDIR/wallet-vp-mdoc-dcapi.log" \
-		go run ./conformance/wallet-vp/scripts/run-modules -response-mode dc_api.jwt -credential-format iso_mdl
+		go run ./conformance/wallet-vp/scripts/run-modules -suite "$CONFORMANCE_SERVER" -response-mode dc_api.jwt -credential-format iso_mdl
 	return 0
 }
 

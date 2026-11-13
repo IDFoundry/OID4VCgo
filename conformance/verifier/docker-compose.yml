@@ -43,8 +43,10 @@ services:
       # entire 18443-18457 host-port range for its conformance-as
       # variants — this repo's own conformance binaries use a distinct
       # 19446-19448 range so both checkouts' harnesses can run at once
-      # without a docker port-bind conflict.
-      - "19446:8443" # optional: only needed to poke it from the host
+      # without a docker port-bind conflict. CONFORMANCE_VERIFIER_HOST_PORT
+      # moves it for a second run beside this one (with its own
+      # COMPOSE_PROJECT_NAME); the drivers' -verifier-base follows it.
+      - "${CONFORMANCE_VERIFIER_HOST_PORT:-19446}:8443"
     volumes:
       - ./oidf-config/haip.config.json:/config.json:ro
     command:

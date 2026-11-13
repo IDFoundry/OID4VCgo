@@ -71,15 +71,16 @@ func main() {
 		Addr:    cfg.ListenAddr,
 		Handler: built.public,
 		// MinVersion/CipherSuites match FAPIgo's own OpenID-Certified
-		// cmd/conformance-as (server/tls.go's own doc comment): without
-		// them, Go negotiates TLS 1.3 by default, whose three built-in
-		// AEAD suites always include ChaCha20-Poly1305 — which the
-		// OIDF suite's own FAPI-RW-8.5-1/-2 probe flags as "not
-		// permitted" (confirmed live: "Server accepted a cipher that
-		// is not on the list of permitted ciphers"), even though Go's
-		// crypto/tls gives no way to restrict TLS 1.3's own suite
-		// selection at all. Forcing TLS 1.2 with this narrower
-		// AES-GCM-only list sidesteps that entirely.
+		// cmd/conformance-as (server/tls.go's own doc comment). TLS 1.3
+		// isn't disabled: a client offering it still negotiates it,
+		// with crypto/tls's three built-in AEAD suites, which
+		// CipherSuites doesn't restrict. CipherSuites narrows TLS 1.2
+		// to ECDHE with AES-GCM, which is what the OIDF suite's
+		// FAPI-RW-8.5-1/-2 check probes: it connects with TLS 1.2 and
+		// flags any other suite the server accepts there (with Go's
+		// defaults, CBC and ChaCha20-Poly1305 suites: "Server accepted
+		// a cipher that is not on the list of permitted ciphers").
+		// MinVersion refuses TLS 1.0 and 1.1.
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{tlsCert},
 			MinVersion:   tls.VersionTLS12,
