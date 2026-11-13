@@ -195,7 +195,13 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
                 return p
             }
             guard let wait else { return }
-            try await withTimeout(5) { try await wait.wait() }
+            do {
+                try await withTimeout(5) { try await wait.wait() }
+            } catch is ProximityTimeout {
+                // The transport's own error, as its callers expect: the
+                // queue never drained, so the other device has gone.
+                throw ProximityTransportError("a write couldn't be queued")
+            }
         }
     }
 

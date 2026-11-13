@@ -94,7 +94,13 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
                 return p
             }
             guard let wait else { return }
-            try await withTimeout(5) { try await wait.wait() }
+            do {
+                try await withTimeout(5) { try await wait.wait() }
+            } catch is ProximityTimeout {
+                // The transport's own error, as its callers expect: the
+                // queue never drained, so the reader has gone.
+                throw ProximityTransportError("a notification couldn't be queued")
+            }
         }
     }
 
@@ -121,9 +127,14 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         poweredOn.fail(ended)
     }
 
+    /// Ends the session with error: on `queue`.
     private func fail(_ error: ProximityTransportError) {
         incoming.end(error)
         started.fail(error)
+        // A send waiting for room in the queue: fail it now rather than
+        // at its timeout. Its chunk was never queued.
+        readyToUpdate?.resolve(.failure(error))
+        readyToUpdate = nil
     }
 
     // MARK: CBPeripheralManagerDelegate, on `queue`
