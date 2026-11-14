@@ -1643,8 +1643,18 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   disconnects just after the last chunk has been sent the response,
   and the session stays `Presented`. In a GATT client, a device that
   stops answering mid-setup now costs one attempt, as a disconnecting
-  one does. Cancelling the caller of `respond` mid-send still leaves
-  `Responding` until `cancel()`.
+  one does.
+- **`respond` never leaves the session in `Responding`:** it handled
+  only the transport's own error from sending, so anything else left
+  the state there, where the idle timeout doesn't run and `decline`
+  does nothing: only `cancel()` ended the session. Its caller cancelled
+  before anything is sent (while the holder key signs) puts the request
+  back, as a `WalletException` does: nothing left the wallet, and the
+  holder can answer again or decline. Cancelled while the response is
+  being sent, the session ends as `Cancelled`: the reader may hold part
+  of the response, so it can't be sent again. Any other error from
+  sending ends it as `Failed`. The KDoc of `respond` lists what it
+  throws and the state each leaves.
 
 ### Phase 10 findings: the iOS SDK
 
@@ -1687,6 +1697,12 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   - the reader verified it
 
   The iOS Simulator has no Bluetooth, so iOS needs devices.
+- **`respond` never leaves the session in `.responding`:** as on
+  Android. A cancelled caller before anything was sent already put the
+  request back. Cancelled while the response is being sent, the session
+  now ends as `.cancelled`, and any other error from sending ends it as
+  `.failed`: both used to leave `.responding`, which only `cancel()`
+  ended.
 - **Two iPhones** (2026-11-12, an iPhone 14 Pro Max and an iPhone 11
   Pro, the demo app built from OID4VCWallet 0.35.0's code, against the
   passport-vdc demo): a full presentation ran each way, each phone in
