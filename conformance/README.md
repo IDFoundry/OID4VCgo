@@ -192,6 +192,43 @@ Not checked, and why:
 The interop runs that check revocation are listed in their own
 sections below.
 
+## OID4VCgo's side in the interop runs
+
+In the interop runs below, OID4VCgo's issuers, verifiers and Wallet
+Provider run as a deployment runs them wherever the other side can
+meet them there: production assurance, durable stores (`sqlstore` and
+`fapigo/sqlstore`, sealed, in a SQLite file), `verifier.Transactions`
+rather than the binary's session engine, and OID4VCgo's
+`walletprovider.Provider` ([`interop/walletprovider`](../interop/walletprovider),
+over its v1 protocol; only the platform evidence is a stand-in,
+`walletprovidertest.FakeVerifier`) where a Go or Kotlin wallet of the
+run's takes Wallet Attestations. The binaries are built with the
+`conformance_production` tag ([`interop/production.sh`](../interop/production.sh)).
+What stays at development, and why, is beside each case in its README.
+The wallets' own settings are those of their runs.
+
+| Run | OID4VCgo's side as deployed | Still development, and why |
+| --- | --- | --- |
+| EUDI wallet library → verifier | SD-JWT VC and mdoc presentations and every verifier-side control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite | the `request_uri_method` choices, the Digital Credentials API and the default engine's own controls: the binary's transactions engine asks for `post` and routes no DC API |
+| EUDI wallet library ← issuer | the `production` profile: `AssuranceProduction` for the Authorization Server and the Credential Issuer, sealed SQLite, DPoP nonces, every attestation from the Wallet Provider through its agent, its revocation refused | the other profiles: `attestation` proofs and `jwt` proofs without a key attestation, which production doesn't take |
+| OID4VCgo's wallet ← EUDI PID Issuer | — | the Wallet Provider: the EUDI stack requires TS3 claims (`client_status`, `key_storage_status`, ...) `walletprovider` doesn't issue |
+| OID4VCgo's wallet → EUDI verifier | — | the fixtures and their status lists (`scripts/setup`, `scripts/serve`): `cmd/conformance-wallet-vp` presents the credentials its configuration holds |
+| walt.id Wallet2 → verifier | the PID and mDL presentations and the untrusted-issuer control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite | the `request_uri_method` choices (the default engine) |
+| walt.id: issuer → OID4VCgo's wallet → Verifier2 | the issuer's production setup, its status lists in `sqlstore`; the wallet attested by the Wallet Provider | — |
+| walt.id Wallet2 ← issuer | — | Wallet2 adds no key attestation, which production requires; its attester protocol isn't `walletprovider`'s |
+| Multipaz: walletflow ← Multipaz issuer | the Wallet Provider, trusted and untrusted | — |
+| Multipaz wallet → verifier, ← issuer | — | cross-device and DC API presentations, which the binary's transactions engine doesn't route; `attestation` proofs with a bare-key key attestation, which production doesn't take |
+| Polaris | — | OID4VCgo's side is the wallet alone |
+
+Status list fetches stay able to reach loopback in every run
+(`status_list_allow_loopback`, and the production issuer's
+`attestation_status_allow_loopback`): a production fetcher dials
+public addresses only, which a runner has none of to serve from, so
+the binaries run the same status policy where production can't inspect
+its fetcher (the verifier's `Accept`, the issuer's wrapped key
+attestation check) and log that they do. PostgreSQL and several
+instances sharing a store aren't run.
+
 ## Interop with polaris-oid4vp
 
 Besides the OIDF suite, `.github/workflows/polaris-interop.yml` runs
@@ -253,9 +290,10 @@ The same workflow runs three more directions. The EUDI wallet library
 for presentation,
 [eudi-lib-jvm-openid4vp-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vp-kt),
 presents SD-JWT VC and mdoc PIDs to `cmd/conformance-verifier`, over
-the redirect flow and the DC API, from a pinned JVM driver, and the
-SD-JWT VC through `verifier.Transactions` with
-`request_uri_method=post` (`interop/eudi/run-wallet.sh`). The EUDI wallet library for issuance,
+the redirect flow and the DC API, from a pinned JVM driver, the
+redirect flow and the verifier's controls through `verifier.Transactions`
+under production assurance, with `request_uri_method=post`
+(`interop/eudi/run-wallet.sh`). The EUDI wallet library for issuance,
 [eudi-lib-jvm-openid4vci-kt](https://github.com/eu-digital-identity-wallet/eudi-lib-jvm-openid4vci-kt),
 obtains credentials from `cmd/conformance-issuer`: both formats, by the
 pre-authorized code and the authorization code flows, with every proof

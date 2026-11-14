@@ -22,7 +22,7 @@
 # issuer, are OID4VCgo's Wallet Provider's (interop/walletprovider), run
 # here as a deployment runs it, on WP_PORT and the three ports after.
 #
-# Needs go, a JDK (21 or later) and openssl, and curl for latest. Exits
+# Needs go and a JDK (21 or later), and curl for latest. Exits
 # 0 only if every case behaves as expected.
 set -euo pipefail
 

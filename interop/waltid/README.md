@@ -34,12 +34,13 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | SD-JWT VC PID, the issuer's `dpop-nonces` profile | issued: the Token and Credential Endpoints each ask for a DPoP nonce, and Wallet2 retries with it |
 | | SD-JWT VC PID, its `deferred` profile | deferred (202), then issued from the Deferred Credential Endpoint when Wallet2 resumes the handle |
 | | SD-JWT VC PID, its `key-attestation` profile | a note, not a case: Wallet2 stops before its Credential Request (see "What isn't covered") |
-| OID4VCgo's issuer → OID4VCgo's wallet → Verifier2 | SD-JWT VC PID and mdoc PID, the session's VC policies `signature` and `credential-status` (IETF, VALID) | Verifier2 fetches the issuer's Token Status List, its `credential-status` policy passes, and it accepts the PID |
+| OID4VCgo's issuer → OID4VCgo's wallet → Verifier2 | SD-JWT VC PID and mdoc PID, the issuer's production setup, the wallet attested by OID4VCgo's Wallet Provider; the session's VC policies `signature` and `credential-status` (IETF, VALID) | Verifier2 fetches the issuer's Token Status List, its `credential-status` policy passes, and it accepts the PID; the provider attested the wallet, and the issuer fetched the provider's status list |
 | | Each, revoked by the issuer (its `POST /status`) after it was issued, before the wallet presents it | Verifier2 refuses it, by `credential-status` (`Status validation failed: expected one of [0], but got 1`), the session `FAILED` |
-| Wallet2 → OID4VCgo's verifier | That SD-JWT VC PID, `x509_hash`, `direct_post.jwt`, `request_uri_method` none, `get` and `post` | verified |
-| | That mdoc PID | verified, only the requested elements disclosed |
-| | The verifier's Access Certificate under an unrelated CA | Wallet2 refuses (`X509TrustAnchorMismatch`) |
-| | The verifier trusts an unrelated issuer CA | the verifier refuses the credential |
+| Wallet2 → OID4VCgo's verifier | That SD-JWT VC PID, `x509_hash`, `direct_post.jwt`, `request_uri_method` none, `get` and `post` (the default engine) | verified |
+| | The same, through `verifier.Transactions` under production assurance | verified, released to the browser that began the request |
+| | That mdoc PID, through `verifier.Transactions` under production assurance | verified, only the requested elements disclosed |
+| | The verifier's Access Certificate under an unrelated CA (`verifier.Transactions`) | Wallet2 refuses (`X509TrustAnchorMismatch`) |
+| | The verifier trusts an unrelated issuer CA (`verifier.Transactions`) | the verifier refuses the credential: its result page's `untrusted_issuer` and `x509: certificate signed by unknown authority` |
 
 Each control is checked for its reason, not just for a failure:
 OID4VCgo's own error for its refusals (an untrusted chain, a request
@@ -57,7 +58,14 @@ OID4VCgo's side is `walletflow` ([`scripts/wallet`](scripts/wallet)),
 `cmd/conformance-verifier` and `cmd/conformance-issuer`, the latter two
 configured as in [`../eudi`](../eudi/README.md): the issuer is the EUDI
 issuer run's ([`setup-issuer`](../eudi/scripts/setup-issuer)), under
-HAIP. Wallet2 receives from it in the base profile, then, each from a
+HAIP. The binaries are built with the `conformance_production` tag, and
+the verifiers but the SD-JWT VC one on the default engine run as a
+deployment's Verifier does: `verifier.Transactions` under
+`verifier.AssuranceProduction`, each over a sealed SQLite file
+(`sqlstore`), its links asking for `request_uri_method=post`, the
+result released to the browser that began the request. The default
+engine, at development, serves the `request_uri_method` each of
+its three cases asks for. Wallet2 receives from it in the base profile, then, each from a
 fresh Wallet2 wallet, in three more of
 [`../eudi/run-issuer.sh`](../eudi/run-issuer.sh)'s profiles, the issuer
 restarted with its config changed as there: `dpop-nonces`
@@ -78,7 +86,24 @@ second one, named `localhost`, as OID4VCgo's wallet's development
 fetcher needs, its lists published as `https://waltid.test:…`
 (`status_lists.base_url`), which Verifier2 reaches through
 [`scripts/serve`](scripts/serve)'s tap, which logs who fetched which
-form. Each control has the issuer revoke the credentials the wallet
+form. It runs as a deployment runs it, its `production` setting: the
+Authorization Server and the Credential Issuer under production
+assurance, every store, the list's reservations and statuses among
+them, in a sealed SQLite file (`sqlstore`, `fapigo/sqlstore`), the
+access token key loaded from its configuration, `jwt` proofs that must
+carry a key attestation, DPoP nonces. OID4VCgo's wallet is attested to
+it by OID4VCgo's Wallet Provider
+([`../walletprovider`](../walletprovider): `walletprovider.Provider`
+over sealed SQLite stores, over its v1 protocol, `scripts/wallet`'s
+`-wallet-provider`), whose CA the issuer trusts for Wallet
+Attestations and Key Attestations by their `x5c` chain, checking their
+status on the provider's lists. Those are on loopback under the
+provider's own TLS certificate, so the issuer's
+`attestation_status_allow_loopback` and
+`attestation_status_tls_trust_anchors_pem` are set, the one setting a
+deployment wouldn't make ([`../eudi`](../eudi/README.md)'s issuer
+`production` profile says why, and has the provider's revocation
+controls). Each control has the issuer revoke the credentials the wallet
 received (the wallet's `-revoke`, the issuer's `POST /status`,
 `Allocator.SetStatus`) before it presents one: it differs from the case
 before it in that status alone. The positive cases are graded by the
@@ -139,6 +164,11 @@ asks.
   `client_id`, so the stand-in ([`scripts/serve`](scripts/serve)) signs
   for the one OID4VCgo's issuer registers, with its attester key and
   `x5c`, and Wallet2 is told that `client_id` when it redeems the offer.
+  OID4VCgo's Wallet Provider can't stand in for it: its v1 protocol
+  registers an instance with platform evidence and signs each request
+  with the instance's registration key, which Wallet2's attester client
+  doesn't speak. OID4VCgo's wallet, which does, takes its attestations
+  from OID4VCgo's Wallet Provider in the status lists direction.
 - **Negative presentations.** OID4VCgo's wallet builds its
   presentation as always; its transport ([`scripts/wallet`](scripts/wallet)'s
   `-tamper`, `tamper.go`) changes it on its way to Verifier2, as an
@@ -258,6 +288,11 @@ differ from a passing case only in the list the wallet is served.
 - Verifier2's issuer trust (finding 3), its DC API flows, and Wallet2's
   checks of the credentials it's issued.
 - Wallet2 receiving from Issuer2: walt.id with itself.
+- Wallet2 receiving from the issuer's production setup: that takes only
+  `jwt` proofs carrying a key attestation (`haip.RecommendedIssuerConfig`),
+  which Wallet2 can't add (below), so Wallet2 receives from the issuer's
+  development profiles, which the EUDI issuer run defines. OID4VCgo's
+  wallet receives from the production setup (the status lists cases).
 - Wallet2 with key attestations: the issuer's `key-attestation` profile
   is a note, not a case. Wallet2's library adds a key attestation to a
   `jwt` proof only from a `KeyAttestationProvider` attached to the
@@ -282,9 +317,10 @@ WALTID_TAG=latest interop/waltid/run.sh
 
 It needs Docker, Go, `jq`, `curl`, `openssl` and `keytool`, and exits 0
 only if every case behaves as expected. `BASE_PORT` (21400) moves its
-ports (`BASE_PORT`+1 to +34), `WORK` keeps the run's files, and
+ports (`BASE_PORT`+1 to +44), `WORK` keeps the run's files, and
 `COMPOSE_PROJECT_NAME` (`oid4vcgo-waltid`) prefixes the containers'
-names.
+names. `BASE_PORT`+42 to +44 are the Wallet Provider, its admin
+listener, and the SD-JWT VC verifier's transactions engine.
 
 ## Moving the pins
 
