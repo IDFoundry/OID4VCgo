@@ -6,20 +6,25 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // productionTestConfig is baseTestConfig under Config.Production, its
@@ -196,4 +201,109 @@ func postCredential(t *testing.T, client *http.Client, cfg Config, clientKey *ec
 		t.Fatal(err)
 	}
 	return resp.StatusCode, string(raw)
+}
+
+// Under ProductionConfig.AttestationStatusAllowLoopback the production
+// setup checks a key attestation's status from a list on loopback, over
+// TLS chained to AttestationStatusTLSTrustAnchorsPEM, as an interop
+// run's Wallet Provider serves it: issued for an entry VALID, refused
+// for one INVALID. issuer.New would refuse that fetcher's checker under
+// production; the wrapper keeps the check.
+func TestProductionSetup_ChecksKeyAttestationStatusOnLoopback(t *testing.T) {
+	kaKey, _, kaLeafPEM, kaCAPEM, err := conformancecert.GenerateSignerAndCert("production-test-key-attestation", "production-test-key-attestation-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := conformancecert.ParseCertificatePEM(kaLeafPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	list, err := statuslist.New(statuslist.Bits1, []uint8{uint8(statuslist.StatusValid), uint8(statuslist.StatusInvalid)}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listURI string
+	lists := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		exp := now.Add(time.Hour).Unix()
+		token, err := statuslist.IssueTokenX5C(kaKey, oid4vci.ES256,
+			statuslist.TokenClaims{Sub: listURI, Iat: now.Unix(), Exp: &exp, StatusList: list}, []*x509.Certificate{leaf})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", statuslist.TokenMediaType)
+		_, _ = io.WriteString(w, token)
+	}))
+	defer lists.Close()
+	listURI = lists.URL + "/statuslists/1"
+
+	cfg := productionTestConfig(t, kaCAPEM)
+	cfg.Production.AttestationStatusAllowLoopback = true
+	cfg.Production.AttestationStatusTLSTrustAnchorsPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: lists.Certificate().Raw}))
+	client, cfg, attesterKey, clientKey := setupFullFlowTestWithConfig(t, cfg, "production-client", "production-subject")
+	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
+	nonceReq := func() string {
+		req, err := http.NewRequest(http.MethodPost, cfg.Issuer+"/nonce", http.NoBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, _ := doJSON(t, client, req)["c_nonce"].(string)
+		return n
+	}
+	for _, c := range []struct {
+		idx    int
+		status int
+		want   string
+	}{
+		{1, http.StatusBadRequest, "invalid_proof"},
+		{0, http.StatusOK, `"credentials"`},
+	} {
+		holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyAttestation := keyAttestationWithStatus(t, kaKey, leaf, holderKey, cNonce, now, listURI, c.idx)
+		proof := buildAttestedProofJWT(t, holderKey, cfg.Client.ID, cfg.Issuer, cNonce, keyAttestation, now)
+		status, body := postCredential(t, client, cfg, clientKey, accessToken, now, proof)
+		if status != c.status || !strings.Contains(body, c.want) {
+			t.Fatalf("key attestation status entry %d: status %d, body %s; want %d with %s", c.idx, status, body, c.status, c.want)
+		}
+		cNonce = nonceReq()
+	}
+}
+
+func TestAttestationStatusFetcher(t *testing.T) {
+	f, err := attestationStatusFetcher(ProductionConfig{})
+	if err != nil || f.AllowLoopback || f.HTTP != nil || !f.HardenedForProduction() {
+		t.Fatalf("default: %+v, %v; want a hardened fetcher on the system roots", f, err)
+	}
+	if _, err := attestationStatusFetcher(ProductionConfig{AttestationStatusTLSTrustAnchorsPEM: "not PEM"}); err == nil {
+		t.Fatal("trust anchors holding no PEM certificate were taken")
+	}
+}
+
+// keyAttestationWithStatus is buildKeyAttestationJWT with a status
+// claim naming entry idx of the list at uri.
+func keyAttestationWithStatus(t *testing.T, kaKey *ecdsa.PrivateKey, leaf *x509.Certificate, holderKey *ecdsa.PrivateKey, nonce string, now time.Time, uri string, idx int) string {
+	t.Helper()
+	pub, err := jwk.Marshal(&holderKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+		"attested_keys": []any{pub}, "nonce": nonce,
+		"status": map[string]any{"status_list": map[string]any{"idx": idx, "uri": uri}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := jose.Sign(jose.ES256, kaKey, map[string]any{
+		"typ": "key-attestation+jwt", "x5c": []string{base64.StdEncoding.EncodeToString(leaf.Raw)},
+	}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compact
 }
