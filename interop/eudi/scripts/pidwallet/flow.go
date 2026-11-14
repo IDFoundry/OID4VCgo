@@ -31,7 +31,7 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		}
 		offer = "openid-credential-offer://?credential_offer=" + url.QueryEscape(string(raw))
 	}
-	w, err := walletflow.New(walletflow.Config{
+	cfg := walletflow.Config{
 		ClientID: o.clientID, RedirectURI: o.redirectURI,
 		IssuerRoots:     env.issuerRoots,
 		MdocIssuerRoots: env.issuerRoots,
@@ -55,13 +55,21 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		IssuerRevocation:         env.revocation,
 		StatusRevocation:         env.revocation,
 		IssuerMetadataRevocation: env.revocation,
-	}, walletflow.Dependencies{
+	}
+	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
 		// A plain *http.Transport, not the recorder: CheckStatus's
 		// fetches apply an address policy that needs one, and this
 		// engine's result records no exchanges.
 		Provider: env.provider, HTTP: env.statusHTTP,
-	})
+	}
+	if env.production {
+		// As a deployment runs it: walletflow's own HTTP client and
+		// durable stores (production.go).
+		cfg.Development = false
+		deps = env.stores.Dependencies(walletflow.Dependencies{Provider: env.provider})
+	}
+	w, err := walletflow.New(cfg, deps)
 	if err != nil {
 		res.fail("setup", err)
 		return

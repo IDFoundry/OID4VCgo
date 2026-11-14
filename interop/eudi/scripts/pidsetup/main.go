@@ -3,7 +3,9 @@
 // from the EUDI reference PID Issuer (eudi-srv-pid-issuer):
 //
 //   - a TLS CA and, under it, the certificates of the stack's HAProxy
-//     (localhost, where the wallet reaches the issuer and its Keycloak),
+//     (the issuer URL's host, where the wallet reaches the issuer and
+//     its Keycloak: localhost, or in a production run the name
+//     interop/prodnet.sh's network gives HAProxy; and localhost),
 //     of Keycloak's own listener (keycloak, where the issuer reaches it),
 //     and of interop/eudi/scripts/serve (host.docker.internal, where
 //     Keycloak and the issuer fetch the Wallet Provider's status list);
@@ -117,7 +119,7 @@ func generate(issuerURL, serveURL, crlHost string) (files, error) {
 		return nil, fmt.Errorf("-serve-url %q isn't an https URL", serveURL)
 	}
 	f := files{}
-	if err := tlsFiles(f, serve.Hostname()); err != nil {
+	if err := tlsFiles(f, issuer.Hostname(), serve.Hostname()); err != nil {
 		return nil, err
 	}
 	if err := issuerFiles(f, issuer, crlHost); err != nil {
@@ -134,9 +136,19 @@ func generate(issuerURL, serveURL, crlHost string) (files, error) {
 	return f, nil
 }
 
+// haproxyHosts are the names HAProxy's certificate carries: the
+// issuer's host, where the wallet reaches it, and localhost, where the
+// script's own requests do.
+func haproxyHosts(issuerHost string) []string {
+	if issuerHost == "localhost" {
+		return []string{"localhost"}
+	}
+	return []string{issuerHost, "localhost"}
+}
+
 // tlsFiles makes the TLS CA and the stack's three listeners'
-// certificates under it.
-func tlsFiles(f files, serveHost string) error {
+// certificates under it: HAProxy's for issuerHost (haproxyHosts).
+func tlsFiles(f files, issuerHost, serveHost string) error {
 	ca, caKey, caPEM, _, err := conformancecert.GenerateCA("oid4vcgo-eudi-pid-tls-ca")
 	if err != nil {
 		return fmt.Errorf("tls ca: %w", err)
@@ -146,7 +158,7 @@ func tlsFiles(f files, serveHost string) error {
 		name  string
 		hosts []string
 	}{
-		{"haproxy", []string{"localhost"}},
+		{"haproxy", haproxyHosts(issuerHost)},
 		{"keycloak", []string{"keycloak"}},
 		{"serve", []string{serveHost, "localhost"}},
 	} {

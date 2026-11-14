@@ -18,6 +18,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/prodwallet"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -40,6 +41,12 @@ type environment struct {
 	provider         *provider
 	// encryptedRequest is set once a Credential Request went encrypted.
 	encryptedRequest bool
+
+	// production is -assurance production (production.go): stores are
+	// the wallet's durable stores, and prodHTTP the core engine's client.
+	production bool
+	stores     *prodwallet.Stores
+	prodHTTP   *http.Client
 }
 
 func newEnvironment(o options) (*environment, error) {
@@ -74,13 +81,18 @@ func newEnvironment(o options) (*environment, error) {
 		return nil, err
 	}
 	env.provider = p
+	if o.assurance == assuranceProduction {
+		if err := env.startProduction(); err != nil {
+			return nil, err
+		}
+	}
 	return env, nil
 }
 
 // newWallet is the wallet package's Wallet, taking signed metadata
 // only, verified under the metadata CA, its signer naming the issuer.
 func (env *environment) newWallet() (*wallet.Wallet, error) {
-	return wallet.New(wallet.Config{
+	cfg := wallet.Config{
 		// Development only for the stack's loopback address; nothing
 		// below relaxes a check.
 		Assurance:       wallet.AssuranceDevelopment,
@@ -94,7 +106,11 @@ func (env *environment) newWallet() (*wallet.Wallet, error) {
 		IssuerMetadataRevocation:    env.revocation,
 		RequireSignedIssuerMetadata: true,
 		RequireIssuerMetadataName:   true,
-	}, wallet.Dependencies{HTTP: env.http, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
+	}
+	if env.production {
+		cfg.Assurance, cfg.Fetch.AllowLoopbackHosts = wallet.AssuranceProduction, false
+	}
+	return wallet.New(cfg, wallet.Dependencies{HTTP: env.walletHTTP(), Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 }
 
 // summarize reads what the exchanges show into res.

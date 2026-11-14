@@ -55,7 +55,28 @@ CRL_PORT="${CRL_PORT:-19446}"
 WORK="${WORK:-$(mktemp -d)}"
 STACK="$WORK/stack"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-eudi-pid}"
-ISSUER="https://localhost:$PORT/pid-issuer"
+# WALLET_ASSURANCE=production runs the wallet as a deployment runs it
+# instead (README.md, "The wallet at production assurance"): in a
+# container on ../prodnet.sh's network, which reaches the stack at
+# PUBLIC_HOST, not loopback, and only the cases that ask that of it.
+WALLET_ASSURANCE="${WALLET_ASSURANCE:-development}"
+case "$WALLET_ASSURANCE" in
+  development)
+    PUBLIC_ORIGIN="https://localhost:$PORT"
+    CURL_TO=()
+    ;;
+  production)
+    # shellcheck source=../prodnet.sh
+    . "$HERE/../prodnet.sh"
+    PUBLIC_HOST=pid-issuer.eudi.test
+    PUBLIC_ORIGIN="https://$PUBLIC_HOST"
+    # The script's own requests reach HAProxy on loopback by that name.
+    CURL_TO=(--connect-to "$PUBLIC_HOST:443:127.0.0.1:$PORT")
+    PRODNET="$COMPOSE_PROJECT_NAME-prodnet"
+    ;;
+  *) echo "WALLET_ASSURANCE is development or production, not '$WALLET_ASSURANCE'" >&2; exit 2 ;;
+esac
+ISSUER="$PUBLIC_ORIGIN/pid-issuer"
 CLIENT_ID=eudiw-abca
 # The wallet's redirect URI: the EUDI wallet app's, a private-use URI
 # scheme with an authority, which the realm registers for the client.
@@ -84,6 +105,7 @@ SERVE_PID=""
 # shellcheck disable=SC2329 # run by the EXIT trap
 cleanup() {
   if [[ -n "$SERVE_PID" ]]; then kill "$SERVE_PID" 2>/dev/null || true; fi
+  if [[ -n "${PRODNET:-}" ]]; then prodnet_remove "$PRODNET"; fi
   if [[ -f "$STACK/compose.env" ]]; then
     set -a
     # shellcheck source=/dev/null
@@ -133,6 +155,7 @@ fetch "$STATUS_LIST_URL" "$STATUS_LIST_SHA256" "$STACK/status-list.tar.gz"
 (cd "$SRC" && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
   && go build -o "$WORK/pidwallet" ./interop/eudi/scripts/pidwallet \
   && go run ./interop/eudi/scripts/pidsetup -out "$WORK" -issuer-url "$ISSUER" -serve-url "$SERVE_URL" -crl-host "localhost:$CRL_PORT")
+if [[ "$WALLET_ASSURANCE" = production ]]; then prodnet_build "$SRC" "$WORK" ./interop/eudi/scripts/pidwallet; fi
 cd "$WORK"
 
 # Per-run passwords: the stack's own are in its public repository.
@@ -169,9 +192,9 @@ tar -xzf "$STACK/status-list.tar.gz" -C "$STACK/status-list" --strip-components 
 cp "$STACK/eudi/status-list/endpoints/get_status_list.py" "$STACK/status-list/"
 cp "$HERE/pid-issuer/status-list.Dockerfile" "$STACK/status-list/Dockerfile"
 cp "$HERE/pid-issuer/status-list-requirements.txt" "$STACK/status-list/requirements.txt"
-sed "s|service_url = \"https://localhost/\"|service_url = \"https://localhost:$PORT/\"|" \
+sed "s|service_url = \"https://localhost/\"|service_url = \"$PUBLIC_ORIGIN/\"|" \
   "$STACK/eudi/status-list/config/config_service.py" > "$STACK/config_service.py"
-grep -q "service_url = \"https://localhost:$PORT/\"" "$STACK/config_service.py" || { echo "config_service.py: no service_url to set" >&2; exit 2; }
+grep -q "service_url = \"$PUBLIC_ORIGIN/\"" "$STACK/config_service.py" || { echo "config_service.py: no service_url to set" >&2; exit 2; }
 cp statuslist-signer.key.pem "$STACK/status-list-certs/key.pem"
 cp statuslist-signer.cert.der "$STACK/status-list-certs/cert.der"
 
@@ -200,6 +223,7 @@ cat > "$STACK/compose.env" <<EOF
 COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME
 STACK=$STACK
 PORT=$PORT
+PUBLIC_ORIGIN=$PUBLIC_ORIGIN
 PID_ISSUER_IMAGE=$PID_ISSUER_IMAGE
 KEYCLOAK_IMAGE=$KEYCLOAK_IMAGE
 POSTGRES_IMAGE=$POSTGRES_IMAGE
@@ -227,8 +251,8 @@ if ! compose up -d --build --quiet-pull > compose-up.log 2>&1; then
   exit 2
 fi
 for _ in $(seq 1 150); do
-  if curl -sf --max-time 5 --cacert tls-ca.pem -H 'Accept: application/json' -o metadata.json \
-    "https://localhost:$PORT/.well-known/openid-credential-issuer/pid-issuer"; then break; fi
+  if curl -sf --max-time 5 --cacert tls-ca.pem "${CURL_TO[@]+"${CURL_TO[@]}"}" -H 'Accept: application/json' -o metadata.json \
+    "$PUBLIC_ORIGIN/.well-known/openid-credential-issuer/pid-issuer"; then break; fi
   sleep 2
 done
 if [[ ! -s metadata.json ]]; then
@@ -237,6 +261,14 @@ if [[ ! -s metadata.json ]]; then
   exit 2
 fi
 echo "  the issuer is up: $(jq -r '.credential_configurations_supported | keys | join(", ")' metadata.json)"
+
+if [[ "$WALLET_ASSURANCE" = production ]]; then
+  # HAProxy, which every URL the wallet is given names, on the
+  # wallet's network as PUBLIC_HOST.
+  prodnet_create "$PRODNET"
+  prodnet_attach "$PRODNET" "$(compose ps -q haproxy)" "$PUBLIC_HOST"
+  echo "  the wallet's network: $PRODNET ($PRODNET_SUBNET), HAProxy as $PUBLIC_HOST"
+fi
 
 if [[ -n "${PID_STOP_AFTER_UP:-}" ]]; then
   # For developing the cases: the stack and serve (pid $SERVE_PID) are
@@ -257,11 +289,19 @@ check() {
   if jq -e "$filter" "result-$name.json" >/dev/null 2>&1; then ok "$what"; else bad "$what"; fi
 }
 
-# wallet NAME ARGS...: runs the wallet, its result in result-NAME.json.
+# wallet NAME ARGS...: runs the wallet, its result in result-NAME.json:
+# under WALLET_ASSURANCE=production, at production assurance in its
+# container, with stores of its own in store-NAME.
 wallet() {
   local name="$1"; shift
-  ./pidwallet -work . -out "result-$name.json" -client-id "$CLIENT_ID" -redirect-uri "$REDIRECT_URI" "$@" \
-    >> pidwallet.log 2>&1 || true
+  if [[ "$WALLET_ASSURANCE" = production ]]; then
+    prodnet_run "$PRODNET" "$WORK" tls-ca.pem "$COMPOSE_PROJECT_NAME-wallet" pidwallet-linux \
+      -work /work -out "result-$name.json" -client-id "$CLIENT_ID" -redirect-uri "$REDIRECT_URI" \
+      -assurance production -store "store-$name" "$@" >> pidwallet.log 2>&1 || true
+  else
+    ./pidwallet -work . -out "result-$name.json" -client-id "$CLIENT_ID" -redirect-uri "$REDIRECT_URI" "$@" \
+      >> pidwallet.log 2>&1 || true
+  fi
   if [[ ! -s "result-$name.json" ]]; then echo '{"ok":false,"step":"run","error":"no result"}' > "result-$name.json"; fi
 }
 
@@ -271,7 +311,7 @@ why() { local name="$1"; jq -r '"\(.step // "-"): \(.error // "" | .[0:240])"' "
 # offer CONFIG: a Credential Offer from the issuer's own offer endpoint.
 offer() {
   local config="$1"
-  curl -sf --max-time 30 --cacert tls-ca.pem -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  curl -sf --max-time 30 --cacert tls-ca.pem "${CURL_TO[@]+"${CURL_TO[@]}"}" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' \
     -d "{\"credentialIds\":[\"$config\"]}" "$ISSUER/issuer/credentialsOffer/create" | jq -r '.credentialsOffer // empty'
 }
 
@@ -315,6 +355,102 @@ MDOC=eu.europa.ec.eudi.pid_mso_mdoc
 # it. If a later image fixes that, this fails: make it VALID.
 SDJWT_STATUS=VALID
 MDOC_STATUS=cwt-der
+
+# status_check NAME STATUS: each credential's status list entry, as
+# issued() checks it; walletflow names a status in lower case.
+status_check() {
+  local name="$1" status="$2"
+  if [[ "$status" = cwt-der ]]; then
+    check "$name" "the wallet refuses the mdoc's CWT Status List Token: a DER signature, or not well-formed CBOR" \
+      'all(.credentials[]; (.status_error // "" | test("ecdsafixed: signature has length|cbor: [0-9]+ bytes of extraneous data")))'
+  else
+    check "$name" "the wallet reads its status list entry: $status" "all(.credentials[]; (.status // \"\" | ascii_upcase) == \"$status\")"
+  fi
+}
+
+# issued_production NAME COUNT STATUS: issued() for a production run,
+# which records no exchanges (production's HTTP client can't be
+# wrapped): issued at production assurance, COUNT credentials verified,
+# their status STATUS; for the core engine, the DPoP-bound token, the
+# encrypted Credential Request and the notification too.
+issued_production() {
+  local name="$1" count="$2" status="$3"
+  if ! jq -e '.ok and .assurance == "production"' "result-$name.json" >/dev/null; then bad "issued at production assurance ($(why "$name"))"; return; fi
+  ok "issued at production assurance"
+  check "$name" "$count credential(s), each verified by the wallet under the IACA" \
+    "(.credentials | length == $count) and all(.credentials[]; .verified)"
+  if jq -e '.engine == "core"' "result-$name.json" >/dev/null; then
+    check "$name" "a DPoP-bound access token, the Credential Request encrypted, the issuer notified" \
+      '.token_type == "DPoP" and .encrypted_request and .notified'
+  fi
+  status_check "$name" "$status"
+}
+
+# refused_production NAME WHAT STEP WHY: the wallet, at production
+# assurance, stopped at STEP for an error containing WHY.
+refused_production() {
+  local name="$1" what="$2" step="$3" want="$4"
+  if jq -e --arg step "$step" --arg want "$want" \
+    '(.ok | not) and .assurance == "production" and .step == $step and (.error | contains($want))' "result-$name.json" >/dev/null; then
+    ok "$what ($(why "$name"))"
+  else bad "$what: want $step: '${want}', got $(why "$name")"; fi
+}
+
+if [[ "$WALLET_ASSURANCE" = production ]]; then
+  for c in "walletflow $SDJWT jwt 1 sdjwt $SDJWT_STATUS" "walletflow $SDJWT jwt 3 batch-sdjwt $SDJWT_STATUS" \
+    "walletflow $MDOC jwt 1 mdoc $MDOC_STATUS" "core $SDJWT jwt 1 sdjwt $SDJWT_STATUS" "core $MDOC attestation 1 mdoc $MDOC_STATUS"; do
+    read -r engine config proof count format status <<< "$c"
+    echo "== production: $engine, $count $format PID(s), $proof proof"
+    wallet "prod-$engine-$format" -engine "$engine" -issuer "$ISSUER" -config "$config" -proof "$proof" -batch "$count"
+    issued_production "prod-$engine-$format" "$count" "$status"
+  done
+
+  echo "== production: walletflow, the issuer's Credential Offer, SD-JWT VC PID"
+  link="$(offer "$SDJWT")"
+  if [[ -z "$link" ]]; then bad "the issuer made an offer"
+  else
+    # -issuer names the issuer whose Status Issuer the wallet trusts
+    # (walletflow's StatusIssuers); the offer is what's redeemed.
+    wallet prod-walletflow-offer -engine walletflow -offer "$link" -issuer "$ISSUER" -proof jwt
+    issued_production prod-walletflow-offer 1 "$SDJWT_STATUS"
+  fi
+
+  echo "== production: core, an SD-JWT VC PID revoked at the status list service"
+  wallet prod-core-revoked -engine core -issuer "$ISSUER" -config "$SDJWT" -proof attestation -revoke-api-key "$STATUS_LIST_API_KEY"
+  issued_production prod-core-revoked 1 "$SDJWT_STATUS"
+  check prod-core-revoked "the wallet reads it as INVALID once revoked" '.status_after_revoke == "INVALID"'
+
+  # The development run's controls, at production assurance: each
+  # differs from a case above, which passes, in that one thing.
+  echo "== production control: metadata signed under a CA the wallet doesn't trust"
+  wallet prod-untrusted-metadata -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -metadata-roots other-ca.pem
+  refused_production prod-untrusted-metadata "walletflow refuses the metadata" offer \
+    "signed metadata: signer certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"
+  echo "== production control: credentials whose IACA the wallet doesn't trust"
+  wallet prod-untrusted-sdjwt -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -issuer-roots other-ca.pem
+  refused_production prod-untrusted-sdjwt "walletflow refuses the SD-JWT VC PID" credential \
+    "is invalid: wallet: verify issued credential: issuer certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"
+  for c in "revoked certrevocation: certificate is revoked" \
+    "expired certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer"; do
+    read -r set reason <<< "$c"
+    echo "== production control: the IACA's CRL set '$set'"
+    wallet "prod-crl-$set" -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -crl-set "$set"
+    refused_production "prod-crl-$set" "walletflow refuses the SD-JWT VC PID" credential \
+      "is invalid: wallet: verify issued credential: issuer certificate: certchain: revocation: no verified path passes it: $reason"
+    wallet "prod-core-crl-$set" -engine core -issuer "$ISSUER" -config "$MDOC" -proof attestation -crl-set "$set"
+    refused_production "prod-core-crl-$set" "the core engine refuses the mdoc PID" verify \
+      "wallet: verify issued credential: issuer certificate: certchain: revocation: no verified path passes it: $reason"
+  done
+  echo "== production control: a Wallet Attestation whose client_status is revoked"
+  wallet prod-revoked-wallet -engine walletflow -issuer "$ISSUER" -config "$SDJWT" -wallet-status-idx 1
+  # As in the development run: Keycloak says no more than that
+  # authentication failed, and the case differs from the walletflow
+  # SD-JWT VC case above only in the attestation's status.
+  refused_production prod-revoked-wallet "Keycloak refuses the PAR" par "invalid_response: Authentication failed."
+
+  if [[ "$fail" -eq 0 ]]; then echo "RESULT: every issuance at production assurance succeeded and verified, and every control was refused"; else echo "RESULT: FAILED"; fi
+  exit "$fail"
+fi
 
 for proof in attestation jwt; do
   echo "== wallet-initiated, SD-JWT VC PID, $proof proof"
