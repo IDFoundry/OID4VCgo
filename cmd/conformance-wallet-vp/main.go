@@ -21,12 +21,14 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -73,7 +75,11 @@ func main() {
 		log.Printf("issued fixture %s credential (vct=%s)", cred.Format, cfg.VCT)
 	}
 
-	trust, err := cfg.verifierTrust()
+	revocation, err := startVerifierCRL(cfg)
+	if err != nil {
+		log.Fatalf("verifier crl: %v", err)
+	}
+	trust, err := cfg.verifierTrust(revocation)
 	if err != nil {
 		log.Fatalf("verifier trust: %v", err)
 	}
@@ -88,6 +94,8 @@ func main() {
 	}
 	if _, none := trust.(wallet.NoVerifierTrust); none {
 		log.Printf("WARNING: verifier_trust_anchors_pem is unset: the Verifier's Request Object certificate chain is not checked, only its signature and x509_hash client_id")
+	} else if revocation == nil {
+		log.Printf("WARNING: verifier_crl is unset: the Verifier's certificate is not checked for revocation")
 	}
 	srv := &server{cred: cred, trust: trust, acceptSANDNS: cfg.AcceptX509SANDNS, http: client}
 
@@ -118,6 +126,27 @@ func main() {
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
+}
+
+// startVerifierCRL starts cfg's CRL publisher, if any, then the
+// Refresher VerifierCRL configures, returning the checker for the
+// Verifier's certificate chain: nil when VerifierCRL is unset.
+func startVerifierCRL(cfg Config) (certrevocation.Checker, error) {
+	if cfg.CRLPublisher != nil {
+		if err := cfg.CRLPublisher.Start(func(err error) { log.Fatalf("crl publisher: %v", err) }); err != nil {
+			return nil, err
+		}
+		log.Printf("serving %d CRLs over https on %s", len(cfg.CRLPublisher.CRLs), cfg.CRLPublisher.ListenAddr)
+	}
+	if !cfg.VerifierCRL.Configured() {
+		return nil, nil
+	}
+	crls, err := cfg.VerifierCRL.Start(context.Background(), log.Printf)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("checking the Verifier's certificate for revocation against %d CRL distribution points", len(cfg.VerifierCRL.DistributionPoints))
+	return crls, nil
 }
 
 // serveMdocCRL starts the plain-HTTP listener for the IACA's CRL when

@@ -542,7 +542,7 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 	if cfg.KeyAttestation == nil {
 		return nil, nil
 	}
-	verifier, err := keyAttestationVerifier(*cfg.KeyAttestation)
+	verifier, err := keyAttestationVerifier(*cfg.KeyAttestation, cfg.keyAttestationRevocation())
 	if err != nil {
 		return nil, err
 	}
@@ -563,14 +563,15 @@ func addKeyAttestationProofType(cfg Config, credConfigs ...*issuer.CredentialCon
 // whose x5c chains to TrustAnchorPEM's certificates, from a single
 // Wallet Provider (the suite's emulated Wallet, whose attestations carry
 // no iss), or those TrustedJWK signs.
-func keyAttestationVerifier(ka conformanceconfig.KeyAttestationConfig) (issuer.AttestationVerifier, error) {
+func keyAttestationVerifier(ka conformanceconfig.KeyAttestationConfig, revocation certrevocation.Checker) (issuer.AttestationVerifier, error) {
 	if ka.TrustAnchorPEM != "" {
 		roots, err := keyAttestationRoots(ka)
 		if err != nil {
 			return nil, err
 		}
-		// Key attestation certificate revocation isn't checked.
-		return issuer.X5CAttestationVerifier{Roots: roots, Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}, nil
+		// The key attestation certificate's revocation, against the
+		// config's CRL when it's set.
+		return issuer.X5CAttestationVerifier{Roots: roots, Revocation: revocation, SingleWalletProvider: true}, nil
 	}
 	trustedKey, err := jwk.ParsePublicKey(ka.TrustedJWK)
 	if err != nil {

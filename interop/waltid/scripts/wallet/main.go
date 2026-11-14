@@ -204,6 +204,7 @@ type received struct {
 // issuer's revocation endpoint.
 type options struct {
 	attesterConfig, mdocIssuerCA, revoke string
+	crlSet                               string
 }
 
 func main() {
@@ -221,6 +222,7 @@ func main() {
 	flag.StringVar(&opts.attesterConfig, "attester-config", "", "setup-issuer's driver.json: attest the wallet to OID4VCgo's issuer as its client_id")
 	flag.StringVar(&opts.mdocIssuerCA, "mdoc-issuer-ca", "", "the IACA mdocs chain to, if not -issuer-ca")
 	flag.StringVar(&opts.revoke, "revoke", "", "OID4VCgo's issuer's POST /status: revoke every credential received before answering -request")
+	flag.StringVar(&opts.crlSet, "crl-set", "current", "the CA's CRL this process publishes, setup's crl-publisher-SET.json in the working directory, which the wallet checks Issuer2's and Verifier2's certificates against: current, revoked-issuer, revoked-verifier or expired; none checks no revocation (OID4VCgo's issuer's CAs publish no CRL)")
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
@@ -283,8 +285,16 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 		defer func() { res.Tampered = t.outcome() }()
 	}
 	client := &http.Client{Transport: transport}
+	// Issuer2's and Verifier2's certificates are checked for
+	// revocation, against the CA's CRL this process publishes at the
+	// distribution point they name (startCRL).
+	revocation, err := startCRL(ctx, opts.crlSet)
+	if err != nil {
+		return fail(err)
+	}
 	cfg := walletflow.Config{
-		IssuerRoots: issuerRoots, Development: true, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
+		IssuerRoots: issuerRoots, IssuerRevocation: revocation, Development: true,
+		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 	}
 	deps := walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client}
 	if opts.attesterConfig != "" {

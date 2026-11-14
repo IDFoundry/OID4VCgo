@@ -81,7 +81,7 @@ func verifiedReport(ctx context.Context, env *environment, conf oid4vci.Credenti
 func verifyOne(ctx context.Context, env *environment, conf oid4vci.CredentialConfigurationMetadata, credentialIssuer, credential string,
 	holders []*ecdsa.PrivateKey) (wallet.VerifiedIssuedCredential, error) {
 	params := wallet.VerifyIssuedCredentialParams{
-		Configuration: conf, Credential: credential, IssuerRoots: env.issuerRoots,
+		Configuration: conf, Credential: credential, IssuerRoots: env.issuerRoots, IssuerRevocation: env.revocation,
 		RequireIssuerName: true, CredentialIssuer: credentialIssuer, Now: time.Now(),
 	}
 	if conf.Format == "mso_mdoc" {
@@ -114,6 +114,7 @@ func checkStatus(ctx context.Context, env *environment, conf oid4vci.CredentialC
 	checker := statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: env.statusHTTP, AllowLoopback: true},
 		Roots:   env.issuerRoots,
+		Options: statuslist.VerifyOptions{Revocation: env.revocation},
 	}
 	if conf.Format == "mso_mdoc" {
 		raw, err := base64.RawURLEncoding.DecodeString(credential)

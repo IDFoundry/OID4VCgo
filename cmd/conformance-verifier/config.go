@@ -1,18 +1,21 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -132,6 +135,24 @@ type Config struct {
 	// status lists too) or to MdocTrustAnchorPEM ("mso_mdoc": that IACA
 	// issues the suite's list signers).
 	StatusListTrustAnchorsPEM string `json:"status_list_trust_anchors_pem"`
+
+	// IssuerCRL, if set, checks every issuer certificate chain this
+	// binary verifies — a "dc+sd-jwt" issuer's, an mdoc Document
+	// Signer's, and a status or identifier list signer's — for
+	// revocation, against the CRLs its distribution points publish,
+	// fetched over https with a certrevocation.Refresher: a revoked
+	// certificate is refused, and so is one whose CA has no current
+	// CRL. Unset, revocation isn't checked (certrevocation.NoCheck).
+	IssuerCRL *conformancecrl.Trust `json:"issuer_crl,omitempty"`
+
+	// CRLPublisher, if set, serves CRLs over https from this process:
+	// the distribution points of the driver's test CAs, which IssuerCRL
+	// fetches back over the network like any other.
+	CRLPublisher *conformancecrl.Publisher `json:"crl_publisher,omitempty"`
+
+	// issuerRevocation is IssuerCRL's checker, once main has started
+	// it: see revocation.
+	issuerRevocation certrevocation.Checker
 
 	// StatusReferenceOptional, with StatusListTrustAnchorsPEM, accepts a
 	// credential that carries no status reference, as the suite's
@@ -308,19 +329,47 @@ func (c Config) sdJWTVCIssuerKeys() (verifier.SDJWTVCIssuerKeyResolver, error) {
 		if err != nil {
 			return nil, err
 		}
-		// No revocation check of the issuer's certificate, by this
-		// harness's choice: the CA it's given is a throwaway one with
-		// no CRL — in the suite runs the one
-		// internal/conformanceverifier.GenerateKeyMaterial generates
-		// (it publishes none, though it could), in the interop runs
-		// each script's own. The credential's own revocation is its
+		// The issuer certificate's revocation, against IssuerCRL's
+		// CRLs when it's set; the credential's own revocation is its
 		// status list's.
-		return verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, nil
+		return verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: c.revocation()}, nil
 	}
 	if !c.hasCredentialIssuerJWK() {
 		return nil, nil
 	}
 	return newStaticIssuerKeyResolver(c.CredentialIssuerJWK)
+}
+
+// revocation is the issuer and list signer certificates' revocation
+// check: IssuerCRL's, or, unset, none — the suite's per-run mdoc IACA,
+// and some interop runs' CAs, publish no CRL this binary could fetch.
+func (c Config) revocation() certrevocation.Checker {
+	if c.issuerRevocation != nil {
+		return c.issuerRevocation
+	}
+	return certrevocation.NoCheck{}
+}
+
+// startIssuerCRL starts c's CRL publisher, if any, then the Refresher
+// IssuerCRL configures, keeping its checker for revocation.
+func (c *Config) startIssuerCRL(ctx context.Context) error {
+	if c.CRLPublisher != nil {
+		if err := c.CRLPublisher.Start(func(err error) { log.Fatalf("crl publisher: %v", err) }); err != nil {
+			return err
+		}
+		log.Printf("serving %d CRLs over https on %s", len(c.CRLPublisher.CRLs), c.CRLPublisher.ListenAddr)
+	}
+	if !c.IssuerCRL.Configured() {
+		log.Printf("WARNING: issuer_crl is unset: issuer and status list signer certificates are not checked for revocation")
+		return nil
+	}
+	crls, err := c.IssuerCRL.Start(ctx, log.Printf)
+	if err != nil {
+		return fmt.Errorf("issuer crl: %w", err)
+	}
+	c.issuerRevocation = crls
+	log.Printf("checking issuer and status list signer certificates for revocation against %d CRL distribution points", len(c.IssuerCRL.DistributionPoints))
+	return nil
 }
 
 // statusListFetchTimeout bounds one status list fetch.
@@ -353,12 +402,11 @@ func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
 		Checker: statuslist.Checker{
 			Fetcher: fetcher,
 			Roots:   roots,
-			// No revocation check of the list signers' certificates,
-			// by this harness's choice: a "dc+sd-jwt" list is signed
-			// under the same throwaway credential issuer CA
-			// (sdJWTVCIssuerKeys), which publishes no CRL; an mdoc
-			// list under the suite's own per-run IACA.
-			Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+			// The list signers' certificates' revocation, against
+			// IssuerCRL's CRLs when it's set: a "dc+sd-jwt" list is
+			// signed under the credential issuer's CA, an mdoc's
+			// under the IACA.
+			Options: statuslist.VerifyOptions{Revocation: c.revocation()},
 			Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
 		},
 		RequireReference: !c.StatusReferenceOptional,

@@ -82,8 +82,15 @@ check_summary() {
 		want="$(printf '%s\n' "$exceptions" | awk -v n="$name=" 'index($0, n) == 1 { w = substr($0, length(n) + 1) } END { print w }')"
 		[[ -z "$want" ]] && want="PASSED"
 		# Every module must have run to completion: an INTERRUPTED
-		# module's result is no verdict, whatever it says.
-		if [[ "$result" != "FINISHED=$want" ]]; then
+		# module's result is no verdict, whatever it says. A driver's
+		# negative control ("crl control: ...") is graded by the driver
+		# itself, which reports CONTROL=<verdict>.
+		if [[ "$name" == "crl control: "* ]]; then
+			if [[ "$result" != "CONTROL=$want" ]]; then
+				echo "  UNEXPECTED: $name = $result (want CONTROL=$want)"
+				clean=1
+			fi
+		elif [[ "$result" != "FINISHED=$want" ]]; then
 			echo "  UNEXPECTED: $name = $result (want FINISHED=$want)"
 			clean=1
 		fi
@@ -219,8 +226,19 @@ run_issuer() {
 	# third exception (WARNING) until wiring.go's own shared
 	# revocationStore fix — see conformance/issuer/README.md's own
 	# "Update" note — so it's expected to PASS like everything else now.
-	local haip_exceptions='fapi2-security-profile-final-refresh-token=SKIPPED
-fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client=REVIEW'
+	# Every leg also drives run-fapi2sp-battery's two negative controls
+	# of cmd/conformance-issuer's revocation check of the Wallet
+	# Attestation signer: the plain happy-flow with an attester
+	# certificate its CA's CRL revokes, and with one from a CA whose
+	# distribution point serves only an expired CRL. The script grades
+	# each itself: the suite must fail the module, and its log must
+	# record the PAR error response naming that reason (CONTROL=REFUSED;
+	# an ERROR line otherwise).
+	local crl_exceptions='crl control: attester certificate revoked=REFUSED
+crl control: attester CA without a current CRL=REFUSED'
+	local haip_exceptions="fapi2-security-profile-final-refresh-token=SKIPPED
+fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client=REVIEW
+$crl_exceptions"
 	# run-fapi2sp-battery drives every entry of the plan's module list:
 	# 63, its 61 modules with happy-flow and
 	# fail-unknown-credential-configuration listed under
@@ -245,7 +263,7 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# which never reaches credential issuance. Every module is expected
 	# to pass, as in the sd_jwt_vc immediate runs
 	# (conformance/issuer/README.md's "Runs"), except under deferral.
-	local vci_exceptions=''
+	local vci_exceptions="$crl_exceptions"
 	run_go_checked "Issuer mdoc" "$WORKDIR/issuer-mdoc.log" "$vci_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -credential-format mdoc
 
@@ -261,7 +279,8 @@ fapi2-security-profile-final-par-attempt-to-use-request_uri-for-different-client
 	# Deferred Credential Response compressed. run-fapi2sp-battery
 	# fails the module if its log holds any other warning
 	# (knownSuiteWarnings; conformance/issuer/README.md's "Runs").
-	local deferred_exceptions='oid4vci-1_0-issuer-happy-flow [encrypted]=WARNING'
+	local deferred_exceptions="oid4vci-1_0-issuer-happy-flow [encrypted]=WARNING
+$crl_exceptions"
 	run_go_checked "Issuer deferred" "$WORKDIR/issuer-deferred.log" "$deferred_exceptions" \
 		go run ./conformance/issuer/scripts/run-fapi2sp-battery -suite "$CONFORMANCE_SERVER" -deferred
 
@@ -328,7 +347,16 @@ run_wallet() {
 	# certificate, and verifies every credential it receives (its
 	# signature, certificate chain, holder binding and status list
 	# entry), failing the module when one doesn't verify.
-	run_go_checked "Wallet default (jwt, sd_jwt_vc)" "$WORKDIR/wallet-default.log" "" \
+	# The wallet_initiated sd_jwt_vc runs also drive cmd/conformance-wallet's
+	# two negative controls of its revocation check of the SD-JWT VC
+	# issuer's certificate (one its CA's CRL revokes, one from a CA
+	# whose distribution point serves only an expired CRL): the wallet
+	# must refuse the credential with certrevocation.ErrRevoked and
+	# ErrNoCurrentCRL respectively, which it grades itself
+	# (CONTROL=REFUSED; an ERROR line otherwise).
+	local crl_exceptions='crl control: credential issuer certificate revoked=REFUSED
+crl control: credential issuer CA without a current CRL=REFUSED'
+	run_go_checked "Wallet default (jwt, sd_jwt_vc)" "$WORKDIR/wallet-default.log" "$crl_exceptions" \
 		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER"
 
 	run_go_checked "Wallet issuer-initiated" "$WORKDIR/wallet-issuer-initiated.log" "" \
@@ -364,7 +392,7 @@ run_wallet() {
 	# support key attestations", each proof a jwt proof carrying a Key
 	# Attestation in its key_attestation header (OID4VCI Appendix D.1),
 	# against the suite's fixture that requires one.
-	run_go_checked "Wallet key attestation (jwt-key-attestation)" "$WORKDIR/wallet-jwt-key-attestation.log" "" \
+	run_go_checked "Wallet key attestation (jwt-key-attestation)" "$WORKDIR/wallet-jwt-key-attestation.log" "$crl_exceptions" \
 		go run ./cmd/conformance-wallet -suite "$CONFORMANCE_SERVER" -proof-type jwt-key-attestation \
 			-credential-configuration-id eu.europa.ec.eudi.pid.1.jwt.keyattest -scope eudi.pid.1.jwt.keyattest
 	return 0

@@ -53,7 +53,18 @@ with walletflow's own request fetch and `wallet_metadata`:
 | walletflow: SD-JWT VC PID and mdoc PID, `haip` profile, by GET and by `request_uri_method=post` | accepted |
 | walletflow: the `x509_san_dns` SD-JWT VC cases, with `Config.AcceptX509SANDNS` | accepted |
 | The wallet doesn't trust the verifier's TLS certificate | the wallet refuses to fetch the request |
+| The Access Certificate's CA revokes it (its CRL names the certificate) | the wallet refuses: `untrusted verifier: … certrevocation: certificate is revoked` |
+| The Access Certificate's CA publishes no current CRL (its distribution point serves one past its `nextUpdate`) | the wallet refuses: `untrusted verifier: … certrevocation: no current CRL from the certificate's issuer` |
 | The verifier's response encryption key, `client_metadata.jwks` | as v0.12.0 sends it (below) |
+
+In every case the wallet checks the Access Certificate against its
+CA's CRL (`verifier_crl`): the CA, `scripts/setup`'s, names an https
+distribution point on `localhost:$CRL_PORT` in the certificate, the
+wallet process serves the CRL there (`crl_publisher`), and a
+`certrevocation.Refresher` fetches it back, https only, bound to the
+CA. The two revocation controls start the wallet serving a CRL that
+revokes the certificate, and one past its `nextUpdate`. The EUDI
+verifier fetches nothing for them: the check is the wallet's alone.
 
 The `x509_san_dns` cases restart the verifier with
 `VERIFIER_CLIENTIDPREFIX=x509_san_dns` and
@@ -156,7 +167,8 @@ Every key, certificate and document is throwaway, made per run by
 - the PID's Type Metadata;
 - the verifier's Access Certificate (its Request Object signing key, a
   P-521 leaf under a CA the wallet trusts; EUDI refuses a self-signed
-  one), its
+  one, naming its CA's CRL distribution point), the CA's three CRLs
+  (current, revoking the certificate, expired), its
   TLS listener, and a Relying Party registration certificate, which EUDI
   refuses a transaction without;
 - `scripts/serve`'s TLS certificate, for `host.docker.internal`, under
@@ -177,9 +189,9 @@ interop/eudi/run-verifier.sh
 VERIFIER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint:latest interop/eudi/run-verifier.sh
 ```
 
-`PORT`, `WALLET_PORT`, `SERVE_PORT` and `ADMIN_PORT` (18443 to
-18446) move the listeners, `CONTAINER` names the verifier's container,
-and `WORK` keeps the run's files. On Linux, `serve`
+`PORT`, `WALLET_PORT`, `SERVE_PORT`, `ADMIN_PORT` and `CRL_PORT`
+(18443 to 18446, and 18448) move the listeners, `CONTAINER` names the
+verifier's container, and `WORK` keeps the run's files. On Linux, `serve`
 listens on the Docker bridge's gateway, which the verifier reaches as
 `host.docker.internal`.
 
@@ -676,12 +688,31 @@ and acknowledges it at the Notification Endpoint.
 | An SD-JWT VC revoked at the status list service (its `/set`) | the wallet reads it as `INVALID` |
 | Metadata signed under a CA the wallet doesn't trust | the wallet refuses the metadata |
 | Credentials under an IACA the wallet doesn't trust, each format | the wallet refuses them |
+| Credentials whose signer the IACA revoked (its CRL names the Document Signer and the SD-JWT VC signer), each format | the wallet refuses them: `issuer certificate: … certrevocation: certificate is revoked` |
+| Credentials whose IACA publishes no current CRL (its distribution point serves one past its `nextUpdate`), each format | the wallet refuses them: `issuer certificate: … certrevocation: no current CRL from the certificate's issuer` |
 | A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR |
 | A Key Attestation whose `key_storage_status` is revoked | the issuer refuses the proof |
 | walletflow, under `ProfileHAIP` with its default proof: one PID, then a batch of three | issued and verified, status `VALID` |
 | A `jwt` proof naming its key in `jwk`, as `GenerateProofWithKeyAttestation` makes it | refused, `invalid_proof` naming `kid` (a note, not a failure: see Findings) |
 | walletflow naming the proof's key in `jwk` (`Config.ProofKeyByJWK`) | refused, the same (a note: see Findings) |
 | A batch of one `jwt` proof per key | refused, `invalid_proof`: at most one proof (a note: see Findings) |
+
+Every run checks the issuer's certificates for revocation, both
+engines alike: the Document Signer, the SD-JWT VC signer and the
+status list signer against the IACA's CRL, and the signed metadata's
+Access Certificate against its CA's
+(`IssuerRevocation`, `StatusRevocation` and `IssuerMetadataRevocation`
+for walletflow; `VerifyIssuedCredentialParams.IssuerRevocation`,
+`statuslist.VerifyOptions.Revocation` and
+`Config.IssuerMetadataRevocation` for the wallet package). Each
+certificate names an https distribution point on `localhost:$CRL_PORT`,
+where `pidwallet` serves the lists `scripts/pidsetup` signed (its
+`-crl-set`) and fetches them back with a `certrevocation.Refresher`,
+https only, bound to each CA. The issuer and its status list service,
+which sign with those certificates, fetch nothing for them: the check
+is the wallet's alone. The two revocation controls differ from the
+issuances above only in the IACA's list the wallet is served; the
+metadata CA's stays current, so each fails at the credential.
 
 A Wallet Attestation and a Key Attestation are each other's controls'
 twins: the same Wallet Provider, the same status list, another index.
@@ -861,7 +892,7 @@ interop/eudi/run-pid-issuer.sh
 PID_ISSUER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest interop/eudi/run-pid-issuer.sh
 ```
 
-`PORT` and `SERVE_PORT` (19443 and 19445) move HAProxy's and serve's
+`PORT`, `SERVE_PORT` and `CRL_PORT` (19443, 19445 and 19446) move HAProxy's, serve's and the wallet's CRL
 listeners, `WORK` keeps the run's files, and `COMPOSE_PROJECT_NAME`
 (`oid4vcgo-eudi-pid`) names the stack. `PID_STOP_AFTER_UP=1` leaves the
 stack and serve running once the issuer is up, for working on the cases

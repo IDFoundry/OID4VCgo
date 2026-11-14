@@ -43,11 +43,12 @@ func attesterTrust(cfg Config) (server.AttesterTrust, error) {
 	// The attester's leaf certificate names it as a URI SAN, which
 	// fapigo/server matches against the client's
 	// expected_attester_issuer, so an attester certified under the same
-	// anchors can't attest for another attester's clients. Attester
-	// certificate revocation isn't checked.
+	// anchors can't attest for another attester's clients. Its
+	// certificate's revocation is checked against cfg.CRL's CRLs when
+	// it's set.
 	return server.X5CAttesterChain{
 		TrustAnchors: anchors, IssuerBinding: server.AttesterIssuerInCertificate,
-		Revocation: server.NoClientCertificateRevocationCheck{},
+		Revocation: cfg.attesterRevocation(),
 	}, nil
 }
 

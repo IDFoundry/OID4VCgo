@@ -56,6 +56,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -116,23 +117,24 @@ func main() {
 	serveURL := flag.String("serve-url", "", "the base URL the verifier reaches serve at")
 	serveHosts := flag.String("serve-hosts", "localhost,host.docker.internal", "comma-separated DNS names for serve's TLS certificate")
 	verifierCurve := flag.String("verifier-curve", "P-256", "the Access Certificate key's curve: P-256, signing ES256, or P-521, signing ES512")
+	crlHost := flag.String("crl-host", "localhost:18448", "host:port of the https CRL distribution point the Access Certificate's CA names, which the wallet serves and fetches (run-verifier.sh's CRL_PORT)")
 	flag.Parse()
 	if *out == "" || *serveURL == "" {
 		fail("-out and -serve-url are required")
 	}
-	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve); err != nil {
+	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve, *crlHost); err != nil {
 		fail(err.Error())
 	}
 }
 
-func run(dir, serveURL string, serveHosts []string, verifierCurve string) error {
+func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost string) error {
 	if u, err := url.Parse(serveURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("-serve-url %q isn't an https URL", serveURL)
 	}
 	files := map[string][]byte{}
 	put := func(name, content string) { files[name] = []byte(content) }
 
-	if err := verifierFiles(put, verifierCurve); err != nil {
+	if err := verifierFiles(put, verifierCurve, crlHost); err != nil {
 		return err
 	}
 	if err := serveFiles(put, serveHosts); err != nil {
@@ -177,7 +179,14 @@ func run(dir, serveURL string, serveHosts []string, verifierCurve string) error 
 // curve: P-521 for the EUDI verifier, which signs ES512 as its own
 // docker-compose configures it, and P-256 for cmd/conformance-verifier,
 // which signs ES256.
-func verifierFiles(put func(name, content string), curve string) error {
+//
+// The Access Certificate's CA publishes its CRL at an https
+// distribution point on crlHost, which the certificate names: the
+// wallet in run-verifier.sh serves it (crl_publisher) and checks the
+// certificate against it (verifier_crl). Its three CRLs are a current
+// one revoking nothing, one revoking the Access Certificate, and one
+// already expired, for the controls.
+func verifierFiles(put func(name, content string), curve, crlHost string) error {
 	var c elliptic.Curve
 	switch curve {
 	case "P-256":
@@ -196,24 +205,22 @@ func verifierFiles(put func(name, content string), curve string) error {
 	if err != nil {
 		return err
 	}
-	verifierCA, verifierCAKey, verifierCAPEM, _, err := conformancecert.GenerateCA("oid4vcgo-eudi-interop-verifier-ca")
+	verifierCA, err := conformancecrl.NewAuthority("oid4vcgo-eudi-interop-verifier-ca", conformancecrl.URL(crlHost, "verifier-ca"))
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
+	verifierCAPEM := verifierCA.CertPEM
 	// Its dNSName, localhost, the host of the verifier's response_uri,
 	// is the x509_san_dns client_id run-verifier.sh also configures it
 	// with (OpenID4VP 1.0 §5.9.3); an x509_hash client_id ignores it.
-	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "oid4vcgo-eudi-interop-verifier"},
-		DNSNames:     []string{"localhost"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(statusListLifetime),
-	}, verifierCA, &verifierKey.PublicKey, verifierCAKey)
+	leaf, err := verifierCA.Issue("oid4vcgo-eudi-interop-verifier", &verifierKey.PublicKey, nil, "localhost")
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
-	verifierCertPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	verifierCertPEM := leaf.CertPEM
+	if err := verifierCRLFiles(put, verifierCA, leaf); err != nil {
+		return err
+	}
 	put("verifier-key.pem", verifierKeyPEM)
 	put("verifier-chain.pem", verifierCertPEM+verifierCAPEM)
 	put("verifier-ca.pem", verifierCAPEM)
@@ -229,6 +236,38 @@ func verifierFiles(put func(name, content string), curve string) error {
 	}
 	put("tls-cert.pem", tlsCertPEM)
 	put("tls-key.pem", tlsKeyPEM)
+	return nil
+}
+
+// verifierCRLFiles writes the Access Certificate CA's CRLs —
+// verifier-ca-crl.pem, current; verifier-ca-crl-revoking.pem, revoking
+// leaf; verifier-ca-crl-expired.pem, past its nextUpdate — the path
+// they're served at, and the CRL publisher's TLS certificate and key,
+// for localhost.
+func verifierCRLFiles(put func(name, content string), ca *conformancecrl.Authority, leaf conformancecrl.Leaf) error {
+	current, err := ca.CRL()
+	if err != nil {
+		return err
+	}
+	revoking, err := ca.CRL(leaf.Cert)
+	if err != nil {
+		return err
+	}
+	expired, err := ca.ExpiredCRL()
+	if err != nil {
+		return err
+	}
+	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("localhost", []string{"localhost"})
+	if err != nil {
+		return fmt.Errorf("crl publisher tls certificate: %w", err)
+	}
+	put("verifier-ca-crl.pem", current)
+	put("verifier-ca-crl-revoking.pem", revoking)
+	put("verifier-ca-crl-expired.pem", expired)
+	put("verifier-ca-crl-url.txt", ca.URL)
+	put("verifier-ca-crl-path.txt", ca.Path())
+	put("crl-tls-cert.pem", tlsCertPEM)
+	put("crl-tls-key.pem", tlsKeyPEM)
 	return nil
 }
 

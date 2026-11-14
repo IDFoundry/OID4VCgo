@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"log"
@@ -37,6 +38,9 @@ func main() {
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	if err := cfg.startCRL(context.Background()); err != nil {
+		log.Fatal(err)
 	}
 	built, err := newServers(cfg)
 	if err != nil {

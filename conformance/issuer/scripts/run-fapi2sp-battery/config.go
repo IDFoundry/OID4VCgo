@@ -11,6 +11,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 )
 
 // run holds everything generated once per invocation: the throwaway
@@ -125,6 +126,9 @@ type run struct {
 	// credentialIssuerCACertPEM, the plan's status_list_trust_anchor_pem.
 	mdocStatusSignerKeyPEM  string
 	mdocStatusSignerCertPEM string
+	// crl is the attester and key attestation CAs' revocation setup:
+	// see newIssuerPKI.
+	crl *issuerPKI
 }
 
 // attesterIssuer is the suite's Client Attestation "iss", and the URI
@@ -144,15 +148,12 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse attester issuer: %w", err)
 	}
-	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca", attesterIssuerURL)
+	// The attester and key attestation CAs publish their CRLs at
+	// distribution points cmd/conformance-issuer serves and checks
+	// their certificates against (newIssuerPKI).
+	pki, err := newIssuerPKI(issuerBaseURL, attesterIssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("generate attester key: %w", err)
-	}
-
-	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"run-fapi2sp-battery-key-attestation-leaf", "run-fapi2sp-battery-key-attestation-ca")
-	if err != nil {
-		return nil, fmt.Errorf("generate key attestation key: %w", err)
+		return nil, err
 	}
 
 	client1InstanceKey, err := generateECKey()
@@ -212,10 +213,11 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 
 		tlsCertPEM: tlsCertPEM, tlsKeyPEM: tlsKeyPEM,
 
-		attesterKey:     attesterKey,
-		attesterLeafPEM: attesterLeafPEM,
-		attesterCAPEM:   attesterCAPEM,
+		attesterKey:     pki.attester.key,
+		attesterLeafPEM: pki.attester.leafPEM,
+		attesterCAPEM:   pki.attesterCA.CertPEM + pki.attesterStaleCA.CertPEM,
 		attesterIssuer:  attesterIssuer,
+		crl:             pki,
 
 		client1ID: "run-fapi2sp-battery-client-1", client2ID: "run-fapi2sp-battery-client-2",
 		client1InstanceKey: client1InstanceKey, client2InstanceKey: client2InstanceKey,
@@ -226,9 +228,9 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		credentialIssuerCACertPEM:   credentialIssuerCACertPEM,
 		credentialRequestDecryptPEM: credentialRequestDecryptPEM,
 
-		keyAttestationKey:     keyAttestationKey,
-		keyAttestationLeafPEM: keyAttestationLeafPEM,
-		keyAttestationCAPEM:   keyAttestationCAPEM,
+		keyAttestationKey:     pki.keyAttestation.key,
+		keyAttestationLeafPEM: pki.keyAttestation.leafPEM,
+		keyAttestationCAPEM:   pki.keyAttestationCA.CertPEM,
 
 		vct:                       "urn:eudi:pid:1",
 		claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
@@ -335,6 +337,8 @@ type serverConfig struct {
 	Deferred                          bool                                    `json:"deferred,omitempty"`
 	DPoPNonces                        bool                                    `json:"dpop_nonces,omitempty"`
 	Production                        *serverProductionConfig                 `json:"production,omitempty"`
+	CRL                               *conformancecrl.Trust                   `json:"crl,omitempty"`
+	CRLPublisher                      *conformancecrl.Publisher               `json:"crl_publisher,omitempty"`
 	StatusLists                       *serverStatusListsConfig                `json:"status_lists,omitempty"`
 }
 
@@ -435,6 +439,8 @@ func buildServerConfig(r *run) ([]byte, error) {
 		StatusLists: &serverStatusListsConfig{
 			MdocSignerKeyPEM: r.mdocStatusSignerKeyPEM, MdocSignerCertificatePEM: r.mdocStatusSignerCertPEM,
 		},
+		CRL:          r.crl.trust,
+		CRLPublisher: r.crl.publisher,
 	}
 	if r.production {
 		var err error
@@ -490,6 +496,13 @@ type overrideEntry struct {
 // ("jwt" for every module except the keyAttestationBattery, which needs
 // "attestation" — see main.go's own -credential-proof-type-hint flag).
 func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, error) {
+	return buildPlanConfigWithAttester(r, credentialFormat, proofTypeHint, r.attesterKey, r.attesterLeafPEM)
+}
+
+// buildPlanConfigWithAttester is buildPlanConfig with the suite's
+// Client Attestations signed by attesterKey, certified by
+// attesterLeafPEM: a CRL control's (see crl.go).
+func buildPlanConfigWithAttester(r *run, credentialFormat, proofTypeHint string, attesterKey *ecdsa.PrivateKey, attesterLeafPEM string) ([]byte, error) {
 	client1InstanceKeyPriv, err := privateJWKRaw(r.client1InstanceKey)
 	if err != nil {
 		return nil, fmt.Errorf("build client1 instance key: %w", err)
@@ -506,7 +519,7 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("build client2 instance public key: %w", err)
 	}
-	attesterPrivJWKS, err := privateJWKSet(r.attesterKey, "run-fapi2sp-battery-attester-key", r.attesterLeafPEM)
+	attesterPrivJWKS, err := privateJWKSet(attesterKey, "run-fapi2sp-battery-attester-key", attesterLeafPEM)
 	if err != nil {
 		return nil, fmt.Errorf("build attester private jwks: %w", err)
 	}

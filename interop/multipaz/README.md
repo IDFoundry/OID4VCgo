@@ -219,6 +219,12 @@ session transcript; so the origin control uses an unsigned request.
   `VerificationSession`, and its issuer the library's routes, without
   its records server or consent pages (so only its pre-authorized
   codes).
+- Certificate revocation, on OID4VCgo's side, in any direction
+  (`certrevocation.NoCheck`, or none): Multipaz's IACA and reader CA
+  are made by the driver through Multipaz's own API, and the CRL
+  distribution point it names (`https://github.com/IDFoundry/OID4VCgo/crl`)
+  serves nothing; OID4VCgo's own certificates for it name one nothing
+  serves either.
 - Requests for several documents, transaction data, zero-knowledge
   proofs, and OpenID4VCI's refresh tokens, deferred issuance,
   Transaction Codes, batches, and encryption.

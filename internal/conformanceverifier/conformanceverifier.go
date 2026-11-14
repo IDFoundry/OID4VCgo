@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -110,6 +111,9 @@ type Config struct {
 	StatusReferenceOptional           bool   `json:"status_reference_optional,omitempty"`
 	StatusListTLSPinnedCertificatePEM string `json:"status_list_tls_pinned_certificate_pem,omitempty"`
 	StatusListAllowPrivate            bool   `json:"status_list_allow_private,omitempty"`
+	// IssuerCRL and CRLPublisher: see issuerPKI.configureCRL.
+	IssuerCRL    *conformancecrl.Trust     `json:"issuer_crl,omitempty"`
+	CRLPublisher *conformancecrl.Publisher `json:"crl_publisher,omitempty"`
 
 	// Engine and Production select cmd/conformance-verifier's
 	// transactions engine under its production setup (-transactions).
@@ -153,6 +157,10 @@ type KeyMaterial struct {
 	ClientCACertPEM            string
 	CredentialIssuerPrivateJWK jwk.SetEntry
 	CredentialIssuerCACertPEM  string
+
+	// issuerPKI is the CAs CredentialIssuerPrivateJWK's certificate,
+	// and the CRL controls', are issued under.
+	issuerPKI *issuerPKI
 }
 
 // GenerateKeyMaterial builds a fresh throwaway TLS listener cert, OID4VP
@@ -174,19 +182,10 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 		return KeyMaterial{}, fmt.Errorf("generate tls cert: %w", err)
 	}
 
-	issuerKey, _, issuerCertPEM, issuerCACertPEM, err := conformancecert.GenerateSignerAndCert(clientCN+"-credential-issuer", clientCACN+"-credential-issuer")
+	pki, err := newIssuerPKI(clientCN+"-credential-issuer", clientCACN+"-credential-issuer")
 	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("generate credential issuer key/certificate: %w", err)
+		return KeyMaterial{}, err
 	}
-	issuerCert, err := conformancecert.ParseCertificatePEM(issuerCertPEM)
-	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("parse credential issuer certificate: %w", err)
-	}
-	issuerPrivateJWKMaterial, err := jwk.MarshalPrivate(issuerKey)
-	if err != nil {
-		return KeyMaterial{}, fmt.Errorf("encode credential issuer private key: %w", err)
-	}
-	issuerPrivateJWK := jwk.SetEntry{JWK: issuerPrivateJWKMaterial, Alg: "ES256", X5C: []string{base64.StdEncoding.EncodeToString(issuerCert.Raw)}}
 
 	return KeyMaterial{
 		Config: Config{
@@ -200,8 +199,9 @@ func GenerateKeyMaterial(clientCN, clientCACN, internalBaseURL string) (KeyMater
 			RejectUnverifiedResponses: true,
 		},
 		ClientCACertPEM:            caCertPEM,
-		CredentialIssuerPrivateJWK: issuerPrivateJWK,
-		CredentialIssuerCACertPEM:  issuerCACertPEM,
+		CredentialIssuerPrivateJWK: pki.signing,
+		CredentialIssuerCACertPEM:  pki.ca.CertPEM,
+		issuerPKI:                  pki,
 	}, nil
 }
 
@@ -385,13 +385,25 @@ const placeholderPNGDataURI = "data:image/png;base64," +
 // response_code under the transactions engine — before reading the
 // result page with the same cookies.
 func DriveModule(setup SetupResult, testName string, moduleVariant map[string]string) ModuleResult {
-	httpClient, apiBase, verifierBase, planID := setup.HTTPClient, setup.APIBase, setup.VerifierBase, setup.PlanID
 	expected, _ := expectationFor(testName)
-	res := ModuleResult{TestName: testName, Expected: expected}
+	res, entries := driveModule(setup, setup.PlanID, testName, moduleVariant)
+	res.Expected = expected
+	if res.Err == nil {
+		res.Err = Grade(res.Expected, refusals[testName], res.Status, res.Result, res.VerifierOutcome, res.VerifierRefusal, entries)
+	}
+	return res
+}
+
+// driveModule creates testName's module within planID, drives it as
+// DriveModule describes, and returns what the suite and the Verifier
+// made of it, with the module's log, ungraded.
+func driveModule(setup SetupResult, planID, testName string, moduleVariant map[string]string) (ModuleResult, []conformancesuite.LogEntry) {
+	httpClient, apiBase, verifierBase := setup.HTTPClient, setup.APIBase, setup.VerifierBase
+	res := ModuleResult{TestName: testName}
 	module, err := conformancesuite.CreateModuleInstance(httpClient, apiBase, planID, testName, moduleVariant)
 	if err != nil {
 		res.Err = fmt.Errorf("create module instance: %w", err)
-		return res
+		return res, nil
 	}
 	res.ModuleID = module.ID
 	// The suite sets a module up asynchronously: a wallet request that
@@ -399,13 +411,13 @@ func DriveModule(setup SetupResult, testName string, moduleVariant map[string]st
 	// asks for its upload placeholder.
 	if err := conformancesuite.WaitUntilWaiting(httpClient, apiBase, module.ID, restartTimeout); err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 	// browser carries the cookies /authorize sets, the same jar for
 	// every request a browser would make to the Verifier.
@@ -417,19 +429,19 @@ func DriveModule(setup SetupResult, testName string, moduleVariant map[string]st
 	authorizeResp, err := noRedirect.Get(verifierBase + "/authorize")
 	if err != nil {
 		res.Err = fmt.Errorf("GET %s/authorize: %w", verifierBase, err)
-		return res
+		return res, nil
 	}
 	deepLink := authorizeResp.Header.Get("Location")
 	_ = authorizeResp.Body.Close()
 	query, ok := strings.CutPrefix(deepLink, "openid4vp://")
 	if !ok {
 		res.Err = fmt.Errorf("GET %s/authorize Location %q (status %d) is no openid4vp:// link", verifierBase, deepLink, authorizeResp.StatusCode)
-		return res
+		return res, nil
 	}
 	sessionID, err := sessionIDOf(query)
 	if err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 
 	// noRedirect again: the suite's own final response, once its
@@ -442,37 +454,36 @@ func DriveModule(setup SetupResult, testName string, moduleVariant map[string]st
 	driveResp, err := noRedirect.Get(driveURL)
 	if err != nil {
 		res.Err = fmt.Errorf("GET %s: %w", driveURL, err)
-		return res
+		return res, nil
 	}
 	_ = driveResp.Body.Close()
 
 	if err := fillUploadPlaceholder(httpClient, apiBase, module.ID); err != nil {
 		res.Err = fmt.Errorf("fill upload placeholder: %w", err)
-		return res
+		return res, nil
 	}
 	// After the placeholder, which the suite creates only once it has
 	// logged the redirect_uri of a response the Verifier answered 200.
 	if err := visitRedirectURI(httpClient, noRedirect, setup, module.ID); err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 	res.Status, res.Result, err = conformancesuite.WaitUntilFinished(httpClient, apiBase, module.ID, restartTimeout)
 	if err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 	res.VerifierOutcome, res.VerifierRefusal, err = verifierOutcome(noRedirect, verifierBase, sessionID)
 	if err != nil {
 		res.Err = err
-		return res
+		return res, nil
 	}
 	entries, err := conformancesuite.FetchModuleLog(httpClient, apiBase, module.ID)
 	if err != nil {
 		res.Err = fmt.Errorf("fetch module log: %w", err)
-		return res
+		return res, nil
 	}
-	res.Err = Grade(res.Expected, refusals[testName], res.Status, res.Result, res.VerifierOutcome, res.VerifierRefusal, entries)
-	return res
+	return res, entries
 }
 
 // visitRedirectURI visits, with browser, the redirect_uri the
@@ -771,6 +782,15 @@ type SetupResult struct {
 	APIBase, VerifierBase, VerifierInternalBase string
 	// Engine is cmd/conformance-verifier's Config.Engine.
 	Engine string
+
+	// Controls are the negative controls of the Verifier's revocation
+	// check (DriveCRLControls): a "dc+sd-jwt" run's, whose issuer CA
+	// is the harness's.
+	Controls []CRLControl
+
+	// planConfig and planVariant are the plan's, for a control's plan.
+	planConfig  PlanConfig
+	planVariant map[string]string
 }
 
 // Setup runs every step both scripts need before they can start
@@ -832,11 +852,16 @@ func Setup(params SetupParams) (SetupResult, error) {
 	log.Printf("created plan %s (alias %s)", planID, *params.Flags.Alias)
 	log.Printf("plan detail: %splan-detail.html?plan=%s", *params.Flags.APIBase, planID)
 
-	return SetupResult{
+	res := SetupResult{
 		HTTPClient: httpClient, PlanID: planID, Modules: modules,
 		APIBase: *params.Flags.APIBase, VerifierBase: *params.Flags.VerifierBase, VerifierInternalBase: *params.Flags.VerifierInternalBase,
-		Engine: km.Config.Engine,
-	}, nil
+		Engine:     km.Config.Engine,
+		planConfig: pc, planVariant: planVariant,
+	}
+	if km.Config.IssuerCRL.Configured() {
+		res.Controls = km.issuerPKI.controls()
+	}
+	return res, nil
 }
 
 // configureTrust sets the issuer and status list trust km.Config's
@@ -857,9 +882,11 @@ func configureTrust(httpClient *http.Client, apiBase string, km *KeyMaterial) er
 		}
 		cfg.MdocTrustAnchorPEM = mdocTrustAnchorPEM
 		cfg.StatusListTrustAnchorsPEM = mdocTrustAnchorPEM
-	} else {
-		cfg.CredentialIssuerTrustAnchorsPEM = km.CredentialIssuerCACertPEM
-		cfg.StatusListTrustAnchorsPEM = km.CredentialIssuerCACertPEM
+	} else if err := km.issuerPKI.configureCRL(cfg); err != nil {
+		// The credential issuer's CA, and the controls' stale one, for
+		// the credential and its status list alike, each certificate
+		// checked against its CA's CRL.
+		return err
 	}
 	suiteCertPEM, err := fetchTLSCertificatePEM(httpClient, apiBase)
 	if err != nil {

@@ -50,6 +50,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -84,11 +85,12 @@ func main() {
 	out := flag.String("out", "", "directory to write into")
 	issuerURL := flag.String("issuer-url", "", "the Credential Issuer Identifier (https://localhost:PORT/pid-issuer)")
 	serveURL := flag.String("serve-url", "", "where Keycloak and the issuer reach serve (https://host.docker.internal:PORT)")
+	crlHost := flag.String("crl-host", defaultCRLHost, "host:port of the https CRL distribution points the IACA's and the metadata CA's certificates name, which pidwallet serves and fetches (run-pid-issuer.sh's CRL_PORT)")
 	flag.Parse()
 	if *out == "" || *issuerURL == "" || *serveURL == "" {
 		fail("-out, -issuer-url and -serve-url are required")
 	}
-	f, err := generate(*issuerURL, strings.TrimSuffix(*serveURL, "/"))
+	f, err := generate(*issuerURL, strings.TrimSuffix(*serveURL, "/"), *crlHost)
 	if err != nil {
 		fail(err.Error())
 	}
@@ -102,7 +104,10 @@ func main() {
 
 // generate makes every file the run needs. issuerURL is the Credential
 // Issuer Identifier; serveURL is where the containers reach serve.
-func generate(issuerURL, serveURL string) (files, error) {
+//
+// crlHost is where the wallet publishes, and fetches, the CRLs of the
+// CAs it trusts the issuer's certificates by: see crlFiles.
+func generate(issuerURL, serveURL, crlHost string) (files, error) {
 	issuer, err := url.Parse(issuerURL)
 	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
 		return nil, fmt.Errorf("-issuer-url %q isn't an https URL", issuerURL)
@@ -115,7 +120,7 @@ func generate(issuerURL, serveURL string) (files, error) {
 	if err := tlsFiles(f, serve.Hostname()); err != nil {
 		return nil, err
 	}
-	if err := issuerFiles(f, issuer); err != nil {
+	if err := issuerFiles(f, issuer, crlHost); err != nil {
 		return nil, err
 	}
 	if err := walletProviderFiles(f, serveURL+statusListPath); err != nil {
@@ -193,14 +198,23 @@ func tlsLeaf(hosts []string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (cer
 // keystore entry is written as NAME.key.pem and NAME.chain.pem (leaf
 // first, its CA after it: the issuer leaves the CA out of every x5c it
 // sends).
-func issuerFiles(f files, issuer *url.URL) error {
+//
+// Every certificate the wallet checks names an https CRL distribution
+// point on crlHost: the IACA's, for the Document Signer, the SD-JWT VC
+// signer and the status list signer, and the metadata CA's, for the
+// Access Certificate. crlFiles writes their CRLs.
+func issuerFiles(f files, issuer *url.URL, crlHost string) error {
 	iaca, iacaKey, iacaPEM, _, err := conformancecert.GenerateMdocIACA("oid4vcgo-eudi-pid-iaca", issuingCountry, contactURI)
 	if err != nil {
 		return fmt.Errorf("iaca: %w", err)
 	}
 	f.put("iaca.pem", iacaPEM)
+	iacaCRL, err := conformancecrl.Wrap(iaca, iacaKey, conformancecrl.URL(crlHost, "iaca"))
+	if err != nil {
+		return fmt.Errorf("iaca: %w", err)
+	}
 
-	dsKey, _, dsPEM, err := conformancecert.GenerateMdocDocumentSigner("oid4vcgo-eudi-pid-ds", issuingCountry, contactURI, contactURI+"/crl", iaca, iacaKey)
+	dsKey, _, dsPEM, err := conformancecert.GenerateMdocDocumentSigner("oid4vcgo-eudi-pid-ds", issuingCountry, contactURI, iacaCRL.URL, iaca, iacaKey)
 	if err != nil {
 		return fmt.Errorf("document signer: %w", err)
 	}
@@ -210,7 +224,8 @@ func issuerFiles(f files, issuer *url.URL) error {
 
 	// The SD-JWT VC signer names the Credential Issuer, so the wallet
 	// can require its iss be named by its certificate.
-	if err := leafEntry(f, "pid-sdjwt", "oid4vcgo-eudi-pid-sdjwt", iaca, iacaKey, iacaPEM, issuer); err != nil {
+	sdjwtPEM, err := leafEntry(f, "pid-sdjwt", "oid4vcgo-eudi-pid-sdjwt", iacaCRL, issuer)
+	if err != nil {
 		return err
 	}
 
@@ -224,7 +239,7 @@ func issuerFiles(f files, issuer *url.URL) error {
 	if err != nil {
 		return err
 	}
-	slDER, err := leafDER("oid4vcgo-eudi-pid-status-list", slKey, iaca, iacaKey, statusIssuer)
+	slDER, err := leafDER("oid4vcgo-eudi-pid-status-list", slKey, iaca, iacaKey, statusIssuer, iacaCRL.URL)
 	if err != nil {
 		return fmt.Errorf("status list signer: %w", err)
 	}
@@ -238,12 +253,15 @@ func issuerFiles(f files, issuer *url.URL) error {
 
 	// Signed metadata's Access Certificate, under a CA that anchors
 	// nothing else, naming the Credential Issuer.
-	metadataCA, metadataCAKey, metadataCAPEM, _, err := conformancecert.GenerateCA("oid4vcgo-eudi-pid-metadata-ca")
+	metadataCA, err := conformancecrl.NewAuthority("oid4vcgo-eudi-pid-metadata-ca", conformancecrl.URL(crlHost, "metadata-ca"))
 	if err != nil {
 		return fmt.Errorf("metadata ca: %w", err)
 	}
-	f.put("metadata-ca.pem", metadataCAPEM)
-	if err := leafEntry(f, "access-certificate", "oid4vcgo-eudi-pid-metadata", metadataCA, metadataCAKey, metadataCAPEM, issuer); err != nil {
+	f.put("metadata-ca.pem", metadataCA.CertPEM)
+	if _, err := leafEntry(f, "access-certificate", "oid4vcgo-eudi-pid-metadata", metadataCA, issuer); err != nil {
+		return err
+	}
+	if err := crlFiles(f, crlHost, iacaCRL, metadataCA, dsPEM, sdjwtPEM); err != nil {
 		return err
 	}
 
@@ -281,20 +299,22 @@ func issuerFiles(f files, issuer *url.URL) error {
 
 // leafEntry issues a leaf for a fresh key under ca, naming uri, and
 // writes it as the keystore entry name.
-func leafEntry(f files, name, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, caPEM string, uri *url.URL) error {
+// It names ca's CRL distribution point, and returns the leaf's PEM.
+func leafEntry(f files, name, commonName string, ca *conformancecrl.Authority, uri *url.URL) (string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return err
+		return "", err
 	}
-	der, err := leafDER(commonName, key, ca, caKey, uri)
+	der, err := leafDER(commonName, key, ca.Cert, ca.Key, uri, ca.URL)
 	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	return putEntry(f, name, key, certPEM0(der), caPEM)
+	return certPEM0(der), putEntry(f, name, key, certPEM0(der), ca.CertPEM)
 }
 
-// leafDER issues a signing leaf for key under ca, naming uri.
-func leafDER(commonName string, key *ecdsa.PrivateKey, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uri *url.URL) ([]byte, error) {
+// leafDER issues a signing leaf for key under ca, naming uri, and crl,
+// if set, as its CRL distribution point.
+func leafDER(commonName string, key *ecdsa.PrivateKey, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uri *url.URL, crl string) ([]byte, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial(),
 		Subject:      pkix.Name{Country: []string{issuingCountry}, CommonName: commonName},
@@ -305,6 +325,9 @@ func leafDER(commonName string, key *ecdsa.PrivateKey, ca *x509.Certificate, caK
 	}
 	if uri.Hostname() != "" {
 		tmpl.DNSNames = []string{uri.Hostname()}
+	}
+	if crl != "" {
+		tmpl.CRLDistributionPoints = []string{crl}
 	}
 	return x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
 }
@@ -376,7 +399,7 @@ func walletProviderFiles(f files, statusListURI string) error {
 		if err != nil {
 			return err
 		}
-		der, err := leafDER("oid4vcgo-eudi-pid-"+name, key, ca, caKey, provider)
+		der, err := leafDER("oid4vcgo-eudi-pid-"+name, key, ca, caKey, provider, "")
 		if err != nil {
 			return fmt.Errorf("%s signer: %w", name, err)
 		}

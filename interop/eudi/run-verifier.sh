@@ -10,6 +10,11 @@
 # run. The status lists are published by OID4VCgo's statuslist package
 # (an Allocator and a Publisher, in scripts/serve -publish), as an
 # issuer publishes them.
+# The wallet checks the verifier's Access Certificate against its CA's
+# CRL, which it fetches over https from the distribution point the
+# certificate names (served by the wallet process itself, from
+# setup's CA), and refuses it once the CA revokes it or has no current
+# CRL.
 # The wallet fetches each request as the wallet package does, verifying
 # the verifier's TLS certificate; the SD-JWT VC and mdoc presentations
 # run again through walletflow (its engine "walletflow"), as a wallet
@@ -31,6 +36,7 @@ PORT="${PORT:-18443}"
 WALLET_PORT="${WALLET_PORT:-18444}"
 SERVE_PORT="${SERVE_PORT:-18445}"
 ADMIN_PORT="${ADMIN_PORT:-18446}"
+CRL_PORT="${CRL_PORT:-18448}"
 WORK="${WORK:-$(mktemp -d)}"
 CONTAINER="${CONTAINER:-oid4vcgo-eudi-verifier}"
 VERIFIER="https://localhost:$PORT"
@@ -38,9 +44,9 @@ WALLET="https://localhost:$WALLET_PORT"
 # The keystore holds throwaway, per-run keys, under a per-run password.
 KEYSTORE_PASSWORD="$(openssl rand -hex 16)"
 
-for p in "$PORT" "$WALLET_PORT" "$SERVE_PORT" "$ADMIN_PORT"; do
+for p in "$PORT" "$WALLET_PORT" "$SERVE_PORT" "$ADMIN_PORT" "$CRL_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    echo "port $p is in use; set PORT / WALLET_PORT / SERVE_PORT / ADMIN_PORT" >&2
+    echo "port $p is in use; set PORT / WALLET_PORT / SERVE_PORT / ADMIN_PORT / CRL_PORT" >&2
     exit 2
   fi
 done
@@ -80,7 +86,7 @@ echo "verifier  $VERIFIER_IMAGE"
 
 (cd "$SRC" && go build -o "$WORK/wallet" ./cmd/conformance-wallet-vp \
   && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
-  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521)
+  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521 -crl-host "localhost:$CRL_PORT")
 cd "$WORK"
 # serve publishes the status lists as an issuer does: an Allocator hands
 # each credential its index and keeps its status, and a Publisher signs
@@ -172,15 +178,26 @@ start_verifier x509_hash "$CLIENT_ID_HASH"
 
 # The wallet verifies the verifier's TLS certificate, which setup makes
 # self-signed for localhost, against TLS_ANCHOR: its own, unless a
-# control says otherwise.
+# control says otherwise. It checks the Access Certificate for
+# revocation (verifier_crl) against the CRL its CA's distribution point
+# serves, which the wallet process publishes itself (crl_publisher):
+# CRL, a current one revoking nothing, unless a control says otherwise.
 TLS_ANCHOR=tls-cert.pem
+CRL=verifier-ca-crl.pem
 start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, $3 optional status list index
   local config="$1" verifier_ca="$2" idx="${3:-}"
   stop_wallet
   jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" --arg idx "$idx" --rawfile tls "$TLS_ANCHOR" \
+    --arg crladdr "127.0.0.1:$CRL_PORT" --rawfile crl "$CRL" --rawfile crlurl verifier-ca-crl-url.txt \
+    --rawfile crlpath verifier-ca-crl-path.txt --rawfile crlissuer verifier-ca.pem \
+    --rawfile crltls crl-tls-cert.pem --rawfile crlkey crl-tls-key.pem \
     '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca
      | if $idx == "" then . else .status_list_idx = ($idx | tonumber) end
-     | .verifier_tls_trust_anchors_pem = $tls' "$config" > wallet.json
+     | .verifier_tls_trust_anchors_pem = $tls
+     | .crl_publisher = {listen_addr: $crladdr, tls_certificate_pem: $crltls, tls_private_key_pem: $crlkey,
+                         crls: {($crlpath): $crl}}
+     | .verifier_crl = {distribution_points: [{url: $crlurl, issuer_pem: $crlissuer}], tls_trust_anchors_pem: $crltls}' \
+    "$config" > wallet.json
   ./wallet -config wallet.json >> wallet.log 2>&1 &
   WALLET_PID=$!
   for _ in $(seq 1 50); do
@@ -365,6 +382,30 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   wallet_refused untrusted-verifier.txt \
     'wallet: parse authorization request: untrusted verifier: wallet: verifier certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority' \
     untrusted-verifier.json
+else bad "transaction initialized"; fi
+
+# The Access Certificate's revocation: its CA's CRL, at the
+# distribution point the certificate names, revokes it; then the CA
+# publishes no current CRL (its distribution point serves one past its
+# nextUpdate), so the wallet can't tell. Either way it must refuse the
+# request, for that reason, before answering it.
+REVOCATION_REFUSAL='wallet: parse authorization request: untrusted verifier: wallet: verifier certificate: certchain: revocation: no verified path passes it: '
+echo "== control: the Access Certificate's CA revoked it"
+CRL=verifier-ca-crl-revoking.pem start_wallet wallet-sdjwt.json verifier-ca.pem
+if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+  authorize revoked-verifier.txt
+  result revoked-verifier.json
+  wallet_refused revoked-verifier.txt "${REVOCATION_REFUSAL}certrevocation: certificate is revoked" revoked-verifier.json
+else bad "transaction initialized"; fi
+
+echo "== control: the Access Certificate's CA publishes no current CRL"
+CRL=verifier-ca-crl-expired.pem start_wallet wallet-sdjwt.json verifier-ca.pem
+if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+  authorize no-crl-verifier.txt
+  result no-crl-verifier.json
+  wallet_refused no-crl-verifier.txt \
+    "${REVOCATION_REFUSAL}certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer" \
+    no-crl-verifier.json
 else bad "transaction initialized"; fi
 
 # revoked_partway presents a credential at a fresh index of list $2,

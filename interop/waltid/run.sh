@@ -89,6 +89,10 @@ ISSUER_INNER_PORT=$((BASE_PORT + 23))
 # status lists through serve's tap on STATUS_TAP_PORT, as $HOST.
 STATUS_ISSUER_PORT=$((BASE_PORT + 27)) STATUS_OFFERS_PORT=$((BASE_PORT + 28)) STATUS_TAP_PORT=$((BASE_PORT + 29))
 VERIFIER_PORT=$((BASE_PORT + 31)) # and the next three
+# OID4VCgo's wallet publishes the run CA's CRL here, at the distribution
+# point Issuer2's and Verifier2's certificates name, and checks them
+# against it (scripts/wallet's -crl-set).
+CRL_PORT=$((BASE_PORT + 41))
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 # The client_id interop/eudi/scripts/setup-issuer registers, which the
@@ -96,7 +100,7 @@ NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
 for p in "$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT" \
-  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
+  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -155,7 +159,8 @@ jq -r '.issuer_ca_pem' issuer-files/driver.json > issuer-ca.pem
 jq -r '.iaca_pem' issuer-files/driver.json > iaca.pem
 (cd "$SRC" && go run ./interop/waltid/scripts/setup -out "$WORK" -host "$HOST" -bind "$SERVE_BIND" \
   -issuer-ca "$WORK/issuer-ca.pem" -iaca "$WORK/iaca.pem" \
-  -issuer2-port "$ISSUER2_PORT" -verifier2-port "$VERIFIER2_PORT" -attester-port "$ATTESTER_PORT" -verifier-port "$VERIFIER_PORT")
+  -issuer2-port "$ISSUER2_PORT" -verifier2-port "$VERIFIER2_PORT" -attester-port "$ATTESTER_PORT" -verifier-port "$VERIFIER_PORT" \
+  -crl-port "$CRL_PORT")
 
 cat issuer2-profiles.conf >> waltid/issuer-api2/config/issuer2-profiles.conf
 cat issuer2-service.conf >> waltid/issuer-api2/config/issuer-service.conf
@@ -251,6 +256,11 @@ JSON='Content-Type: application/json'
 # Why OID4VCgo refuses a chain to a CA it doesn't trust, in the wallet
 # and the verifier alike.
 UNTRUSTED_ISSUER='certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority'
+# Why OID4VCgo's wallet refuses a certificate the run's CA revoked, and
+# one it can't check: its CRL, at the distribution point the
+# certificate names, is past its nextUpdate.
+REVOKED='certchain: revocation: no verified path passes it: certrevocation: certificate is revoked'
+NO_CURRENT_CRL="certchain: revocation: no verified path passes it: certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer"
 
 # issuer2_offer is a pre-authorized code offer of Issuer2's profile $1.
 issuer2_offer() {
@@ -296,6 +306,20 @@ if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "credential" and (.received |
     receive-untrusted-issuer.json >/dev/null; then
   ok "control: a credential from an issuer the wallet doesn't trust is refused, for its chain"
 else bad "control: a credential from an untrusted issuer: $(why receive-untrusted-issuer.json)"; fi
+
+# Every credential above was checked against the run CA's current CRL,
+# which the wallet fetched over https from the distribution point
+# Issuer2's certificates name. Here the CA revokes them, then publishes
+# no current CRL: the credential must be refused for that reason.
+for c in "revoked-issuer REVOKED revoked" "expired NO_CURRENT_CRL without-current-crl"; do
+  read -r set why name <<< "$c"
+  wallet "receive-crl-$name" -issuer-ca ca.pem -verifier-ca ca.pem -crl-set "$set" -offer "$(issuer2_offer eudiPidSdJwt)"
+  if jq -e --arg want "${!why}" '.stage == "credential" and (.received | length == 0)
+      and (.error | contains("is invalid: wallet: verify issued credential: issuer certificate: " + $want))' \
+      "receive-crl-$name.json" >/dev/null; then
+    ok "control: a credential whose signer's CA $( [[ $set = expired ]] && echo 'publishes no current CRL' || echo 'revoked it') is refused, for that"
+  else bad "control: a credential, CRL set $set: $(why "receive-crl-$name.json")"; fi
+done
 
 # What Issuer2 sent of what SPECIFICATIONS.md's "Known leniencies"
 # concern, as the wallet's transport read it, asserted as 1.2.1 sends
@@ -430,6 +454,16 @@ if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "request" and (.received | le
   ok "control: a Verifier whose Access Certificate the wallet doesn't trust is refused, for its chain"
 else bad "control: an untrusted Verifier: $(why present-untrusted-verifier.json)"; fi
 
+# Verifier2's Access Certificate, checked against the run CA's CRL in
+# every presentation above, here revoked by it.
+wallet present-revoked-verifier -issuer-ca ca.pem -verifier-ca ca.pem -crl-set revoked-verifier \
+  -offer "$(issuer2_offer eudiPidSdJwt)" -request "$(session signed "$PID_QUERY" | cut -d' ' -f2)"
+if jq -e --arg want "$REVOKED" '.stage == "request" and (.received | length == 1)
+    and (.error | contains("parse authorization request: untrusted verifier: wallet: verifier certificate: " + $want))' \
+    present-revoked-verifier.json >/dev/null; then
+  ok "control: a Verifier whose Access Certificate the CA revoked is refused, for that"
+else bad "control: a revoked Verifier: $(why present-revoked-verifier.json)"; fi
+
 echo "### OID4VCgo's issuer → OID4VCgo's wallet → walt.id Verifier2: status lists"
 # Verifier2 checks the Token Status List entry of credentials OID4VCgo's
 # issuer issued, from the list the issuer publishes (statuslist's
@@ -480,7 +514,9 @@ status_present() {  # $1 name, $2 configuration, $3 query, $4 "valid" or "revoke
   local name="$1" config="$2" query="$3" id link revoke=()
   if [[ "$4" = revoked ]]; then revoke=(-revoke "http://127.0.0.1:$STATUS_OFFERS_PORT/status"); fi
   read -r id link <<< "$(status_session "$query")"
-  wallet "status-$name" -issuer-ca issuer-ca.pem -mdoc-issuer-ca iaca.pem -verifier-ca ca.pem \
+  # -crl-set none: OID4VCgo's issuer's CAs (setup-issuer's) publish no
+  # CRL, so this wallet checks no certificate's revocation here.
+  wallet "status-$name" -issuer-ca issuer-ca.pem -mdoc-issuer-ca iaca.pem -verifier-ca ca.pem -crl-set none \
     -attester-config issuer-files/driver.json -offer "$(status_offer "$config")" ${revoke[@]+"${revoke[@]}"} -request "$link"
   # Verifier2's first status check can outlast the wallet's wait for
   # its answer (on an emulated image, its status policy's first run

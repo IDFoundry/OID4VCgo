@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"flag"
@@ -22,7 +23,6 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
-	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceusage"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
@@ -34,7 +34,8 @@ func main() {
 	conformanceusage.Set("conformance-verifier -config <file>",
 		"A test harness for the OIDF conformance suite's verifier plan, not a\n"+
 			"deployment model: by default it runs under development assurance,\n"+
-			"checks no certificate revocation, and keeps its transactions in\n"+
+			"checks certificate revocation only against the CRLs its config\n"+
+			"names, and keeps its transactions in\n"+
 			"memory. Never deploy it or copy its wiring; DEPLOYING.md is the\n"+
 			"checklist for a production Verifier.")
 	flag.Parse()
@@ -47,6 +48,9 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	if err := cfg.startIssuerCRL(context.Background()); err != nil {
+		log.Fatal(err)
+	}
 	mux, clientID, err := newHandler(cfg)
 	if err != nil {
 		log.Fatal(err)
@@ -99,10 +103,10 @@ func (c Config) issuerKeyResolvers() (verifier.SDJWTVCIssuerKeyResolver, verifie
 	if err != nil {
 		return nil, nil, fmt.Errorf("mdoc trust anchor: %w", err)
 	}
-	// No revocation check: the OIDF suite generates its own IACA and
-	// document signer for each run, and publishes no CRL for them that
-	// this binary could fetch.
-	return issuerKeys, verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool, Revocation: certrevocation.NoCheck{}}, nil
+	// The Document Signer's revocation, against IssuerCRL's CRLs when
+	// it's set: the OIDF suite's own IACA and Document Signers publish
+	// no CRL this binary could fetch, so its mdoc runs leave it unset.
+	return issuerKeys, verifier.X5ChainIssuerKeyResolver{Roots: mdocTrustAnchorPool, Revocation: c.revocation()}, nil
 }
 
 // newVerifier builds the verifier.Verifier cfg describes, at assurance.
