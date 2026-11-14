@@ -17,7 +17,9 @@
 #                                  x509_hash, direct_post.jwt, each
 #                                  request_uri_method; and through
 #                                  verifier.Transactions under production
-#                                  assurance, as a deployment runs it
+#                                  assurance, as a deployment runs it;
+#                                  with POSTGRES_URL, the SD-JWT VC's as
+#                                  two instances sharing that database
 #   our issuer → our wallet →      the issuer's production setup, the
 #     Verifier2                    wallet attested by OID4VCgo's Wallet
 #                                  Provider (interop/walletprovider);
@@ -28,6 +30,7 @@
 #
 #   interop/waltid/run.sh
 #   WALTID_TAG=latest interop/waltid/run.sh
+#   POSTGRES_URL=postgres://postgres@localhost:5432/postgres?sslmode=disable interop/waltid/run.sh
 #
 # Needs docker, go, jq, curl, openssl and keytool. Exits 0 only if
 # every case behaves as expected.
@@ -84,7 +87,9 @@ WALTID_FILES=(
 # dials on SERVE_BIND.
 HOST=waltid.test
 BASE_PORT="${BASE_PORT:-21400}"
-ISSUER2_HTTP=$((BASE_PORT + 1)) VERIFIER2_HTTP=$((BASE_PORT + 2)) WALLET2_HTTP=$((BASE_PORT + 3))
+# The containers' published ports, each settable on its own.
+ISSUER2_HTTP="${ISSUER2_HTTP:-$((BASE_PORT + 1))}" VERIFIER2_HTTP="${VERIFIER2_HTTP:-$((BASE_PORT + 2))}"
+WALLET2_HTTP="${WALLET2_HTTP:-$((BASE_PORT + 3))}"
 ISSUER2_PORT=$((BASE_PORT + 11)) VERIFIER2_PORT=$((BASE_PORT + 12))
 ISSUER_PORT=$((BASE_PORT + 21)) OFFERS_PORT=$((BASE_PORT + 22)) ATTESTER_PORT=$((BASE_PORT + 26))
 # OID4VCgo's issuer listens here, behind serve's tap on ISSUER_PORT,
@@ -104,6 +109,11 @@ CRL_PORT=$((BASE_PORT + 41))
 # issuer's production setup, and its admin listener; and the
 # transactions-engine Verifier for the SD-JWT VC PID.
 WP_PORT=$((BASE_PORT + 42)) WP_ADMIN_PORT=$((BASE_PORT + 43)) TX_VERIFIER_PORT=$((BASE_PORT + 44))
+# With POSTGRES_URL, an empty PostgreSQL database, that Verifier runs as
+# two instances sharing it, on loopback behind interop/splitproxy on
+# TX_VERIFIER_PORT: these.
+POSTGRES_URL="${POSTGRES_URL:-}"
+TX_A_PORT=$((BASE_PORT + 45)) TX_B_PORT=$((BASE_PORT + 46))
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 # WALLET_ASSURANCE=production runs only OID4VCgo's wallet with Issuer2
@@ -124,7 +134,7 @@ CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
 LISTENING=("$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT"
   "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT"
-  "$WP_PORT" "$WP_ADMIN_PORT" "$TX_VERIFIER_PORT")
+  "$WP_PORT" "$WP_ADMIN_PORT" "$TX_VERIFIER_PORT" "$TX_A_PORT" "$TX_B_PORT")
 # A production run listens on this host for Issuer2's and Verifier2's
 # own APIs alone: the rest is on the wallet's network.
 if [[ "$WALLET_ASSURANCE" = production ]]; then LISTENING=("$ISSUER2_HTTP" "$VERIFIER2_HTTP"); fi
@@ -181,7 +191,7 @@ mkdir -p "$WORK/issuer-files"
 # issuer run their production setups (below), and the Wallet Provider
 # runs at all.
 build_production "$WORK" "$SRC" verifier=./cmd/conformance-verifier issuer=./cmd/conformance-issuer \
-  walletprovider=./interop/walletprovider
+  walletprovider=./interop/walletprovider splitproxy=./interop/splitproxy
 (cd "$SRC" && go build -o "$WORK/serve" ./interop/waltid/scripts/serve \
   && go build -o "$WORK/wallet" ./interop/waltid/scripts/wallet \
   && go run ./interop/eudi/scripts/setup-issuer -out "$WORK/issuer-files" -port "$ISSUER_PORT" -offers-port "$OFFERS_PORT")
@@ -268,10 +278,44 @@ for v in mdoc untrusted-access untrusted-issuer; do
   jq --arg db "$WORK/verifier-$v.db" --arg key "$(sealing_key)" "$TX_FILTER" "verifier-$v.json" > "verifier-$v-tx.json"
   mv "verifier-$v-tx.json" "verifier-$v.json"
 done
-for v in sdjwt sdjwt-tx mdoc untrusted-access untrusted-issuer; do
+TX_VERIFIERS=(sdjwt-tx)
+if [[ -n "$POSTGRES_URL" ]]; then
+  # The transactions SD-JWT VC verifier as two instances, a and b, of a
+  # deployment sharing the PostgreSQL database and the sealing key,
+  # each sweeping it every second, behind interop/splitproxy at its
+  # URL, serving its TLS certificate. The proxy splits each request's
+  # flow between them: a begins it (/authorize) and takes the Wallet's
+  # response (/response), b serves the Request Object (/request/{id})
+  # and redeems the response_code a minted (/result); so the request
+  # object a began is fetched at b, the response to b's request object
+  # is taken by a, and a's response_code is redeemed at b.
+  TX_VERIFIERS=(sdjwt-tx-a sdjwt-tx-b)
+  # shellcheck disable=SC2016 # jq's variables, not the shell's
+  jq --arg pg "$POSTGRES_URL" '.production |= (del(.database_path) + {database_url: $pg, sweep_interval: "1s"})' \
+    verifier-sdjwt-tx.json > verifier-sdjwt-tx-scaled.json
+  for i in a b; do
+    if [[ "$i" = a ]]; then port="$TX_A_PORT"; else port="$TX_B_PORT"; fi
+    jq --arg addr "127.0.0.1:$port" '.listen_addr = $addr' verifier-sdjwt-tx-scaled.json > "verifier-sdjwt-tx-$i.json"
+  done
+  ./splitproxy -addr "$SERVE_BIND:$TX_VERIFIER_PORT" -cert tls-cert.pem -key tls-key.pem -backend-ca ca.pem -backend-server-name "$HOST" \
+    -backend "a=https://127.0.0.1:$TX_A_PORT" -backend "b=https://127.0.0.1:$TX_B_PORT" \
+    -route /authorize=a -route /response=a -route /request=b -route /result=b > splitproxy.log 2>&1 &
+  PIDS+=($!)
+fi
+for v in sdjwt "${TX_VERIFIERS[@]}" mdoc untrusted-access untrusted-issuer; do
   ./verifier -config "verifier-$v.json" > "verifier-$v.log" 2>&1 &
   PIDS+=($!)
 done
+if [[ -n "$POSTGRES_URL" ]]; then
+  for port in "$TX_A_PORT" "$TX_B_PORT"; do
+    for _ in $(seq 1 50); do
+      if curl -s -o /dev/null --max-time 1 --cacert ca.pem --resolve "$HOST:$port:127.0.0.1" "https://$HOST:$port/"; then continue 2; fi
+      sleep 0.2
+    done
+    echo "the transactions verifier on $port did not start; see $WORK/verifier-sdjwt-tx-*.log" >&2
+    exit 2
+  done
+fi
 
 # tls GETs or POSTs a URL at $HOST, verifying its TLS certificate.
 tls() { curl -sS --max-time 60 --cacert ca.pem --resolve "$HOST:${1##*:}:$SERVE_BIND" "${@:2}"; }
@@ -743,6 +787,36 @@ if grep -q '<h1>Verification succeeded</h1>' result-pid-tx.html && grep -q '"fam
     && grep -q '"given_name"' result-pid-tx.html; then
   ok "sd-jwt pid through verifier.Transactions under production assurance, request_uri_method post: verified, released to the browser that asked"
 else bad "sd-jwt pid through verifier.Transactions: $(sed 's/<[^>]*>/ /g' result-pid-tx.html | head -c 300)"; fi
+if [[ -n "$POSTGRES_URL" ]]; then
+  # The split that presentation took, from the instances' own logs and
+  # the proxy's: begun at a, its Request Object fetched (POST) at b, the
+  # response taken by a, its response_code redeemed at b.
+  tx_id="$(sed -nE 's/.*transaction ([^ ]+): begun$/\1/p' verifier-sdjwt-tx-a.log | tail -1)"
+  echo "        observed: $(grep -oE 'instance=[ab] [A-Z]+ "/(authorize|request/[^"]*|response|result)" [0-9]+' splitproxy.log \
+    | sed -E 's|/request/[^"]*|/request/…|' | paste -sd, -)"
+  if [[ -n "$tx_id" ]] && grep -q 'request object fetched with POST' verifier-sdjwt-tx-b.log \
+      && grep -qF "transaction $tx_id: result redeemed" verifier-sdjwt-tx-b.log \
+      && grep -q 'instance=b POST "/request/[^"]*" 200 why=route' splitproxy.log \
+      && grep -q 'instance=a POST "/response" 200 why=route' splitproxy.log; then
+    ok "two instances on PostgreSQL: the request begun at a, its Request Object fetched at b, the response taken by a, its response_code redeemed at b"
+  else bad "two instances on PostgreSQL: the presentation wasn't split as routed (transaction '$tx_id'; see splitproxy.log, verifier-sdjwt-tx-*.log)"; fi
+  # Control: that response_code redeemed again, at a, which minted it
+  # but didn't redeem it: only the shared store tells it the request is
+  # done. Refused (no result for it in this browser) for the reason a
+  # logs: the code names no open request, as the redemption at b closed it.
+  url="$(jq -r '.redirect_to // .verifier_response.redirect_uri // empty' wallet2-present-pid-tx.json 2>/dev/null || true)"
+  status="$(tls "$TX_VERIFIER_PORT" -b tx-pid.cookies -H "X-Interop-Instance: a" -o result-pid-tx-replay.html -w '%{http_code}' "$url" 2>/dev/null || true)"
+  if [[ -n "$url" && "$status" = 403 ]] && grep -q '<h1>No result</h1>' result-pid-tx-replay.html \
+      && grep 'redeem: ' verifier-sdjwt-tx-a.log | grep -qF 'verifier: unknown presentation request' \
+      && grep -q 'instance=a GET "/result" 403 why=override' splitproxy.log; then
+    ok "control: the response_code redeemed again at a, which minted it, is refused: $(grep 'redeem: ' verifier-sdjwt-tx-a.log | tail -1 | sed 's/.*redeem: //')"
+  else bad "control: the response_code redeemed again at a: HTTP $status, $(grep 'redeem:' verifier-sdjwt-tx-a.log | tail -1)"; fi
+  for i in a b; do
+    if [[ "$(grep -c 'sweep: deleted' "verifier-sdjwt-tx-$i.log" || true)" -gt 0 ]] && ! grep -q 'sweep: FAILED' "verifier-sdjwt-tx-$i.log"; then
+      ok "instance $i swept the shared store $(grep -c 'sweep: deleted' "verifier-sdjwt-tx-$i.log") times, none failing"
+    else bad "instance $i: $(grep 'sweep: FAILED' "verifier-sdjwt-tx-$i.log" | head -1 || echo 'never swept')"; fi
+  done
+fi
 launch="$(tx_authorize $((VERIFIER_PORT + 1)) tx-mdoc.cookies)"
 present2 "$holder" "$launch" > wallet2-present-mdoc.json
 tx_result wallet2-present-mdoc.json "$launch" tx-mdoc.cookies result-mdoc.html
