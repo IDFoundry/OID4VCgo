@@ -31,6 +31,8 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | SD-JWT VC PID, the issuer's `dpop-nonces` profile | issued: the Token and Credential Endpoints each ask for a DPoP nonce, and Wallet2 retries with it |
 | | SD-JWT VC PID, its `deferred` profile | deferred (202), then issued from the Deferred Credential Endpoint when Wallet2 resumes the handle |
 | | SD-JWT VC PID, its `key-attestation` profile | a note, not a case: Wallet2 stops before its Credential Request (see "What isn't covered") |
+| OID4VCgo's issuer → OID4VCgo's wallet → Verifier2 | SD-JWT VC PID and mdoc PID, the session's VC policies `signature` and `credential-status` (IETF, VALID) | Verifier2 fetches the issuer's Token Status List, its `credential-status` policy passes, and it accepts the PID |
+| | Each, revoked by the issuer (its `POST /status`) after it was issued, before the wallet presents it | Verifier2 refuses it, by `credential-status` (`Status validation failed: expected one of [0], but got 1`), the session `FAILED` |
 | Wallet2 → OID4VCgo's verifier | That SD-JWT VC PID, `x509_hash`, `direct_post.jwt`, `request_uri_method` none, `get` and `post` | verified |
 | | That mdoc PID | verified, only the requested elements disclosed |
 | | The verifier's Access Certificate under an unrelated CA | Wallet2 refuses (`X509TrustAnchorMismatch`) |
@@ -58,6 +60,34 @@ fresh Wallet2 wallet, in three more of
 restarted with its config changed as there: `dpop-nonces`
 (`dpop_nonces`), `deferred` (`deferred`) and `key-attestation`
 (`key_attestation.jwt_proof_requires_key_attestation`).
+
+### Status lists
+
+`cmd/conformance-issuer` publishes its Token Status List as an issuer
+does (`status_lists`: a `statuslist.Allocator` hands each credential
+its index and keeps its status, and a `statuslist.Publisher` signs the
+list on each fetch, the SD-JWT VC's by its issuer key with `x5c`, the
+mdoc's by its Document Signer with `x5chain`), and Verifier2's
+`credential-status` policy fetches it, verifies its signature, binds
+its signer to the credential's (the same `x5c`/`x5chain` leaf), checks
+its claims and reads the entry. That instance of the issuer is a
+second one, named `localhost`, as OID4VCgo's wallet's development
+fetcher needs, its lists published as `https://waltid.test:…`
+(`status_lists.base_url`), which Verifier2 reaches through
+[`scripts/serve`](scripts/serve)'s tap, which logs who fetched which
+form. Each control has the issuer revoke the credentials the wallet
+received (the wallet's `-revoke`, the issuer's `POST /status`,
+`Allocator.SetStatus`) before it presents one: it differs from the case
+before it in that status alone. The positive cases are graded by the
+session, which Verifier2 may decide after the wallet stopped waiting for
+its answer (its first status check took 17 s on an emulated image).
+
+Verifier2 asks for both forms at once (`Accept:
+application/statuslist+jwt, application/statuslist+cwt, …`), and the
+issuer's Publisher serves the CWT on a tie, so Verifier2 reads the
+SD-JWT VC's list as a CWT too, and verifies it. Its status reader
+caches a list only for an HTTP `max-age`, which the issuer's tokens,
+with no `ttl`, don't set.
 
 ## What walt.id sends
 
@@ -199,8 +229,11 @@ Found by the negative presentations:
 
 - The authorization code flow, in either direction, and Issuer2's
   Wallet Attestation: Issuer2 runs with anonymous pre-authorized codes.
-- Status lists: Issuer2's credentials carry none, and OID4VCgo's
-  verifiers here check none.
+- Status lists of Issuer2's credentials, which carry none, and of the
+  PIDs Wallet2 is issued: the base profile's issuer sets no
+  `status_lists`, and OID4VCgo's verifiers here check none. Only
+  Verifier2 checks status (above); a SUSPENDED status isn't exercised,
+  the issuer's list taking 1 bit.
 - Verifier2's issuer trust (finding 3), its DC API flows, and Wallet2's
   checks of the credentials it's issued.
 - Wallet2 receiving from Issuer2: walt.id with itself.

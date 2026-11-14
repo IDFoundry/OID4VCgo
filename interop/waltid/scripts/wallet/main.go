@@ -9,6 +9,16 @@
 // The parties' TLS certificates chain to -tls-ca; -resolve HOST=ADDR,
 // if given, dials ADDR for HOST.
 //
+// To redeem OID4VCgo's issuer's offers instead, which take a Wallet
+// Attestation (HAIP 1.0 §4.4.1), -attester-config names
+// interop/eudi/scripts/setup-issuer's driver.json: its client_id, and
+// the keys of a stand-in Wallet Provider the issuer trusts
+// (provider.go); -mdoc-issuer-ca, its mdocs' IACA. With -revoke, the
+// issuer's POST /status, the wallet has the issuer revoke every
+// credential it received before it answers -request, as an issuer
+// revokes one after issuing it: the result's "revoked" lists the
+// status list entries.
+//
 // The result, written to -out as JSON, says how far the run got and
 // what it saw; run.sh decides whether that's what the case expects.
 // Its "observed" records what walt.id sent of what SPECIFICATIONS.md's
@@ -22,7 +32,7 @@
 // refuse (tamper.go); the result's "tampered" records the change and
 // Verifier2's answer to it.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] -offer URL [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE] [-mdoc-issuer-ca FILE] -offer URL [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
 package main
 
 import (
@@ -65,6 +75,7 @@ type result struct {
 	QueryIDs []string   `json:"query_ids,omitempty"`
 	Observed *observed  `json:"observed"`
 	Tampered *tampered  `json:"tampered,omitempty"`
+	Revoked  []string   `json:"revoked,omitempty"`
 }
 
 // tampered is what -tamper changed of the presentation, and Verifier2's
@@ -184,6 +195,15 @@ type received struct {
 	Format          string   `json:"format"`
 	ConfigurationID string   `json:"configuration_id"`
 	Claims          []string `json:"claims"`
+	// StatusLists are its copies' status list entries, uri#idx.
+	StatusLists []string `json:"status_lists,omitempty"`
+}
+
+// options are the flags that change what the wallet is, beyond the
+// parties' trust: OID4VCgo's issuer's Wallet Provider and IACA, and the
+// issuer's revocation endpoint.
+type options struct {
+	attesterConfig, mdocIssuerCA, revoke string
 }
 
 func main() {
@@ -197,6 +217,10 @@ func main() {
 	out := flag.String("out", "", "where to write the result")
 	tamper := flag.String("tamper", "", "change the presentation on its way to Verifier2: "+strings.Join(tamperModes, ", "))
 	verifier2Key := flag.String("verifier2-key", "", "Verifier2's request object key, for -tamper")
+	var opts options
+	flag.StringVar(&opts.attesterConfig, "attester-config", "", "setup-issuer's driver.json: attest the wallet to OID4VCgo's issuer as its client_id")
+	flag.StringVar(&opts.mdocIssuerCA, "mdoc-issuer-ca", "", "the IACA mdocs chain to, if not -issuer-ca")
+	flag.StringVar(&opts.revoke, "revoke", "", "OID4VCgo's issuer's POST /status: revoke every credential received before answering -request")
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
@@ -204,7 +228,7 @@ func main() {
 	if *tlsCA == "" || *issuerCA == "" || *verifierCA == "" || len(offered) == 0 || *out == "" {
 		log.Fatal("-tls-ca, -issuer-ca, -verifier-ca, -offer and -out are required")
 	}
-	res := run(*tlsCA, *issuerCA, *verifierCA, *resolve, offered, *request, *tamper, *verifier2Key)
+	res := run(*tlsCA, *issuerCA, *verifierCA, *resolve, offered, *request, *tamper, *verifier2Key, opts)
 	raw, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		log.Fatal(err)
@@ -214,7 +238,7 @@ func main() {
 	}
 }
 
-func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request, tamper, verifier2Key string) (res result) {
+func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request, tamper, verifier2Key string, opts options) (res result) {
 	res.Stage = "setup"
 	res.Observed = &observed{}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -259,15 +283,38 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 		defer func() { res.Tampered = t.outcome() }()
 	}
 	client := &http.Client{Transport: transport}
-	w, err := walletflow.New(walletflow.Config{
+	cfg := walletflow.Config{
 		IssuerRoots: issuerRoots, Development: true, VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots},
-	}, walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client})
+	}
+	deps := walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client}
+	if opts.attesterConfig != "" {
+		p, err := loadProvider(opts.attesterConfig)
+		if err != nil {
+			return fail(err)
+		}
+		cfg.ClientID, deps.Provider = p.cfg.ClientID, p
+	}
+	if opts.mdocIssuerCA != "" {
+		if cfg.MdocIssuerRoots, err = pool(opts.mdocIssuerCA); err != nil {
+			return fail(err)
+		}
+	}
+	w, err := walletflow.New(cfg, deps)
 	if err != nil {
 		return fail(err)
 	}
 
+	var got []walletflow.StoredCredential
 	for _, offer := range offered {
-		if err := redeem(ctx, w, offer, &res); err != nil {
+		creds, err := redeem(ctx, w, offer, &res)
+		if err != nil {
+			return fail(err)
+		}
+		got = append(got, creds...)
+	}
+	if opts.revoke != "" {
+		res.Stage = "revoke"
+		if err := revoke(ctx, opts.revoke, got, &res); err != nil {
 			return fail(err)
 		}
 	}
@@ -297,22 +344,22 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 }
 
 // redeem redeems offer's pre-authorized code, recording in res how far
-// it got and the credentials it received or refused.
-func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result) error {
+// it got and the credentials it received or refused, which it returns.
+func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result) ([]walletflow.StoredCredential, error) {
 	res.Stage = "offer"
 	s, err := w.StartIssuance(ctx, offer)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = s.Close(ctx) }()
 	res.Stage = "token"
 	if err := s.RedeemPreAuthorizedCode(ctx, ""); err != nil {
-		return err
+		return nil, err
 	}
 	res.Stage = "credential"
 	got, err := s.RequestCredentials(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, c := range got.Credentials {
 		names := make([]string, 0, len(c.Claims))
@@ -320,15 +367,24 @@ func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result
 			names = append(names, name)
 		}
 		slices.Sort(names)
-		res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names})
+		var lists []string
+		for _, cp := range c.AllCopies() {
+			if cp.StatusList != nil {
+				lists = append(lists, fmt.Sprintf("%s#%d", cp.StatusList.URI, cp.StatusList.Idx))
+			}
+		}
+		if len(lists) == 0 && c.StatusList != nil {
+			lists = append(lists, fmt.Sprintf("%s#%d", c.StatusList.URI, c.StatusList.Idx))
+		}
+		res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names, StatusLists: lists})
 	}
 	for _, f := range got.Failed {
 		res.Failed = append(res.Failed, f.ConfigurationID+": "+f.Err.Error())
 	}
 	if len(got.Failed) > 0 {
-		return errors.New("a credential was refused")
+		return nil, errors.New("a credential was refused")
 	}
-	return nil
+	return got.Credentials, nil
 }
 
 // pool is a PEM file's certificates.

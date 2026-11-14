@@ -263,6 +263,11 @@ func tapLine(req *http.Request, res *http.Response) string {
 	if strings.Contains(res.Header.Get("WWW-Authenticate"), "use_dpop_nonce") {
 		parts = append(parts, "challenge=use_dpop_nonce")
 	}
+	if strings.HasPrefix(req.URL.Path, "/statuslists/") {
+		// Who fetched the status list, and which form it got: Verifier2,
+		// or OID4VCgo's wallet, which fetches it too.
+		parts = append(parts, fmt.Sprintf("client=%q as=%q", req.Header.Get("User-Agent"), res.Header.Get("Content-Type")))
+	}
 	return strings.Join(parts, " | ")
 }
 
