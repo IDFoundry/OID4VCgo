@@ -99,7 +99,14 @@ check_summary() {
 		insummary && NF {
 			line = $0
 			sub(/^[^ ]+ [^ ]+ /, "", line)  # strip the "YYYY/MM/DD HH:MM:SS " log.Printf timestamp
-			if (match(line, /ERROR:/) || match(line, /NOT RUN/)) {
+			if (match(line, /[ \t]CONTROL=[A-Z]+/)) {
+				# A graded negative control (from the driver): its verdict
+				# comes first, and the text after it may quote the
+				# outcome the suite reported, "ERROR: ..." included.
+				name = substr(line, 1, RSTART - 1)
+				gsub(/[ \t]+$/, "", name)
+				print name "|" substr(line, RSTART + 1, RLENGTH - 1)
+			} else if (match(line, /ERROR:/) || match(line, /NOT RUN/)) {
 				name = substr(line, 1, RSTART - 1)
 				gsub(/[ \t]+$/, "", name)
 				print name "|FAILED"
