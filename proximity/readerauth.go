@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
-
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 )
@@ -136,6 +134,20 @@ func VerifyReaderAuth(req DocRequest, sessionTranscriptBytes []byte, t ReaderTru
 // #6.24(bstr .cbor ["ReaderAuthentication", SessionTranscript,
 // ItemsRequestBytes]): what readerAuth signs, detached.
 func readerAuthenticationBytes(sessionTranscriptBytes, itemsRequestBytes []byte) ([]byte, error) {
+	transcript, err := sessionTranscript(sessionTranscriptBytes)
+	if err != nil {
+		return nil, err
+	}
+	b, err := readerauth.AuthenticationBytes(transcript, itemsRequestBytes)
+	if err != nil {
+		return nil, fmt.Errorf("proximity: %w", err)
+	}
+	return b, nil
+}
+
+// sessionTranscript unwraps SessionTranscriptBytes once, to the
+// SessionTranscript the reader authentication structures embed.
+func sessionTranscript(sessionTranscriptBytes []byte) ([]byte, error) {
 	if len(sessionTranscriptBytes) == 0 {
 		return nil, errors.New("proximity: no session transcript (session not established)")
 	}
@@ -143,15 +155,7 @@ func readerAuthenticationBytes(sessionTranscriptBytes, itemsRequestBytes []byte)
 	if err != nil {
 		return nil, fmt.Errorf("proximity: decode SessionTranscriptBytes: %w", err)
 	}
-	authentication, err := encMode.Marshal([]any{"ReaderAuthentication", cbor.RawMessage(transcript), cbor.RawMessage(itemsRequestBytes)})
-	if err != nil {
-		return nil, fmt.Errorf("proximity: encode ReaderAuthentication: %w", err)
-	}
-	b, err := wrapTag24(authentication)
-	if err != nil {
-		return nil, fmt.Errorf("proximity: encode ReaderAuthenticationBytes: %w", err)
-	}
-	return b, nil
+	return transcript, nil
 }
 
 // readerKey is the key and chain WithReaderAuth sets.

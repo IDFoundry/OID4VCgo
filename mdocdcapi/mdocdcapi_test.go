@@ -1,6 +1,7 @@
 package mdocdcapi
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -19,6 +20,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 	"github.com/idfoundry/oid4vcgo/oid4vpmdoc"
@@ -507,5 +509,101 @@ func TestVerifyResponseRefusesMalformedEncryptedResponse(t *testing.T) {
 		if _, err := verify(t, h, encodeResponse(t, tc.wire), nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want an error containing %q", name, err, tc.want)
 		}
+	}
+}
+
+// legacyReaderAuthentication(All)Bytes are the detached reader
+// authentication payloads as this package built them before the
+// construction moved to internal/readerauth: each structure encoded with
+// encMode and wrapped with wrapTag24. The shared builder must keep them.
+func legacyReaderAuthenticationBytes(t *testing.T, transcript, itemsRequestBytes []byte) []byte {
+	t.Helper()
+	b, err := wrapTag24([]any{"ReaderAuthentication", cbor.RawMessage(transcript), cbor.RawMessage(itemsRequestBytes)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func legacyReaderAuthenticationAllBytes(t *testing.T, transcript []byte, itemsRequestBytes [][]byte, info []byte) []byte {
+	t.Helper()
+	items := make([]any, len(itemsRequestBytes))
+	for i, b := range itemsRequestBytes {
+		items[i] = cbor.RawMessage(b)
+	}
+	var infoItem any
+	if info != nil {
+		infoItem = cbor.RawMessage(info)
+	}
+	b, err := wrapTag24([]any{"ReaderAuthenticationAll", cbor.RawMessage(transcript), items, infoItem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// BuildRequest's signatures are over the same bytes as before the
+// shared builders: every reader's ReaderAuthAll over the whole request,
+// and each DocRequest's ReaderAuth by the first reader only.
+func TestBuildRequestSignsUnchangedAuthenticationBytes(t *testing.T) {
+	ca, caKey := testcert.CA(t, "mdocdcapi test reader CA")
+	certA, keyA := testcert.Leaf(t, "mdocdcapi test reader A", ca, caKey)
+	certB, keyB := testcert.Leaf(t, "mdocdcapi test reader B", ca, caKey)
+	req, err := BuildRequest(RequestParams{
+		Origin: testOrigin,
+		Documents: []DocumentRequest{
+			{DocType: testmdoc.DocType, Elements: bothNames()},
+			{DocType: "org.example.second", Elements: map[string]map[string]bool{"org.example": {"x": false}}},
+		},
+		Readers: []ReaderKey{{Signer: keyA, Chain: []*x509.Certificate{certA, ca}}, {Signer: keyB, Chain: []*x509.Certificate{certB, ca}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript := annexCTranscript(t, req.Data.EncryptionInfo, testOrigin)
+	raw, err := base64.RawURLEncoding.DecodeString(req.Data.DeviceRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		DocRequests []struct {
+			ItemsRequest cbor.RawMessage `cbor:"itemsRequest"`
+			ReaderAuth   cbor.RawMessage `cbor:"readerAuth"`
+		} `cbor:"docRequests"`
+		ReaderAuthAll []cbor.RawMessage `cbor:"readerAuthAll"`
+	}
+	if err := cbor.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.DocRequests) != 2 || len(wire.ReaderAuthAll) != 2 {
+		t.Fatalf("got %d DocRequests and %d ReaderAuthAll, want 2 and 2", len(wire.DocRequests), len(wire.ReaderAuthAll))
+	}
+	items := [][]byte{wire.DocRequests[0].ItemsRequest, wire.DocRequests[1].ItemsRequest}
+
+	all := legacyReaderAuthenticationAllBytes(t, transcript, items, nil)
+	if shared, err := readerauth.AuthenticationAllBytes(transcript, items, nil); err != nil || !bytes.Equal(shared, all) {
+		t.Errorf("AuthenticationAllBytes = %x, %v; want the legacy %x", shared, err, all)
+	}
+	for i, leaf := range []*x509.Certificate{certA, certB} {
+		if err := readerauth.VerifySignature(wire.ReaderAuthAll[i], all, leaf); err != nil {
+			t.Errorf("ReaderAuthAll[%d] over the legacy bytes: %v", i, err)
+		}
+	}
+	for i, d := range wire.DocRequests {
+		one := legacyReaderAuthenticationBytes(t, transcript, d.ItemsRequest)
+		if shared, err := readerauth.AuthenticationBytes(transcript, d.ItemsRequest); err != nil || !bytes.Equal(shared, one) {
+			t.Errorf("AuthenticationBytes[%d] = %x, %v; want the legacy %x", i, shared, err, one)
+		}
+		if err := readerauth.VerifySignature(d.ReaderAuth, one, certA); err != nil {
+			t.Errorf("DocRequest %d ReaderAuth by the first reader: %v", i, err)
+		}
+		if err := readerauth.VerifySignature(d.ReaderAuth, one, certB); err == nil {
+			t.Errorf("DocRequest %d ReaderAuth verifies by the second reader too", i)
+		}
+	}
+	// A present DeviceRequestInfo is inserted as received, as before.
+	info := []byte{0xd8, 0x18, 0x41, 0xa0}
+	if shared, err := readerauth.AuthenticationAllBytes(transcript, items, info); err != nil || !bytes.Equal(shared, legacyReaderAuthenticationAllBytes(t, transcript, items, info)) {
+		t.Errorf("AuthenticationAllBytes with information differs from the legacy construction: %v", err)
 	}
 }
