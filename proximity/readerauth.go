@@ -124,10 +124,15 @@ func VerifyReaderAuth(req DocRequest, sessionTranscriptBytes []byte, t ReaderTru
 	if err := readerauth.VerifySignature(req.ReaderAuth, detached, chain[0]); err != nil {
 		return ReaderAuthentication{Status: ReaderInvalid, Chain: chain, Err: err}
 	}
-	if _, err := readerauth.VerifyTrust(ders, readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Revocation: t.Revocation, Now: t.Now}); err != nil {
+	if _, err := readerauth.VerifyTrust(ders, t.internal()); err != nil {
 		return ReaderAuthentication{Status: ReaderUntrusted, Chain: chain, Err: err}
 	}
 	return ReaderAuthentication{Status: ReaderTrusted, Chain: chain}
+}
+
+// internal is t as internal/readerauth takes it.
+func (t ReaderTrust) internal() readerauth.Trust {
+	return readerauth.Trust{Roots: t.Roots, LeafPolicy: t.LeafPolicy, Revocation: t.Revocation, Now: t.Now}
 }
 
 // readerAuthenticationBytes is §9.1.4's ReaderAuthenticationBytes,

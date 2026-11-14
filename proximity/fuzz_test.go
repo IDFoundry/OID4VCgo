@@ -121,3 +121,117 @@ func FuzzReaderVerify(f *testing.F) {
 		_, _ = s.reader.Verify(context.Background(), msg, fx.roots, time.Now())
 	})
 }
+
+// FuzzDecodeDeviceRequest: the request-level decoder never panics,
+// fails only with decoding or validation errors, and accepts only
+// requests within its limits whose document references name their
+// documents. Its seeds are second-edition requests with information,
+// signed and not, and Annex D's.
+func FuzzDecodeDeviceRequest(f *testing.F) {
+	f.Add(mustHex(f, annexDDeviceRequest))
+	f.Add([]byte{0xa0})
+	for _, seed := range fuzzRequestSeeds(f) {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		req, err := DecodeDeviceRequest(b)
+		if err != nil {
+			if req != nil {
+				t.Fatal("an error and a request")
+			}
+			if !errors.Is(err, ErrCBORDecoding) && !errors.Is(err, ErrCBORValidation) {
+				t.Fatalf("error is neither decoding nor validation: %v", err)
+			}
+			return
+		}
+		docs := req.DocRequests()
+		if len(docs) == 0 || len(docs) > MaxDocRequests || len(req.readerAuthAll) > MaxReaderSignatures {
+			t.Fatalf("accepted %d documents and %d signatures", len(docs), len(req.readerAuthAll))
+		}
+		info := req.RequestInfo()
+		if info == nil {
+			return
+		}
+		if info.Signed || len(info.UseCases) > MaxUseCases {
+			t.Fatalf("accepted information %+v", info)
+		}
+		sets, refs, hints := 0, 0, 0
+		for _, uc := range info.UseCases {
+			if uc.DocumentSets == nil || uc.PurposeHints == nil {
+				t.Fatal("a nil collection")
+			}
+			sets += len(uc.DocumentSets)
+			hints += len(uc.PurposeHints)
+			for _, set := range uc.DocumentSets {
+				refs += len(set)
+				for _, i := range set {
+					if i < 0 || i >= len(docs) {
+						t.Fatalf("document reference %d of %d", i, len(docs))
+					}
+				}
+			}
+			for id := range uc.PurposeHints {
+				if len(id) > MaxControllerIDBytes {
+					t.Fatalf("a %d-byte controller ID", len(id))
+				}
+			}
+		}
+		if sets > MaxDocumentSets || refs > MaxDocumentReferences || hints > MaxPurposeHints {
+			t.Fatalf("over a total: %d sets, %d references, %d hints", sets, refs, hints)
+		}
+	})
+}
+
+// FuzzVerifyDeviceRequest: verifying any decodable request never
+// panics, and with no trust anchors never trusts a reader; coverage
+// needs information and a whole-request signature.
+func FuzzVerifyDeviceRequest(f *testing.F) {
+	for _, seed := range fuzzRequestSeeds(f) {
+		f.Add(seed)
+	}
+	f.Add(mustHex(f, annexDDeviceRequest))
+	transcript := fuzzTranscript(f)
+	annexD := mustHex(f, annexDSessionTranscriptBytes)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		req, err := DecodeDeviceRequest(b)
+		if err != nil {
+			return
+		}
+		for _, session := range [][]byte{transcript, annexD} {
+			got := VerifyDeviceRequest(req, session, ReaderTrust{})
+			if got.Reader.Status == ReaderTrusted || got.Reader.Err == nil {
+				t.Fatalf("trusted with no roots: %+v", got)
+			}
+			if got.RequestInfoSigned && (req.info == nil || len(req.readerAuthAll) == 0 || got.Reader.Status == ReaderInvalid) {
+				t.Fatalf("coverage without information, a whole-request signature or validity: %+v", got)
+			}
+		}
+	})
+}
+
+// fuzzTranscript is the transcript fuzzRequestSeeds are signed over.
+func fuzzTranscript(tb testing.TB) []byte {
+	tb.Helper()
+	transcript, err := encMode.Marshal([]any{nil, nil, []any{"fuzz", []byte{1}}})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	b, err := wrapTag24(transcript)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return b
+}
+
+// fuzzRequestSeeds are second-edition requests, signed over
+// fuzzTranscript.
+func fuzzRequestSeeds(f *testing.F) [][]byte {
+	f.Helper()
+	a := newTestSigner(f)
+	transcript := fuzzTranscript(f)
+	return [][]byte{
+		testRequest{docs: testDocs(2, &a), all: []testSigner{a}, info: sampleInfo(f)}.build(f, transcript),
+		testRequest{docs: testDocs(1, nil), all: []testSigner{a, a}, info: infoOf(f, map[string]any{})}.build(f, transcript),
+		testRequest{docs: testDocs(3, nil), info: sampleInfo(f)}.build(f, transcript),
+	}
+}
