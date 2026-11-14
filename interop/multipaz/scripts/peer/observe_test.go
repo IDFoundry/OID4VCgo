@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
 func TestDescribeJWKs(t *testing.T) {
@@ -76,5 +78,23 @@ func TestRecorderRefusesAnOversizedBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestDescribeRequestInfo(t *testing.T) {
+	for want, info := range map[string]*proximity.RequestInfo{
+		"none":                    nil,
+		"signed=false use_cases=": {UseCases: []proximity.UseCase{}},
+		"signed=true use_cases=[mandatory=true sets=[0][1,0] hints=a:3,b:-2][mandatory=false sets= hints=]": {
+			Signed: true,
+			UseCases: []proximity.UseCase{
+				{Mandatory: true, DocumentSets: [][]int{{0}, {1, 0}}, PurposeHints: map[string]int32{"b": -2, "a": 3}},
+				{DocumentSets: [][]int{}, PurposeHints: map[string]int32{}},
+			},
+		},
+	} {
+		if got := describeRequestInfo(info); got != want {
+			t.Errorf("describeRequestInfo = %q, want %q", got, want)
+		}
 	}
 }

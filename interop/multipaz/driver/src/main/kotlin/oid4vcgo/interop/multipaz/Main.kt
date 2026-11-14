@@ -13,9 +13,18 @@ import kotlin.system.exitProcess
  * line each, "ok" or "FAIL"; exits 1 if any failed.
  *
  * Usage: driver -peer BINARY -verifier BINARY -setup-issuer BINARY -issuer BINARY -dir DIR
+ *
+ * Or, with -fixtures FILE alone, writes the second-edition requests'
+ * offline fixture bundle (ReaderAuthAllFixtures) to FILE, and runs no
+ * case.
  */
 fun main(args: Array<String>) {
     val flags = args.toList().chunked(2).associate { it[0] to it.getOrNull(1) }
+    flags["-fixtures"]?.let { path ->
+        runBlocking { ReaderAuthAllFixtures.write(File(path)) }
+        println("wrote $path")
+        exitProcess(0)
+    }
     val peerBinary = flags["-peer"] ?: usage()
     val dir = File(flags["-dir"] ?: usage())
     val verifierBinary = flags["-verifier"] ?: usage()
@@ -34,6 +43,7 @@ fun main(args: Array<String>) {
             val holder = Holder.create(pki, goReaderCA)
             val tls = Tls(dir)
             Cases(peer, pki, holder, issuerTrust).run() +
+                ReaderAuthAllCases(peer, pki).run() +
                 VpCases(peer, pki, holder, issuerTrust, goIACA, tls).run() +
                 VciCases(peer, pki, tls, dir).run()
         }
@@ -43,6 +53,6 @@ fun main(args: Array<String>) {
 }
 
 private fun usage(): Nothing {
-    System.err.println("usage: driver -peer BINARY -verifier BINARY -setup-issuer BINARY -issuer BINARY -dir DIR")
+    System.err.println("usage: driver -peer BINARY -verifier BINARY -setup-issuer BINARY -issuer BINARY -dir DIR\n       driver -fixtures FILE")
     exitProcess(2)
 }
