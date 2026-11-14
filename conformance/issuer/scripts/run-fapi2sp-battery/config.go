@@ -60,13 +60,6 @@ type run struct {
 	credentialIssuerCACertPEM   string
 	credentialRequestDecryptPEM string
 
-	// statusListTrustAnchorPEM is required config (HAIP) even though
-	// nothing in this battery ever exercises a Status List — confirmed
-	// live: "'Status List Trust Anchor' field is missing... It is
-	// required for HAIP". Any syntactically valid CA certificate
-	// satisfies it.
-	statusListTrustAnchorPEM string
-
 	// keyAttestationKey signs the suite's own dynamically-minted Key
 	// Attestation JWTs (Appendix D.1): its private half is what the
 	// suite's own key_attestation_jwks plan-config field needs
@@ -123,6 +116,15 @@ type run struct {
 	// mdocCRLPEM is the IACA's CRL, served at the CRL distribution
 	// point mdocSignerCertPEM names (see mdocCRLURI).
 	mdocCRLPEM string
+
+	// mdocStatusSignerKeyPEM/mdocStatusSignerCertPEM sign the Token
+	// Status List mdocs reference: an MSO revocation list signer
+	// (ISO/IEC 18013-5 Table B.9) under mdocIACACertPEM, which the
+	// suite validates the list's x5chain against. The list SD-JWT VCs
+	// reference is signed by credentialIssuerSigningKey, under
+	// credentialIssuerCACertPEM, the plan's status_list_trust_anchor_pem.
+	mdocStatusSignerKeyPEM  string
+	mdocStatusSignerCertPEM string
 }
 
 // attesterIssuer is the suite's Client Attestation "iss", and the URI
@@ -145,11 +147,6 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	attesterKey, _, attesterLeafPEM, attesterCAPEM, err := conformancecert.GenerateSignerAndCert("run-fapi2sp-battery-attester-leaf", "run-fapi2sp-battery-attester-ca", attesterIssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("generate attester key: %w", err)
-	}
-
-	_, _, statusListTrustAnchorPEM, _, err := conformancecert.GenerateCA("run-fapi2sp-battery-status-list-trust-anchor")
-	if err != nil {
-		return nil, fmt.Errorf("generate status list trust anchor: %w", err)
 	}
 
 	keyAttestationKey, _, keyAttestationLeafPEM, keyAttestationCAPEM, err := conformancecert.GenerateSignerAndCert(
@@ -201,6 +198,11 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate mdoc iaca crl: %w", err)
 	}
+	_, mdocStatusSignerKeyPEM, mdocStatusSignerCertPEM, err := conformancecert.GenerateMdocRevocationListSigner(
+		"run-fapi2sp-battery-mdoc-status-list", "FR", mdocIACACert, mdocIACAKey)
+	if err != nil {
+		return nil, fmt.Errorf("generate mdoc status list signer: %w", err)
+	}
 
 	callback := "https://localhost.emobix.co.uk:8443/test/a/" + alias + "/callback"
 
@@ -224,10 +226,9 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		credentialIssuerCACertPEM:   credentialIssuerCACertPEM,
 		credentialRequestDecryptPEM: credentialRequestDecryptPEM,
 
-		statusListTrustAnchorPEM: statusListTrustAnchorPEM,
-		keyAttestationKey:        keyAttestationKey,
-		keyAttestationLeafPEM:    keyAttestationLeafPEM,
-		keyAttestationCAPEM:      keyAttestationCAPEM,
+		keyAttestationKey:     keyAttestationKey,
+		keyAttestationLeafPEM: keyAttestationLeafPEM,
+		keyAttestationCAPEM:   keyAttestationCAPEM,
 
 		vct:                       "urn:eudi:pid:1",
 		claims:                    map[string]string{"given_name": "Jean", "family_name": "Dupont"},
@@ -274,6 +275,9 @@ func generateRun(alias, issuerBaseURL string) (*run, error) {
 		mdocSignerCertPEM: mdocSignerCertPEM,
 		mdocIACACertPEM:   mdocIACACertPEM,
 		mdocCRLPEM:        mdocCRLPEM,
+
+		mdocStatusSignerKeyPEM:  mdocStatusSignerKeyPEM,
+		mdocStatusSignerCertPEM: mdocStatusSignerCertPEM,
 	}, nil
 }
 
@@ -331,6 +335,14 @@ type serverConfig struct {
 	Deferred                          bool                                    `json:"deferred,omitempty"`
 	DPoPNonces                        bool                                    `json:"dpop_nonces,omitempty"`
 	Production                        *serverProductionConfig                 `json:"production,omitempty"`
+	StatusLists                       *serverStatusListsConfig                `json:"status_lists,omitempty"`
+}
+
+// serverStatusListsConfig mirrors cmd/conformance-issuer's
+// StatusListsConfig.
+type serverStatusListsConfig struct {
+	MdocSignerKeyPEM         string `json:"mdoc_signer_key_pem,omitempty"`
+	MdocSignerCertificatePEM string `json:"mdoc_signer_certificate_pem,omitempty"`
 }
 
 // serverProductionConfig mirrors cmd/conformance-issuer's
@@ -417,6 +429,12 @@ func buildServerConfig(r *run) ([]byte, error) {
 		// Trusted by its x5c chain, as a deployment trusts a Wallet
 		// Provider's key attestations.
 		KeyAttestation: &conformanceconfig.KeyAttestationConfig{TrustAnchorPEM: r.keyAttestationCAPEM},
+		// Every credential names its entry in the issuer's Token
+		// Status List, which the suite fetches and checks (HAIP 1.0
+		// §6.1).
+		StatusLists: &serverStatusListsConfig{
+			MdocSignerKeyPEM: r.mdocStatusSignerKeyPEM, MdocSignerCertificatePEM: r.mdocStatusSignerCertPEM,
+		},
 	}
 	if r.production {
 		var err error
@@ -546,8 +564,13 @@ func buildPlanConfig(r *run, credentialFormat, proofTypeHint string) ([]byte, er
 			"credential_proof_type_hint":  proofTypeHint,
 		},
 		"credential": map[string]any{
-			"trust_anchor_pem":             trustAnchorPEM,
-			"status_list_trust_anchor_pem": r.statusListTrustAnchorPEM,
+			"trust_anchor_pem": trustAnchorPEM,
+			// The SD-JWT VC's Status List Token is signed by the
+			// credential issuer's own key, its certificate in x5c
+			// (ValidateStatusListTokenX5cCertificateChain); an mdoc's
+			// list x5chain is validated against trust_anchor_pem, the
+			// IACA (ValidateMdocRevocationListCertificateChain).
+			"status_list_trust_anchor_pem": r.credentialIssuerCACertPEM,
 		},
 		"browser": []browserBlock{consentBlock},
 		"override": map[string]overrideEntry{

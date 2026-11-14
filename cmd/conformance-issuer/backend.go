@@ -5,6 +5,7 @@ import (
 	"github.com/idfoundry/fapigo/storage"
 
 	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // backend is what Config.Production changes in the wiring newServers
@@ -21,6 +22,10 @@ type backend interface {
 	// issuer adjusts the Credential Issuer's configuration and
 	// dependencies.
 	issuer(cfg *issuer.Config, deps *issuer.Dependencies) error
+
+	// statusIndices is where Config.StatusLists keeps its reservations
+	// and statuses.
+	statusIndices() statuslist.IndexStore
 }
 
 // newBackend is the development wiring's backend, which changes
@@ -41,3 +46,7 @@ func (developmentBackend) authorizationServer(_ *server.Config, _ *server.Depend
 }
 
 func (developmentBackend) issuer(*issuer.Config, *issuer.Dependencies) error { return nil }
+
+func (developmentBackend) statusIndices() statuslist.IndexStore {
+	return &statuslist.MemoryIndexStore{}
+}

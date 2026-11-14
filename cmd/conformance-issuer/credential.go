@@ -86,6 +86,9 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 				return nil, nil
 			}
 			req.SDJWTClaims, req.MdocClaims = content()
+			if cfg.lists != nil {
+				req.PerBatch = cfg.lists.perBatch
+			}
 			return nil, nil
 		},
 	})
@@ -133,7 +136,11 @@ func deferredCredentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Ver
 		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: endpoint, Tokens: tokens},
 		Resolve: func(ctx context.Context, _ issuer.Grant, transactionID string, _ issuer.DeferredTransactionRecord) error {
 			sdjwtClaims, mdocClaims := content()
-			return iss.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims})
+			issuance := issuer.DeferredIssuance{SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims}
+			if cfg.lists != nil {
+				issuance.PerBatch = cfg.lists.perBatch
+			}
+			return iss.IssueDeferredCredential(ctx, transactionID, issuance)
 		},
 	})
 }

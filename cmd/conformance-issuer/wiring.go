@@ -294,6 +294,16 @@ func newServers(cfg Config) (servers, error) {
 		}
 		issDeps.MdocSigner = mdocSigner
 	}
+	if cfg.StatusLists != nil {
+		mdocListSigner, err := mdocStatusListSigner(cfg, issDeps.MdocSigner)
+		if err != nil {
+			return servers{}, err
+		}
+		sdjwtListSigner := statusListSigner{key: issuerSigningKey, chain: []*x509.Certificate{issuerCertificate}}
+		if cfg.lists, err = newStatusLists(cfg, stores.statusIndices(), sdjwtListSigner, mdocListSigner); err != nil {
+			return servers{}, err
+		}
+	}
 
 	attestationVerifier, err := addKeyAttestationProofType(cfg, attestationTargets...)
 	if err != nil {
@@ -350,6 +360,9 @@ func newServers(cfg Config) (servers, error) {
 		return servers{}, err
 	}
 	s := servers{public: public}
+	if cfg.lists != nil {
+		cfg.lists.route(public)
+	}
 	if cfg.Offers != nil {
 		s.offers = offersHandler(iss, cfg)
 	}

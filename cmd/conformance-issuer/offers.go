@@ -267,6 +267,9 @@ func offersHandler(iss *issuer.Issuer, cfg Config) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(resp)
 	})
+	if cfg.lists != nil {
+		mux.HandleFunc("POST /status", cfg.lists.statusHandler)
+	}
 	return mux
 }
 

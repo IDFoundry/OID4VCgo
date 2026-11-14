@@ -144,6 +144,16 @@ type Config struct {
 	// mints (§6.2). Off, the authorization code flow is scope-based.
 	AuthorizationDetails bool `json:"authorization_details,omitempty"`
 
+	// StatusLists, when set, gives every Credential issued a Token
+	// Status List reference and serves the list (see
+	// StatusListsConfig). Off, credentials carry no status.
+	StatusLists *StatusListsConfig `json:"status_lists,omitempty"`
+
+	// lists is StatusLists' list, which newServers builds: what the
+	// Credential and Deferred Credential Endpoints allocate from, and
+	// the offers listener's statusHandler changes.
+	lists *statusLists
+
 	// Production, when set, runs the Authorization Server and the
 	// Credential Issuer under production assurance (see
 	// ProductionConfig). Only a binary built with the
@@ -356,6 +366,9 @@ func loadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: exactly one of key_attestation.trusted_jwk and key_attestation.trust_anchor_pem is required when key_attestation is present")
 	}
 	if err := validateProduction(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateStatusLists(cfg); err != nil {
 		return Config{}, err
 	}
 	if cfg.DefaultSubject == "" {
