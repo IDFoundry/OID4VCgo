@@ -93,6 +93,40 @@ come from anyone who scanned the code. As over the Digital Credentials
 API, ``WalletConfiguration/requireTrustedMdocReader`` ends a session
 from any other reader before the holder sees it.
 
+### Use cases and purpose hints
+
+A reader following the ISO/IEC 18013-5 second-edition draft may sign
+the whole request rather than each document, and say why it asks:
+``ProximityPresentation/Request/requestInfo`` holds its use cases, each
+with ``ProximityPresentation/UseCase/mandatory``,
+``ProximityPresentation/UseCase/documentSets`` (groups of indices into
+``ProximityPresentation/Request/documents``) and
+``ProximityPresentation/UseCase/purposeHints`` (an `Int32` purpose code
+per controller ID, as the reader sent it). It is `nil` when the reader
+sent none, as a first-edition reader doesn't, which is different from
+present information with no use cases; keep a consent screen that works
+without it.
+
+Read ``ProximityPresentation/RequestInfo/signed`` together with the
+reader's status. `signed` is true when a verified signature over the
+whole request covers this information; it says nothing about who
+signed. ``ProximityReaderIdentity/status`` says whether that signer is
+one the wallet trusts. Even signed by a trusted reader, the hints are
+the reader's claims: the library doesn't check that a purpose is true,
+or that the reader's certificate allows it to ask, and translating
+purpose codes is the app's.
+
+```swift
+/// The purpose hints to show, and whether a reader the wallet trusts vouched for them.
+func purposeHints(_ request: ProximityPresentation.Request) -> (hints: [String], vouched: Bool) {
+    guard let info = request.requestInfo else { return ([], false) } // a first-edition reader
+    let hints = info.useCases.flatMap { useCase in
+        useCase.purposeHints.map { "\($0.key): \($0.value)" }
+    }
+    return (hints, info.signed && request.reader.status == .trusted)
+}
+```
+
 ### Several documents at once
 
 A reader may ask for several documents in one request: an mDL, a photo

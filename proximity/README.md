@@ -121,11 +121,14 @@ notifications.
    Server2Client notifications, then writes `0x01` (start) to State.
 5. **Request.** The reader sends `Establishment(docType, elements)`. The
    mdoc passes it to `HandleSessionEstablishment`, then
-   `ParseDeviceRequest`, then `VerifyReaderAuth` with its trusted reader
-   roots, and shows a consent prompt: who is asking, what, and whether
-   the reader says it will keep each element. A reader that passes
-   `NewReaderSession` `WithReaderAuth(key, chain)` signs its request
-   (§9.1.4). `VerifyReaderAuth`'s `Status` is one of:
+   `DecodeDeviceRequest`, then `VerifyDeviceRequest` with its trusted
+   reader roots, and shows a consent prompt: who is asking, what, and
+   whether the reader says it will keep each element. A reader that
+   passes `NewReaderSession` `WithReaderAuth(key, chain)` signs its
+   request (§9.1.4); a second-edition reader may sign it as a whole
+   instead, or as well (see [Second-edition requests](#second-edition-requests)).
+   The `Reader.Status` of `VerifyDeviceRequest`, as of the per-document
+   `VerifyReaderAuth`, is one of:
    - **`ReaderTrusted`:** the signature verifies, by a certificate that
      chains to the roots. `Chain[0]` names the reader.
    - **`ReaderUntrusted`:** the signature verifies, but the certificate
@@ -173,6 +176,77 @@ notifications.
    it, don't: start a new session with a new `NewDeviceSession`
    (§8.3.3.1.1.8).
 
+## Second-edition requests
+
+The ISO/IEC 18013-5 second-edition draft lets a reader sign the whole
+request (`readerAuthAll`) and send request-level information
+(`deviceRequestInfo`): use cases, each with a `mandatory` flag, document
+sets (groups of the request's documents) and purpose hints (an integer
+purpose code per controller ID). This package reads them in the working
+representation Multipaz 0.102.0 builds; that representation, and the
+validity rules below, still have to be checked against the ballot
+text, so they are this library's profile, not a conformance claim.
+
+`DecodeDeviceRequest` returns an opaque `*DeviceRequest`. Its
+`DocRequests()` and `RequestInfo()` return copies, nil `RequestInfo`
+when the reader sent none and an empty one for present but empty
+information. It checks what it reads: a present `readerAuthAll` is an
+array of 1 to `MaxReaderSignatures` (8) signatures, a present
+`deviceRequestInfo` is `#6.24(bstr .cbor map)`, neither may be null,
+known fields must have their types, document indices must name one of
+the request's documents and purpose codes must fit a signed 32-bit
+integer. Unknown fields are accepted and stay signed as received; they
+aren't interpreted. Duplicate keys are refused anywhere, the embedded
+information included. A request over any limit is refused whole, never
+truncated:
+
+| Limit | Value |
+|---|---:|
+| `MaxReaderSignatures` | 8 |
+| `MaxDeviceRequestInfoBytes` (tag and byte string head included) | 65,536 |
+| `MaxUseCases` | 16 |
+| `MaxDocumentSetsPerUseCase` / `MaxDocumentSets` (in all) | 8 / 64 |
+| `MaxDocumentReferencesPerSet` / `MaxDocumentReferences` (in all) | 8 / 256 |
+| `MaxPurposeHintsPerUseCase` / `MaxPurposeHints` (in all) | 16 / 64 |
+| `MaxControllerIDBytes` | 256 |
+
+These are resource policy, not limits from the standard; the existing
+2 MiB message, eight-document and 256-element limits still apply.
+
+`VerifyDeviceRequest` (or `DeviceSession.VerifyDeviceRequest`) checks
+every signature the request carries, each `readerAuthAll` over
+ReaderAuthenticationAll and each `readerAuth` over its document:
+
+- One that doesn't verify, or is malformed, makes the reader
+  `ReaderInvalid`, with no chain, even if another path would verify.
+  A document without its own `readerAuth` isn't invalid when the whole
+  request is signed.
+- With `readerAuthAll`, only its signers can be the reader: the first,
+  in the request's order, whose chain the `ReaderTrust` accepts is
+  `ReaderTrusted`; if none is, the reader is `ReaderUntrusted`, with
+  the first signer's chain. A trusted per-document signer doesn't stand
+  in for an untrusted whole-request one.
+- Without it, the first-edition rule holds: trusted only when one
+  trusted reader signs every document.
+
+`RequestAuthentication.RequestInfoSigned` is true when the request
+carries information and a `readerAuthAll`, and every signature
+verified: a verified signature covers the information. It is
+independent of trust. A request whose reader is untrusted can have
+signed information, and per-document trust never makes it signed.
+Neither proves that a purpose is true, or that the reader's
+certificate entitles it to ask for it; those decisions, and what
+`mandatory` and document sets oblige, are the application's.
+
+`ParseDeviceRequest` and `VerifyReaderAuth` stay as they were: a
+document-only parser that ignores the second-edition fields, so a
+request signed only as a whole looks unsigned to them. Code that needs
+whole-request trust or the information moves to the new pair;
+`walletflow.ProximityPresentation` has.
+
+This package's reader (`NewReaderSession`) still sends first-edition
+requests.
+
 ## Chunking
 
 A message can be larger than one characteristic write. Split it into
@@ -209,8 +283,8 @@ returns an error when the message is bad. Map it to a reply with
 - **`ok == false`:** the error is a verification failure, or the session
   was already closed. Show the error and disconnect.
 
-A `ParseDeviceRequest` error is a request that decrypted but isn't a
-valid DeviceRequest: `ErrCBORDecoding` for bytes that aren't CBOR,
+A `DecodeDeviceRequest` or `ParseDeviceRequest` error is a request that
+decrypted but isn't a valid DeviceRequest: `ErrCBORDecoding` for bytes that aren't CBOR,
 `ErrCBORValidation` for CBOR of the wrong shape. The holder can answer
 it inside the session instead, with `ErrorResponse(err)`: an encrypted
 DeviceResponse with no documents and status 11 or 12 (§8.3.2.1.2.3),
@@ -234,15 +308,18 @@ gattServer.advertise(session.serviceUUID())
 onMessage { msg ->            // a reassembled Client2Server message
   try {
     val req = try {
-      Proximity.parseDeviceRequest(session.handleSessionEstablishment(msg))
+      Proximity.decodeDeviceRequest(session.handleSessionEstablishment(msg))
     } catch (e: ParseError) {             // decrypted, but not a DeviceRequest
       sendChunked(session.errorResponse(e)); disconnect(); return
     }
-    val reader = session.verifyReaderAuth(req[0], readerTrust)
-    val consented = askUser(req, reader)  // null if declined
+    val auth = session.verifyDeviceRequest(req, readerTrust)
+    val docs = req.docRequests()
+    // auth.reader: who is asking; req.requestInfo() with
+    // auth.requestInfoSigned: its use cases and purpose hints.
+    val consented = askUser(docs, req.requestInfo(), auth)  // null if declined
     val reply = if (consented == null) session.termination()
       else session.encrypt(Proximity.buildDeviceResponse(
-             req[0], mdoc, deviceKey, session.sessionTranscriptBytes(), consented), false)
+             docs[0], mdoc, deviceKey, session.sessionTranscriptBytes(), consented), false)
     sendChunked(reply)                    // as Server2Client notifications
   } catch (e: Exception) {
     Proximity.statusFor(e)?.let { sendChunked(Proximity.statusMessage(it)) }
