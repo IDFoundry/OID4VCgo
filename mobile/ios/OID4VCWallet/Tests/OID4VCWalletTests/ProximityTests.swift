@@ -429,9 +429,11 @@ final class ProximityTests: XCTestCase {
         _ = try await request(holder)
         stalling.stall()
         let mdocID = s.mdocID
+        // Built outside the task: the region-based isolation checker
+        // can't follow Self.namespace captured in its closure.
+        let elements = [MdocPresentation.Element(namespace: Self.namespace, identifier: "family_name", retain: false)]
         let responding = Task {
-            try await holder.respond(document: 0, credentialID: mdocID,
-                                     elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+            try await holder.respond(document: 0, credentialID: mdocID, elements: elements)
         }
         try await stalling.sending.wait()
         responding.cancel()
