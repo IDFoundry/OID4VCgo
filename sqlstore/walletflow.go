@@ -48,7 +48,46 @@ func (d *DB) Credentials() *CredentialStore {
 			upsert: d.sql.credentialUpsert, get: d.sql.credentialGet, getForUpdate: d.sql.credentialGetForUpdate,
 			update: d.sql.credentialUpdate, list: d.sql.credentialList, delete: d.sql.credentialDelete,
 		}, rowOf: func(walletflow.StoredCredential) row { return row{} },
+		encode: func(id string, c walletflow.StoredCredential) ([]byte, error) {
+			if c.Claims != nil {
+				c.Claims, _ = textKeyed(c.Claims).(map[string]any)
+			}
+			return d.encodeRecord("wallet_credentials", id, c)
+		},
 	}}
+}
+
+// textKeyed is v with every map in it keyed by text, which JSON
+// requires: an mdoc's claims are decoded CBOR, where a map element (an
+// EUDI PID's place_of_birth, an mDL's driving_privileges entries) is a
+// map[any]any. A text key is kept as it is, any other is its fmt
+// form. Other values are left to encoding/json, as before.
+func textKeyed(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = textKeyed(e)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			key, ok := k.(string)
+			if !ok {
+				key = fmt.Sprint(k)
+			}
+			out[key] = textKeyed(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = textKeyed(e)
+		}
+		return out
+	}
+	return v
 }
 
 // Put implements walletflow.CredentialStore.
