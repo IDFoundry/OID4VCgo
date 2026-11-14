@@ -223,7 +223,9 @@ jobs:
   # oid4vci-conformance.yml; this checks it builds, and its tests.
   # cmd/conformance-verifier's production store (production.go, its
   # transactions engine's) is built the same way, and the OIDF suite
-  # runs it in oid4vp-conformance.yml.
+  # runs it in oid4vp-conformance.yml. So are the interop wallets'
+  # production stores (internal/prodwallet), which eudi-interop.yml's
+  # and waltid-interop.yml's production jobs run.
   conformance-issuer-production:
     runs-on: ubuntu-latest
     steps:
@@ -239,15 +241,15 @@ jobs:
         run: go work init . ./sqlstore
 
       - name: go vet
-        run: go vet -tags conformance_production ./cmd/conformance-issuer ./cmd/conformance-verifier
+        run: go vet -tags conformance_production ./cmd/conformance-issuer ./cmd/conformance-verifier ./internal/prodwallet ./interop/eudi/scripts/pidwallet ./interop/waltid/scripts/wallet
 
       - name: go test (race)
-        run: go test -race -tags conformance_production ./cmd/conformance-issuer ./cmd/conformance-verifier
+        run: go test -race -tags conformance_production ./cmd/conformance-issuer ./cmd/conformance-verifier ./internal/prodwallet ./interop/eudi/scripts/pidwallet ./interop/waltid/scripts/wallet
 
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
-          args: --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/...
+          args: --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/... ./internal/prodwallet/... ./interop/eudi/scripts/pidwallet/... ./interop/waltid/scripts/wallet/...
 
   # mobile/ is its own Go module too: the gomobile boundary (see
   # mobile/MOBILE.md), which needs golang.org/x/mobile.

@@ -9,7 +9,8 @@
 # disposable runner with a read-only token and no secrets. Pull
 # requests, the daily run and each release test the pinned images; the
 # weekly run tests walt.id's newest release (latest), to show a break
-# before the pin moves.
+# before the pin moves. The production job runs OID4VCgo's wallet with
+# Issuer2 and Verifier2 again at production assurance.
 name: walt.id interop
 
 on:
@@ -81,6 +82,45 @@ jobs:
             ${{ runner.temp }}/waltid-work/wallet2-*.json
           retention-days: 14
 
+  # OID4VCgo's wallet with Issuer2 and Verifier2 again, at production
+  # assurance (WALLET_ASSURANCE=production, interop/waltid/production.sh):
+  # the wallet in a container on interop/prodnet.sh's network.
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: sqlstore/go.sum
+
+      - name: Run the interop script
+        env:
+          WALTID_TAG: ${{ inputs.waltid_tag || (github.event.schedule == '45 7 * * 1' && 'latest') || '' }}
+          WALLET_ASSURANCE: production
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/waltid-work"
+          mkdir -p "$WORK"
+          [ -n "$WALTID_TAG" ] || unset WALTID_TAG
+          bash interop/waltid/run.sh 2>&1 | tee "$RUNNER_TEMP/waltid-interop.log"
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: waltid-interop-production
+          path: |
+            ${{ runner.temp }}/waltid-interop.log
+            ${{ runner.temp }}/waltid-work/*.log
+            ${{ runner.temp }}/waltid-work/production-*.json
+          retention-days: 14
+
   # Report each scheduled (or dispatched) default-branch run on an
   # issue, opened when the run fails and closed when one passes
   # (.github/scripts/scheduled-alert.sh): nothing else alerts on it.
@@ -88,7 +128,7 @@ jobs:
   # a dispatch naming a tag) has its own label, so a pinned run passing
   # doesn't close its issue.
   alert:
-    needs: [interop]
+    needs: [interop, production]
     if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -96,6 +136,6 @@ jobs:
       actions: read
     uses: ./.github/workflows/scheduled-alert.yml
     with:
-      result: ${{ needs.interop.result }}
+      result: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
       label: ${{ (github.event.schedule == '45 7 * * 1' || inputs.waltid_tag != '') && 'interop-waltid-latest' || 'interop-waltid' }}
       title: ${{ (github.event.schedule == '45 7 * * 1' || inputs.waltid_tag != '') && 'walt.id interop failure against newer walt.id images' || 'Scheduled walt.id interop failure' }}
