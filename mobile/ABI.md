@@ -47,7 +47,12 @@ wrapper is unaffected), naming the key by its index is the default,
 configuration key, so an older wrapper is unaffected), a Wallet's
 `accept_x509_san_dns` answers Verifiers identified by the
 `x509_san_dns` Client Identifier Prefix; the Swift and Kotlin libraries
-have it from OID4VCWallet 0.36.0, as `acceptX509SANDNS`.
+have it from OID4VCWallet 0.36.0, as `acceptX509SANDNS`. Also within
+version 15 (an optional configuration key, so an older wrapper is
+unaffected), a Wallet's `allowed_private_hosts` names hosts it may
+reach at a private address outside `development`; the Swift and Kotlin
+libraries have it, as `allowedPrivateHosts`, from the first
+OID4VCWallet release after 0.36.1.
 
 Also within version 15, without bumping it (callback marks and a
 detail, so an older wrapper is unaffected): a `KeyStore.Sign` or
@@ -449,7 +454,8 @@ refused, and the Kotlin library's an `IOException` and a
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
  "proof_key_by_jwk": false,
- "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "proximity_device_auth": "signature",
+ "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "allowed_private_hosts": ["issuer.corp.example"],
+ "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
  "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
  "status_cache_dir": "/absolute/path", "status_cache_key": "<base64 of 32 random bytes>",
@@ -714,6 +720,23 @@ host without pins, is `invalid_input`. The pins cover the requests Go
 makes, in development too; an app's own requests, such as to its Wallet
 Provider, are the app's to pin.
 
+`allowed_private_hosts` names hosts the wallet may reach at a private
+address (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) outside
+`development`: issuers, Authorization Servers, Verifiers, status lists
+and CRL distribution points inside the deployment's own network, an
+enterprise's or a test environment's
+(`walletflow.Config.AllowedPrivateHosts`). Each is a host name, matched
+exactly and without case; an IP address, a wildcard, a port or a
+loopback name (`localhost`, or one under `.localhost`) is
+`invalid_input`. Nothing else is lifted: a listed host is still
+refused at a loopback, link-local or shared (100.64.0.0/10) address,
+each address is checked as it's dialled, and every request is still
+https with its certificate verified (a CRL as `crl_require_https`
+says, as for any other host). List only hosts the deployment runs:
+anyone who can hand the wallet an offer or a request can have it send
+a request to any path on them. `development`'s client reaches private
+addresses anyway.
+
 `revocation` names the trust roles whose certificate chains must pass a
 check against Certificate Revocation Lists (RFC 5280), and `crls` holds
 those lists as PEM `X509 CRL` blocks. The roles are `issuer` (a
@@ -775,7 +798,8 @@ and returns `{"abi", "results", "crls", "next_refresh"}`:
   list served is the one held) or `failed`, with `error` the failure as
   `[code] message`: `network` when the point couldn't be reached
   (outside `development`, a host on a loopback, private or other
-  non-public address is unreachable), `protocol` for an HTTP error
+  non-public address is unreachable, unless it's in
+  `allowed_private_hosts` and the address is private), `protocol` for an HTTP error
   status or a list refused, `cancelled`. A failure never evicts the list
   held.
 - `crls` is every list now held, whether fetched or given in `crls` or
@@ -809,7 +833,8 @@ are the floor — those a CA the configuration has signed, from
 OID4VCWallet 0.29.0 (see below). Fetches are a GET, over `http` or `https` (a CRL is
 signed, so distribution points are usually plain `http`), at most
 8 MiB, DER or one PEM block, following at most three redirects on the
-same host only, from public addresses only outside `development`
+same host only, from public addresses only outside `development`, and
+the private ones of `allowed_private_hosts`
 (the hardened client of `certrevocation.Refresher`), over one client
 whose connections every refresh of the Wallet or ProximityReader
 reuses. Once a list has been fetched from a point, later fetches are

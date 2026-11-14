@@ -222,6 +222,14 @@ authorizations: it is for development only.
   cover the SDK's own requests, not your app's, such as to your Wallet
   Provider: pin that client yourself (OkHttp's `CertificatePinner`, or
   a network security configuration).
+- Outside `development` the SDK's requests reach public addresses only.
+  If your issuers, Verifiers, status lists or CRL distribution points
+  are inside your own network (an enterprise's, or a test
+  environment's), name those hosts in `allowedPrivateHosts`: each host
+  name exactly, no wildcard or IP address. Only their private addresses
+  are allowed, never loopback or link-local, and TLS is still verified.
+  List only hosts you run: anyone who can hand the wallet an offer or a
+  request can have it send a request to them.
 - To refuse certificates your ecosystem's CAs have revoked, list the
   roles to check in `revocation` and give their CAs' CRLs (PEM
   `X509 CRL` blocks) in `crls`. A role listed fails closed for any CA it
@@ -259,7 +267,8 @@ signed that is current and not older than the one held, and returns a
 `CRLRefreshResult`: each point's outcome, every list now held as `crls`,
 and `nextRefresh`. A failed point keeps its list, so a refresh never
 makes things worse. Fetches go to public addresses only (outside
-`development`), over `http` or `https`: CRLs are signed, so
+`development`), and the private ones of `allowedPrivateHosts`, over
+`http` or `https`: CRLs are signed, so
 distribution points are usually plain `http`; `crlRequireHTTPS` refuses
 those, where your CAs serve `https`. A `ProximityReader` has the same
 `refreshCRLs`.

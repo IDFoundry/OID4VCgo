@@ -152,6 +152,19 @@ public data class WalletConfiguration(
      * security configuration).
      */
     @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
+    /**
+     * Hosts the wallet may reach at a private address (10/8, 172.16/12,
+     * 192.168/16, fc00::/7) outside [development]: issuers, Verifiers,
+     * status lists and CRL distribution points inside the deployment's
+     * own network, an enterprise's or a test environment's. Each is a
+     * host name, matched exactly and without case: no wildcard, IP
+     * address, port or loopback name. Nothing else is lifted: a listed
+     * host is still refused at a loopback or link-local address, and
+     * every request is still HTTPS with its certificate verified. List
+     * only hosts the deployment runs: anyone who can hand the wallet an
+     * offer or a request can have it send a request to them.
+     */
+    @SerialName("allowed_private_hosts") val allowedPrivateHosts: List<String> = emptyList(),
     /** The profile issuance follows. */
     @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
     /**

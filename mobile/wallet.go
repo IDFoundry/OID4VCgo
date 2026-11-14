@@ -145,6 +145,12 @@ type config struct {
 	// which a certificate in the verified chain must have
 	// (walletflow.TLSPins). A mismatch fails the request as tls_pin.
 	TLSPins map[string][]string `json:"tls_pins,omitempty"`
+	// AllowedPrivateHosts names hosts the wallet may reach at a private
+	// address outside development: issuers, Verifiers, status lists and
+	// CRL distribution points inside the deployment's own network. Each
+	// is a host name, matched exactly and without case: no wildcard, IP
+	// address, port or loopback name (walletflow.Config.AllowedPrivateHosts).
+	AllowedPrivateHosts []string `json:"allowed_private_hosts,omitempty"`
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf: issuer → Status Issuer
 	// identifiers (walletflow.Config.StatusIssuers).
@@ -386,7 +392,7 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 	if err := crls.configureRefresh(crlRefreshConfig{
 		points: cfg.CRLDistributionPoints, fromRoots: cfg.CRLDistributionPointsFromRoots,
 		roots: walletRevocationRoots(cfg, named), requireHTTPS: cfg.CRLRequireHTTPS, development: cfg.Development,
-		http: client,
+		http: client, privateHosts: cfg.AllowedPrivateHosts,
 	}); err != nil {
 		return nil, err
 	}
@@ -499,6 +505,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
 		ProofKeyByJWK: cfg.ProofKeyByJWK, RequireTrustedMdocReader: cfg.RequireTrustedMdocReader,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
+		AllowedPrivateHosts: cfg.AllowedPrivateHosts,
 	}
 	if cfg.AcceptX509SANDNS && cfg.VerifierRoots == "" {
 		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("accept_x509_san_dns needs verifier_roots: an x509_san_dns name is the Verifier's only through a chain to them"))
