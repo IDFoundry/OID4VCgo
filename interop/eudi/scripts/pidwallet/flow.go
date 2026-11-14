@@ -82,7 +82,7 @@ func (env *environment) newWalletflow() (*walletflow.Wallet, error) {
 	if env.production {
 		// As a deployment runs it: walletflow's own HTTP client and
 		// durable stores (production.go).
-		cfg.Development = false
+		cfg.Development, cfg.AllowedPrivateHosts = false, env.o.allowedPrivateHosts
 		deps = env.stores.Dependencies(walletflow.Dependencies{Provider: env.provider})
 	}
 	return walletflow.New(cfg, deps)

@@ -31,6 +31,11 @@ func TestLoadConfig_Assurance(t *testing.T) {
 	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, productionTestConfig(t))); err != nil {
 		t.Fatalf("production config: %v", err)
 	}
+	withHosts := productionTestConfig(t)
+	withHosts.AllowedPrivateHosts = []string{"verifier.eudi.test"}
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, withHosts)); err != nil {
+		t.Fatalf("production config with allowed_private_hosts: %v", err)
+	}
 	for name, mutate := range map[string]func(*Config){
 		"unknown assurance":   func(c *Config) { c.Assurance = "staging" },
 		"wallet engine":       func(c *Config) { c.Engine = engineWallet },
@@ -49,18 +54,23 @@ func TestLoadConfig_Assurance(t *testing.T) {
 	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err != nil {
 		t.Errorf("development: %v", err)
 	}
+	cfg.AllowedPrivateHosts = []string{"verifier.eudi.test"}
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, cfg)); err == nil {
+		t.Error("development with allowed_private_hosts: loaded")
+	}
 }
 
 // Under production, the walletflow engine builds its own HTTP client,
 // which dials public addresses only: a Verifier on loopback, as the
-// fake one is, is refused before anything is fetched — why the
-// production legs run on interop/prodnet.sh's network.
+// fake one is, is refused before anything is fetched, allowed_private_hosts
+// set or not — why the production legs run on interop/prodnet.sh's
+// network.
 func TestHandleAuthorizeWalletflow_ProductionRefusesLoopback(t *testing.T) {
 	srv, issuerCA := setupWalletUnderTest(t)
 	_, ts, built, _ := newFakeVerifierServer(t, srv, newTestQuery(t, "urn:eudi:pid:1"), issuerCA)
 	roots := srv.trust.(wallet.X5CVerifierRoots)
 	roots.Revocation = certrevocation.NoCheck{}
-	cfg := Config{VCT: "urn:eudi:pid:1", Engine: engineWalletflow, Assurance: assuranceProduction}
+	cfg := Config{VCT: "urn:eudi:pid:1", Engine: engineWalletflow, Assurance: assuranceProduction, AllowedPrivateHosts: []string{"verifier.example"}}
 	client, verified, err := cfg.verifierHTTPClient()
 	if err != nil || !verified {
 		t.Fatalf("verifierHTTPClient: %v, verified %v", err, verified)

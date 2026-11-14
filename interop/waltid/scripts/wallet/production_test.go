@@ -38,10 +38,11 @@ func TestCommonNamePolicy(t *testing.T) {
 func TestProductionNeedsRevocationAndStores(t *testing.T) {
 	cfg := walletflow.Config{VerifierTrust: wallet.X5CVerifierRoots{Roots: x509.NewCertPool()}}
 	var deps walletflow.Dependencies
-	if _, err := production(&cfg, &deps, t.TempDir(), nil); err == nil {
+	if _, err := production(&cfg, &deps, options{store: t.TempDir()}, nil); err == nil {
 		t.Error("production took no revocation check")
 	}
-	stores, err := production(&cfg, &deps, t.TempDir(), certrevocation.NoCheck{})
+	opts := options{store: t.TempDir(), allowedPrivateHosts: []string{"issuer2.example"}}
+	stores, err := production(&cfg, &deps, opts, certrevocation.NoCheck{})
 	if !prodwallet.Built {
 		if !errors.Is(err, prodwallet.ErrNotBuilt) {
 			t.Fatalf("production without the tag: %v", err)
@@ -53,7 +54,8 @@ func TestProductionNeedsRevocationAndStores(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = stores.Close() })
 	roots, _ := cfg.VerifierTrust.(wallet.X5CVerifierRoots)
-	if cfg.Development || cfg.StatusRevocation == nil || cfg.IssuerLeafPolicy == nil || roots.LeafPolicy == nil || deps.Keys == nil || deps.HTTP != nil {
+	if cfg.Development || cfg.StatusRevocation == nil || cfg.IssuerLeafPolicy == nil || roots.LeafPolicy == nil || deps.Keys == nil || deps.HTTP != nil ||
+		len(cfg.AllowedPrivateHosts) != 1 || cfg.AllowedPrivateHosts[0] != "issuer2.example" {
 		t.Fatalf("production left %+v, %+v", cfg, deps)
 	}
 }

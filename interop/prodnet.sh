@@ -4,25 +4,26 @@
 # false, wallet's and fapigo/client's AssuranceProduction), talking to
 # the other side's services as it would to a deployment's.
 #
-# Production's HTTP client dials public addresses only, and production
-# has no setting that lifts that for walletflow, so the wallet can't
-# reach a service on loopback or on a private Docker network. These
+# Production's HTTP client dials public addresses only, besides the
+# private addresses of hosts the wallet is configured to allow
+# (walletflow.Config.AllowedPrivateHosts, wallet.Config.Fetch's and
+# fapihttp.TransportConfig's), as a deployment whose services are
+# inside its own network configures it; loopback stays refused. These
 # legs run the wallet, built for Linux, in a container on a network of
 # their own (prodnet_create): internal, so nothing on it has a route
-# out, and on a subnet of global unicast space (PRODNET_SUBNET), so the
-# addresses of the other side's containers, attached to it under the
-# names their URLs carry (prodnet_attach), are public ones to that
-# client. The wallet's TLS roots are the system's, which the container
-# reads from SSL_CERT_FILE: the run's TLS CA. Those two are the only
-# things that aren't production's: the wallet's client is the one
-# production builds, nothing in it relaxed, and its stores are
-# sqlstore's (internal/prodwallet). A CRL publisher the wallet runs in
-# its own process for its revocation checks stays on its loopback, as
-# internal/conformancecrl documents.
+# out, on a private subnet Docker assigns. The other side's
+# containers are attached to it under the names their URLs carry
+# (prodnet_attach), and the wallet is given exactly those names to
+# allow, so every other private address, and every name that isn't
+# theirs, is still refused. The wallet's TLS roots are the system's,
+# which the container reads from SSL_CERT_FILE: the run's TLS CA. Those
+# roots and the allowed names are what a deployment on a private
+# network configures too; nothing else is relaxed: the wallet's client
+# is the one production builds, and its stores are sqlstore's
+# (internal/prodwallet). A CRL
+# publisher the wallet runs in its own process for its revocation
+# checks stays on its loopback, as internal/conformancecrl documents.
 
-# PRODNET_SUBNET is global unicast space no address check refuses. The
-# network is internal: no packet to or from it leaves the Docker host.
-PRODNET_SUBNET="${PRODNET_SUBNET:-11.84.0.0/24}"
 # The image the wallet runs in: static binaries, nothing else.
 PRODNET_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
@@ -47,11 +48,17 @@ prodnet_build() {
   done
 }
 
-# prodnet_create NAME: the internal network on PRODNET_SUBNET.
+# prodnet_create NAME: the internal network, on a subnet Docker assigns
+# from its private address pools.
 prodnet_create() {
   local name="$1"
   docker network rm "$name" >/dev/null 2>&1 || true
-  docker network create --internal --subnet "$PRODNET_SUBNET" "$name" >/dev/null
+  docker network create --internal "$name" >/dev/null
+}
+
+# prodnet_subnet NAME: the network's subnet, for the logs.
+prodnet_subnet() {
+  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$1" | xargs
 }
 
 # prodnet_attach NAME CONTAINER ALIAS...: connects CONTAINER to the

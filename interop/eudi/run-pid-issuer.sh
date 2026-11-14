@@ -58,7 +58,9 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-eudi-pid}"
 # WALLET_ASSURANCE=production runs the wallet as a deployment runs it
 # instead (README.md, "The wallet at production assurance"): in a
 # container on ../prodnet.sh's network, which reaches the stack at
-# PUBLIC_HOST, not loopback, and only the cases that ask that of it.
+# PUBLIC_HOST, not loopback, the one host it may reach at a private
+# address (-allowed-private-host), and only the cases that ask that of
+# it.
 WALLET_ASSURANCE="${WALLET_ASSURANCE:-development}"
 case "$WALLET_ASSURANCE" in
   development)
@@ -267,7 +269,7 @@ if [[ "$WALLET_ASSURANCE" = production ]]; then
   # wallet's network as PUBLIC_HOST.
   prodnet_create "$PRODNET"
   prodnet_attach "$PRODNET" "$(compose ps -q haproxy)" "$PUBLIC_HOST"
-  echo "  the wallet's network: $PRODNET ($PRODNET_SUBNET), HAProxy as $PUBLIC_HOST"
+  echo "  the wallet's network: $PRODNET ($(prodnet_subnet "$PRODNET")), HAProxy as $PUBLIC_HOST"
 fi
 
 if [[ -n "${PID_STOP_AFTER_UP:-}" ]]; then
@@ -297,7 +299,7 @@ wallet() {
   if [[ "$WALLET_ASSURANCE" = production ]]; then
     prodnet_run "$PRODNET" "$WORK" tls-ca.pem "$COMPOSE_PROJECT_NAME-wallet" pidwallet-linux \
       -work /work -out "result-$name.json" -client-id "$CLIENT_ID" -redirect-uri "$REDIRECT_URI" \
-      -assurance production -store "store-$name" "$@" >> pidwallet.log 2>&1 || true
+      -assurance production -store "store-$name" -allowed-private-host "$PUBLIC_HOST" "$@" >> pidwallet.log 2>&1 || true
   else
     ./pidwallet -work . -out "result-$name.json" -client-id "$CLIENT_ID" -redirect-uri "$REDIRECT_URI" "$@" \
       >> pidwallet.log 2>&1 || true

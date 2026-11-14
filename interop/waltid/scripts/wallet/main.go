@@ -221,6 +221,10 @@ type options struct {
 	// assurance is "development" or "production" (production.go), and
 	// store the directory of production's durable stores.
 	assurance, store string
+	// allowedPrivateHosts are the hosts production's client may reach
+	// at a private address: Issuer2's and Verifier2's, on the run's
+	// Docker network.
+	allowedPrivateHosts []string
 }
 
 func main() {
@@ -244,6 +248,10 @@ func main() {
 	flag.StringVar(&opts.crlSet, "crl-set", "current", "the CA's CRL this process publishes, setup's crl-publisher-SET.json in the working directory, which the wallet checks Issuer2's and Verifier2's certificates against: current, revoked-issuer, revoked-verifier or expired; none checks no revocation (OID4VCgo's issuer's CAs publish no CRL)")
 	flag.StringVar(&opts.assurance, "assurance", "development", "development, or production: walletflow as a deployment runs it (production.go), its stores in -store; -tls-ca and -resolve are then unused, the TLS roots the system's")
 	flag.StringVar(&opts.store, "store", "", "with -assurance production, the directory of the wallet's durable stores")
+	flag.Func("allowed-private-host", "with -assurance production, a host the wallet may reach at a private address (repeatable)", func(host string) error {
+		opts.allowedPrivateHosts = append(opts.allowedPrivateHosts, host)
+		return nil
+	})
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")

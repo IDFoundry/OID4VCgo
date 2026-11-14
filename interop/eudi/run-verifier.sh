@@ -232,8 +232,10 @@ start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, 
     "$config" > wallet.json
   if [[ "$WALLET_ASSURANCE" = production ]]; then
     # walletflow at production assurance, in its container: its own
-    # client, TLS verified against TLS_ANCHOR as the system's roots.
-    jq '.assurance = "production" | .listen_addr = ":8443" | del(.verifier_tls_trust_anchors_pem)' wallet.json > wallet-production.json
+    # client, TLS verified against TLS_ANCHOR as the system's roots, the
+    # verifier's host the one it may reach at a private address.
+    jq --arg host "$VERIFIER_HOST" '.assurance = "production" | .listen_addr = ":8443" | .allowed_private_hosts = [$host] | del(.verifier_tls_trust_anchors_pem)' \
+      wallet.json > wallet-production.json
     prodnet_start "$PRODNET" "$WORK" "$TLS_ANCHOR" "$CONTAINER-wallet" "127.0.0.1:$WALLET_PORT:8443" \
       conformance-wallet-vp-linux -config /work/wallet-production.json
   else

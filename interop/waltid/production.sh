@@ -8,8 +8,9 @@
 # The wallet runs in a container on ../prodnet.sh's network, where
 # serve, in a container of its own, terminates TLS for Issuer2 and
 # Verifier2 as ISSUER2_HOST and VERIFIER2_HOST, the names their base
-# URLs carry (setup's -issuer2-host, -verifier2-host). Its TLS roots are
-# the system's: the run's CA. The cases are the development run's for
+# URLs carry (setup's -issuer2-host, -verifier2-host), the two hosts the
+# wallet may reach at a private address (-allowed-private-host). Its TLS
+# roots are the system's: the run's CA. The cases are the development run's for
 # those two parties, but the negative presentations, whose tampering
 # transport production's client doesn't take; each control differs from
 # a case that passes in the one thing it names. It sets fail.
@@ -49,7 +50,7 @@ for _ in $(seq 1 50); do
   if [[ "$(docker logs "$NAME-tls" 2>&1 | grep -c 'listening on')" -ge 2 ]]; then break; fi
   sleep 0.2
 done
-echo "the wallet's network: $PRODNET ($PRODNET_SUBNET), Issuer2 as $ISSUER2_HOST:$ISSUER2_PORT, Verifier2 as $VERIFIER2_HOST:$VERIFIER2_PORT"
+echo "the wallet's network: $PRODNET ($(prodnet_subnet "$PRODNET")), Issuer2 as $ISSUER2_HOST:$ISSUER2_PORT, Verifier2 as $VERIFIER2_HOST:$VERIFIER2_PORT"
 
 fail=0
 ok() { local what="$1"; echo "  ok    $what"; }
@@ -70,7 +71,8 @@ issuer2_offer() {  # $1 Issuer2's profile: a pre-authorized code offer of it
 wallet() {  # $1 name; then the wallet's options
   local name="$1"; shift
   prodnet_run "$PRODNET" "$WORK" ca.pem "$NAME-wallet" wallet-linux -tls-ca ca.pem -out "$name.json" \
-    -assurance production -store "store-$name" "$@" >> "wallet-$name.log" 2>&1 \
+    -assurance production -store "store-$name" -allowed-private-host "$ISSUER2_HOST" -allowed-private-host "$VERIFIER2_HOST" \
+    "$@" >> "wallet-$name.log" 2>&1 \
     || echo '{"stage": "wallet", "error": "the wallet failed; see its log"}' > "$name.json"
 }
 why() {  # $1 file

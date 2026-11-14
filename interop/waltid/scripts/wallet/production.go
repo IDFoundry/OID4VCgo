@@ -29,13 +29,14 @@ func assurance(opts options, cfg *walletflow.Config, deps *walletflow.Dependenci
 	if opts.assurance != "production" {
 		return nil, nil
 	}
-	return production(cfg, deps, opts.store, revocation)
+	return production(cfg, deps, opts, revocation)
 }
 
 // production sets cfg and deps up as a deployment runs walletflow
 // (-assurance production): Development off, so walletflow builds its
 // own HTTP client (Dependencies.HTTP nil), which dials public addresses
-// only, follows no redirect and verifies TLS against the system roots;
+// only, and the private ones of -allowed-private-host's hosts, follows
+// no redirect and verifies TLS against the system roots;
 // the durable stores in store (internal/prodwallet), which receiving
 // credentials requires; StatusRevocation, the status list signers'
 // revocation check, which production requires besides
@@ -47,15 +48,15 @@ func assurance(opts options, cfg *walletflow.Config, deps *walletflow.Dependenci
 // its certificates (an extended key usage, a certificate policy):
 // setup's CA marks none, so they go by the subject's common name, which
 // only that CA, trusted for nothing else, issues.
-func production(cfg *walletflow.Config, deps *walletflow.Dependencies, store string, revocation certrevocation.Checker) (*prodwallet.Stores, error) {
+func production(cfg *walletflow.Config, deps *walletflow.Dependencies, opts options, revocation certrevocation.Checker) (*prodwallet.Stores, error) {
 	if revocation == nil {
 		return nil, errors.New("-assurance production checks revocation: -crl-set none is development's")
 	}
-	stores, err := prodwallet.Open(store)
+	stores, err := prodwallet.Open(opts.store)
 	if err != nil {
 		return nil, fmt.Errorf("-store: %w", err)
 	}
-	cfg.Development = false
+	cfg.Development, cfg.AllowedPrivateHosts = false, opts.allowedPrivateHosts
 	cfg.StatusRevocation = revocation
 	cfg.IssuerLeafPolicy = commonNamePolicy(issuer2Name, true)
 	roots, ok := cfg.VerifierTrust.(wallet.X5CVerifierRoots)

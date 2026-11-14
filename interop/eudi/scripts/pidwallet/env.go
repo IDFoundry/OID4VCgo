@@ -109,6 +109,7 @@ func (env *environment) newWallet() (*wallet.Wallet, error) {
 	}
 	if env.production {
 		cfg.Assurance, cfg.Fetch.AllowLoopbackHosts = wallet.AssuranceProduction, false
+		cfg.Fetch.AllowedPrivateHosts = env.o.allowedPrivateHosts
 	}
 	return wallet.New(cfg, wallet.Dependencies{HTTP: env.walletHTTP(), Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})
 }
