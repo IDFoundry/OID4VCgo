@@ -16,11 +16,19 @@ This binary is a conformance-suite harness. It runs `fapigo/server` and
 its production setup, below: "Production setup"), and some of its
 settings exist only for the suite:
 
-- **Credentials without status, valid for a year.** It issues each
-  credential with a 365-day `exp` and no `status` claim, so nothing can
-  revoke one. A Credential Issuer sets a status reference
-  (`statuslist`, `identifierlist`) and an `exp` matching its own
-  policy.
+- **Credentials valid for a year, their status lists in memory.**
+  It issues each credential with a 365-day `exp`. With `status_lists`
+  set, as every OIDF run sets it (see "Credential status"), each also
+  names its own entry in the issuer's Token Status List, drawn at
+  random by a `statuslist.Allocator` and served by `statuslist.Publisher`
+  at `/statuslists/1` (JWT by default, for SD-JWT VCs) and
+  `/statuslists/1/cwt` (CWT by default, for mdocs): one 1-bit list
+  of 2^16 entries, its reservations and statuses in memory
+  (`statuslist.MemoryIndexStore`) at development and in `sqlstore`
+  under the production setup, and its tokens carrying no `ttl`. Without
+  it, credentials carry no `status` claim. A Credential Issuer keeps
+  its reservations durably, sizes and rotates its lists, and sets an
+  `exp` matching its own policy.
 - **In-memory stores**, refused under `issuer.AssuranceProduction`
   (see `issuer/issuertest` for the contracts a durable store passes).
 - **No certificate revocation** for Wallet Attestation signers
@@ -48,6 +56,50 @@ settings exist only for the suite:
 
 `examples/passport-vdc`'s issuer shows the HAIP profile, status lists
 and deferred issuance together.
+
+## Credential status
+
+Every OIDF run (`run-fapi2sp-battery`'s `buildServerConfig`) sets
+`status_lists`, so every SD-JWT VC and mdoc the suite is issued names
+an entry in the issuer's Token Status List, each credential of a batch
+its own (`CredentialRequest.PerBatch`, one `Allocator.AllocateN`),
+deferred issuance included. The suite checks them on every issued
+credential, as of its 2026-11-13 `master`:
+
+- **SD-JWT VC** (`ValidateSdJwtVcCredentialClaims`): it fetches the
+  `status.status_list.uri` with `Accept: application/statuslist+jwt`
+  (`FetchStatusListToken`), requires that media type
+  (`EnsureContentTypeStatusListJwt`), validates the token's `x5c`
+  chain to `credential.status_list_trust_anchor_pem` and its signature
+  under HAIP (`ValidateStatusListTokenX5cCertificateChain`: the leaf
+  not self-signed, the anchor not in the chain), and requires the entry
+  at `idx` to be VALID (`CheckCredentialStatus`). The list is signed by
+  the SD-JWT VC issuer's own key, its certificate in `x5c`, so the plan
+  config's `status_list_trust_anchor_pem` is the issuer's CA.
+- **mdoc** (`ValidateMdocCredential`): it requires a `status_list` or
+  `identifier_list` MSO status under HAIP
+  (`ValidateMdocMsoRevocationMechanism`), fetches the list
+  (`FetchMdocRevocationList`) and requires `application/statuslist+cwt`,
+  checks the CWT's format, its signature, its signer certificate
+  against ISO/IEC 18013-5 Table B.9 (a WARNING) and its `x5chain` to
+  the IACA (`credential.trust_anchor_pem`, §12.3.6.2), and requires
+  the entry to be VALID (`EnsureMdocNotRevoked`). The list mdocs name
+  is signed by an MSO revocation list signer the IACA issues
+  (`conformancecert.GenerateMdocRevocationListSigner`, the plan's
+  `status_lists.mdoc_signer_key_pem`), not the Document Signer, whose
+  critical extended key usage Table B.9 doesn't allow.
+- **Batches** (`batch-issuance`): every credential's reference distinct
+  (`VCIEnsureBatchStatusReferencesAreDistinct`), the indices no
+  predictable sequence (`VCIEnsureBatchStatusListIndicesAreUnpredictable`),
+  and the URIs shared (`VCIWarnBatchStatusListUrisProvideHerdPrivacy`).
+
+What it doesn't check: any status but VALID. The issuer plans have no
+module that has the issuer revoke or suspend a credential and expects
+the list to say so, so the revocation path (`Allocator.SetStatus`,
+served at the offers listener's `POST /status` when `offers` is set)
+is exercised only by the interop runs whose verifiers check status
+(`conformance/README.md`). Nor does it fetch an SD-JWT VC's list in
+the CWT form, or an mdoc's in the JWT form, or check a `ttl`.
 
 ## Why this is a full FAPI 2.0 AS, not just OID4VCI endpoints
 
@@ -853,13 +905,13 @@ from the same freshly generated key material in one run, then restarts
   trusted-JWKS lookup by `kid`); since fapigo's `AttesterTrust` (FAPIgo
   PR #384), `run-fapi2sp-battery` registers that CA as the attester
   trust anchor and the `x5c` chain is what's verified.
-- **`credential.status_list_trust_anchor_pem` is required even though
-  this binary implements no status list.** The suite's own HAIP
-  variant unconditionally requires this field ("`'Status List Trust
-  Anchor' field is missing from the 'Credential' section... required
-  for HAIP"), the same required-but-unused pattern as
-  `client_attestation.key_attestation_jwks`. Fixed by generating a
-  throwaway CA and supplying its cert PEM.
+- **`credential.status_list_trust_anchor_pem` is required.** The
+  suite's own HAIP variant unconditionally requires this field
+  ("`'Status List Trust Anchor' field is missing from the 'Credential'
+  section... required for HAIP"). It was first filled with a throwaway
+  CA, while this binary issued no status; it is now the SD-JWT VC
+  issuer's CA, which the suite validates the issuer's status lists
+  against (see "Credential status").
 - **The suite's own `implicitCallback.html` page has a universal,
   suite-side JS bug affecting every module needing a real browser
   round trip.** It loads Bootstrap 5.3.3 from a CDN, which the suite's

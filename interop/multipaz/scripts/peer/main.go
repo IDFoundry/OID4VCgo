@@ -47,6 +47,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -91,6 +92,10 @@ type request struct {
 	Request    string `json:"request,omitempty"`
 	Protocol   string `json:"protocol,omitempty"`
 	VerifierCA string `json:"verifier_ca,omitempty"`
+
+	// Status is what status_set gives the holder's credential of
+	// Format: VALID, INVALID or SUSPENDED.
+	Status string `json:"status,omitempty"`
 }
 
 // reply is the answer to one request: Error says why it failed.
@@ -178,6 +183,9 @@ type peer struct {
 	// OpenID4VP's: see vp.go; OpenID4VCI's: see vci.go.
 	vp  vpState
 	vci vciState
+
+	// The status lists the holder's credentials name: see status.go.
+	status statusState
 }
 
 // readerKey is a reader authentication key and its chain.
@@ -219,10 +227,12 @@ func newPeer(dir, verifierBinary string, vci vciState) (*peer, error) {
 		}
 		p.readerCAs[name] = k
 	}
-	if err := p.issueMDL(dsKey, ds); err != nil {
+	// setupVP makes the TLS certificate the status lists are served
+	// with, which the mDL names.
+	if err := p.setupVP(dir, ca{iaca, iacaKey}, ca{readerCA, readerCAKey}, ca{other, otherKey}); err != nil {
 		return nil, err
 	}
-	if err := p.setupVP(dir, ca{iaca, iacaKey}, ca{readerCA, readerCAKey}, ca{other, otherKey}); err != nil {
+	if err := p.issueMDL(dsKey, ds); err != nil {
 		return nil, err
 	}
 	if p.vci.provider, err = newProvider(dir); err != nil {
@@ -257,10 +267,16 @@ func (p *peer) issueMDL(dsKey *ecdsa.PrivateKey, ds *x509.Certificate) error {
 		"family_name": "Mustermann", "given_name": "Erika", "birth_date": "1971-09-01",
 		"issuing_country": "US", "document_number": "OID4VCGO-1", "age_over_18": true, "age_over_21": true,
 	}
+	// Its entry in the Document Signer's status list (status.go).
+	ref, err := p.allocateStatus("mso_mdoc", dsKey, []*x509.Certificate{ds}, statuslist.FormCWT)
+	if err != nil {
+		return err
+	}
 	issued, err := mdoc.Issue(dsKey, oid4vci.COSEES256, mdoc.Claims{
 		DocType: docType, NameSpaces: map[string]map[string]any{nameSpace: claims},
 		DeviceKey: k.Public().(*ecdsa.PublicKey),
 		Signed:    now.Add(-time.Minute), ValidFrom: now.Add(-time.Minute), ValidUntil: now.Add(24 * time.Hour),
+		Status: &mdoc.StatusListRef{Idx: ref.Idx, URI: ref.URI},
 	}, mdoc.IssueOptions{X5Chain: [][]byte{ds.Raw}})
 	if err != nil {
 		return err
@@ -325,6 +341,8 @@ func (p *peer) do(req request) (reply, error) {
 		return p.issuerStart()
 	case "wallet_receive":
 		return p.walletReceive(ctx, req)
+	case "status_set":
+		return p.statusSet(req)
 	}
 	return reply{}, fmt.Errorf("unknown op %q", req.Op)
 }

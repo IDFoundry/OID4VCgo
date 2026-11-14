@@ -83,6 +83,11 @@ ISSUER_PORT=$((BASE_PORT + 21)) OFFERS_PORT=$((BASE_PORT + 22)) ATTESTER_PORT=$(
 # OID4VCgo's issuer listens here, behind serve's tap on ISSUER_PORT,
 # which logs what Wallet2 sends it.
 ISSUER_INNER_PORT=$((BASE_PORT + 23))
+# A second instance of OID4VCgo's issuer, for OID4VCgo's wallet, named
+# localhost (walletflow's development fetcher reaches loopback for a
+# loopback name alone), with its offers listener; Verifier2 fetches its
+# status lists through serve's tap on STATUS_TAP_PORT, as $HOST.
+STATUS_ISSUER_PORT=$((BASE_PORT + 27)) STATUS_OFFERS_PORT=$((BASE_PORT + 28)) STATUS_TAP_PORT=$((BASE_PORT + 29))
 VERIFIER_PORT=$((BASE_PORT + 31)) # and the next three
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
@@ -91,7 +96,7 @@ NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
 for p in "$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT" \
-  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
+  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -176,12 +181,15 @@ run_service() {  # $1 name, $2 image, $3 its config directory, $4 host port, $5 
     -v "$WORK/waltid/$dir/config:/waltid-$dir/config" "$@" "$image" >/dev/null
 }
 run_service issuer2 "$ISSUER2_IMAGE" issuer-api2 "$ISSUER2_HTTP" 7005
-run_service verifier2 "$VERIFIER2_IMAGE" verifier-api2 "$VERIFIER2_HTTP" 7004
-run_service wallet2 "$WALLET2_IMAGE" wallet-api2 "$WALLET2_HTTP" 7006 -v "$WORK/truststore.p12:/trust/truststore.p12:ro" \
-  -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/trust/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
+# Verifier2 fetches OID4VCgo's issuer's status lists, and Wallet2 calls
+# the issuer, both over TLS under the run's CA.
+TRUST=(-v "$WORK/truststore.p12:/trust/truststore.p12:ro"
+  -e JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/trust/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12")
+run_service verifier2 "$VERIFIER2_IMAGE" verifier-api2 "$VERIFIER2_HTTP" 7004 "${TRUST[@]}"
+run_service wallet2 "$WALLET2_IMAGE" wallet-api2 "$WALLET2_HTTP" 7006 "${TRUST[@]}"
 
 ./serve -dir . -proxy "127.0.0.1:$ISSUER2_PORT=http://127.0.0.1:$ISSUER2_HTTP" -proxy "127.0.0.1:$VERIFIER2_PORT=http://127.0.0.1:$VERIFIER2_HTTP" \
-  -tap "$SERVE_BIND:$ISSUER_PORT=https://127.0.0.1:$ISSUER_INNER_PORT" -tap-name "$HOST" \
+  -tap "$SERVE_BIND:$ISSUER_PORT=https://127.0.0.1:$ISSUER_INNER_PORT" -tap "$SERVE_BIND:$STATUS_TAP_PORT=https://127.0.0.1:$STATUS_ISSUER_PORT" -tap-name "$HOST" \
   -attester "$SERVE_BIND:$ATTESTER_PORT" -attester-config issuer-files/driver.json -attester-mode attester-mode > serve.log 2>&1 &
 PIDS+=($!)
 
@@ -421,6 +429,102 @@ if jq -e --arg want "$UNTRUSTED_ISSUER" '.stage == "request" and (.received | le
     present-untrusted-verifier.json >/dev/null; then
   ok "control: a Verifier whose Access Certificate the wallet doesn't trust is refused, for its chain"
 else bad "control: an untrusted Verifier: $(why present-untrusted-verifier.json)"; fi
+
+echo "### OID4VCgo's issuer → OID4VCgo's wallet → walt.id Verifier2: status lists"
+# Verifier2 checks the Token Status List entry of credentials OID4VCgo's
+# issuer issued, from the list the issuer publishes (statuslist's
+# Allocator and Publisher, in cmd/conformance-issuer): its VC policies
+# are the signature and credential-status, IETF, value 0 (VALID). The
+# wallet redeems the issuer's offer, attested by its stand-in Wallet
+# Provider (setup-issuer's attester and key attestation keys), then
+# presents to a signed, encrypted session. In each control the issuer
+# revokes the credentials after issuing them (POST /status, the
+# wallet's -revoke), before the wallet presents one: the control
+# differs from the case before it in that status alone.
+#
+# The issuer is a second instance of the base profile's, named
+# localhost for OID4VCgo's wallet, its status lists published as
+# https://$HOST:$STATUS_TAP_PORT/statuslists/1 (status_lists.base_url),
+# which Verifier2 reaches through serve's tap.
+jq --arg issuer "https://localhost:$STATUS_ISSUER_PORT" --arg addr "127.0.0.1:$STATUS_ISSUER_PORT" \
+  --arg offers "127.0.0.1:$STATUS_OFFERS_PORT" --arg lists "https://$HOST:$STATUS_TAP_PORT" \
+  '.issuer = $issuer | .listen_addr = $addr | .offers.listen_addr = $offers | .status_lists.base_url = $lists' \
+  issuer.json > issuer-status.json
+./issuer -config issuer-status.json > issuer-status.log 2>&1 &
+PIDS+=($!)
+for _ in $(seq 1 50); do
+  if curl -s -o /dev/null --max-time 1 --cacert ca.pem "https://localhost:$STATUS_ISSUER_PORT/.well-known/openid-credential-issuer"; then break; fi
+  sleep 0.2
+done
+STATUS_POLICIES='{"vc_policies": ["signature", {"policy": "credential-status", "argument": {"discriminator": "ietf", "value": 0}}]}'
+status_session() {  # $1 the DCQL query: prints the session's id and link
+  curl -sS --max-time 30 -X POST -H "$JSON" \
+    --data "$(jq -cn --argjson q "$1" --argjson p "$STATUS_POLICIES" \
+      '{flow_type: "cross_device", core_flow: {signed_request: true, encrypted_response: true, dcql_query: $q, policies: $p}}')" \
+    "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/create" | jq -r '"\(.sessionId) \(.bootstrapAuthorizationRequestUrl)"'
+}
+status_offer() {  # $1 the configuration: an offer of it by OID4VCgo's second issuer
+  curl -sS --max-time 30 -X POST -H "$JSON" \
+    --data "$(jq -cn --arg c "$1" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}')" \
+    "http://127.0.0.1:$STATUS_OFFERS_PORT/offers" | jq -r '.uri'
+}
+OUR_VCT="$(jq -r '.vct' issuer-files/driver.json)" OUR_DOCTYPE="$(jq -r '.doctype' issuer-files/driver.json)"
+OUR_NAMESPACE="$(jq -r '.namespace' issuer-files/driver.json)"
+OUR_PID_QUERY="$(jq -cn --arg v "$OUR_VCT" '{credentials: [{id: "pid", format: "dc+sd-jwt", meta: {vct_values: [$v]}, claims: [{path: ["family_name"]}]}]}')"
+OUR_MDOC_QUERY="$(jq -cn --arg d "$OUR_DOCTYPE" --arg n "$OUR_NAMESPACE" '{credentials: [{id: "pid", format: "mso_mdoc", meta: {doctype_value: $d}, claims: [{path: [$n, "family_name"]}]}]}')"
+# status_present has OID4VCgo's wallet redeem an offer of configuration
+# $2 and present it to a status-checking session for query $3; $4,
+# "revoked", has the issuer revoke it first. The wallet's outcome is in
+# status-$1.json, the session's info in status-$1-info.json.
+status_present() {  # $1 name, $2 configuration, $3 query, $4 "valid" or "revoked"
+  local name="$1" config="$2" query="$3" id link revoke=()
+  if [[ "$4" = revoked ]]; then revoke=(-revoke "http://127.0.0.1:$STATUS_OFFERS_PORT/status"); fi
+  read -r id link <<< "$(status_session "$query")"
+  wallet "status-$name" -issuer-ca issuer-ca.pem -mdoc-issuer-ca iaca.pem -verifier-ca ca.pem \
+    -attester-config issuer-files/driver.json -offer "$(status_offer "$config")" ${revoke[@]+"${revoke[@]}"} -request "$link"
+  # Verifier2's first status check can outlast the wallet's wait for
+  # its answer (on an emulated image, its status policy's first run
+  # took 17 s): the session says what it decided once it has.
+  for _ in $(seq 1 30); do
+    session_info "$id" > "status-$name-info.json"
+    if jq -e '.status == "SUCCESSFUL" or .status == "FAILED"' "status-$name-info.json" >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+}
+# answered reports whether the wallet's response reached Verifier2: it
+# finished, or it gave up waiting for Verifier2's answer to it.
+answered() {
+  jq -e '.stage == "done" or (.stage == "response" and (.error | contains("may or may not have reached the verifier")))' "$1" >/dev/null 2>&1
+}
+# status_policy prints the credential-status policy's results in the
+# session status-$1-info.json: success, and error when it failed.
+status_policy() {
+  jq -c '[.. | objects | select((.policy? | type) == "object" and .policy.id? == "credential-status")
+    | {success, error: (.error // .result.error // null)}]' "status-$1-info.json" 2>/dev/null | head -c 600
+}
+STATUS_REFUSAL='Status validation failed: expected one of [0], but got 1'
+for case in "pid eu.europa.ec.eudi.pid_vc_sd_jwt OUR_PID_QUERY" "mdoc eu.europa.ec.eudi.pid_mso_mdoc OUR_MDOC_QUERY"; do
+  read -r name config query <<< "$case"
+  status_present "$name" "$config" "${!query}" valid
+  if answered "status-$name.json" && jq -e '.received[0].status_lists | length >= 1' "status-$name.json" >/dev/null 2>&1 \
+      && jq -e '.status == "SUCCESSFUL"' "status-$name-info.json" >/dev/null 2>&1 \
+      && [[ "$(status_policy "$name")" == *'"success":true'* ]]; then
+    ok "$name from OID4VCgo's issuer, its status list entry $(jq -r '.received[0].status_lists[0]' "status-$name.json" | sed 's|.*/statuslists|/statuslists|'): Verifier2's credential-status policy passed, and it accepted it"
+  else bad "$name from OID4VCgo's issuer: wallet $(why "status-$name.json"), session $(jq -r '.status' "status-$name-info.json" 2>/dev/null), credential-status $(status_policy "$name")"; fi
+  status_present "$name-revoked" "$config" "${!query}" revoked
+  if jq -e '(.revoked | length >= 1) and .stage != "done"' "status-$name-revoked.json" >/dev/null 2>&1 \
+      && jq -e '.status == "FAILED"' "status-$name-revoked-info.json" >/dev/null 2>&1 \
+      && [[ "$(status_policy "$name-revoked")" == *'"success":false'*"$STATUS_REFUSAL"* ]]; then
+    ok "control: $name revoked by OID4VCgo's issuer after issuance: Verifier2 refuses it, by its credential-status policy ($STATUS_REFUSAL)"
+  else bad "control: $name revoked by the issuer: wallet $(why "status-$name-revoked.json"), revoked $(jq -c '.revoked' "status-$name-revoked.json" 2>/dev/null), session $(jq -r '.status' "status-$name-revoked-info.json" 2>/dev/null), credential-status $(status_policy "$name-revoked")"; fi
+done
+# Each check Verifier2 made, it made by fetching the list from the
+# issuer, through serve's tap, which nothing else calls: a run in which
+# it fetched nothing didn't check status at all.
+for path in /statuslists/1 /statuslists/1/cwt; do
+  if grep -q " tap: GET \"$path\" 200" serve.log; then ok "Verifier2 fetched $path from OID4VCgo's issuer: $(grep " tap: GET \"$path\" 200" serve.log | head -1 | sed 's/.* | //')"
+  else bad "Verifier2 fetched $path from OID4VCgo's issuer ($(grep ' tap: GET "/statuslists' serve.log | head -3 | sed 's/.* tap: //' | tr '\n' ';'))"; fi
+done
 
 W="http://127.0.0.1:$WALLET2_HTTP"
 # wallet2 creates a Wallet2 wallet with a P-256 key, printing its id.

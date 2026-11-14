@@ -44,9 +44,10 @@ with walletflow's own request fetch and `wallet_metadata`:
 | The launch's `client_id` isn't the signed request's | the wallet refuses |
 | A query for a credential the wallet doesn't hold | the verifier receives `access_denied` |
 | The wallet trusts an unrelated CA for the verifier | the wallet refuses |
-| A revoked SD-JWT VC (its status list entry invalid) | the verifier refuses it |
+| An SD-JWT VC at a fresh status list index, then revoked (INVALID) by the issuer side and presented again | accepted, then refused (`StatusNotValid`) |
+| The same, suspended (SUSPENDED) | accepted, then refused (`StatusNotValid`) |
 | An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata, before the verifier has the metadata cached | the verifier refuses it |
-| A revoked mdoc | the verifier refuses it |
+| An mdoc at a fresh status list index, then revoked by the issuer side and presented again | accepted, then refused (`DocumentHasBeenRevoked`) |
 | SD-JWT VC PID, `openid4vp` profile, the verifier's `client_id` `x509_san_dns:localhost`, by GET and by `request_uri_method=post`, to a wallet with `accept_x509_san_dns` | accepted |
 | The same `x509_san_dns` request to a wallet without `accept_x509_san_dns` | the wallet refuses |
 | walletflow: SD-JWT VC PID and mdoc PID, `haip` profile, by GET and by `request_uri_method=post` | accepted |
@@ -84,9 +85,26 @@ The verifier is run as strictly as it can be configured:
 - Each credential carries a Token Status List reference, and the
   verifier reads it (`VERIFIER_VALIDATION_STATUSCHECK_ENABLED`): it
   fetches the list, a JWT Status List Token for the SD-JWT VC, a CWT
-  one for the mdoc, and refuses a credential whose entry is invalid.
+  one for the mdoc, and refuses a credential whose entry isn't valid.
   It never verifies the token's signature (below), so this exercises
   the reference and the entry, not the list's authenticity.
+- The lists are published as an issuer publishes them, by OID4VCgo's
+  `statuslist` ([`scripts/serve`](scripts/serve) `-publish`): an
+  `Allocator` hands each fixture credential its index, at random, and
+  keeps its status, and a `Publisher` signs the list from it on each
+  fetch, by the credential's issuer (the SD-JWT VC's key, `x5c` its
+  certificate; the mdoc's Document Signer, `x5chain` its certificate).
+  The SD-JWT VC's list takes 2 bits a status, the mdoc's 1 (ISO/IEC
+  18013-5 §12.3.6.5). serve's loopback admin listener is the issuer's
+  side: `POST /allocate` hands out an index, and `POST /status` sets
+  one's status through `Allocator.SetStatus`, so the next fetch reads
+  it (`Publisher.Invalidate`; the tokens carry no `ttl`). Each status
+  control presents a credential at an index of its own, which the
+  verifier accepts, has the issuer side revoke (or suspend) it, and
+  presents it again, which the verifier must refuse: the two
+  presentations differ in that status alone. The verifier fetched the
+  list for each presentation, the run's serve.log shows: v0.12.0
+  doesn't cache it.
 - SD-JWT VC Type Metadata is required (`always_required`), resolved for
   `urn:eudi:pid:1` and checked against the credential's `vct#integrity`
   (`..._INTEGRITY_ENABLED`).
@@ -131,8 +149,10 @@ Every key, certificate and document is throwaway, made per run by
 [`scripts/setup`](scripts/setup):
 
 - the wallet's fixture credentials, an SD-JWT VC under a CA and an mdoc
-  under an IACA, and their x5c-signed Status List Tokens (index 0 valid,
-  1 invalid);
+  under an IACA, whose issuers' keys sign the status lists serve
+  publishes (setup's fixed Status List Tokens, index 0 valid and 1
+  invalid, are what serve serves without `-publish`, for
+  [`run-wallet.sh`](run-wallet.sh));
 - the PID's Type Metadata;
 - the verifier's Access Certificate (its Request Object signing key, a
   P-521 leaf under a CA the wallet trusts; EUDI refuses a self-signed
@@ -157,8 +177,9 @@ interop/eudi/run-verifier.sh
 VERIFIER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint:latest interop/eudi/run-verifier.sh
 ```
 
-`PORT`, `WALLET_PORT` and `SERVE_PORT` (18443, 18444 and 18445) move
-the listeners, and `WORK` keeps the run's files. On Linux, `serve`
+`PORT`, `WALLET_PORT`, `SERVE_PORT` and `ADMIN_PORT` (18443 to
+18446) move the listeners, `CONTAINER` names the verifier's container,
+and `WORK` keeps the run's files. On Linux, `serve`
 listens on the Docker bridge's gateway, which the verifier reaches as
 `host.docker.internal`.
 
@@ -547,8 +568,10 @@ finding 1.
   issuer issues none.
 - `authorization_details` in the Token Request, beyond the refusal:
   finding 2.
-- Status lists in issued credentials: `cmd/conformance-issuer` issues
-  none.
+- Status lists in issued credentials: this run's `cmd/conformance-issuer`
+  issues none (it leaves `status_lists` unset), and the library is a
+  wallet, which wouldn't check them. The OIDF issuer runs, and the
+  walt.id run's Verifier2, check the issuer's.
 - Key attestations trusted by `x5c` or a trust chain: the issuer trusts
   one configured key. Several key-attested proofs in one request: the
   library sends one (ETSI TS 119 472-3).

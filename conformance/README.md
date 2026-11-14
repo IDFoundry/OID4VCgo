@@ -87,13 +87,25 @@ runs still don't exercise, in particular:
   SQLite store (`verifier/README.md`'s "Transactions engine").
 - The issuer's production setup beyond its single-instance SQLite
   stores: PostgreSQL, several instances sharing them
-  (`DeploymentHorizontallyScaled`), status lists for the credentials
-  it issues, and certificate revocation checks on Wallet Attestation
-  and key attestation signers and on the signers of the status lists
-  their `status` claims name, which it declines
+  (`DeploymentHorizontallyScaled`), and certificate revocation checks
+  on Wallet Attestation and key attestation signers and on the signers
+  of the status lists their `status` claims name, which it declines
   (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
   suite's attestations carry no `status` claim, so the status checks
   are configured but never fetch a list.
+- A credential the issuer has revoked. Every issuer run, development
+  and production, gives each credential it issues its own entry in the
+  issuer's Token Status List (`status_lists`: `statuslist.Allocator`
+  and `Publisher`, the reservations in `sqlstore` under production),
+  and the suite fetches and checks the list for every one: an SD-JWT
+  VC's JWT, its `x5c` chain to `status_list_trust_anchor_pem`, an
+  mdoc's CWT, its `x5chain` to the IACA and its signer against ISO/IEC
+  18013-5 Table B.9, and the entry VALID (`issuer/README.md`'s
+  "Credential status"). No module has the issuer revoke or suspend a
+  credential, so the suite never reads a status but VALID. The EUDI
+  verifier, walt.id and Multipaz interop runs below do: a credential
+  revoked partway through is refused (or read INVALID) by the other
+  side's own status check.
 - Refresh tokens: under the VCI plans the suite takes the scope from
   the credential configuration's single scope-token and never asks for
   `offline_access`, and `fapigo/server` grants no scope that wasn't
@@ -165,12 +177,17 @@ allows: SD-JWT VC and mdoc presentations under its `haip` and
 Metadata checked and each credential's status list entry read, and an
 SD-JWT VC presentation to the verifier configured with an
 `x509_san_dns` client_id, to a wallet opted in to that prefix, must be
-accepted, and controls (revoked credentials, a mismatched
-`vct#integrity`, untrusted CAs on either side, a replayed request, a
-mismatched `client_id`, an unheld credential) refused
-(`interop/eudi/run-verifier.sh`). The verifier never verifies a Status
-List Token's signature, so the run shows it reads the entry and
-refuses a revoked credential, not that it would refuse a forged list.
+accepted, and controls (credentials revoked or suspended partway
+through the run, a mismatched `vct#integrity`, untrusted CAs on either
+side, a replayed request, a mismatched `client_id`, an unheld
+credential) refused (`interop/eudi/run-verifier.sh`). The status lists
+are published by OID4VCgo's `statuslist` (an `Allocator` and a
+`Publisher`, as an issuer publishes them), and a credential the run
+has the issuer side revoke after the verifier accepted it is then
+refused for its status (`StatusNotValid`, `DocumentHasBeenRevoked`).
+The verifier never verifies a Status List Token's signature, so the
+run shows it reads the entry and refuses a revoked credential, not that
+it would refuse a forged list.
 See
 [`interop/eudi/README.md`](../interop/eudi/README.md) for the cases,
 what the verifier doesn't check, and moving the pin.
@@ -218,7 +235,11 @@ response encrypted), and walt.id's Wallet obtaining PIDs from
 presenting them to `cmd/conformance-verifier`; controls (untrusted
 issuers, Verifiers and attesters, an unsigned request, and
 presentations to Verifier2 whose Key Binding JWT `nonce` or `aud`, or
-a disclosure, was changed on the way) refused. Verifier2 accepts a PID
+a disclosure, was changed on the way) refused. Verifier2 also checks
+the Token Status List of SD-JWT VC and mdoc PIDs `cmd/conformance-issuer`
+issued (its `credential-status` policy, which fetches the issuer's
+list, verifies its signature and reads the entry), and refuses one the
+issuer revoked after issuing it. Verifier2 accepts a PID
 under a certificate nobody configured it with, a known gap the run
 notes, failing if it changes. It runs
 on each pull request, daily and on each release against the pinned
@@ -247,7 +268,11 @@ Controls (untrusted readers, Verifiers, issuers and attesters, a
 DeviceResponse over another session transcript, an answer for another
 origin, a mismatched `x509_hash` client_id, and, to Multipaz's
 Verifier, a Key Binding JWT naming another nonce and an mDL signed over
-another session transcript) are refused. Multipaz's Verifier accepts a
+another session transcript) are refused. Multipaz's
+`RevocationChecker` reads the Token Status List entries of the PID and
+mDL `walletflow` presents to its Verifier, from lists OID4VCgo's
+`statuslist` publishes, VALID, and INVALID once the issuer side has
+revoked them. Multipaz's Verifier accepts a
 Key Binding JWT naming another Verifier as `aud`, a known gap the run
 notes, failing if it changes. It runs on each pull request,
 daily and on each release against the pinned release, and weekly
@@ -464,8 +489,8 @@ specific reason to suspect drift, not just when something seems off.
   automation-config mechanism FAPIgo's own OpenID-Certified
   `cmd/conformance-as` already relies on. Surfaced and fixed real gaps:
   a missing `x5c` on the suite's own emulated Client Attestation
-  signing key, a required-but-unused `status_list_trust_anchor_pem`
-  field, and — the highest-value find — a universal, suite-side
+  signing key, a required `status_list_trust_anchor_pem` field (unused
+  then; the suite now checks the issuer's status lists against it), and — the highest-value find — a universal, suite-side
   HtmlUnit/Bootstrap JS bug that leaves browser-driven modules
   `WAITING` forever with no timeout, needing the same
   `unblock-implicit-callback.py`-style workaround FAPIgo's own

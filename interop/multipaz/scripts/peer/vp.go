@@ -22,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -82,6 +83,9 @@ func (p *peer) setupVP(dir string, iaca, readerCA, other ca) error {
 	}
 	p.vp.tlsRoots = x509.NewCertPool()
 	p.vp.tlsRoots.AddCert(tlsCA)
+	if err := p.startStatus(p.vp.tlsCertPEM, p.vp.tlsKeyPEM); err != nil {
+		return err
+	}
 	for name, content := range map[string]string{
 		"go-tls-ca.pem": certPEM(tlsCA), "tls-cert.pem": p.vp.tlsCertPEM,
 		"tls-key.pem": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})),
@@ -129,12 +133,17 @@ func (p *peer) issuePID(iaca ca) error {
 	now := time.Now()
 	exp := now.Add(24 * time.Hour).Unix()
 	claims := map[string]any{"family_name": "Mustermann", "given_name": "Erika", "birthdate": "1971-09-01"}
+	// Its entry in its issuer's status list (status.go).
+	ref, err := p.allocateStatus("dc+sd-jwt", signerKey, []*x509.Certificate{signer}, statuslist.FormJWT)
+	if err != nil {
+		return err
+	}
 	additional := map[string]any{}
 	for name, value := range claims {
 		additional[name] = sdjwtvc.SD(value)
 	}
 	credential, _, err := sdjwtvc.Issue(signerKey, oid4vci.ES256, sdjwtvc.Claims{
-		VCT: pidVCT, Iss: "https://oid4vcgo.example", Exp: &exp,
+		VCT: pidVCT, Iss: "https://oid4vcgo.example", Exp: &exp, Status: ref.Claim(),
 		CNF: map[string]any{"jwk": json.RawMessage(jwk)}, Additional: additional,
 	}, sdjwtvc.IssueOptions{IssuerCertificate: signer})
 	if err != nil {

@@ -5,7 +5,11 @@
 # direct_post.jwt, under both its haip and openid4vp profiles, and over
 # the Digital Credentials API, with the verifier checking each
 # credential's Token Status List and the SD-JWT VC's Type Metadata,
-# fetched over TLS it verifies; then controls that must be refused.
+# fetched over TLS it verifies; then controls that must be refused,
+# among them a credential of each format revoked partway through the
+# run. The status lists are published by OID4VCgo's statuslist package
+# (an Allocator and a Publisher, in scripts/serve -publish), as an
+# issuer publishes them.
 # The wallet fetches each request as the wallet package does, verifying
 # the verifier's TLS certificate; the SD-JWT VC and mdoc presentations
 # run again through walletflow (its engine "walletflow"), as a wallet
@@ -26,16 +30,17 @@ VERIFIER_IMAGE="${VERIFIER_IMAGE:-ghcr.io/eu-digital-identity-wallet/eudi-srv-ve
 PORT="${PORT:-18443}"
 WALLET_PORT="${WALLET_PORT:-18444}"
 SERVE_PORT="${SERVE_PORT:-18445}"
+ADMIN_PORT="${ADMIN_PORT:-18446}"
 WORK="${WORK:-$(mktemp -d)}"
-CONTAINER=oid4vcgo-eudi-verifier
+CONTAINER="${CONTAINER:-oid4vcgo-eudi-verifier}"
 VERIFIER="https://localhost:$PORT"
 WALLET="https://localhost:$WALLET_PORT"
 # The keystore holds throwaway, per-run keys, under a per-run password.
 KEYSTORE_PASSWORD="$(openssl rand -hex 16)"
 
-for p in "$PORT" "$WALLET_PORT" "$SERVE_PORT"; do
+for p in "$PORT" "$WALLET_PORT" "$SERVE_PORT" "$ADMIN_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    echo "port $p is in use; set PORT / WALLET_PORT / SERVE_PORT" >&2
+    echo "port $p is in use; set PORT / WALLET_PORT / SERVE_PORT / ADMIN_PORT" >&2
     exit 2
   fi
 done
@@ -77,8 +82,32 @@ echo "verifier  $VERIFIER_IMAGE"
   && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
   && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521)
 cd "$WORK"
-./serve -dir . -addr "$SERVE_BIND:$SERVE_PORT" > serve.log 2>&1 &
+# serve publishes the status lists as an issuer does: an Allocator hands
+# each credential its index and keeps its status, and a Publisher signs
+# the list from it on each fetch, by the credential's issuer (the SD-JWT
+# VC's key and certificate, the mdoc's Document Signer). Its admin
+# listener is the issuer's side: allocate an index, change a status.
+./serve -dir . -addr "$SERVE_BIND:$SERVE_PORT" -publish -admin "127.0.0.1:$ADMIN_PORT" > serve.log 2>&1 &
 SERVE_PID=$!
+ADMIN="http://127.0.0.1:$ADMIN_PORT"
+for _ in $(seq 1 50); do
+  if curl -s -o /dev/null --max-time 1 -X POST "$ADMIN/status"; then break; fi
+  sleep 0.2
+done
+# allocate prints a fresh index of list $1 (jwt or cwt).
+allocate() { curl -sSf --max-time 10 -X POST "$ADMIN/allocate?list=$1" | jq -er '.idx'; }
+# set_status sets index $2 of list $1 to status $3, as the issuer
+# revokes (INVALID) or suspends a credential.
+set_status() {
+  curl -sSf --max-time 10 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg l "$1" --argjson i "$2" --arg s "$3" '{list: $l, idx: $i, status: $s}')" "$ADMIN/status" >/dev/null
+}
+# Each fixture credential its own index, valid; the controls below
+# revoke credentials of their own.
+for format in sdjwt:jwt mdoc:cwt; do
+  idx="$(allocate "${format#*:}")"
+  jq --argjson idx "$idx" '.status_list_idx = $idx' "wallet-${format%%:*}.json" > tmp.json && mv tmp.json "wallet-${format%%:*}.json"
+done
 # The verifier trusts serve's CA through the image's ca-certificates
 # buildpack, which adds each certificate in a binding of that type to
 # the JVM's trust store.
@@ -146,10 +175,11 @@ start_verifier x509_hash "$CLIENT_ID_HASH"
 # control says otherwise.
 TLS_ANCHOR=tls-cert.pem
 start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, $3 optional status list index
-  local config="$1" verifier_ca="$2" idx="${3:-0}"
+  local config="$1" verifier_ca="$2" idx="${3:-}"
   stop_wallet
-  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" --argjson idx "$idx" --rawfile tls "$TLS_ANCHOR" \
-    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca | .status_list_idx = $idx
+  jq --arg addr "127.0.0.1:$WALLET_PORT" --rawfile ca "$verifier_ca" --arg idx "$idx" --rawfile tls "$TLS_ANCHOR" \
+    '.listen_addr = $addr | .verifier_trust_anchors_pem = $ca
+     | if $idx == "" then . else .status_list_idx = ($idx | tonumber) end
      | .verifier_tls_trust_anchors_pem = $tls' "$config" > wallet.json
   ./wallet -config wallet.json >> wallet.log 2>&1 &
   WALLET_PID=$!
@@ -337,9 +367,26 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
     untrusted-verifier.json
 else bad "transaction initialized"; fi
 
-echo "== control: a revoked SD-JWT VC (status list index 1)"
-start_wallet wallet-sdjwt.json verifier-ca.pem 1
-refused sdjwt-revoked "$SDJWT_QUERY" issuer-ca.pem '{"error":"StatusNotValid","description":"Status is not Valid"}'
+# revoked_partway presents a credential at a fresh index of list $2,
+# which the verifier must accept; the issuer then sets that index to
+# $5 (INVALID: revoked, or SUSPENDED), and the same credential,
+# presented again, must be refused for its status, $6: the two
+# presentations differ in that status alone.
+revoked_partway() {  # $1 label, $2 list, $3 wallet config, $4 dcql and issuer chain, as "query chain"; $5 the status, $6 the cause
+  local name="$1" list="$2" config="$3" query chain="${4#* }" status="$5" want="$6" idx
+  query="${4%% *}"
+  echo "== control: $name, $status partway through the run"
+  idx="$(allocate "$list")"
+  start_wallet "$config" verifier-ca.pem "$idx"
+  present "$name-$status-before" "${!query}" haip "$chain" get
+  set_status "$list" "$idx" "$status"
+  echo "        the issuer set index $idx of /statuslists/$list to $status"
+  refused "$name-$status" "${!query}" "$chain" "$want"
+}
+revoked_partway sdjwt jwt wallet-sdjwt.json "SDJWT_QUERY issuer-ca.pem" INVALID \
+  '{"error":"StatusNotValid","description":"Status is not Valid"}'
+revoked_partway sdjwt jwt wallet-sdjwt.json "SDJWT_QUERY issuer-ca.pem" SUSPENDED \
+  '{"error":"StatusNotValid","description":"Status is not Valid"}'
 
 echo "== an SD-JWT VC whose vct#integrity doesn't match, once the verifier has the Type Metadata cached"
 # Not a control: v0.12.0 caches resolved Type Metadata by vct alone and
@@ -359,9 +406,7 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   fi
 else bad "transaction initialized"; fi
 
-echo "== control: a revoked mdoc (status list index 1)"
-start_wallet wallet-mdoc.json verifier-ca.pem 1
-refused mdoc-revoked "$MDOC_QUERY" iaca.pem \
+revoked_partway mdoc cwt wallet-mdoc.json "MDOC_QUERY iaca.pem" INVALID \
   "DeviceResponse contains invalid documents: Document at index '0' with docType 'eu.europa.ec.eudi.pid.1' contains the following errors: 'DocumentHasBeenRevoked'"
 
 start_wallet wallet-mdoc.json verifier-ca.pem

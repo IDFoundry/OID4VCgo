@@ -174,6 +174,10 @@ func (b *productionBackend) issuer(cfg *issuer.Config, deps *issuer.Dependencies
 	return nil
 }
 
+// statusIndices keeps Config.StatusLists' reservations and statuses in
+// sqlstore, beside the issuer's other records.
+func (b *productionBackend) statusIndices() statuslist.IndexStore { return b.issuerDB.StatusIndices() }
+
 // statusChecker fetches the Status List Tokens an attestation's status
 // claim names, signed under roots, through the shared cache: from
 // public addresses only, the signers' certificate revocation unchecked.
