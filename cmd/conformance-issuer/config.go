@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/server"
@@ -226,19 +227,43 @@ func (c Config) keyAttestationRevocation() certrevocation.Checker {
 // ProductionConfig is Config.Production: the production setup, run
 // under server.AssuranceProduction and issuer.AssuranceProduction with
 // what those require, rather than this binary's development wiring.
-// Its stores are sqlstore's and fapigo/sqlstore's, in one SQLite file,
-// with every record sealed; its access token signing key is loaded from
-// here; its proof types are jwt proofs carrying a key attestation
-// (haip.RecommendedIssuerConfig), with no attestation proof type; and
-// key attestations are trusted by their x5c chain
-// (KeyAttestationConfig.TrustAnchorPEM, required here) with their
-// status checked, as Wallet Attestations' are. It is still a test
-// harness: the database is a fresh file each run, and its keys come
-// from this configuration.
+// Its stores are sqlstore's and fapigo/sqlstore's, in one SQLite file
+// or PostgreSQL database, with every record sealed; its access token
+// signing key is loaded from here; its proof types are jwt proofs
+// carrying a key attestation (haip.RecommendedIssuerConfig), with no
+// attestation proof type; and key attestations are trusted by their
+// x5c chain (KeyAttestationConfig.TrustAnchorPEM, required here) with
+// their status checked, as Wallet Attestations' are. It is still a
+// test harness: the database is a fresh one each run, and its keys
+// come from this configuration.
 type ProductionConfig struct {
 	// DatabasePath is the SQLite file the stores keep their records in,
-	// created when absent.
-	DatabasePath string `json:"database_path"`
+	// created when absent. Set it or DatabaseURL, not both.
+	DatabasePath string `json:"database_path,omitempty"`
+
+	// DatabaseURL, in place of DatabasePath, is a PostgreSQL
+	// connection URL (pgx's) whose database the stores keep their
+	// records in: every instance given the same one shares them.
+	DatabaseURL string `json:"database_url,omitempty"`
+
+	// HorizontallyScaled says this instance is one of several sharing
+	// DatabaseURL behind one issuer URL: the Authorization Server runs
+	// with server.DeploymentHorizontallyScaled, under which its stores
+	// and keys must declare CrossInstanceConsistent, and the access
+	// token key is declared so, every instance loading the same one. It
+	// needs DatabaseURL and NonceKey.
+	HorizontallyScaled bool `json:"horizontally_scaled,omitempty"`
+
+	// NonceKey, if set, is the c_nonce key (issuer.Dependencies.NonceKeys),
+	// base64, at least issuer.MinNonceKeyBytes: the same on every
+	// instance, so that a c_nonce one issues is accepted by another.
+	// Unset, each process makes its own, as the development wiring does.
+	NonceKey string `json:"nonce_key,omitempty"`
+
+	// SweepInterval, if set, is how often (a Go duration) this instance
+	// runs Sweep over every store, as DEPLOYING.md has every instance of
+	// a deployment do. Each run is logged.
+	SweepInterval string `json:"sweep_interval,omitempty"`
 
 	// SealingKey is the 32-byte AES-256-GCM key, base64-encoded, every
 	// store seals its records with (sealing.AESGCMSealer).
@@ -273,8 +298,16 @@ func validateProduction(cfg Config) error {
 	if p == nil {
 		return nil
 	}
-	if p.DatabasePath == "" || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
-		return fmt.Errorf("config: production.database_path, production.sealing_key and production.access_token_signing_key_pem are all required when production is present")
+	if (p.DatabasePath == "") == (p.DatabaseURL == "") || p.SealingKey == "" || p.AccessTokenSigningKeyPEM == "" {
+		return fmt.Errorf("config: production.sealing_key, production.access_token_signing_key_pem and one of production.database_path and production.database_url are required when production is present")
+	}
+	if p.HorizontallyScaled && (p.DatabaseURL == "" || p.NonceKey == "") {
+		return fmt.Errorf("config: production.horizontally_scaled needs production.database_url and production.nonce_key, which every instance shares")
+	}
+	if p.SweepInterval != "" {
+		if d, err := time.ParseDuration(p.SweepInterval); err != nil || d <= 0 {
+			return fmt.Errorf("config: production.sweep_interval is not a positive duration: %q", p.SweepInterval)
+		}
 	}
 	if cfg.KeyAttestation == nil || cfg.KeyAttestation.TrustAnchorPEM == "" {
 		return fmt.Errorf("config: key_attestation.trust_anchor_pem is required when production is present: its jwt proofs carry key attestations, trusted by their x5c chain")

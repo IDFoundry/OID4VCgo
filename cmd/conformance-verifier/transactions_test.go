@@ -308,12 +308,21 @@ func TestLoadConfig_Engine(t *testing.T) {
 		mutate func(*Config)
 		ok     bool
 	}{
-		"sessions":                         {func(c *Config) { c.Engine = engineSessions }, true},
-		"transactions":                     {func(c *Config) { c.Engine = engineTransactions }, true},
-		"transactions production":          {func(c *Config) { c.Engine, c.Production = engineTransactions, production }, true},
-		"unknown":                          {func(c *Config) { c.Engine = "other" }, false},
-		"production without engine":        {func(c *Config) { c.Production = production }, false},
-		"production without a key":         {func(c *Config) { c.Engine, c.Production = engineTransactions, &ProductionConfig{DatabasePath: "x"} }, false},
+		"sessions":                  {func(c *Config) { c.Engine = engineSessions }, true},
+		"transactions":              {func(c *Config) { c.Engine = engineTransactions }, true},
+		"transactions production":   {func(c *Config) { c.Engine, c.Production = engineTransactions, production }, true},
+		"unknown":                   {func(c *Config) { c.Engine = "other" }, false},
+		"production without engine": {func(c *Config) { c.Production = production }, false},
+		"production without a key":  {func(c *Config) { c.Engine, c.Production = engineTransactions, &ProductionConfig{DatabasePath: "x"} }, false},
+		"production on PostgreSQL, swept": {func(c *Config) {
+			c.Engine, c.Production = engineTransactions, &ProductionConfig{DatabaseURL: "postgres://localhost/v", SealingKey: "a2V5", SweepInterval: "1s"}
+		}, true},
+		"production with two databases": {func(c *Config) {
+			c.Engine, c.Production = engineTransactions, &ProductionConfig{DatabasePath: "x", DatabaseURL: "postgres://localhost/v", SealingKey: "a2V5"}
+		}, false},
+		"production swept at no interval": {func(c *Config) {
+			c.Engine, c.Production = engineTransactions, &ProductionConfig{DatabasePath: "x", SealingKey: "a2V5", SweepInterval: "never"}
+		}, false},
 		"transactions with dc_api_origins": {func(c *Config) { c.Engine, c.DCAPIOrigins = engineTransactions, []string{testOrigin} }, false},
 	} {
 		t.Run(name, func(t *testing.T) {

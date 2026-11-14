@@ -203,19 +203,44 @@ type Config struct {
 
 	// Production, with the transactions engine, runs it under
 	// verifier.AssuranceProduction with a sealed, durable
-	// TransactionStore (sqlstore over SQLite): only a binary built with
-	// the conformance_production tag can (see production.go).
+	// TransactionStore (sqlstore over SQLite or PostgreSQL): only a
+	// binary built with the conformance_production tag can (see
+	// production.go).
 	Production *ProductionConfig `json:"production,omitempty"`
 }
 
 // ProductionConfig is Config.Production.
 type ProductionConfig struct {
-	// DatabasePath is the SQLite file the transactions are kept in.
-	DatabasePath string `json:"database_path"`
+	// DatabasePath is the SQLite file the transactions are kept in. Set
+	// it or DatabaseURL, not both.
+	DatabasePath string `json:"database_path,omitempty"`
+	// DatabaseURL, in place of DatabasePath, is a PostgreSQL connection
+	// URL (pgx's) whose database the transactions are kept in: every
+	// instance given the same one, and the same SealingKey, shares them,
+	// so that a request one instance began can be fetched, answered and
+	// redeemed at another.
+	DatabaseURL string `json:"database_url,omitempty"`
 	// SealingKey is the base64 32-byte AES-256-GCM key
 	// (sealing.AESGCMSealer) each transaction's response decryption
 	// key and result are sealed with.
 	SealingKey string `json:"sealing_key"`
+	// SweepInterval, if set, is how often (a Go duration) this instance
+	// runs the store's Sweep, as DEPLOYING.md has every instance of a
+	// deployment do. Each run is logged.
+	SweepInterval string `json:"sweep_interval,omitempty"`
+}
+
+// check checks p holds what the production store needs.
+func (p ProductionConfig) check() error {
+	if (p.DatabasePath == "") == (p.DatabaseURL == "") || p.SealingKey == "" {
+		return fmt.Errorf("config: production.sealing_key and one of production.database_path and production.database_url are required")
+	}
+	if p.SweepInterval != "" {
+		if d, err := time.ParseDuration(p.SweepInterval); err != nil || d <= 0 {
+			return fmt.Errorf("config: production.sweep_interval is not a positive duration: %q", p.SweepInterval)
+		}
+	}
+	return nil
 }
 
 // Engines Config.Engine names.
@@ -235,8 +260,8 @@ func (c Config) checkEngine() error {
 		if len(c.DCAPIOrigins) != 0 {
 			return fmt.Errorf("config: engine %q serves no Digital Credentials API: leave dc_api_origins unset", engineTransactions)
 		}
-		if p := c.Production; p != nil && (p.DatabasePath == "" || p.SealingKey == "") {
-			return fmt.Errorf("config: production.database_path and production.sealing_key are both required")
+		if p := c.Production; p != nil {
+			return p.check()
 		}
 	default:
 		return fmt.Errorf("config: unsupported engine %q", c.Engine)
