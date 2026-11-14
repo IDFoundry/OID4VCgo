@@ -73,6 +73,7 @@ jobs:
           path: |
             ${{ runner.temp }}/waltid-interop.log
             ${{ runner.temp }}/waltid-work/*.log
+            ${{ runner.temp }}/waltid-work/wallet-provider/*.log
             ${{ runner.temp }}/waltid-work/result-*.json
             ${{ runner.temp }}/waltid-work/receive-*.json
             ${{ runner.temp }}/waltid-work/present-*.json

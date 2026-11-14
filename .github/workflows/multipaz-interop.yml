@@ -84,6 +84,7 @@ jobs:
           path: |
             ${{ runner.temp }}/multipaz-interop.log
             ${{ runner.temp }}/multipaz-work/*.log
+            ${{ runner.temp }}/multipaz-work/*wallet-provider/*.log
           retention-days: 14
 
   # Report each scheduled (or dispatched) default-branch run on an
