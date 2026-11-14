@@ -248,12 +248,57 @@ public class ProximityPresentation internal constructor(
             get() = this is Presented || this is Declined || this is ReaderEnded || this is Cancelled || this is Failed
     }
 
-    /** The reader's request. */
+    /**
+     * The reader's request.
+     *
+     * Adding [requestInfo] changed this class's constructor and generated methods: code
+     * compiled against an earlier release must be rebuilt, though calls passing only
+     * [reader] and [documents] still compile.
+     */
     public data class Request(
         /** Who sent the request. */
         val reader: ProximityReaderIdentity,
         /** The requested documents, in the request's order, each with the held mdocs of its doctype. */
         val documents: List<MdocPresentation.Document>,
+        /**
+         * The request's use cases and purpose hints (ISO/IEC 18013-5 second edition), or
+         * null when the reader sent none — a first-edition reader, say — or this library's
+         * Go side predates them. [RequestInfo.signed] says whether a verified whole-request
+         * signature covers it; [reader] says whether that signer is trusted. Neither shows
+         * that a purpose is true, or that the reader may ask for it.
+         */
+        val requestInfo: RequestInfo? = null,
+    )
+
+    /**
+     * A request's second-edition information, as the reader sent it.
+     *
+     * @property useCases The use cases, in the request's order.
+     * @property signed Whether a verified whole-request signature (readerAuthAll) covers this
+     *   information, every signature the request carries having verified. It isn't reader
+     *   trust: see [Request.reader].
+     */
+    @Serializable
+    public data class RequestInfo(
+        @SerialName("use_cases") val useCases: List<UseCase>,
+        val signed: Boolean,
+    )
+
+    /**
+     * One use case of a request.
+     *
+     * @property mandatory The use case's mandatory flag, as the reader sent it; what it obliges
+     *   the holder to is the app's decision.
+     * @property documentSets The use case's document sets: each lists indices into
+     *   [Request.documents], in order, repeats kept.
+     * @property purposeHints Purpose codes by controller ID, as the reader sent them: neither
+     *   translated nor checked against what the reader's certificate allows.
+     */
+    @Serializable
+    public data class UseCase(
+        val mandatory: Boolean,
+        @SerialName("document_sets") val documentSets: List<List<Int>>,
+        @SerialName("purpose_hints") val purposeHints: Map<String, Int>,
     )
 
     private val engagement: EngagementJSON = decode(handle.engagement())
@@ -297,7 +342,7 @@ public class ProximityPresentation internal constructor(
                 }
                 return
             }
-            val request = decode<RequestJSON>(handle.request()).toRequest()
+            val request = decodeProximityRequest(handle.request())
             if (!advance(State.Connected, State.RequestReceived(request))) return
             // The holder decides; meanwhile the reader can only end the
             // session. Responding can take a while (a biometric prompt):
@@ -498,9 +543,14 @@ public class ProximityPresentation internal constructor(
     @Serializable
     private data class BLEModeJSON(val mode: String, @SerialName("service_uuid") val serviceUUID: String)
 
+    /** Request()'s JSON. request_info defaults to null for a Go side that predates it. */
     @Serializable
-    private data class RequestJSON(val reader: ReaderJSON, val documents: List<MdocPresentation.Document> = emptyList()) {
-        fun toRequest(): Request = Request(reader.toIdentity(), documents)
+    internal data class RequestJSON(
+        val reader: ReaderJSON,
+        val documents: List<MdocPresentation.Document> = emptyList(),
+        @SerialName("request_info") val requestInfo: RequestInfo? = null,
+    ) {
+        fun toRequest(): Request = Request(reader.toIdentity(), documents, requestInfo)
     }
 
     @Serializable
@@ -529,6 +579,13 @@ internal class HolderEngagement(val modes: List<Pair<ProximityBLEMode, UUID>>, v
         return transports.singleOrNull() ?: EitherTransport(transports)
     }
 }
+
+/**
+ * Decodes the Go side's Request() JSON into the request snapshot: the one decoding path for
+ * the session and for tests.
+ */
+internal fun decodeProximityRequest(text: String): ProximityPresentation.Request =
+    decode<ProximityPresentation.RequestJSON>(text).toRequest()
 
 /** A transport failure as the app sees it. */
 internal fun transportFailure(e: ProximityTransportException): ProximityException {

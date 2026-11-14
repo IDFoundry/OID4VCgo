@@ -119,6 +119,11 @@ func TestSessions_ProximityPresentation(t *testing.T) {
 	if req.Reader.Status != "trusted" || req.Reader.Name != "Test Shop" || len(req.Reader.Chain) != 2 || req.Reader.Error != "" {
 		t.Errorf("reader = %+v", req.Reader)
 	}
+	// A first-edition request carries no request information: an
+	// explicit null, for the app's fallback.
+	if !strings.Contains(p.Request(), `"request_info":null`) {
+		t.Errorf("request_info for a first-edition request isn't null: %s", p.Request())
+	}
 	if leaf, err := x509.ParseCertificate(sent(t, req.Reader.Chain[0])); err != nil || !leaf.Equal(reader.key.Chain[0]) {
 		t.Errorf("chain[0] isn't the reader's certificate: %v", err)
 	}
