@@ -26,20 +26,23 @@ PRODNET_SUBNET="${PRODNET_SUBNET:-11.84.0.0/24}"
 # The image the wallet runs in: static binaries, nothing else.
 PRODNET_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
-# prodnet_build SRC OUT PKG...: builds each PKG for the Docker host's
-# Linux, with the conformance_production tag (internal/prodwallet's
-# sqlstore stores), in a Go workspace holding SRC and SRC/sqlstore,
-# into OUT/NAME-linux.
+# prodnet_build SRC OUT PKG...: builds each PKG, with the Go release
+# SRC/go.mod names, for the Docker host's Linux, with the
+# conformance_production tag (internal/prodwallet's sqlstore stores),
+# in a Go workspace holding SRC and SRC/sqlstore, into OUT/NAME-linux.
 prodnet_build() {
   local src="$1" out="$2"; shift 2
-  local arch work
+  local arch work gover
   arch="$(docker version -f '{{.Server.Arch}}')"
+  # The Go release go.mod names, as CI builds with: a newer one's
+  # standard library can hide what this one refuses.
+  gover="$(sed -nE 's/^go ([0-9.]+)$/\1/p' "$src/go.mod")"
   work="$out/prodnet-go.work"
   rm -f "$work"
-  (cd "$out" && GOWORK=off go work init "$src" "$src/sqlstore" && mv go.work "$work")
+  (cd "$out" && GOWORK=off GOTOOLCHAIN="go$gover" go work init "$src" "$src/sqlstore" && mv go.work "$work")
   local pkg
   for pkg in "$@"; do
-    (cd "$src" && GOWORK="$work" CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+    (cd "$src" && GOWORK="$work" GOTOOLCHAIN="go$gover" CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
       go build -tags conformance_production -o "$out/$(basename "$pkg")-linux" "$pkg")
   done
 }
@@ -65,11 +68,11 @@ prodnet_attach() {
 # mounted at /work and the working directory, trusting DIR/CA as the
 # system's TLS roots, as this user (so its files are this user's).
 prodnet_run() {
-  local name="$1" dir="$2" ca="$3" container="$4"; shift 4
+  local name="$1" dir="$2" ca="$3" container="$4" binary="$5"; shift 5
   docker run --rm --name "$container" --network "$name" \
     --user "$(id -u):$(id -g)" -v "$dir:/work" -w /work \
     -e SSL_CERT_FILE="/work/$ca" -e SSL_CERT_DIR=/nonexistent \
-    --entrypoint "/work/$1" "$PRODNET_IMAGE" "${@:2}"
+    --entrypoint "/work/$binary" "$PRODNET_IMAGE" "$@"
 }
 
 # prodnet_start NAME DIR CA CONTAINER PUBLISH ARGS...: prodnet_run, for
@@ -78,13 +81,13 @@ prodnet_run() {
 # by and which carries no alias of the other side's, so every name the
 # wallet resolves to the other side is on NAME.
 prodnet_start() {
-  local name="$1" dir="$2" ca="$3" container="$4" publish="$5"; shift 5
+  local name="$1" dir="$2" ca="$3" container="$4" publish="$5" binary="$6"; shift 6
   docker network inspect "$name-front" >/dev/null 2>&1 || docker network create "$name-front" >/dev/null
   docker rm -f "$container" >/dev/null 2>&1 || true
   docker create --name "$container" --network "$name-front" -p "$publish" \
     --user "$(id -u):$(id -g)" -v "$dir:/work" -w /work \
     -e SSL_CERT_FILE="/work/$ca" -e SSL_CERT_DIR=/nonexistent \
-    --entrypoint "/work/$1" "$PRODNET_IMAGE" "${@:2}" >/dev/null
+    --entrypoint "/work/$binary" "$PRODNET_IMAGE" "$@" >/dev/null
   docker network connect "$name" "$container"
   docker start "$container" >/dev/null
 }

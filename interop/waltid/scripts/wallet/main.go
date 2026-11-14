@@ -341,15 +341,11 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 			return fail(err)
 		}
 	}
-	if opts.assurance == "production" {
-		// What the transport recorded stays empty: walletflow's own
-		// client takes no wrapping.
-		stores, err := production(&cfg, &deps, opts.store, revocation)
-		if err != nil {
-			return fail(err)
-		}
-		defer func() { _ = stores.Close() }()
+	stores, err := assurance(opts, &cfg, &deps, revocation)
+	if err != nil {
+		return fail(err)
 	}
+	defer func() { _ = stores.Close() }()
 	w, err := walletflow.New(cfg, deps)
 	if err != nil {
 		return fail(err)

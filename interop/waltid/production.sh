@@ -52,16 +52,17 @@ done
 echo "the wallet's network: $PRODNET ($PRODNET_SUBNET), Issuer2 as $ISSUER2_HOST:$ISSUER2_PORT, Verifier2 as $VERIFIER2_HOST:$VERIFIER2_PORT"
 
 fail=0
-ok() { echo "  ok    $1"; }
-bad() { echo "  FAIL  $1"; fail=1; }
+ok() { local what="$1"; echo "  ok    $what"; }
+bad() { local what="$1"; echo "  FAIL  $what"; fail=1; }
 JSON='Content-Type: application/json'
 UNTRUSTED='certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority'
 REVOKED='certchain: revocation: no verified path passes it: certrevocation: certificate is revoked'
 NO_CURRENT_CRL="certchain: revocation: no verified path passes it: certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer"
 
 issuer2_offer() {  # $1 Issuer2's profile: a pre-authorized code offer of it
+  local profile="$1"
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --arg p "$1" '{profileId: $p, authMethod: "PRE_AUTHORIZED"}')" \
+    --data "$(jq -cn --arg p "$profile" '{profileId: $p, authMethod: "PRE_AUTHORIZED"}')" \
     "http://127.0.0.1:$ISSUER2_HTTP/issuer2/credential-offers" | jq -r '.credentialOffer'
 }
 # wallet runs the wallet at production assurance, with stores of its
@@ -73,17 +74,21 @@ wallet() {  # $1 name; then the wallet's options
     || echo '{"stage": "wallet", "error": "the wallet failed; see its log"}' > "$name.json"
 }
 why() {  # $1 file
-  jq -c '{stage, error} | with_entries(select(.value != null))' "$1" 2>/dev/null | cut -c1-300 || head -c 300 "$1"
+  local file="$1"
+  jq -c '{stage, error} | with_entries(select(.value != null))' "$file" 2>/dev/null | cut -c1-300 || head -c 300 "$file"
 }
 session() {  # $1 signed or plain, $2 the DCQL query: the session's id and link
-  local signed=true
-  if [[ "$1" = plain ]]; then signed=false; fi
+  local mode="$1" query="$2" signed=true
+  if [[ "$mode" = plain ]]; then signed=false; fi
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --argjson q "$2" --argjson s "$signed" \
+    --data "$(jq -cn --argjson q "$query" --argjson s "$signed" \
       '{flow_type: "cross_device", core_flow: {signed_request: $s, encrypted_response: $s, dcql_query: $q}}')" \
     "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/create" | jq -r '"\(.sessionId) \(.bootstrapAuthorizationRequestUrl)"'
 }
-session_status() { curl -sS --max-time 30 "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/$1/info" | jq -r '.status'; }
+session_status() {  # $1 the session's id
+  local id="$1"
+  curl -sS --max-time 30 "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/$id/info" | jq -r '.status'
+}
 
 echo "### OID4VCgo's wallet, at production assurance ← walt.id Issuer2"
 for profile in eudiPidSdJwt eudiPidMdoc isoMdl; do
@@ -92,13 +97,14 @@ for profile in eudiPidSdJwt eudiPidMdoc isoMdl; do
     ok "$profile: issued and checked at production assurance ($(jq -r '.received[0] | "\(.format) \(.configuration_id)"' "production-receive-$profile.json"))"
   else bad "$profile: $(why "production-receive-$profile.json")"; fi
 done
-# received is the controls' check: refused as the credential is checked,
+# refused_credential is the controls' check: refused as the credential is checked,
 # for the reason $2, not before it was issued or for anything else.
 refused_credential() {  # $1 name, $2 why
-  if jq -e --arg want "$2" '.stage == "credential" and (.received | length == 0)
-      and (.error | contains("is invalid: wallet: verify issued credential: issuer certificate: " + $want))' "$1.json" >/dev/null; then
-    ok "control: refused, for $2"
-  else bad "control: $(why "$1.json")"; fi
+  local name="$1" want="$2"
+  if jq -e --arg want "$want" '.stage == "credential" and (.received | length == 0)
+      and (.error | contains("is invalid: wallet: verify issued credential: issuer certificate: " + $want))' "$name.json" >/dev/null; then
+    ok "control: refused, for $want"
+  else bad "control: $(why "$name.json")"; fi
 }
 wallet production-receive-untrusted-issuer -issuer-ca other-ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)"
 refused_credential production-receive-untrusted-issuer "$UNTRUSTED"
@@ -122,9 +128,10 @@ done
 # refused_request checks the wallet received the PID, then refused the
 # request, for $2.
 refused_request() {  # $1 name, $2 why
-  if jq -e --arg want "$2" '.stage == "request" and (.received | length == 1) and (.error | contains($want))' "$1.json" >/dev/null; then
-    ok "control: refused, for $2"
-  else bad "control: $(why "$1.json")"; fi
+  local name="$1" want="$2"
+  if jq -e --arg want "$want" '.stage == "request" and (.received | length == 1) and (.error | contains($want))' "$name.json" >/dev/null; then
+    ok "control: refused, for $want"
+  else bad "control: $(why "$name.json")"; fi
 }
 read -r id link <<< "$(session plain "$PID_QUERY")"
 wallet production-present-unsigned -issuer-ca ca.pem -verifier-ca ca.pem -offer "$(issuer2_offer eudiPidSdJwt)" -request "$link"

@@ -340,9 +340,10 @@ refused() {  # $1 label, $2 dcql, $3 issuer chain file, $4 the cause
 # the one thing it names.
 if [[ "$WALLET_ASSURANCE" = production ]]; then
   # present_production is present, checking walletflow answered.
-  present_production() {
+  present_production() {  # present's arguments
+    local name="$1"
     present "$@"
-    if grep -q 'walletflow answered pid\.' "wallet-$1.txt"; then ok "walletflow answered the query, at production assurance"
+    if grep -q 'walletflow answered pid\.' "wallet-$name.txt"; then ok "walletflow answered the query, at production assurance"
     else bad "walletflow answered the query"; fi
   }
   # refused_production runs a transaction for the query, which the
@@ -355,7 +356,7 @@ if [[ "$WALLET_ASSURANCE" = production ]]; then
       want="walletflow: presentation request: ${want//REQUEST_URI/$(jq -r '.request_uri' init.json)}"
       authorize "$name.txt" "$client_id"
       result "$name.json"
-      if jq -e '.vp_token' "$name.json" >/dev/null 2>&1; then bad "the wallet presented"
+      if jq -e '.vp_token != null' "$name.json" >/dev/null 2>&1; then bad "the wallet presented"
       elif grep -qF "$want" "$name.txt"; then ok "the wallet refused: $want"
       else bad "the wallet refused, for $want ($(head -c 300 "$name.txt" | tr -s '\n' ' '))"; fi
     else bad "transaction initialized"; fi

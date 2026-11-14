@@ -20,6 +20,18 @@ const (
 	verifier2Name = "walt.id Verifier2"
 )
 
+// assurance applies opts.assurance to cfg and deps: production's setup
+// under "production", with its stores to close; nothing otherwise
+// (stores nil, whose Close does nothing). What the wallet's recording
+// transport saw then stays empty: walletflow's own client takes no
+// wrapping.
+func assurance(opts options, cfg *walletflow.Config, deps *walletflow.Dependencies, revocation certrevocation.Checker) (*prodwallet.Stores, error) {
+	if opts.assurance != "production" {
+		return nil, nil
+	}
+	return production(cfg, deps, opts.store, revocation)
+}
+
 // production sets cfg and deps up as a deployment runs walletflow
 // (-assurance production): Development off, so walletflow builds its
 // own HTTP client (Dependencies.HTTP nil), which dials public addresses
