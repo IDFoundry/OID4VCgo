@@ -35,6 +35,8 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 | | The request's nonce changed (signed again by the Verifier's key), so the SD-JWT VC's Key Binding JWT names another nonce | Multipaz refuses it (`Failed verification of nonce`) |
 | | The same for the mDL, so its DeviceSignature is over another session transcript | Multipaz refuses it (`Device authentication signature failed to verify`) |
 | | The request names and is signed by another Verifier the wallet trusts, so the Key Binding JWT's `aud` is another client_id | known, not a control: Multipaz accepts it (finding 2); the run fails if that changes |
+| | PID and mDL, cross-device: the presentation's status list reference (`VerifiedPresentation.revocationStatus`) checked with Multipaz's `CachingRevocationChecker`, under OID4VCgo's IACA | VALID, the list's signature verified |
+| | The same credential revoked by its issuer (the peer's `status_set`) after that presentation, and presented again | Multipaz's checker reads it INVALID, the signature verified |
 | Multipaz wallet ← `cmd/conformance-issuer`, OpenID4VCI 1.0 | SD-JWT VC PID and mdoc PID, authorization code (PAR, PKCE, `scope`), Wallet Attestation and PoP, DPoP, Key Attestation proof | issued, under OID4VCgo's CAs |
 | | A pre-authorized code: Multipaz asks for the configuration by `authorization_details`, then requests it by `credential_configuration_id` | the issuer refuses it (§8.2: use `credential_identifier`) |
 | | A Wallet Attestation from an attester the issuer doesn't trust | the issuer refuses it (`invalid_client`) |
@@ -43,6 +45,30 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 | | A Wallet Attestation from an attester Multipaz's issuer doesn't trust | Multipaz's issuer refuses it |
 
 Each control is checked for its reason, not just for a failure.
+
+### Status lists
+
+The PID and mDL walletflow holds each name an entry in a Token Status
+List the peer publishes as an issuer does ([`scripts/peer`](scripts/peer)'s
+`status.go`): a `statuslist.Allocator` hands the credential its index,
+at random, and keeps its status, and a `statuslist.Publisher` signs
+the list from it on each fetch, by the credential's own issuer (the
+PID's signer, the mDL's Document Signer, each under OID4VCgo's IACA),
+over TLS on loopback, the tokens carrying no `ttl`. Multipaz's Verifier
+doesn't check status itself: it hands its app each verified
+presentation's status reference (`VerifiedPresentation.revocationStatus`),
+and the driver checks it as a Multipaz app does, with
+`CachingRevocationChecker` (`onlyTrusted`, `bypassCache`), given
+OID4VCgo's IACA: Multipaz fetches the list, verifies its signature and
+`x5chain`, and reads the entry. The control then has the issuer side
+revoke the credential (`Allocator.SetStatus`), walletflow presents it
+again, and Multipaz's checker must read INVALID from a list whose
+signature it verified: the two presentations differ in that status
+alone. The credential is made valid again after, for the cases that
+follow. Multipaz asks for the CWT form first (`Accept:
+application/statuslist+cwt, application/statuslist+jwt;q=0.9`), so it
+reads both lists as CWTs, the PID's included; neither form's `ttl` nor
+a SUSPENDED status is exercised (the lists take 1 bit).
 
 ### What Multipaz sends that OID4VCgo is lenient about
 
@@ -194,8 +220,12 @@ session transcript; so the origin control uses an unsigned request.
   its records server or consent pages (so only its pre-authorized
   codes).
 - Requests for several documents, transaction data, zero-knowledge
-  proofs, status lists, and OpenID4VCI's refresh tokens, deferred
-  issuance, Transaction Codes, batches, and encryption.
+  proofs, and OpenID4VCI's refresh tokens, deferred issuance,
+  Transaction Codes, batches, and encryption.
+- Status lists beyond the OpenID4VP cases above: Multipaz's reader and
+  Annex C verifier would hand the app the same reference, and the run
+  doesn't check it there; nor do OID4VCgo's sides check the status of
+  Multipaz's credentials, which carry none.
 
 ## Running it
 

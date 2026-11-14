@@ -34,7 +34,7 @@ fun main(args: Array<String>) {
             val holder = Holder.create(pki, goReaderCA)
             val tls = Tls(dir)
             Cases(peer, pki, holder, issuerTrust).run() +
-                VpCases(peer, pki, holder, issuerTrust, tls).run() +
+                VpCases(peer, pki, holder, issuerTrust, goIACA, tls).run() +
                 VciCases(peer, pki, tls, dir).run()
         }
     }

@@ -3,6 +3,8 @@ package oid4vcgo.interop.multipaz
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpsConfigurator
 import com.sun.net.httpserver.HttpsServer
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -16,9 +18,14 @@ import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.crypto.Crypto
 import org.multipaz.crypto.EcPrivateKey
 import org.multipaz.crypto.JsonWebSignature
+import org.multipaz.crypto.X509Cert
 import org.multipaz.documenttype.knowntypes.DrivingLicense
 import org.multipaz.presentment.digitalCredentialsPresentment
 import org.multipaz.presentment.uriSchemePresentment
+import org.multipaz.revocation.CachingRevocationChecker
+import org.multipaz.revocation.RevocationCheckState
+import org.multipaz.revocation.RevocationStatus
+import org.multipaz.storage.ephemeral.EphemeralStorage
 import org.multipaz.trustmanagement.TrustManager
 import org.multipaz.util.toBase64Url
 import org.multipaz.verification.JsonVerifiedPresentation
@@ -62,6 +69,7 @@ class VpCases(
     private val pki: Pki,
     private val holder: Holder,
     private val issuerTrust: TrustManager,
+    private val issuerRoot: X509Cert,
     private val tls: Tls,
 ) : Checks() {
     suspend fun run(): Int {
@@ -143,6 +151,33 @@ class VpCases(
                 reason = "verified, the KB-JWT's aud $siblingId, the session's client_id ${x509Hash(pki.reader)}"
                 null
             }
+            // Status: Multipaz's Verifier hands its app each verified
+            // presentation's status list reference
+            // (VerifiedPresentation.revocationStatus) and leaves checking
+            // it to the app, which does so with Multipaz's
+            // RevocationChecker: it fetches the list, which OID4VCgo's
+            // statuslist publishes (the peer's status.go), verifies its
+            // signature under OID4VCgo's IACA, and reads the entry. The
+            // issuer then revokes the credential (the peer's status_set,
+            // statuslist.Allocator.SetStatus), and walletflow presents it
+            // again: the control differs from the case before it in that
+            // status alone. The credential is made valid again after, for
+            // the cases that follow.
+            for (format in listOf(SD_JWT, MSO_MDOC)) {
+                check("$format: Multipaz's RevocationChecker reads its Token Status List entry, as OID4VCgo's issuer publishes it, VALID") {
+                    val (a, result) = verifier.ask(peer, format, "mpz")
+                    a.error ?: revocation(result.get(30, TimeUnit.SECONDS), RevocationCheckState.VALID)
+                }
+                check("control: $format revoked by its issuer after the presentation above: Multipaz's RevocationChecker reads it INVALID") {
+                    peer.call("status_set", "format" to format, "status" to "INVALID").error?.let { return@check "status_set: $it" }
+                    try {
+                        val (a, result) = verifier.ask(peer, format, "mpz")
+                        a.error ?: revocation(result.get(30, TimeUnit.SECONDS), RevocationCheckState.INVALID)
+                    } finally {
+                        peer.call("status_set", "format" to format, "status" to "VALID")
+                    }
+                }
+            }
         }
         for (format in listOf(SD_JWT, MSO_MDOC)) {
             var answer: Reply? = null
@@ -152,6 +187,30 @@ class VpCases(
             check("observed: $format, Digital Credentials API, the Verifier's response encryption key is as Multipaz sends it today") {
                 observed("client_metadata.jwks", answer?.observed?.get("verifier_jwks"), Observed.VERIFIER_JWKS_DCAPI)
             }
+        }
+    }
+
+    /**
+     * null if Multipaz's RevocationChecker, given [presentations]' one
+     * revocation status and OID4VCgo's IACA, reads [want] from a list
+     * whose signature it verified, or why not. It fetches the list
+     * afresh (bypassCache), as a Verifier checking a presentation now
+     * would once its cache had expired.
+     */
+    private suspend fun revocation(presentations: List<VerifiedPresentation>, want: RevocationCheckState): String? {
+        val presentation = presentations.singleOrNull() ?: return "${presentations.size} presentations"
+        val status = presentation.revocationStatus as? RevocationStatus.StatusList
+            ?: return "Multipaz found no status list reference: ${presentation.revocationStatus}"
+        val result = HttpClient(tls.ktor) { install(HttpTimeout) }.use { client ->
+            CachingRevocationChecker(EphemeralStorage(), client)
+                .check(status, issuerCert = issuerRoot, onlyTrusted = true, bypassCache = true)
+        }
+        reason = "${status.uri.substringAfter("/statuslists/")} index ${status.idx}: ${result.state}, its signature verified"
+        return when {
+            result.state != want ->
+                "Multipaz read ${result.state} (signature verified: ${result.isTrusted}${result.error?.let { "; $it" } ?: ""}), want $want"
+            !result.isTrusted -> "Multipaz read ${result.state} without verifying the list's signature"
+            else -> null
         }
     }
 
