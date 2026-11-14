@@ -86,6 +86,17 @@ type Config struct {
 	// conformance plans run the default; the EUDI interop run both.
 	Engine string `json:"engine,omitempty"`
 
+	// Assurance "production" runs the walletflow engine as a wallet app
+	// runs it: Config.Development false, and walletflow's own HTTP
+	// client (Dependencies.HTTP nil), which dials public addresses only,
+	// follows no redirect and verifies TLS against the system roots
+	// (on Linux, SSL_CERT_FILE). It needs engine "walletflow",
+	// verifier_trust_anchors_pem and verifier_crl, which production
+	// requires, and refuses verifier_tls_trust_anchors_pem, which only
+	// this binary's own client applies. "" or "development" is the
+	// default: walletflow's Development, over that client.
+	Assurance string `json:"assurance,omitempty"`
+
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
 	// SD-JWT VC (see credential.go).
 	CredentialIssuerPrivateKeyPEM string `json:"credential_issuer_private_key_pem"`
@@ -177,6 +188,37 @@ type Config struct {
 	VCTIntegrity string `json:"vct_integrity,omitempty"`
 }
 
+// The assurance levels Config.Assurance names.
+const (
+	assuranceDevelopment = "development"
+	assuranceProduction  = "production"
+)
+
+// production reports whether c runs the walletflow engine at production
+// assurance.
+func (c Config) production() bool { return c.Assurance == assuranceProduction }
+
+// checkAssurance refuses an unknown Assurance, and a production one
+// without what production requires or with what it doesn't apply.
+func (c Config) checkAssurance() error {
+	switch c.Assurance {
+	case "", assuranceDevelopment:
+		return nil
+	case assuranceProduction:
+	default:
+		return fmt.Errorf("config: assurance %q is neither %q nor %q", c.Assurance, assuranceDevelopment, assuranceProduction)
+	}
+	switch {
+	case c.Engine != engineWalletflow:
+		return fmt.Errorf("config: assurance %q needs engine %q", assuranceProduction, engineWalletflow)
+	case c.VerifierTrustAnchorsPEM == "" || !c.VerifierCRL.Configured():
+		return fmt.Errorf("config: assurance %q needs verifier_trust_anchors_pem and verifier_crl", assuranceProduction)
+	case c.VerifierTLSTrustAnchorsPEM != "":
+		return fmt.Errorf("config: assurance %q verifies TLS against the system roots: verifier_tls_trust_anchors_pem applies only to this binary's own client", assuranceProduction)
+	}
+	return nil
+}
+
 // isMdoc reports whether c is configured for the "mso_mdoc" fixture
 // credential rather than the default "dc+sd-jwt" one.
 func (c Config) isMdoc() bool {
@@ -203,6 +245,9 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.VerifierCRL.Configured() && cfg.VerifierTrustAnchorsPEM == "" {
 		return Config{}, fmt.Errorf("config: verifier_crl needs verifier_trust_anchors_pem")
+	}
+	if err := cfg.checkAssurance(); err != nil {
+		return Config{}, err
 	}
 	if (cfg.StatusListURI == "") != (cfg.StatusListIdx == nil) {
 		return Config{}, fmt.Errorf("config: status_list_uri and status_list_idx must be set together")
@@ -308,6 +353,12 @@ func (c Config) verifierTrust(revocation certrevocation.Checker) (wallet.Verifie
 // VerifierTLSTrustAnchorsPEM, or, with none, not at all; verified
 // reports which.
 func (c Config) verifierHTTPClient() (client *http.Client, verified bool, err error) {
+	if c.production() {
+		// What's left for this client under production (following
+		// redirect_uri, as the holder's browser would): the system
+		// roots, as for walletflow's own.
+		return &http.Client{Timeout: 30 * time.Second}, true, nil
+	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if c.VerifierTLSTrustAnchorsPEM == "" {
 		tlsConfig.InsecureSkipVerify = true //nolint:gosec // no anchors configured: see VerifierTLSTrustAnchorsPEM, and the warning main logs

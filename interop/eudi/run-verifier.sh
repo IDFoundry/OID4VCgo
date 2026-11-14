@@ -41,6 +41,27 @@ WORK="${WORK:-$(mktemp -d)}"
 CONTAINER="${CONTAINER:-oid4vcgo-eudi-verifier}"
 VERIFIER="https://localhost:$PORT"
 WALLET="https://localhost:$WALLET_PORT"
+# WALLET_ASSURANCE=production runs walletflow as a wallet app runs it
+# instead (README.md, "The wallet at production assurance"): in a
+# container on ../prodnet.sh's network, which reaches the verifier at
+# VERIFIER_HOST, not loopback, and only the cases that ask that of it.
+WALLET_ASSURANCE="${WALLET_ASSURANCE:-development}"
+VERIFIER_HOST=localhost
+CURL_TO=()
+case "$WALLET_ASSURANCE" in
+  development) ;;
+  production)
+    # shellcheck source=../prodnet.sh
+    . "$HERE/../prodnet.sh"
+    VERIFIER_HOST=verifier.eudi.test
+    VERIFIER="https://$VERIFIER_HOST:8443"
+    # The script's own requests reach the verifier on loopback by that
+    # name.
+    CURL_TO=(--connect-to "$VERIFIER_HOST:8443:127.0.0.1:$PORT")
+    PRODNET="$CONTAINER-prodnet"
+    ;;
+  *) echo "WALLET_ASSURANCE is development or production, not '$WALLET_ASSURANCE'" >&2; exit 2 ;;
+esac
 # The keystore holds throwaway, per-run keys, under a per-run password.
 KEYSTORE_PASSWORD="$(openssl rand -hex 16)"
 
@@ -66,6 +87,10 @@ SERVE_URL="https://host.docker.internal:$SERVE_PORT"
 WALLET_PID=""
 SERVE_PID=""
 stop_wallet() {
+  if [[ "$WALLET_ASSURANCE" = production ]]; then
+    docker logs "$CONTAINER-wallet" >> "$WORK/wallet.log" 2>&1 || true
+    docker rm -f "$CONTAINER-wallet" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$WALLET_PID" ]]; then
     kill "$WALLET_PID" 2>/dev/null || true
     wait "$WALLET_PID" 2>/dev/null || true
@@ -77,6 +102,7 @@ cleanup() {
   if [[ -n "$SERVE_PID" ]]; then kill "$SERVE_PID" 2>/dev/null || true; fi
   docker logs "$CONTAINER" > "$WORK/verifier.log" 2>&1 || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  if [[ -n "${PRODNET:-}" ]]; then prodnet_remove "$PRODNET"; fi
 }
 trap cleanup EXIT
 
@@ -86,7 +112,12 @@ echo "verifier  $VERIFIER_IMAGE"
 
 (cd "$SRC" && go build -o "$WORK/wallet" ./cmd/conformance-wallet-vp \
   && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
-  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521 -crl-host "localhost:$CRL_PORT")
+  && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -verifier-curve P-521 -crl-host "localhost:$CRL_PORT" \
+    -verifier-host "$VERIFIER_HOST")
+if [[ "$WALLET_ASSURANCE" = production ]]; then
+  prodnet_build "$SRC" "$WORK" ./cmd/conformance-wallet-vp
+  prodnet_create "$PRODNET"
+fi
 cd "$WORK"
 # serve publishes the status lists as an issuer does: an Allocator hands
 # each credential its index and keeps its status, and a Publisher signs
@@ -173,6 +204,7 @@ start_verifier() {  # $1 the Client Identifier Prefix, $2 the client_id without 
     echo "the verifier did not start; see $WORK/verifier.log" >&2
     exit 2
   fi
+  if [[ "$WALLET_ASSURANCE" = production ]]; then prodnet_attach "$PRODNET" "$CONTAINER" "$VERIFIER_HOST"; fi
 }
 start_verifier x509_hash "$CLIENT_ID_HASH"
 
@@ -198,8 +230,16 @@ start_wallet() {  # $1 the wallet config, $2 the CA it trusts for the verifier, 
                          crls: {($crlpath): $crl}}
      | .verifier_crl = {distribution_points: [{url: $crlurl, issuer_pem: $crlissuer}], tls_trust_anchors_pem: $crltls}' \
     "$config" > wallet.json
-  ./wallet -config wallet.json >> wallet.log 2>&1 &
-  WALLET_PID=$!
+  if [[ "$WALLET_ASSURANCE" = production ]]; then
+    # walletflow at production assurance, in its container: its own
+    # client, TLS verified against TLS_ANCHOR as the system's roots.
+    jq '.assurance = "production" | .listen_addr = ":8443" | del(.verifier_tls_trust_anchors_pem)' wallet.json > wallet-production.json
+    prodnet_start "$PRODNET" "$WORK" "$TLS_ANCHOR" "$CONTAINER-wallet" "127.0.0.1:$WALLET_PORT:8443" \
+      conformance-wallet-vp-linux -config /work/wallet-production.json
+  else
+    ./wallet -config wallet.json >> wallet.log 2>&1 &
+    WALLET_PID=$!
+  fi
   for _ in $(seq 1 50); do
     if curl -sk -o /dev/null --max-time 1 "$WALLET/"; then return 0; fi
     sleep 0.2
@@ -226,7 +266,7 @@ init_transaction() {  # $1 dcql, $2 profile, $3 issuer chain file, $4 request_ur
     '{dcql_query: $q, nonce: ("n-" + (now | tostring)), jar_mode: "by_reference", request_uri_method: $method,
       response_mode: "direct_post.jwt", profile: $profile, issuer_chain: $chain,
       registration_certificate: $rc, wallet_response_redirect_uri_template: $redirect}' > init-request.json
-  curl -sk --max-time 30 -X POST -H 'Content-Type: application/json' -d @init-request.json \
+  curl -sk "${CURL_TO[@]+"${CURL_TO[@]}"}" --max-time 30 -X POST -H 'Content-Type: application/json' -d @init-request.json \
     "$VERIFIER/ui/presentations" > init.json
   TID="$(jq -r '.transaction_id // empty' init.json)"
   [[ -n "$TID" ]] || { echo "        the verifier refused the transaction: $(cat init.json)"; return 1; }
@@ -242,11 +282,11 @@ authorize() {  # $1 output file, $2 optional client_id
 
 result() {  # $1 output file, $2 optional response_code
   local out="$1" code="${2:-}"
-  curl -sk --max-time 30 -o "$out" "$VERIFIER/ui/presentations/$TID${code:+?response_code=$code}" || true
+  curl -sk "${CURL_TO[@]+"${CURL_TO[@]}"}" --max-time 30 -o "$out" "$VERIFIER/ui/presentations/$TID${code:+?response_code=$code}" || true
 }
 
 events() {
-  curl -sk --max-time 30 "$VERIFIER/ui/presentations/$TID/events" \
+  curl -sk "${CURL_TO[@]+"${CURL_TO[@]}"}" --max-time 30 "$VERIFIER/ui/presentations/$TID/events" \
     | jq -r '.events[]? | "        event: " + .event + (if .cause then ": " + (.cause | tostring | .[0:300]) else "" end)' || true
 }
 
@@ -256,7 +296,7 @@ events() {
 # wallet never answered, or one refused for anything else, isn't.
 invalid_vp_token() {  # $1 what the cause must contain, $2 the wallet's output
   local want="$1" out="$2"
-  curl -sk --max-time 30 -o "events-$TID.json" "$VERIFIER/ui/presentations/$TID/events" || true
+  curl -sk "${CURL_TO[@]+"${CURL_TO[@]}"}" --max-time 30 -o "events-$TID.json" "$VERIFIER/ui/presentations/$TID/events" || true
   grep -q 'wallet: verifier rejected the authorization response: status 400 InvalidVpToken' "$out" \
     && jq -e --arg want "$want" '[.events[]? | select(.event == "Wallet failed to post response")
       | .cause | tostring | select(startswith("vp_token is not valid: ") and contains($want))] | length >= 1' \
@@ -292,6 +332,76 @@ refused() {  # $1 label, $2 dcql, $3 issuer chain file, $4 the cause
     else bad "the verifier refused it for $want ($(head -c 200 "wallet-$name.txt" | tr -s '\n' ' '))"; events; fi
   else bad "transaction initialized"; fi
 }
+
+# The production run: walletflow at production assurance presents both
+# formats by each request_uri_method, x509_hash and x509_san_dns, and
+# refuses what the development run's walletflow-relevant controls show
+# it refusing. Each control differs from a presentation that passes in
+# the one thing it names.
+if [[ "$WALLET_ASSURANCE" = production ]]; then
+  # present_production is present, checking walletflow answered.
+  present_production() {
+    present "$@"
+    if grep -q 'walletflow answered pid\.' "wallet-$1.txt"; then ok "walletflow answered the query, at production assurance"
+    else bad "walletflow answered the query"; fi
+  }
+  # refused_production runs a transaction for the query, which the
+  # wallet must refuse before answering, for $2: walletflow's error,
+  # REQUEST_URI in it the transaction's request_uri.
+  refused_production() {  # $1 label, $2 why, $3 optional client_id to launch with
+    local name="$1" want="$2" client_id="${3:-}"
+    echo "== production control: $name"
+    if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
+      want="walletflow: presentation request: ${want//REQUEST_URI/$(jq -r '.request_uri' init.json)}"
+      authorize "$name.txt" "$client_id"
+      result "$name.json"
+      if jq -e '.vp_token' "$name.json" >/dev/null 2>&1; then bad "the wallet presented"
+      elif grep -qF "$want" "$name.txt"; then ok "the wallet refused: $want"
+      else bad "the wallet refused, for $want ($(head -c 300 "$name.txt" | tr -s '\n' ' '))"; fi
+    else bad "transaction initialized"; fi
+  }
+  for format in sdjwt mdoc; do
+    jq '.engine = "walletflow"' "wallet-$format.json" > "wallet-$format-walletflow.json"
+  done
+  start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+  present_production production-sdjwt-haip "$SDJWT_QUERY" haip issuer-ca.pem get
+  present_production production-sdjwt-haip-post "$SDJWT_QUERY" haip issuer-ca.pem post
+  refused_production production-mismatch \
+    "wallet: parse authorization request: client_id \"x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\" does not match x5c leaf's own x509_hash" \
+    "x509_hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  start_wallet wallet-mdoc-walletflow.json verifier-ca.pem
+  present_production production-mdoc-haip "$MDOC_QUERY" haip iaca.pem get
+  present_production production-mdoc-haip-post "$MDOC_QUERY" haip iaca.pem post
+
+  UNTRUSTED='wallet: parse authorization request: untrusted verifier: wallet: verifier certificate: '
+  start_wallet wallet-sdjwt-walletflow.json other-ca.pem
+  refused_production production-untrusted-verifier \
+    "${UNTRUSTED}certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"
+  CRL=verifier-ca-crl-revoking.pem start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+  refused_production production-revoked-verifier \
+    "${UNTRUSTED}certchain: revocation: no verified path passes it: certrevocation: certificate is revoked"
+  CRL=verifier-ca-crl-expired.pem start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+  refused_production production-no-crl-verifier \
+    "${UNTRUSTED}certchain: revocation: no verified path passes it: certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer"
+  # The verifier's TLS certificate, which walletflow's client checks
+  # against the system's roots: here another CA's.
+  TLS_ANCHOR=other-ca.pem start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+  refused_production production-untrusted-tls \
+    'wallet: fetch authorization request: fetch request_uri: fapihttp: Get "REQUEST_URI": tls: failed to verify certificate: x509: certificate signed by unknown authority'
+
+  echo "== production: the verifier restarted with client_id x509_san_dns:$VERIFIER_HOST"
+  start_verifier x509_san_dns "$VERIFIER_HOST"
+  jq '.accept_x509_san_dns = true | .engine = "walletflow"' wallet-sdjwt.json > wallet-sdjwt-san-dns-walletflow.json
+  start_wallet wallet-sdjwt-san-dns-walletflow.json verifier-ca.pem
+  for method in get post; do
+    present_production "production-sdjwt-san-dns-$method" "$SDJWT_QUERY" openid4vp issuer-ca.pem "$method"
+    if jq -e --arg cid "x509_san_dns:$VERIFIER_HOST" '.client_id == $cid' init.json >/dev/null 2>&1; then ok "the request's client_id was x509_san_dns:$VERIFIER_HOST"
+    else bad "the request's client_id was x509_san_dns:$VERIFIER_HOST ($(jq -r '.client_id' init.json))"; fi
+  done
+
+  if [[ "$fail" -eq 0 ]]; then echo "RESULT: every presentation at production assurance accepted, and every control refused"; else echo "RESULT: FAILED"; fi
+  exit "$fail"
+fi
 
 # This control runs first, while the verifier has no Type Metadata
 # cached: it checks vct#integrity only when it resolves it (see below).
