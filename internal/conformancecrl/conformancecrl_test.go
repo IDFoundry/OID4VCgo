@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,12 +78,22 @@ func TestTrustChecksPublishedCRLs(t *testing.T) {
 		DistributionPoints: []conformancecrl.DistributionPoint{ca.DistributionPoint(), stale.DistributionPoint()},
 		TLSTrustAnchorsPEM: tlsCertPEM,
 	}
+	// The refresher Start leaves running logs from its own goroutine
+	// too: a later refresh of the stale CA fails again.
+	var mu sync.Mutex
 	var logged []string
-	checker, err := trust.Start(ctx, func(format string, args ...any) { logged = append(logged, format) })
+	checker, err := trust.Start(ctx, func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logged = append(logged, format)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(logged) == 0 {
+	mu.Lock()
+	n := len(logged)
+	mu.Unlock()
+	if n == 0 {
 		t.Error("the stale CA's expired CRL was accepted without a logged failure")
 	}
 
