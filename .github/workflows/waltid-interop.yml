@@ -10,7 +10,9 @@
 # requests, the daily run and each release test the pinned images; the
 # weekly run tests walt.id's newest release (latest), to show a break
 # before the pin moves. The production job runs OID4VCgo's wallet with
-# Issuer2 and Verifier2 again at production assurance.
+# Issuer2 and Verifier2 again at production assurance. The interop job
+# runs the transactions SD-JWT VC verifier as two instances sharing a
+# PostgreSQL service container.
 name: walt.id interop
 
 on:
@@ -40,6 +42,24 @@ jobs:
   interop:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The database the transactions SD-JWT VC verifier's two instances
+    # share (POSTGRES_URL): interop/waltid/run.sh runs it as two behind
+    # one URL when it's set.
+    services:
+      postgres:
+        # Pinned by digest, as ci.yml's sqlstore job's. Dependabot
+        # doesn't update service images: move it by hand.
+        image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+        env:
+          # A throwaway container reachable only from this job: no password.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +76,7 @@ jobs:
       - name: Run the interop script
         env:
           WALTID_TAG: ${{ inputs.waltid_tag || (github.event.schedule == '45 7 * * 1' && 'latest') || '' }}
+          POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
         run: |
           set -o pipefail
           export WORK="$RUNNER_TEMP/waltid-work"

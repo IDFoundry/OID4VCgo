@@ -20,7 +20,8 @@
 # interop/eudi/run-issuer.sh: issued in every way both support and
 # verified, and controls refused. Its version is pinned exactly, its
 # dependencies locked and checksum-verified, so it also runs with the
-# pinned image's runs only.
+# pinned image's runs only. Its last profile runs the issuer as two
+# instances sharing a PostgreSQL service container.
 #
 # And OID4VCgo's wallet against the EUDI reference PID Issuer
 # (eudi-srv-pid-issuer, the pid-issuer job), run as its own
@@ -197,6 +198,23 @@ jobs:
     if: github.event.schedule != '15 7 * * 1' && inputs.verifier_image == '' && inputs.pid_issuer_image == ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The database the production-scaled profile's two issuer instances
+    # share (POSTGRES_URL), which run-issuer.sh runs when it's set.
+    services:
+      postgres:
+        # Pinned by digest, as ci.yml's sqlstore job's. Dependabot
+        # doesn't update service images: move it by hand.
+        image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+        env:
+          # A throwaway container reachable only from this job: no password.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -220,6 +238,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Run the interop script
+        env:
+          POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
         run: |
           set -o pipefail
           export WORK="$RUNNER_TEMP/eudi-issuer-work"
