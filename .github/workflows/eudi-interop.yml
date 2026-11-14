@@ -71,11 +71,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # The issued-credential cases build the issuer, the Wallet
+      # Provider and the wallet with sqlstore.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
-          cache-dependency-path: go.mod
+          cache-dependency-path: sqlstore/go.sum
 
       - name: Run the interop script
         env:
@@ -99,6 +101,7 @@ jobs:
             ${{ runner.temp }}/eudi-work/*.log
             ${{ runner.temp }}/eudi-work/*.txt
             ${{ runner.temp }}/eudi-work/result-*.json
+            ${{ runner.temp }}/eudi-work/wallet-provider/*.log
           retention-days: 14
 
   # The same verifier, presented to by walletflow at production
@@ -140,6 +143,7 @@ jobs:
             ${{ runner.temp }}/eudi-work/*.log
             ${{ runner.temp }}/eudi-work/*.txt
             ${{ runner.temp }}/eudi-work/result-*.json
+            ${{ runner.temp }}/eudi-work/wallet-provider/*.log
           retention-days: 14
 
   wallet:
