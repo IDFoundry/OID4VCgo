@@ -48,6 +48,10 @@ PID_ISSUER_FILES=(
 
 PORT="${PORT:-19443}"
 SERVE_PORT="${SERVE_PORT:-19445}"
+# The wallet publishes the CRLs of the CAs it trusts the issuer by (the
+# IACA's and the signed metadata CA's) here, and checks every issuer
+# certificate against them: see scripts/pidwallet's -crl-set.
+CRL_PORT="${CRL_PORT:-19446}"
 WORK="${WORK:-$(mktemp -d)}"
 STACK="$WORK/stack"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-eudi-pid}"
@@ -57,9 +61,9 @@ CLIENT_ID=eudiw-abca
 # scheme with an authority, which the realm registers for the client.
 REDIRECT_URI=eu.europa.ec.euidi://authorization
 
-for p in "$PORT" "$SERVE_PORT"; do
+for p in "$PORT" "$SERVE_PORT" "$CRL_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    echo "port $p is in use; set PORT / SERVE_PORT" >&2
+    echo "port $p is in use; set PORT / SERVE_PORT / CRL_PORT" >&2
     exit 2
   fi
 done
@@ -128,7 +132,7 @@ fetch "$STATUS_LIST_URL" "$STATUS_LIST_SHA256" "$STACK/status-list.tar.gz"
 
 (cd "$SRC" && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
   && go build -o "$WORK/pidwallet" ./interop/eudi/scripts/pidwallet \
-  && go run ./interop/eudi/scripts/pidsetup -out "$WORK" -issuer-url "$ISSUER" -serve-url "$SERVE_URL")
+  && go run ./interop/eudi/scripts/pidsetup -out "$WORK" -issuer-url "$ISSUER" -serve-url "$SERVE_URL" -crl-host "localhost:$CRL_PORT")
 cd "$WORK"
 
 # Per-run passwords: the stack's own are in its public repository.
@@ -396,6 +400,31 @@ for c in "$SDJWT sdjwt" "$MDOC mdoc"; do
   check "untrusted-$format" "the wallet refuses the $format PID ($(why "untrusted-$format"))" \
     '(.ok | not) and .step == "verify" and (.credentials | length == 1) and (.credentials[0].verified | not)
      and (.error | contains("wallet: verify issued credential: issuer certificate: certchain: certificate chain does not verify against a trusted root: x509: certificate signed by unknown authority"))'
+done
+
+# The issuer's certificates' revocation: every run above checked the
+# Document Signer, the SD-JWT VC signer, the status list signer and the
+# metadata signer against their CA's current CRL, which the wallet
+# fetched over https from the distribution point each names. Here the
+# IACA's CRL revokes the credentials' signers, then the IACA publishes
+# no current CRL (its list is past its nextUpdate): either way the
+# wallet must refuse the credential, for that reason. The metadata CA's
+# list stays current, so neither fails before the credential.
+REVOCATION_REFUSAL='wallet: verify issued credential: issuer certificate: certchain: revocation: no verified path passes it: '
+for c in "revoked certrevocation: certificate is revoked" \
+  "expired certchain: revocation couldn't be decided: certrevocation: no current CRL from the certificate's issuer"; do
+  read -r set why <<< "$c"
+  case "$set" in
+    revoked) echo "== control: credentials whose signer the IACA revoked" ;;
+    expired) echo "== control: credentials whose IACA publishes no current CRL" ;;
+  esac
+  for f in "$SDJWT sdjwt" "$MDOC mdoc"; do
+    read -r config format <<< "$f"
+    wallet "crl-$set-$format" -issuer "$ISSUER" -config "$config" -proof attestation -crl-set "$set"
+    check "crl-$set-$format" "the wallet refuses the $format PID ($(why "crl-$set-$format"))" \
+      "(.ok | not) and .step == \"verify\" and (.credentials | length == 1) and (.credentials[0].verified | not)
+       and (.error | contains(\"$REVOCATION_REFUSAL$why\"))"
+  done
 done
 
 echo "== control: a Wallet Attestation whose client_status is revoked"

@@ -54,6 +54,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 )
 
 // country is every certificate's: an mdoc's document signer must name
@@ -70,7 +71,7 @@ type authority struct {
 
 // ports are where each party listens; HOST names them all.
 type ports struct {
-	issuer2, verifier2, attester, verifier int
+	issuer2, verifier2, attester, verifier, crl int
 }
 
 func main() {
@@ -84,6 +85,7 @@ func main() {
 	flag.IntVar(&p.verifier2, "verifier2-port", 21412, "Verifier2's TLS port")
 	flag.IntVar(&p.attester, "attester-port", 21426, "the attester's TLS port")
 	flag.IntVar(&p.verifier, "verifier-port", 21431, "the first of the four verifiers' ports")
+	flag.IntVar(&p.crl, "crl-port", 21441, "the port of the https CRL distribution point Issuer2's and Verifier2's certificates name, on localhost, which OID4VCgo's wallet serves and fetches")
 	flag.Parse()
 	if *out == "" || *bind == "" || *issuerCA == "" || *iaca == "" {
 		fail("-out, -bind, -issuer-ca and -iaca are required")
@@ -140,10 +142,19 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 		return err
 	}
 
-	if err := issuer2Files(put, ca, p); err != nil {
+	// Issuer2's and Verifier2's certificates name the CA's CRL
+	// distribution point, which OID4VCgo's wallet serves and checks them
+	// against (crlFiles).
+	crlURL := conformancecrl.URL(net.JoinHostPort("localhost", strconv.Itoa(p.crl)), "ca")
+	issuer2Leaves, err := issuer2Files(put, ca, p, crlURL)
+	if err != nil {
 		return err
 	}
-	if err := verifier2File(put, ca, p); err != nil {
+	verifier2Leaf, err := verifier2File(put, ca, p, crlURL)
+	if err != nil {
+		return err
+	}
+	if err := crlFiles(put, ca, crlURL, p.crl, issuer2Leaves, verifier2Leaf); err != nil {
 		return err
 	}
 	put("wallet2-service.conf", hocon(
@@ -175,25 +186,31 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 // its mdoc document signer chain under the CA, which every profile
 // takes by substitution; its base URL; and the pre-authorized code
 // redeemable with no client authentication.
-func issuer2Files(put func(name, content string), ca authority, p ports) error {
+//
+// Both certificates name crl as their CRL distribution point; they're
+// returned, for crlFiles.
+func issuer2Files(put func(name, content string), ca authority, p ports, crl string) ([]string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	sdjwt, err := leafFor(ca, &key.PublicKey, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Issuer2", Country: []string{country}}})
-	if err != nil {
-		return err
-	}
-	ds, err := leafFor(ca, &key.PublicKey, &x509.Certificate{
-		Subject:            pkix.Name{CommonName: "walt.id Issuer2 document signer", Country: []string{country}},
-		UnknownExtKeyUsage: []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
+	sdjwt, err := leafFor(ca, &key.PublicKey, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "walt.id Issuer2", Country: []string{country}}, CRLDistributionPoints: []string{crl},
 	})
 	if err != nil {
-		return err
+		return nil, err
+	}
+	ds, err := leafFor(ca, &key.PublicKey, &x509.Certificate{
+		Subject:               pkix.Name{CommonName: "walt.id Issuer2 document signer", Country: []string{country}},
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{mdoc.MDLDocumentSignerEKU},
+		CRLDistributionPoints: []string{crl},
+	})
+	if err != nil {
+		return nil, err
 	}
 	keyJSON, err := json.Marshal(map[string]any{"type": "jwk", "jwk": privateJWK(key)})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// A key set to null first is replaced, not merged with the one the
 	// pinned file sets (HOCON object merging).
@@ -202,27 +219,30 @@ func issuer2Files(put func(name, content string), ca authority, p ports) error {
 		"defaultMdocIssuerX5chain = ["+quote(ds)+"]\n")
 	put("issuer2-service.conf", hocon("baseUrl", httpsURL("localhost", p.issuer2))+
 		"clientAuthenticationConfig = null\nclientAuthenticationConfig { supportedMethods = [{ type = \"preauth-anonymous\" }] }\n")
-	return nil
+	return []string{sdjwt, ds}, nil
 }
 
 // verifier2File is Verifier2's: an Access Certificate under the CA, its
 // x509_hash Client Identifier, and its base URL.
-func verifier2File(put func(name, content string), ca authority, p ports) error {
-	key, cert, err := leaf(ca, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Verifier2"}})
+//
+// The certificate names crl as its CRL distribution point; it's
+// returned, for crlFiles.
+func verifier2File(put func(name, content string), ca authority, p ports, crl string) (string, error) {
+	key, cert, err := leaf(ca, &x509.Certificate{Subject: pkix.Name{CommonName: "walt.id Verifier2"}, CRLDistributionPoints: []string{crl}})
 	if err != nil {
-		return err
+		return "", err
 	}
 	block, _ := pem.Decode([]byte(cert))
 	hash := sha256.Sum256(block.Bytes)
 	keyJSON, err := json.Marshal(map[string]any{"type": "jwk", "jwk": privateJWK(key)})
 	if err != nil {
-		return err
+		return "", err
 	}
 	// The wallet's negative presentations (scripts/wallet's -tamper)
 	// sign Verifier2's request again with it.
 	keyPEM, err := conformancecert.ECKeyPEM(key)
 	if err != nil {
-		return err
+		return "", err
 	}
 	put("verifier2-key.pem", keyPEM)
 	put("verifier2-service.conf", hocon(
@@ -230,7 +250,7 @@ func verifier2File(put func(name, content string), ca authority, p ports) error 
 		"urlPrefix", httpsURL("localhost", p.verifier2)+"/verification-session",
 	)+"key = null\nkey = "+string(keyJSON)+"\n"+
 		"x5c = ["+quote(base64.StdEncoding.EncodeToString(block.Bytes))+"]\n")
-	return nil
+	return cert, nil
 }
 
 // verifierConfig is cmd/conformance-verifier's Config, as far as the

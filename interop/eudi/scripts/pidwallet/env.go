@@ -16,6 +16,7 @@ import (
 
 	"github.com/idfoundry/fapigo/fapihttp"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -26,6 +27,9 @@ import (
 type environment struct {
 	o   options
 	rec *recorder
+	// revocation checks every certificate the wallet verifies for
+	// revocation (startCRL).
+	revocation certrevocation.Checker
 	// http makes every protocol request; statusHTTP fetches status
 	// lists, through a plain *http.Transport, as statuslist.Fetcher
 	// requires.
@@ -87,6 +91,7 @@ func (env *environment) newWallet() (*wallet.Wallet, error) {
 			AllowLoopbackHosts: true,
 		},
 		IssuerMetadataRoots:         env.metadataRoots,
+		IssuerMetadataRevocation:    env.revocation,
 		RequireSignedIssuerMetadata: true,
 		RequireIssuerMetadataName:   true,
 	}, wallet.Dependencies{HTTP: env.http, Clock: wallet.ClockFunc(time.Now), Random: rand.Reader})

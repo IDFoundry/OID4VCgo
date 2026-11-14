@@ -16,6 +16,8 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | mdoc PID | issued, and passes the wallet's checks |
 | | mDL | issued, and passes the wallet's checks |
 | | The wallet trusts an unrelated issuer CA | the wallet refuses the credential |
+| | The run's CA revokes Issuer2's signers (its CRL names them) | the wallet refuses the credential: `issuer certificate: certchain: revocation: … certrevocation: certificate is revoked` |
+| | The run's CA publishes no current CRL (its distribution point serves one past its `nextUpdate`) | the wallet refuses the credential: `… certrevocation: no current CRL from the certificate's issuer` |
 | OID4VCgo's wallet → Verifier2 | SD-JWT VC PID, signed `x509_hash` request, response encrypted (`direct_post.jwt`) | Verifier2 accepts it |
 | | mDL, the same | Verifier2 accepts it |
 | | SD-JWT VC PID, relayed: the response encrypted to a key of the wallet transport's own, then again to Verifier2's, unchanged | Verifier2 accepts it |
@@ -25,6 +27,7 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | That, the Issuer-signed JWT signed again under a self-signed certificate | a note, not a case: Verifier2 accepts it (finding 3); the run fails if that changes |
 | | The request unsigned, naming its `x509_hash` client | the wallet refuses |
 | | The wallet trusts an unrelated Verifier CA | the wallet refuses |
+| | The run's CA revokes Verifier2's Access Certificate | the wallet refuses the request: `untrusted verifier: wallet: verifier certificate: certchain: revocation: … certrevocation: certificate is revoked` |
 | Wallet2 ← OID4VCgo's issuer | SD-JWT VC PID: Wallet Attestation and PoP, DPoP, pre-authorized code | issued |
 | | mdoc PID, the same | issued |
 | | The Wallet Attestation from an attester the issuer doesn't trust | the issuer refuses (`invalid_client`) |
@@ -225,8 +228,26 @@ Found by the negative presentations:
    verify. The session is `FAILED`, so the refusal holds; the run
    asserts the answer as 1.2.1 gives it, so that a change is noticed.
 
+## Certificate revocation
+
+OID4VCgo's wallet checks Issuer2's SD-JWT VC signer and Document
+Signer, and Verifier2's Access Certificate, against the run CA's CRL
+in every case it takes part in (walletflow's `IssuerRevocation`, and
+`X5CVerifierRoots.Revocation`): the certificates, `scripts/setup`'s,
+name an https distribution point on `localhost:$CRL_PORT`
+(`BASE_PORT`+41), where `scripts/wallet` serves the list setup signed
+(its `-crl-set`) and fetches it back with a `certrevocation.Refresher`,
+https only, bound to the CA. Issuer2 and Verifier2 fetch nothing for
+them: the check is the wallet's alone. The three revocation controls
+differ from a passing case only in the list the wallet is served.
+
 ## What isn't covered
 
+- Certificate revocation in the walt.id-to-OID4VCgo directions:
+  `cmd/conformance-verifier` checks the credentials Wallet2 presents,
+  and `cmd/conformance-issuer` the Wallet Attestation, with no CRL
+  (their CAs are `interop/eudi/scripts/setup-issuer`'s, which name no
+  distribution point anything serves).
 - The authorization code flow, in either direction, and Issuer2's
   Wallet Attestation: Issuer2 runs with anonymous pre-authorized codes.
 - Status lists of Issuer2's credentials, which carry none, and of the

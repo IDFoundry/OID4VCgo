@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -49,12 +48,13 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		// key by its index among the Key Attestation's attested_keys,
 		// as the issuer requires; -proof jwk names it in jwk.
 		ProofKeyByJWK: o.proof == "jwk",
-		// Development only for the stack's loopback address; the run's
-		// certificates publish no CRLs.
+		// Development only for the stack's loopback address. Every
+		// certificate checked is checked for revocation, against the
+		// CRLs of the IACA and the metadata CA (startCRL).
 		Development:              true,
-		IssuerRevocation:         certrevocation.NoCheck{},
-		StatusRevocation:         certrevocation.NoCheck{},
-		IssuerMetadataRevocation: certrevocation.NoCheck{},
+		IssuerRevocation:         env.revocation,
+		StatusRevocation:         env.revocation,
+		IssuerMetadataRevocation: env.revocation,
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
 		// A plain *http.Transport, not the recorder: CheckStatus's

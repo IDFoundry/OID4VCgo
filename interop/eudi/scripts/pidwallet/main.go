@@ -48,6 +48,7 @@ import (
 type options struct {
 	work, out               string
 	engine                  string
+	crlSet                  string
 	issuer, configID, offer string
 	proof                   string
 	batch                   int
@@ -145,6 +146,7 @@ func main() {
 	flag.IntVar(&o.walletStatusIdx, "wallet-status-idx", 0, "the Wallet Attestation's client_status index (1 is revoked)")
 	flag.IntVar(&o.keyStorageStatusIdx, "key-storage-status-idx", 0, "the Key Attestation's key_storage_status index (1 is revoked)")
 	flag.StringVar(&o.revokeAPIKey, "revoke-api-key", "", "the status list service's API key: revoke the first credential, and check it again")
+	flag.StringVar(&o.crlSet, "crl-set", "current", "the CRLs this process publishes for the IACA and the metadata CA (pidsetup's crl-publisher-SET.json): current, revoked (the IACA revokes the issuer's signers) or expired (the IACA's list is past its nextUpdate)")
 	flag.Parse()
 	if o.work == "" || o.out == "" || o.redirectURI == "" || (o.offer == "") == (o.issuer == "" || o.configID == "") {
 		fmt.Fprintln(os.Stderr, "pidwallet: -work, -out, -redirect-uri, and either -offer or -issuer and -config are required")
@@ -173,6 +175,10 @@ func run(ctx context.Context, o options) result {
 	env, err := newEnvironment(o)
 	if err != nil {
 		res.Step, res.Error = "setup", err.Error()
+		return res
+	}
+	if env.revocation, err = startCRL(ctx, o); err != nil {
+		res.Step, res.Error = "setup", "crl: "+err.Error()
 		return res
 	}
 	switch o.engine {

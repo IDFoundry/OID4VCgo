@@ -43,7 +43,7 @@ func roots(t *testing.T, f files, name string) *x509.CertPool {
 
 func TestGenerate(t *testing.T) {
 	const issuer = "https://localhost:19443/pid-issuer"
-	f, err := generate(issuer, "https://host.docker.internal:19445")
+	f, err := generate(issuer, "https://host.docker.internal:19445", defaultCRLHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,10 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestGenerateRefusesBadURLs(t *testing.T) {
-	if _, err := generate("http://localhost/pid-issuer", "https://host.docker.internal:1"); err == nil {
+	if _, err := generate("http://localhost/pid-issuer", "https://host.docker.internal:1", defaultCRLHost); err == nil {
 		t.Error("an http issuer URL was accepted")
 	}
-	if _, err := generate("https://localhost/pid-issuer", "host.docker.internal"); err == nil {
+	if _, err := generate("https://localhost/pid-issuer", "host.docker.internal", defaultCRLHost); err == nil {
 		t.Error("a serve URL with no scheme was accepted")
 	}
 }
