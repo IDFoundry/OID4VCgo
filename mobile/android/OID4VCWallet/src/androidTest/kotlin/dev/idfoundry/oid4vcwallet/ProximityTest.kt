@@ -8,6 +8,8 @@ import kotlin.time.Duration.Companion.minutes
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
@@ -99,7 +101,7 @@ class ProximityTest {
     private suspend fun setup(
         signed: Boolean = true,
         requireTrusted: Boolean = false,
-        holderKeys: AndroidKeystoreKeyStore = keys,
+        holderKeys: KeyStore = keys,
         deviceAuth: WalletConfiguration.ProximityDeviceAuth = WalletConfiguration.ProximityDeviceAuth.SIGNATURE,
     ): Setup {
         val env = TestEnv().also { envs += it }
@@ -629,6 +631,39 @@ class ProximityTest {
         assertTrue(holder.state.value is ProximityPresentation.State.RequestReceived)
         holder.decline()
         assertEquals(ProximityPresentation.State.Declined, holder.state.value)
+        reader.cancel()
+    }
+
+    /**
+     * Cancelling the caller of `respond` as Go's respond returns ends the
+     * session, though nothing was sent: Go's session is over, so the
+     * request can't stand.
+     */
+    @Test
+    fun cancellingRespondAsTheResponseIsBuiltEndsTheSession(): Unit = runBlocking {
+        // The holder key cancels the caller as it signs, then signs: Go
+        // checks its context only before each document, so with one
+        // document its respond returns the response, and the cancellation
+        // reaches respond only once it has.
+        val responding = CompletableDeferred<Job>()
+        val arm = java.util.concurrent.atomic.AtomicBoolean()
+        val cancelling = object : KeyStore by keys {
+            override fun sign(id: String, digest: ByteArray): ByteArray {
+                if (arm.getAndSet(false)) runBlocking { responding.await().cancel() }
+                return keys.sign(id, digest)
+            }
+        }
+        val s = setup(holderKeys = cancelling)
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        arm.set(true)
+        val job = launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        }
+        responding.complete(job)
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(ProximityPresentation.State.Cancelled, holder.state.value)
         reader.cancel()
     }
 

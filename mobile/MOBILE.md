@@ -1650,10 +1650,13 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   does nothing: only `cancel()` ended the session. Its caller cancelled
   before anything is sent (while the holder key signs) puts the request
   back, as a `WalletException` does: nothing left the wallet, and the
-  holder can answer again or decline. Cancelled while the response is
-  being sent, the session ends as `Cancelled`: the reader may hold part
-  of the response, so it can't be sent again. Any other error from
-  sending ends it as `Failed`. The KDoc of `respond` lists what it
+  holder can answer again or decline. Cancelled as Go's respond
+  returns, the session ends as `Cancelled` though nothing was sent:
+  `Deferred.await` reports the cancellation even when the call has
+  completed, and Go's session is over by then, so the request can't
+  stand. Cancelled while the response is being sent, the session ends as
+  `Cancelled`: the reader may hold part of the response, so it can't be
+  sent again. Any other error from sending ends it as `Failed`. The KDoc of `respond` lists what it
   throws and the state each leaves.
 
 ### Phase 10 findings: the iOS SDK

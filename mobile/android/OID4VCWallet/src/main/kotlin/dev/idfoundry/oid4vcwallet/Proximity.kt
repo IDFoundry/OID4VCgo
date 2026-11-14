@@ -31,6 +31,7 @@ import java.security.cert.X509Certificate
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
@@ -381,7 +382,9 @@ public class ProximityPresentation internal constructor(
      * It never leaves the session in [State.Responding]:
      * - Returning: the response was sent, and the state is [State.Presented].
      * - A [WalletException], or the caller's cancellation, before
-     *   anything was sent: the state is [State.RequestReceived] again.
+     *   the response was built: the state is [State.RequestReceived]
+     *   again. Cancelled once it was built, though not sent, the state
+     *   is [State.Cancelled]: the response can't be built again.
      * - A [ProximityException]: the response couldn't be delivered, and
      *   the state is [State.Failed] with it.
      * - The caller's cancellation while the response was being sent: the
@@ -396,11 +399,28 @@ public class ProximityPresentation internal constructor(
             ?: throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
         if (!_state.compareAndSet(request, State.Responding)) throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
         val answersJSON = MdocPresentation.answersJSON(answers)
+        // Whether Go's respond returned a response: its session has ended
+        // then, and the copies count as seen. cancellable returns only
+        // once the call has, so this is settled whatever it throws.
+        val returned = AtomicBoolean()
         val answer = try {
-            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON) })
+            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON).also { returned.set(true) } })
         } catch (e: Exception) {
-            // Nothing was sent, whatever went wrong: a refusal of Go's, or
-            // the caller's own cancellation. The request stands.
+            if (returned.get()) {
+                // Go's session is over, so the request can't stand, though
+                // nothing was sent. The caller was cancelled as Go's
+                // respond returned (await reports the cancellation even
+                // though the call completed), or its answer didn't decode.
+                if (e is CancellationException) {
+                    finish(State.Cancelled)
+                    throw e
+                }
+                val error = WalletException(WalletException.Code.internal, null, e.toString())
+                finish(State.Failed(error))
+                throw error
+            }
+            // Nothing was sent: a refusal of Go's, or the caller's own
+            // cancellation before Go's respond returned. The request stands.
             _state.compareAndSet(State.Responding, request)
             throw e
         }
