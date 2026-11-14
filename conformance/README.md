@@ -79,7 +79,9 @@ production assurance adds, or a deployment uses instead, the OIDF
 runs still don't exercise, in particular:
 
 - The wallet roles under production assurance: `cmd/conformance-wallet`
-  and `cmd/conformance-wallet-vp` run only at development. The
+  and `cmd/conformance-wallet-vp` run only at development here (the
+  interop runs drive the wallet at production: "OID4VCgo's wallet at
+  production assurance", below). The
   Verifier's does run under production, through `verifier.Transactions`:
   the daily OID4VP workflow's "Verifier transactions" legs serve the
   Verifier plan's whole module list for both formats with
