@@ -19,17 +19,19 @@ PORT="${PORT:-20443}"
 MDOC_PORT="${MDOC_PORT:-20444}"
 SERVE_PORT="${SERVE_PORT:-20445}"
 TX_PORT="${TX_PORT:-20446}"
+TX_MDOC_PORT="${TX_MDOC_PORT:-20447}"
 WORK="${WORK:-$(mktemp -d)}"
 SDJWT_VERIFIER="https://localhost:$PORT"
 MDOC_VERIFIER="https://localhost:$MDOC_PORT"
 SERVE_URL="https://localhost:$SERVE_PORT"
 TX_VERIFIER="https://localhost:$TX_PORT"
+TX_MDOC_VERIFIER="https://localhost:$TX_MDOC_PORT"
 # The page origin the Digital Credentials API requests are for.
 ORIGIN=https://verifier.oid4vcgo-interop.example
 
-for p in "$PORT" "$MDOC_PORT" "$SERVE_PORT" "$TX_PORT"; do
+for p in "$PORT" "$MDOC_PORT" "$SERVE_PORT" "$TX_PORT" "$TX_MDOC_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
-    echo "port $p is in use; set PORT / MDOC_PORT / SERVE_PORT / TX_PORT" >&2
+    echo "port $p is in use; set PORT / MDOC_PORT / SERVE_PORT / TX_PORT / TX_MDOC_PORT" >&2
     exit 2
   fi
 done
@@ -44,8 +46,12 @@ trap cleanup EXIT
 echo "work dir  $WORK"
 echo "verifier  $SRC, commit $(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
 
-(cd "$SRC" && go build -o "$WORK/verifier" ./cmd/conformance-verifier \
-  && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
+# shellcheck source=../production.sh
+. "$HERE/../production.sh"
+# Built with the conformance_production tag, so that its transactions
+# engine can run as a deployment's Verifier does (below).
+build_production "$WORK" "$SRC" verifier=./cmd/conformance-verifier
+(cd "$SRC" && go build -o "$WORK/serve" ./interop/eudi/scripts/serve \
   && go run ./interop/eudi/scripts/setup -out "$WORK" -serve-url "$SERVE_URL" -serve-hosts localhost)
 (cd "$HERE/presentation" && ./gradlew --quiet --no-daemon installDist)
 DRIVER="$HERE/presentation/build/install/eudi-presentation-driver/bin/eudi-presentation-driver"
@@ -80,17 +86,25 @@ verifier_config "$MDOC_PORT" --rawfile ca iaca.pem \
     mdoc_claims: ["family_name", "given_name"], mdoc_trust_anchor_pem: $ca,
     status_list_trust_anchors_pem: $ca, status_list_tls_trust_anchors_pem: $serve_ca, status_list_allow_loopback: true,
     dc_api_origins: [$origin]}' > verifier-mdoc.json
-# The SD-JWT VC verifier again, served by verifier.Transactions (the
-# transactions engine), whose links ask for request_uri_method=post
-# (TransactionsConfig.RequestURIMethodPost). It serves no Digital
-# Credentials API.
-# shellcheck disable=SC2016
-verifier_config "$TX_PORT" --rawfile ca issuer-ca.pem \
-  '{listen_addr: $addr, base_url: $base, tls_certificate_pem: $tls_cert, tls_private_key_pem: $tls_key,
-    client_certificate_pem: $client_cert, client_private_key_pem: $client_key,
-    credential_issuer_trust_anchors_pem: $ca, vct: "urn:eudi:pid:1", claims: ["family_name", "given_name"],
-    status_list_trust_anchors_pem: $ca, status_list_tls_trust_anchors_pem: $serve_ca, status_list_allow_loopback: true,
-    engine: "transactions"}' > verifier-transactions.json
+# Both verifiers again, as a deployment runs a Verifier: served by
+# verifier.Transactions (the transactions engine), whose links ask for
+# request_uri_method=post (TransactionsConfig.RequestURIMethodPost),
+# under verifier.AssuranceProduction, its transactions in a sealed
+# SQLite file (sqlstore, sealing.AESGCMSealer). The status policy is
+# the same as above; its fetcher may reach loopback, where serve
+# publishes the lists, which TransactionsConfig.Status refuses under
+# production, so the binary runs that policy as the Accept instead
+# (conformance/verifier/README.md's "Transactions engine"). The
+# transactions engine serves no Digital Credentials API.
+tx_config() {  # $1 port, $2 the default engine's config, $3 database file
+  local port="$1" from="$2" db="$3"
+  # shellcheck disable=SC2016 # jq's variables, not the shell's
+  jq --arg addr "127.0.0.1:$port" --arg base "https://localhost:$port" --arg db "$WORK/$db" --arg key "$(sealing_key)" \
+    '.listen_addr = $addr | .base_url = $base | del(.dc_api_origins)
+      | .engine = "transactions" | .production = {database_path: $db, sealing_key: $key}' "$from"
+}
+tx_config "$TX_PORT" verifier-sdjwt.json verifier-transactions.db > verifier-transactions.json
+tx_config "$TX_MDOC_PORT" verifier-mdoc.json verifier-transactions-mdoc.db > verifier-transactions-mdoc.json
 
 ./serve -dir . -addr "127.0.0.1:$SERVE_PORT" > serve.log 2>&1 &
 PIDS+=($!)
@@ -100,9 +114,11 @@ PIDS+=($!)
 PIDS+=($!)
 ./verifier -config verifier-transactions.json > verifier-transactions.log 2>&1 &
 PIDS+=($!)
+./verifier -config verifier-transactions-mdoc.json > verifier-transactions-mdoc.log 2>&1 &
+PIDS+=($!)
 # The transactions engine's /authorize begins a request: its readiness
 # is probed at /result/{id}, which answers 404 for an unknown one.
-for url in "$SDJWT_VERIFIER/authorize" "$MDOC_VERIFIER/authorize" "$TX_VERIFIER/result/probe" "$SERVE_URL/statuslists/jwt"; do
+for url in "$SDJWT_VERIFIER/authorize" "$MDOC_VERIFIER/authorize" "$TX_VERIFIER/result/probe" "$TX_MDOC_VERIFIER/result/probe" "$SERVE_URL/statuslists/jwt"; do
   for _ in $(seq 1 50); do
     if curl -sk -o /dev/null --max-time 1 "$url"; then continue 2; fi
     sleep 0.2
@@ -197,6 +213,69 @@ refused() {  # $1 name, $2 verifier, $3 why; then driver options
   verifier_refused "result-$name.json" "$want"
 }
 
+# tx_begin begins a request on the transactions verifier $1 at its
+# /authorize, as a deployment's page does, its browser binding kept in
+# the cookie jar $2, and prints the openid4vp:// launch it redirects to.
+tx_begin() {  # $1 verifier, $2 cookie jar
+  curl -sk --max-time 30 -c "$2" -o /dev/null -w '%{redirect_url}' "$1/authorize"
+}
+
+# tx_page saves the transactions verifier's page $2 for the browser
+# whose cookie jar is $3 to $4, its HTML entities decoded, so that a
+# refusal's text reads as the verifier logged it.
+tx_page() {  # $1 verifier, $2 path or absolute URL, $3 cookie jar, $4 output
+  local url="$2"
+  [[ "$url" = https://* ]] || url="$1$url"
+  curl -sk --max-time 30 -b "$3" "$url" 2>/dev/null \
+    | sed -e 's/&#34;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' > "$4" || true
+}
+
+# tx_present runs a presentation to the transactions verifier $2 that
+# must be accepted: the redirect back to its redirect_uri, in the
+# browser that began the request, redeems the response_code for the
+# result page, which must hold the two requested claims and none of the
+# PID's others.
+tx_present() {  # $1 name, $2 verifier; then driver options
+  local name="$1" verifier="$2"; shift 2
+  echo "== $name"
+  drive "$name" redirect --uri "$(tx_begin "$verifier" "$name.cookies")" "$@"
+  if jq -e '.dispatch == "accepted"' "$name.json" >/dev/null; then
+    ok "the wallet resolved the request and the verifier took the response ($(jq -r '.encryption' "$name.json"))"
+  else bad "the wallet presented ($(explain "$name.json"))"; return; fi
+  tx_page "$verifier" "$(jq -r '.redirect_uri // empty' "$name.json")" "$name.cookies" "result-$name.html"
+  if grep -q '<h1>Verification succeeded</h1>' "result-$name.html" \
+      && grep -q 'Dupont' "result-$name.html" && grep -q 'Jean' "result-$name.html" \
+      && ! grep -qE 'birth_date|nationalities|issuing_country|issuing_authority' "result-$name.html"; then
+    ok "the verifier verified it and released the requested claims, and only those, to the browser that asked"
+  else bad "the verifier verified it ($(head -c 300 "result-$name.html"))"; fi
+}
+
+# tx_refused runs a presentation the transactions verifier $2 must
+# refuse: the request's page, shown to the browser that began it, must
+# report the refusal with its verifier.Reason $3 (on a "reason: " line)
+# and an error containing $4. $3 "accept" is the status policy's
+# refusal, which the binary runs as TransactionsConfig.Accept (above):
+# an error of the Accept's own, with no verifier.Reason, so the page
+# must have no reason line. A refusal for another reason, or none,
+# fails the control.
+tx_refused() {  # $1 name, $2 verifier, $3 reason, $4 why; then driver options
+  local name="$1" verifier="$2" reason="$3" want="$4" uri id reason_line
+  shift 4
+  reason_line="<pre>reason: $reason</pre>"
+  [[ "$reason" != accept ]] || reason_line=""
+  echo "== control: $name"
+  uri="$(tx_begin "$verifier" "$name.cookies")"
+  drive "$name" redirect --uri "$uri" "$@"
+  if ! jq -e '.resolved' "$name.json" >/dev/null; then bad "the wallet presented ($(explain "$name.json"))"; return; fi
+  # The request's ID is the last segment of its request_uri.
+  id="$(sed -E 's/.*[?&]request_uri=([^&]*).*/\1/; s/.*%2F//' <<< "$uri")"
+  tx_page "$verifier" "/result/$id" "$name.cookies" "result-$name.html"
+  if grep -q '<h1>Verification failed</h1>' "result-$name.html" && grep -qF -- "$want" "result-$name.html" \
+      && if [[ -n "$reason_line" ]]; then grep -qF "$reason_line" "result-$name.html"; else ! grep -q '<pre>reason: ' "result-$name.html"; fi; then
+    ok "the verifier refused it: $reason, $want"
+  else bad "the verifier refused it, for $reason, $want ($(sed 's/<[^>]*>/ /g' "result-$name.html" | head -c 400))"; fi
+}
+
 # wallet_refused checks the driver's outcome in $1 is the wallet library
 # refusing to resolve the request, for an error containing $2: not the
 # driver failing, nor a refusal for another reason.
@@ -242,7 +321,7 @@ dcapi() {  # $1 verifier, $2 name, $3 origin the platform reports; then driver o
 SDJWT=(--wallet wallet-sdjwt.json)
 MDOC=(--wallet wallet-mdoc.json)
 
-echo "#### SD-JWT VC (dc+sd-jwt)"
+echo "#### SD-JWT VC (dc+sd-jwt), the default engine"
 present sdjwt-post "$SDJWT_VERIFIER" post "${SDJWT[@]}"
 if jq -e '.request_uri_fetch | .method == "POST" and (.wallet_nonce | length > 0)
     and (.content_type | startswith("application/x-www-form-urlencoded"))
@@ -273,36 +352,33 @@ if jq -e '.request_uri_fetch.method == "GET"' result-sdjwt-no-method.json >/dev/
   ok "no request_uri_method: the wallet fetched the request with GET"
 else bad "no request_uri_method: fetched with $(jq -c '.request_uri_fetch' result-sdjwt-no-method.json)"; fi
 
-present sdjwt-get-only-wallet "$SDJWT_VERIFIER" post "${SDJWT[@]}" --request-uri-methods get
-if jq -e '.request_uri_fetch.method == "GET"' result-sdjwt-get-only-wallet.json >/dev/null; then
-  ok "request_uri_method post to a wallet without post: it fetched the request with GET"
-else bad "request_uri_method post to a wallet without post: fetched with $(jq -c '.request_uri_fetch' result-sdjwt-get-only-wallet.json)"; fi
-
-present sdjwt-a256gcm "$SDJWT_VERIFIER" post "${SDJWT[@]}" --enc A256GCM
-if jq -e '.encryption == "ECDH-ES/A256GCM"' sdjwt-a256gcm.json >/dev/null; then ok "the response was encrypted with A256GCM"
-else bad "the response was encrypted with A256GCM ($(jq -r '.encryption' sdjwt-a256gcm.json))"; fi
-
 # verifier.Transactions: /authorize binds the request to this browser
 # by a cookie, the wallet POSTs to the request_uri with its
 # wallet_metadata (to which Transactions narrows the Request Object's
 # client_metadata) and wallet_nonce, and the redirect back, in the
 # same browser, redeems the response_code for the result page.
-echo "== SD-JWT VC through verifier.Transactions, request_uri_method=post"
-uri="$(curl -sk --max-time 30 -c tx-cookies.txt -o /dev/null -w '%{redirect_url}' "$TX_VERIFIER/authorize")"
-drive sdjwt-transactions redirect --uri "$uri" "${SDJWT[@]}"
-if jq -e '.dispatch == "accepted"' sdjwt-transactions.json >/dev/null; then
-  ok "the wallet resolved the request and the verifier took the response ($(jq -r '.encryption' sdjwt-transactions.json))"
-else bad "the wallet presented ($(explain sdjwt-transactions.json))"; fi
-# This verifier's only request, fetched once.
+echo "#### SD-JWT VC through verifier.Transactions, under production assurance"
+tx_present sdjwt-transactions "$TX_VERIFIER" "${SDJWT[@]}"
+# This verifier's first request, fetched once.
 fetches="$(grep 'request object fetched with ' verifier-transactions.log | sed 's/.*fetched with //' | tr '\n' ' ')"
 if [[ "$fetches" = "POST " ]]; then ok "the wallet fetched the request with POST"
 else bad "the wallet fetched the request with POST (fetched with: ${fetches:-nothing})"; fi
-curl -sk --max-time 30 -b tx-cookies.txt -o result-sdjwt-transactions.html "$(jq -r '.redirect_uri // empty' sdjwt-transactions.json)" || true
-if grep -q '<h1>Verification succeeded</h1>' result-sdjwt-transactions.html \
-    && grep -q 'Dupont' result-sdjwt-transactions.html && grep -q 'Jean' result-sdjwt-transactions.html \
-    && ! grep -qE 'birth_date|nationalities|issuing_country|issuing_authority' result-sdjwt-transactions.html; then
-  ok "the verifier verified it and released the requested claims, and only those, to the browser that asked"
-else bad "the verifier verified it ($(head -c 300 result-sdjwt-transactions.html))"; fi
+tx_present sdjwt-transactions-a256gcm "$TX_VERIFIER" "${SDJWT[@]}" --enc A256GCM
+if jq -e '.encryption == "ECDH-ES/A256GCM"' sdjwt-transactions-a256gcm.json >/dev/null; then ok "the response was encrypted with A256GCM"
+else bad "the response was encrypted with A256GCM ($(jq -r '.encryption' sdjwt-transactions-a256gcm.json))"; fi
+tx_present sdjwt-transactions-get-only-wallet "$TX_VERIFIER" "${SDJWT[@]}" --request-uri-methods get
+if [[ "$(grep 'request object fetched with ' verifier-transactions.log | tail -1 | sed 's/.*fetched with //')" = GET ]]; then
+  ok "request_uri_method post to a wallet without post: it fetched the request with GET"
+else bad "request_uri_method post to a wallet without post: fetched with GET ($(grep 'request object fetched with ' verifier-transactions.log | tail -1))"; fi
+
+tx_refused revoked "$TX_VERIFIER" accept "$REVOKED" "${SDJWT[@]}" --variant revoked
+tx_refused untrusted-issuer "$TX_VERIFIER" untrusted_issuer "$UNTRUSTED_ISSUER" "${SDJWT[@]}" --variant untrusted-issuer
+tx_refused kb-jwt-wrong-nonce "$TX_VERIFIER" holder_binding "$KB_JWT_FOR its nonce does not match the expected value" "${SDJWT[@]}" --variant wrong-nonce
+tx_refused kb-jwt-wrong-aud "$TX_VERIFIER" holder_binding "$KB_JWT_FOR its aud does not match the expected audience" "${SDJWT[@]}" --variant wrong-audience
+tx_refused no-kb-jwt "$TX_VERIFIER" invalid_credential "verifier: verify: sdjwtvc: key binding is required but no Key Binding JWT was presented" \
+  "${SDJWT[@]}" --variant no-key-binding
+tx_refused unrequested-claim "$TX_VERIFIER" unrequested_claims 'verifier: the presentation discloses claims the query didn'"'"'t ask for: "birth_date"' \
+  "${SDJWT[@]}" --variant extra-claim
 
 echo "== SD-JWT VC over the Digital Credentials API (openid4vp-v1-signed)"
 dcapi "$SDJWT_VERIFIER" sdjwt-dcapi "$ORIGIN" "${SDJWT[@]}"
@@ -315,15 +391,6 @@ code="$(curl -sk --max-time 30 -o dcapi-again.json -w '%{http_code}' -X POST -H 
 if [[ "$code" = 409 ]] && jq -e '.error == "the request has already been answered"' dcapi-again.json >/dev/null 2>&1; then
   ok "refused (HTTP $code, the request has already been answered)"
 else bad "refused (HTTP $code: $(head -c 200 dcapi-again.json))"; fi
-
-refused revoked "$SDJWT_VERIFIER" "$REVOKED" "${SDJWT[@]}" --variant revoked
-refused untrusted-issuer "$SDJWT_VERIFIER" "$UNTRUSTED_ISSUER" "${SDJWT[@]}" --variant untrusted-issuer
-refused kb-jwt-wrong-nonce "$SDJWT_VERIFIER" "$KB_JWT_FOR its nonce does not match the expected value" "${SDJWT[@]}" --variant wrong-nonce
-refused kb-jwt-wrong-aud "$SDJWT_VERIFIER" "$KB_JWT_FOR its aud does not match the expected audience" "${SDJWT[@]}" --variant wrong-audience
-refused no-kb-jwt "$SDJWT_VERIFIER" "verifier: verify: sdjwtvc: key binding is required but no Key Binding JWT was presented" \
-  "${SDJWT[@]}" --variant no-key-binding
-refused unrequested-claim "$SDJWT_VERIFIER" 'verifier: the presentation discloses claims the query didn'"'"'t ask for: "birth_date"' \
-  "${SDJWT[@]}" --variant extra-claim
 
 echo "== control: the holder declines"
 drive decline redirect --uri "$(authorize "$SDJWT_VERIFIER" post)" "${SDJWT[@]}" --variant decline
@@ -387,7 +454,7 @@ echo "== control: a Digital Credentials API presentation whose KB-JWT aud is the
 dcapi "$SDJWT_VERIFIER" dcapi-wrong-aud "$ORIGIN" "${SDJWT[@]}" --variant wrong-audience
 verifier_refused result-dcapi-wrong-aud.json "$KB_JWT_FOR its aud does not match the expected audience"
 
-echo "#### mdoc (mso_mdoc)"
+echo "#### mdoc (mso_mdoc), the default engine"
 present mdoc-post "$MDOC_VERIFIER" post "${MDOC[@]}"
 present mdoc-get "$MDOC_VERIFIER" get "${MDOC[@]}"
 
@@ -397,17 +464,19 @@ if jq -e '.status == "verified"' result-mdoc-dcapi.json >/dev/null && released r
   ok "the verifier verified the response the wallet assembled ($(jq -r '.encryption' mdoc-dcapi.json))"
 else bad "the verifier verified it ($(explain mdoc-dcapi.json); $(why result-mdoc-dcapi.json))"; fi
 
-refused mdoc-revoked "$MDOC_VERIFIER" "$REVOKED" "${MDOC[@]}" --variant revoked
-refused mdoc-untrusted-issuer "$MDOC_VERIFIER" "$UNTRUSTED_ISSUER" "${MDOC[@]}" --variant untrusted-issuer
-refused mdoc-transcript-wrong-nonce "$MDOC_VERIFIER" "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-nonce
-refused mdoc-transcript-wrong-client-id "$MDOC_VERIFIER" "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-audience
-refused mdoc-unrequested-element "$MDOC_VERIFIER" \
-  'verifier: the presentation discloses data elements the query didn'"'"'t ask for: "eu.europa.ec.eudi.pid.1/birth_date"' \
-  "${MDOC[@]}" --variant extra-claim
-
 echo "== control: an mdoc over the Digital Credentials API whose SessionTranscript names the client_id, not the origin"
 dcapi "$MDOC_VERIFIER" mdoc-dcapi-wrong-origin "$ORIGIN" "${MDOC[@]}" --variant wrong-audience
 verifier_refused result-mdoc-dcapi-wrong-origin.json "$DEVICE_SIGNATURE"
+
+echo "#### mdoc through verifier.Transactions, under production assurance"
+tx_present mdoc-transactions "$TX_MDOC_VERIFIER" "${MDOC[@]}"
+tx_refused mdoc-revoked "$TX_MDOC_VERIFIER" accept "$REVOKED" "${MDOC[@]}" --variant revoked
+tx_refused mdoc-untrusted-issuer "$TX_MDOC_VERIFIER" untrusted_issuer "$UNTRUSTED_ISSUER" "${MDOC[@]}" --variant untrusted-issuer
+tx_refused mdoc-transcript-wrong-nonce "$TX_MDOC_VERIFIER" holder_binding "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-nonce
+tx_refused mdoc-transcript-wrong-client-id "$TX_MDOC_VERIFIER" holder_binding "$DEVICE_SIGNATURE" "${MDOC[@]}" --variant wrong-audience
+tx_refused mdoc-unrequested-element "$TX_MDOC_VERIFIER" unrequested_claims \
+  'verifier: the presentation discloses data elements the query didn'"'"'t ask for: "eu.europa.ec.eudi.pid.1/birth_date"' \
+  "${MDOC[@]}" --variant extra-claim
 
 # Each status check the verifier made, it made by fetching from serve:
 # a run in which it fetched nothing checked no status at all.

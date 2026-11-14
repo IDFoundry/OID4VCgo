@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
  * exits non-zero if any failed. run-issuer.sh starts the issuer in the
  * profile's configuration first.
  *
- *   main <driver.json> <base|key-attestation|deferred|dpop-nonces>
+ *   main <driver.json> <base|key-attestation|deferred|dpop-nonces|production>
  */
 fun main(args: Array<String>) {
     require(args.size == 2) { "usage: <driver.json> <profile>" }
@@ -21,6 +21,7 @@ fun main(args: Array<String>) {
             "key-attestation" -> keyAttestationCases(run)
             "deferred" -> deferredCases(run)
             "dpop-nonces" -> dpopNonceCases(run)
+            "production" -> productionCases(run)
             else -> error("unknown profile ${args[1]}")
         }
     }

@@ -59,7 +59,27 @@ class Wallet(
     val recorder = Recorder()
     val http = walletHttpClient(ssl, recorder)
 
-    fun trustedAttestation(): ClientAuthentication = walletAttestation(cfg.clientId, cfg.attesterIssuer, cfg.attesterKey, cfg.attesterX5c)
+    /**
+     * The instance key of the last Wallet Attestation the Wallet
+     * Provider's agent issued: the issuance's, which its Key
+     * Attestations name.
+     */
+    var instanceKey: ECKey? = null
+
+    /**
+     * Wallet Attestation client authentication the issuer trusts: from
+     * OID4VCgo's Wallet Provider when the driver has its agent (the
+     * production profile), else signed with the attester key the
+     * issuer's development configuration trusts.
+     */
+    fun trustedAttestation(): ClientAuthentication = cfg.agent?.let { attestationFrom(it) } ?: walletAttestation(cfg.clientId, cfg.attesterIssuer, cfg.attesterKey, cfg.attesterX5c)
+
+    /** Wallet Attestation client authentication from [agent]'s provider, keeping its instance key. */
+    fun attestationFrom(agent: ProviderAgent): ClientAuthentication {
+        val (auth, key) = providerWalletAttestation(cfg.clientId, agent)
+        instanceKey = key
+        return auth
+    }
 
     fun config(options: WalletOptions): OpenId4VCIConfig {
         val es256 = setOf(JWSAlgorithm.ES256)
@@ -229,6 +249,25 @@ class Proofs(
         ): Proofs {
             val keys = List(n) { newKey() }
             return Proofs(keys, ProofSpecification.JwtProofWithKeyAttestation { nonce, _ -> ecSigner(keys[0], keyAttestation(signer, keys, nonce)) })
+        }
+
+        /**
+         * One jwt proof carrying a Key Attestation of [n] keys from
+         * [wallet]'s Wallet Provider, for the issuance of its current
+         * instance key, signed by the first key.
+         */
+        fun jwtWithProviderKeyAttestation(
+            wallet: Wallet,
+            n: Int = 1,
+        ): Proofs {
+            val keys = List(n) { newKey() }
+            val agent = checkNotNull(wallet.cfg.agent) { "no Wallet Provider agent" }
+            return Proofs(
+                keys,
+                ProofSpecification.JwtProofWithKeyAttestation { nonce, _ ->
+                    ecSigner(keys[0], agent.keyAttestation(checkNotNull(wallet.instanceKey) { "no Wallet Attestation yet" }, keys, nonce))
+                },
+            )
         }
 
         /** One attestation proof: a key attestation of [n] keys. */
