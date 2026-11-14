@@ -532,3 +532,88 @@ suspend fun dpopNonceCases(run: Run) {
         run.checkNonceChallenges(listOf(TOKEN_PATH, CREDENTIAL_PATH))
     }
 }
+
+/** FAPIgo's error_description for a Wallet Attestation its status list reads revoked. */
+private const val REVOKED_ATTESTATION = "client attestation has been revoked"
+
+/** The Wallet Provider's refusal, through its agent, to attest a revoked instance. */
+private const val PROVIDER_REVOKED = "HTTP 403 instance_revoked"
+
+/**
+ * The issuer's production setup (cmd/conformance-issuer's production:
+ * production assurance, sealed SQLite stores, jwt proofs that must
+ * carry a key attestation, DPoP nonces), with every Wallet Attestation
+ * and Key Attestation from OID4VCgo's Wallet Provider through its
+ * agent, and both attestations' status checked on the provider's lists.
+ */
+suspend fun productionCases(run: Run) {
+    val sdjwt = run.wallet.cfg.sdJwtConfigurationId
+    val mdoc = run.wallet.cfg.mdocConfigurationId
+
+    // As baseCases' controls: a 401's error object is read from the
+    // exchange (README finding 3).
+    fun refusedAtToken(description: String) =
+        run.wallet.recorder.to(TOKEN_PATH).lastOrNull().let {
+            (it != null && it.status == 401 && it.error == "invalid_client" && it.errorDescription == description)
+                .also { refused -> if (!refused) recorded(it) }
+        }
+
+    run.case("authorization code, SD-JWT VC, jwt proof with the Wallet Provider's Key Attestation of two keys") {
+        val issuer = walletInitiated(listOf(sdjwt))
+        val authorized = with(this) { issuer.authorizeByCode() }
+        run.checkAuthorizationCodeRequests()
+        run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwtWithProviderKeyAttestation(this, 2))
+        run.checkCredentialRequests()
+    }
+    run.case("pre-authorized code, mdoc, jwt proof with the Wallet Provider's Key Attestation") {
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(mdoc), byReference = true)
+        val issuer = fromOffer(uri)
+        val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
+        run.checkPreAuthorizedTokenRequest()
+        run.issueAndVerify(issuer, authorized, mdoc, Proofs.jwtWithProviderKeyAttestation(this))
+        run.checkCredentialRequests()
+    }
+    run.case("pre-authorized code, both formats on one token, Credential Request and Response encryption") {
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt, mdoc))
+        val issuer = fromOffer(uri, WalletOptions(encryption = true))
+        var authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
+        authorized = run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwtWithProviderKeyAttestation(this)).first
+        run.issueAndVerify(issuer, authorized, mdoc, Proofs.jwtWithProviderKeyAttestation(this))
+        run.checkCredentialRequests(encrypted = true)
+    }
+    run.control(
+        "a Wallet Attestation from a Wallet Provider under a CA the issuer doesn't trust",
+        "the Token Endpoint refuses it: 401 invalid_client, \"$UNTRUSTED_ATTESTER\"",
+        { refusedAtToken(UNTRUSTED_ATTESTER) },
+    ) {
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
+        val issuer = fromOffer(uri, WalletOptions(client = attestationFrom(checkNotNull(cfg.otherAgent) { "no other agent" })))
+        with(this) { issuer.authorizeByPreAuthorizedCode() }
+    }
+
+    // Last, as it revokes the wallet's instance at the provider: a
+    // Wallet Attestation the wallet obtained before, which the cases
+    // above differ from in its status alone, then refused at the Token
+    // Endpoint once the issuer's cached list has expired (the
+    // provider's ttl) and it reads the entry INVALID.
+    val admin = checkNotNull(run.wallet.cfg.providerAdmin) { "no Wallet Provider admin" }
+    val heldAttestation = run.wallet.attestationFrom(checkNotNull(run.wallet.cfg.agent))
+    run.control(
+        "a Wallet Attestation whose instance the Wallet Provider has since revoked",
+        "the Token Endpoint refuses it: 401 invalid_client, \"$REVOKED_ATTESTATION\"",
+        { refusedAtToken(REVOKED_ATTESTATION) },
+    ) {
+        revokeAtProvider(admin)
+        delay((cfg.providerStatusTtlSeconds + 2) * 1000)
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
+        val issuer = fromOffer(uri, WalletOptions(client = heldAttestation))
+        with(this) { issuer.authorizeByPreAuthorizedCode() }
+    }
+    run.control(
+        "a new Wallet Attestation for the revoked instance",
+        "the Wallet Provider refuses it: $PROVIDER_REVOKED",
+        { t -> generateSequence(t) { it.cause }.any { (it.message ?: "").contains(PROVIDER_REVOKED) } },
+    ) {
+        attestationFrom(checkNotNull(cfg.agent))
+    }
+}

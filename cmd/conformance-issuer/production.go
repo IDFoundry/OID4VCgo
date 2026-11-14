@@ -12,11 +12,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -54,8 +56,10 @@ type productionBackend struct {
 	// configuration rather than made per process.
 	signingKeys keys.KeyManager
 	// statusCache is the one statuslist.Cache the Wallet Attestation
-	// and Key Attestation status checks share.
-	statusCache *statuslist.Cache
+	// and Key Attestation status checks share, and statusFetcher their
+	// fetcher.
+	statusCache   *statuslist.Cache
+	statusFetcher statuslist.Fetcher
 }
 
 func newProductionBackend(cfg Config) (backend, error) {
@@ -87,7 +91,11 @@ func newProductionBackend(cfg Config) (backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", p.DatabasePath, err)
 	}
-	b := &productionBackend{cfg: cfg, signingKeys: signingKeys, statusCache: statuslist.NewCache(statuslist.CacheOptions{})}
+	statusFetcher, err := attestationStatusFetcher(*p)
+	if err != nil {
+		return nil, err
+	}
+	b := &productionBackend{cfg: cfg, signingKeys: signingKeys, statusCache: statuslist.NewCache(statuslist.CacheOptions{}), statusFetcher: statusFetcher}
 	if b.issuerDB, err = sqlstore.New(sqlDB, sqlstore.SQLite, sqlstore.Options{Sealer: sealer}); err != nil {
 		return nil, err
 	}
@@ -170,8 +178,26 @@ func (b *productionBackend) issuer(cfg *issuer.Config, deps *issuer.Dependencies
 	if err != nil {
 		return err
 	}
-	deps.AttestationStatus = issuer.StatusListAttestationStatus{Checker: b.statusChecker(roots)}
+	status := issuer.StatusListAttestationStatus{Checker: b.statusChecker(roots)}
+	deps.AttestationStatus = status
+	if b.cfg.Production.AttestationStatusAllowLoopback {
+		log.Print("WARNING: attestation status lists are fetched from loopback addresses, which issuer.New refuses under production assurance: the key attestation status check runs through a wrapper it can't inspect")
+		deps.AttestationStatus = uninspectedAttestationStatus{status}
+	}
 	return nil
+}
+
+// uninspectedAttestationStatus runs a StatusListAttestationStatus's
+// check, without its CheckConfiguration, which issuer.New would call
+// and which refuses a Fetcher that may reach loopback under production
+// assurance (ProductionConfig.AttestationStatusAllowLoopback).
+type uninspectedAttestationStatus struct {
+	inner issuer.StatusListAttestationStatus
+}
+
+// CheckAttestationStatus implements issuer.AttestationStatusChecker.
+func (u uninspectedAttestationStatus) CheckAttestationStatus(ctx context.Context, a issuer.VerifiedKeyAttestation) error {
+	return u.inner.CheckAttestationStatus(ctx, a)
 }
 
 // statusIndices keeps Config.StatusLists' reservations and statuses in
@@ -180,13 +206,32 @@ func (b *productionBackend) statusIndices() statuslist.IndexStore { return b.iss
 
 // statusChecker fetches the Status List Tokens an attestation's status
 // claim names, signed under roots, through the shared cache: from
-// public addresses only, the signers' certificate revocation unchecked.
+// public addresses only, unless the configuration lets it reach
+// loopback, over TLS chained to the system roots or the configuration's
+// anchors, the signers' certificate revocation unchecked.
 func (b *productionBackend) statusChecker(roots *x509.CertPool) statuslist.Checker {
 	return statuslist.Checker{
+		Fetcher: b.statusFetcher,
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
 		Cache:   b.statusCache,
 	}
+}
+
+// attestationStatusFetcher is p's attestation status list fetcher.
+func attestationStatusFetcher(p ProductionConfig) (statuslist.Fetcher, error) {
+	f := statuslist.Fetcher{AllowLoopback: p.AttestationStatusAllowLoopback}
+	if p.AttestationStatusTLSTrustAnchorsPEM != "" {
+		tlsRoots := x509.NewCertPool()
+		if !tlsRoots.AppendCertsFromPEM([]byte(p.AttestationStatusTLSTrustAnchorsPEM)) {
+			return f, fmt.Errorf("config: production.attestation_status_tls_trust_anchors_pem holds no PEM certificates")
+		}
+		f.HTTP = &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12}},
+		}
+	}
+	return f, nil
 }
 
 // auditLog is the Authorization Server's and the Credential Issuer's

@@ -130,7 +130,14 @@ Each follows the specification, so none is a finding.
   reader certificate under the same root), and the session verifies
   walletflow's response as it would any other. Both serve the
   peer's certificate for `localhost`, which `walletflow`'s development
-  fetcher reaches by name.
+  fetcher reaches by name. `cmd/conformance-verifier` runs its default
+  engine at development assurance, over an in-memory session store,
+  not as a deployment's `verifier.Transactions` under production as in
+  the EUDI and walt.id runs: Multipaz's wallet is presented cross-device
+  and over the Digital Credentials API, and the binary's transactions
+  engine begins same-device requests alone and routes no Digital
+  Credentials API (the package's `Begin` with `sameDevice` false and
+  `BeginDCAPI` do).
 - **OpenID4VCI.** OID4VCgo's issuer is `cmd/conformance-issuer` as
   [`../eudi/scripts/setup-issuer`](../eudi/scripts/setup-issuer)
   configures it, which the peer starts, trusting an attester the peer
@@ -145,11 +152,24 @@ Each follows the specification, so none is a finding.
   with its `exp` an hour after its `iat`, so the control's attestation
   differs from the passing one in its lifetime alone. The issuer gives
   every failed check of an attestation the same `invalid_client`
-  description, so that's what pins the control's reason.
+  description, so that's what pins the control's reason. The issuer
+  runs its development profile, not its production setup: that takes
+  only `jwt` proofs carrying a key attestation, trusted by their `x5c`
+  chain, and Multipaz's wallet sends `attestation` proofs whose key
+  attestation its local backend signs with a bare key.
   Multipaz's issuer runs in the driver from its published libraries
   (`multipaz-openid4vci`'s routes on Netty, over TLS), signing with the
-  driver's document signer and trusting the peer's Wallet Provider, which
-  attests `walletflow`'s instance and keys.
+  driver's document signer and trusting OID4VCgo's Wallet Provider
+  ([`../walletprovider`](../walletprovider)), which attests
+  `walletflow`'s instance keys and holder keys: `walletprovider.Provider`
+  as a deployment runs it, over sealed SQLite stores, its status lists
+  served, which [`run.sh`](run.sh) starts and the peer registers with
+  over its v1 protocol (`interop/internal/interopwp`; only the platform
+  evidence is a stand-in, `walletprovidertest.FakeVerifier`). Its CA is
+  named as Multipaz's issuer keys its trusted attesters. The
+  untrusted-attester control's attestations are a second such
+  provider's, under a CA of its own, naming the same identifier, so the
+  control differs from the passing case in the provider's CA alone.
 
 ## What it found
 
@@ -244,7 +264,8 @@ It needs Go and a JDK (21 or later), and exits 0 only if every case
 behaves as expected. `MULTIPAZ_VERSION` builds the driver against
 another Multipaz release (`latest`: Maven Central's newest, found with
 `curl`) without the locks and checksums, which are the pinned
-release's. `WORK` keeps the run's files; `driver.log` has
+release's. `WP_PORT` (22441, and the three ports after) moves the Wallet
+Providers and their admin listeners. `WORK` keeps the run's files; `driver.log` has
 Multipaz's own logging.
 
 ## Moving the pin

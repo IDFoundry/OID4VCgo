@@ -40,6 +40,13 @@ class DriverConfig(
     val issuerCa: List<X509Certificate>,
     val iaca: List<X509Certificate>,
     val otherCa: List<X509Certificate>,
+    // The production profile's: OID4VCgo's Wallet Provider's agent, the
+    // agent of one under a CA the issuer doesn't trust, the trusted
+    // provider's admin listener, and its status lists' ttl in seconds.
+    val agent: ProviderAgent?,
+    val otherAgent: ProviderAgent?,
+    val providerAdmin: String?,
+    val providerStatusTtlSeconds: Long,
 ) {
     companion object {
         fun load(path: String): DriverConfig {
@@ -70,6 +77,10 @@ class DriverConfig(
                 issuerCa = certificates(s("issuer_ca_pem")),
                 iaca = certificates(s("iaca_pem")),
                 otherCa = certificates(s("other_ca_pem")),
+                agent = o["wallet_provider_agent"]?.jsonPrimitive?.content?.let { ProviderAgent(it) },
+                otherAgent = o["other_wallet_provider_agent"]?.jsonPrimitive?.content?.let { ProviderAgent(it) },
+                providerAdmin = o["wallet_provider_admin"]?.jsonPrimitive?.content,
+                providerStatusTtlSeconds = o["wallet_provider_status_ttl_seconds"]?.jsonPrimitive?.content?.toLong() ?: 0,
             )
         }
 

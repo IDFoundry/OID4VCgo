@@ -190,6 +190,7 @@ jobs:
           path: |
             ${{ runner.temp }}/eudi-issuer-interop.log
             ${{ runner.temp }}/eudi-issuer-work/*.log
+            ${{ runner.temp }}/eudi-issuer-work/*wallet-provider/*.log
           retention-days: 14
 
   pid-issuer:

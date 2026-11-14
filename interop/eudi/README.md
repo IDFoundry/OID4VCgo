@@ -180,6 +180,13 @@ What isn't covered:
   response.
 - ISO/IEC 18013-7 Annex C (`org-iso-mdoc`): the EUDI verifier has no
   such endpoint.
+- Credentials an OID4VCgo issuer issued: the fixtures are signed by
+  `scripts/setup`, and their status lists published by `scripts/serve`'s
+  `statuslist` `Allocator` over an in-memory store, as
+  `cmd/conformance-wallet-vp` presents the credentials its configuration
+  holds rather than ones it obtains. `cmd/conformance-issuer`'s
+  production setup, its status lists in `sqlstore`, issues to wallets in
+  the issuer and walt.id runs, where Verifier2 checks its lists.
 
 Run it locally (Docker, Go, jq, curl and openssl; on Apple silicon the
 amd64 image runs emulated and takes a couple of minutes to start):
@@ -228,25 +235,48 @@ B.2.6.1, or B.2.6.2 over the Digital Credentials API). Each credential
 is issued for the run under `scripts/setup`'s throwaway issuer CA (or
 IACA), and carries a Token Status List reference.
 
-Two verifiers run, one asking for the SD-JWT VC PID (`dc+sd-jwt`,
-`urn:eudi:pid:1`), one for the mdoc PID (`eu.europa.ec.eudi.pid.1`),
-each for `family_name` and `given_name`. A third serves the SD-JWT VC
-request through `verifier.Transactions`, the API a deployment uses
-(`cmd/conformance-verifier`'s transactions engine): its links ask for
+Four verifiers run, two asking for the SD-JWT VC PID (`dc+sd-jwt`,
+`urn:eudi:pid:1`), two for the mdoc PID (`eu.europa.ec.eudi.pid.1`),
+each for `family_name` and `given_name`. One of each runs as a
+deployment's Verifier does: through `verifier.Transactions`, the API a
+deployment uses (`cmd/conformance-verifier`'s transactions engine),
+under `verifier.AssuranceProduction`, its transactions in a sealed
+SQLite file (its `production` setting: `sqlstore`'s
+`TransactionStore`, `sealing.AESGCMSealer`; the binary is built with
+the `conformance_production` tag). Its links ask for
 `request_uri_method=post`, the wallet's POST carries its
 `wallet_metadata`, to which the Request Object's `client_metadata` is
 narrowed, and the result is released only to the browser holding the
-request's cookie, at the `redirect_uri`. All three run at development
-assurance (`verifier.AssuranceDevelopment`): the binary's production
-mode, which takes the transactions engine and a build with the
-`conformance_production` tag, isn't used here, and each verifier's
-status list fetches may reach loopback (`status_list_allow_loopback`),
-where [`scripts/serve`](scripts/serve) serves the lists. Within that:
-the issuer trusted by its x5c chain to the run's CA (or IACA), never a
-pinned key; every credential's Token Status List checked, a status
-reference required, the list signed by the credential's issuer and
-fetched over TLS it verifies; holder binding required; a disclosed
-claim the query didn't ask for refused. No certificate's revocation is
+request's cookie, at the `redirect_uri`. The presentations, and every
+control the verifier must refuse, go to these two, each refusal graded
+by the result page that browser sees: the refusal's `verifier.Reason`
+(its `reason:` line) and its error.
+
+The other two, the binary's default engine at development assurance
+(`verifier.AssuranceDevelopment`, an in-memory session store), serve
+what the transactions engine doesn't: the `request_uri_method` a case
+asks for (`get`, or none; the transactions engine asks for `post`),
+the Digital Credentials API (the binary routes no Digital Credentials
+API through `verifier.Transactions`, though the package's `BeginDCAPI`
+does), and the default engine's own controls (a `response_code`
+redeemed again at its `/result/{id}/redeem`, the replayed response, the
+holder declining) and the wallet's (graded by the library's refusal,
+whichever engine served the request).
+
+On both engines: the issuer trusted by its x5c chain to the run's CA
+(or IACA), never a pinned key; every credential's Token Status List
+checked, a status reference required, the list signed by the
+credential's issuer and fetched over TLS it verifies; holder binding
+required; a disclosed claim the query didn't ask for refused. The
+status lists are on loopback, where [`scripts/serve`](scripts/serve)
+serves them, so the fetchers may reach loopback
+(`status_list_allow_loopback`): a production fetcher dials public
+addresses only, and a runner has none to serve from. Under production,
+`TransactionsConfig.Status` refuses that fetcher, so the binary runs the
+same status policy as the `Accept` (conformance/verifier/README.md's
+"Transactions engine"): a revoked credential's refusal is then the
+`Accept`'s own error, with no `verifier.Reason`, and the controls
+check the result page names none. No certificate's revocation is
 checked: both engines take `certrevocation.NoCheck` for the issuer's
 and the status list signer's certificates, as the run's throwaway CAs
 publish no CRL. The run also checks that the status lists were
@@ -257,20 +287,21 @@ fetched.
 | SD-JWT VC, `request_uri_method=post` | accepted; the wallet fetches with a form POST, a `wallet_nonce` and `wallet_metadata` |
 | SD-JWT VC, `request_uri_method=get` | accepted; fetched with GET |
 | SD-JWT VC, no `request_uri_method` | accepted; fetched with GET |
-| SD-JWT VC, `post` to a wallet that supports only GET | accepted; fetched with GET |
-| SD-JWT VC, a wallet that encrypts only with A256GCM | accepted, encrypted with A256GCM |
-| SD-JWT VC through `verifier.Transactions` (`TransactionsConfig.RequestURIMethodPost`) | accepted; fetched with a form POST, the result released to the browser that began the request |
+| SD-JWT VC through `verifier.Transactions` under production (`TransactionsConfig.RequestURIMethodPost`) | accepted; fetched with a form POST, the result released to the browser that began the request |
+| The same, a wallet that supports only GET | accepted; fetched with GET |
+| The same, a wallet that encrypts only with A256GCM | accepted, encrypted with A256GCM |
 | SD-JWT VC over the Digital Credentials API (`openid4vp-v1-signed`, `dc_api.jwt`) | accepted |
+| mdoc through `verifier.Transactions` under production | accepted, released to the browser that began the request |
 | mdoc, `request_uri_method=post` and `get` | accepted |
 | mdoc over the Digital Credentials API | accepted |
 | A `response_code` redeemed a second time | the verifier refuses |
 | A Digital Credentials API answer posted a second time | the verifier refuses |
-| A revoked SD-JWT VC, or mdoc (its status list entry invalid) | the verifier refuses it |
-| An SD-JWT VC, or mdoc, from an issuer under an untrusted CA | the verifier refuses it |
-| A KB-JWT for another nonce, or another `aud` | the verifier refuses it |
-| An SD-JWT VC without a KB-JWT | the verifier refuses it |
-| An SD-JWT VC, or mdoc, disclosing a claim the query didn't ask for | the verifier refuses it |
-| An mdoc whose SessionTranscript names another nonce, or another `client_id` | the verifier refuses it |
+| A revoked SD-JWT VC, or mdoc (its status list entry invalid), under production | the verifier refuses it: the status policy's error (`statuslist: the referenced token's status is INVALID (revoked)`), no `verifier.Reason` (the `Accept`'s) |
+| An SD-JWT VC, or mdoc, from an issuer under an untrusted CA, under production | the verifier refuses it: `untrusted_issuer`, `x509: certificate signed by unknown authority` |
+| A KB-JWT for another nonce, or another `aud`, under production | the verifier refuses it: `holder_binding`, `key binding JWT is for another request` |
+| An SD-JWT VC without a KB-JWT, under production | the verifier refuses it: `invalid_credential`, `key binding is required but no Key Binding JWT was presented` |
+| An SD-JWT VC, or mdoc, disclosing a claim the query didn't ask for, under production | the verifier refuses it: `unrequested_claims` |
+| An mdoc whose SessionTranscript names another nonce, or another `client_id`, under production | the verifier refuses it: `holder_binding`, the DeviceSignature doesn't verify |
 | Over the Digital Credentials API, a KB-JWT whose `aud` is the `client_id`, not `origin:<origin>` (Appendix A.4) | the verifier refuses it |
 | Over the Digital Credentials API, an mdoc SessionTranscript naming the `client_id`, not the origin | the verifier refuses it |
 | The holder declines | the verifier records the wallet's `access_denied` |
@@ -284,8 +315,10 @@ fetched.
 
 Each accepted redirect-flow case completes the same-device return: the
 verifier answers the response with a `redirect_uri` carrying a
-`response_code`, and releases the result once, for that code
-(`/result/{id}/redeem`), with how the wallet fetched the Request Object.
+`response_code`, and releases the result once, for that code: the
+default engine at `/result/{id}/redeem`, with how the wallet fetched
+the Request Object; the transactions engine to the browser that began
+the request (`Transactions.Redeem`), whose log says how it was fetched.
 The released claims must be the two asked for and none of the PID's
 others. Each control is checked for its reason: OID4VCgo's verifier's
 error, or the EUDI library's (`InvalidJarJwt`, `UnexpectedOrigin`, ...),
@@ -373,8 +406,12 @@ The verifier, not the library, sets the limits here:
 - ISO/IEC TS 18013-7 Annex C (`org-iso-mdoc`): the library is
   OpenID4VP only.
 - A `response_code` bound to the browser that started the request
-  outside the one `verifier.Transactions` case: `cmd/conformance-verifier`'s
+  outside the `verifier.Transactions` cases: `cmd/conformance-verifier`'s
   default engine has none (see `conformance/verifier/README.md`).
+- The Digital Credentials API, the `request_uri_method` choices and the
+  default engine's own controls under production assurance: they run
+  on the default engine, at development (above).
+- A production status list fetch: the lists are on loopback (above).
 - The revocation (CRLs) of the issuer's and the status list signer's
   certificates: both engines check none (`certrevocation.NoCheck`).
 
@@ -384,8 +421,8 @@ Run it locally (Go, a JDK 21 or later, jq, curl and openssl):
 interop/eudi/run-wallet.sh
 ```
 
-`PORT`, `MDOC_PORT`, `SERVE_PORT` and `TX_PORT` (20443 to 20446) move
-the listeners, and `WORK` keeps the run's files. Every key, certificate and
+`PORT`, `MDOC_PORT`, `SERVE_PORT`, `TX_PORT` and `TX_MDOC_PORT` (20443
+to 20447) move the listeners, and `WORK` keeps the run's files. Every key, certificate and
 document is throwaway, made per run by [`scripts/setup`](scripts/setup)
 and the driver; CI uploads the logs and the verifiers' answers, never
 the work directory's keys.
@@ -446,7 +483,8 @@ library makes, so a case also checks how it was made: DPoP proof and
 token, attestation headers, PKCE S256, `issuer_state`, the Nonce
 Endpoint, encrypted bodies, DPoP nonce retries.
 
-The issuer runs in four configurations in turn, its profiles:
+The issuer runs in five configurations in turn, its profiles, the
+last its production setup:
 
 | Profile | Case | Expected |
 |---|---|---|
@@ -475,6 +513,12 @@ The issuer runs in four configurations in turn, its profiles:
 | deferred | with Request and Response encryption | deferred, then issued, encrypted |
 | deferred | a `transaction_id` polled again once issued | refused, `invalid_transaction_id` |
 | dpop-nonces | authorization code, SD-JWT VC; pre-authorized code, mdoc | PAR, the Token and the Credential Endpoints each challenge with `use_dpop_nonce`, and the wallet retries |
+| production | authorization code, SD-JWT VC, a jwt proof carrying the Wallet Provider's Key Attestation of two keys | two credentials, one per attested key |
+| production | pre-authorized code, mdoc, offer by reference, one key | issued, verified |
+| production | both formats on one pre-authorized token, Credential Request and Response encryption | issued, verified, both bodies `application/jwt` |
+| production | a Wallet Attestation from a Wallet Provider under a CA the issuer doesn't trust | refused: 401 `invalid_client`, "no matching attester key" |
+| production | a Wallet Attestation the wallet obtained before the Wallet Provider revoked its instance, once the cached status list's `ttl` has passed | refused: 401 `invalid_client`, "client attestation has been revoked" |
+| production | a new Wallet Attestation for the revoked instance | the Wallet Provider refuses it: 403 `instance_revoked` |
 
 `base` is the issuer as the OIDF plan runs it, plus `offers` (the
 pre-authorized code grant, Credential Offers, and a loopback-only
@@ -488,6 +532,36 @@ key attestation to a jwt proof only when the issuer requires one.
 `deferred` defers every request, and `dpop-nonces` has the
 Authorization Server and the Credential Issuer each require their own
 DPoP nonce.
+
+`production` is the issuer as a deployment runs it
+(`cmd/conformance-issuer`'s `production` setting, the binary built with
+the `conformance_production` tag): the Authorization Server and the
+Credential Issuer under production assurance, every store `sqlstore`'s
+or `fapigo/sqlstore`'s in a sealed SQLite file, the access token key
+loaded from its configuration, audit sinks, `jwt` proofs that must
+carry a key attestation (`haip.RecommendedIssuerConfig`, no
+`attestation` proof type), and DPoP nonces. Every Wallet Attestation
+and Key Attestation is OID4VCgo's Wallet Provider's
+([`../walletprovider`](../walletprovider): `walletprovider.Provider`
+over sealed SQLite stores, its status lists served), which the driver
+obtains through the provider's agent (the wallet's side of its v1
+protocol, as the Swift and Kotlin libraries' `HttpWalletProvider` is
+on a device; only the platform evidence is a stand-in,
+`walletprovidertest.FakeVerifier`). The issuer trusts both by their
+`x5c` chain to the provider's CA, and checks their status on its lists.
+Those are on loopback under the provider's own TLS certificate, which
+production's status fetcher refuses (`HardenedForProduction`), so this
+profile alone sets `attestation_status_allow_loopback` and
+`attestation_status_tls_trust_anchors_pem`, the one setting a
+deployment wouldn't make: `issuer.New` would refuse that fetcher, so
+the key attestation check runs through a wrapper it can't inspect,
+checking exactly what it would (the binary logs a warning). The
+revocation control holds a Wallet Attestation from before the
+revocation, differing from the passing cases in its status alone; the
+provider's `ttl` is 2 s, so the issuer's cached list expires within the
+run, and the run checks the issuer fetched the list again. The other
+profiles' cases don't run here: production takes no `attestation`
+proofs and no `jwt` proof without a key attestation.
 
 Each control is checked for its reason, from the issuer's error
 response as the driver recorded it, not only from the library's
@@ -584,9 +658,12 @@ finding 1.
   issues none (it leaves `status_lists` unset), and the library is a
   wallet, which wouldn't check them. The OIDF issuer runs, and the
   walt.id run's Verifier2, check the issuer's.
-- Key attestations trusted by `x5c` or a trust chain: the issuer trusts
-  one configured key. Several key-attested proofs in one request: the
-  library sends one (ETSI TS 119 472-3).
+- Key attestations trusted by a trust chain: the development profiles
+  trust one configured key, the production profile the Wallet
+  Provider's `x5c` chain. Several key-attested proofs in one request:
+  the library sends one (ETSI TS 119 472-3).
+- PostgreSQL, and several issuer instances sharing a store: the
+  production profile's stores are one SQLite file, one instance.
 - RSA request or response encryption: the issuer supports ECDH-ES only.
 - Credential reuse policies and registration certificates (ETSI TS
   119 472-3, the ARF): not part of OpenID4VCI or HAIP, and the issuer
@@ -604,7 +681,9 @@ PROFILES="base deferred" interop/eudi/run-issuer.sh
 ```
 
 `PORT` and `OFFERS_PORT` (18446 and 18447) move the issuer's
-listeners, and `WORK` keeps the run's files, its keys among them. The
+listeners, `WP_PORT` (`PORT`+2, and the five ports after) the
+production profile's Wallet Providers, their admin listeners and
+agents, and `WORK` keeps the run's files, its keys among them. The
 driver's stack traces and the library's logging go to
 `driver-<profile>.log`, the issuer's to `issuer-<profile>.log`.
 
@@ -763,7 +842,11 @@ Wallet Attestation, `key_storage` and `user_authentication`
 Attestation, each status valid for more than the issuer's 31-day
 preferred period. HAIP 1.0 §4.4.1 leaves an ecosystem room for such
 claims, and walletflow takes them through its `WalletProvider`, which
-`pidwallet`'s implements.
+`pidwallet`'s implements. OID4VCgo's own Wallet Provider
+(`walletprovider.Provider`, which the issuer, walt.id and Multipaz runs
+use as deployed, [`../walletprovider`](../walletprovider)) issues
+Appendix D's and E's claims alone too, with no setting for TS3's, so
+this run keeps the stand-in.
 
 Of what the wallet is lenient about (SPECIFICATIONS.md, "Known
 leniencies"), the issuer sends its `credential_request_encryption`

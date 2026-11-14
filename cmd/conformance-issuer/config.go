@@ -247,6 +247,23 @@ type ProductionConfig struct {
 	// AccessTokenSigningKeyPEM is the Authorization Server's access
 	// token signing key: a P-256 private key, PEM-encoded.
 	AccessTokenSigningKeyPEM string `json:"access_token_signing_key_pem"`
+
+	// AttestationStatusTLSTrustAnchorsPEM, if set, are the CA
+	// certificates the Wallet Attestation and Key Attestation status
+	// list fetches trust for TLS, in place of the system roots: an
+	// interop run's Wallet Provider serves its lists under a
+	// certificate of its own.
+	AttestationStatusTLSTrustAnchorsPEM string `json:"attestation_status_tls_trust_anchors_pem,omitempty"`
+
+	// AttestationStatusAllowLoopback lets those fetches reach a
+	// loopback address, where an interop run's Wallet Provider serves
+	// its lists. issuer.New refuses a key attestation status check
+	// whose fetcher may under production assurance
+	// (statuslist.Fetcher.HardenedForProduction), so the check then
+	// runs through a wrapper it can't inspect, checking exactly what it
+	// would, as cmd/conformance-verifier runs its status policy as the
+	// Accept; the binary logs a warning saying so.
+	AttestationStatusAllowLoopback bool `json:"attestation_status_allow_loopback,omitempty"`
 }
 
 // validateProduction checks Production, when set, holds what the
