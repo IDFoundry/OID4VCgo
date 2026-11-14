@@ -1668,9 +1668,12 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   the session fails as `ConnectionLost`. A peripheral whose session
   fails (the central unsubscribes or ends it, Bluetooth turns off) also
   fails a send waiting for room at once, as the central already did:
-  its chunk was never queued. This is read from the code: not yet run
-  on a device. Not looked into: whether a send can return normally
-  after the other device has gone, when the queue still has room.
+  its chunk was never queued, and sends no later chunk once its
+  session has failed, as Android's does: `updateValue` could still
+  take one while the queue had room, and a response the reader never
+  got would seem sent. This is read from the code: not yet run on a
+  device. Not looked into: whether a send can return normally after
+  the other device has gone without CoreBluetooth reporting it.
 - **Apps need `NSBluetoothAlwaysUsageDescription`** in Info.plist.
 
 ### Phase 10 findings: the demos
