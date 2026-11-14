@@ -224,14 +224,15 @@ func fuzzTranscript(tb testing.TB) []byte {
 }
 
 // fuzzRequestSeeds are second-edition requests, signed over
-// fuzzTranscript.
+// fuzzTranscript, and the Multipaz-built requests of
+// testdata/multipaz/reader_auth_all.json.
 func fuzzRequestSeeds(f *testing.F) [][]byte {
 	f.Helper()
 	a := newTestSigner(f)
 	transcript := fuzzTranscript(f)
-	return [][]byte{
+	return append([][]byte{
 		testRequest{docs: testDocs(2, &a), all: []testSigner{a}, info: sampleInfo(f)}.build(f, transcript),
 		testRequest{docs: testDocs(1, nil), all: []testSigner{a, a}, info: infoOf(f, map[string]any{})}.build(f, transcript),
 		testRequest{docs: testDocs(3, nil), info: sampleInfo(f)}.build(f, transcript),
-	}
+	}, multipazFixtureRequests(f)...)
 }

@@ -1,0 +1,381 @@
+{
+    "description": "ISO/IEC 18013-5 second-edition DeviceRequests built and signed by Multipaz's request builder (interop/multipaz/driver -fixtures), for proximity's Go tests. Test keys and certificates only.",
+    "generator_version": "multipaz 0.102.0",
+    "verification_time": "2026-01-01T00:00:00Z",
+    "session_transcript_bytes": "2BhYOoPYGFgceBpzeW50aGV0aWMgRGV2aWNlRW5nYWdlbWVudNgYVXRzeW50aGV0aWMgRVJlYWRlcktlefY=",
+    "trust_anchors": "-----BEGIN CERTIFICATE-----\nMIICDDCCAbGgAwIBAgIRAIKZdeaVJ45MiOwbuOLnPokwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjA0MSUwIwYDVQQDDBxNdWx0aXBheiBpbnRlcm9wIHJlYWRlciByb290\r\nMQswCQYDVQQGDAJVUzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD55n2ZArzBZ4dQt6J/YCpB6\r\n1rNSsna1FOpfrPxZtVCIV6BXGDbpHQLaisCPJOn7Hh8xaMR+UypNHym59lVAtzijgaMwgaAwDgYD\r\nVR0PAQH/BAQDAgEGMBIGA1UdEwEB/wQIMAYBAf8CAQAwOgYDVR0fBDMwMTAvoC2gK4YpaHR0cHM6\r\nLy9naXRodWIuY29tL0lERm91bmRyeS9PSUQ0VkNnby9jcmwwHQYDVR0OBBYEFKJOnCtvpOAHWz3U\r\nM/7jYsiP6rMlMB8GA1UdIwQYMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMAoGCCqGSM49BAMCA0kA\r\nMEYCIQCm6ZZpam6E9QokmVlNrhTEU3F+M4NF2+pZrU5eINv6AAIhAOju1T2u18OZ9wqeZDFpwVng\r\nnwq9F4CLuu/2k+J7xFRO\n-----END CERTIFICATE-----\n",
+    "cases": [
+        {
+            "name": "whole_request_only",
+            "description": "signed only as a whole, by the trusted reader, with use cases and purpose hints",
+            "device_request": "pGd2ZXJzaW9uYzEuMWtkb2NSZXF1ZXN0c4KhbGl0ZW1zUmVxdWVzdNgYWGSiZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xo2tmYW1pbHlfbmFtZfVqZ2l2ZW5fbmFtZfRrYWdlX292ZXJfMTj0oWxpdGVtc1JlcXVlc3TYGFhVomdkb2NUeXBleB5vcmcuZXhhbXBsZS5pbnRlcm9wLm1lbWJlcnNoaXBqbmFtZVNwYWNlc6Fzb3JnLmV4YW1wbGUuaW50ZXJvcKFpbWVtYmVyX2lk9HFkZXZpY2VSZXF1ZXN0SW5mb9gYWK2iaHVzZUNhc2VzgqNpbWFuZGF0b3J59Wxkb2N1bWVudFNldHOCgQCCAAFscHVycG9zZUhpbnRzonZvcmcuZXhhbXBsZS5jb250cm9sbGVyA3FvcmcuZXhhbXBsZS5vdGhlciGiaW1hbmRhdG9yefRsZG9jdW1lbnRTZXRzgYEBeBxvcmcuZXhhbXBsZS5pbnRlcm9wRXh0ZW5zaW9ub25vdCBpbnRlcnByZXRlZG1yZWFkZXJBdXRoQWxsgYRDoQEmoRghWQIMMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwcTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAwWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkGA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjgKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQYMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lENFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBEAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMWz/pUsdH+/1ikHDr2WEA1L4dzocO8QXD7jBP0Jgo9LytGtJlP/tIoarsC4IwQgkuB5XkXcTjG34k5b+4Gxef3MqS5clyGQ2NFy0PkvZpQ",
+            "expected": {
+                "reader_status": "trusted",
+                "request_info_signed": true,
+                "reader_leaf": "-----BEGIN CERTIFICATE-----\nMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkG\r\nA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjg\r\nKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQY\r\nMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgco\r\ngYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lE\r\nNFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBE\r\nAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMW\r\nz/pUsdH+/1ikHDo=\n-----END CERTIFICATE-----\n",
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": {
+                    "use_cases": [
+                        {
+                            "mandatory": true,
+                            "document_sets": [
+                                [
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {
+                                "org.example.controller": 3,
+                                "org.example.other": -2
+                            }
+                        },
+                        {
+                            "mandatory": false,
+                            "document_sets": [
+                                [
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {}
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "present_empty_information",
+            "description": "signed as a whole, present but empty information",
+            "device_request": "pGd2ZXJzaW9uYzEuMWtkb2NSZXF1ZXN0c4KhbGl0ZW1zUmVxdWVzdNgYWGSiZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xo2tmYW1pbHlfbmFtZfVqZ2l2ZW5fbmFtZfRrYWdlX292ZXJfMTj0oWxpdGVtc1JlcXVlc3TYGFhVomdkb2NUeXBleB5vcmcuZXhhbXBsZS5pbnRlcm9wLm1lbWJlcnNoaXBqbmFtZVNwYWNlc6Fzb3JnLmV4YW1wbGUuaW50ZXJvcKFpbWVtYmVyX2lk9HFkZXZpY2VSZXF1ZXN0SW5mb9gYQaBtcmVhZGVyQXV0aEFsbIGEQ6EBJqEYIVkCDDCCAggwggGvoAMCAQICEQCyh/pxlTI5Mj2I8GwBR83SMAoGCCqGSM49BAMCMDQxJTAjBgNVBAMMHE11bHRpcGF6IGludGVyb3AgcmVhZGVyIHJvb3QxCzAJBgNVBAYMAlVTMB4XDTI1MTIzMTIzMDAwMFoXDTQ1MTIyNzAwMDAwMFowLzEgMB4GA1UEAwwXTXVsdGlwYXogaW50ZXJvcCByZWFkZXIxCzAJBgNVBAYMAlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXuLyJiMYjiK4oZYyxNasT9knffXI4CsN7fkLcf9wWGz9PF97+P12bljvyEVy5xJHpZBbleQwnBA9nJBNjdJLv6OBpjCBozAfBgNVHSMEGDAWgBSiTpwrb6TgB1s91DP+42LIj+qzJTAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH/BAswCQYHKIGMXQUBBjA6BgNVHR8EMzAxMC+gLaArhilodHRwczovL2dpdGh1Yi5jb20vSURGb3VuZHJ5L09JRDRWQ2dvL2NybDAdBgNVHQ4EFgQUEVUdru1u9lruWRAaSgQ1cG9px9YwCgYIKoZIzj0EAwIDRwAwRAIgWylRtxjux8c/syRnLMe1pYmp+KW9R1Zvtqh2K3Hk/DUCIFUhapoemmVYzXZDqf/2WN3sgN7DFs/6VLHR/v9YpBw69lhApEfLzIcMFiWPPDDjD2hjzAlTA62Qb9v4mopIVCcnfiMI+HxFBZ/aKtpJ2GFHwWseeyKjTgnsOVVfrfDAw538wQ==",
+            "expected": {
+                "reader_status": "trusted",
+                "request_info_signed": true,
+                "reader_leaf": "-----BEGIN CERTIFICATE-----\nMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkG\r\nA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjg\r\nKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQY\r\nMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgco\r\ngYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lE\r\nNFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBE\r\nAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMW\r\nz/pUsdH+/1ikHDo=\n-----END CERTIFICATE-----\n",
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": {
+                    "use_cases": []
+                }
+            }
+        },
+        {
+            "name": "absent_information",
+            "description": "signed as a whole, no information",
+            "device_request": "o2d2ZXJzaW9uYzEuMWtkb2NSZXF1ZXN0c4KhbGl0ZW1zUmVxdWVzdNgYWGSiZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xo2tmYW1pbHlfbmFtZfVqZ2l2ZW5fbmFtZfRrYWdlX292ZXJfMTj0oWxpdGVtc1JlcXVlc3TYGFhVomdkb2NUeXBleB5vcmcuZXhhbXBsZS5pbnRlcm9wLm1lbWJlcnNoaXBqbmFtZVNwYWNlc6Fzb3JnLmV4YW1wbGUuaW50ZXJvcKFpbWVtYmVyX2lk9G1yZWFkZXJBdXRoQWxsgYRDoQEmoRghWQIMMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwcTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAwWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkGA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjgKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQYMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lENFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBEAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMWz/pUsdH+/1ikHDr2WEAPBmSBo4zElnfVDjBFWwLzHwdne5Zy+/l3IROYfBsseLOv1YafMF+nvUHkYi06kxOyoKeNKwIQVgiUkr9spLrD",
+            "expected": {
+                "reader_status": "trusted",
+                "request_info_signed": false,
+                "reader_leaf": "-----BEGIN CERTIFICATE-----\nMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkG\r\nA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjg\r\nKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQY\r\nMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgco\r\ngYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lE\r\nNFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBE\r\nAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMW\r\nz/pUsdH+/1ikHDo=\n-----END CERTIFICATE-----\n",
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": null
+            }
+        },
+        {
+            "name": "mixed_signatures",
+            "description": "signed per document and as a whole, by the trusted reader",
+            "device_request": "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",
+            "expected": {
+                "reader_status": "trusted",
+                "request_info_signed": true,
+                "reader_leaf": "-----BEGIN CERTIFICATE-----\nMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkG\r\nA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjg\r\nKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQY\r\nMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgco\r\ngYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lE\r\nNFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBE\r\nAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMW\r\nz/pUsdH+/1ikHDo=\n-----END CERTIFICATE-----\n",
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": {
+                    "use_cases": [
+                        {
+                            "mandatory": true,
+                            "document_sets": [
+                                [
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {
+                                "org.example.controller": 3,
+                                "org.example.other": -2
+                            }
+                        },
+                        {
+                            "mandatory": false,
+                            "document_sets": [
+                                [
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {}
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "multiple_signers_one_trusted",
+            "description": "signed as a whole by an untrusted reader, then the trusted one: the trusted one is the reader",
+            "device_request": "pGd2ZXJzaW9uYzEuMWtkb2NSZXF1ZXN0c4KhbGl0ZW1zUmVxdWVzdNgYWGSiZ2RvY1R5cGV1b3JnLmlzby4xODAxMy41LjEubURMam5hbWVTcGFjZXOhcW9yZy5pc28uMTgwMTMuNS4xo2tmYW1pbHlfbmFtZfVqZ2l2ZW5fbmFtZfRrYWdlX292ZXJfMTj0oWxpdGVtc1JlcXVlc3TYGFhVomdkb2NUeXBleB5vcmcuZXhhbXBsZS5pbnRlcm9wLm1lbWJlcnNoaXBqbmFtZVNwYWNlc6Fzb3JnLmV4YW1wbGUuaW50ZXJvcKFpbWVtYmVyX2lk9HFkZXZpY2VSZXF1ZXN0SW5mb9gYWK2iaHVzZUNhc2VzgqNpbWFuZGF0b3J59Wxkb2N1bWVudFNldHOCgQCCAAFscHVycG9zZUhpbnRzonZvcmcuZXhhbXBsZS5jb250cm9sbGVyA3FvcmcuZXhhbXBsZS5vdGhlciGiaW1hbmRhdG9yefRsZG9jdW1lbnRTZXRzgYEBeBxvcmcuZXhhbXBsZS5pbnRlcm9wRXh0ZW5zaW9ub25vdCBpbnRlcnByZXRlZG1yZWFkZXJBdXRoQWxsgoRDoQEmoRghWQIfMIICGzCCAcKgAwIBAgIQW/wCttuT1fMAINLqHfTr2jAKBggqhkjOPQQDAjA+MS8wLQYDVQQDDCZNdWx0aXBheiBpbnRlcm9wIHVudHJ1c3RlZCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAwWhcNNDUxMjI3MDAwMDAwWjA5MSowKAYDVQQDDCFNdWx0aXBheiBpbnRlcm9wIHVudHJ1c3RlZCByZWFkZXIxCzAJBgNVBAYMAlVTMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENNpIt4FHMxDvk13Alk8wZkV6xbtvlWggVnyXDJKeUsdoqf3Ae2LSI7Z6Ag19u64R1g3KUyA1O7L/GQ5NwBaHGqOBpjCBozAfBgNVHSMEGDAWgBT/Dyf9auXZxJAezl3Xr9n0fsBgtjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lAQH/BAswCQYHKIGMXQUBBjA6BgNVHR8EMzAxMC+gLaArhilodHRwczovL2dpdGh1Yi5jb20vSURGb3VuZHJ5L09JRDRWQ2dvL2NybDAdBgNVHQ4EFgQUfFUc7XD3gawHlrE26yh3cpire9MwCgYIKoZIzj0EAwIDRwAwRAIgbr6zXWa0CdBBJN7HQoKx29tyj2ik9hHeaKo2OYANGycCIEy6bHMz8QvaNiw02rjFIzhcIBa5vYV6WfjWX2mPr3E59lhAksOdse7FJ4nDrjFIyFkqn9B3RcmBjd6Yk7G1KFR7shbJoEjCTfVTHKWlV2QiNqOp0om3zVYs8zV7mIbpyBTve4RDoQEmoRghWQIMMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwcTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAwWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkGA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjgKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQYMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lENFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBEAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMWz/pUsdH+/1ikHDr2WEDFO+/PKiRj9C8ExtYpwHlNJjmdxC7svC9u4rp/9UlRLd3QHeFHsvvi9wwo67hNkZ6T+oVl3PE8D399ChmWleU+",
+            "expected": {
+                "reader_status": "trusted",
+                "request_info_signed": true,
+                "reader_leaf": "-----BEGIN CERTIFICATE-----\nMIICCDCCAa+gAwIBAgIRALKH+nGVMjkyPYjwbAFHzdIwCgYIKoZIzj0EAwIwNDElMCMGA1UEAwwc\r\nTXVsdGlwYXogaW50ZXJvcCByZWFkZXIgcm9vdDELMAkGA1UEBgwCVVMwHhcNMjUxMjMxMjMwMDAw\r\nWhcNNDUxMjI3MDAwMDAwWjAvMSAwHgYDVQQDDBdNdWx0aXBheiBpbnRlcm9wIHJlYWRlcjELMAkG\r\nA1UEBgwCVVMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARe4vImIxiOIrihljLE1qxP2Sd99cjg\r\nKw3t+Qtx/3BYbP08X3v4/XZuWO/IRXLnEkelkFuV5DCcED2ckE2N0ku/o4GmMIGjMB8GA1UdIwQY\r\nMBaAFKJOnCtvpOAHWz3UM/7jYsiP6rMlMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgco\r\ngYxdBQEGMDoGA1UdHwQzMDEwL6AtoCuGKWh0dHBzOi8vZ2l0aHViLmNvbS9JREZvdW5kcnkvT0lE\r\nNFZDZ28vY3JsMB0GA1UdDgQWBBQRVR2u7W72Wu5ZEBpKBDVwb2nH1jAKBggqhkjOPQQDAgNHADBE\r\nAiBbKVG3GO7Hxz+zJGcsx7Wlian4pb1HVm+2qHYrceT8NQIgVSFqmh6aZVjNdkOp//ZY3eyA3sMW\r\nz/pUsdH+/1ikHDo=\n-----END CERTIFICATE-----\n",
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": {
+                    "use_cases": [
+                        {
+                            "mandatory": true,
+                            "document_sets": [
+                                [
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {
+                                "org.example.controller": 3,
+                                "org.example.other": -2
+                            }
+                        },
+                        {
+                            "mandatory": false,
+                            "document_sets": [
+                                [
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {}
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "untrusted_whole_request_trusted_documents",
+            "description": "control: trusted per-document signatures, the whole request by an untrusted reader, are untrusted, still signed",
+            "device_request": "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",
+            "expected": {
+                "reader_status": "untrusted",
+                "request_info_signed": true,
+                "reader_leaf": null,
+                "documents": [
+                    {
+                        "doctype": "org.iso.18013.5.1.mDL",
+                        "elements": [
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "family_name",
+                                "intent_to_retain": true
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "given_name",
+                                "intent_to_retain": false
+                            },
+                            {
+                                "namespace": "org.iso.18013.5.1",
+                                "identifier": "age_over_18",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    },
+                    {
+                        "doctype": "org.example.interop.membership",
+                        "elements": [
+                            {
+                                "namespace": "org.example.interop",
+                                "identifier": "member_id",
+                                "intent_to_retain": false
+                            }
+                        ]
+                    }
+                ],
+                "request_info": {
+                    "use_cases": [
+                        {
+                            "mandatory": true,
+                            "document_sets": [
+                                [
+                                    0
+                                ],
+                                [
+                                    0,
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {
+                                "org.example.controller": 3,
+                                "org.example.other": -2
+                            }
+                        },
+                        {
+                            "mandatory": false,
+                            "document_sets": [
+                                [
+                                    1
+                                ]
+                            ],
+                            "purpose_hints": {}
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}
