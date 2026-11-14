@@ -65,6 +65,9 @@ type options struct {
 	// assurance is development or production (production.go), and store
 	// the directory of production's durable stores.
 	assurance, store string
+	// allowedPrivateHosts are the hosts production's clients may reach
+	// at a private address: the stack's, on the run's Docker network.
+	allowedPrivateHosts []string
 }
 
 // result is what the run reports.
@@ -156,6 +159,10 @@ func main() {
 	flag.StringVar(&o.crlSet, "crl-set", "current", "the CRLs this process publishes for the IACA and the metadata CA (pidsetup's crl-publisher-SET.json): current, revoked (the IACA revokes the issuer's signers) or expired (the IACA's list is past its nextUpdate)")
 	flag.StringVar(&o.assurance, "assurance", assuranceDevelopment, "development, or production: the wallet as a deployment runs it (production.go), its stores in -store")
 	flag.StringVar(&o.store, "store", "", "with -assurance production, the directory of the wallet's durable stores")
+	flag.Func("allowed-private-host", "with -assurance production, a host the wallet may reach at a private address (repeatable)", func(host string) error {
+		o.allowedPrivateHosts = append(o.allowedPrivateHosts, host)
+		return nil
+	})
 	flag.Parse()
 	if (o.assurance != assuranceDevelopment && o.assurance != assuranceProduction) || (o.assurance == assuranceProduction) != (o.store != "") {
 		fmt.Fprintln(os.Stderr, "pidwallet: -assurance is development or production, which needs -store")

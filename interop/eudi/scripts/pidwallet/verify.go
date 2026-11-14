@@ -117,9 +117,7 @@ func checkStatus(ctx context.Context, env *environment, conf oid4vci.CredentialC
 		Options: statuslist.VerifyOptions{Revocation: env.revocation},
 	}
 	if env.production {
-		// statuslist's own client: public addresses only, the system's
-		// TLS roots.
-		checker.Fetcher = statuslist.Fetcher{}
+		checker.Fetcher = env.productionStatusFetcher()
 	}
 	if conf.Format == "mso_mdoc" {
 		raw, err := base64.RawURLEncoding.DecodeString(credential)

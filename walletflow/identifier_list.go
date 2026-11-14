@@ -11,7 +11,6 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/identifierlist"
-	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // identifierListEntry is the identifier list entry one of an mdoc's
@@ -110,7 +109,7 @@ func sameIdentifierLists(a, b StoredCredential) bool {
 func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, entries []identifierListEntry) ([]identifierListEntry, error) {
 	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
 	checker := identifierlist.Checker{
-		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development, MaxBytes: w.cfg.IdentifierListMaxBytes},
+		Fetcher: w.statusFetcher(w.cfg.IdentifierListMaxBytes),
 		Roots:   roots,
 		Options: identifierlist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
 		Cache:   w.statusCache,

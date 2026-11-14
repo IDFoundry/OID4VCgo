@@ -16,14 +16,14 @@
 // A production leg runs the wallet with nothing else changed from
 // production: Dependencies.HTTP nil, so walletflow builds its own
 // hardened client, which dials public addresses only and follows no
-// redirect, and verifies TLS against the system roots. Two things
-// about where it runs aren't production's, and the harness scripts
-// that run it (interop/prodnet.sh) document them: the other side's
-// services are on a Docker network whose subnet is global unicast
-// space, internal (no route out), so that their addresses are public
-// ones to that client; and the system roots are the run's TLS CA,
-// through SSL_CERT_FILE. Throwaway key material only, never for
-// production use.
+// redirect, and verifies TLS against the system roots. Where it runs,
+// the harness scripts that run it (interop/prodnet.sh) document: the
+// other side's services are on an internal Docker network (no route
+// out) on a private subnet, under names the wallet is given to allow
+// at a private address (walletflow.Config.AllowedPrivateHosts), as a
+// deployment inside its own network names its services; and the system
+// roots are the run's TLS CA, through SSL_CERT_FILE. Throwaway key
+// material only, never for production use.
 package prodwallet
 
 import "errors"

@@ -54,6 +54,9 @@ type crlRefreshConfig struct {
 	// requests do; nil fetches with certrevocation's own client, from
 	// public addresses only outside development.
 	http *http.Client
+	// privateHosts is the Wallet's "allowed_private_hosts": hosts whose
+	// private addresses certrevocation's own client may dial.
+	privateHosts []string
 }
 
 // crlHTTP is the client RefreshCRLs fetches with for a configuration
@@ -201,13 +204,15 @@ func (p crlPoint) refresher(cfg crlRefreshConfig, client *http.Client, floors []
 // refreshClient is the client cfg's lists are fetched with: with
 // development_roots, in development, cfg.http, which trusts them;
 // otherwise the hardened client certrevocation.Refresher builds by
-// default, dialling public addresses only outside development.
+// default, dialling public addresses only outside development, and the
+// private ones of cfg.privateHosts.
 func refreshClient(cfg crlRefreshConfig) (*http.Client, error) {
 	if cfg.http != nil {
 		return cfg.http, nil
 	}
 	tc := fapihttp.RecommendedTransportConfig()
 	tc.AllowLoopbackHosts = cfg.development
+	tc.AllowedPrivateHosts = cfg.privateHosts
 	return fapihttp.NewClient(tc)
 }
 

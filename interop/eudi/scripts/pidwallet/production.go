@@ -8,6 +8,7 @@ import (
 	"github.com/idfoundry/fapigo/fapihttp"
 
 	"github.com/idfoundry/oid4vcgo/internal/prodwallet"
+	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
 // The -assurance levels. Under production the wallet is set up as a
@@ -22,12 +23,14 @@ import (
 //     AssuranceProduction, over fapihttp.NewClient's client, the
 //     client's sessions in fapigo/sqlstore's store and its instance
 //     and DPoP keys in sqlstore's KeyStore, which declares their
-//     custody, and status lists fetched by statuslist's own client.
+//     custody, and status lists fetched through that client.
 //
-// Each of those dials public addresses only, follows no redirect and
+// Each of those dials public addresses only, and the private ones of
+// the hosts -allowed-private-host names, follows no redirect and
 // verifies TLS against the system roots: run-pid-issuer.sh runs the
 // wallet in a container on interop/prodnet.sh's network, where the
-// stack is, and gives it the run's TLS CA as those roots. The holder's
+// stack is, names the stack's host, and gives it the run's TLS CA as
+// those roots. The holder's
 // sign-in at Keycloak (login) is the holder's browser, not the wallet,
 // and keeps env.http. Every certificate is still checked against the
 // IACA's and the metadata CA's CRLs (startCRL), and trust is as strict
@@ -47,7 +50,9 @@ func (env *environment) startProduction() error {
 	if err != nil {
 		return fmt.Errorf("-store: %w", err)
 	}
-	client, err := fapihttp.NewClient(fapihttp.RecommendedTransportConfig())
+	tc := fapihttp.RecommendedTransportConfig()
+	tc.AllowedPrivateHosts = env.o.allowedPrivateHosts
+	client, err := fapihttp.NewClient(tc)
 	if err != nil {
 		_ = stores.Close()
 		return err
@@ -56,6 +61,27 @@ func (env *environment) startProduction() error {
 	env.production, env.stores, env.prodHTTP = true, stores, client
 	return nil
 }
+
+// productionStatusFetcher is the core engine's status list Fetcher in
+// production: statuslist's own client, public addresses only, the
+// system's TLS roots; or, with -allowed-private-host, as walletflow
+// fetches then, production's hardened client used as it is
+// (UncheckedTransport), its dial-time policy allowing those hosts'
+// private addresses alone, where statuslist's own policy can allow only
+// every private address or none.
+func (env *environment) productionStatusFetcher() statuslist.Fetcher {
+	if len(env.o.allowedPrivateHosts) == 0 {
+		return statuslist.Fetcher{}
+	}
+	client := *env.prodHTTP
+	client.Transport = hardenedTransport{env.prodHTTP.Transport}
+	return statuslist.Fetcher{HTTP: &client, UncheckedTransport: true}
+}
+
+// hardenedTransport hides fapihttp.NewClient's transport from
+// statuslist.Fetcher's *http.Transport check, so it keeps its own
+// dialer.
+type hardenedTransport struct{ http.RoundTripper }
 
 // walletHTTP is the core engine's client for the wallet and
 // fapigo/client: production's, or the recording one.

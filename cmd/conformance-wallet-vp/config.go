@@ -88,14 +88,22 @@ type Config struct {
 
 	// Assurance "production" runs the walletflow engine as a wallet app
 	// runs it: Config.Development false, and walletflow's own HTTP
-	// client (Dependencies.HTTP nil), which dials public addresses only,
-	// follows no redirect and verifies TLS against the system roots
+	// client (Dependencies.HTTP nil), which dials public addresses only
+	// (and AllowedPrivateHosts' private ones), follows no redirect and
+	// verifies TLS against the system roots
 	// (on Linux, SSL_CERT_FILE). It needs engine "walletflow",
 	// verifier_trust_anchors_pem and verifier_crl, which production
 	// requires, and refuses verifier_tls_trust_anchors_pem, which only
 	// this binary's own client applies. "" or "development" is the
 	// default: walletflow's Development, over that client.
 	Assurance string `json:"assurance,omitempty"`
+
+	// AllowedPrivateHosts, under Assurance "production", are the hosts
+	// walletflow's client may reach at a private address
+	// (walletflow.Config.AllowedPrivateHosts): the Verifier's, on an
+	// interop run's Docker network. Development reaches them anyway, so
+	// it's refused there.
+	AllowedPrivateHosts []string `json:"allowed_private_hosts,omitempty"`
 
 	// CredentialIssuerPrivateKeyPEM signs this binary's own fixture
 	// SD-JWT VC (see credential.go).
@@ -203,6 +211,9 @@ func (c Config) production() bool { return c.Assurance == assuranceProduction }
 func (c Config) checkAssurance() error {
 	switch c.Assurance {
 	case "", assuranceDevelopment:
+		if len(c.AllowedPrivateHosts) > 0 {
+			return fmt.Errorf("config: allowed_private_hosts applies only under assurance %q", assuranceProduction)
+		}
 		return nil
 	case assuranceProduction:
 	default:

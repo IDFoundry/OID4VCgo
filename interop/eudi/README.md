@@ -208,8 +208,10 @@ listens on the Docker bridge's gateway, which the verifier reaches as
 workflow's `verifier-production` job) runs `cmd/conformance-wallet-vp`'s
 walletflow engine as a wallet app runs it: `"assurance": "production"`,
 so `walletflow.Config.Development` is false and walletflow builds its
-own HTTP client, which dials public addresses only, follows no redirect
-and verifies TLS against the system roots. Nothing else is relaxed:
+own HTTP client, which dials public addresses only, besides
+`allowed_private_hosts`' (`walletflow.Config.AllowedPrivateHosts`)
+private ones, follows no redirect and verifies TLS against the system
+roots. Nothing else is relaxed:
 verifier trust is `X5CVerifierRoots` under the Access Certificate's CA,
 checked against its CRL as above, and the binary's pinned-certificate
 TLS client (`verifier_tls_trust_anchors_pem`, which trusts a pinned
@@ -218,18 +220,20 @@ leaf for any host name) is refused under production.
 | | Development run | Production run |
 |---|---|---|
 | Assurance | `Development: true` | production (`Development: false`) |
-| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only, the system roots |
+| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only and `verifier.eudi.test`'s private one (`allowed_private_hosts`), the system roots |
 | Where the verifier is | `localhost` | `verifier.eudi.test`, on the wallet's network (below) |
 | Verifier trust | `X5CVerifierRoots`, the run's verifier CA | the same |
 | Revocation | the Access Certificate against its CA's CRL | the same |
 | Stores, keys | the fixture credential, in memory | the same (presenting needs no durable store) |
 
-What isn't production's, as [`../prodnet.sh`](../prodnet.sh) sets it
-up: production's client never dials loopback or a private address, and
-has no setting to, so the wallet runs, built for Linux, in a container
-on an internal Docker network on a subnet of global unicast space,
-which the verifier's container joins as `verifier.eudi.test`; and the
-wallet's system roots are the verifier's TLS certificate, through
+Where it runs, as [`../prodnet.sh`](../prodnet.sh) sets it up:
+production's client never dials loopback, so the wallet runs, built for
+Linux, in a container on an internal Docker network, on a private
+subnet Docker assigns, which the verifier's container joins as
+`verifier.eudi.test`, the one host the wallet may reach at a private
+address (`allowed_private_hosts`), as a deployment inside its own
+network names its services; and the wallet's system roots are the
+verifier's TLS certificate, through
 `SSL_CERT_FILE` (setup's `-verifier-host` names it, and the Access
 Certificate's dNSName, for that host). The CRL publisher stays in the
 wallet's process, on its loopback, as above.
@@ -1091,7 +1095,7 @@ deployment runs them, with cases of their own:
 | | Development run | Production run |
 |---|---|---|
 | Assurance | walletflow `Development: true`; `wallet` and `fapigo/client` at `AssuranceDevelopment` | walletflow `Development: false`; both at `AssuranceProduction` |
-| Fetchers | a client trusting the run's TLS CA, loopback allowed | walletflow's own client; `fapihttp.NewClient`'s for the core engine; statuslist's own for status lists: public addresses only, no redirect followed, the system roots |
+| Fetchers | a client trusting the run's TLS CA, loopback allowed | walletflow's own client; `fapihttp.NewClient`'s for the core engine, and for its status lists: public addresses only and `pid-issuer.eudi.test`'s private one (`-allowed-private-host`, `walletflow.Config.AllowedPrivateHosts`, `wallet.Config.Fetch.AllowedPrivateHosts`), no redirect followed, the system roots |
 | Where the stack is | `https://localhost:$PORT` | `https://pid-issuer.eudi.test`, on the wallet's network: Keycloak's `KC_HOSTNAME`, the issuer's public URLs and the status list service's `service_url` name it, and HAProxy's certificate |
 | Stores | in memory | sqlstore's sealed SQLite stores (`internal/prodwallet`): walletflow's keys, credentials and pending authorizations; fapigo/sqlstore's client sessions, and the core engine's instance and DPoP keys in sqlstore's KeyStore, whose durable custody the key manager declares |
 | Redirect URI | `eu.europa.ec.euidi://authorization` | the same: a private-use scheme, as production requires |
@@ -1099,12 +1103,13 @@ deployment runs them, with cases of their own:
 | Trust | signed metadata only, under the metadata CA, its signer naming the issuer; credentials under the IACA | the same |
 | Revocation | every issuer certificate against its CA's CRL | the same |
 
-What isn't production's is where it runs, as [`../prodnet.sh`](../prodnet.sh)
-sets it up: production's clients never dial loopback or a private
-address, so the wallet runs, built for Linux, in a container on an
-internal Docker network on a subnet of global unicast space, which
-HAProxy joins as `pid-issuer.eudi.test`, and its system roots are the
-run's TLS CA, through `SSL_CERT_FILE`. The CRL publisher stays in its
+Where it runs, as [`../prodnet.sh`](../prodnet.sh) sets it up:
+production's clients never dial loopback, so the wallet runs, built for
+Linux, in a container on an internal Docker network, on a private
+subnet Docker assigns, which HAProxy joins as `pid-issuer.eudi.test`,
+the one host the wallet may reach at a private address
+(`-allowed-private-host`), and its system roots are the run's TLS CA,
+through `SSL_CERT_FILE`. The CRL publisher stays in its
 process, on its loopback. The holder's sign-in at Keycloak is the
 holder's browser, not the wallet, and keeps the development client.
 Keycloak and the issuer still reach `serve` (the Wallet Provider's

@@ -7,6 +7,29 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.78.0 → v0.79.0
+
+### Wallet (`walletflow`, `mobile`)
+
+- **New, opt-in: `walletflow.Config.AllowedPrivateHosts`** (the mobile
+  configuration's `allowed_private_hosts`, `allowedPrivateHosts` in the
+  Swift and Kotlin libraries). Nothing changes unless you set it.
+  Outside `Development`, walletflow reaches public addresses only;
+  this names hosts it may also reach at a private address (issuers,
+  Verifiers, status lists, and for `mobile` CRL distribution points
+  inside your own network), as `wallet.Config.Fetch.AllowedPrivateHosts`
+  does for `wallet`. Each entry is a host name, matched exactly: `New`
+  refuses an IP address, a wildcard, a port or a loopback name. A
+  listed host is still refused at a loopback, link-local or other
+  non-public address, and TLS is still required. If you worked around
+  the public-addresses-only client by passing your own
+  `Dependencies.HTTP`, that client's private hosts didn't reach
+  walletflow's metadata, request_uri and status list fetches; set
+  `AllowedPrivateHosts` instead, and if you keep your own client, build
+  it with `fapihttp.NewClient` and the same
+  `TransportConfig.AllowedPrivateHosts`: outside `Development`, `New`
+  refuses one whose list differs.
+
 ## v0.77.1 → v0.78.0
 
 ### Verifier (`verifier`)

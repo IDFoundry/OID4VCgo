@@ -126,6 +126,17 @@ public struct WalletConfiguration: Codable, Sendable {
     /// Verifiers, status lists), not the app's own, such as to its
     /// Wallet Provider: pin that client yourself.
     public var tlsPins: [String: [String]]
+    /// Hosts the wallet may reach at a private address (10/8, 172.16/12,
+    /// 192.168/16, fc00::/7) outside `development`: issuers, Verifiers,
+    /// status lists and CRL distribution points inside the deployment's
+    /// own network, an enterprise's or a test environment's. Each is a
+    /// host name, matched exactly and without case: no wildcard, IP
+    /// address, port or loopback name. Nothing else is lifted: a listed
+    /// host is still refused at a loopback or link-local address, and
+    /// every request is still HTTPS with its certificate verified. List
+    /// only hosts the deployment runs: anyone who can hand the wallet an
+    /// offer or a request can have it send a request to them.
+    public var allowedPrivateHosts: [String]
     /// The Status Issuers that may sign a credential issuer's status lists
     /// on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
     /// Issuer identifiers, each recognized by a certificate under
@@ -305,7 +316,7 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
                 development: Bool = false, developmentRoots: String = "", locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
                 copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI, proofKeyByJWK: Bool = false, proofKeyByIndex: Bool = false,
-                acceptX509SANDNS: Bool = false, tlsPins: [String: [String]] = [:], proximityDeviceAuth: ProximityDeviceAuth = .signature,
+                acceptX509SANDNS: Bool = false, tlsPins: [String: [String]] = [:], allowedPrivateHosts: [String] = [], proximityDeviceAuth: ProximityDeviceAuth = .signature,
                 verifierRequireEKU: String = "", registrarRequireEKU: String = "",
                 issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
                 statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
@@ -333,6 +344,7 @@ public struct WalletConfiguration: Codable, Sendable {
         self.requestRefresh = requestRefresh
         self.copyPolicy = copyPolicy
         self.tlsPins = tlsPins
+        self.allowedPrivateHosts = allowedPrivateHosts
         self.issuanceProfile = issuanceProfile
         self.proofKeyByJWK = proofKeyByJWK
         self.proofKeyByIndex = proofKeyByIndex
@@ -374,7 +386,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case proofKeyByJWK = "proof_key_by_jwk", proofKeyByIndex = "proof_key_by_index"
         case acceptX509SANDNS = "accept_x509_san_dns"
-        case tlsPins = "tls_pins", proximityDeviceAuth = "proximity_device_auth"
+        case tlsPins = "tls_pins", allowedPrivateHosts = "allowed_private_hosts", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
         case issuerRequireEKU = "issuer_require_eku", issuerMetadataRequireEKU = "issuer_metadata_require_eku"
         case statusIssuers = "status_issuers", requireIssuerName = "require_issuer_name"
@@ -418,6 +430,7 @@ public struct WalletConfiguration: Codable, Sendable {
                   proofKeyByIndex: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByIndex) ?? false,
                   acceptX509SANDNS: try c.decodeIfPresent(Bool.self, forKey: .acceptX509SANDNS) ?? false,
                   tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
+                  allowedPrivateHosts: try c.decodeIfPresent([String].self, forKey: .allowedPrivateHosts) ?? [],
                   proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
                   verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
                   registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "",

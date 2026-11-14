@@ -80,6 +80,7 @@ func newFlow(cfg Config, cred wallet.HeldCredential, trust wallet.VerifierTrust,
 	}
 	return walletflow.New(walletflow.Config{
 		Development: !cfg.production(), VerifierTrust: trust, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
+		AllowedPrivateHosts: cfg.AllowedPrivateHosts,
 	}, deps)
 }
 

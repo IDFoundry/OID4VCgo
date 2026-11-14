@@ -157,6 +157,15 @@ along with its Wallet Attestations (the Wallet Provider protocol's
   wallet out of that host until an update. Pins cover the SDK's own
   requests, which `NSPinnedDomains` doesn't reach, not your app's, such
   as to your Wallet Provider: pin that `URLSession` yourself.
+- Outside `development` the SDK's requests reach public addresses only.
+  If your issuers, Verifiers, status lists or CRL distribution points
+  are inside your own network (an enterprise's, or a test
+  environment's), name those hosts in
+  ``WalletConfiguration/allowedPrivateHosts``: each host name exactly,
+  no wildcard or IP address. Only their private addresses are allowed,
+  never loopback or link-local, and TLS is still verified. List only
+  hosts you run: anyone who can hand the wallet an offer or a request
+  can have it send a request to them.
 - To refuse certificates your ecosystem's CAs have revoked, list the
   roles to check in ``WalletConfiguration/revocation`` and give their
   CAs' CRLs (PEM `X509 CRL` blocks) in ``WalletConfiguration/crls``. A
@@ -199,7 +208,8 @@ returns a ``CRLRefreshResult``: each point's outcome, every list now
 held as ``CRLRefreshResult/crls``, and
 ``CRLRefreshResult/nextRefresh``. A failed point keeps its list, so a
 refresh never makes things worse. Fetches go to public addresses only
-(outside `development`), over `http` or `https`: CRLs are signed, so
+(outside `development`), and the private ones of
+``WalletConfiguration/allowedPrivateHosts``, over `http` or `https`: CRLs are signed, so
 distribution points are usually plain `http`;
 ``WalletConfiguration/crlRequireHTTPS`` refuses those, where your CAs
 serve `https`. A ``ProximityReader`` has the same

@@ -336,7 +336,9 @@ type Config struct {
 	//     lists be on loopback addresses, over http there too;
 	//   - permits wallet.NoVerifierTrust as VerifierTrust;
 	//   - makes requests through an ordinary HTTP client, which reaches
-	//     private networks, instead of the hardened one;
+	//     private networks, instead of the hardened one (outside
+	//     Development, AllowedPrivateHosts names the private hosts it
+	//     may reach);
 	//   - skips the checks New makes at production assurance: Durable
 	//     Authorizations (and Grants, with RequestRefresh), Keys
 	//     declaring durable custody, Random crypto/rand, roles' pools
@@ -350,6 +352,33 @@ type Config struct {
 	// set TLSPins.VerifyConnection on that client's TLS configuration
 	// instead.
 	TLSPins TLSPins
+
+	// AllowedPrivateHosts names hosts the wallet may reach at a private
+	// address (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7)
+	// outside Development: an issuer, Authorization Server, Verifier or
+	// status list inside the deployment's own network, an enterprise's
+	// or a test environment's. Each is a host name, matched exactly and
+	// without case: no wildcard, IP address, port or loopback name, which
+	// New refuses. It is fapihttp.Config.AllowedPrivateHosts, as
+	// wallet.Config.Fetch takes it, held to by every request the wallet
+	// makes: Credential Offers, issuer metadata (signed or not),
+	// Authorization Server metadata, pushed authorization, token, nonce,
+	// Credential, deferred and notification requests, request_uri
+	// Request Objects, direct_post responses, and status and identifier
+	// lists. Nothing else is lifted: a listed host is still refused at a
+	// loopback, link-local, shared (100.64.0.0/10) or other non-public
+	// address, every request is still https with its certificate
+	// verified, and each address is checked as it's dialled, so a listed
+	// name resolving elsewhere then is refused too.
+	//
+	// List only hosts the deployment runs: anyone who can hand the
+	// wallet an offer or a request can have it send a GET or POST to any
+	// path on them. With Dependencies.HTTP set, outside Development, New
+	// requires that client to allow exactly these hosts
+	// (fapihttp.TransportConfig.AllowedPrivateHosts). In Development,
+	// whose client reaches private networks anyway, status and
+	// identifier lists may then be on any private address too.
+	AllowedPrivateHosts []string
 }
 
 // Dependencies are what the app supplies.
@@ -387,7 +416,8 @@ type Dependencies struct {
 
 	// HTTP makes every request. nil means a client with a 10 s timeout
 	// that, outside Development, is fapihttp's hardened one: it dials
-	// only public addresses and follows no redirect. One set here should
+	// only public addresses, and Config.AllowedPrivateHosts' private
+	// ones, and follows no redirect. One set here should
 	// be as careful: issuers' and Verifiers' endpoints come from offers
 	// and requests anyone can make. One without a Timeout is used
 	// through a copy with the 10 s one, its Transport and CheckRedirect
@@ -451,6 +481,9 @@ type Wallet struct {
 	grantLocks map[string]*grantLock
 	// statusCache is deps.StatusCache, or the Wallet's own.
 	statusCache *statuslist.Cache
+	// statusHTTP fetches status and identifier lists when
+	// Config.AllowedPrivateHosts names hosts (statusHTTP), nil otherwise.
+	statusHTTP *http.Client
 }
 
 // CopyPolicy is which copy of a credential a presentation uses.
@@ -514,6 +547,14 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.TLSPins.Validate(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateAllowedPrivateHosts(); err != nil {
+		return nil, err
+	}
+	if err := checkCallersPrivateHosts(cfg, deps.HTTP); err != nil {
+		return nil, err
+	}
+	// The caller's slice stays theirs: changing it later changes nothing.
+	cfg.AllowedPrivateHosts = slices.Clone(cfg.AllowedPrivateHosts)
 	systemClock := deps.Clock == nil
 	deps, err := withDefaultDependencies(cfg, deps)
 	if err != nil {
@@ -529,7 +570,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		Locales: cfg.Locales,
 		Fetch: fapihttp.Config{
 			MaxResponseBytes: maxResponseBytes, RequestTimeout: httpTimeout, MaxRedirects: 2,
-			AllowLoopbackHosts: cfg.Development,
+			AllowLoopbackHosts: cfg.Development, AllowedPrivateHosts: cfg.AllowedPrivateHosts,
 		},
 	}, wallet.Dependencies{HTTP: deps.HTTP, Clock: wallet.ClockFunc(deps.Clock), Random: deps.Random})
 	if err != nil {
@@ -538,7 +579,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	w := &Wallet{
 		cfg: cfg, deps: deps, core: core, deferred: map[string]*Deferred{}, settled: map[string]bool{}, liveKeys: map[string]int{}, resuming: map[string]bool{},
 		openGrants: map[string]bool{}, grantLocks: map[string]*grantLock{}, systemClock: systemClock,
-		statusCache: deps.StatusCache,
+		statusCache: deps.StatusCache, statusHTTP: statusHTTP(cfg, deps.HTTP),
 	}
 	if w.statusCache == nil {
 		w.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: deps.Clock})
@@ -557,7 +598,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 func withDefaultDependencies(cfg Config, deps Dependencies) (Dependencies, error) {
 	switch {
 	case deps.HTTP == nil:
-		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins)
+		client, err := defaultHTTPClient(cfg.Development, cfg.TLSPins, cfg.AllowedPrivateHosts)
 		if err != nil {
 			return deps, err
 		}
@@ -1018,12 +1059,13 @@ func durableKeys(ks KeyStore) bool {
 }
 
 // defaultHTTPClient is the client New uses when Dependencies.HTTP is
-// nil. Outside Development it dials only public addresses, resolved
-// once and checked at dial time, and follows no redirect: an offer's or
-// a Verifier's endpoints can't point the wallet's requests into its own
-// network. In Development, services on the machine or the local network
-// are the point. Either checks pins, when there are any.
-func defaultHTTPClient(development bool, pins TLSPins) (*http.Client, error) {
+// nil. Outside Development it dials only public addresses, and the
+// private ones of privateHosts, resolved once and checked at dial time,
+// and follows no redirect: an offer's or a Verifier's endpoints can't
+// point the wallet's requests into its own network. In Development,
+// services on the machine or the local network are the point. Either
+// checks pins, when there are any.
+func defaultHTTPClient(development bool, pins TLSPins, privateHosts []string) (*http.Client, error) {
 	var verify func(tls.ConnectionState) error
 	if len(pins) > 0 {
 		verify = pins.VerifyConnection
@@ -1036,7 +1078,10 @@ func defaultHTTPClient(development bool, pins TLSPins) (*http.Client, error) {
 		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyConnection: verify}
 		return &http.Client{Transport: transport, Timeout: httpTimeout}, nil
 	}
-	client, err := fapihttp.NewClient(fapihttp.TransportConfig{DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout, VerifyConnection: verify})
+	client, err := fapihttp.NewClient(fapihttp.TransportConfig{
+		DialTimeout: httpTimeout, TLSHandshakeTimeout: httpTimeout, VerifyConnection: verify,
+		AllowedPrivateHosts: privateHosts,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: http client: %w", err)
 	}

@@ -47,7 +47,10 @@ which drives the `wallet` package step by step.
 `assurance: "production"` runs that engine as a wallet app runs it:
 `walletflow` at production assurance, with its own hardened client
 (public addresses only, no redirect followed, TLS verified against the
-system roots, on Linux `SSL_CERT_FILE`), in place of this binary's.
+system roots, on Linux `SSL_CERT_FILE`), in place of this binary's;
+`allowed_private_hosts` names hosts it may also reach at a private
+address (`walletflow.Config.AllowedPrivateHosts`), refused at
+development, whose client reaches them anyway.
 It needs `engine: "walletflow"`, `verifier_trust_anchors_pem` and
 `verifier_crl`, and refuses `verifier_tls_trust_anchors_pem`, whose
 pinned certificate is trusted for any host name. The EUDI verifier
