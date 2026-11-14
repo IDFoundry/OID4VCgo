@@ -24,7 +24,6 @@ import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
@@ -354,7 +353,10 @@ internal class GattClientTransport(
     }
 
     private suspend fun expectSuccess(what: String) {
-        val status = withTimeout(OPERATION_TIMEOUT_MS) { results.receive() }
+        // Not withTimeout: its TimeoutCancellationException is a
+        // cancellation, which a caller takes as its own and lets pass.
+        val status = withTimeoutOrNull(OPERATION_TIMEOUT_MS) { results.receive() }
+            ?: throw bluetoothOffFailure ?: ProximityTransportException("$what wasn't confirmed")
         if (status != BluetoothGatt.GATT_SUCCESS) throw bluetoothOffFailure ?: ProximityTransportException("$what failed ($status)")
     }
 
