@@ -192,14 +192,40 @@ func adminHandler(p *walletprovider.Provider) http.Handler {
 	return mux
 }
 
-// logRequests logs each request's method, path and status, so a run
-// can show who fetched the status lists.
+// logRequests logs each request's method, endpoint and status, so a
+// run can show what the wallet asked for and who fetched the status
+// lists. Only a method and an endpoint the provider serves are named:
+// the sender chose the rest of the request.
 func logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(rec, r)
-		log.Printf("served %s %q %d", r.Method, r.URL.Path, rec.status)
+		method := "another method"
+		switch r.Method {
+		case http.MethodGet:
+			method = http.MethodGet
+		case http.MethodPost:
+			method = http.MethodPost
+		}
+		log.Printf("served %s %q %d", method, endpoint(r.URL.Path), rec.status)
 	})
+}
+
+// endpoint names the endpoint path is: one of the protocol's, the
+// status lists (statusListsPath + "/{start}/{n}"), or another path.
+func endpoint(path string) string {
+	for _, p := range []string{
+		walletprovider.ChallengePath, walletprovider.InstancesPath, walletprovider.WalletAttestationPath,
+		walletprovider.KeyAttestationPath, walletprovider.StatusPath,
+	} {
+		if path == p {
+			return p
+		}
+	}
+	if strings.HasPrefix(path, statusListsPath+"/") {
+		return statusListsPath + "/{start}/{n}"
+	}
+	return "another path"
 }
 
 type statusRecorder struct {

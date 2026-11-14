@@ -165,7 +165,7 @@ for profile in $PROFILES; do
   # the cached list's ttl had passed. A run in which the issuer fetched
   # nothing checked no status at all.
   if [[ "$profile" = production ]]; then
-    fetches="$(grep -c ' served GET "/statuslists/[0-9]*/[0-9]*" 200' "$WORK/wallet-provider/wallet-provider.log" || true)"
+    fetches="$(grep -c ' served GET "/statuslists/{start}/{n}" 200' "$WORK/wallet-provider/wallet-provider.log" || true)"
     if [[ "$fetches" -ge 2 ]]; then echo "  ok    the issuer fetched the Wallet Provider's status list $fetches times"
     else echo "  FAIL  the issuer fetched the Wallet Provider's status list before and after the revocation (fetched $fetches times)"; fail=1; fi
   fi

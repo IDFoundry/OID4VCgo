@@ -614,7 +614,7 @@ for path in /statuslists/1 /statuslists/1/cwt; do
 done
 # The issuer checked the wallet's attestations' status by fetching the
 # Wallet Provider's list, the attestations being the provider's.
-if grep -q ' served GET "/statuslists/[0-9]*/[0-9]*" 200' wallet-provider/wallet-provider.log \
+if grep -q ' served GET "/statuslists/{start}/{n}" 200' wallet-provider/wallet-provider.log \
     && grep -q ' served POST "/v1/wallet-attestation" 200' wallet-provider/wallet-provider.log \
     && grep -q ' served POST "/v1/key-attestation" 200' wallet-provider/wallet-provider.log; then
   ok "the Wallet Provider attested the wallet, and the issuer fetched its status list"
