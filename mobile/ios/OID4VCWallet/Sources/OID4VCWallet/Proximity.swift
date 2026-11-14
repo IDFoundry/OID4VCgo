@@ -270,6 +270,51 @@ public final class ProximityPresentation: @unchecked Sendable {
         public let reader: ProximityReaderIdentity
         /// The requested documents, in the request's order, each with the held mdocs of its doctype.
         public let documents: [MdocPresentation.Document]
+        /// The request's use cases and purpose hints (ISO/IEC 18013-5 second edition), or nil
+        /// when the reader sent none — a first-edition reader, say. ``RequestInfo/signed`` says
+        /// whether a verified whole-request signature covers it; ``reader`` says whether that
+        /// signer is trusted. Neither shows that a purpose is true, or that the reader may ask
+        /// for it.
+        public let requestInfo: RequestInfo?
+
+        init(reader: ProximityReaderIdentity, documents: [MdocPresentation.Document], requestInfo: RequestInfo? = nil) {
+            self.reader = reader
+            self.documents = documents
+            self.requestInfo = requestInfo
+        }
+    }
+
+    /// A request's second-edition information, as the reader sent it.
+    public struct RequestInfo: Sendable, Decodable, Equatable {
+        /// The use cases, in the request's order.
+        public let useCases: [UseCase]
+        /// Whether a verified whole-request signature (readerAuthAll) covers this information,
+        /// every signature the request carries having verified. It isn't reader trust: see
+        /// ``Request/reader``.
+        public let signed: Bool
+
+        enum CodingKeys: String, CodingKey { case useCases = "use_cases", signed }
+    }
+
+    /// One use case of a request.
+    public struct UseCase: Sendable, Decodable, Equatable {
+        /// The use case's mandatory flag, as the reader sent it; what it obliges the holder to is
+        /// the app's decision.
+        public let mandatory: Bool
+        /// The use case's document sets: each lists indices into ``Request/documents``, in order,
+        /// repeats kept.
+        public let documentSets: [[Int]]
+        /// Purpose codes by controller ID, as the reader sent them: neither translated nor checked
+        /// against what the reader's certificate allows.
+        public let purposeHints: [String: Int32]
+
+        enum CodingKeys: String, CodingKey { case mandatory, documentSets = "document_sets", purposeHints = "purpose_hints" }
+    }
+
+    /// Decodes the Go side's Request() JSON into the request snapshot: the one decoding path for
+    /// the session and for tests.
+    static func decodeRequest(_ json: String) throws -> Request {
+        try decode(RequestJSON.self, json).request
     }
 
     private let handle: MobileProximityPresentation
@@ -336,7 +381,7 @@ public final class ProximityPresentation: @unchecked Sendable {
                 }
                 return
             }
-            let request = try decode(RequestJSON.self, handle.request()).request
+            let request = try Self.decodeRequest(handle.request())
             guard broadcast.update(.requestReceived(request), if: { if case .connected = $0 { true } else { false } }) else { return }
             // The holder decides; meanwhile the reader can only end the
             // session. The idle timeout runs only while the request waits.
@@ -537,10 +582,13 @@ public final class ProximityPresentation: @unchecked Sendable {
         }
     }
 
+    /// Request()'s JSON. request_info is nil when missing, for a Go side that predates it.
     private struct RequestJSON: Decodable {
         let reader: ReaderJSON
         let documents: [MdocPresentation.Document]
-        var request: Request { Request(reader: reader.identity, documents: documents) }
+        let requestInfo: RequestInfo?
+        enum CodingKeys: String, CodingKey { case reader, documents, requestInfo = "request_info" }
+        var request: Request { Request(reader: reader.identity, documents: documents, requestInfo: requestInfo) }
     }
 }
 

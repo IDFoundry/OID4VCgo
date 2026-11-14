@@ -11,7 +11,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-func mustCBOR(t *testing.T, v any) cbor.RawMessage {
+func mustCBOR(t testing.TB, v any) cbor.RawMessage {
 	t.Helper()
 	b, err := encMode.Marshal(v)
 	if err != nil {
@@ -182,5 +182,33 @@ func TestCompressedEDeviceKey(t *testing.T) {
 	offCurve := mustCBOR(t, map[int]any{1: 2, -1: 1, -2: bytes.Repeat([]byte{0xff}, 32), -3: true})
 	if _, err := decodeEDeviceKey(offCurve); err == nil {
 		t.Error("a compressed point off P-256 was accepted")
+	}
+}
+
+// DecodeDeviceRequest classifies errors as ParseDeviceRequest does for
+// what both read: an oversized message or bytes that aren't CBOR are
+// decoding errors (status 11), well-formed CBOR that isn't a
+// DeviceRequest a validation error (status 12).
+func TestDecodeDeviceRequest_ErrorClasses(t *testing.T) {
+	for name, tc := range map[string]struct {
+		b    []byte
+		want error
+	}{
+		"over MaxMessageBytes": {make([]byte, MaxMessageBytes+1), ErrCBORDecoding},
+		"not CBOR":             {[]byte{0xa1, 0x61}, ErrCBORDecoding},
+		"a duplicate key":      {[]byte{0xa2, 0x61, 'a', 0x01, 0x61, 'a', 0x02}, ErrCBORDecoding},
+		"not a map":            {mustCBOR(t, []int{1}), ErrCBORValidation},
+		"no version":           {mustCBOR(t, map[string]any{"docRequests": []any{}}), ErrCBORValidation},
+		"version 2.0":          {mustCBOR(t, map[string]any{"version": "2.0", "docRequests": []any{}}), ErrCBORValidation},
+		"no docRequests":       {mustCBOR(t, map[string]any{"version": "1.0"}), ErrCBORValidation},
+		"too many docRequests": {mustCBOR(t, map[string]any{"version": "1.0", "docRequests": make([]map[string]any, MaxDocRequests+1)}), ErrCBORValidation},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, legacyErr := ParseDeviceRequest(tc.b)
+			_, err := DecodeDeviceRequest(tc.b)
+			if !errors.Is(err, tc.want) || !errors.Is(legacyErr, tc.want) {
+				t.Errorf("DecodeDeviceRequest = %v, ParseDeviceRequest = %v; want both %v", err, legacyErr, tc.want)
+			}
+		})
 	}
 }

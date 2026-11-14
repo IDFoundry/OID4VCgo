@@ -21,6 +21,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/readerauth"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/internal/testmdoc"
 )
@@ -578,7 +579,11 @@ func TestVerifyReaderPerDocumentRefusesMixedSigners(t *testing.T) {
 		want string
 	}{
 		"another reader signs the second": {func(docs []map[string]cbor.RawMessage) {
-			sig, err := signReaderAuth(readerB, readerAuthentication(transcript, docs[1]["itemsRequest"]))
+			detached, err := readerauth.AuthenticationBytes(transcript, docs[1]["itemsRequest"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig, err := signReaderAuth(readerB, "ReaderAuthentication", detached)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -712,5 +717,56 @@ func TestParseRequestRefusesCBORPastLimits(t *testing.T) {
 				t.Errorf("ParseRequest = %v, want an error containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The DC API keeps its own acceptance policy after the reader
+// authentication bytes moved to internal/readerauth: a ReaderAuthAll
+// that doesn't verify still falls back to a complete, valid set of
+// per-document signatures, and with several ReaderAuthAll the first that
+// verifies by a trusted certificate names the reader, even after one
+// that doesn't. (Proximity's request-level verifier refuses both; this
+// package's behavior is unchanged.)
+func TestVerifyReaderTrust_DCAPIPolicyUnchanged(t *testing.T) {
+	h := newWalletHarness(t, bothNames())
+	var good RequestData
+	if err := json.Unmarshal(h.data, &good); err != nil {
+		t.Fatal(err)
+	}
+	with := func(edit func(dr map[string]cbor.RawMessage)) Incoming {
+		d := good
+		d.DeviceRequest = rewriteDeviceRequest(t, d.DeviceRequest, edit)
+		in, err := ParseRequest(marshalData(t, d), testOrigin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in
+	}
+	editAll := func(dr map[string]cbor.RawMessage, edit func([]cbor.RawMessage) []cbor.RawMessage) {
+		var all []cbor.RawMessage
+		if err := cbor.Unmarshal(dr["readerAuthAll"], &all); err != nil {
+			t.Fatal(err)
+		}
+		dr["readerAuthAll"] = mustCBOR(t, edit(all))
+	}
+
+	fallback := with(func(dr map[string]cbor.RawMessage) {
+		editAll(dr, func(all []cbor.RawMessage) []cbor.RawMessage {
+			all[0] = tamperSignature(all[0])
+			return all
+		})
+	})
+	if reader, err := fallback.VerifyReader(h.roots, time.Time{}); err != nil || !reader.Equal(h.leaf) {
+		t.Errorf("a bad ReaderAuthAll beside valid per-document signatures: %v, want the reader by fallback", err)
+	}
+
+	badThenGood := with(func(dr map[string]cbor.RawMessage) {
+		editDocRequests(t, dr, func(docs []map[string]cbor.RawMessage) { delete(docs[0], "readerAuth") })
+		editAll(dr, func(all []cbor.RawMessage) []cbor.RawMessage {
+			return []cbor.RawMessage{tamperSignature(all[0]), all[0]}
+		})
+	})
+	if reader, err := badThenGood.VerifyReader(h.roots, time.Time{}); err != nil || !reader.Equal(h.leaf) {
+		t.Errorf("a bad ReaderAuthAll before a good one: %v, want the reader", err)
 	}
 }

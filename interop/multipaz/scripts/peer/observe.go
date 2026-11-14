@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
 // What Multipaz sends walletflow that walletflow is lenient about
@@ -185,4 +187,37 @@ func describeJWKs(raw json.RawMessage) string {
 		return "empty"
 	}
 	return strings.Join(keys, ";")
+}
+
+// describeRequestInfo is what the holder made of a request's
+// second-edition information (walletflow's RequestInfo), for the
+// driver to check against what its Multipaz reader sent: "none", or
+//
+//	signed=<bool> use_cases=[mandatory=<bool> sets=[<i>,…]… hints=<id>:<code>,…]…
+//
+// each use case in the request's order, its document sets in order, and
+// its purpose hints sorted by controller ID.
+func describeRequestInfo(info *proximity.RequestInfo) string {
+	if info == nil {
+		return "none"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "signed=%t use_cases=", info.Signed)
+	for _, uc := range info.UseCases {
+		fmt.Fprintf(&b, "[mandatory=%t sets=", uc.Mandatory)
+		for _, set := range uc.DocumentSets {
+			ids := make([]string, len(set))
+			for i, id := range set {
+				ids[i] = strconv.Itoa(id)
+			}
+			b.WriteString("[" + strings.Join(ids, ",") + "]")
+		}
+		hints := make([]string, 0, len(uc.PurposeHints))
+		for id, code := range uc.PurposeHints {
+			hints = append(hints, id+":"+strconv.Itoa(int(code)))
+		}
+		sort.Strings(hints)
+		b.WriteString(" hints=" + strings.Join(hints, ",") + "]")
+	}
+	return b.String()
 }

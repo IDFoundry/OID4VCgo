@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/idfoundry/oid4vcgo/internal/identifier"
 	"slices"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
 // deviceRequestVersion is the DeviceRequest version this package writes
@@ -74,30 +77,122 @@ const (
 // well-formed CBOR, or ErrCBORValidation for well-formed CBOR that isn't
 // a DeviceRequest — one asking for a document type twice among them:
 // answer either with DeviceSession.ErrorResponse.
+//
+// ParseDeviceRequest reads only the document requests: a second-edition
+// request's readerAuthAll and deviceRequestInfo are neither checked nor
+// returned, so a request signed only as a whole looks unsigned here.
+// DecodeDeviceRequest reads, and checks, the whole request.
 func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
+	req, err := decodeWireDeviceRequest(b)
+	if err != nil {
+		return nil, err
+	}
+	return parseDocRequests(req.DocRequests)
+}
+
+// DecodeDeviceRequest decodes a whole DeviceRequest (§8.3.2.1.2.1), as
+// DeviceSession.HandleSessionEstablishment or HandleSessionData returns
+// it: its document requests, as ParseDeviceRequest, and the second
+// edition's readerAuthAll and deviceRequestInfo, whatever its 1.x
+// version. VerifyDeviceRequest then checks its signatures.
+//
+// It is stricter than ParseDeviceRequest about what it reads:
+// readerAuthAll, when present, must be an array of 1 to
+// MaxReaderSignatures signatures (their contents are checked by
+// VerifyDeviceRequest), and deviceRequestInfo, when present, must be
+// #6.24(bstr .cbor map) of at most MaxDeviceRequestInfoBytes; neither
+// may be null. Its known fields must have the working representation
+// RequestInfo describes, within this package's other Max limits, and
+// with every document index naming one of the request's DocRequests;
+// unknown fields are accepted, and signed as received. Nothing is
+// truncated or dropped to fit.
+//
+// An error wraps ErrCBORDecoding for bytes, or embedded
+// deviceRequestInfo bytes, that aren't well-formed CBOR, or
+// ErrCBORValidation for well-formed CBOR that isn't such a DeviceRequest:
+// answer either with DeviceSession.ErrorResponse.
+func DecodeDeviceRequest(b []byte) (*DeviceRequest, error) {
+	req, err := decodeWireDeviceRequest(b)
+	if err != nil {
+		return nil, err
+	}
+	docs, err := parseDocRequests(req.DocRequests)
+	if err != nil {
+		return nil, err
+	}
+	var info, all []byte
+	var haveInfo, haveAll bool
+	err = strictcbor.Entries(b, func(key, value []byte) error {
+		var name string
+		if len(key) == 0 || key[0]>>5 != 3 || decMode.Unmarshal(key, &name) != nil {
+			return nil
+		}
+		switch name {
+		case "deviceRequestInfo":
+			info, haveInfo = value, true
+		case "readerAuthAll":
+			all, haveAll = value, true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORValidation, err)
+	}
+
+	out := &DeviceRequest{decoded: true, docs: cloneDocRequests(docs)}
+	if haveAll {
+		err := arrayItems(all, MaxReaderSignatures, "readerAuthAll", func(_ int, sig []byte) error {
+			out.readerAuthAll = append(out.readerAuthAll, bytes.Clone(sig))
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("proximity: %w", err)
+		}
+		if len(out.readerAuthAll) == 0 {
+			return nil, fmt.Errorf("proximity: readerAuthAll is empty: %w", ErrCBORValidation)
+		}
+	}
+	if haveInfo {
+		if out.info, err = parseDeviceRequestInfo(info, len(docs)); err != nil {
+			return nil, fmt.Errorf("proximity: %w", err)
+		}
+		out.infoBytes = bytes.Clone(info)
+	}
+	return out, nil
+}
+
+// decodeWireDeviceRequest decodes b's version and document requests,
+// the part of a DeviceRequest both parsers read, after checking its
+// size and well-formedness (duplicate keys at every depth included).
+func decodeWireDeviceRequest(b []byte) (wireDeviceRequest, error) {
 	if len(b) > MaxMessageBytes {
-		return nil, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
+		return wireDeviceRequest{}, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(b), MaxMessageBytes, ErrCBORDecoding)
 	}
 	if err := decMode.Wellformed(b); err != nil {
-		return nil, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORDecoding, err)
+		return wireDeviceRequest{}, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORDecoding, err)
 	}
 	var req wireDeviceRequest
 	if err := decMode.Unmarshal(b, &req); err != nil {
-		return nil, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORValidation, err)
+		return wireDeviceRequest{}, fmt.Errorf("proximity: decode DeviceRequest: %w: %w", ErrCBORValidation, err)
 	}
 	if !strings.HasPrefix(req.Version, "1.") {
-		return nil, fmt.Errorf("proximity: DeviceRequest version %q, want 1.x: %w", req.Version, ErrCBORValidation)
+		return wireDeviceRequest{}, fmt.Errorf("proximity: DeviceRequest version %q, want 1.x: %w", req.Version, ErrCBORValidation)
 	}
-	if len(req.DocRequests) == 0 {
+	return req, nil
+}
+
+// parseDocRequests checks and decodes a DeviceRequest's docRequests.
+func parseDocRequests(docRequests []wireDocRequest) ([]DocRequest, error) {
+	if len(docRequests) == 0 {
 		return nil, fmt.Errorf("proximity: DeviceRequest has no docRequests: %w", ErrCBORValidation)
 	}
-	if len(req.DocRequests) > MaxDocRequests {
-		return nil, fmt.Errorf("proximity: DeviceRequest has %d docRequests, over %d: %w", len(req.DocRequests), MaxDocRequests, ErrCBORValidation)
+	if len(docRequests) > MaxDocRequests {
+		return nil, fmt.Errorf("proximity: DeviceRequest has %d docRequests, over %d: %w", len(docRequests), MaxDocRequests, ErrCBORValidation)
 	}
 
-	out := make([]DocRequest, 0, len(req.DocRequests))
+	out := make([]DocRequest, 0, len(docRequests))
 	elements := 0
-	for i, dr := range req.DocRequests {
+	for i, dr := range docRequests {
 		parsed, err := parseDocRequest(dr)
 		if err != nil {
 			return nil, fmt.Errorf("proximity: docRequests[%d]: %w", i, err)
@@ -223,8 +318,15 @@ func orderedMapEntries(raw []byte) (keys []string, values []cbor.RawMessage, err
 // cborMapHeader decodes a CBOR map's header: its number of pairs, or
 // indefinite, and the bytes after the header.
 func cborMapHeader(raw []byte) (n uint64, indefinite bool, rest []byte, err error) {
-	if len(raw) == 0 || raw[0]>>5 != 5 {
-		return 0, false, nil, fmt.Errorf("not a CBOR map: %w", ErrCBORDecoding)
+	return cborHeader(raw, 5)
+}
+
+// cborHeader decodes the header of a CBOR array (major type 4) or map
+// (5): its number of items or pairs, or indefinite, and the bytes after
+// the header.
+func cborHeader(raw []byte, major byte) (n uint64, indefinite bool, rest []byte, err error) {
+	if len(raw) == 0 || raw[0]>>5 != major {
+		return 0, false, nil, fmt.Errorf("not a CBOR %s: %w", map[byte]string{4: "array", 5: "map"}[major], ErrCBORDecoding)
 	}
 	info := raw[0] & 0x1f
 	rest = raw[1:]

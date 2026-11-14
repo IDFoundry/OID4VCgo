@@ -37,10 +37,14 @@ type ProximityPresentation struct {
 	// and gives nothing to send.
 	terminating atomic.Bool
 
-	mu       sync.Mutex
-	state    proximityState
-	reqs     []proximity.DocRequest
-	reader   proximity.ReaderAuthentication
+	mu     sync.Mutex
+	state  proximityState
+	reqs   []proximity.DocRequest
+	reader proximity.ReaderAuthentication
+	// info is the accepted request's information, Signed as its
+	// verification found; nil before a request is accepted, and for one
+	// without information.
+	info     *proximity.RequestInfo
 	requests []MdocRequest
 	byID     map[string]StoredCredential
 	// verifierName is the reader's name among Verifiers (verifierID),
@@ -251,7 +255,7 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 	if err != nil {
 		return p.fail(err)
 	}
-	reqs, err := proximity.ParseDeviceRequest(reqBytes)
+	req, err := proximity.DecodeDeviceRequest(reqBytes)
 	if err != nil {
 		p.state = proximityEnded
 		send, encErr := p.s.ErrorResponse(err)
@@ -260,10 +264,14 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 		}
 		return ProximityEvent{Send: send, Ended: true, Err: fmt.Errorf("walletflow: %w", err)}
 	}
+	reqs := req.DocRequests()
 	p.reqs = reqs
-	// The holder may answer any of the requests, so each one's
-	// readerAuth counts, not only the first's.
-	p.reader = p.readerOf(reqs)
+	// Every signature the request carries counts: the holder may answer
+	// any of its documents, and its information is shown with them.
+	authn := p.s.VerifyDeviceRequest(req, proximity.ReaderTrust{
+		Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Revocation: p.w.cfg.MdocReaderRevocation, Now: p.w.deps.Clock(),
+	})
+	p.reader = authn.Reader
 	if p.w.cfg.RequireTrustedMdocReader && p.reader.Status != proximity.ReaderTrusted {
 		p.state = proximityEnded
 		return ProximityEvent{Send: p.s.Termination(), Ended: true, Err: fmt.Errorf("walletflow: %w: %w", ErrUntrustedVerifier, p.reader.Err)}
@@ -290,6 +298,11 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 			}
 		}
 		p.requests = append(p.requests, r)
+	}
+	// Published only with the accepted request, its coverage settled.
+	if info := req.RequestInfo(); info != nil {
+		info.Signed = authn.RequestInfoSigned
+		p.info = info
 	}
 	p.state = proximityRequested
 	return ProximityEvent{Request: true}
@@ -337,40 +350,50 @@ func (p *ProximityPresentation) verifierID() (string, error) {
 	}
 }
 
-// readerOf is who sent reqs: trusted only when every DocRequest is
-// signed by the same trusted reader, as mdocdcapi requires too.
-// Otherwise it's the weakest request's result (invalid, then
-// unauthenticated, then untrusted): a reader can't attach an unsigned
-// or untrusted request for one document to a trusted one for another
-// and have the wallet show the trusted name for both.
-func (p *ProximityPresentation) readerOf(reqs []proximity.DocRequest) proximity.ReaderAuthentication {
-	trust := proximity.ReaderTrust{
-		Roots: p.w.cfg.MdocReaderRoots, LeafPolicy: p.w.cfg.MdocReaderLeafPolicy, Revocation: p.w.cfg.MdocReaderRevocation, Now: p.w.deps.Clock(),
-	}
-	weakness := map[proximity.ReaderStatus]int{
-		proximity.ReaderTrusted: 0, proximity.ReaderUntrusted: 1, proximity.ReaderUnauthenticated: 2, proximity.ReaderInvalid: 3,
-	}
-	var reader proximity.ReaderAuthentication
-	for i, req := range reqs {
-		got := p.s.VerifyReaderAuth(req, trust)
-		if i > 0 && got.Status == proximity.ReaderTrusted && reader.Status == proximity.ReaderTrusted && !got.Chain[0].Equal(reader.Chain[0]) {
-			got = proximity.ReaderAuthentication{Status: proximity.ReaderUntrusted, Chain: got.Chain, Err: errors.New("the documents are signed by different readers")}
-		}
-		if i == 0 || weakness[got.Status] > weakness[reader.Status] {
-			reader = got
-		}
-	}
-	return reader
-}
-
-// Reader is who sent the request: its readerAuth's status and
-// certificate chain (proximity.VerifyReaderAuth), under
-// Config.MdocReaderRoots and MdocReaderLeafPolicy. Only a
-// proximity.ReaderTrusted chain is the reader's verified identity.
+// Reader is who sent the request, taking every signature it carries
+// into account (proximity.VerifyDeviceRequest): its status and
+// certificate chain, under Config.MdocReaderRoots and
+// MdocReaderLeafPolicy. With a readerAuthAll, it is a whole-request
+// signer; without, it is trusted only when one trusted reader signs
+// every document. Only a proximity.ReaderTrusted chain is the reader's
+// verified identity.
 func (p *ProximityPresentation) Reader() proximity.ReaderAuthentication {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.reader
+}
+
+// RequestInfo is the accepted request's information — its use cases,
+// with their mandatory flags, document sets and purpose hints — or nil
+// before a request is accepted, after one was refused, and for a
+// request without any. It stays the accepted request's after the
+// holder answers or declines. Its Signed reports whether a verified
+// whole-request signature covers it; whether the signer is trusted is
+// Reader's to say, and neither establishes that a purpose is true or
+// that the reader may ask for it. The result is a copy.
+func (p *ProximityPresentation) RequestInfo() *proximity.RequestInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.info == nil {
+		return nil
+	}
+	return copyRequestInfo(p.info)
+}
+
+// copyRequestInfo is a deep copy of info.
+func copyRequestInfo(info *proximity.RequestInfo) *proximity.RequestInfo {
+	out := &proximity.RequestInfo{UseCases: make([]proximity.UseCase, len(info.UseCases)), Signed: info.Signed}
+	for i, uc := range info.UseCases {
+		c := proximity.UseCase{Mandatory: uc.Mandatory, DocumentSets: make([][]int, len(uc.DocumentSets)), PurposeHints: make(map[string]int32, len(uc.PurposeHints))}
+		for j, set := range uc.DocumentSets {
+			c.DocumentSets[j] = append(make([]int, 0, len(set)), set...)
+		}
+		for k, v := range uc.PurposeHints {
+			c.PurposeHints[k] = v
+		}
+		out.UseCases[i] = c
+	}
+	return out
 }
 
 // Requests are the requested documents, in the request's order, each

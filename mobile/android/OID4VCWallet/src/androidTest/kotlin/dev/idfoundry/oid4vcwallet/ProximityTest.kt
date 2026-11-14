@@ -139,6 +139,45 @@ class ProximityTest {
             ?: throw AssertionError("no request: ${holder.state.value}")
             ).request
 
+    /**
+     * The request snapshot's decoding of request_info: missing (an older Go side) and null are
+     * both no information; present information keeps empty collections, several use cases,
+     * int32 boundary codes, and signed apart from the reader's trust.
+     */
+    @Test
+    fun requestInfoDecoding() {
+        val reader = """{"status":"untrusted","claimed_name":"Shop","chain":[]}"""
+        val documents = """[{"doctype":"$DOC_TYPE","elements":[]}]"""
+
+        val missing = decodeProximityRequest("""{"abi":15,"reader":$reader,"documents":$documents}""")
+        assertEquals(null, missing.requestInfo)
+        val explicitNull = decodeProximityRequest("""{"abi":15,"reader":$reader,"documents":$documents,"request_info":null}""")
+        assertEquals(null, explicitNull.requestInfo)
+
+        val empty = decodeProximityRequest("""{"abi":15,"reader":$reader,"documents":$documents,"request_info":{"use_cases":[],"signed":false}}""")
+        assertEquals(ProximityPresentation.RequestInfo(emptyList(), signed = false), empty.requestInfo)
+
+        val present = decodeProximityRequest(
+            """{"abi":15,"reader":$reader,"documents":$documents,"request_info":{"use_cases":[""" +
+                """{"mandatory":true,"document_sets":[[0],[0,0]],"purpose_hints":{"org.example.max":2147483647,"org.example.min":-2147483648}},""" +
+                """{"mandatory":false,"document_sets":[],"purpose_hints":{},"future_field":1}""" +
+                """],"signed":true,"future_member":"x"}}""",
+        )
+        val info = present.requestInfo ?: throw AssertionError("no requestInfo")
+        assertTrue(info.signed)
+        // Signed coverage, yet the reader stays untrusted: the two are separate.
+        assertEquals(ProximityReaderIdentity.Status.Untrusted, present.reader.status)
+        assertEquals(
+            listOf(
+                ProximityPresentation.UseCase(true, listOf(listOf(0), listOf(0, 0)), mapOf("org.example.max" to Int.MAX_VALUE, "org.example.min" to Int.MIN_VALUE)),
+                ProximityPresentation.UseCase(false, emptyList(), emptyMap()),
+            ),
+            info.useCases,
+        )
+        // Existing two-argument constructor calls still compile.
+        assertEquals(null, ProximityPresentation.Request(present.reader, present.documents).requestInfo)
+    }
+
     /** A reader is a production one unless `development` is set: a configuration leaving its decisions open is `invalid_input`. */
     @Test
     fun readerIsProductionByDefault() {
@@ -176,6 +215,8 @@ class ProximityTest {
         assertEquals(ProximityReaderIdentity.Status.Trusted, request.reader.status)
         assertEquals("Test Reader", request.reader.name)
         assertEquals(2, request.reader.chain.size)
+        // A first-edition reader sends no request information.
+        assertEquals(null, request.requestInfo)
         val document = request.documents.single()
         assertEquals(DOC_TYPE, document.doctype)
         // In the request's order: the reader encodes them sorted.

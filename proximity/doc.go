@@ -30,8 +30,9 @@
 //	HandleSessionEstablishment ◀── SessionEstablishment ──
 //	  SKReader/SKDevice                           {eReaderKey, data: E(DeviceRequest)}
 //	  → DeviceRequest
-//	ParseDeviceRequest → []DocRequest          (WithReaderAuth: signed)
-//	VerifyReaderAuth → who is asking
+//	DecodeDeviceRequest → *DeviceRequest       (WithReaderAuth: signed)
+//	VerifyDeviceRequest → who is asking, and
+//	  whether its information is signed
 //	  (consent prompt)
 //	BuildDeviceResponse
 //	Encrypt(resp, false) ── SessionData ──────▶  Verify(ctx, msg, roots, now)
@@ -84,8 +85,24 @@
 //   - Reader authentication (§9.1.4): WithReaderAuth signs each
 //     request's ItemsRequestBytes, with the SessionTranscript, by the
 //     reader's key, its certificate chain in x5chain; the holder's
-//     VerifyReaderAuth checks the signature and the chain against its
-//     ReaderTrust. Shared with mdocdcapi's DC API org-iso-mdoc.
+//     VerifyReaderAuth checks one DocRequest's signature and chain
+//     against its ReaderTrust. The ReaderAuthentication(All) bytes are
+//     built by internal/readerauth, shared with mdocdcapi's DC API
+//     org-iso-mdoc.
+//   - The second edition's whole-request reader authentication and
+//     request information, as the ISO/IEC 18013-5 second-edition draft
+//     describes them and Multipaz 0.102.0 builds them, not yet checked
+//     against the ballot text: DecodeDeviceRequest reads readerAuthAll
+//     and deviceRequestInfo (use cases with their mandatory flags,
+//     document sets and purpose hints) within this package's Max
+//     limits, and VerifyDeviceRequest verifies every signature a
+//     request carries. With readerAuthAll, its first trusted signer is
+//     the reader, and RequestAuthentication.RequestInfoSigned says
+//     whether a verified whole-request signature covers the
+//     information: coverage, not trust, and not a check that a purpose
+//     is true or permitted. ParseDeviceRequest stays the first-edition,
+//     document-only parser. This package's reader doesn't send
+//     second-edition requests.
 //   - BLE Ident (§8.3.3.1.1), for mdoc central client mode: BLEIdent.
 //   - Map keys are matched case-sensitively, as CBOR's are.
 //
@@ -113,9 +130,10 @@
 //     documents, and one response answer any of them: BuildDocument and
 //     MarshalDeviceResponse for the holder, EstablishmentDocuments and
 //     VerifyDocuments for the reader.)
-//   - The second edition's DeviceRequestInfo (useCases, documentSets):
-//     ParseDeviceRequest doesn't decode it, so a reader's alternative
-//     sets of documents aren't shown or enforced.
+//   - Acting on the second edition's DeviceRequestInfo: its use cases,
+//     document sets and purpose hints are decoded and shown, not
+//     enforced, translated, or checked against the reader's
+//     certificate; that is the application's decision.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
 //     Credentials API, and transaction data.
 //

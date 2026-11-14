@@ -1828,15 +1828,57 @@ reader asks for several (`RequestDocuments`). Findings:
   for itself.
   Developers report the reuse failing in some iOS releases; check it on
   a device.
-- **Not yet:** the second edition's `DeviceRequestInfo` (`useCases`,
-  `documentSets`) isn't decoded, so a reader's alternative sets aren't
-  shown or enforced; an answer list is already their shape.
+- **Not yet:** enforcing the second edition's `DeviceRequestInfo`.
+  The holder now decodes and shows it (see "Second-edition request
+  information (ABI 15)" below), but a reader's alternative document
+  sets aren't enforced; an answer list is already their shape.
 - **The demo apps** ask for and answer several documents in person,
   and the iOS document provider extension answers several in one
   Safari response, with one holder confirmation. iOS offers the
   extension only the doctypes its entitlement lists and the app
   registers, which in the demo is the Photo ID alone, so until another
   type is added there Safari hands it one document at a time.
+
+## Second-edition request information (ABI 15)
+
+Issue #1017. A reader may sign the whole request (`readerAuthAll`) and
+send use cases with purpose hints (`deviceRequestInfo`), in the ISO/IEC
+18013-5 second-edition draft's form as Multipaz 0.102.0 builds it.
+Before this, the holder parsed only the documents: a request signed
+only as a whole looked unsigned, so `require_trusted_mdoc_reader`
+refused a reader that could have been recognised, and the hints never
+reached the app.
+
+- **Go.** `proximity.DecodeDeviceRequest` and `VerifyDeviceRequest`
+  read the whole request and verify every signature in it;
+  `walletflow.ProximityPresentation` uses them, and its `RequestInfo()`
+  is the accepted request's information. The reader is the first
+  trusted whole-request signer, never a per-document one standing in
+  for it; whether a verified whole-request signature covers the
+  information is reported apart, as `signed`. See `proximity/README.md`.
+- **The gomobile ABI** stays at 15. `Request()` gains `request_info`,
+  an explicit `null` when there is none (ABI.md). No call or error code
+  changed, and the existing wrappers ignore a member they don't know.
+- **Kotlin** is where compatibility breaks. `ProximityPresentation.Request`
+  is a public data class; a defaulted `requestInfo` constructor
+  parameter keeps existing calls compiling, but its constructor,
+  `copy` and `componentN` methods change in the binary: an app or
+  library compiled against an earlier OID4VCWallet must be rebuilt
+  against this one. Its API is otherwise unchanged. Keeping the old
+  binary shape would have meant a separate accessor for information
+  the consent screen reads with the request; the rebuild was preferred.
+- **Swift** gains a stored `requestInfo` property on `Request`, whose
+  initializer stays internal: source using the struct keeps compiling.
+  Rebuild against the new framework as for any release.
+- **Releases.** The gomobile ABI number can't tell a wrapper with
+  `request_info` from one without, so the Kotlin and Swift libraries
+  carrying it are released from one commit with one version, named in
+  their release notes.
+- **Evidence.** Go tests, fuzzing, and Multipaz interop cases in
+  `interop/multipaz` plus a fixture bundle built and signed by Multipaz
+  that the Go tests verify offline. Not yet: a check against the
+  ballot text, which a release must name before calling the feature
+  conformant, and a run on phones over BLE.
 
 ## Key Attestations name the issuance's instance key (ABI 15)
 

@@ -181,6 +181,19 @@ hold only one gomobile library. An app shipping 64-bit only filters the
 32-bit ones out: \`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }\`.
 It's compiled for Kotlin 2.2 and later.
 
+## Compatibility
+
+This library's version, not the Go side's ABI number, says what it
+carries: additions to the Go side's JSON results come within one ABI.
+A release can change a public Kotlin class's binary shape while
+existing source still compiles: \`ProximityPresentation.Request\`
+gained a \`requestInfo\` constructor parameter (the reader's use cases
+and purpose hints, with \`signed\`), defaulted, so calls passing
+\`reader\` and \`documents\` compile as they are, but code compiled
+against a release before it must be rebuilt. Each release's notes say
+when a rebuild is needed. The Swift package of the same version comes
+from the same commit.
+
 ## Documentation
 
 - [Guides](docs/GettingStarted.md): getting started, receiving

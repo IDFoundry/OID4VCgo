@@ -323,7 +323,11 @@ func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
 		}
 		docRequest := map[string]any{"itemsRequest": cbor.RawMessage(itemsRequestBytes)}
 		if len(p.Readers) > 0 {
-			readerAuth, err := signReaderAuth(p.Readers[0], readerAuthentication(transcript, itemsRequestBytes))
+			detached, err := readerauth.AuthenticationBytes(transcript, itemsRequestBytes)
+			if err != nil {
+				return "", fmt.Errorf("mdocdcapi: encode ReaderAuthentication: %w", err)
+			}
+			readerAuth, err := signReaderAuth(p.Readers[0], "ReaderAuthentication", detached)
 			if err != nil {
 				return "", err
 			}
@@ -334,9 +338,14 @@ func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
 	}
 	deviceRequest := map[string]any{"version": "1.0", "docRequests": docRequests}
 	if len(p.Readers) > 0 {
+		// Every reader signs the same ReaderAuthenticationAll.
+		detached, err := readerauth.AuthenticationAllBytes(transcript, items, nil)
+		if err != nil {
+			return "", fmt.Errorf("mdocdcapi: encode ReaderAuthenticationAll: %w", err)
+		}
 		all := make([]any, 0, len(p.Readers))
 		for _, r := range p.Readers {
-			sig, err := signReaderAuth(r, readerAuthenticationAll(transcript, items, nil))
+			sig, err := signReaderAuth(r, "ReaderAuthenticationAll", detached)
 			if err != nil {
 				return "", err
 			}
@@ -352,38 +361,14 @@ func buildDeviceRequest(p RequestParams, transcript []byte) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// readerAuthentication is ISO/IEC 18013-5 §12.5's ReaderAuthentication,
-// which a DocRequest's ReaderAuth signs.
-func readerAuthentication(transcript, itemsRequestBytes []byte) []any {
-	return []any{"ReaderAuthentication", cbor.RawMessage(transcript), cbor.RawMessage(itemsRequestBytes)}
-}
-
-// readerAuthenticationAll is the second edition's ReaderAuthenticationAll,
-// which a ReaderAuthAll signs: every DocRequest's ItemsRequestBytes, in
-// order, and the DeviceRequestInfoBytes or null.
-func readerAuthenticationAll(transcript []byte, itemsRequestBytes [][]byte, deviceRequestInfo []byte) []any {
-	items := make([]any, len(itemsRequestBytes))
-	for i, b := range itemsRequestBytes {
-		items[i] = cbor.RawMessage(b)
-	}
-	var info any
-	if deviceRequestInfo != nil {
-		info = cbor.RawMessage(deviceRequestInfo)
-	}
-	return []any{"ReaderAuthenticationAll", cbor.RawMessage(transcript), items, info}
-}
-
 // signReaderAuth is a ReaderAuth or ReaderAuthAll: a COSE_Sign1 with a
-// null payload over the detached #6.24(bstr .cbor authentication), the
-// reader's chain in the unprotected x5chain header.
-func signReaderAuth(r ReaderKey, authentication []any) ([]byte, error) {
-	detached, err := wrapTag24(authentication)
-	if err != nil {
-		return nil, fmt.Errorf("mdocdcapi: encode %v: %w", authentication[0], err)
-	}
+// null payload over detached, the encoded ReaderAuthenticationBytes or
+// ReaderAuthenticationAllBytes (internal/readerauth builds both) that
+// name is, the reader's chain in the unprotected x5chain header.
+func signReaderAuth(r ReaderKey, name string, detached []byte) ([]byte, error) {
 	sig, err := readerauth.Sign(r.Signer, r.Chain, detached)
 	if err != nil {
-		return nil, fmt.Errorf("mdocdcapi: sign %v: %w", authentication[0], err)
+		return nil, fmt.Errorf("mdocdcapi: sign %s: %w", name, err)
 	}
 	return sig, nil
 }

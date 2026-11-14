@@ -146,6 +146,39 @@ final class ProximityTests: XCTestCase {
         throw WalletError(code: .internalError, message: "no request")
     }
 
+    /// The request snapshot's decoding of request_info: missing (an older Go side) and null are
+    /// both no information; present information keeps empty collections, several use cases,
+    /// Int32 boundary codes, and signed apart from the reader's trust.
+    func testRequestInfoDecoding() throws {
+        let reader = #"{"status":"untrusted","name":"","claimed_name":"Shop","chain":[]}"#
+        let documents = #"[{"doctype":"org.iso.18013.5.1.mDL","elements":[],"credentials":[]}]"#
+        func request(_ requestInfo: String?) throws -> ProximityPresentation.Request {
+            let member = requestInfo.map { #","request_info":"# + $0 } ?? ""
+            return try ProximityPresentation.decodeRequest(#"{"abi":15,"reader":"# + reader + #","documents":"# + documents + member + "}")
+        }
+
+        XCTAssertNil(try request(nil).requestInfo)
+        XCTAssertNil(try request("null").requestInfo)
+
+        let empty = try XCTUnwrap(try request(#"{"use_cases":[],"signed":false}"#).requestInfo)
+        XCTAssertEqual(empty, ProximityPresentation.RequestInfo(useCases: [], signed: false))
+
+        let present = try request(
+            #"{"use_cases":[{"mandatory":true,"document_sets":[[0],[0,0]],"#
+                + #""purpose_hints":{"org.example.max":2147483647,"org.example.min":-2147483648}},"#
+                + #"{"mandatory":false,"document_sets":[],"purpose_hints":{},"future_field":1}],"#
+                + #""signed":true,"future_member":"x"}"#)
+        let info = try XCTUnwrap(present.requestInfo)
+        XCTAssertTrue(info.signed)
+        // Signed coverage, yet the reader stays untrusted: the two are separate.
+        XCTAssertEqual(present.reader.status, .untrusted)
+        XCTAssertEqual(info.useCases, [
+            ProximityPresentation.UseCase(mandatory: true, documentSets: [[0], [0, 0]],
+                                          purposeHints: ["org.example.max": Int32.max, "org.example.min": Int32.min]),
+            ProximityPresentation.UseCase(mandatory: false, documentSets: [], purposeHints: [:]),
+        ])
+    }
+
     /// A reader is a production one unless `development` is set: a
     /// configuration leaving its decisions open is `invalidInput`.
     func testReaderIsProductionByDefault() throws {
@@ -199,6 +232,8 @@ final class ProximityTests: XCTestCase {
         XCTAssertEqual(r.reader.status, .trusted)
         XCTAssertEqual(r.reader.name, "Test Reader")
         XCTAssertEqual(r.reader.chain.count, 2)
+        // A first-edition reader sends no request information.
+        XCTAssertNil(r.requestInfo)
         XCTAssertEqual(r.reader.certificates.map(\.subject), ["CN=Test Reader,C=US", "CN=Test Reader CA,C=US"])
         XCTAssertEqual(r.reader.certificates.map(\.isCA), [false, true])
         XCTAssertTrue(r.reader.certificates[0].extendedKeyUsages.contains { $0.hasPrefix("mdoc reader authentication") })

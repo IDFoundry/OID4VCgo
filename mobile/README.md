@@ -90,7 +90,12 @@ has the setup, the lifecycle and the routing rules.
   `mdocReaderRoots`, `untrusted`, `unauthenticated` if unsigned, or
   `invalid`, with its certificate chain; in Swift also `certificates`,
   each certificate's fields, which iOS has no API to read) and the requested
-  documents with the held mdocs that match. The app asks the holder,
+  documents with the held mdocs that match, and, from a second-edition
+  reader, `requestInfo`: its use cases, each with a mandatory flag,
+  document sets and purpose hints, and `signed`, whether a verified
+  whole-request signature covers them (null/nil when the reader sent
+  none). `signed` isn't trust, which is the reader's status, and
+  neither proves a purpose. The app asks the holder,
   then calls `respond(document:credentialID:elements:)` or `decline()`.
   `presented(linkable:)` says whether the copy shown had been seen by
   another Verifier. `requireTrustedMdocReader` ends a session from an
@@ -233,6 +238,15 @@ settings (Pages) deploy from that branch.
 
 The library is compiled for Kotlin 2.2 (language and API version, and
 its standard library), so an app on AGP 9's own Kotlin can use it.
+
+Versions and compatibility: the wrapper's release version, not the
+gomobile ABI number, says what it carries. Optional JSON members are
+added within an ABI (ABI.md), so two wrappers on ABI 15 can differ:
+`requestInfo` on `ProximityPresentation.Request` is one such addition.
+It also changed that public data class's constructor and generated
+methods, so Kotlin code compiled against a release before it must be
+rebuilt, though calls passing `reader` and `documents` compile as they
+are; each release's notes say when a rebuild is needed.
 
 ## Publishing the Swift package
 
