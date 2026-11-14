@@ -466,7 +466,7 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 	// against on receipt unless they've changed since.
 	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
 	checker := statuslist.Checker{
-		Fetcher: statuslist.Fetcher{HTTP: w.deps.HTTP, AllowLoopback: w.cfg.Development, MaxBytes: w.cfg.StatusMaxBytes},
+		Fetcher: w.statusFetcher(w.cfg.StatusMaxBytes),
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
 		Cache:   w.statusCache,
