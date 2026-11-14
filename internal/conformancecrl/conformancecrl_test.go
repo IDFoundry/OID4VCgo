@@ -2,7 +2,6 @@ package conformancecrl_test
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"net"
@@ -67,20 +66,10 @@ func TestTrustChecksPublishedCRLs(t *testing.T) {
 		TLSCertificatePEM: tlsCertPEM, TLSPrivateKeyPEM: tlsKeyPEM,
 		CRLs: map[string]string{ca.Path(): crl, stale.Path(): expired},
 	}
-	handler, err := pub.Handler()
-	if err != nil {
+	if err := pub.ServeOn(ln, func(error) {}); err != nil {
 		t.Fatal(err)
 	}
-	pair, err := tls.X509KeyPair([]byte(tlsCertPEM), []byte(tlsKeyPEM))
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewUnstartedServer(handler)
-	_ = srv.Listener.Close()
-	srv.Listener = ln
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
-	srv.StartTLS()
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { _ = ln.Close() })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -98,7 +87,7 @@ func TestTrustChecksPublishedCRLs(t *testing.T) {
 	}
 
 	now := time.Now()
-	check := func(leaf *x509.Certificate, root *x509.Certificate) error {
+	check := func(leaf, root *x509.Certificate) error {
 		return checker.CheckRevocation(ctx, certrevocation.Check{Chain: []*x509.Certificate{leaf, root}, Now: now})
 	}
 	if err := check(good.Cert, ca.Cert); err != nil {
@@ -153,4 +142,70 @@ func portOf(t *testing.T, addr net.Addr) string {
 		t.Fatal(err)
 	}
 	return port
+}
+
+func TestWrap(t *testing.T) {
+	ca, err := conformancecrl.NewAuthority("ca", conformancecrl.URL("crl.test", "ca"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := conformancecrl.Wrap(ca.Cert, ca.Key, ca.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.CertPEM != ca.CertPEM {
+		t.Error("Wrap's CertPEM isn't the certificate's")
+	}
+	if _, err := wrapped.CRL(); err != nil {
+		t.Fatal(err)
+	}
+	noCRLSign := *ca.Cert
+	noCRLSign.KeyUsage = x509.KeyUsageCertSign
+	if _, err := conformancecrl.Wrap(&noCRLSign, ca.Key, ca.URL); err == nil {
+		t.Error("a CA that can't sign CRLs was wrapped")
+	}
+	other, err := conformancecrl.NewAuthority("other", conformancecrl.URL("crl.test", "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, foreign, err := other.IssueKey("foreign", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ca.CRL(foreign.Cert); err == nil {
+		t.Error("a CRL revoked another CA's certificate")
+	}
+}
+
+func TestTrustRefusesBadConfig(t *testing.T) {
+	ca, err := conformancecrl.NewAuthority("ca", conformancecrl.URL("crl.test", "ca"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nilTrust *conformancecrl.Trust
+	if nilTrust.Configured() || (&conformancecrl.Trust{}).Configured() {
+		t.Error("an empty Trust is configured")
+	}
+	for name, trust := range map[string]conformancecrl.Trust{
+		"no distribution points": {TLSTrustAnchorsPEM: ca.CertPEM},
+		"no tls anchors":         {DistributionPoints: []conformancecrl.DistributionPoint{ca.DistributionPoint()}},
+		"bad issuer": {
+			DistributionPoints: []conformancecrl.DistributionPoint{{URL: ca.URL, IssuerPEM: "nope"}},
+			TLSTrustAnchorsPEM: ca.CertPEM,
+		},
+		"http": {
+			DistributionPoints: []conformancecrl.DistributionPoint{{URL: "http://crl.test/ca.crl", IssuerPEM: ca.CertPEM}},
+			TLSTrustAnchorsPEM: ca.CertPEM,
+		},
+	} {
+		if _, err := trust.Start(context.Background(), t.Logf); err == nil {
+			t.Errorf("%s: started", name)
+		}
+	}
+	if _, err := (conformancecrl.Publisher{CRLs: map[string]string{"/x": "not a crl"}}).Handler(); err == nil {
+		t.Error("a publisher of no CRL was built")
+	}
+	if err := (conformancecrl.Publisher{ListenAddr: "127.0.0.1:0"}).Start(func(error) {}); err == nil {
+		t.Error("a publisher without a TLS key pair started")
+	}
 }

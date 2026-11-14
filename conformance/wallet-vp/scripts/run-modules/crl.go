@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -115,7 +116,31 @@ const controlTestName = "oid4vp-1final-wallet-happy-flow"
 // suite, which can't know the certificate is revoked, waits for a
 // presentation that never comes, so its verdict isn't the control's:
 // the module is stopped once graded.
-func driveCRLControl(httpClient *http.Client, apiBase, walletVPBase, alias, trustAnchorCertPEM, authorizationEndpoint string, cfg generatedConfig, planVariant, moduleVariant map[string]string, c crlControl) (res moduleResult) {
+//
+// controlRun is what each control's plan and drive share with the
+// run's own.
+type controlRun struct {
+	httpClient                                                              *http.Client
+	apiBase, walletVPBase, alias, trustAnchorCertPEM, authorizationEndpoint string
+	cfg                                                                     generatedConfig
+	planVariant, moduleVariant                                              map[string]string
+}
+
+// driveCRLControls drives each of p's controls (driveCRLControl).
+func (r controlRun) driveCRLControls(p verifierPKI) []moduleResult {
+	var results []moduleResult
+	for _, c := range p.controls() {
+		res := r.driveCRLControl(c)
+		log.Printf("%s: %s", res.testName, res.line())
+		results = append(results, res)
+	}
+	return results
+}
+
+func (r controlRun) driveCRLControl(c crlControl) (res moduleResult) {
+	httpClient, apiBase, walletVPBase, alias := r.httpClient, r.apiBase, r.walletVPBase, r.alias
+	trustAnchorCertPEM, authorizationEndpoint, cfg := r.trustAnchorCertPEM, r.authorizationEndpoint, r.cfg
+	planVariant, moduleVariant := r.planVariant, r.moduleVariant
 	exp := expectation{action: actionRefused, result: "not graded", refusal: c.refusal}
 	res = moduleResult{testName: "crl control: " + c.name, expected: exp}
 	pc := buildPlanConfig(alias+"-crl-"+strings.ReplaceAll(c.name, " ", "-"), "OID4VCgo cmd/conformance-wallet-vp CRL control: "+c.name, trustAnchorCertPEM, c.clientJWK, buildDCQLCredential(cfg), authorizationEndpoint)

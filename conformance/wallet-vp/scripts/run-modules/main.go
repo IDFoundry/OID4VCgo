@@ -653,11 +653,11 @@ func main() {
 
 	// The negative controls of the wallet's revocation check, each
 	// under a plan of its own: see driveCRLControl.
-	for _, c := range pki.controls() {
-		res := driveCRLControl(httpClient, *apiBase, *walletVPBase, *alias, trustAnchorCertPEM, *walletVPInternalBase+authorizePath, cfg, planVariant, moduleVariant, c)
-		log.Printf("%s: %s", res.testName, res.line())
-		results = append(results, res)
-	}
+	results = append(results, controlRun{
+		httpClient: httpClient, apiBase: *apiBase, walletVPBase: *walletVPBase, alias: *alias,
+		trustAnchorCertPEM: trustAnchorCertPEM, authorizationEndpoint: *walletVPInternalBase + authorizePath,
+		cfg: cfg, planVariant: planVariant, moduleVariant: moduleVariant,
+	}.driveCRLControls(pki)...)
 
 	log.Print("=== summary ===")
 	allExpected := len(results) > 0

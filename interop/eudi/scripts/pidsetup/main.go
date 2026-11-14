@@ -224,7 +224,7 @@ func issuerFiles(f files, issuer *url.URL, crlHost string) error {
 
 	// The SD-JWT VC signer names the Credential Issuer, so the wallet
 	// can require its iss be named by its certificate.
-	sdjwtPEM, err := leafEntry(f, "pid-sdjwt", "oid4vcgo-eudi-pid-sdjwt", iaca, iacaKey, iacaPEM, issuer, iacaCRL.URL)
+	sdjwtPEM, err := leafEntry(f, "pid-sdjwt", "oid4vcgo-eudi-pid-sdjwt", iacaCRL, issuer)
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func issuerFiles(f files, issuer *url.URL, crlHost string) error {
 		return fmt.Errorf("metadata ca: %w", err)
 	}
 	f.put("metadata-ca.pem", metadataCA.CertPEM)
-	if _, err := leafEntry(f, "access-certificate", "oid4vcgo-eudi-pid-metadata", metadataCA.Cert, metadataCA.Key, metadataCA.CertPEM, issuer, metadataCA.URL); err != nil {
+	if _, err := leafEntry(f, "access-certificate", "oid4vcgo-eudi-pid-metadata", metadataCA, issuer); err != nil {
 		return err
 	}
 	if err := crlFiles(f, crlHost, iacaCRL, metadataCA, dsPEM, sdjwtPEM); err != nil {
@@ -299,18 +299,17 @@ func issuerFiles(f files, issuer *url.URL, crlHost string) error {
 
 // leafEntry issues a leaf for a fresh key under ca, naming uri, and
 // writes it as the keystore entry name.
-// It names crl, if set, as its CRL distribution point, and returns
-// the leaf's PEM.
-func leafEntry(f files, name, commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, caPEM string, uri *url.URL, crl string) (string, error) {
+// It names ca's CRL distribution point, and returns the leaf's PEM.
+func leafEntry(f files, name, commonName string, ca *conformancecrl.Authority, uri *url.URL) (string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return "", err
 	}
-	der, err := leafDER(commonName, key, ca, caKey, uri, crl)
+	der, err := leafDER(commonName, key, ca.Cert, ca.Key, uri, ca.URL)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	return certPEM0(der), putEntry(f, name, key, certPEM0(der), caPEM)
+	return certPEM0(der), putEntry(f, name, key, certPEM0(der), ca.CertPEM)
 }
 
 // leafDER issues a signing leaf for key under ca, naming uri, and crl,

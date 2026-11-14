@@ -417,6 +417,7 @@ for c in "revoked certrevocation: certificate is revoked" \
   case "$set" in
     revoked) echo "== control: credentials whose signer the IACA revoked" ;;
     expired) echo "== control: credentials whose IACA publishes no current CRL" ;;
+    *) echo "unknown CRL set $set" >&2; exit 2 ;;
   esac
   for f in "$SDJWT sdjwt" "$MDOC mdoc"; do
     read -r config format <<< "$f"

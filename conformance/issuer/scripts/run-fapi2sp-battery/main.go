@@ -451,7 +451,10 @@ func main() {
 			outcome := "ERROR: the plan lists no plain happy-flow to drive it with"
 			if happyFlow != nil {
 				log.Printf("--- %s ---", key)
-				outcome = runCRLControl(httpClient, runCfg, run, *credentialFormat, *credentialProofTypeHint, planName, planVariant, happyFlow, c)
+				outcome = runCRLControl(httpClient, runCfg, controlPlan{
+					run: run, credentialFormat: *credentialFormat, proofTypeHint: *credentialProofTypeHint,
+					planName: planName, planVariant: planVariant, happyFlow: happyFlow,
+				}, c)
 			}
 			log.Printf("%s: %s", key, outcome)
 			runs = append(runs, batteryRun{key: key})

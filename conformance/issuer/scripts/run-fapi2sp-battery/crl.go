@@ -152,8 +152,18 @@ func controlKey(c crlControl) string { return "crl control: " + c.name }
 // the PAR response c names in the module's log. It reports
 // CONTROL=REFUSED when it does (conformance/scripts/lib.sh expects
 // that), and an ERROR line otherwise.
-func runCRLControl(httpClient *http.Client, cfg runModuleConfig, r *run, credentialFormat, proofTypeHint, planName string, planVariant map[string]string, happyFlow map[string]string, c crlControl) string {
-	planConfig, err := buildPlanConfigWithAttester(r, credentialFormat, proofTypeHint, c.attester.key, c.attester.leafPEM)
+//
+// controlPlan is what each control's plan shares with the run's own.
+type controlPlan struct {
+	run                             *run
+	credentialFormat, proofTypeHint string
+	planName                        string
+	planVariant, happyFlow          map[string]string
+}
+
+func runCRLControl(httpClient *http.Client, cfg runModuleConfig, p controlPlan, c crlControl) string {
+	planName, planVariant, happyFlow := p.planName, p.planVariant, p.happyFlow
+	planConfig, err := buildPlanConfigWithAttester(p.run, p.credentialFormat, p.proofTypeHint, c.attester.key, c.attester.leafPEM)
 	if err != nil {
 		return "ERROR: build plan config: " + err.Error()
 	}
