@@ -598,15 +598,7 @@ func main() {
 	}
 
 	if *dumpPlanConfig {
-		if _, err := os.Stdout.Write(pcRaw); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println()
-		fmt.Println("\n--- all-mandatory-claims plan (credential_type=" + allMandatoryClaimsCredentialType(*credentialFormat) + ") ---")
-		if _, err := os.Stdout.Write(amcPCRaw); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println()
+		dumpPlanConfigs(pcRaw, amcPCRaw, *credentialFormat)
 		return
 	}
 
@@ -672,6 +664,20 @@ func main() {
 		log.Printf("all-mandatory-claims plan detail: %splan-detail.html?plan=%s", *apiBase, amcPlanID)
 		os.Exit(1)
 	}
+}
+
+// dumpPlanConfigs prints both plans' configurations, for
+// -dump-plan-config.
+func dumpPlanConfigs(pcRaw, amcPCRaw []byte, credentialFormat string) {
+	if _, err := os.Stdout.Write(pcRaw); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println()
+	fmt.Println("\n--- all-mandatory-claims plan (credential_type=" + allMandatoryClaimsCredentialType(credentialFormat) + ") ---")
+	if _, err := os.Stdout.Write(amcPCRaw); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println()
 }
 
 // line is res as one summary line.
