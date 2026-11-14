@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -68,6 +69,10 @@ type walletRun struct {
 	proofType proofStrategy
 
 	planConfig []byte
+
+	// planConfigWith is planConfig with another credential.signing_jwk:
+	// a CRL control's (crl.go).
+	planConfigWith func(signingJWK map[string]any) ([]byte, error)
 }
 
 // newWalletRun generates a fresh alias/client ID/key material and
@@ -79,7 +84,11 @@ type walletRun struct {
 // emulated Credential Issuer defines a small fixed set of
 // credential_configuration_id/scope pairs, not an arbitrary
 // tester-chosen name).
-func newWalletRun(cfg runConfig) (*walletRun, error) {
+//
+// With crl, the credential signing and Token Status List signing
+// certificates are issued by its CAs, whose CRLs the wallet checks them
+// against; without it (-dump-config), by throwaway CAs of their own.
+func newWalletRun(cfg runConfig, crl *walletCRL) (*walletRun, error) {
 	suffix, err := randomHex(4)
 	if err != nil {
 		return nil, fmt.Errorf("generate run suffix: %w", err)
@@ -110,10 +119,13 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// rejects one that is) — a throwaway CA-issued leaf, mirroring the
 	// attester's own leaf/CA shape, satisfies this the same way
 	// cmd/conformance-wallet-vp's own credential-issuer cert does.
-	credentialSigningKey, _, credentialSigningLeafPEM, credentialIssuerCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcgo-wallet-credential-issuer-leaf", "oid4vcgo-wallet-credential-issuer-ca")
+	credentialSigningKey, credentialSigningLeafPEM, credentialIssuerCAPEM, err := runSigner(crl, "oid4vcgo-wallet-credential-issuer-leaf", "oid4vcgo-wallet-credential-issuer-ca", func(c *walletCRL) *conformancecrl.Authority { return c.credentialCA })
 	if err != nil {
 		return nil, fmt.Errorf("generate credential signing key/cert: %w", err)
+	}
+	if crl != nil {
+		// The controls' CA without a current CRL is trusted too.
+		credentialIssuerCAPEM += crl.staleCA.CertPEM
 	}
 	credentialSigningJWK, err := privateJWKWithX5C(credentialSigningKey, credentialSigningLeafPEM)
 	if err != nil {
@@ -127,8 +139,7 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	// suite also signs its HAIP Token Status List (the status_list its
 	// SD-JWT VCs reference) with it, refusing to without an x5c
 	// (VCIGenerateJwtStatusListToken), so it gets a CA-issued leaf too.
-	serverKey, _, serverLeafPEM, statusListCAPEM, err := conformancecert.GenerateSignerAndCert(
-		"oid4vcgo-wallet-status-list-leaf", "oid4vcgo-wallet-status-list-ca")
+	serverKey, serverLeafPEM, statusListCAPEM, err := runSigner(crl, "oid4vcgo-wallet-status-list-leaf", "oid4vcgo-wallet-status-list-ca", func(c *walletCRL) *conformancecrl.Authority { return c.statusCA })
 	if err != nil {
 		return nil, fmt.Errorf("generate server signing key/cert: %w", err)
 	}
@@ -138,47 +149,50 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 	}
 	serverJWK["kid"] = "oid4vcgo-wallet-server-key"
 
-	planConfig, err := json.Marshal(map[string]any{
-		"alias": alias,
-		"server": map[string]any{
-			"jwks": map[string]any{"keys": []any{serverJWK}},
-		},
-		"client": map[string]any{
-			"client_id":    clientID,
-			"scope":        cfg.scope,
-			"redirect_uri": redirectURI,
-		},
-		"client_attestation": map[string]any{
-			// issuer is an opaque identifier the suite checks the
-			// Client Attestation JWT's own "iss" claim against
-			// (ValidateClientAttestationIssuer) — it never needs to
-			// resolve to anything real.
-			"issuer":       "https://oid4vcgo-wallet-attester.example.com",
-			"trust_anchor": attesterCAPEM,
-			// key_attestation_trust_anchor_pem is required config
-			// regardless of proofType — a distinct HAIP §4.5.1
-			// requirement from Wallet Attestation client auth (see
-			// AGENTS.md's own note on not conflating the two). Its own
-			// dedicated CA (above) only actually gets exercised when a
-			// Key Attestation JWT is presented (keyattestation.go).
-			"key_attestation_trust_anchor_pem": keyAttestationCAPEM,
-			// key_attestation_jwks is a required-but-unused placeholder
-			// under the base (non-HAIP) plan's own fapi_profile=vci
-			// variant — AbstractVCIWalletTest.java only hides it under
-			// fapi_profile=vci_haip, and its own fallback verifier
-			// (VerifyKeyAttestationSignatureUsingConfigJwks) only ever
-			// reads it when a presented Key Attestation JWT lacks an x5c
-			// header, which keyattestation.go never omits — matching the
-			// same required-but-unused pattern already found for the
-			// Issuer role's own client_attestation.key_attestation_jwks
-			// (run-fapi2sp-battery/config.go).
-			"key_attestation_jwks": map[string]any{"keys": []any{}},
-		},
-		"credential": map[string]any{
-			"signing_jwk": credentialSigningJWK,
-		},
-		"vci": vciConfig(cfg),
-	})
+	planConfigWith := func(signingJWK map[string]any) ([]byte, error) {
+		return json.Marshal(map[string]any{
+			"alias": alias,
+			"server": map[string]any{
+				"jwks": map[string]any{"keys": []any{serverJWK}},
+			},
+			"client": map[string]any{
+				"client_id":    clientID,
+				"scope":        cfg.scope,
+				"redirect_uri": redirectURI,
+			},
+			"client_attestation": map[string]any{
+				// issuer is an opaque identifier the suite checks the
+				// Client Attestation JWT's own "iss" claim against
+				// (ValidateClientAttestationIssuer) — it never needs to
+				// resolve to anything real.
+				"issuer":       "https://oid4vcgo-wallet-attester.example.com",
+				"trust_anchor": attesterCAPEM,
+				// key_attestation_trust_anchor_pem is required config
+				// regardless of proofType — a distinct HAIP §4.5.1
+				// requirement from Wallet Attestation client auth (see
+				// AGENTS.md's own note on not conflating the two). Its own
+				// dedicated CA (above) only actually gets exercised when a
+				// Key Attestation JWT is presented (keyattestation.go).
+				"key_attestation_trust_anchor_pem": keyAttestationCAPEM,
+				// key_attestation_jwks is a required-but-unused placeholder
+				// under the base (non-HAIP) plan's own fapi_profile=vci
+				// variant — AbstractVCIWalletTest.java only hides it under
+				// fapi_profile=vci_haip, and its own fallback verifier
+				// (VerifyKeyAttestationSignatureUsingConfigJwks) only ever
+				// reads it when a presented Key Attestation JWT lacks an x5c
+				// header, which keyattestation.go never omits — matching the
+				// same required-but-unused pattern already found for the
+				// Issuer role's own client_attestation.key_attestation_jwks
+				// (run-fapi2sp-battery/config.go).
+				"key_attestation_jwks": map[string]any{"keys": []any{}},
+			},
+			"credential": map[string]any{
+				"signing_jwk": signingJWK,
+			},
+			"vci": vciConfig(cfg),
+		})
+	}
+	planConfig, err := planConfigWith(credentialSigningJWK)
 	if err != nil {
 		return nil, fmt.Errorf("marshal plan config: %w", err)
 	}
@@ -190,8 +204,23 @@ func newWalletRun(cfg runConfig) (*walletRun, error) {
 		keyAttestationKey: keyAttestationKey, keyAttestationKeyPEM: keyAttestationKeyPEM, keyAttestationLeafPEM: keyAttestationLeafPEM,
 		credentialIssuerCAPEM: credentialIssuerCAPEM, statusListCAPEM: statusListCAPEM,
 		proofType:  cfg.proofType,
-		planConfig: planConfig,
+		planConfig: planConfig, planConfigWith: planConfigWith,
 	}, nil
+}
+
+// runSigner is a signing key and its leaf certificate, with the CA
+// certificate that issued it: from crl's CA ca picks, or, without crl,
+// from a throwaway CA of its own.
+func runSigner(crl *walletCRL, leafCN, caCN string, ca func(*walletCRL) *conformancecrl.Authority) (key *ecdsa.PrivateKey, leafPEM, caPEM string, err error) {
+	if crl == nil {
+		key, _, leafPEM, caPEM, err = conformancecert.GenerateSignerAndCert(leafCN, caCN)
+		return key, leafPEM, caPEM, err
+	}
+	s, err := issueSigner(ca(crl), leafCN)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return s.key, s.leafPEM, ca(crl).CertPEM, nil
 }
 
 // vciConfig builds the plan config's own "vci" object — just

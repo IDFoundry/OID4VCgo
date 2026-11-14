@@ -1,19 +1,24 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 
 	fapi "github.com/idfoundry/fapigo"
+	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 )
 
 // Config is this binary's own configuration — one JSON file, inline
@@ -159,6 +164,63 @@ type Config struct {
 	// ProductionConfig). Only a binary built with the
 	// conformance_production build tag can: see production.go.
 	Production *ProductionConfig `json:"production,omitempty"`
+
+	// CRL, if set, checks the certificate chains of Wallet Attestation
+	// signers (attesters) and key attestation signers for revocation,
+	// against the CRLs its distribution points publish, fetched over
+	// https with a certrevocation.Refresher: a revoked certificate is
+	// refused, and so is one whose CA has no current CRL. Unset,
+	// neither is checked (server.NoClientCertificateRevocationCheck,
+	// certrevocation.NoCheck).
+	CRL *conformancecrl.Trust `json:"crl,omitempty"`
+
+	// CRLPublisher, if set, serves CRLs over https from this process:
+	// the distribution points of the driver's test CAs, which CRL
+	// fetches back over the network like any other.
+	CRLPublisher *conformancecrl.Publisher `json:"crl_publisher,omitempty"`
+
+	// crls is CRL's checker, once main has started it.
+	crls *certrevocation.CRLs
+}
+
+// startCRL starts c's CRL publisher, if any, then the Refresher CRL
+// configures, keeping its checker for the attester and key attestation
+// trust.
+func (c *Config) startCRL(ctx context.Context) error {
+	if c.CRLPublisher != nil {
+		if err := c.CRLPublisher.Start(func(err error) { log.Fatalf("crl publisher: %v", err) }); err != nil {
+			return err
+		}
+		log.Printf("serving %d CRLs over https on %s", len(c.CRLPublisher.CRLs), c.CRLPublisher.ListenAddr)
+	}
+	if !c.CRL.Configured() {
+		return nil
+	}
+	crls, err := c.CRL.Start(ctx, log.Printf)
+	if err != nil {
+		return fmt.Errorf("crl: %w", err)
+	}
+	c.crls = &crls
+	log.Printf("checking attester and key attestation certificates for revocation against %d CRL distribution points", len(c.CRL.DistributionPoints))
+	return nil
+}
+
+// attesterRevocation is the Wallet Attestation signers' certificate
+// revocation check: CRL's, or none.
+func (c Config) attesterRevocation() server.ClientCertificateRevocation {
+	if c.crls == nil {
+		return server.NoClientCertificateRevocationCheck{}
+	}
+	return server.ClientCertificateCRLs{Lists: c.crls.Lists}
+}
+
+// keyAttestationRevocation is the key attestation signers'
+// certificate revocation check: CRL's, or none.
+func (c Config) keyAttestationRevocation() certrevocation.Checker {
+	if c.crls == nil {
+		return certrevocation.NoCheck{}
+	}
+	return *c.crls
 }
 
 // ProductionConfig is Config.Production: the production setup, run

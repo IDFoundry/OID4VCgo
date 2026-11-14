@@ -323,25 +323,25 @@ func TestFetchAndVerifyRequestObject_ChecksTheChainAgainstAnchors(t *testing.T) 
 }
 
 func TestConfigVerifierTrust(t *testing.T) {
-	if trust, err := (Config{}).verifierTrust(); err != nil {
+	if trust, err := (Config{}).verifierTrust(nil); err != nil {
 		t.Fatal(err)
 	} else if _, ok := trust.(wallet.NoVerifierTrust); !ok {
 		t.Errorf("no anchors = %T, want NoVerifierTrust", trust)
 	}
 	ca, _ := testcert.CA(t, "anchor")
 	anchorPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
-	if trust, err := (Config{VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(); err != nil {
+	if trust, err := (Config{VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(nil); err != nil {
 		t.Fatal(err)
 	} else if _, ok := trust.(wallet.X5CVerifierRoots); !ok {
 		t.Errorf("with anchors = %T, want X5CVerifierRoots", trust)
 	}
-	if _, err := (Config{VerifierTrustAnchorsPEM: "not a certificate"}).verifierTrust(); err == nil {
+	if _, err := (Config{VerifierTrustAnchorsPEM: "not a certificate"}).verifierTrust(nil); err == nil {
 		t.Error("verifierTrust accepted anchors with no certificate")
 	}
-	if _, err := (Config{AcceptX509SANDNS: true}).verifierTrust(); err == nil || err.Error() != "accept_x509_san_dns needs verifier_trust_anchors_pem" {
+	if _, err := (Config{AcceptX509SANDNS: true}).verifierTrust(nil); err == nil || err.Error() != "accept_x509_san_dns needs verifier_trust_anchors_pem" {
 		t.Errorf("accept_x509_san_dns without anchors: %v", err)
 	}
-	if _, err := (Config{AcceptX509SANDNS: true, VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(); err != nil {
+	if _, err := (Config{AcceptX509SANDNS: true, VerifierTrustAnchorsPEM: anchorPEM}).verifierTrust(nil); err != nil {
 		t.Errorf("accept_x509_san_dns with anchors: %v", err)
 	}
 }

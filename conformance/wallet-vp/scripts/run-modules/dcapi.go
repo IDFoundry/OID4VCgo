@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
@@ -82,20 +81,18 @@ type dcapiRun struct {
 	apiBase, walletVPBase, alias, credentialFormat string
 	trustAnchorCertPEM                             string
 	cfg                                            generatedConfig
-	verifierCA                                     *x509.Certificate
-	verifierCAKey                                  *ecdsa.PrivateKey
+	verifierCA                                     *conformancecrl.Authority
 }
 
 // run creates the dc_api.jwt plan for the credential format and drives
 // every module it lists, and reports whether each ended as expected.
 func (d dcapiRun) run() bool {
 	httpClient, apiBase, walletVPBase := d.httpClient, d.apiBase, d.walletVPBase
-	verifierCA, verifierCAKey := d.verifierCA, d.verifierCAKey
-	clientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
+	clientJWK, _, err := generateClientJWK(d.verifierCA)
 	if err != nil {
 		log.Fatalf("generate plan client signing key: %v", err)
 	}
-	client2JWK, err := generateClientJWK(verifierCA, verifierCAKey)
+	client2JWK, _, err := generateClientJWK(d.verifierCA)
 	if err != nil {
 		log.Fatalf("generate plan client2 signing key: %v", err)
 	}

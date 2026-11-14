@@ -31,6 +31,10 @@ const (
 	// what it tests, so no presentation reaches the Verifier: SKIPPED,
 	// with the result page still pending.
 	Skip
+	// RefuseControl: a negative control's (DriveCRLControls). The
+	// Verifier must refuse the presentation; the suite, whose module
+	// expects it accepted, fails it, and its verdict isn't graded.
+	RefuseControl
 )
 
 func (e Expectation) String() string {
@@ -41,6 +45,8 @@ func (e Expectation) String() string {
 		return "refuse: FINISHED=PASSED, failed"
 	case Skip:
 		return "skip: FINISHED=SKIPPED, pending"
+	case RefuseControl:
+		return "refuse: suite verdict not graded, failed"
 	}
 	return "no expectation"
 }

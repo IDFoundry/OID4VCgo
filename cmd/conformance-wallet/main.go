@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"strings"
@@ -234,7 +235,7 @@ func main() {
 	}
 
 	if *dumpConfig {
-		walletRun, err := newWalletRun(cfg)
+		walletRun, err := newWalletRun(cfg, nil)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -285,14 +286,24 @@ func run(cfg runConfig) error {
 		return err
 	}
 
-	walletRun, err := newWalletRun(cfg)
+	// The SD-JWT VC issuer's and status list signer's CAs publish CRLs
+	// this process serves and checks their certificates against.
+	crl, err := newWalletCRL()
 	if err != nil {
+		return err
+	}
+	walletRun, err := newWalletRun(cfg, crl)
+	if err != nil {
+		return err
+	}
+	if err := crl.start(ctx); err != nil {
 		return err
 	}
 	trust, err := newIssuerTrust(ctx, walletRun, cfg.apiBase, httpClient)
 	if err != nil {
 		return err
 	}
+	trust.revocation = crl.revocation
 
 	var offerWallet *wallet.Wallet
 	if cfg.issuerInitiated {
@@ -312,6 +323,14 @@ func run(cfg runConfig) error {
 
 	runner := moduleRunner{HTTPClient: httpClient, APIBase: cfg.apiBase, WalletRun: walletRun, Trust: trust, OfferWallet: offerWallet}
 	summary := driveAllModules(ctx, runner, modules, scopeModules, planID)
+	// The negative controls of the wallet's revocation check of the
+	// SD-JWT VC issuer's certificate. The suite signs mdocs under its
+	// own IACA whatever signing_jwk says, and an issuer_initiated
+	// module waits for an offer the control doesn't resolve: only a
+	// wallet_initiated sd_jwt_vc run drives them.
+	if cfg.credentialFormat == "sd_jwt_vc" && !cfg.issuerInitiated && !cfg.basePlan {
+		maps.Copy(summary, runCRLControls(ctx, runner, crl, planName, planVariant, modules))
+	}
 
 	log.Printf("=== summary ===")
 	printModuleSummary(scopeModules, summary)

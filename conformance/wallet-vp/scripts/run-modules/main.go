@@ -76,9 +76,6 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -95,6 +92,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/internal/conformancesuite"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -158,16 +156,19 @@ func extractSentErrorCode(driveBody string) (code string, ok bool) {
 }
 
 type generatedConfig struct {
-	ListenAddr                     string         `json:"listen_addr"`
-	TLSCertificatePEM              string         `json:"tls_certificate_pem"`
-	VerifierTrustAnchorsPEM        string         `json:"verifier_trust_anchors_pem,omitempty"`
-	VerifierTLSTrustAnchorsPEM     string         `json:"verifier_tls_trust_anchors_pem,omitempty"`
-	TLSPrivateKeyPEM               string         `json:"tls_private_key_pem"`
-	CredentialIssuerPrivateKeyPEM  string         `json:"credential_issuer_private_key_pem"`
-	CredentialIssuerCertificatePEM string         `json:"credential_issuer_certificate_pem"`
-	HolderPrivateKeyPEM            string         `json:"holder_private_key_pem"`
-	VCT                            string         `json:"vct,omitempty"`
-	Claims                         map[string]any `json:"claims,omitempty"`
+	ListenAddr              string `json:"listen_addr"`
+	TLSCertificatePEM       string `json:"tls_certificate_pem"`
+	VerifierTrustAnchorsPEM string `json:"verifier_trust_anchors_pem,omitempty"`
+	// VerifierCRL and CRLPublisher: see newVerifierPKI.
+	VerifierCRL                    *conformancecrl.Trust     `json:"verifier_crl,omitempty"`
+	CRLPublisher                   *conformancecrl.Publisher `json:"crl_publisher,omitempty"`
+	VerifierTLSTrustAnchorsPEM     string                    `json:"verifier_tls_trust_anchors_pem,omitempty"`
+	TLSPrivateKeyPEM               string                    `json:"tls_private_key_pem"`
+	CredentialIssuerPrivateKeyPEM  string                    `json:"credential_issuer_private_key_pem"`
+	CredentialIssuerCertificatePEM string                    `json:"credential_issuer_certificate_pem"`
+	HolderPrivateKeyPEM            string                    `json:"holder_private_key_pem"`
+	VCT                            string                    `json:"vct,omitempty"`
+	Claims                         map[string]any            `json:"claims,omitempty"`
 
 	// CredentialFormat/MdocIssuerPrivateKeyPEM/MdocIssuerCertificatePEM/
 	// MdocDocType/MdocNamespace/MdocClaims mirror
@@ -531,14 +532,17 @@ func main() {
 	}
 	// The suite's emulated Verifier signs its Request Objects with a
 	// certificate issued by this CA, and the wallet under test trusts
-	// only it (verifier_trust_anchors_pem), so every run checks the
-	// Request Object's chain (OID4VP §5.9.3, HAIP 1.0 §5), not just its
-	// signature and x509_hash client_id.
-	verifierCA, verifierCAKey, verifierCAPEM, _, err := conformancecert.GenerateCA("oid4vcgo-wallet-vp-test-verifier-ca")
+	// only it and the controls' stale CA (verifier_trust_anchors_pem),
+	// so every run checks the Request Object's chain (OID4VP §5.9.3,
+	// HAIP 1.0 §5), not just its signature and x509_hash client_id —
+	// and checks it for revocation against the CA's CRL, which the
+	// wallet fetches over https from the distribution point the
+	// certificate names (verifier_crl).
+	pki, err := newVerifierPKI(&cfg)
 	if err != nil {
-		log.Fatalf("generate verifier CA: %v", err)
+		log.Fatalf("%v", err)
 	}
-	cfg.VerifierTrustAnchorsPEM = verifierCAPEM
+	verifierCA := pki.ca
 	// The wallet verifies the suite's TLS certificate on every call it
 	// makes to it, pinned: the one the suite serves -suite with, which
 	// its nginx also serves the suite network.
@@ -553,7 +557,7 @@ func main() {
 		run := dcapiRun{
 			httpClient: httpClient, apiBase: *apiBase, walletVPBase: *walletVPBase, alias: *alias,
 			credentialFormat: *credentialFormat, trustAnchorCertPEM: trustAnchorCertPEM, cfg: cfg,
-			verifierCA: verifierCA, verifierCAKey: verifierCAKey,
+			verifierCA: verifierCA,
 		}
 		if !run.run() {
 			os.Exit(1)
@@ -561,7 +565,7 @@ func main() {
 		return
 	}
 
-	clientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
+	clientJWK, _, err := generateClientJWK(verifierCA)
 	if err != nil {
 		log.Fatalf("generate plan client signing key: %v", err)
 	}
@@ -582,7 +586,7 @@ func main() {
 	// is included for schema completeness even though the suite
 	// ignores it under a non-custom credential_type — see
 	// VP1FinalWalletCredentialType.java's own doc comment).
-	amcClientJWK, err := generateClientJWK(verifierCA, verifierCAKey)
+	amcClientJWK, _, err := generateClientJWK(verifierCA)
 	if err != nil {
 		log.Fatalf("generate all-mandatory-claims plan client signing key: %v", err)
 	}
@@ -645,6 +649,14 @@ func main() {
 			log.Printf("%s: %s", res.testName, res.line())
 			results = append(results, res)
 		}
+	}
+
+	// The negative controls of the wallet's revocation check, each
+	// under a plan of its own: see driveCRLControl.
+	for _, c := range pki.controls() {
+		res := driveCRLControl(httpClient, *apiBase, *walletVPBase, *alias, trustAnchorCertPEM, *walletVPInternalBase+authorizePath, cfg, planVariant, moduleVariant, c)
+		log.Printf("%s: %s", res.testName, res.line())
+		results = append(results, res)
 	}
 
 	log.Print("=== summary ===")
@@ -932,29 +944,22 @@ func toHostBase(redirectTo, hostBase string) string {
 // generateClientJWK builds the suite's own emulated-Verifier signing
 // key: a fresh EC P-256 key plus a leaf certificate ca issues for it
 // as its only "x5c" entry — HAIP 1.0 §5: not self-signed, and without
-// the trust anchor — which the wallet under test checks against ca.
-func generateClientJWK(ca *x509.Certificate, caKey *ecdsa.PrivateKey) (jwk.SetEntry, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// the trust anchor — which the wallet under test checks against ca,
+// and against ca's CRL at the distribution point it names.
+func generateClientJWK(ca *conformancecrl.Authority) (jwk.SetEntry, *x509.Certificate, error) {
+	key, leaf, err := ca.IssueKey("oid4vcgo-wallet-vp-test-verifier-client", nil)
 	if err != nil {
-		return jwk.SetEntry{}, fmt.Errorf("generate key: %w", err)
-	}
-	certPEM, err := conformancecert.IssueLeafCertPEM("oid4vcgo-wallet-vp-test-verifier-client", key, ca, caKey)
-	if err != nil {
-		return jwk.SetEntry{}, fmt.Errorf("issue verifier cert: %w", err)
-	}
-	cert, err := conformancecert.ParseCertificatePEM(certPEM)
-	if err != nil {
-		return jwk.SetEntry{}, fmt.Errorf("parse cert: %w", err)
+		return jwk.SetEntry{}, nil, fmt.Errorf("issue verifier cert: %w", err)
 	}
 	privJWK, err := jwk.MarshalPrivate(key)
 	if err != nil {
-		return jwk.SetEntry{}, fmt.Errorf("marshal private jwk: %w", err)
+		return jwk.SetEntry{}, nil, fmt.Errorf("marshal private jwk: %w", err)
 	}
 	return jwk.SetEntry{
 		JWK: privJWK,
 		Kid: "wallet-vp-test-client-sig", Use: "sig", Alg: "ES256",
-		X5C: []string{base64.StdEncoding.EncodeToString(cert.Raw)},
-	}, nil
+		X5C: []string{base64.StdEncoding.EncodeToString(leaf.Cert.Raw)},
+	}, leaf.Cert, nil
 }
 
 // defaultWalletVPBase is where dockerComposeYML publishes

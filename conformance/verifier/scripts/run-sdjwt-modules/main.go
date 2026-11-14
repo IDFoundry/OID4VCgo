@@ -49,5 +49,8 @@ func main() {
 	moduleVariant := map[string]string{"client_id_prefix": "x509_hash", "request_method": "request_uri_signed", "vp_profile": "haip"}
 
 	results := conformanceverifier.DriveModules(setup, moduleVariant)
+	// The negative controls of the Verifier's revocation check of the
+	// issuer certificate, each under a plan of its own.
+	results = append(results, conformanceverifier.DriveCRLControls(setup, moduleVariant)...)
 	conformanceverifier.PrintSummaryAndExit(results, *flags.APIBase, setup.PlanID)
 }

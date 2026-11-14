@@ -12,6 +12,7 @@ import (
 	"net/url"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -30,6 +31,10 @@ type issuerTrust struct {
 	mdocRoots       *x509.CertPool
 	statusListRoots *x509.CertPool
 	httpClient      *http.Client
+	// revocation checks the SD-JWT VC issuer's and its status list
+	// signer's certificates against their CAs' CRLs (crl.go); nil
+	// checks none. The suite's mdoc IACA publishes no CRL.
+	revocation certrevocation.Checker
 }
 
 // suiteIACARootPath is where the suite serves the IACA root its mdoc
@@ -127,8 +132,9 @@ func verifyBound(ctx context.Context, trust issuerTrust, conf oid4vci.Credential
 	// without the trailing "/" its metadata's credential_issuer has, so
 	// the two never match by simple string comparison. The trust anchors
 	// are this run's alone, so they bind the credential to the suite.
-	params := wallet.VerifyIssuedCredentialParams{Configuration: conf, Credential: credential, IssuerRoots: trust.sdJWTRoots}
+	params := wallet.VerifyIssuedCredentialParams{Configuration: conf, Credential: credential, IssuerRoots: trust.sdJWTRoots, IssuerRevocation: trust.revocation}
 	if conf.Format == mdoc.CredentialFormat {
+		params.IssuerRevocation = nil
 		// Its document signer's own profile (mdoc.DefaultDocumentSignerPolicy,
 		// IssuerLeafPolicy's default for an mdoc) under the suite's IACA.
 		params.IssuerRoots = trust.mdocRoots
@@ -164,9 +170,10 @@ func checkStatus(ctx context.Context, trust issuerTrust, credential string, veri
 	checker := statuslist.Checker{
 		Fetcher: statuslist.Fetcher{HTTP: trust.httpClient, AllowLoopback: true},
 		Roots:   trust.statusListRoots,
-		Options: statuslist.VerifyOptions{UnboundSigner: statuslist.AnyListSigner},
+		Options: statuslist.VerifyOptions{UnboundSigner: statuslist.AnyListSigner, Revocation: trust.revocation},
 	}
 	if verified.StatusListCWT {
+		checker.Options.Revocation = nil
 		var err error
 		if checker, err = mdocStatusChecker(checker, trust, credential); err != nil {
 			return err

@@ -439,6 +439,26 @@ func main() {
 		log.Printf("%s: %s", r.key, outcomes[i])
 	}
 
+	// The negative controls of cmd/conformance-issuer's revocation
+	// check of the Wallet Attestation signer, each the plain happy-flow
+	// under a plan of its own (runCRLControl). The base plan, which
+	// this script drives for its metadata and VCI modules alone, runs
+	// none.
+	if !*basePlan {
+		happyFlow := happyFlowVariant(runs)
+		for _, c := range run.crl.controls() {
+			key := controlKey(c)
+			outcome := "ERROR: the plan lists no plain happy-flow to drive it with"
+			if happyFlow != nil {
+				log.Printf("--- %s ---", key)
+				outcome = runCRLControl(httpClient, runCfg, run, *credentialFormat, *credentialProofTypeHint, planName, planVariant, happyFlow, c)
+			}
+			log.Printf("%s: %s", key, outcome)
+			runs = append(runs, batteryRun{key: key})
+			outcomes = append(outcomes, outcome)
+		}
+	}
+
 	log.Printf("=== summary ===")
 	for i, r := range runs {
 		log.Printf("%-100s %s", r.key, outcomes[i])
@@ -446,6 +466,17 @@ func main() {
 	for _, name := range missing {
 		log.Printf("%-100s %s", name, "NOT RUN (not found in plan's own module list)")
 	}
+}
+
+// happyFlowVariant is the variant of the plain happy-flow among runs,
+// or nil when it isn't one of them.
+func happyFlowVariant(runs []batteryRun) map[string]string {
+	for _, r := range runs {
+		if r.module.TestModule == happyFlowTestName && r.module.Variant["vci_credential_encryption"] != "encrypted" {
+			return r.module.Variant
+		}
+	}
+	return nil
 }
 
 // batteryRun is one module instance of the plan this binary drives:

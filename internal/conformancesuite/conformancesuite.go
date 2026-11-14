@@ -401,3 +401,21 @@ func Do(httpClient *http.Client, req *http.Request) (body []byte, status int, er
 	}
 	return body, res.StatusCode, nil
 }
+
+// StopModule stops moduleID (DELETE /api/runner/{id}): for a module a
+// harness drove to a point the suite can't finish from, such as a
+// negative control the wallet refused before answering it.
+func StopModule(httpClient *http.Client, apiBase, moduleID string) error {
+	req, err := http.NewRequest(http.MethodDelete, apiBase+"api/runner/"+url.PathEscape(moduleID), nil)
+	if err != nil {
+		return err
+	}
+	body, status, err := Do(httpClient, req)
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("DELETE api/runner/%s: status %d: %.200s", moduleID, status, body)
+	}
+	return nil
+}

@@ -13,8 +13,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/conformancecrl"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -39,6 +41,19 @@ type Config struct {
 	// conformance/wallet-vp/scripts/run-modules sets it to the CA it
 	// issues the suite's Request Object signing certificate from.
 	VerifierTrustAnchorsPEM string `json:"verifier_trust_anchors_pem,omitempty"`
+
+	// VerifierCRL, if set, checks the Verifier's Request Object
+	// certificate chain for revocation (X5CVerifierRoots.Revocation)
+	// against the CRLs its distribution points publish, fetched over
+	// https with a certrevocation.Refresher: a revoked certificate is
+	// refused, and so is one whose CA has no current CRL. Unset, no
+	// revocation is checked. It needs VerifierTrustAnchorsPEM.
+	VerifierCRL *conformancecrl.Trust `json:"verifier_crl,omitempty"`
+
+	// CRLPublisher, if set, serves CRLs over https from this process:
+	// the distribution points of the driver's test CAs, which
+	// VerifierCRL fetches back over the network like any other.
+	CRLPublisher *conformancecrl.Publisher `json:"crl_publisher,omitempty"`
 
 	// AcceptX509SANDNS also accepts a Request Object whose client_id has
 	// the x509_san_dns Client Identifier Prefix (OpenID4VP 1.0 §5.9.3,
@@ -186,6 +201,9 @@ func loadConfig(path string) (Config, error) {
 	if cfg.Engine != "" && cfg.Engine != engineWallet && cfg.Engine != engineWalletflow {
 		return Config{}, fmt.Errorf("config: engine %q is neither %q nor %q", cfg.Engine, engineWallet, engineWalletflow)
 	}
+	if cfg.VerifierCRL.Configured() && cfg.VerifierTrustAnchorsPEM == "" {
+		return Config{}, fmt.Errorf("config: verifier_crl needs verifier_trust_anchors_pem")
+	}
 	if (cfg.StatusListURI == "") != (cfg.StatusListIdx == nil) {
 		return Config{}, fmt.Errorf("config: status_list_uri and status_list_idx must be set together")
 	}
@@ -268,9 +286,10 @@ func (c Config) mdocCRL() ([]byte, error) {
 }
 
 // verifierTrust is how Request Object certificate chains are trusted:
-// against VerifierTrustAnchorsPEM, or not at all when it's unset, which
+// against VerifierTrustAnchorsPEM, checked for revocation by revocation
+// (nil checks none), or not at all when it's unset, which
 // AcceptX509SANDNS refuses.
-func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
+func (c Config) verifierTrust(revocation certrevocation.Checker) (wallet.VerifierTrust, error) {
 	if c.AcceptX509SANDNS && c.VerifierTrustAnchorsPEM == "" {
 		return nil, fmt.Errorf("accept_x509_san_dns needs verifier_trust_anchors_pem")
 	}
@@ -281,7 +300,7 @@ func (c Config) verifierTrust() (wallet.VerifierTrust, error) {
 	if !roots.AppendCertsFromPEM([]byte(c.VerifierTrustAnchorsPEM)) {
 		return nil, fmt.Errorf("verifier_trust_anchors_pem holds no certificate")
 	}
-	return wallet.X5CVerifierRoots{Roots: roots}, nil
+	return wallet.X5CVerifierRoots{Roots: roots, Revocation: revocation}, nil
 }
 
 // verifierHTTPClient is the client every call to the Verifier goes
