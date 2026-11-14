@@ -24,6 +24,8 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     private var readyToUpdate: Pending<Void>?
     private var sessionStarted = false
     private var closed = false
+    /// What ended the session, the first time: no chunk is sent after it.
+    private var failure: ProximityTransportError?
 
     private let poweredOn = Signal()
     private let serviceAdded = Signal()
@@ -88,6 +90,10 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         while true {
             let wait: Pending<Void>? = try queue.sync {
                 guard !closed, let manager, let peer, let server2Client else { throw ProximityTransportError("the session ended") }
+                // A reader that unsubscribed or ended the session gets no
+                // more chunks: updateValue could still take one while the
+                // queue has room, and the response would seem sent.
+                if let failure { throw failure }
                 if manager.updateValue(value, for: server2Client, onSubscribedCentrals: [peer]) { return nil }
                 let p = Pending<Void>()
                 readyToUpdate = p
@@ -127,8 +133,10 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         poweredOn.fail(ended)
     }
 
-    /// Ends the session with error: on `queue`.
+    /// Ends the session with error: on `queue`. The first error is the
+    /// one a later send throws.
     private func fail(_ error: ProximityTransportError) {
+        if failure == nil { failure = error }
         incoming.end(error)
         started.fail(error)
         // A send waiting for room in the queue: fail it now rather than
