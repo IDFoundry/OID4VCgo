@@ -214,7 +214,7 @@ The wallets' own settings are those of their runs.
 | EUDI wallet library → verifier | SD-JWT VC and mdoc presentations and every verifier-side control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite | the `request_uri_method` choices, the Digital Credentials API and the default engine's own controls: the binary's transactions engine asks for `post` and routes no DC API |
 | EUDI wallet library ← issuer | the `production` profile: `AssuranceProduction` for the Authorization Server and the Credential Issuer, sealed SQLite, DPoP nonces, every attestation from the Wallet Provider through its agent, its revocation refused; the `production-scaled` profile: the same as two instances sharing PostgreSQL, split between them | the other profiles: `attestation` proofs and `jwt` proofs without a key attestation, which production doesn't take |
 | OID4VCgo's wallet ← EUDI PID Issuer | — | the Wallet Provider: the EUDI stack requires TS3 claims (`client_status`, `key_storage_status`, ...) `walletprovider` doesn't issue |
-| OID4VCgo's wallet → EUDI verifier | — | the fixtures and their status lists (`scripts/setup`, `scripts/serve`): `cmd/conformance-wallet-vp` presents the credentials its configuration holds |
+| OID4VCgo's issuer → OID4VCgo's wallet → EUDI verifier | the issuer's production setup, its status lists in `sqlstore`, revoked through its `POST /status`; the wallet attested by the Wallet Provider, its credentials in `sqlstore` | the fixtures (`scripts/setup`, `scripts/serve`) for what the issued credentials don't cover: the default engine, the `openid4vp` profile, the DC API, `x509_san_dns`, `vct#integrity`, a suspension, and the wallet's own refusals |
 | walt.id Wallet2 → verifier | the PID and mDL presentations and the untrusted-issuer control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite; the PID's verifier as two instances sharing PostgreSQL, split between them | the `request_uri_method` choices (the default engine) |
 | walt.id: issuer → OID4VCgo's wallet → Verifier2 | the issuer's production setup, its status lists in `sqlstore`; the wallet attested by the Wallet Provider | — |
 | walt.id Wallet2 ← issuer | — | Wallet2 adds no key attestation, which production requires; its attester protocol isn't `walletprovider`'s |
@@ -318,9 +318,13 @@ through the run, a mismatched `vct#integrity`, untrusted CAs on either
 side, a replayed request, a mismatched `client_id`, an unheld
 credential) refused (`interop/eudi/run-verifier.sh`). The status lists
 are published by OID4VCgo's `statuslist` (an `Allocator` and a
-`Publisher`, as an issuer publishes them), and a credential the run
-has the issuer side revoke after the verifier accepted it is then
-refused for its status (`StatusNotValid`, `DocumentHasBeenRevoked`).
+`Publisher`, as an issuer publishes them). walletflow's presentations
+of both formats present what OID4VCgo's side issued, as deployed:
+`cmd/conformance-issuer` in its production setup issues them over
+OID4VCI to `walletflow`, attested by the Wallet Provider, which stores
+them in `sqlstore` and presents them from there in later launches; the
+issuer then revokes each, which the verifier, having accepted it, then
+refuses for its status (`StatusNotValid`, `DocumentHasBeenRevoked`).
 The verifier never verifies a Status List Token's signature, so the
 run shows it reads the entry and refuses a revoked credential, not that
 it would refuse a forged list.
@@ -464,7 +468,7 @@ that isn't production's defaults.
 | Run (job) | At production assurance | Attestations |
 | --- | --- | --- |
 | EUDI PID Issuer (`eudi-interop.yml` `pid-issuer-production`) | walletflow and the core engine: PIDs in both formats, a batch, from the issuer's offer, a revocation read; controls: untrusted metadata, untrusted IACA, revoked signer, no current CRL, revoked Wallet Attestation | the run's stand-in Wallet Provider: the stack requires EUDI TS3 claims that `walletprovider` doesn't issue |
-| EUDI Verifier Endpoint (`eudi-interop.yml` `verifier-production`) | `cmd/conformance-wallet-vp`'s walletflow engine: both formats, both `request_uri_method`s, `x509_hash` and `x509_san_dns`; controls: mismatched `client_id`, untrusted verifier CA, revoked Access Certificate, no current CRL, untrusted TLS certificate | none needed |
+| EUDI Verifier Endpoint (`eudi-interop.yml` `verifier-production`) | walletflow: both formats issued by OID4VCgo's issuer's production setup, stored in sqlstore, presented by both `request_uri_method`s under `x509_hash`, then revoked by the issuer and refused by the verifier; `cmd/conformance-wallet-vp`'s walletflow engine: the fixture under `x509_san_dns`; controls: mismatched `client_id`, untrusted verifier CA, revoked Access Certificate, no current CRL, untrusted TLS certificate | OID4VCgo's Wallet Provider, for its issuer |
 | walt.id Issuer2 and Verifier2 (`waltid-interop.yml` `production`) | walletflow: three credentials received, PID and mDL presented; controls: untrusted issuer CA, revoked signer, no current CRL, unsigned request, untrusted Verifier CA, revoked Access Certificate | none: Issuer2 asks for neither |
 
 Each control is graded by its refusal's reason, as in development, and
