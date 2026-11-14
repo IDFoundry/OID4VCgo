@@ -631,7 +631,7 @@ func certPEM(c *x509.Certificate) string {
 
 // readPool is a PEM file's certificates.
 func readPool(path string) (*x509.CertPool, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- the driver's own file
+	raw, err := os.ReadFile(path) // #nosec G304 G703 -- the driver's own file, or run.sh's Wallet Provider's
 	if err != nil {
 		return nil, err
 	}

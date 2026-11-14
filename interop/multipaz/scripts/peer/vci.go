@@ -254,11 +254,11 @@ func newProviders(ctx context.Context, dir string) (trusted, other walletflow.Wa
 		if other, err = registerAtProvider(ctx, os.Getenv(envOtherWalletProvider), otherDir); err != nil {
 			return nil, nil, err
 		}
-		ca, err := os.ReadFile(filepath.Join(trustedDir, "ca.pem")) // #nosec G304 -- run.sh's own provider's file
+		ca, err := os.ReadFile(filepath.Join(trustedDir, "ca.pem")) // #nosec G304 G703 -- run.sh's own provider's file
 		if err != nil {
 			return nil, nil, err
 		}
-		return trusted, other, os.WriteFile(filepath.Join(dir, "go-attester-ca.pem"), ca, 0o600)
+		return trusted, other, os.WriteFile(filepath.Join(dir, "go-attester-ca.pem"), ca, 0o600) // #nosec G703 -- the operator's own -dir
 	}
 	signed, err := newSigner(goAttesterIssuer, goAttesterCAName)
 	if err != nil {
