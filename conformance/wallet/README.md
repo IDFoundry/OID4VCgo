@@ -25,6 +25,14 @@ wallet app uses `walletflow` (or the mobile libraries over it), whose
 zero `Config` is production: durable stores, a revocation choice per
 trust role and a hardened HTTP client.
 
+None of this role's legs runs at production assurance: the locally run
+suite is on loopback, which production's client never dials, and its
+TLS certificate names no `subjectAltName` (below), which production's
+verification needs. The interop runs drive `wallet` and `fapigo/client`
+at `AssuranceProduction` instead, against the EUDI PID Issuer
+([`../../interop/eudi`](../../interop/eudi/README.md), "The wallet at
+production assurance").
+
 ## TLS
 
 This binary pins the suite's TLS certificate: at startup it reads the

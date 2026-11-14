@@ -202,6 +202,55 @@ verifier's container, and `WORK` keeps the run's files. On Linux, `serve`
 listens on the Docker bridge's gateway, which the verifier reaches as
 `host.docker.internal`.
 
+### The wallet at production assurance
+
+`WALLET_ASSURANCE=production interop/eudi/run-verifier.sh` (the
+workflow's `verifier-production` job) runs `cmd/conformance-wallet-vp`'s
+walletflow engine as a wallet app runs it: `"assurance": "production"`,
+so `walletflow.Config.Development` is false and walletflow builds its
+own HTTP client, which dials public addresses only, follows no redirect
+and verifies TLS against the system roots. Nothing else is relaxed:
+verifier trust is `X5CVerifierRoots` under the Access Certificate's CA,
+checked against its CRL as above, and the binary's pinned-certificate
+TLS client (`verifier_tls_trust_anchors_pem`, which trusts a pinned
+leaf for any host name) is refused under production.
+
+| | Development run | Production run |
+|---|---|---|
+| Assurance | `Development: true` | production (`Development: false`) |
+| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only, the system roots |
+| Where the verifier is | `localhost` | `verifier.eudi.test`, on the wallet's network (below) |
+| Verifier trust | `X5CVerifierRoots`, the run's verifier CA | the same |
+| Revocation | the Access Certificate against its CA's CRL | the same |
+| Stores, keys | the fixture credential, in memory | the same (presenting needs no durable store) |
+
+What isn't production's, as [`../prodnet.sh`](../prodnet.sh) sets it
+up: production's client never dials loopback or a private address, and
+has no setting to, so the wallet runs, built for Linux, in a container
+on an internal Docker network on a subnet of global unicast space,
+which the verifier's container joins as `verifier.eudi.test`; and the
+wallet's system roots are the verifier's TLS certificate, through
+`SSL_CERT_FILE` (setup's `-verifier-host` names it, and the Access
+Certificate's dNSName, for that host). The CRL publisher stays in the
+wallet's process, on its loopback, as above.
+
+| Case | Expected |
+|---|---|
+| SD-JWT VC and mdoc PIDs, `haip`, `request_uri_method` `get` and `post` | the verifier accepts each vp_token |
+| SD-JWT VC PID, `openid4vp`, `x509_san_dns:verifier.eudi.test`, `get` and `post` | accepted |
+| A launch whose `client_id` isn't the signed request's | the wallet refuses: `client_id … does not match x5c leaf's own x509_hash` |
+| The wallet trusts an unrelated CA for the verifier | refused: `untrusted verifier: … certificate signed by unknown authority` |
+| The Access Certificate's CA revoked it; publishes no current CRL | refused: `… certrevocation: certificate is revoked`; `… no current CRL from the certificate's issuer` |
+| The wallet's system roots are another CA's | refused by walletflow's client: `fetch request_uri: … tls: failed to verify certificate: x509: certificate signed by unknown authority` |
+
+Each control is graded by walletflow's own error, in full, and differs
+from a case that passes in the one thing it names. The verifier sends
+nothing production's wallet refuses: every case that passes in
+development passes at production. Not run at production:
+the DC API (`/dcapi` is the harness's stand-in for the browser), the
+default engine (the binary's own steps over `wallet`), and the
+verifier's own refusals, which don't depend on the wallet's assurance.
+
 ### Moving the pin
 
 The image is pinned by digest in `run-verifier.sh`. The weekly run tests
@@ -980,6 +1029,58 @@ listeners, `WORK` keeps the run's files, and `COMPOSE_PROJECT_NAME`
 (`oid4vcgo-eudi-pid`) names the stack. `PID_STOP_AFTER_UP=1` leaves the
 stack and serve running once the issuer is up, for working on the cases
 with `pidwallet` by hand.
+
+### The wallet at production assurance
+
+`WALLET_ASSURANCE=production interop/eudi/run-pid-issuer.sh` (the
+workflow's `pid-issuer-production` job) starts the stack under a public
+name and runs `pidwallet -assurance production`, both engines as a
+deployment runs them, with cases of their own:
+
+| | Development run | Production run |
+|---|---|---|
+| Assurance | walletflow `Development: true`; `wallet` and `fapigo/client` at `AssuranceDevelopment` | walletflow `Development: false`; both at `AssuranceProduction` |
+| Fetchers | a client trusting the run's TLS CA, loopback allowed | walletflow's own client; `fapihttp.NewClient`'s for the core engine; statuslist's own for status lists: public addresses only, no redirect followed, the system roots |
+| Where the stack is | `https://localhost:$PORT` | `https://pid-issuer.eudi.test`, on the wallet's network: Keycloak's `KC_HOSTNAME`, the issuer's public URLs and the status list service's `service_url` name it, and HAProxy's certificate |
+| Stores | in memory | sqlstore's sealed SQLite stores (`internal/prodwallet`): walletflow's keys, credentials and pending authorizations; fapigo/sqlstore's client sessions, and the core engine's instance and DPoP keys in sqlstore's KeyStore, whose durable custody the key manager declares |
+| Redirect URI | `eu.europa.ec.euidi://authorization` | the same: a private-use scheme, as production requires |
+| Attestations | the stand-in Wallet Provider (above) | the same, for the reason below |
+| Trust | signed metadata only, under the metadata CA, its signer naming the issuer; credentials under the IACA | the same |
+| Revocation | every issuer certificate against its CA's CRL | the same |
+
+What isn't production's is where it runs, as [`../prodnet.sh`](../prodnet.sh)
+sets it up: production's clients never dial loopback or a private
+address, so the wallet runs, built for Linux, in a container on an
+internal Docker network on a subnet of global unicast space, which
+HAProxy joins as `pid-issuer.eudi.test`, and its system roots are the
+run's TLS CA, through `SSL_CERT_FILE`. The CRL publisher stays in its
+process, on its loopback. The holder's sign-in at Keycloak is the
+holder's browser, not the wallet, and keeps the development client.
+Keycloak and the issuer still reach `serve` (the Wallet Provider's
+status list) as before.
+
+The attestations stay the stand-in's: the stack requires TS3's claims,
+which OID4VCgo's `walletprovider` doesn't issue any more than package
+`attestation` (its Wallet Attestations carry draft-ietf-oauth-status-list's
+`status`, not `client_status`). Neither is a deviation: HAIP 1.0
+§4.4.1 and §4.5.1 leave those claims to an ecosystem, and TS3 is
+EUDI's.
+
+| Case | Expected |
+|---|---|
+| walletflow: one SD-JWT VC PID, three in a batch, an mdoc PID; and from the issuer's Credential Offer | issued at production assurance, each verified under the IACA; the SD-JWT VC's status VALID, the mdoc's CWT status list refused as in development (Findings) |
+| The core engine: an SD-JWT VC PID (`jwt` proof), an mdoc PID (`attestation` proof) | the same, with a DPoP-bound token, the Credential Request encrypted and the notification sent |
+| The core engine: an SD-JWT VC PID revoked at the status list service | VALID, then INVALID, read with statuslist's own client |
+| Metadata signed under a CA the wallet doesn't trust | walletflow refuses it at the offer: `signed metadata: signer certificate: … certificate signed by unknown authority` |
+| Credentials under an IACA the wallet doesn't trust | walletflow refuses the credential: `is invalid: wallet: verify issued credential: issuer certificate: … unknown authority` |
+| The IACA revokes the signers; publishes no current CRL | walletflow and the core engine refuse the credential: `… certrevocation: certificate is revoked`; `… no current CRL from the certificate's issuer` |
+| A Wallet Attestation whose `client_status` is revoked | Keycloak refuses the PAR: `invalid_response: Authentication failed.`, graded as in development, by elimination |
+
+Production's client can't be wrapped, so the run records no
+exchanges: the development run's checks of what went over the wire (a
+challenged PoP at PAR and token, DPoP nonces, the encrypted response)
+aren't repeated. The issuer sends nothing production's wallet refuses:
+every case run in both passes in both.
 
 ### Moving the pins
 

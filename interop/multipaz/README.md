@@ -106,11 +106,20 @@ Each follows the specification, so none is a finding.
   the work directory at start.
 - **OID4VCgo's holder** is `walletflow`, as the mobile libraries use it,
   with the mDL in its store and a key store whose keys agree keys, as a
-  phone's do, for deviceMac. In person and for Annex C it runs in
-  development and fetches nothing. The OpenID4VP and OpenID4VCI
-  wallets are walletflow instances of their own, also in development,
-  which do fetch: request objects, metadata, tokens and credentials,
-  over TLS to the peer's certificate on loopback. **Its readers** run
+  phone's do, for deviceMac. In person and for Annex C it runs at
+  production assurance (`Development` false), as a wallet app does,
+  and fetches nothing; presenting what it holds needs no durable
+  store, and the reader's certificate isn't checked for revocation
+  (`certrevocation.NoCheck`, production's explicit decline: Multipaz's
+  reader CA names a distribution point nothing serves). The OpenID4VP
+  and OpenID4VCI wallets are walletflow instances of their own, in
+  development, which do fetch: request objects, metadata, tokens and
+  credentials, over TLS to the peer's certificate on loopback, where
+  the driver serves Multipaz's Verifier and issuer from its JVM.
+  Production's client never dials loopback, and the production legs
+  of the other interop runs ([`../prodnet.sh`](../prodnet.sh)) put
+  the other side in a container on a network of their own, which this
+  run's in-process servers aren't. **Its readers** run
   under production assurance; `proximity`'s
   binds the IACA to the mDL document type and, by default, requires the
   mDL document signer extended key usage.

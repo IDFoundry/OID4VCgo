@@ -44,6 +44,22 @@ credential held in a `walletflow.Wallet` (`walletflow.go`); the EUDI
 interop run uses it. The conformance plans run the default engine,
 which drives the `wallet` package step by step.
 
+`assurance: "production"` runs that engine as a wallet app runs it:
+`walletflow` at production assurance, with its own hardened client
+(public addresses only, no redirect followed, TLS verified against the
+system roots, on Linux `SSL_CERT_FILE`), in place of this binary's.
+It needs `engine: "walletflow"`, `verifier_trust_anchors_pem` and
+`verifier_crl`, and refuses `verifier_tls_trust_anchors_pem`, whose
+pinned certificate is trusted for any host name. The EUDI verifier
+run's production job uses it ([`../../interop/eudi`](../../interop/eudi/README.md),
+"The wallet at production assurance"). The OIDF plans don't: the
+locally run suite is reached as `localhost.emobix.co.uk`, a loopback
+address production's client never dials, and its nginx certificate
+(`CN=localhost`, no extensions) names no `subjectAltName`, which Go's
+verification requires (RFC 9525, which replaced RFC 6125, no longer
+matches a name against the Common Name), so production refuses its
+TLS: the pin above exists for that.
+
 ## How the interaction model was confirmed
 
 This took real digging into the suite's own source

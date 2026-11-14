@@ -392,6 +392,42 @@ against Multipaz's newest release on Maven Central. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the
 cases, Multipaz's deviations, and moving the pin.
 
+## OID4VCgo's wallet at production assurance
+
+The runs above drive OID4VCgo's wallet at development assurance,
+which reaches loopback and private addresses and, for walletflow,
+skips production's checks. Three runs drive it again at production
+assurance, each in a job of its own (`WALLET_ASSURANCE=production`):
+walletflow's `Development` false and its own HTTP client, or `wallet`
+and `fapigo/client` at `AssuranceProduction` over `fapihttp.NewClient`'s;
+sqlstore's durable stores where receiving credentials requires them
+(`internal/prodwallet`); every certificate checked against its CA's
+CRL; no trust relaxed. Production's clients never dial loopback or a
+private address, and walletflow has no setting that lets them, so the
+wallet runs, built for Linux, in a container on an internal Docker
+network on a subnet of global unicast space, which the other side's
+containers join under the names their URLs carry; its system roots are
+the run's TLS CA, through `SSL_CERT_FILE` ([`interop/prodnet.sh`](../interop/prodnet.sh)).
+Those two, and the CRL publishers on the wallet's own loopback, are
+all that isn't production's.
+
+| Run (job) | At production assurance | Attestations |
+| --- | --- | --- |
+| EUDI PID Issuer (`eudi-interop.yml` `pid-issuer-production`) | walletflow and the core engine: PIDs in both formats, a batch, from the issuer's offer, a revocation read; controls: untrusted metadata, untrusted IACA, revoked signer, no current CRL, revoked Wallet Attestation | the run's stand-in Wallet Provider: the stack requires EUDI TS3 claims that `walletprovider` doesn't issue |
+| EUDI Verifier Endpoint (`eudi-interop.yml` `verifier-production`) | `cmd/conformance-wallet-vp`'s walletflow engine: both formats, both `request_uri_method`s, `x509_hash` and `x509_san_dns`; controls: mismatched `client_id`, untrusted verifier CA, revoked Access Certificate, no current CRL, untrusted TLS certificate | none needed |
+| walt.id Issuer2 and Verifier2 (`waltid-interop.yml` `production`) | walletflow: three credentials received, PID and mDL presented; controls: untrusted issuer CA, revoked signer, no current CRL, unsigned request, untrusted Verifier CA, revoked Access Certificate | none: Issuer2 asks for neither |
+
+Each control is graded by its refusal's reason, as in development, and
+no other side sends anything production's wallet refuses. Multipaz's
+in-person and Annex C holder runs at production assurance in its own
+run, fetching nothing; its OpenID4VP and OpenID4VCI wallets, which
+fetch from servers the driver runs on loopback, and the OIDF Wallet
+and Wallet-VP plans stay at development: the local suite is on
+loopback, and its TLS certificate names no `subjectAltName`, which
+production's verification requires (see
+[`wallet-vp/README.md`](wallet-vp/README.md)). The Polaris run's
+config is polaris-id's own script's, which sets no assurance.
+
 ## Keeping the local suite current
 
 These binaries only genuinely mirror what `certification.openid.net`
