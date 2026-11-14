@@ -104,6 +104,11 @@ func TestNew_AllowedPrivateHostsWiring(t *testing.T) {
 	if f := dw.statusFetcher(0); !f.AllowLoopback || !f.AllowPrivate || f.UncheckedTransport {
 		t.Errorf("in Development, status fetcher = %+v, want loopback and private allowed", f)
 	}
+	// In Development a caller's hardened client doesn't replace
+	// statuslist's policy, which allows loopback there.
+	if statusHTTP(dev, w.deps.HTTP) != nil {
+		t.Error("in Development, status lists go through the hardened transport")
+	}
 }
 
 // TestNew_AllowedPrivateHostsCallersHTTP: outside Development, a

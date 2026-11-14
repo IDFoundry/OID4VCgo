@@ -69,18 +69,18 @@ func sameHosts(a, b []string) bool {
 }
 
 // statusHTTP is the client the wallet fetches status and identifier
-// lists with when Config.AllowedPrivateHosts names hosts and its HTTP
-// client is fapihttp's hardened one: that client, its transport wrapped
-// so statuslist.Fetcher uses it as it is (UncheckedTransport) rather
-// than replacing its dialer with statuslist's own address policy, which
-// can allow private addresses only all together. The hardened dialer
-// then applies its own policy: public addresses, and private ones of the
-// listed hosts alone, checked on the address it dials, so a name that
-// resolves elsewhere by the time it's dialled is refused too. nil, with
-// no hosts listed or another client (Development's), keeps statuslist's
-// policy.
+// lists with when, outside Development, Config.AllowedPrivateHosts
+// names hosts and its HTTP client is fapihttp's hardened one: that
+// client, its transport wrapped so statuslist.Fetcher uses it as it is
+// (UncheckedTransport) rather than replacing its dialer with
+// statuslist's own address policy, which can allow private addresses
+// only all together. The hardened dialer then applies its own policy:
+// public addresses, and private ones of the listed hosts alone, checked
+// on the address it dials, so a name that resolves elsewhere by the
+// time it's dialled is refused too. nil, with no hosts listed, in
+// Development or with another client, keeps statuslist's policy.
 func statusHTTP(cfg Config, client *http.Client) *http.Client {
-	if len(cfg.AllowedPrivateHosts) == 0 {
+	if cfg.Development || len(cfg.AllowedPrivateHosts) == 0 {
 		return nil
 	}
 	if _, ok := fapihttp.HardeningOf(client); !ok {
