@@ -38,6 +38,8 @@ Issuer2, Verifier2 and Wallet2, run locally from their published images
 | | Each, revoked by the issuer (its `POST /status`) after it was issued, before the wallet presents it | Verifier2 refuses it, by `credential-status` (`Status validation failed: expected one of [0], but got 1`), the session `FAILED` |
 | Wallet2 → OID4VCgo's verifier | That SD-JWT VC PID, `x509_hash`, `direct_post.jwt`, `request_uri_method` none, `get` and `post` (the default engine) | verified |
 | | The same, through `verifier.Transactions` under production assurance | verified, released to the browser that began the request |
+| | With `POSTGRES_URL`: that verifier as two instances sharing PostgreSQL, the request begun at a, its Request Object fetched at b, the response taken by a, the `response_code` redeemed at b | verified; each step served by the instance it was routed to |
+| | That `response_code` redeemed again, at a, which minted it | a refuses it: 403, logging `verifier: unknown presentation request` |
 | | That mdoc PID, through `verifier.Transactions` under production assurance | verified, only the requested elements disclosed |
 | | The verifier's Access Certificate under an unrelated CA (`verifier.Transactions`) | Wallet2 refuses (`X509TrustAnchorMismatch`) |
 | | The verifier trusts an unrelated issuer CA (`verifier.Transactions`) | the verifier refuses the credential: its result page's `untrusted_issuer` and `x509: certificate signed by unknown authority` |
@@ -71,6 +73,26 @@ fresh Wallet2 wallet, in three more of
 restarted with its config changed as there: `dpop-nonces`
 (`dpop_nonces`), `deferred` (`deferred`) and `key-attestation`
 (`key_attestation.jwt_proof_requires_key_attestation`).
+
+With `POSTGRES_URL` naming an empty PostgreSQL database (the
+workflow's service container), the SD-JWT VC verifier's transactions
+engine runs as two instances of one deployment, its store there
+(`production.database_url`), the sealing key shared, each sweeping it
+every second (`sweep_interval`), behind
+[`../splitproxy`](../splitproxy) at its URL, which serves its TLS
+certificate and routes `/authorize` and `/response` to instance a,
+`/request/{id}` and `/result` to b. So the request a began is served
+to Wallet2 by b, the response to b's Request Object is taken by a, and
+a's `response_code` is redeemed at b, in the browser that began it.
+The run checks that split from the proxy's log (each request, the
+instance that served it) and the instances' own (the transaction begun
+at a, its Request Object fetched with POST and its result redeemed at
+b), and that both swept, none failing. Its control redeems the
+`response_code` again at a (the proxy's `X-Interop-Instance` override),
+which minted it but only reads in the shared store that b redeemed it:
+refused, a's result page "No result" (403) and its log the
+transaction store's reason, `verifier: unknown presentation request`.
+The other verifiers stay on SQLite, one instance each.
 
 ### Status lists
 
@@ -357,10 +379,13 @@ WALTID_TAG=latest interop/waltid/run.sh
 
 It needs Docker, Go, `jq`, `curl`, `openssl` and `keytool`, and exits 0
 only if every case behaves as expected. `BASE_PORT` (21400) moves its
-ports (`BASE_PORT`+1 to +44), `WORK` keeps the run's files, and
+ports (`BASE_PORT`+1 to +46), `WORK` keeps the run's files, and
 `COMPOSE_PROJECT_NAME` (`oid4vcgo-waltid`) prefixes the containers'
 names. `BASE_PORT`+42 to +44 are the Wallet Provider, its admin
-listener, and the SD-JWT VC verifier's transactions engine.
+listener, and the SD-JWT VC verifier's transactions engine, and +45
+and +46 that engine's two instances under `POSTGRES_URL`.
+`ISSUER2_HTTP`, `VERIFIER2_HTTP` and `WALLET2_HTTP` (`BASE_PORT`+1 to
++3), the containers' published ports, can each be set on their own.
 `WALLET_ASSURANCE=production` runs the production cases above
 instead, listening on this host on `BASE_PORT`+1 and +2 alone.
 
