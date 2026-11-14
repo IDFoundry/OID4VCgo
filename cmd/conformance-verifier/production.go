@@ -12,23 +12,25 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite" // the database/sql driver for the SQLite file
-
+	"github.com/idfoundry/oid4vcgo/internal/proddb"
 	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
-// openProductionStore opens p's SQLite file as sqlstore's
-// verifier.TransactionStore — durable, atomic per transaction — each
-// transaction encoded by a verifier.TransactionCodec that seals its
-// response decryption key and result with p's key
-// (sealing.AESGCMSealer), as verifier.AssuranceProduction requires.
+// productionConns sizes the PostgreSQL connection pool.
+const productionConns = 8
+
+// openProductionStore opens p's SQLite file or PostgreSQL database as
+// sqlstore's verifier.TransactionStore — durable, atomic per
+// transaction — each transaction encoded by a verifier.TransactionCodec
+// that seals its response decryption key and result with p's key
+// (sealing.AESGCMSealer), as verifier.AssuranceProduction requires;
+// and, with p.SweepInterval, sweeps it that often.
 func openProductionStore(p ProductionConfig) (verifier.TransactionStore, error) {
 	key, err := base64.StdEncoding.DecodeString(p.SealingKey)
 	if err != nil {
@@ -38,20 +40,31 @@ func openProductionStore(p ProductionConfig) (verifier.TransactionStore, error) 
 	if err != nil {
 		return nil, fmt.Errorf("config: production.sealing_key: %w", err)
 	}
-	// WAL mode with a busy timeout, as sqlstore's documentation says to
-	// open SQLite.
-	sqlDB, err := sql.Open("sqlite", "file:"+p.DatabasePath+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
+	sqlDB, err := proddb.Open(p.DatabasePath, p.DatabaseURL, productionConns)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", p.DatabasePath, err)
+		return nil, err
 	}
-	db, err := sqlstore.New(sqlDB, sqlstore.SQLite, sqlstore.Options{})
+	dialect := sqlstore.SQLite
+	if sqlDB.Postgres {
+		dialect = sqlstore.Postgres
+	}
+	db, err := sqlstore.New(sqlDB.DB, dialect, sqlstore.Options{})
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	// Every instance migrates as it starts: on PostgreSQL under an
+	// advisory lock, so instances starting together take turns.
 	if err := db.Migrate(ctx); err != nil {
-		return nil, fmt.Errorf("migrate %s: %w", p.DatabasePath, err)
+		return nil, fmt.Errorf("migrate %s: %w", sqlDB.Name, err)
+	}
+	if p.SweepInterval != "" {
+		interval, err := time.ParseDuration(p.SweepInterval)
+		if err != nil {
+			return nil, fmt.Errorf("config: production.sweep_interval: %w", err)
+		}
+		go proddb.SweepEvery(interval, map[string]proddb.Sweeper{"verifier": db})
 	}
 	return db.Transactions(verifier.TransactionCodec{Sealer: sealer}), nil
 }

@@ -14,7 +14,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -26,11 +25,11 @@ import (
 	"github.com/idfoundry/fapigo/server"
 	fapisqlstore "github.com/idfoundry/fapigo/sqlstore"
 	"github.com/idfoundry/fapigo/storage"
-	_ "modernc.org/sqlite" // the database/sql driver for the SQLite file
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/haip"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/proddb"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
@@ -42,10 +41,14 @@ import (
 // Notification Endpoint.
 const productionNotificationLifetime = 24 * time.Hour
 
-// productionBackend is Config.Production's backend: one SQLite file
-// holding sqlstore's issuer stores and fapigo/sqlstore's Authorization
-// Server and Credential Endpoint stores, every record sealed with one
-// key, as sqlstore's "A whole issuer deployment" wires them.
+// productionConns sizes the PostgreSQL connection pool.
+const productionConns = 16
+
+// productionBackend is Config.Production's backend: one SQLite file or
+// PostgreSQL database holding sqlstore's issuer stores and
+// fapigo/sqlstore's Authorization Server and Credential Endpoint
+// stores, every record sealed with one key, as sqlstore's "A whole
+// issuer deployment" wires them.
 type productionBackend struct {
 	cfg      Config
 	issuerDB *sqlstore.DB
@@ -60,6 +63,8 @@ type productionBackend struct {
 	// fetcher.
 	statusCache   *statuslist.Cache
 	statusFetcher statuslist.Fetcher
+	// nonceKey is ProductionConfig.NonceKey, decoded, or nil.
+	nonceKey []byte
 }
 
 func newProductionBackend(cfg Config) (backend, error) {
@@ -76,52 +81,71 @@ func newProductionBackend(cfg Config) (backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: production.access_token_signing_key_pem: %w", err)
 	}
-	// One process, and the key loaded from its configuration: durable,
-	// not shared across instances.
+	// The key loaded from the configuration: durable, and the same in
+	// every instance when several share the database.
 	signingKeys, err := keys.NewKeyManagerFromSigners([]keys.SignerSpec{
 		{Purpose: keys.AccessTokenSigning, Algorithm: fapi.ES256, Signer: signingKey},
-	}, keys.DeclareCustody(keys.KeyCustody{Durable: true}))
+	}, keys.DeclareCustody(keys.KeyCustody{Durable: true, CrossInstanceConsistent: p.HorizontallyScaled}))
 	if err != nil {
 		return nil, err
 	}
 
-	// WAL mode with a busy timeout, as sqlstore's documentation says to
-	// open SQLite.
-	sqlDB, err := sql.Open("sqlite", "file:"+p.DatabasePath+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
+	sqlDB, err := proddb.Open(p.DatabasePath, p.DatabaseURL, productionConns)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", p.DatabasePath, err)
+		return nil, err
+	}
+	dialect, fapiDialect := sqlstore.SQLite, fapisqlstore.SQLite
+	if sqlDB.Postgres {
+		dialect, fapiDialect = sqlstore.Postgres, fapisqlstore.Postgres
 	}
 	statusFetcher, err := attestationStatusFetcher(*p)
 	if err != nil {
 		return nil, err
 	}
 	b := &productionBackend{cfg: cfg, signingKeys: signingKeys, statusCache: statuslist.NewCache(statuslist.CacheOptions{}), statusFetcher: statusFetcher}
-	if b.issuerDB, err = sqlstore.New(sqlDB, sqlstore.SQLite, sqlstore.Options{Sealer: sealer}); err != nil {
+	if p.NonceKey != "" {
+		if b.nonceKey, err = base64.StdEncoding.DecodeString(p.NonceKey); err != nil {
+			return nil, fmt.Errorf("config: production.nonce_key: %w", err)
+		}
+	}
+	if b.issuerDB, err = sqlstore.New(sqlDB.DB, dialect, sqlstore.Options{Sealer: sealer}); err != nil {
 		return nil, err
 	}
-	if b.asDB, err = fapisqlstore.New(sqlDB, fapisqlstore.SQLite, fapisqlstore.Options{Sealer: sealer}); err != nil {
+	if b.asDB, err = fapisqlstore.New(sqlDB.DB, fapiDialect, fapisqlstore.Options{Sealer: sealer}); err != nil {
 		return nil, err
 	}
-	if b.rsDB, err = fapisqlstore.New(sqlDB, fapisqlstore.SQLite, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer}); err != nil {
+	if b.rsDB, err = fapisqlstore.New(sqlDB.DB, fapiDialect, fapisqlstore.Options{TablePrefix: "fapigo_rs_", Sealer: sealer}); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	// Every instance migrates as it starts: on PostgreSQL under an
+	// advisory lock, so instances starting together take turns.
 	for _, db := range []interface{ Migrate(context.Context) error }{b.issuerDB, b.asDB, b.rsDB} {
 		if err := db.Migrate(ctx); err != nil {
-			return nil, fmt.Errorf("migrate %s: %w", p.DatabasePath, err)
+			return nil, fmt.Errorf("migrate %s: %w", sqlDB.Name, err)
 		}
+	}
+	if p.SweepInterval != "" {
+		interval, err := time.ParseDuration(p.SweepInterval)
+		if err != nil {
+			return nil, fmt.Errorf("config: production.sweep_interval: %w", err)
+		}
+		go proddb.SweepEvery(interval, map[string]proddb.Sweeper{"issuer": b.issuerDB, "authorization server": b.asDB, "credential endpoint": b.rsDB})
 	}
 	return b, nil
 }
 
 // authorizationServer runs the Authorization Server under
-// server.AssuranceProduction, one instance, with fapigo/sqlstore's
+// server.AssuranceProduction, one instance or one of several, with fapigo/sqlstore's
 // stores, the configuration's access token signing key, an audit log,
 // and Wallet Attestations' status checked.
 func (b *productionBackend) authorizationServer(srvCfg *server.Config, deps *server.Dependencies, clients []storage.RegisteredClientConfig, _ storage.NonceStore) (storage.NonceStore, error) {
 	srvCfg.Assurance = server.AssuranceProduction
 	srvCfg.Deployment = server.DeploymentSingleInstance
+	if b.cfg.Production.HorizontallyScaled {
+		srvCfg.Deployment = server.DeploymentHorizontallyScaled
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -165,6 +189,9 @@ func (b *productionBackend) issuer(cfg *issuer.Config, deps *issuer.Dependencies
 	cfg.Limits.NotificationLifetime = productionNotificationLifetime
 
 	deps.Nonces = b.issuerDB.Nonces()
+	if b.nonceKey != nil {
+		deps.NonceKeys = [][]byte{b.nonceKey}
+	}
 	deps.Notifications = b.issuerDB.Notifications()
 	deps.DeferredTransactions = b.issuerDB.DeferredTransactions()
 	if deps.PreAuthorizedCodes != nil {

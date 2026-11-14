@@ -212,10 +212,10 @@ The wallets' own settings are those of their runs.
 | Run | OID4VCgo's side as deployed | Still development, and why |
 | --- | --- | --- |
 | EUDI wallet library → verifier | SD-JWT VC and mdoc presentations and every verifier-side control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite | the `request_uri_method` choices, the Digital Credentials API and the default engine's own controls: the binary's transactions engine asks for `post` and routes no DC API |
-| EUDI wallet library ← issuer | the `production` profile: `AssuranceProduction` for the Authorization Server and the Credential Issuer, sealed SQLite, DPoP nonces, every attestation from the Wallet Provider through its agent, its revocation refused | the other profiles: `attestation` proofs and `jwt` proofs without a key attestation, which production doesn't take |
+| EUDI wallet library ← issuer | the `production` profile: `AssuranceProduction` for the Authorization Server and the Credential Issuer, sealed SQLite, DPoP nonces, every attestation from the Wallet Provider through its agent, its revocation refused; the `production-scaled` profile: the same as two instances sharing PostgreSQL, split between them | the other profiles: `attestation` proofs and `jwt` proofs without a key attestation, which production doesn't take |
 | OID4VCgo's wallet ← EUDI PID Issuer | — | the Wallet Provider: the EUDI stack requires TS3 claims (`client_status`, `key_storage_status`, ...) `walletprovider` doesn't issue |
 | OID4VCgo's wallet → EUDI verifier | — | the fixtures and their status lists (`scripts/setup`, `scripts/serve`): `cmd/conformance-wallet-vp` presents the credentials its configuration holds |
-| walt.id Wallet2 → verifier | the PID and mDL presentations and the untrusted-issuer control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite | the `request_uri_method` choices (the default engine) |
+| walt.id Wallet2 → verifier | the PID and mDL presentations and the untrusted-issuer control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite; the PID's verifier as two instances sharing PostgreSQL, split between them | the `request_uri_method` choices (the default engine) |
 | walt.id: issuer → OID4VCgo's wallet → Verifier2 | the issuer's production setup, its status lists in `sqlstore`; the wallet attested by the Wallet Provider | — |
 | walt.id Wallet2 ← issuer | — | Wallet2 adds no key attestation, which production requires; its attester protocol isn't `walletprovider`'s |
 | Multipaz: walletflow ← Multipaz issuer | the Wallet Provider, trusted and untrusted | — |
@@ -228,8 +228,52 @@ Status list fetches stay able to reach loopback in every run
 public addresses only, which a runner has none of to serve from, so
 the binaries run the same status policy where production can't inspect
 its fetcher (the verifier's `Accept`, the issuer's wrapped key
-attestation check) and log that they do. PostgreSQL and several
-instances sharing a store aren't run.
+attestation check) and log that they do.
+
+### PostgreSQL, and two instances sharing it
+
+Two legs run OID4VCgo's side on PostgreSQL (`sqlstore.Postgres` and
+`fapigo/sqlstore`'s, the `production.database_url` setting; a
+`postgres:17-alpine` service container pinned by digest in CI) as two
+instances of one deployment behind one URL:
+[`interop/splitproxy`](../interop/splitproxy), standing in for the load
+balancer, terminates TLS with the server's own certificate and sends
+each request to the instance its route names, so that what one
+instance issues the other must accept. Each instance migrates the
+schema as it starts and sweeps the stores every second (`Sweep`, from
+every instance, as [DEPLOYING.md](../DEPLOYING.md) has a deployment
+do), and the run fails if either never swept or a sweep failed.
+
+- The EUDI wallet library ← issuer's `production-scaled` profile
+  (`interop/eudi/run-issuer.sh`, with `POSTGRES_URL`): the
+  `production` profile's cases and controls, the Authorization Server
+  under `server.DeploymentHorizontallyScaled` (so its stores and keys
+  must declare `CrossInstanceConsistent`), the c_nonce key shared.
+  PAR, the Token, Nonce and Notification Endpoints are instance a's,
+  the consent and the Credential Endpoint b's, and a request whose
+  DPoP proof carries no nonce goes to the other instance, which
+  challenges it: so a's request_uri is used at b, b's codes are
+  redeemed at a, a's access tokens, c_nonces and DPoP nonces are taken
+  by b, b's DPoP nonces by a. Two cases of its own send a request to
+  the instance its route doesn't name, and the issuer issues a Token
+  Status List whose indices both reserve in the shared store.
+- walt.id Wallet2 → verifier (`interop/waltid/run.sh`, with
+  `POSTGRES_URL`): the PID's transactions verifier, its request begun
+  at a, its Request Object fetched at b, the response taken by a and
+  its `response_code` redeemed at b.
+
+The split is proven from each side: every response carries the
+instance that served it (`X-Interop-Instance`), which the EUDI driver
+records and checks each exchange of each case against; the proxy logs
+each request with its instance and why it went there; and the
+instances' own logs show what each served (their audit events, a
+transaction begun, fetched, redeemed). The controls of their own are
+graded by the refusing instance's reason: a pre-authorized code minted
+by b and redeemed at a, redeemed again at b (400 `invalid_grant`,
+"pre-authorized_code is unknown or already used"), and a
+`response_code` minted by a and redeemed at b, redeemed again at a
+(refused, a logging `verifier: unknown presentation request`). The
+Wallet Provider stays one instance on SQLite.
 
 ## Interop with polaris-oid4vp
 

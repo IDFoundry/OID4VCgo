@@ -27,8 +27,22 @@ func TestLoadConfig_Production(t *testing.T) {
 	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, withProduction(t, baseTestConfig(t)))); err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
+	// One of several instances sharing a PostgreSQL database.
+	scaled := withProduction(t, baseTestConfig(t))
+	scaled.Production.DatabasePath, scaled.Production.DatabaseURL = "", "postgres://localhost/issuer"
+	scaled.Production.HorizontallyScaled, scaled.Production.NonceKey, scaled.Production.SweepInterval = true, "bm9uY2U=", "1s"
+	if _, err := loadConfig(conformancecert.WriteJSONConfig(t, scaled)); err != nil {
+		t.Fatalf("loadConfig, horizontally scaled: %v", err)
+	}
 	cases := map[string]func(*Config){
-		"production.database_path":                func(c *Config) { c.Production.DatabasePath = "" },
+		"production.database_path":            func(c *Config) { c.Production.DatabasePath = "" },
+		"both database_path and database_url": func(c *Config) { c.Production.DatabaseURL = "postgres://localhost/issuer" },
+		"horizontally_scaled on SQLite":       func(c *Config) { c.Production.HorizontallyScaled, c.Production.NonceKey = true, "bm9uY2U=" },
+		"horizontally_scaled without a nonce_key": func(c *Config) {
+			c.Production.DatabasePath, c.Production.DatabaseURL, c.Production.HorizontallyScaled = "", "postgres://localhost/issuer", true
+		},
+		"a sweep_interval that isn't a duration":  func(c *Config) { c.Production.SweepInterval = "often" },
+		"a sweep_interval that isn't positive":    func(c *Config) { c.Production.SweepInterval = "0s" },
 		"production.sealing_key":                  func(c *Config) { c.Production.SealingKey = "" },
 		"production.access_token_signing_key_pem": func(c *Config) { c.Production.AccessTokenSigningKeyPEM = "" },
 		"key_attestation":                         func(c *Config) { c.KeyAttestation = nil },

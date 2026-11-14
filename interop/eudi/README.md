@@ -533,7 +533,8 @@ token, attestation headers, PKCE S256, `issuer_state`, the Nonce
 Endpoint, encrypted bodies, DPoP nonce retries.
 
 The issuer runs in five configurations in turn, its profiles, the
-last its production setup:
+last its production setup, and with `POSTGRES_URL` (as in the
+workflow) a sixth, that setup as two instances sharing PostgreSQL:
 
 | Profile | Case | Expected |
 |---|---|---|
@@ -568,6 +569,10 @@ last its production setup:
 | production | a Wallet Attestation from a Wallet Provider under a CA the issuer doesn't trust | refused: 401 `invalid_client`, "no matching attester key" |
 | production | a Wallet Attestation the wallet obtained before the Wallet Provider revoked its instance, once the cached status list's `ttl` has passed | refused: 401 `invalid_client`, "client attestation has been revoked" |
 | production | a new Wallet Attestation for the revoked instance | the Wallet Provider refuses it: 403 `instance_revoked` |
+| production-scaled | the `production` cases and controls, with two issuer instances sharing PostgreSQL, each exchange checked against the split | as `production`, each request answered by the instance meant for it |
+| production-scaled | an SD-JWT VC issued by instance a, which the Credential Endpoint isn't routed to | issued, verified |
+| production-scaled | the pre-authorized code b minted and a redeemed, redeemed again at b | b refuses it: 400 `invalid_grant`, "pre-authorized_code is unknown or already used" |
+| production-scaled | across the profile | a DPoP nonce one instance issued accepted by the other at PAR, the Token and the Credential Endpoints; Status List indices reserved by both, none twice; both swept the stores, none failing |
 
 `base` is the issuer as the OIDF plan runs it, plus `offers` (the
 pre-authorized code grant, Credential Offers, and a loopback-only
@@ -611,6 +616,46 @@ provider's `ttl` is 2 s, so the issuer's cached list expires within the
 run, and the run checks the issuer fetched the list again. The other
 profiles' cases don't run here: production takes no `attestation`
 proofs and no `jwt` proof without a key attestation.
+
+`production-scaled` runs when `POSTGRES_URL` names an empty PostgreSQL
+database (the workflow's service container): the `production` setup
+with its stores there (`production.database_url`), as two instances of
+a horizontally scaled deployment (`horizontally_scaled`: the
+Authorization Server under `server.DeploymentHorizontallyScaled`,
+whose stores and access token key must declare
+`CrossInstanceConsistent`), sharing the sealing, access token and
+c_nonce keys (`nonce_key`), each sweeping the stores every second
+(`sweep_interval`), with a Token Status List (`status_lists`) whose
+indices they reserve in the shared store. The Wallet Providers are
+fresh ones, as `production` revoked its instance. Both instances sit
+behind [`../splitproxy`](../splitproxy) at the issuer's URL, which
+sends PAR, the Token, Nonce and Notification Endpoints and the
+Credential Offer Endpoint to instance a, and the consent page and its
+decision (which the binary, standing in for a login service, keeps in
+memory between them) and the Credential Endpoint to b; the driver
+mints its offers at b's offers listener. A request whose DPoP proof
+carries no nonce goes to the other instance, which answers with a
+nonce challenge, and the retry carrying that nonce to its route's. So
+a's `request_uri` is used at b, b's authorization codes and
+pre-authorized codes are redeemed at a, a's access tokens and
+c_nonces are taken by b, b's `notification_id`s by a, and each
+instance accepts DPoP nonces the other issued. The proxy names the
+instance on each response (`X-Interop-Instance`); the driver records
+it, and checks after each case that every exchange was answered by
+the instance meant for it, and at the end that a nonce from one
+instance was accepted by the other at PAR, the Token and the
+Credential Endpoints, and that both instances reserved Status List
+indices, none twice (from the issued SD-JWT VCs' `status`). The run
+then checks the proxy's log (each instance served its routes, and the
+nonce challenges for the other's) and each instance's own (the audit
+events of what it served; its sweeps, none failing). Two cases are the
+profile's own: an SD-JWT VC issued by instance a, the request sent
+there by the driver (the proxy's `X-Interop-Instance` override); and
+that token's pre-authorized code, which b minted and a redeemed,
+redeemed again at b, which only the shared store tells it was spent.
+It refuses it with the same reason it gives a code it never issued,
+"pre-authorized_code is unknown or already used", so the control is
+graded by that and by the instance that answered.
 
 Each control is checked for its reason, from the issuer's error
 response as the driver recorded it, not only from the library's
@@ -727,14 +772,20 @@ dependencies come from Maven Central):
 ```sh
 interop/eudi/run-issuer.sh
 PROFILES="base deferred" interop/eudi/run-issuer.sh
+POSTGRES_URL=postgres://postgres@localhost:5432/postgres?sslmode=disable interop/eudi/run-issuer.sh
 ```
 
 `PORT` and `OFFERS_PORT` (18446 and 18447) move the issuer's
 listeners, `WP_PORT` (`PORT`+2, and the five ports after) the
-production profile's Wallet Providers, their admin listeners and
-agents, and `WORK` keeps the run's files, its keys among them. The
-driver's stack traces and the library's logging go to
-`driver-<profile>.log`, the issuer's to `issuer-<profile>.log`.
+production profiles' Wallet Providers, their admin listeners and
+agents, `SCALED_PORT` (`PORT`+8, and the two ports after)
+`production-scaled`'s instances and the first's offers listener, and
+`WORK` keeps the run's files, its keys among them. `POSTGRES_URL`, an
+empty PostgreSQL database, adds `production-scaled` to the profiles.
+The driver's stack traces and the library's logging go to
+`driver-<profile>.log`, the issuer's to `issuer-<profile>.log`
+(`issuer-production-scaled-a.log` and `-b.log`, and the proxy's to
+`splitproxy.log`).
 
 ### Moving the library's pin
 

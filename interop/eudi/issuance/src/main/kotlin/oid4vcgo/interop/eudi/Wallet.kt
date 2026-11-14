@@ -172,6 +172,7 @@ class Wallet(
     suspend fun Issuer.authorizeByCode(approve: Boolean = true): AuthorizedRequest {
         val prepared = prepareAuthorizationRequest().getOrThrow()
         val response = consent(ssl, prepared.authorizationCodeURL.value.toURI(), cfg.redirectUri, cfg.subject, approve)
+        recorder.consentInstances += response.instances
         if (response.error != null) throw AuthorizationRefused(response.error)
         return with(prepared) {
             authorizeWithAuthorizationCode(

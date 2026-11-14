@@ -117,6 +117,12 @@ private suspend fun Run.verifyIssued(
     val format = if (configurationId == wallet.cfg.mdocConfigurationId) "mdoc" else "SD-JWT VC"
     expect(credentials.size == proofs.keys.size, "issued ${proofs.keys.size} $format") { "issued ${credentials.size}" }
     val bound = wallet.verify(configurationId, credentials)
+    if (format == "SD-JWT VC") {
+        split?.recordIssued(
+            wallet.recorder.to(CREDENTIAL_PATH).lastOrNull { it.status == 200 }?.instance,
+            credentials.map { (it.credential as eu.europa.ec.eudi.openid4vci.Credential.Str).value },
+        )
+    }
     ok(if (format == "mdoc") "the mdoc verifies: issuerAuth, x5chain to the IACA, digests, docType, claims" else "EUDI's SD-JWT VC verifier accepts it: x5c to the issuer CA, vct, claims")
     expect(bound.toSet() == proofs.thumbprints && bound.size == proofs.keys.size, "each bound to a different key the proofs named")
 }
@@ -545,10 +551,20 @@ private const val PROVIDER_REVOKED = "HTTP 403 instance_revoked"
  * carry a key attestation, DPoP nonces), with every Wallet Attestation
  * and Key Attestation from OID4VCgo's Wallet Provider through its
  * agent, and both attestations' status checked on the provider's lists.
+ *
+ * [scaled] is the two-instance profile's: the same setup on PostgreSQL,
+ * two instances behind interop/splitproxy sharing it, every case
+ * checked against the split ([checkSplit]), and two more where a
+ * request is sent to the instance its route doesn't name.
  */
-suspend fun productionCases(run: Run) {
+suspend fun productionCases(
+    run: Run,
+    scaled: Boolean = false,
+) {
     val sdjwt = run.wallet.cfg.sdJwtConfigurationId
     val mdoc = run.wallet.cfg.mdocConfigurationId
+    val split = if (scaled) Split(checkNotNull(run.wallet.cfg.splitRoutes) { "no split_routes" }) else null
+    run.split = split
 
     // As baseCases' controls: a 401's error object is read from the
     // exchange (README finding 3).
@@ -590,6 +606,7 @@ suspend fun productionCases(run: Run) {
         val issuer = fromOffer(uri, WalletOptions(client = attestationFrom(checkNotNull(cfg.otherAgent) { "no other agent" })))
         with(this) { issuer.authorizeByPreAuthorizedCode() }
     }
+    if (split != null) scaledCases(run, split)
 
     // Last, as it revokes the wallet's instance at the provider: a
     // Wallet Attestation the wallet obtained before, which the cases
@@ -615,5 +632,66 @@ suspend fun productionCases(run: Run) {
         { t -> generateSequence(t) { it.cause }.any { (it.message ?: "").contains(PROVIDER_REVOKED) } },
     ) {
         attestationFrom(checkNotNull(cfg.agent))
+    }
+    if (split != null) run.finishSplit(split)
+}
+
+/** Runs [block] with every request sent to [instance], interop/splitproxy's override. */
+private suspend fun <T> Wallet.at(
+    instance: String,
+    block: suspend () -> T,
+): T {
+    recorder.forceInstance = instance
+    try {
+        return block()
+    } finally {
+        recorder.forceInstance = null
+    }
+}
+
+/** The issuer's error_description for a pre-authorized code it has no unspent record of. */
+private const val SPENT_PRE_AUTHORIZED_CODE = "pre-authorized_code is unknown or already used"
+
+/**
+ * The two-instance profile's own: an SD-JWT VC issued by the instance
+ * the Credential Endpoint isn't routed to, from a token and c_nonce the
+ * same instance issued; then that token's pre-authorized code redeemed
+ * again at the other instance. That one minted the code (run-issuer.sh
+ * gives the driver its offers listener) but didn't redeem it, so only
+ * the shared store tells it the code is spent: an instance keeping its
+ * own records would redeem it.
+ */
+private suspend fun scaledCases(
+    run: Run,
+    split: Split,
+) {
+    val sdjwt = run.wallet.cfg.sdJwtConfigurationId
+    val instances = split.routes.values.toSet()
+    val issuedBy = instances.first { it != split.routeOf(CREDENTIAL_PATH) }
+    val replayAt = instances.first { it != split.routeOf(TOKEN_PATH) }
+    var replayOffer = ""
+    run.case("two instances: an SD-JWT VC issued by instance $issuedBy, the Credential Endpoint's other instance") {
+        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
+        replayOffer = uri
+        val issuer = fromOffer(uri)
+        val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
+        run.checkPreAuthorizedTokenRequest()
+        at(issuedBy) { run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwtWithProviderKeyAttestation(this)) }
+        run.checkCredentialRequests()
+    }
+    run.control(
+        "two instances: the same pre-authorized code redeemed again, at instance $replayAt, which minted it but didn't redeem it",
+        "instance $replayAt refuses it: 400 invalid_grant, \"$SPENT_PRE_AUTHORIZED_CODE\"",
+        {
+            run.wallet.recorder.to(TOKEN_PATH).lastOrNull().let {
+                (it != null && it.status == 400 && it.error == "invalid_grant" && it.errorDescription == SPENT_PRE_AUTHORIZED_CODE && it.instance == replayAt)
+                    .also { refused -> if (!refused) recorded(it) }
+            }
+        },
+    ) {
+        at(replayAt) {
+            val issuer = fromOffer(replayOffer)
+            with(this) { issuer.authorizeByPreAuthorizedCode() }
+        }
     }
 }

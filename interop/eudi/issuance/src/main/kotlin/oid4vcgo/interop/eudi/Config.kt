@@ -47,6 +47,9 @@ class DriverConfig(
     val otherAgent: ProviderAgent?,
     val providerAdmin: String?,
     val providerStatusTtlSeconds: Long,
+    // The two-instance profile's: interop/splitproxy's routes, each path
+    // and the instance it goes to, as run-issuer.sh gives them to it.
+    val splitRoutes: Map<String, String>?,
 ) {
     companion object {
         fun load(path: String): DriverConfig {
@@ -81,6 +84,7 @@ class DriverConfig(
                 otherAgent = o["other_wallet_provider_agent"]?.jsonPrimitive?.content?.let { ProviderAgent(it) },
                 providerAdmin = o["wallet_provider_admin"]?.jsonPrimitive?.content,
                 providerStatusTtlSeconds = o["wallet_provider_status_ttl_seconds"]?.jsonPrimitive?.content?.toLong() ?: 0,
+                splitRoutes = (o["split_routes"] as? JsonObject)?.mapValues { it.value.jsonPrimitive.content },
             )
         }
 

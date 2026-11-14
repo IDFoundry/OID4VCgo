@@ -75,7 +75,8 @@ done
 
 # CI's conformance-issuer-production job lints cmd/conformance-issuer's
 # and cmd/conformance-verifier's production setups, and the interop
-# wallets' production stores (internal/prodwallet), too: the
+# wallets' production stores (internal/prodwallet) and the database
+# those setups open (internal/proddb), too: the
 # conformance_production tag, in a workspace holding the root module
 # and sqlstore.
 if [[ $# -eq 0 ]]; then
@@ -86,7 +87,7 @@ if [[ $# -eq 0 ]]; then
   printf 'go %s\n\nuse (\n\t%s\n\t%s/sqlstore\n)\n' "$gover" "$root" "$root" >"$work/go.work"
   echo "== cmd/conformance-issuer, cmd/conformance-verifier, the interop wallets (conformance_production): golangci-lint $lint_version, go$gover"
   if ! GOWORK="$work/go.work" "$bin" run --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/... \
-    ./internal/prodwallet/... ./interop/eudi/scripts/pidwallet/... ./interop/waltid/scripts/wallet/...; then fail=1; fi
+    ./internal/prodwallet/... ./internal/proddb/... ./interop/eudi/scripts/pidwallet/... ./interop/waltid/scripts/wallet/...; then fail=1; fi
   rm -rf "$work"
 fi
 
