@@ -235,7 +235,9 @@ func newPeer(dir, verifierBinary string, vci vciState) (*peer, error) {
 	if err := p.issueMDL(dsKey, ds); err != nil {
 		return nil, err
 	}
-	if p.vci.provider, err = newProvider(dir); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if p.vci.provider, p.vci.other, err = newProviders(ctx, dir); err != nil {
 		return nil, err
 	}
 	for name, content := range map[string]string{"go-iaca.pem": iacaPEM, "go-reader-ca.pem": certPEM(readerCA), "go-other-ca.pem": certPEM(other)} {

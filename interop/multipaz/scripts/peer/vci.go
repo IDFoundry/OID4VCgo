@@ -22,6 +22,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/interop/internal/interopwp"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -36,10 +37,11 @@ const (
 )
 
 // vciState is the OpenID4VCI side: the binaries the peer runs, and
-// walletflow's Wallet Provider.
+// walletflow's Wallet Providers: the one Multipaz's issuer trusts, and
+// other, one under a CA it doesn't.
 type vciState struct {
 	setupIssuerBinary, issuerBinary string
-	provider                        *provider
+	provider, other                 walletflow.WalletProvider
 }
 
 // signer is a key and its certificate, leaf first, CA last.
@@ -180,7 +182,7 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	}
 	prov := p.vci.provider
 	if req.Trust == "other" {
-		prov = prov.other
+		prov = p.vci.other
 	}
 	// Through a recorder, of what the issuer sent (observe.go).
 	rec := newRecorder(&http.Transport{
@@ -220,28 +222,73 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	return rep, nil
 }
 
-// provider is walletflow's Wallet Provider: it attests whatever it's
-// asked to, as the peer's attester, whose CA Multipaz's issuer trusts
-// (go-attester-ca.pem); other is one under a CA it doesn't.
+// provider is a stand-in Wallet Provider: it attests whatever it's
+// asked to, as the peer's attester, its CA the trusted one's
+// (go-attester-ca.pem) or another.
 type provider struct {
 	signer signer
-	other  *provider
 }
 
-func newProvider(dir string) (*provider, error) {
-	trusted, err := newSigner(goAttesterIssuer, "OID4VCgo interop wallet provider CA")
+// The environment naming the Wallet Providers run.sh starts
+// (interop/walletprovider): each one's base URL, and the directory it
+// wrote its CA (ca.pem) and TLS certificate (tls-cert.pem) to.
+const (
+	envWalletProvider         = "OID4VCGO_WALLET_PROVIDER"
+	envWalletProviderDir      = "OID4VCGO_WALLET_PROVIDER_DIR"
+	envOtherWalletProvider    = "OID4VCGO_OTHER_WALLET_PROVIDER"
+	envOtherWalletProviderDir = "OID4VCGO_OTHER_WALLET_PROVIDER_DIR"
+)
+
+// newProviders are walletflow's Wallet Providers, the trusted one's CA
+// written to dir/go-attester-ca.pem for Multipaz's issuer: OID4VCgo's
+// Wallet Provider, as a deployment runs it, and one under another CA,
+// when the environment names them (run.sh starts them), each with this
+// wallet registered as an instance; otherwise stand-ins signing with
+// keys of the peer's (provider).
+func newProviders(ctx context.Context, dir string) (trusted, other walletflow.WalletProvider, err error) {
+	if base := os.Getenv(envWalletProvider); base != "" {
+		trustedDir, otherDir := os.Getenv(envWalletProviderDir), os.Getenv(envOtherWalletProviderDir)
+		if trusted, err = registerAtProvider(ctx, base, trustedDir); err != nil {
+			return nil, nil, err
+		}
+		if other, err = registerAtProvider(ctx, os.Getenv(envOtherWalletProvider), otherDir); err != nil {
+			return nil, nil, err
+		}
+		ca, err := os.ReadFile(filepath.Join(trustedDir, "ca.pem")) // #nosec G304 -- run.sh's own provider's file
+		if err != nil {
+			return nil, nil, err
+		}
+		return trusted, other, os.WriteFile(filepath.Join(dir, "go-attester-ca.pem"), ca, 0o600)
+	}
+	signed, err := newSigner(goAttesterIssuer, goAttesterCAName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	untrusted, err := newSigner(goAttesterIssuer, "OID4VCgo interop untrusted wallet provider CA")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ca := trusted.chain[len(trusted.chain)-1]
+	ca := signed.chain[len(signed.chain)-1]
 	if err := os.WriteFile(filepath.Join(dir, "go-attester-ca.pem"), []byte(certPEM(ca)), 0o600); err != nil {
+		return nil, nil, err
+	}
+	return &provider{signer: signed}, &provider{signer: untrusted}, nil
+}
+
+// goAttesterCAName is the common name of the CA walletflow's Wallet
+// Provider's attestations chain to: Multipaz's issuer keys its trusted
+// attesters by it.
+const goAttesterCAName = "OID4VCgo interop wallet provider CA"
+
+// registerAtProvider registers walletflow as an instance of the Wallet
+// Provider at base, whose TLS certificate is dir/tls-cert.pem.
+func registerAtProvider(ctx context.Context, base, dir string) (*interopwp.Provider, error) {
+	roots, err := readPool(filepath.Join(dir, "tls-cert.pem"))
+	if err != nil {
 		return nil, err
 	}
-	return &provider{signer: trusted, other: &provider{signer: untrusted}}, nil
+	hc := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}}
+	return interopwp.Register(ctx, base, hc)
 }
 
 func (p *provider) header() attestation.Header {
