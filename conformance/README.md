@@ -448,14 +448,18 @@ walletflow's `Development` false and its own HTTP client, or `wallet`
 and `fapigo/client` at `AssuranceProduction` over `fapihttp.NewClient`'s;
 sqlstore's durable stores where receiving credentials requires them
 (`internal/prodwallet`); every certificate checked against its CA's
-CRL; no trust relaxed. Production's clients never dial loopback or a
-private address, and walletflow has no setting that lets them, so the
-wallet runs, built for Linux, in a container on an internal Docker
-network on a subnet of global unicast space, which the other side's
-containers join under the names their URLs carry; its system roots are
-the run's TLS CA, through `SSL_CERT_FILE` ([`interop/prodnet.sh`](../interop/prodnet.sh)).
-Those two, and the CRL publishers on the wallet's own loopback, are
-all that isn't production's.
+CRL; no trust relaxed. Production's clients never dial loopback, and
+reach a private address only for a host named in
+`walletflow.Config.AllowedPrivateHosts` (`wallet.Config.Fetch`'s and
+`fapihttp.TransportConfig`'s for the core engine), so the wallet runs,
+built for Linux, in a container on an internal Docker network, on a
+private subnet Docker assigns, which the other side's containers join
+under the names their URLs carry, and those names are the hosts it's
+given to allow, as a deployment inside its own network names its
+services; its system roots are the run's TLS CA, through
+`SSL_CERT_FILE` ([`interop/prodnet.sh`](../interop/prodnet.sh)).
+Those, and the CRL publishers on the wallet's own loopback, are all
+that isn't production's defaults.
 
 | Run (job) | At production assurance | Attestations |
 | --- | --- | --- |
