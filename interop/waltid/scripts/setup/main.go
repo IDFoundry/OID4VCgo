@@ -8,7 +8,10 @@
 //
 // Two names: Issuer2 and Verifier2, which only OID4VCgo's wallet calls,
 // from this host, are localhost (its fetcher reaches loopback in
-// development only for a loopback name); everything walt.id's Wallet
+// development only for a loopback name), or in a production run the
+// names interop/prodnet.sh's network gives them (-issuer2-host,
+// -verifier2-host), which the TLS certificate carries too; everything
+// walt.id's Wallet
 // calls from its container (OID4VCgo's issuer and verifiers, the
 // attester) is HOST, which the container maps to this host.
 //
@@ -48,6 +51,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -69,9 +73,12 @@ type authority struct {
 	pem  string
 }
 
-// ports are where each party listens; HOST names them all.
+// ports are where each party listens; HOST names them all, except
+// Issuer2 and Verifier2, named issuer2Host and verifier2Host (localhost
+// by default, interop/prodnet.sh's names for a production run).
 type ports struct {
 	issuer2, verifier2, attester, verifier, crl int
+	issuer2Host, verifier2Host                  string
 }
 
 func main() {
@@ -86,6 +93,8 @@ func main() {
 	flag.IntVar(&p.attester, "attester-port", 21426, "the attester's TLS port")
 	flag.IntVar(&p.verifier, "verifier-port", 21431, "the first of the four verifiers' ports")
 	flag.IntVar(&p.crl, "crl-port", 21441, "the port of the https CRL distribution point Issuer2's and Verifier2's certificates name, on localhost, which OID4VCgo's wallet serves and fetches")
+	flag.StringVar(&p.issuer2Host, "issuer2-host", "localhost", "the name OID4VCgo's wallet reaches Issuer2 by: its base URL's host")
+	flag.StringVar(&p.verifier2Host, "verifier2-host", "localhost", "the name OID4VCgo's wallet reaches Verifier2 by: its URL prefix's host")
 	flag.Parse()
 	if *out == "" || *bind == "" || *issuerCA == "" || *iaca == "" {
 		fail("-out, -bind, -issuer-ca and -iaca are required")
@@ -97,6 +106,18 @@ func main() {
 	if err := run(*out, *host, *bind, p, anchors); err != nil {
 		fail(err.Error())
 	}
+}
+
+// tlsNames are the TLS certificate's names: host, localhost, and
+// Issuer2's and Verifier2's.
+func tlsNames(host string, p ports) []string {
+	names := []string{host, "localhost"}
+	for _, n := range []string{p.issuer2Host, p.verifier2Host} {
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	return names
 }
 
 // anchors are what OID4VCgo's issuer's credentials chain to, which the
@@ -131,7 +152,7 @@ func run(dir, host, bind string, p ports, trust anchors) error {
 	put("other-ca.pem", other.pem)
 
 	tlsKey, tlsCert, err := leaf(ca, &x509.Certificate{
-		Subject: pkix.Name{CommonName: host}, DNSNames: []string{host, "localhost"},
+		Subject: pkix.Name{CommonName: host}, DNSNames: tlsNames(host, p),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	if err != nil {
@@ -217,7 +238,7 @@ func issuer2Files(put func(name, content string), ca authority, p ports, crl str
 	put("issuer2-profiles.conf", "defaultIssuerKey = null\ndefaultIssuerKey = "+string(keyJSON)+"\n"+
 		"defaultIssuerX5chain = ["+quote(sdjwt)+"]\n"+
 		"defaultMdocIssuerX5chain = ["+quote(ds)+"]\n")
-	put("issuer2-service.conf", hocon("baseUrl", httpsURL("localhost", p.issuer2))+
+	put("issuer2-service.conf", hocon("baseUrl", httpsURL(p.issuer2Host, p.issuer2))+
 		"clientAuthenticationConfig = null\nclientAuthenticationConfig { supportedMethods = [{ type = \"preauth-anonymous\" }] }\n")
 	return []string{sdjwt, ds}, nil
 }
@@ -247,7 +268,7 @@ func verifier2File(put func(name, content string), ca authority, p ports, crl st
 	put("verifier2-key.pem", keyPEM)
 	put("verifier2-service.conf", hocon(
 		"clientId", "x509_hash:"+base64.RawURLEncoding.EncodeToString(hash[:]),
-		"urlPrefix", httpsURL("localhost", p.verifier2)+"/verification-session",
+		"urlPrefix", httpsURL(p.verifier2Host, p.verifier2)+"/verification-session",
 	)+"key = null\nkey = "+string(keyJSON)+"\n"+
 		"x5c = ["+quote(base64.StdEncoding.EncodeToString(block.Bytes))+"]\n")
 	return cert, nil

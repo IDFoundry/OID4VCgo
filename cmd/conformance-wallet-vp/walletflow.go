@@ -56,7 +56,8 @@ func (fixtureKeys) DeleteKey(context.Context, string) error { return nil }
 // as trust does, calling them through client. Development, for the
 // interop runs' Verifiers on this machine: it lets them be on loopback
 // addresses, and client is this binary's own (its TLS verified against
-// verifier_tls_trust_anchors_pem), not walletflow's hardened one.
+// verifier_tls_trust_anchors_pem), not walletflow's hardened one. Under
+// Config.Assurance "production", neither.
 func newFlow(cfg Config, cred wallet.HeldCredential, trust wallet.VerifierTrust, client *http.Client) (*walletflow.Wallet, error) {
 	store := walletflow.NewMemoryCredentialStore()
 	stored := walletflow.StoredCredential{ // #nosec G101 -- the fixture credential issued at startup, not a secret
@@ -70,9 +71,16 @@ func newFlow(cfg Config, cred wallet.HeldCredential, trust wallet.VerifierTrust,
 	if err := store.Put(context.Background(), stored); err != nil {
 		return nil, err
 	}
+	deps := walletflow.Dependencies{Keys: fixtureKeys{key: fixtureKey{cred.HolderKey}}, Credentials: store, HTTP: client}
+	if cfg.production() {
+		// Config.Assurance "production": walletflow's own client, as a
+		// wallet app has it. Presenting a held credential needs none of
+		// production's durable stores.
+		deps.HTTP = nil
+	}
 	return walletflow.New(walletflow.Config{
-		Development: true, VerifierTrust: trust, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
-	}, walletflow.Dependencies{Keys: fixtureKeys{key: fixtureKey{cred.HolderKey}}, Credentials: store, HTTP: client})
+		Development: !cfg.production(), VerifierTrust: trust, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
+	}, deps)
 }
 
 // handleAuthorizeWalletflow is handleAuthorize for the walletflow

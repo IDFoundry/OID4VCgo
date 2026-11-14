@@ -271,6 +271,46 @@ https only, bound to the CA. Issuer2 and Verifier2 fetch nothing for
 them: the check is the wallet's alone. The three revocation controls
 differ from a passing case only in the list the wallet is served.
 
+## The wallet at production assurance
+
+`WALLET_ASSURANCE=production interop/waltid/run.sh` (the workflow's
+`production` job; [`production.sh`](production.sh)) runs only
+OID4VCgo's wallet with Issuer2 and Verifier2, walletflow as a
+deployment runs it (`scripts/wallet -assurance production`):
+
+| | Development run | Production run |
+|---|---|---|
+| Assurance | `Development: true` | production (`Development: false`) |
+| Fetchers | the wallet's recording transport, the run's CA, `localhost` dialled | walletflow's own client: public addresses only, no redirect followed, the system roots |
+| Where Issuer2 and Verifier2 are | `localhost`, behind serve's TLS proxies on this host | `issuer2.waltid.test` and `verifier2.waltid.test` (setup's `-issuer2-host`, `-verifier2-host`, their base URLs), behind serve in a container on the wallet's network |
+| Stores | in memory | sqlstore's sealed SQLite stores (`internal/prodwallet`), which receiving credentials at production requires |
+| Trust | `IssuerRoots` and `X5CVerifierRoots`, both the run's CA | the same, each with a leaf policy, as production requires of two roles whose roots share an anchor: Issuer2's certificates by their common name, Verifier2's by its own (setup's CA, trusted for nothing else, marks no role an extended key usage could tell) |
+| Revocation | Issuer2's and Verifier2's certificates against the CA's CRL | the same, and `StatusRevocation`, which production requires too |
+| Attestations | none: Issuer2 redeems its pre-authorized codes anonymously and asks for no Key Attestation | the same |
+
+What isn't production's, as [`../prodnet.sh`](../prodnet.sh) sets it
+up: production's client never dials loopback or a private address, so
+the wallet runs, built for Linux, in a container on an internal Docker
+network on a subnet of global unicast space, which serve's container
+joins under the two names; and the wallet's system roots are the run's
+CA, through `SSL_CERT_FILE`. The CRL publisher stays in the wallet's
+process, on its loopback.
+
+| Case | Expected |
+|---|---|
+| SD-JWT VC PID, mdoc PID, mDL from Issuer2 | issued, and pass walletflow's checks |
+| An unrelated issuer CA; the CA revokes Issuer2's signers; it publishes no current CRL | walletflow refuses the credential: `is invalid: wallet: verify issued credential: issuer certificate: …` with the development run's reasons |
+| PID and mDL to a signed `x509_hash` request, the response encrypted | Verifier2 accepts it (`SUCCESSFUL`) |
+| The request unsigned | refused: `fetch request_uri: fapihttp: response has an unexpected content type: got "application/json", …` |
+| An unrelated Verifier CA; the CA revokes Verifier2's Access Certificate | refused: `parse authorization request: untrusted verifier: wallet: verifier certificate: …` |
+
+The negative presentations aren't run: their tampering transport is
+the wallet's own, which production's client doesn't take, and they
+test Verifier2, not the wallet. Nor is the status list direction
+(OID4VCgo's issuer), whose issuer is named `localhost`. Issuer2 and
+Verifier2 send nothing production's wallet refuses: every case passes
+at both.
+
 ## What isn't covered
 
 - Certificate revocation in the walt.id-to-OID4VCgo directions:
@@ -321,6 +361,8 @@ ports (`BASE_PORT`+1 to +44), `WORK` keeps the run's files, and
 `COMPOSE_PROJECT_NAME` (`oid4vcgo-waltid`) prefixes the containers'
 names. `BASE_PORT`+42 to +44 are the Wallet Provider, its admin
 listener, and the SD-JWT VC verifier's transactions engine.
+`WALLET_ASSURANCE=production` runs the production cases above
+instead, listening on this host on `BASE_PORT`+1 and +2 alone.
 
 ## Moving the pins
 

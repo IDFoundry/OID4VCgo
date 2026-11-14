@@ -31,7 +31,23 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		}
 		offer = "openid-credential-offer://?credential_offer=" + url.QueryEscape(string(raw))
 	}
-	w, err := walletflow.New(walletflow.Config{
+	w, err := env.newWalletflow()
+	if err != nil {
+		res.fail("setup", err)
+		return
+	}
+	s, err := w.StartIssuance(ctx, offer)
+	if err != nil {
+		res.fail("offer", err)
+		return
+	}
+	runIssuance(ctx, env, w, s, res)
+}
+
+// newWalletflow is the walletflow engine's Wallet, as -assurance has it.
+func (env *environment) newWalletflow() (*walletflow.Wallet, error) {
+	o := env.o
+	cfg := walletflow.Config{
 		ClientID: o.clientID, RedirectURI: o.redirectURI,
 		IssuerRoots:     env.issuerRoots,
 		MdocIssuerRoots: env.issuerRoots,
@@ -55,22 +71,27 @@ func runWalletflow(ctx context.Context, env *environment, res *result) {
 		IssuerRevocation:         env.revocation,
 		StatusRevocation:         env.revocation,
 		IssuerMetadataRevocation: env.revocation,
-	}, walletflow.Dependencies{
+	}
+	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
 		// A plain *http.Transport, not the recorder: CheckStatus's
 		// fetches apply an address policy that needs one, and this
 		// engine's result records no exchanges.
 		Provider: env.provider, HTTP: env.statusHTTP,
-	})
-	if err != nil {
-		res.fail("setup", err)
-		return
 	}
-	s, err := w.StartIssuance(ctx, offer)
-	if err != nil {
-		res.fail("offer", err)
-		return
+	if env.production {
+		// As a deployment runs it: walletflow's own HTTP client and
+		// durable stores (production.go).
+		cfg.Development = false
+		deps = env.stores.Dependencies(walletflow.Dependencies{Provider: env.provider})
 	}
+	return walletflow.New(cfg, deps)
+}
+
+// runIssuance authorizes s, receives its credentials and checks each
+// copy's status.
+func runIssuance(ctx context.Context, env *environment, w *walletflow.Wallet, s *walletflow.Issuance, res *result) {
+	o := env.o
 	defer func() { _ = s.Close(context.WithoutCancel(ctx)) }()
 	if ids := s.Offer().Credentials; len(ids) > 0 {
 		res.Configuration = ids[0].ConfigurationID

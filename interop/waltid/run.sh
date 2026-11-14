@@ -106,13 +106,29 @@ CRL_PORT=$((BASE_PORT + 41))
 WP_PORT=$((BASE_PORT + 42)) WP_ADMIN_PORT=$((BASE_PORT + 43)) TX_VERIFIER_PORT=$((BASE_PORT + 44))
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
+# WALLET_ASSURANCE=production runs only OID4VCgo's wallet with Issuer2
+# and Verifier2, walletflow at production assurance (production.sh;
+# README.md, "The wallet at production assurance"): in a container on
+# ../prodnet.sh's network, which reaches them at these names, not
+# loopback.
+WALLET_ASSURANCE="${WALLET_ASSURANCE:-development}"
+ISSUER2_HOST=localhost VERIFIER2_HOST=localhost
+case "$WALLET_ASSURANCE" in
+  development) ;;
+  production) ISSUER2_HOST=issuer2.waltid.test VERIFIER2_HOST=verifier2.waltid.test ;;
+  *) echo "WALLET_ASSURANCE is development or production, not '$WALLET_ASSURANCE'" >&2; exit 2 ;;
+esac
 # The client_id interop/eudi/scripts/setup-issuer registers, which the
 # stand-in Wallet Provider's attestations name.
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
-for p in "$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT" \
-  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT" \
-  "$WP_PORT" "$WP_ADMIN_PORT" "$TX_VERIFIER_PORT"; do
+LISTENING=("$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT"
+  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT"
+  "$WP_PORT" "$WP_ADMIN_PORT" "$TX_VERIFIER_PORT")
+# A production run listens on this host for Issuer2's and Verifier2's
+# own APIs alone: the rest is on the wallet's network.
+if [[ "$WALLET_ASSURANCE" = production ]]; then LISTENING=("$ISSUER2_HTTP" "$VERIFIER2_HTTP"); fi
+for p in "${LISTENING[@]}"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -177,7 +193,7 @@ jq -r '.iaca_pem' issuer-files/driver.json > iaca.pem
 (cd "$SRC" && go run ./interop/waltid/scripts/setup -out "$WORK" -host "$HOST" -bind "$SERVE_BIND" \
   -issuer-ca "$WORK/issuer-ca.pem" -iaca "$WORK/iaca.pem" \
   -issuer2-port "$ISSUER2_PORT" -verifier2-port "$VERIFIER2_PORT" -attester-port "$ATTESTER_PORT" -verifier-port "$VERIFIER_PORT" \
-  -crl-port "$CRL_PORT")
+  -crl-port "$CRL_PORT" -issuer2-host "$ISSUER2_HOST" -verifier2-host "$VERIFIER2_HOST")
 
 cat issuer2-profiles.conf >> waltid/issuer-api2/config/issuer2-profiles.conf
 cat issuer2-service.conf >> waltid/issuer-api2/config/issuer-service.conf
@@ -202,6 +218,11 @@ run_service() {  # $1 name, $2 image, $3 its config directory, $4 host port, $5 
     -e SERVICE_HOST="$HOST" -e ISSUER_API2_PORT=7005 -e VERIFIER_API2_PORT=7004 -e WALLET_API2_PORT=7006 \
     -v "$WORK/waltid/$dir/config:/waltid-$dir/config" "$@" "$image" >/dev/null
 }
+if [[ "$WALLET_ASSURANCE" = production ]]; then
+  # shellcheck source=production.sh
+  . "$HERE/production.sh"
+  exit "$fail"
+fi
 run_service issuer2 "$ISSUER2_IMAGE" issuer-api2 "$ISSUER2_HTTP" 7005
 # Verifier2 fetches OID4VCgo's issuer's status lists, and Wallet2 calls
 # the issuer, both over TLS under the run's CA.

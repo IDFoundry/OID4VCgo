@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // Deferred polling: the issuer defers by a few seconds.
@@ -171,11 +173,7 @@ func (s *issuance) oauthClient(ctx context.Context, asMeta wallet.AuthorizationS
 	if err != nil {
 		return nil, err
 	}
-	instanceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	dpopKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	instanceKey, dpopKey, custody, err := s.clientKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -194,15 +192,20 @@ func (s *issuance) oauthClient(ctx context.Context, asMeta wallet.AuthorizationS
 	km, err := keys.NewKeyManagerFromSigners([]keys.SignerSpec{
 		{Purpose: keys.ClientAttestationPoPSigning, Algorithm: fapi.ES256, Signer: instanceKey},
 		{Purpose: keys.DPoPProofSigning, Algorithm: fapi.ES256, Signer: dpopKey},
-	})
+	}, custody...)
 	if err != nil {
 		return nil, err
+	}
+	var sessions storage.SessionStore = memstore.NewSessionStore()
+	assurance := client.AssuranceDevelopment
+	if s.env.production {
+		sessions, assurance = s.env.stores.Sessions, client.AssuranceProduction
 	}
 	return client.New(client.Config{
 		Issuer: issuer, ClientID: fapi.ClientID(s.env.o.clientID), RedirectURI: s.env.o.redirectURI,
 		Endpoints:                      endpoints,
 		Profile:                        client.ProfileFAPISecurity,
-		Assurance:                      client.AssuranceDevelopment,
+		Assurance:                      assurance,
 		ClientAuthMethod:               storage.ClientAuthMethodAttestation,
 		AuthorizationResponseIssPolicy: client.RequireAuthorizationResponseIss,
 		OAuthOnly:                      true,
@@ -212,10 +215,33 @@ func (s *issuance) oauthClient(ctx context.Context, asMeta wallet.AuthorizationS
 			HTTPTimeout: 30 * time.Second, MaxHTTPResponseBytes: 2 << 20, MaxJOSECompactBytes: 16 * 1024,
 		},
 	}, client.Dependencies{
-		Sessions: memstore.NewSessionStore(), Keys: km, HTTP: s.env.http,
+		Sessions: sessions, Keys: km, HTTP: s.env.walletHTTP(),
 		Clock: client.SystemClock{}, Random: rand.Reader, Attestation: attestation,
 		DPoPNonceCache: client.NewInMemoryDPoPNonceCache(),
 	})
+}
+
+// clientKeys are the issuance's instance and DPoP keys: in production,
+// keys of the durable KeyStore, whose custody the key manager declares
+// as fapigo/client requires; otherwise fresh keys in memory.
+func (s *issuance) clientKeys(ctx context.Context) (instance, dpop crypto.Signer, custody []keys.CustodyOption, err error) {
+	if s.env.production {
+		ks := s.env.stores.Keys
+		if instance, err = ks.NewKey(ctx, walletflow.KeyPurposeInstance); err != nil {
+			return nil, nil, nil, err
+		}
+		if dpop, err = ks.NewKey(ctx, walletflow.KeyPurposeDPoP); err != nil {
+			return nil, nil, nil, err
+		}
+		return instance, dpop, []keys.CustodyOption{keys.DeclareCustody(s.env.stores.Custody)}, nil
+	}
+	if instance, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+		return nil, nil, nil, err
+	}
+	if dpop, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+		return nil, nil, nil, err
+	}
+	return instance, dpop, nil, nil
 }
 
 // challenged is a Wallet Attestation whose PoPs carry a fresh challenge.

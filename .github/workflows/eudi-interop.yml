@@ -28,6 +28,11 @@
 # formats must be issued and pass the wallet's own checks, and controls
 # refused. Its images are pinned by digest too, and the weekly run tests
 # the PID Issuer's latest image as well.
+#
+# The verifier-production and pid-issuer-production jobs run the
+# verifier and PID Issuer runs again with OID4VCgo's wallet at
+# production assurance (WALLET_ASSURANCE=production): its own cases,
+# the wallet in a container on interop/prodnet.sh's network.
 name: EUDI interop
 
 on:
@@ -88,6 +93,47 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: eudi-interop
+          path: |
+            ${{ runner.temp }}/eudi-interop.log
+            ${{ runner.temp }}/eudi-work/*.log
+            ${{ runner.temp }}/eudi-work/*.txt
+            ${{ runner.temp }}/eudi-work/result-*.json
+          retention-days: 14
+
+  # The same verifier, presented to by walletflow at production
+  # assurance (WALLET_ASSURANCE=production): the wallet in a container
+  # on interop/prodnet.sh's network, with its own HTTP client and the
+  # run's TLS CA as its system roots.
+  verifier-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: sqlstore/go.sum
+
+      - name: Run the interop script
+        env:
+          VERIFIER_IMAGE: ${{ inputs.verifier_image || (github.event.schedule == '15 7 * * 1' && 'ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint:latest') || '' }}
+          WALLET_ASSURANCE: production
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/eudi-work"
+          mkdir -p "$WORK"
+          [ -n "$VERIFIER_IMAGE" ] || unset VERIFIER_IMAGE
+          bash interop/eudi/run-verifier.sh 2>&1 | tee "$RUNNER_TEMP/eudi-interop.log"
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eudi-interop-production
           path: |
             ${{ runner.temp }}/eudi-interop.log
             ${{ runner.temp }}/eudi-work/*.log
@@ -233,6 +279,47 @@ jobs:
             ${{ runner.temp }}/eudi-pid-work/result-*.json
           retention-days: 14
 
+  # The same stack, with the wallet at production assurance
+  # (WALLET_ASSURANCE=production): its own cases, in a container on
+  # interop/prodnet.sh's network, with sqlstore's stores.
+  pid-issuer-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: sqlstore/go.sum
+
+      - name: Run the interop script
+        env:
+          PID_ISSUER_IMAGE: ${{ inputs.pid_issuer_image || (github.event.schedule == '15 7 * * 1' && 'ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest') || '' }}
+          WALLET_ASSURANCE: production
+        run: |
+          set -o pipefail
+          export WORK="$RUNNER_TEMP/eudi-pid-work"
+          mkdir -p "$WORK"
+          [ -n "$PID_ISSUER_IMAGE" ] || unset PID_ISSUER_IMAGE
+          bash interop/eudi/run-pid-issuer.sh 2>&1 | tee "$RUNNER_TEMP/eudi-pid-interop.log"
+
+      # As the pid-issuer job's: the logs, their passwords redacted, and
+      # the wallet's results, not its stores.
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eudi-pid-interop-production
+          path: |
+            ${{ runner.temp }}/eudi-pid-interop.log
+            ${{ runner.temp }}/eudi-pid-work/*.log
+            ${{ runner.temp }}/eudi-pid-work/result-*.json
+          retention-days: 14
+
   # Report each scheduled (or dispatched) default-branch run on an
   # issue, opened when the run fails and closed when one passes
   # (.github/scripts/scheduled-alert.sh): nothing else alerts on it.
@@ -240,7 +327,7 @@ jobs:
   # a dispatch naming one) has its own label, so a pinned run passing
   # doesn't close its issue.
   alert:
-    needs: [verifier, wallet, issuer, pid-issuer]
+    needs: [verifier, verifier-production, wallet, issuer, pid-issuer, pid-issuer-production]
     if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read

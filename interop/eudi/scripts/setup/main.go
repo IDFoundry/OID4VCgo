@@ -118,23 +118,24 @@ func main() {
 	serveHosts := flag.String("serve-hosts", "localhost,host.docker.internal", "comma-separated DNS names for serve's TLS certificate")
 	verifierCurve := flag.String("verifier-curve", "P-256", "the Access Certificate key's curve: P-256, signing ES256, or P-521, signing ES512")
 	crlHost := flag.String("crl-host", "localhost:18448", "host:port of the https CRL distribution point the Access Certificate's CA names, which the wallet serves and fetches (run-verifier.sh's CRL_PORT)")
+	verifierHost := flag.String("verifier-host", "localhost", "the verifier's host name: its TLS certificate's and its Access Certificate's dNSName")
 	flag.Parse()
 	if *out == "" || *serveURL == "" {
 		fail("-out and -serve-url are required")
 	}
-	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve, *crlHost); err != nil {
+	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve, *crlHost, *verifierHost); err != nil {
 		fail(err.Error())
 	}
 }
 
-func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost string) error {
+func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost, verifierHost string) error {
 	if u, err := url.Parse(serveURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("-serve-url %q isn't an https URL", serveURL)
 	}
 	files := map[string][]byte{}
 	put := func(name, content string) { files[name] = []byte(content) }
 
-	if err := verifierFiles(put, verifierCurve, crlHost); err != nil {
+	if err := verifierFiles(put, verifierCurve, crlHost, verifierHost); err != nil {
 		return err
 	}
 	if err := serveFiles(put, serveHosts); err != nil {
@@ -186,7 +187,7 @@ func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost strin
 // certificate against it (verifier_crl). Its three CRLs are a current
 // one revoking nothing, one revoking the Access Certificate, and one
 // already expired, for the controls.
-func verifierFiles(put func(name, content string), curve, crlHost string) error {
+func verifierFiles(put func(name, content string), curve, crlHost, host string) error {
 	var c elliptic.Curve
 	switch curve {
 	case "P-256":
@@ -210,10 +211,11 @@ func verifierFiles(put func(name, content string), curve, crlHost string) error 
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
 	verifierCAPEM := verifierCA.CertPEM
-	// Its dNSName, localhost, the host of the verifier's response_uri,
-	// is the x509_san_dns client_id run-verifier.sh also configures it
-	// with (OpenID4VP 1.0 §5.9.3); an x509_hash client_id ignores it.
-	leaf, err := verifierCA.Issue("oid4vcgo-eudi-interop-verifier", &verifierKey.PublicKey, nil, "localhost")
+	// Its dNSName, host (-verifier-host), the host of the verifier's
+	// response_uri, is the x509_san_dns client_id run-verifier.sh also
+	// configures it with (OpenID4VP 1.0 §5.9.3); an x509_hash client_id
+	// ignores it.
+	leaf, err := verifierCA.Issue("oid4vcgo-eudi-interop-verifier", &verifierKey.PublicKey, nil, host)
 	if err != nil {
 		return fmt.Errorf("verifier access certificate: %w", err)
 	}
@@ -230,7 +232,7 @@ func verifierFiles(put func(name, content string), curve, crlHost string) error 
 	}
 	put("registration-certificate.jws", rc)
 
-	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM("localhost", []string{"localhost"})
+	tlsCertPEM, tlsKeyPEM, err := conformancecert.SelfSignedPEM(host, []string{host})
 	if err != nil {
 		return fmt.Errorf("verifier tls certificate: %w", err)
 	}

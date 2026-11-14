@@ -296,14 +296,21 @@ func (p *peer) issueMDL(dsKey *ecdsa.PrivateKey, ds *x509.Certificate) error {
 }
 
 // wallet is the holder's walletflow wallet, trusting the driver's
-// reader CA.
+// reader CA, for in-person and org-iso-mdoc presentations: at
+// production assurance, as a wallet app runs it. These fetch nothing,
+// so it needs no network of production's (../../../prodnet.sh), nor,
+// presenting a credential it holds, durable stores. The reader's
+// certificate isn't checked for revocation: Multipaz's reader CA, made
+// in the driver by Multipaz's own generator, names a distribution point
+// nothing serves, so MdocReaderRevocation is certrevocation.NoCheck,
+// production's explicit decline, not development's leaving it unset.
 func (p *peer) wallet(mac bool) (*walletflow.Wallet, error) {
 	auth := walletflow.ProximityDeviceSignature
 	if mac {
 		auth = walletflow.ProximityDeviceMACPreferred
 	}
 	return walletflow.New(walletflow.Config{
-		Development: true, MdocReaderRoots: p.mpzReaderCA, MdocReaderLeafPolicy: mdocdcapi.RequireReaderAuthenticationEKU,
+		MdocReaderRoots: p.mpzReaderCA, MdocReaderLeafPolicy: mdocdcapi.RequireReaderAuthenticationEKU,
 		MdocReaderRevocation: certrevocation.NoCheck{}, ProximityDeviceAuth: auth,
 	}, walletflow.Dependencies{Keys: p.keys, Credentials: p.store})
 }

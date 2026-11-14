@@ -30,6 +30,9 @@
 // status list entry is then revoked at the status list service, and
 // checked again.
 //
+// With -assurance production, each engine runs as a deployment runs it,
+// at production assurance, its stores in -store (production.go).
+//
 // The result, written to -out as JSON, says how far the run got and
 // what it saw; the script decides whether that's what the case
 // expects. Usage: see run-pid-issuer.sh.
@@ -59,11 +62,15 @@ type options struct {
 	walletStatusIdx         int
 	keyStorageStatusIdx     int
 	revokeAPIKey            string
+	// assurance is development or production (production.go), and store
+	// the directory of production's durable stores.
+	assurance, store string
 }
 
 // result is what the run reports.
 type result struct {
 	Engine        string `json:"engine"`
+	Assurance     string `json:"assurance"`
 	Configuration string `json:"configuration"`
 	Proof         string `json:"proof,omitempty"`
 	// OK is set when every step succeeded; otherwise Step is the one
@@ -132,7 +139,7 @@ func main() {
 	flag.StringVar(&o.work, "work", "", "the directory pidsetup wrote")
 	flag.StringVar(&o.out, "out", "", "the file to write the result to")
 	flag.StringVar(&o.engine, "engine", "core", "core (wallet and fapigo/client) or walletflow")
-	flag.StringVar(&o.issuer, "issuer", "", "the Credential Issuer Identifier, for a wallet-initiated issuance")
+	flag.StringVar(&o.issuer, "issuer", "", "the Credential Issuer Identifier, for a wallet-initiated issuance; with -offer, the issuer whose Status Issuer walletflow trusts")
 	flag.StringVar(&o.configID, "config", "", "the credential configuration to request, for a wallet-initiated issuance")
 	flag.StringVar(&o.offer, "offer", "", "a Credential Offer link, for an issuer-initiated issuance")
 	flag.StringVar(&o.proof, "proof", "jwt", "attestation, jwt (kid 0), jwk or jwt-each")
@@ -147,7 +154,13 @@ func main() {
 	flag.IntVar(&o.keyStorageStatusIdx, "key-storage-status-idx", 0, "the Key Attestation's key_storage_status index (1 is revoked)")
 	flag.StringVar(&o.revokeAPIKey, "revoke-api-key", "", "the status list service's API key: revoke the first credential, and check it again")
 	flag.StringVar(&o.crlSet, "crl-set", "current", "the CRLs this process publishes for the IACA and the metadata CA (pidsetup's crl-publisher-SET.json): current, revoked (the IACA revokes the issuer's signers) or expired (the IACA's list is past its nextUpdate)")
+	flag.StringVar(&o.assurance, "assurance", assuranceDevelopment, "development, or production: the wallet as a deployment runs it (production.go), its stores in -store")
+	flag.StringVar(&o.store, "store", "", "with -assurance production, the directory of the wallet's durable stores")
 	flag.Parse()
+	if (o.assurance != assuranceDevelopment && o.assurance != assuranceProduction) || (o.assurance == assuranceProduction) != (o.store != "") {
+		fmt.Fprintln(os.Stderr, "pidwallet: -assurance is development or production, which needs -store")
+		os.Exit(2)
+	}
 	if o.work == "" || o.out == "" || o.redirectURI == "" || (o.offer == "") == (o.issuer == "" || o.configID == "") {
 		fmt.Fprintln(os.Stderr, "pidwallet: -work, -out, -redirect-uri, and either -offer or -issuer and -config are required")
 		os.Exit(2)
@@ -171,12 +184,13 @@ func main() {
 
 // run runs the engine o names.
 func run(ctx context.Context, o options) result {
-	res := result{Engine: o.engine, Configuration: o.configID, Proof: o.proof}
+	res := result{Engine: o.engine, Assurance: o.assurance, Configuration: o.configID, Proof: o.proof}
 	env, err := newEnvironment(o)
 	if err != nil {
 		res.Step, res.Error = "setup", err.Error()
 		return res
 	}
+	defer func() { _ = env.stores.Close() }()
 	if env.revocation, err = startCRL(ctx, o); err != nil {
 		res.Step, res.Error = "setup", "crl: "+err.Error()
 		return res

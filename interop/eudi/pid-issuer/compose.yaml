@@ -29,7 +29,7 @@ services:
       KC_PROXY_HEADERS: forwarded
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /idp
-      KC_HOSTNAME: https://localhost:${PORT:?}/idp
+      KC_HOSTNAME: ${PUBLIC_ORIGIN:?}/idp
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HTTPS_CERTIFICATE_FILE: /etc/oid4vcgo/keycloak-cert.pem
       KC_HTTPS_CERTIFICATE_KEY_FILE: /etc/oid4vcgo/keycloak-key.pem
@@ -89,8 +89,8 @@ services:
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENTID: pid-issuer-srv
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_OPAQUETOKEN_CLIENTSECRET: ${INTROSPECTION_SECRET:?}
       SPRING_HTTP_CODECS_MAXINMEMORYSIZE: 8MB
-      ISSUER_PUBLICURL: https://localhost:${PORT:?}/pid-issuer
-      ISSUER_AUTHORIZATIONSERVER_PUBLICURL: https://localhost:${PORT:?}/idp/realms/pid-issuer-realm
+      ISSUER_PUBLICURL: ${PUBLIC_ORIGIN:?}/pid-issuer
+      ISSUER_AUTHORIZATIONSERVER_PUBLICURL: ${PUBLIC_ORIGIN:?}/idp/realms/pid-issuer-realm
       ISSUER_AUTHORIZATIONSERVER_INTROSPECTION: https://keycloak:8443/idp/realms/pid-issuer-realm/protocol/openid-connect/token/introspect
       ISSUER_KEYSTORE_FILE: file:/issuer-keys.p12
       ISSUER_KEYSTORE_TYPE: PKCS12

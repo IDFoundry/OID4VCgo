@@ -1,6 +1,7 @@
 // Command wallet is OID4VCgo's wallet for interop/waltid/run.sh, on
-// walletflow at development assurance: it redeems each of walt.id
-// Issuer2's pre-authorized code offers (-offer, repeatable), checking
+// walletflow at development assurance (or production, -assurance): it
+// redeems each of walt.id Issuer2's pre-authorized code offers
+// (-offer, repeatable), checking
 // each credential as walletflow does, its issuer's chain to
 // -issuer-ca among them; then, with -request, answers walt.id
 // Verifier2's request with them, trusting Verifiers whose Access
@@ -30,6 +31,11 @@
 // transport: each Token Response's token_type, each encryption JWK's
 // alg and kid in the issuer's credential_request_encryption, and in
 // a Verifier's request object's client_metadata.
+//
+// With -assurance production, walletflow runs as a deployment runs it
+// (production.go): its own HTTP client, the system's TLS roots, its
+// stores in -store; -tls-ca, -resolve and the observing transport are
+// then unused.
 //
 // With -tamper, the transport changes the presentation on its way to
 // Verifier2, for the negative presentations a correct Verifier must
@@ -212,6 +218,9 @@ type options struct {
 	// walletProvider, walletProviderTLS and clientID: OID4VCgo's
 	// Wallet Provider, in place of attesterConfig's stand-in.
 	walletProvider, walletProviderTLS, clientID string
+	// assurance is "development" or "production" (production.go), and
+	// store the directory of production's durable stores.
+	assurance, store string
 }
 
 func main() {
@@ -233,9 +242,15 @@ func main() {
 	flag.StringVar(&opts.mdocIssuerCA, "mdoc-issuer-ca", "", "the IACA mdocs chain to, if not -issuer-ca")
 	flag.StringVar(&opts.revoke, "revoke", "", "OID4VCgo's issuer's POST /status: revoke every credential received before answering -request")
 	flag.StringVar(&opts.crlSet, "crl-set", "current", "the CA's CRL this process publishes, setup's crl-publisher-SET.json in the working directory, which the wallet checks Issuer2's and Verifier2's certificates against: current, revoked-issuer, revoked-verifier or expired; none checks no revocation (OID4VCgo's issuer's CAs publish no CRL)")
+	flag.StringVar(&opts.assurance, "assurance", "development", "development, or production: walletflow as a deployment runs it (production.go), its stores in -store; -tls-ca and -resolve are then unused, the TLS roots the system's")
+	flag.StringVar(&opts.store, "store", "", "with -assurance production, the directory of the wallet's durable stores")
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
+	}
+	if (opts.assurance != "development" && opts.assurance != "production") || (opts.assurance == "production") != (opts.store != "") ||
+		(opts.assurance == "production" && *tamper != "") {
+		log.Fatal("-assurance is development or production, which needs -store and takes no -tamper (its transport is walletflow's own)")
 	}
 	if *tlsCA == "" || *issuerCA == "" || *verifierCA == "" || len(offered) == 0 || *out == "" {
 		log.Fatal("-tls-ca, -issuer-ca, -verifier-ca, -offer and -out are required")
@@ -326,6 +341,11 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 			return fail(err)
 		}
 	}
+	stores, err := assurance(opts, &cfg, &deps, revocation)
+	if err != nil {
+		return fail(err)
+	}
+	defer func() { _ = stores.Close() }()
 	w, err := walletflow.New(cfg, deps)
 	if err != nil {
 		return fail(err)
