@@ -250,7 +250,8 @@ public final class ProximityPresentation: @unchecked Sendable {
         case declined
         /// The reader ended the session first.
         case readerEnded
-        /// `cancel` was called.
+        /// `cancel` was called, or the caller of `respond` was cancelled
+        /// while the response was being sent.
         case cancelled
         /// The session failed: a `ProximityError` or `WalletError`.
         case failed(any Error & Sendable)
@@ -410,6 +411,19 @@ public final class ProximityPresentation: @unchecked Sendable {
     /// them all (`KeychainKeyStore.Options.holderUserPresence`). On a
     /// `WalletError` — the prompt cancelled, say — nothing was sent and
     /// the request stands: try again, or `decline`.
+    ///
+    /// It never leaves the session in `.responding`:
+    /// - Returning: the response was sent, and the state is `.presented`.
+    /// - A `WalletError`, or the caller's cancellation, before anything
+    ///   was sent: the state is `.requestReceived` again.
+    /// - A `ProximityError`: the response couldn't be delivered, and the
+    ///   state is `.failed` with it.
+    /// - A `CancellationError` while the response was being sent: the
+    ///   reader may hold part of it, so the state is `.cancelled`.
+    /// - A `WalletError` with code `.internalError` from sending: the
+    ///   state is `.failed` with it.
+    ///
+    /// After `cancel`, the state is `.cancelled` whatever it throws.
     @discardableResult
     public func respond(answers: [MdocPresentation.Answer]) async throws -> Responded {
         guard case .requestReceived(let request) = state,
@@ -445,6 +459,15 @@ public final class ProximityPresentation: @unchecked Sendable {
             try await transport.send(answer.send)
         } catch let e as ProximityTransportError {
             let error = ProximityError(e)
+            finish(.failed(error))
+            throw error
+        } catch is CancellationError {
+            // The caller's own cancellation, mid-send: the reader may hold
+            // part of the response, so it can't be sent again.
+            finish(.cancelled)
+            throw CancellationError()
+        } catch {
+            let error = WalletError(code: .internalError, message: "\(error)")
             finish(.failed(error))
             throw error
         }

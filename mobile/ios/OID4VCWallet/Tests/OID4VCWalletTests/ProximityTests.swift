@@ -70,6 +70,33 @@ final class LosingTransport: ProximityTransport, @unchecked Sendable {
     func close() { inner.close() }
 }
 
+/// A transport whose `send` never finishes once `stall` was called,
+/// until its caller is cancelled: `sending` signals that it waits.
+final class StallingTransport: ProximityTransport, @unchecked Sendable {
+    private let inner: PipeTransport
+    private let lock = NSLock()
+    private var stalled = false
+    let sending = Signal()
+
+    init(_ inner: PipeTransport) { self.inner = inner }
+
+    func stall() { lock.withLock { stalled = true } }
+
+    func connect() async throws { try await inner.connect() }
+
+    func send(_ message: Data) async throws {
+        if lock.withLock({ stalled }) {
+            sending.signal()
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+        }
+        try await inner.send(message)
+    }
+
+    func receive() async throws -> Data { try await inner.receive() }
+
+    func close() { inner.close() }
+}
+
 /// In-person presentation through the Swift API, holder and reader in one
 /// process over an in-memory transport: the Go sessions, the key store and
 /// both state machines, without BLE.
@@ -386,6 +413,35 @@ final class ProximityTests: XCTestCase {
         }
         guard case .failed(let error) = holder.state, let e = error as? ProximityError else { return XCTFail("holder: \(holder.state)") }
         XCTAssertEqual(e.reason, .connectionLost)
+        reader.cancel()
+    }
+
+    /// Cancelling the caller of `respond` while the response is being
+    /// sent ends the session: the reader may hold part of it.
+    func testCancellingRespondMidSendEndsTheSession() async throws {
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        let stalling = StallingTransport(holderEnd)
+        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in stalling }
+        let reader = try s.reader.start(qrCode: holder.qrCode, docType: Self.docType,
+                                        elements: [Self.namespace: ["family_name", "given_name"]], timeouts: timeouts) { _ in readerEnd }
+        _ = try await request(holder)
+        stalling.stall()
+        let mdocID = s.mdocID
+        // Built outside the task: the region-based isolation checker
+        // can't follow Self.namespace captured in its closure.
+        let elements = [MdocPresentation.Element(namespace: Self.namespace, identifier: "family_name", retain: false)]
+        let responding = Task {
+            try await holder.respond(document: 0, credentialID: mdocID, elements: elements)
+        }
+        try await stalling.sending.wait()
+        responding.cancel()
+        do {
+            _ = try await responding.value
+            XCTFail("a cancelled response was reported presented")
+        } catch is CancellationError {}
+        guard case .cancelled = holder.state else { return XCTFail("holder: \(holder.state)") }
         reader.cancel()
     }
 
