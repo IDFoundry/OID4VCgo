@@ -242,7 +242,7 @@ func documentIndex(raw []byte, docCount int) (int, error) {
 	if err := decMode.Unmarshal(raw, &v); err != nil {
 		return 0, fmt.Errorf("decode a document reference: %w: %w", ErrCBORValidation, err)
 	}
-	if v >= uint64(docCount) {
+	if docCount <= 0 || v >= uint64(docCount) {
 		return 0, fmt.Errorf("document reference %d, but the request has %d DocRequests: %w", v, docCount, ErrCBORValidation)
 	}
 	return int(v), nil
@@ -299,7 +299,7 @@ func arrayItems(raw []byte, limit int, what string, fn func(i int, item []byte) 
 	if err != nil {
 		return fmt.Errorf("%s isn't an array: %w", what, ErrCBORValidation)
 	}
-	if !indefinite && n > uint64(limit) {
+	if !indefinite && (limit < 0 || n > uint64(limit)) {
 		return fmt.Errorf("%s has %d items, over %d: %w", what, n, limit, ErrCBORValidation)
 	}
 	for i := 0; indefinite || uint64(i) < n; i++ {

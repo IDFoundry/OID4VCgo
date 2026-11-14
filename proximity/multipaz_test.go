@@ -88,6 +88,7 @@ func pemCertificate(tb testing.TB, text string) *x509.Certificate {
 	block, _ := pem.Decode([]byte(text))
 	if block == nil {
 		tb.Fatal("not PEM")
+		return nil
 	}
 	c, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
