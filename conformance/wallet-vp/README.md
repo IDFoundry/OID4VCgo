@@ -115,6 +115,14 @@ Verifier's security by. For every Verifier it talks to:
   unset (e.g. a config from `scripts/generate-config`), the Request
   Object's certificate chain isn't checked at all. The binary logs a
   warning at startup in that case.
+- **Revocation, against what the config names:** with `verifier_crl`
+  set, the Request Object's certificate chain is checked against the
+  CRLs of its CAs (`X5CVerifierRoots.Revocation`), which a
+  `certrevocation.Refresher` fetches over https from the distribution
+  points it names, each bound to its CA; a revoked certificate is
+  refused, and so is one whose CA has no current CRL. `crl_publisher`
+  serves the driver's CRLs from this process. Unset, revocation isn't
+  checked, and the binary logs a warning.
 
 This binary is also run daily, and on each release, against
 polaris-oid4vp, an independent Verifier, with four controls that must
@@ -126,7 +134,21 @@ this binary doesn't trust (`verifier_trust_anchors_pem`). See
 `scripts/run-modules` issues the suite's Request Object signing
 certificate from a CA it generates per run and sets that CA as
 `verifier_trust_anchors_pem`, so every conformance run exercises the
-chain check. To point this binary at your own Verifier, set
+chain check. That CA names an https CRL distribution point on
+`conformance-wallet-vp:8444` in the certificate, and the run sets
+`crl_publisher` to serve its CRL there and `verifier_crl` to check it,
+so every module, in all four legs, also checks the Verifier's
+certificate against a CRL fetched over the Docker network. The
+`direct_post.jwt` legs end with two negative controls, each
+`happy-flow` under a plan of its own (`driveCRLControl`): a Verifier
+certificate the CA's CRL revokes, and one from a CA whose distribution
+point serves only a CRL past its `nextUpdate`. The wallet must refuse
+each before answering, its refusal naming `untrusted verifier: wallet:
+verifier certificate: certchain: revocation: no verified path passes
+it: certrevocation: certificate is revoked`, or `…: certchain:
+revocation couldn't be decided: certrevocation: no current CRL from
+the certificate's issuer`. The suite keeps waiting for a presentation
+and the module is stopped: its verdict isn't graded. To point this binary at your own Verifier, set
 `verifier_trust_anchors_pem` to your Verifier's CA. A Wallet built on
 the `wallet` package verifies TLS through its own `fapihttp` client
 and trusts Verifiers through `wallet.X5CVerifierRoots` — the same

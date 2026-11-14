@@ -42,15 +42,17 @@ and is still a harness: see its section):
 - **No atomic completion.** A session's `done` flag is checked and set
   by the handler under a per-session lock, not by a store's atomic
   update, and only one process's memory holds it.
-- **Development assurance, a test harness's status fetch, no
-  revocation.** It runs under `verifier.AssuranceDevelopment`. It
+- **Development assurance, a test harness's status fetch and CRL
+  fetch.** It runs under `verifier.AssuranceDevelopment`. It
   checks credential status when `status_list_trust_anchors_pem` is set
   (the suite runs and the interop runs set it), but its fetch may
   reach private or loopback addresses and, in the suite runs, trusts
   the suite's TLS certificate by a pin rather than a chain, neither of
-  which production allows. It declines certificate revocation
-  (`certrevocation.NoCheck{}`) for the credential issuers and status
-  list signers (see "No certificate revocation" below).
+  which production allows. It checks the credential issuers' and
+  status list signers' certificates for revocation only when
+  `issuer_crl` is set (see "Certificate revocation" below), and its CRL
+  fetch reaches the Docker network; unset, it declines
+  (`certrevocation.NoCheck{}`).
 
 A Verifier uses `verifier.Transactions` with a durable
 `verifier.TransactionStore` (encoded with `verifier.TransactionCodec`),
@@ -269,6 +271,34 @@ and run both drivers. `present-revoked-credential` (and, for
 other accepted module carrying a status reference fails on the
 warning, and each run exits 1.
 
+### Certificate revocation
+
+In the `sd_jwt_vc` legs (both engines) the credential issuer CA the
+suite's Signing JWK is certified under is the harness's
+(`internal/conformanceverifier`'s `issuerPKI`): it names an https CRL
+distribution point on `conformance-verifier:8444` in every certificate
+it issues, `cmd/conformance-verifier` publishes its CRL there
+(`crl_publisher`) and checks the issuer's certificate and the status
+list signer's (the same key) against it (`issuer_crl`), fetching it
+over the Docker network with a `certrevocation.Refresher`, https only,
+the distribution point bound to its CA. So every accepted module also
+shows a current CRL was fetched and the certificate found unrevoked.
+
+Two negative controls follow the plan's modules, each `happy-flow`
+under a plan of its own (`DriveCRLControls`): one whose Signing JWK's
+certificate the CA's CRL revokes, and one whose CA's distribution
+point serves only a CRL past its `nextUpdate`. The Verifier must refuse
+each, its result page naming `reason: untrusted_issuer` and
+`resolve issuer key: certchain: revocation: no verified path passes
+it: certrevocation: certificate is revoked`, or `…: certchain:
+revocation couldn't be decided: certrevocation: no current CRL from
+the certificate's issuer`. The suite, whose `happy-flow` expects the
+presentation accepted, fails the module (`FINISHED=FAILED`), which
+isn't graded.
+
+The `mso_mdoc` legs don't check revocation: the suite's IACA and
+Document Signers publish no CRL.
+
 ### Transactions engine
 
 `run-sdjwt-modules -transactions` and `run-mdoc-module -transactions`
@@ -339,14 +369,10 @@ instead:
   recorded the same way. Its TLS is pinned to the suite's certificate,
   as for the default engine (`pinnedTLSConfig`). Production's own
   check of the `Fetcher` is the one thing not exercised.
-- **No certificate revocation** (`certrevocation.NoCheck{}`) for the
-  issuers' and the status list signers' certificates, a decision
-  production accepts. For `sd_jwt_vc` that's this harness's choice,
-  not a limit of the suite: the credential issuer CA the suite signs
-  its credentials and status lists under is one
-  `internal/conformanceverifier.GenerateKeyMaterial` generates each
-  run, and it publishes no CRL for it. For `mso_mdoc` the suite
-  generates its own IACA and Document Signer each run.
+- **Certificate revocation for `sd_jwt_vc` only**: see "Certificate
+  revocation" below. For `mso_mdoc` the suite generates its own IACA
+  and Document Signer each run, and publishes no CRL for them, so
+  those legs decline (`certrevocation.NoCheck{}`).
 
 Nothing falls back to development assurance.
 

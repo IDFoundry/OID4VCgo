@@ -88,11 +88,12 @@ runs still don't exercise, in particular:
 - The issuer's production setup beyond its single-instance SQLite
   stores: PostgreSQL, several instances sharing them
   (`DeploymentHorizontallyScaled`), and certificate revocation checks
-  on Wallet Attestation and key attestation signers and on the signers
-  of the status lists their `status` claims name, which it declines
-  (`NoClientCertificateRevocationCheck`, `certrevocation.NoCheck`). The
-  suite's attestations carry no `status` claim, so the status checks
-  are configured but never fetch a list.
+  on the signers of the status lists Wallet Attestations' and key
+  attestations' `status` claims name, which it declines
+  (`certrevocation.NoCheck`). The suite's attestations carry no
+  `status` claim, so the status checks are configured but never fetch
+  a list. (The attestation signers' own certificates are checked
+  against CRLs: see "Certificate revocation" below.)
 - A credential the issuer has revoked. Every issuer run, development
   and production, gives each credential it issues its own entry in the
   issuer's Token Status List (`status_lists`: `statuslist.Allocator`
@@ -106,6 +107,10 @@ runs still don't exercise, in particular:
   verifier, walt.id and Multipaz interop runs below do: a credential
   revoked partway through is refused (or read INVALID) by the other
   side's own status check.
+- Certificate revocation where the suite's own CA issues the
+  certificate: its per-run mdoc IACA (the Verifier's and the Wallet's
+  `mso_mdoc` runs) publishes no CRL a binary could fetch, so those
+  Document Signers aren't checked. See "Certificate revocation".
 - Refresh tokens: under the VCI plans the suite takes the scope from
   the credential configuration's single scope-token and never asks for
   `offline_access`, and `fapigo/server` grants no scope that wasn't
@@ -140,6 +145,53 @@ runs still don't exercise, in particular:
   redirects them to a registered redirect URI, which production
   refuses.
 
+## Certificate revocation
+
+Wherever the certificate OID4VCgo checks is issued by a CA the harness
+makes, the runs check it against that CA's CRL as a deployment would:
+the CA (`internal/conformancecrl.Authority`) names an https CRL
+distribution point in every certificate it issues and publishes a
+signed CRL there (`conformancecrl.Publisher`), and the binary under
+test fetches it back over the network with a
+`certrevocation.Refresher` (`conformancecrl.Trust`): https only, each
+distribution point bound to its CA, a revoked certificate refused with
+`certrevocation.ErrRevoked` and one whose CA has no current CRL with
+`ErrNoCurrentCRL`. Two things differ from production: the distribution
+points are on the Docker network or loopback, which the fetcher may
+dial for those hosts alone, and their TLS certificate is pinned rather
+than chained to the system roots. The publisher runs in the binary's
+own process or container, serving lists the driver signed with the CA's
+key; nothing in the check is short-circuited.
+
+Each run with CRL checks also has negative controls, graded by their
+reason: a certificate its CA's CRL revokes, and one from a CA whose
+distribution point serves only a CRL past its `nextUpdate`. A refusal
+for any other reason fails the control.
+
+| Run | Checked against CRLs | Controls, and the reason each must give |
+| --- | --- | --- |
+| Issuer, every leg (development and production) | Wallet Attestation signers (`server.ClientCertificateCRLs` on `X5CAttesterChain`), key attestation signers (`issuer.X5CAttestationVerifier`) | the plain `happy-flow` with a revoked attester certificate: PAR answered `invalid_client` "attester certificate is revoked"; with an attester CA without a current CRL: `server_error` "failed to check the attester certificate's revocation status" — read from the module's log of the PAR response, reported `CONTROL=REFUSED` |
+| Wallet (OID4VCI), every leg | the SD-JWT VC issuer's and its Token Status List signer's certificates (`VerifyIssuedCredentialParams.IssuerRevocation`, `statuslist.VerifyOptions.Revocation`) | wallet-initiated `sd_jwt_vc` legs: the credential issuance module with a revoked issuer certificate, and one from a CA without a current CRL: the wallet refuses the credential, `errors.Is` `ErrRevoked` / `ErrNoCurrentCRL` |
+| Verifier `sd_jwt_vc`, both engines (`verifier.Transactions` under production) | the credential issuer's and the status list signer's certificates (`X5CIssuerKeyResolver.Revocation`, `statuslist.VerifyOptions.Revocation`) | `happy-flow` with a revoked issuer certificate, and one from a CA without a current CRL: the result page's `reason: untrusted_issuer` and `certrevocation: certificate is revoked` / `no current CRL from the certificate's issuer` |
+| Wallet-VP, all four legs | the Verifier's Request Object certificate (`X5CVerifierRoots.Revocation`) | `direct_post.jwt` legs: `happy-flow` with a revoked Verifier certificate, and one from a CA without a current CRL: the wallet refuses before answering, `untrusted verifier: … certrevocation: certificate is revoked` / `… no current CRL from the certificate's issuer` |
+
+Not checked, and why:
+
+- The suite's own certificates: the per-run mdoc IACA and Document
+  Signers in the Verifier's and the Wallet's `mso_mdoc` runs (and the
+  CWT status list signers under it) publish no CRL. Those runs keep
+  `certrevocation.NoCheck` (the Verifier) or no check (the Wallet).
+- The Issuer's key attestation controls: its `invalid_proof` response
+  says only "attestation 0: verification failed", by design, so a
+  refusal can't be graded by its reason from the suite's log. Key
+  attestation certificates are still checked against their CA's CRL in
+  every leg.
+- The production issuer's attestation status list signers (above):
+  no list is ever fetched.
+
+The interop runs that check revocation are listed in their own
+sections below.
+
 ## Interop with polaris-oid4vp
 
 Besides the OIDF suite, `.github/workflows/polaris-interop.yml` runs
@@ -153,7 +205,8 @@ OIDF suite has no negative wallet-side cases like those. The script's
 wallet config sets no `verifier_tls_trust_anchors_pem`, so the wallet
 there doesn't verify the verifier's TLS certificate (it says so at
 startup): these cases test the request object's signature and chain,
-not TLS.
+not TLS. Nor does it set `verifier_crl`: the Verifier's certificate
+isn't checked for revocation there, its CA being the script's own.
 
 It runs on each pull request (outside `mobile/`), with the wallet built
 from the pull request's checkout, so a regression shows before it's
@@ -188,6 +241,10 @@ refused for its status (`StatusNotValid`, `DocumentHasBeenRevoked`).
 The verifier never verifies a Status List Token's signature, so the
 run shows it reads the entry and refuses a revoked credential, not that
 it would refuse a forged list.
+The wallet checks the verifier's Access Certificate against its CA's
+CRL, fetched over https from the distribution point it names, and
+refuses it, for that reason, when the CA revokes it or publishes no
+current CRL.
 See
 [`interop/eudi/README.md`](../interop/eudi/README.md) for the cases,
 what the verifier doesn't check, and moving the pin.
@@ -212,7 +269,14 @@ attestation-based client authentication, the status list service),
 verifying each credential, and the SD-JWT VC's status: the status list
 service's CWT tokens don't verify, so the wallet refuses an mdoc's
 status list and its revocation isn't shown
-(`interop/eudi/run-pid-issuer.sh`).
+(`interop/eudi/run-pid-issuer.sh`). There the wallet checks every
+issuer certificate (the Document Signer's, the SD-JWT VC signer's, the
+status list signer's and the metadata signer's) against its CA's CRL,
+and refuses a credential, for that reason, whose signer the IACA
+revoked or whose IACA publishes no current CRL. The other two
+directions don't check revocation yet: the EUDI libraries present and
+obtain credentials signed under the scripts' CAs with
+`certrevocation.NoCheck` on OID4VCgo's side.
 Their cases and each component's deviations from the specifications
 are in the same README.
 
@@ -239,7 +303,13 @@ a disclosure, was changed on the way) refused. Verifier2 also checks
 the Token Status List of SD-JWT VC and mdoc PIDs `cmd/conformance-issuer`
 issued (its `credential-status` policy, which fetches the issuer's
 list, verifies its signature and reads the entry), and refuses one the
-issuer revoked after issuing it. Verifier2 accepts a PID
+issuer revoked after issuing it. `walletflow` checks Issuer2's and
+Verifier2's certificates against the run CA's CRL, and refuses a
+credential whose signer the CA revoked or which it can't check (no
+current CRL), and a Verifier whose Access Certificate it revoked, for
+those reasons; it checks no revocation where it takes credentials from
+`cmd/conformance-issuer`, nor do the walt.id-to-OID4VCgo directions.
+Verifier2 accepts a PID
 under a certificate nobody configured it with, a known gap the run
 notes, failing if it changes. It runs
 on each pull request, daily and on each release against the pinned
@@ -274,7 +344,11 @@ mDL `walletflow` presents to its Verifier, from lists OID4VCgo's
 `statuslist` publishes, VALID, and INVALID once the issuer side has
 revoked them. Multipaz's Verifier accepts a
 Key Binding JWT naming another Verifier as `aud`, a known gap the run
-notes, failing if it changes. It runs on each pull request,
+notes, failing if it changes. No certificate's revocation is checked
+in this run yet (`certrevocation.NoCheck` or none): Multipaz's IACA and
+reader CA are made by the driver through Multipaz's own API, and the
+certificates OID4VCgo issues for it name a distribution point nothing
+serves. It runs on each pull request,
 daily and on each release against the pinned release, and weekly
 against Multipaz's newest release on Maven Central. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the

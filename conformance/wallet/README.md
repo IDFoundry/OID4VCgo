@@ -65,7 +65,23 @@ status list, with its own document signer and list signer under its
 own IACA root, which it serves at `/mdoc-iaca-root.pem` for wallets to
 configure; this binary fetches it from there over the pinned
 connection, and checks the list's signer as ISO/IEC 18013-5 §12.3.6.2
-says (`mdoc.StatusTrust`). Certificate revocation isn't checked.
+says (`mdoc.StatusTrust`).
+
+The SD-JWT VC issuer's certificate and its status list signer's are
+checked for revocation (`VerifyIssuedCredentialParams.IssuerRevocation`,
+`statuslist.VerifyOptions.Revocation`): their CAs are this run's
+(`crl.go`), naming an https CRL distribution point on a loopback
+listener this process serves their CRLs from, which a
+`certrevocation.Refresher` fetches back, https only, each distribution
+point bound to its CA. The suite's mdoc IACA publishes no CRL, so mdoc
+Document Signers aren't checked. The wallet-initiated `sd_jwt_vc` runs
+end with two negative controls, each the immediate, plain credential
+issuance module under a plan of its own: one whose `signing_jwk`
+certificate the CA's CRL revokes, and one from a CA whose distribution
+point serves only a CRL past its `nextUpdate`. The wallet must refuse
+the credential with an error wrapping `certrevocation.ErrRevoked`, or
+`ErrNoCurrentCRL`, naming the issuer certificate; the control reports
+`CONTROL=REFUSED`, and the suite's verdict isn't graded.
 
 Nor is the SD-JWT VC's `iss` bound to the Credential Issuer Identifier
 (`VerifyIssuedCredentialParams.CredentialIssuer`, off by default:

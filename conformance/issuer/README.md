@@ -31,13 +31,16 @@ settings exist only for the suite:
   `exp` matching its own policy.
 - **In-memory stores**, refused under `issuer.AssuranceProduction`
   (see `issuer/issuertest` for the contracts a durable store passes).
-- **No certificate revocation** for Wallet Attestation signers
-  (`server.NoClientCertificateRevocationCheck{}`), and a 24-hour
-  Wallet Attestation lifetime to suit the suite's fixtures. The
-  production setup declines it too, for those signers, key attestation
-  signers and the signers of the status lists their `status` claims
-  name (`certrevocation.NoCheck{}` in `production.go`'s
-  `statusChecker`).
+- **Certificate revocation only against the CRLs its config names**
+  (`crl`): Wallet Attestation and key attestation signers are checked
+  against them when it's set, as every run here sets it (see
+  "Certificate revocation" below), and declined
+  (`server.NoClientCertificateRevocationCheck{}`,
+  `certrevocation.NoCheck{}`) when it isn't. A 24-hour Wallet
+  Attestation lifetime suits the suite's fixtures. The production
+  setup declines revocation for the signers of the status lists the
+  attestations' `status` claims name (`certrevocation.NoCheck{}` in
+  `production.go`'s `statusChecker`).
 - **No HAIP profile check in `issuer.New`**: it doesn't set
   `Config.Profile: haip.IssuerProfile{}`, except in the production
   setup.
@@ -386,6 +389,39 @@ validated from the Deferred Credential Endpoint's response, and in the
 mdoc runs the suite parsed and validated an `mso_mdoc` credential,
 `batch-issuance` included.
 
+## Certificate revocation
+
+The CAs the suite's Wallet Attestations and key attestations are
+certified under are `run-fapi2sp-battery`'s (`crl.go`): each names an
+https CRL distribution point on `conformance-issuer:8444` in every
+certificate it issues, `cmd/conformance-issuer` publishes their CRLs
+there (`crl_publisher`), and checks the attester's certificate
+(`server.ClientCertificateCRLs` on `X5CAttesterChain`) and the key
+attestation's (`issuer.X5CAttestationVerifier`) against them (`crl`),
+fetched over the Docker network with a `certrevocation.Refresher`,
+https only, each distribution point bound to its CA. So every module
+that authenticates a client, or takes a key attestation, also shows a
+current CRL fetched and the certificate unrevoked, in every leg.
+
+Every leg but `-base-plan` ends with two negative controls, each the
+plain `happy-flow` under a plan of its own whose Client Attestations
+are signed under: an attester certificate the CA's CRL revokes, and
+one from a CA whose distribution point serves only a CRL past its
+`nextUpdate`. The Authorization Server must refuse PAR, with
+`invalid_client` "attester certificate is revoked", or `server_error`
+"failed to check the attester certificate's revocation status"
+(FAPIgo's refusals for a revoked certificate and for one whose
+revocation can't be decided). The suite stops the module there
+(`INTERRUPTED=FAILED`); the script reads that error response from the
+module's log and reports `CONTROL=REFUSED`, or an `ERROR` line for any
+other outcome, which `conformance/scripts/lib.sh` expects.
+
+Key attestation revocation has no control here: the Credential
+Endpoint answers any key attestation it can't verify with
+`invalid_proof` "attestation 0: verification failed", by design, so
+the suite's log can't tell a revoked certificate from any other
+failure.
+
 ## Production setup
 
 With a `production` object in its configuration, `cmd/conformance-issuer`
@@ -425,9 +461,10 @@ its development wiring:
   `statuslist.Cache`). The suite's attestations carry no `status`
   claim, so no list is ever fetched.
 
-It still declines certificate revocation checks for attestation
-signers, and issues credentials without status, as the development
-wiring does (see "What not to copy").
+It checks attestation signers' certificates against their CAs' CRLs,
+as the development wiring does, declines revocation for the
+attestations' status list signers, and issues credentials without
+status (see "What not to copy").
 
 `sqlstore` and `fapigo/sqlstore` are modules this one doesn't require,
 so the production setup builds only with the `conformance_production`
