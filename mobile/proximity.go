@@ -283,6 +283,19 @@ var extKeyUsageNames = map[x509.ExtKeyUsage]string{
 // "signature_algorithm", "extensions" (OIDs), "sha256" (hex)}.
 // Each summary has shown_to_verifier and linkable_here for this reader.
 // Before the "request" event, documents is empty.
+//
+// request_info is the request's second-edition information, or null:
+// before the "request" event, after a refused request, and when the
+// reader sent none. Otherwise it is {"use_cases": [{"mandatory",
+// "document_sets", "purpose_hints"}], "signed"}: each use case's
+// mandatory flag, its document sets — arrays of indices into documents
+// — and its purpose hints, an object from controller ID to integer
+// purpose code (signed 32-bit), all as the reader sent them; empty
+// arrays and objects stay empty, never null. signed is true only when
+// a verified whole-request signature (readerAuthAll) covers it, every
+// signature the request carries having verified; it is not reader
+// trust, which is reader.status, and neither shows that a purpose is
+// true or that the reader may ask for it.
 func (p *ProximityPresentation) Request() string {
 	r := p.p.Reader()
 	reader := proximityReaderJSON{Status: r.Status.String(), Chain: []string{}, Certificates: []certificateJSON{}}
@@ -306,9 +319,10 @@ func (p *ProximityPresentation) Request() string {
 	}
 	out := struct {
 		result
-		Reader    proximityReaderJSON `json:"reader"`
-		Documents []mdocDocumentJSON  `json:"documents"`
-	}{result: result{ABIVersion}, Reader: reader, Documents: []mdocDocumentJSON{}}
+		Reader      proximityReaderJSON `json:"reader"`
+		Documents   []mdocDocumentJSON  `json:"documents"`
+		RequestInfo *requestInfoJSON    `json:"request_info"`
+	}{result: result{ABIVersion}, Reader: reader, Documents: []mdocDocumentJSON{}, RequestInfo: requestInfoOf(p.p.RequestInfo())}
 	for _, req := range p.p.Requests() {
 		d := mdocDocumentJSON{DocType: req.DocType, Elements: []mdocElementJSON{}, Credentials: []credentialSummary{}}
 		for _, e := range req.Elements {
@@ -324,6 +338,38 @@ func (p *ProximityPresentation) Request() string {
 	}
 	text, _ := marshal(out)
 	return text
+}
+
+// requestInfoJSON is Request's request_info.
+type requestInfoJSON struct {
+	UseCases []useCaseJSON `json:"use_cases"`
+	Signed   bool          `json:"signed"`
+}
+
+type useCaseJSON struct {
+	Mandatory    bool             `json:"mandatory"`
+	DocumentSets [][]int          `json:"document_sets"`
+	PurposeHints map[string]int32 `json:"purpose_hints"`
+}
+
+// requestInfoOf is info as request_info: nil for nil, and every
+// collection non-nil, so none is encoded as null.
+func requestInfoOf(info *proximity.RequestInfo) *requestInfoJSON {
+	if info == nil {
+		return nil
+	}
+	out := &requestInfoJSON{UseCases: make([]useCaseJSON, 0, len(info.UseCases)), Signed: info.Signed}
+	for _, uc := range info.UseCases {
+		c := useCaseJSON{Mandatory: uc.Mandatory, DocumentSets: make([][]int, 0, len(uc.DocumentSets)), PurposeHints: map[string]int32{}}
+		for _, set := range uc.DocumentSets {
+			c.DocumentSets = append(c.DocumentSets, append(make([]int, 0, len(set)), set...))
+		}
+		for id, code := range uc.PurposeHints {
+			c.PurposeHints[id] = code
+		}
+		out.UseCases = append(out.UseCases, c)
+	}
+	return out
 }
 
 // Respond presents the held mdoc credentialID for document number
