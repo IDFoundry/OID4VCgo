@@ -9,7 +9,7 @@ import kotlin.system.exitProcess
  * exits non-zero if any failed. run-issuer.sh starts the issuer in the
  * profile's configuration first.
  *
- *   main <driver.json> <base|key-attestation|deferred|dpop-nonces|production>
+ *   main <driver.json> <base|key-attestation|deferred|dpop-nonces|production|production-scaled>
  */
 fun main(args: Array<String>) {
     require(args.size == 2) { "usage: <driver.json> <profile>" }
@@ -22,6 +22,7 @@ fun main(args: Array<String>) {
             "deferred" -> deferredCases(run)
             "dpop-nonces" -> dpopNonceCases(run)
             "production" -> productionCases(run)
+            "production-scaled" -> productionCases(run, scaled = true)
             else -> error("unknown profile ${args[1]}")
         }
     }
@@ -35,6 +36,9 @@ class Run(
 ) {
     var failed = false
         private set
+
+    /** The two-instance profile's split, which every case is checked against. */
+    var split: Split? = null
 
     fun ok(what: String) = println("  ok    $what")
 
@@ -61,6 +65,7 @@ class Run(
         wallet.recorder.clear()
         try {
             wallet.block()
+            split?.let { checkSplit(it) }
         } catch (t: Throwable) {
             bad("${t::class.simpleName}: ${describe(t)}")
             System.err.println("case \"$name\" failed:")
@@ -92,6 +97,7 @@ class Run(
                 thrown.printStackTrace()
             }
         }
+        split?.let { checkSplit(it) }
     }
 }
 

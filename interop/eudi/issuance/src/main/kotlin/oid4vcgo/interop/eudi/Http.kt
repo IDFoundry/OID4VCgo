@@ -45,16 +45,39 @@ data class Exchange(
     // An error response's error and error_description (RFC 6749 §5.2): null for a success, or a body without them.
     val error: String? = null,
     val errorDescription: String? = null,
+    // In the two-instance profile, behind interop/splitproxy: the issuer
+    // instance that answered (its X-Interop-Instance), and the one the
+    // request asked for, if it did. Null otherwise.
+    val instance: String? = null,
+    val forcedInstance: String? = null,
+    // Whether the request's DPoP proof carried a nonce claim.
+    val dpopProofNonce: Boolean = false,
 )
 
 // Parameters whose values a case checks; the rest (codes, verifiers, tokens) aren't recorded.
 val FORM_VALUES = setOf("grant_type", "response_type", "code_challenge_method", "scope", "client_id", "redirect_uri", "authorization_details")
 
+/**
+ * interop/splitproxy's header: on a response, the issuer instance that
+ * served it; on a request, the instance it's to go to.
+ */
+const val INSTANCE_HEADER = "X-Interop-Instance"
+
 /** Every exchange of a case, in order. */
 class Recorder {
     val exchanges: MutableList<Exchange> = Collections.synchronizedList(mutableListOf())
 
-    fun clear() = exchanges.clear()
+    /** The instances that served the consent page and its decision, in the two-instance profile. */
+    val consentInstances: MutableList<String?> = Collections.synchronizedList(mutableListOf())
+
+    /** The issuer instance every request is sent to while set (interop/splitproxy's override). */
+    @Volatile
+    var forceInstance: String? = null
+
+    fun clear() {
+        exchanges.clear()
+        consentInstances.clear()
+    }
 
     fun to(path: String) = exchanges.filter { it.path == path }
 }
@@ -95,6 +118,9 @@ fun walletHttpClient(
 ): HttpClient {
     val record =
         createClientPlugin("Recorder") {
+            onRequest { request, _ ->
+                recorder.forceInstance?.let { request.headers.append(INSTANCE_HEADER, it) }
+            }
             onResponse { response ->
                 val request = response.call.request
                 // ktor saves a response's body, so reading it here leaves it for the library.
@@ -118,6 +144,9 @@ fun walletHttpClient(
                             } ?: emptyMap(),
                         error = errorObject?.first,
                         errorDescription = errorObject?.second,
+                        instance = response.headers[INSTANCE_HEADER],
+                        forcedInstance = request.headers[INSTANCE_HEADER],
+                        dpopProofNonce = request.headers["DPoP"]?.let { jwtStringClaim(it, "nonce") }.orEmpty().isNotEmpty(),
                     )
             }
         }
@@ -140,6 +169,8 @@ data class AuthorizationResponse(
     val state: String?,
     val iss: String?,
     val error: String?,
+    // The instances that served the consent page and the decision, behind interop/splitproxy.
+    val instances: List<String?> = emptyList(),
 )
 
 /**
@@ -187,7 +218,8 @@ fun consent(
             val (k, v) = it.split('=', limit = 2) + ""
             URLDecoder.decode(k, Charsets.UTF_8) to URLDecoder.decode(v, Charsets.UTF_8)
         }
-    return AuthorizationResponse(query["code"], query["state"], query["iss"], query["error"])
+    val instances = listOf(page, decision).map { it.headers().firstValue(INSTANCE_HEADER).orElse(null) }
+    return AuthorizationResponse(query["code"], query["state"], query["iss"], query["error"], instances)
 }
 
 /** A plain-HTTP JSON POST to the issuer's offer-minting endpoint (loopback). */
