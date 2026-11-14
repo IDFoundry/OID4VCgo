@@ -22,8 +22,8 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
-	"github.com/idfoundry/oid4vcgo/interop/internal/interopwp"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/interop/internal/interopwp"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
