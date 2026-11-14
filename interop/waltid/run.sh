@@ -15,7 +15,14 @@
 #                                  key-attestation profiles
 #   Wallet2 → our verifier         those PIDs, to cmd/conformance-verifier:
 #                                  x509_hash, direct_post.jwt, each
-#                                  request_uri_method
+#                                  request_uri_method; and through
+#                                  verifier.Transactions under production
+#                                  assurance, as a deployment runs it
+#   our issuer → our wallet →      the issuer's production setup, the
+#     Verifier2                    wallet attested by OID4VCgo's Wallet
+#                                  Provider (interop/walletprovider);
+#                                  Verifier2 checks the credentials'
+#                                  status
 #
 # then controls that one side or the other must refuse. See README.md.
 #
@@ -93,6 +100,10 @@ VERIFIER_PORT=$((BASE_PORT + 31)) # and the next three
 # point Issuer2's and Verifier2's certificates name, and checks them
 # against it (scripts/wallet's -crl-set).
 CRL_PORT=$((BASE_PORT + 41))
+# OID4VCgo's Wallet Provider, which attests OID4VCgo's wallet to the
+# issuer's production setup, and its admin listener; and the
+# transactions-engine Verifier for the SD-JWT VC PID.
+WP_PORT=$((BASE_PORT + 42)) WP_ADMIN_PORT=$((BASE_PORT + 43)) TX_VERIFIER_PORT=$((BASE_PORT + 44))
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 # The client_id interop/eudi/scripts/setup-issuer registers, which the
@@ -100,7 +111,8 @@ NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-waltid}"
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
 for p in "$ISSUER2_HTTP" "$VERIFIER2_HTTP" "$WALLET2_HTTP" "$ISSUER2_PORT" "$VERIFIER2_PORT" "$ISSUER_PORT" "$OFFERS_PORT" \
-  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT"; do
+  "$ISSUER_INNER_PORT" "$ATTESTER_PORT" "$STATUS_ISSUER_PORT" "$STATUS_OFFERS_PORT" "$STATUS_TAP_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$CRL_PORT" \
+  "$WP_PORT" "$WP_ADMIN_PORT" "$TX_VERIFIER_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -147,10 +159,15 @@ for entry in "${WALTID_FILES[@]}"; do
 done
 
 mkdir -p "$WORK/issuer-files"
+# shellcheck source=../production.sh
+. "$HERE/../production.sh"
+# Built with the conformance_production tag: the verifier and the
+# issuer run their production setups (below), and the Wallet Provider
+# runs at all.
+build_production "$WORK" "$SRC" verifier=./cmd/conformance-verifier issuer=./cmd/conformance-issuer \
+  walletprovider=./interop/walletprovider
 (cd "$SRC" && go build -o "$WORK/serve" ./interop/waltid/scripts/serve \
   && go build -o "$WORK/wallet" ./interop/waltid/scripts/wallet \
-  && go build -o "$WORK/verifier" ./cmd/conformance-verifier \
-  && go build -o "$WORK/issuer" ./cmd/conformance-issuer \
   && go run ./interop/eudi/scripts/setup-issuer -out "$WORK/issuer-files" -port "$ISSUER_PORT" -offers-port "$OFFERS_PORT")
 cd "$WORK"
 # OID4VCgo's issuer's credentials chain to these: its verifiers trust
@@ -215,7 +232,22 @@ start_issuer() {  # $1 the profile's name, $2 a jq filter
   exit 2
 }
 start_issuer base .
-for v in sdjwt mdoc untrusted-access untrusted-issuer; do
+# The verifiers but the first as a deployment runs a Verifier: served by
+# verifier.Transactions (the transactions engine, request_uri_method
+# post), under verifier.AssuranceProduction, its transactions in a
+# sealed SQLite file. The SD-JWT VC verifier runs as both: on the
+# default engine at development assurance, which serves each
+# request_uri_method a case asks for, and as the transactions engine
+# on TX_VERIFIER_PORT.
+# shellcheck disable=SC2016 # jq's variables, not the shell's
+TX_FILTER='.engine = "transactions" | .production = {database_path: $db, sealing_key: $key}'
+jq --arg addr "$SERVE_BIND:$TX_VERIFIER_PORT" --arg base "https://$HOST:$TX_VERIFIER_PORT" --arg db "$WORK/verifier-sdjwt-tx.db" \
+  --arg key "$(sealing_key)" ".listen_addr = \$addr | .base_url = \$base | $TX_FILTER" verifier-sdjwt.json > verifier-sdjwt-tx.json
+for v in mdoc untrusted-access untrusted-issuer; do
+  jq --arg db "$WORK/verifier-$v.db" --arg key "$(sealing_key)" "$TX_FILTER" "verifier-$v.json" > "verifier-$v-tx.json"
+  mv "verifier-$v-tx.json" "verifier-$v.json"
+done
+for v in sdjwt sdjwt-tx mdoc untrusted-access untrusted-issuer; do
   ./verifier -config "verifier-$v.json" > "verifier-$v.log" 2>&1 &
   PIDS+=($!)
 done
@@ -240,7 +272,7 @@ for port in "$ISSUER2_PORT" "$VERIFIER2_PORT"; do
   echo "https://localhost:$port did not start; see $WORK/*.log" >&2
   exit 2
 done
-for port in "$ISSUER_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)); do
+for port in "$ISSUER_PORT" "$VERIFIER_PORT" $((VERIFIER_PORT + 1)) $((VERIFIER_PORT + 2)) $((VERIFIER_PORT + 3)) "$TX_VERIFIER_PORT"; do
   for _ in $(seq 1 50); do
     if tls "$port" -o /dev/null "https://$HOST:$port/" 2>/dev/null; then continue 2; fi
     sleep 0.2
@@ -469,9 +501,10 @@ echo "### OID4VCgo's issuer → OID4VCgo's wallet → walt.id Verifier2: status 
 # issuer issued, from the list the issuer publishes (statuslist's
 # Allocator and Publisher, in cmd/conformance-issuer): its VC policies
 # are the signature and credential-status, IETF, value 0 (VALID). The
-# wallet redeems the issuer's offer, attested by its stand-in Wallet
-# Provider (setup-issuer's attester and key attestation keys), then
-# presents to a signed, encrypted session. In each control the issuer
+# wallet redeems the issuer's offer, attested by OID4VCgo's Wallet
+# Provider (interop/walletprovider: walletprovider.Provider over sealed
+# SQLite stores, its status lists served), then presents to a signed,
+# encrypted session. In each control the issuer
 # revokes the credentials after issuing them (POST /status, the
 # wallet's -revoke), before the wallet presents one: the control
 # differs from the case before it in that status alone.
@@ -479,10 +512,27 @@ echo "### OID4VCgo's issuer → OID4VCgo's wallet → walt.id Verifier2: status 
 # The issuer is a second instance of the base profile's, named
 # localhost for OID4VCgo's wallet, its status lists published as
 # https://$HOST:$STATUS_TAP_PORT/statuslists/1 (status_lists.base_url),
-# which Verifier2 reaches through serve's tap.
+# which Verifier2 reaches through serve's tap. It runs its production
+# setup (cmd/conformance-issuer's production): production assurance,
+# sealed SQLite stores (its status lists' reservations among them),
+# jwt proofs that must carry a key attestation, DPoP nonces; Wallet
+# Attestations and Key Attestations trusted by their x5c chain to the
+# Wallet Provider's CA, and their status checked on its lists, which
+# it fetches from loopback (attestation_status_allow_loopback: the one
+# setting a deployment wouldn't make; README.md).
+start_wallet_provider "$WORK/walletprovider" "$WORK/wallet-provider" "$WP_PORT" "$WP_ADMIN_PORT" "$CLIENT_ID" \
+  -identifier "$(jq -r '.attester_issuer' issuer-files/driver.json)"
+PIDS+=($!)
+wait_ready "http://127.0.0.1:$WP_ADMIN_PORT/ready"
+# shellcheck disable=SC2016 # jq's variables, not the shell's
 jq --arg issuer "https://localhost:$STATUS_ISSUER_PORT" --arg addr "127.0.0.1:$STATUS_ISSUER_PORT" \
   --arg offers "127.0.0.1:$STATUS_OFFERS_PORT" --arg lists "https://$HOST:$STATUS_TAP_PORT" \
-  '.issuer = $issuer | .listen_addr = $addr | .offers.listen_addr = $offers | .status_lists.base_url = $lists' \
+  --arg db "$WORK/issuer-status.db" --arg key "$(sealing_key)" --arg atk "$(access_token_key)" \
+  --rawfile wpca wallet-provider/ca.pem --rawfile wptls wallet-provider/tls-cert.pem \
+  '.issuer = $issuer | .listen_addr = $addr | .offers.listen_addr = $offers | .status_lists.base_url = $lists
+    | .production = {database_path: $db, sealing_key: $key, access_token_signing_key_pem: $atk,
+        attestation_status_tls_trust_anchors_pem: $wptls, attestation_status_allow_loopback: true}
+    | .client.attester_trust_anchors_pem = $wpca | .key_attestation = {trust_anchor_pem: $wpca} | .dpop_nonces = true' \
   issuer.json > issuer-status.json
 ./issuer -config issuer-status.json > issuer-status.log 2>&1 &
 PIDS+=($!)
@@ -517,7 +567,8 @@ status_present() {  # $1 name, $2 configuration, $3 query, $4 "valid" or "revoke
   # -crl-set none: OID4VCgo's issuer's CAs (setup-issuer's) publish no
   # CRL, so this wallet checks no certificate's revocation here.
   wallet "status-$name" -issuer-ca issuer-ca.pem -mdoc-issuer-ca iaca.pem -verifier-ca ca.pem -crl-set none \
-    -attester-config issuer-files/driver.json -offer "$(status_offer "$config")" ${revoke[@]+"${revoke[@]}"} -request "$link"
+    -wallet-provider "https://localhost:$WP_PORT" -wallet-provider-tls wallet-provider/tls-cert.pem -client-id "$CLIENT_ID" \
+    -offer "$(status_offer "$config")" ${revoke[@]+"${revoke[@]}"} -request "$link"
   # Verifier2's first status check can outlast the wallet's wait for
   # its answer (on an emulated image, its status policy's first run
   # took 17 s): the session says what it decided once it has.
@@ -561,6 +612,13 @@ for path in /statuslists/1 /statuslists/1/cwt; do
   if grep -q " tap: GET \"$path\" 200" serve.log; then ok "Verifier2 fetched $path from OID4VCgo's issuer: $(grep " tap: GET \"$path\" 200" serve.log | head -1 | sed 's/.* | //')"
   else bad "Verifier2 fetched $path from OID4VCgo's issuer ($(grep ' tap: GET "/statuslists' serve.log | head -3 | sed 's/.* tap: //' | tr '\n' ';'))"; fi
 done
+# The issuer checked the wallet's attestations' status by fetching the
+# Wallet Provider's list, the attestations being the provider's.
+if grep -q ' served GET "/statuslists/[0-9]*/[0-9]*" 200' wallet-provider/wallet-provider.log \
+    && grep -q ' served POST "/v1/wallet-attestation" 200' wallet-provider/wallet-provider.log \
+    && grep -q ' served POST "/v1/key-attestation" 200' wallet-provider/wallet-provider.log; then
+  ok "the Wallet Provider attested the wallet, and the issuer fetched its status list"
+else bad "the Wallet Provider attested the wallet, and the issuer fetched its status list ($(grep ' served ' wallet-provider/wallet-provider.log | tail -5 | tr '\n' ';'))"; fi
 
 W="http://127.0.0.1:$WALLET2_HTTP"
 # wallet2 creates a Wallet2 wallet with a P-256 key, printing its id.
@@ -588,6 +646,30 @@ authorize() {
   local port="$1" method="$2"
   tls "$port" -o /dev/null -w '%{redirect_url}' "https://$HOST:$port/authorize?request_uri_method=$method"
 }
+# tx_authorize begins a request on the transactions verifier at port
+# $1, as a deployment's page does, its browser binding kept in the
+# cookie jar $2, and prints the openid4vp:// launch.
+tx_authorize() {
+  tls "$1" -c "$2" -o /dev/null -w '%{redirect_url}' "https://$HOST:$1/authorize"
+}
+# tx_result saves the transactions verifier's page for the request
+# Wallet2 answered ($1, its answer): its redirect_to, the redirect_uri
+# that redeems the response_code, when it has one, else the request's
+# own page, /result/{id}, for the launch $2; both in the browser whose
+# cookie jar is $3. Its HTML entities are decoded into $4.
+tx_result() {
+  local answer="$1" launch="$2" jar="$3" out="$4" url port
+  url="$(jq -r '.redirect_to // .verifier_response.redirect_uri // empty' "$answer" 2>/dev/null || true)"
+  if [[ -z "$url" ]]; then
+    url="$(sed -E 's/.*[?&]request_uri=([^&]*).*/\1/' <<< "$launch")"
+    url="$(printf '%b' "${url//%/\\x}")"
+    url="${url/\/request\///result/}"
+  fi
+  port="$(sed -E 's|https://[^:/]+:([0-9]+).*|\1|' <<< "$url")"
+  tls "$port" -b "$jar" "$url" 2>/dev/null \
+    | sed -e 's/&#34;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' > "$out" || true
+}
+
 # redeem follows Wallet2's redirect_to in $1 and redeems its
 # response_code: the verifier's outcome is in $2.
 redeem() {
@@ -630,26 +712,41 @@ for method in none get post; do
     ok "sd-jwt pid, request_uri_method $method: verified (issuer, holder binding, response encrypted)"
   else bad "sd-jwt pid, request_uri_method $method: $(why "result-pid-$method.json")"; fi
 done
-present2 "$holder" "$(authorize $((VERIFIER_PORT + 1)) get)" > wallet2-present-mdoc.json
-redeem wallet2-present-mdoc.json result-mdoc.json
-if jq -e '.status == "verified" and (.credentials.cred1["eu.europa.ec.eudi.pid.1"] | keys == ["family_name", "given_name"])' result-mdoc.json >/dev/null; then
-  ok "mdoc pid: verified, only the requested elements disclosed"
-else bad "mdoc pid: $(why result-mdoc.json)"; fi
-present2 "$holder" "$(authorize $((VERIFIER_PORT + 2)) get)" > wallet2-present-untrusted-access.json || true
-redeem wallet2-present-untrusted-access.json result-untrusted-access.json
+# The rest through verifier.Transactions under production assurance:
+# the result page, in the browser that began the request, says what
+# the verifier decided.
+launch="$(tx_authorize "$TX_VERIFIER_PORT" tx-pid.cookies)"
+present2 "$holder" "$launch" > wallet2-present-pid-tx.json
+tx_result wallet2-present-pid-tx.json "$launch" tx-pid.cookies result-pid-tx.html
+if grep -q '<h1>Verification succeeded</h1>' result-pid-tx.html && grep -q '"family_name"' result-pid-tx.html \
+    && grep -q '"given_name"' result-pid-tx.html; then
+  ok "sd-jwt pid through verifier.Transactions under production assurance, request_uri_method post: verified, released to the browser that asked"
+else bad "sd-jwt pid through verifier.Transactions: $(sed 's/<[^>]*>/ /g' result-pid-tx.html | head -c 300)"; fi
+launch="$(tx_authorize $((VERIFIER_PORT + 1)) tx-mdoc.cookies)"
+present2 "$holder" "$launch" > wallet2-present-mdoc.json
+tx_result wallet2-present-mdoc.json "$launch" tx-mdoc.cookies result-mdoc.html
+if grep -q '<h1>Verification succeeded</h1>' result-mdoc.html && grep -q '"family_name"' result-mdoc.html \
+    && grep -q '"given_name"' result-mdoc.html && ! grep -qE '"(birth_date|nationality|issuing_country)"' result-mdoc.html; then
+  ok "mdoc pid through verifier.Transactions under production assurance: verified, only the requested elements disclosed"
+else bad "mdoc pid: $(sed 's/<[^>]*>/ /g' result-mdoc.html | head -c 300)"; fi
+launch="$(tx_authorize $((VERIFIER_PORT + 2)) tx-untrusted-access.cookies)"
+present2 "$holder" "$launch" > wallet2-present-untrusted-access.json || true
 if jq -e '.id == "SignedAuthorizationRequestValidationException" and (.message | contains("X509TrustAnchorMismatch"))' \
     wallet2-present-untrusted-access.json >/dev/null 2>&1 \
-    && jq -e '.status == "no redirect_to"' result-untrusted-access.json >/dev/null 2>&1; then
+    && ! jq -e '.redirect_to // .verifier_response.redirect_uri' wallet2-present-untrusted-access.json >/dev/null 2>&1; then
   ok "control: Wallet2 doesn't answer a Verifier whose Access Certificate it doesn't trust (X509TrustAnchorMismatch)"
 else bad "control: a Verifier whose Access Certificate Wallet2 doesn't trust: $(head -c 300 wallet2-present-untrusted-access.json)"; fi
-present2 "$holder" "$(authorize $((VERIFIER_PORT + 3)) get)" > wallet2-present-untrusted-issuer.json || true
-redeem wallet2-present-untrusted-issuer.json result-untrusted-issuer.json
-# Refused by the verifier, for the issuer's chain: not a presentation
-# that never arrived, nor one refused for something else.
-if jq -e --arg want "$UNTRUSTED_ISSUER" '.status == "failed" and (.error | contains("verifier: resolve issuer key: " + $want))' \
-    result-untrusted-issuer.json >/dev/null 2>&1; then
-  ok "control: the verifier refuses a credential from an issuer it doesn't trust, for its chain"
-else bad "control: a credential from an issuer the verifier doesn't trust: $(why result-untrusted-issuer.json)"; fi
+launch="$(tx_authorize $((VERIFIER_PORT + 3)) tx-untrusted-issuer.cookies)"
+present2 "$holder" "$launch" > wallet2-present-untrusted-issuer.json || true
+tx_result wallet2-present-untrusted-issuer.json "$launch" tx-untrusted-issuer.cookies result-untrusted-issuer.html
+# Refused by the verifier, for the issuer's chain (its verifier.Reason
+# untrusted_issuer, and the error): not a presentation that never
+# arrived, nor one refused for something else.
+if grep -q '<h1>Verification failed</h1>' result-untrusted-issuer.html \
+    && grep -qF '<pre>reason: untrusted_issuer</pre>' result-untrusted-issuer.html \
+    && grep -qF "verifier: resolve issuer key: $UNTRUSTED_ISSUER" result-untrusted-issuer.html; then
+  ok "control: the verifier refuses a credential from an issuer it doesn't trust, for its chain (untrusted_issuer)"
+else bad "control: a credential from an issuer the verifier doesn't trust: $(sed 's/<[^>]*>/ /g' result-untrusted-issuer.html | head -c 400)"; fi
 
 echo "### walt.id Wallet2 ← OID4VCgo's issuer, its other profiles"
 # The base profile's issuances above, as the tap saw them. Of what

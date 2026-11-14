@@ -13,7 +13,11 @@
 // Attestation (HAIP 1.0 §4.4.1), -attester-config names
 // interop/eudi/scripts/setup-issuer's driver.json: its client_id, and
 // the keys of a stand-in Wallet Provider the issuer trusts
-// (provider.go); -mdoc-issuer-ca, its mdocs' IACA. With -revoke, the
+// (provider.go); or -wallet-provider names OID4VCgo's Wallet Provider
+// (interop/walletprovider), whose TLS certificate is
+// -wallet-provider-tls, which issues the wallet's attestations for
+// -client-id over its protocol (interop/internal/interopwp);
+// -mdoc-issuer-ca, its mdocs' IACA. With -revoke, the
 // issuer's POST /status, the wallet has the issuer revoke every
 // credential it received before it answers -request, as an issuer
 // revokes one after issuing it: the result's "revoked" lists the
@@ -32,7 +36,7 @@
 // refuse (tamper.go); the result's "tampered" records the change and
 // Verifier2's answer to it.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE] [-mdoc-issuer-ca FILE] -offer URL [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] -offer URL [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
 package main
 
 import (
@@ -205,6 +209,9 @@ type received struct {
 type options struct {
 	attesterConfig, mdocIssuerCA, revoke string
 	crlSet                               string
+	// walletProvider, walletProviderTLS and clientID: OID4VCgo's
+	// Wallet Provider, in place of attesterConfig's stand-in.
+	walletProvider, walletProviderTLS, clientID string
 }
 
 func main() {
@@ -220,6 +227,9 @@ func main() {
 	verifier2Key := flag.String("verifier2-key", "", "Verifier2's request object key, for -tamper")
 	var opts options
 	flag.StringVar(&opts.attesterConfig, "attester-config", "", "setup-issuer's driver.json: attest the wallet to OID4VCgo's issuer as its client_id")
+	flag.StringVar(&opts.walletProvider, "wallet-provider", "", "OID4VCgo's Wallet Provider's base URL: attest the wallet to OID4VCgo's issuer with its attestations, as -client-id")
+	flag.StringVar(&opts.walletProviderTLS, "wallet-provider-tls", "", "the Wallet Provider's TLS certificate, PEM")
+	flag.StringVar(&opts.clientID, "client-id", "", "the client_id the Wallet Provider attests the wallet as")
 	flag.StringVar(&opts.mdocIssuerCA, "mdoc-issuer-ca", "", "the IACA mdocs chain to, if not -issuer-ca")
 	flag.StringVar(&opts.revoke, "revoke", "", "OID4VCgo's issuer's POST /status: revoke every credential received before answering -request")
 	flag.StringVar(&opts.crlSet, "crl-set", "current", "the CA's CRL this process publishes, setup's crl-publisher-SET.json in the working directory, which the wallet checks Issuer2's and Verifier2's certificates against: current, revoked-issuer, revoked-verifier or expired; none checks no revocation (OID4VCgo's issuer's CAs publish no CRL)")
@@ -303,6 +313,13 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 			return fail(err)
 		}
 		cfg.ClientID, deps.Provider = p.cfg.ClientID, p
+	}
+	if opts.walletProvider != "" {
+		p, err := registerAtProvider(ctx, opts.walletProvider, opts.walletProviderTLS)
+		if err != nil {
+			return fail(err)
+		}
+		cfg.ClientID, deps.Provider = opts.clientID, p
 	}
 	if opts.mdocIssuerCA != "" {
 		if cfg.MdocIssuerRoots, err = pool(opts.mdocIssuerCA); err != nil {

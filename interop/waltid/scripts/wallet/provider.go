@@ -6,6 +6,8 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/attestation"
+	"github.com/idfoundry/oid4vcgo/interop/internal/interopwp"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
@@ -131,4 +134,24 @@ func revoke(ctx context.Context, url string, got []walletflow.StoredCredential, 
 		}
 	}
 	return nil
+}
+
+// registerAtProvider registers the wallet as an instance of OID4VCgo's
+// Wallet Provider at baseURL, whose TLS certificate is the PEM file
+// tlsCert, which then issues its Wallet Attestations and Key
+// Attestations (interop/internal/interopwp).
+func registerAtProvider(ctx context.Context, baseURL, tlsCert string) (*interopwp.Provider, error) {
+	raw, err := os.ReadFile(tlsCert) // #nosec G304 -- the operator's own file
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("%s holds no PEM certificate", tlsCert)
+	}
+	hc := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
+	}
+	return interopwp.Register(ctx, baseURL, hc)
 }
