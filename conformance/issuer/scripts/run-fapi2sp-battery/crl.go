@@ -173,7 +173,7 @@ func runCRLControl(httpClient *http.Client, cfg runModuleConfig, p controlPlan, 
 	}
 	cfg.planID = planID
 	outcome := runModule(httpClient, cfg, happyFlowTestName, happyFlow)
-	if !strings.HasPrefix(outcome, "FINISHED=FAILED") && !strings.HasPrefix(outcome, "INTERRUPTED=FAILED") {
+	if !refusedAtPAR(outcome, cfg.issuerInitiated) {
 		return "ERROR: " + outcome + ", want FAILED, refused at PAR"
 	}
 	moduleID := moduleIDOf(outcome)
@@ -185,6 +185,22 @@ func runCRLControl(httpClient *http.Client, cfg runModuleConfig, p controlPlan, 
 		return fmt.Sprintf("ERROR: %s, but its log holds no %s %q error response: not refused for the attester certificate's revocation%s", strings.SplitN(outcome, " ", 2)[0], c.code, c.description, moduleSuffix(cfg.apiBase, moduleID))
 	}
 	return fmt.Sprintf("CONTROL=REFUSED: %s %q (the suite reports %s)", c.code, c.description, outcome)
+}
+
+// parRefusedOffer is how the suite answers the Credential Offer an
+// issuer_initiated module is submitted, when the PAR it then makes is
+// refused: it runs PAR within that request.
+const parRefusedOffer = "submit credential offer: status 400: "
+
+// refusedAtPAR reports whether runModule's outcome is a module the
+// suite failed: FINISHED or INTERRUPTED FAILED, or, issuer_initiated,
+// the Credential Offer submission answered with the suite's PAR
+// response check failing. Its log says why, which runCRLControl reads.
+func refusedAtPAR(outcome string, issuerInitiated bool) bool {
+	if strings.HasPrefix(outcome, "FINISHED=FAILED") || strings.HasPrefix(outcome, "INTERRUPTED=FAILED") {
+		return true
+	}
+	return issuerInitiated && strings.Contains(outcome, parRefusedOffer) && strings.Contains(outcome, "CheckPAREndpointResponse201WithNoError")
 }
 
 // moduleIDOf is the module id moduleSuffix wrote into outcome.

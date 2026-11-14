@@ -412,7 +412,9 @@ one from a CA whose distribution point serves only a CRL past its
 "failed to check the attester certificate's revocation status"
 (FAPIgo's refusals for a revoked certificate and for one whose
 revocation can't be decided). The suite stops the module there
-(`INTERRUPTED=FAILED`); the script reads that error response from the
+(`INTERRUPTED=FAILED`; under `issuer_initiated`, where it makes the PAR
+within the Credential Offer's submission, it answers that submission
+400 instead); the script reads that error response from the
 module's log and reports `CONTROL=REFUSED`, or an `ERROR` line for any
 other outcome, which `conformance/scripts/lib.sh` expects.
 

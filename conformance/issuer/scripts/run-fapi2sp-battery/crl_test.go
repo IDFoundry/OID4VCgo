@@ -72,3 +72,27 @@ func TestControlHelpers(t *testing.T) {
 		t.Errorf("happyFlowVariant = %v, want none", got)
 	}
 }
+
+func TestRefusedAtPAR(t *testing.T) {
+	suffix := moduleSuffix("https://suite/", "m")
+	offerRefused := "ERROR: submit credential offer: " + parRefusedOffer + `{"cause":"CheckPAREndpointResponse201WithNoError: ..."}` + suffix
+	for _, c := range []struct {
+		outcome         string
+		issuerInitiated bool
+		want            bool
+	}{
+		{"FINISHED=FAILED" + suffix, false, true},
+		{"INTERRUPTED=FAILED" + suffix, false, true},
+		{offerRefused, true, true},
+		{offerRefused, false, false},
+		{"FINISHED=PASSED" + suffix, false, false},
+		{"ERROR: submit credential offer: wait for WAITING", true, false},
+	} {
+		if got := refusedAtPAR(c.outcome, c.issuerInitiated); got != c.want {
+			t.Errorf("refusedAtPAR(%q, %v) = %v, want %v", c.outcome, c.issuerInitiated, got, c.want)
+		}
+	}
+	if id := moduleIDOf(offerRefused); id != "m" {
+		t.Errorf("moduleIDOf = %q, want m", id)
+	}
+}
