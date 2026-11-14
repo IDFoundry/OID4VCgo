@@ -1158,7 +1158,7 @@ request per session. Every method is safe to call from any thread.
 |---|---|
 | `Engagement()` | `{"qr_code", "service_uuid", "ble_mode", "ble_modes", "ident"}`: the QR code's text (`mdoc:` and the DeviceEngagement), and in `ble_modes` each mode offered, `{"mode", "service_uuid"}`, each with its own UUID. In `peripheral_server` mode, advertise `service_uuid` and be the GATT server. In `central_client` mode, scan for `service_uuid`, connect as GATT client, and disconnect from a reader whose Ident characteristic isn't `ident` (base64, present only with that mode). `service_uuid` and `ble_mode` are `ble_modes`' first: peripheral server mode's, when offered |
 | `HandleMessage(op, message)` | `{"event", "send", "reason", "error"}`. If `send` is present, it's the base64 message to send the reader. `event` is `request` (show `Request`), `ended` (send `send`, then disconnect) or `none`. `reason`, for `ended`, is `reader_ended` (the reader ended the session first) or `error`. `error` is then the failing call's text: `protocol` for a bad message, `untrusted_verifier` for a reader `require_trusted_mdoc_reader` refuses |
-| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error", "error_detail"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`, and `error_detail` is `certificate_revoked` or `no_current_crl` when that's its certificate's revocation check under `mdoc_reader` in `revocation` (added within ABI 14, OID4VCWallet 0.27.0). Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here` |
+| `Request()` | `{"reader": {"status", "name", "claimed_name", "chain", "error", "error_detail"}, "documents": [{"doctype", "elements": [{"namespace", "identifier", "retain"}], "credentials": [summary]}]}`, in the request's order. `reader.status` is `trusted` (its certificate chains to `mdoc_reader_roots` and passes `mdoc_reader_require_eku`), `untrusted` (signed by a certificate that doesn't), `unauthenticated` (not signed) or `invalid` (a signature that doesn't verify for this session). `name` is the reader's name, set only when `trusted`; for another signed request, `claimed_name` is the name its certificate gives itself, which anyone can claim, so never show it as the reader's. Both are the certificate's subject common name without control, line separator or invisible format characters (bidirectional ones among them). (Within ABI 12, `name` was the common name whatever the status, until this was found to let an untrusted reader pass for a trusted one in an app that didn't check `status`.) `chain` is the certificates, leaf first, as base64 DER, and `certificates` their fields, for an app that can't parse them (iOS): `{"subject", "issuer", "not_before", "not_after", "serial", "subject_alt_names", "extended_key_usages", "key_usages", "is_ca", "signature_algorithm", "extensions", "sha256"}`. `error` says why the reader isn't `trusted`, and `error_detail` is `certificate_revoked` or `no_current_crl` when that's its certificate's revocation check under `mdoc_reader` in `revocation` (added within ABI 14, OID4VCWallet 0.27.0). Each summary has `shown_to_verifier` (this reader, known by its certificate, was shown it before; never for an unsigned one) and `linkable_here`. `request_info` (additive within ABI 15; see below) is the request's second-edition information, or `null` |
 | `Respond(op, document, credentialID, elementsJSON)` | `{"send", "linkable"}`: send `send`, the encrypted DeviceResponse, which ends the session, then disconnect. `linkable` is whether the copy presented had been seen by another Verifier. On an error, nothing is sent and the session goes on |
 | `RespondDocuments(op, answersJSON)` | `Respond`'s result, answering several of the request's documents in one DeviceResponse (additive within ABI 15). `answersJSON` is as `MdocPresentation.RespondDocuments`'s; a document left out isn't in the response, with no `documentErrors`. `linkable` is whether any copy presented had been seen by another Verifier, and `linkable_credentials` which, by credential ID (also in `Respond`'s result). Each holder key signs in the request's order; if one fails or the holder cancels, nothing is sent, the keys after it aren't asked, and the session goes on |
 | `Terminate()` | `{"send"}`: the holder declined, cancelled or timed out. Send `send` (status 20) if a reader is connected, then disconnect. Nothing is disclosed: a `Respond` still running (its holder key prompting) fails with `cancelled` and gives nothing to send. Once `Respond` has returned, don't send its `send` after calling `Terminate` |
@@ -1183,6 +1183,53 @@ reconnecting after a disconnect) are in `proximity/README.md`.
 
 ProximityPresentation was added within ABI version 12, and later within
 it `StartProximityPresentationWithModes`, `ble_modes` and `ident`.
+
+### Request information (`request_info`)
+
+`Request()`'s `request_info` is what the holder took from a reader's
+second-edition request (ISO/IEC 18013-5 second-edition draft, in the
+representation Multipaz 0.102.0 builds; not yet checked against the
+ballot text):
+
+```json
+{"use_cases": [{"mandatory": true,
+                "document_sets": [[0], [0, 1]],
+                "purpose_hints": {"org.example.controller": 3}}],
+ "signed": true}
+```
+
+- It is `null` before the `request` event, after a request the holder
+  refused, and when the reader sent no `deviceRequestInfo` (a
+  first-edition reader). The member is always present, so `null` is an
+  explicit "none": a library from before it omits the member, which
+  says nothing about the reader.
+- Present but empty information is `{"use_cases": [], "signed": …}`;
+  a use case with no document sets or purpose hints has `[]` and `{}`,
+  never `null`.
+- `document_sets` are arrays of indices into `documents`, in order,
+  repeats kept. `purpose_hints` maps each controller ID, as the reader
+  sent it, to an integer purpose code from −2³¹ to 2³¹−1, neither
+  translated nor checked. What `mandatory` obliges is the app's call.
+- `signed` is true only when a verified whole-request signature
+  (`readerAuthAll`) covers the information and every signature the
+  request carries verified. It is not reader trust: an `untrusted`
+  reader can have signed information, and per-document signatures,
+  trusted or not, never make it signed. Show `reader.status` for who is
+  asking; neither field shows that a purpose is true or that the reader
+  may ask for it.
+- With a `readerAuthAll`, `reader` is its first trusted signer, else
+  the first signer as `untrusted`; one signature that doesn't verify,
+  anywhere in the request, makes it `invalid`.
+  `require_trusted_mdoc_reader` ends a session whose reader isn't
+  trusted before any `request` event. A request whose information is
+  malformed, or over the holder's limits, ends with an error response
+  (`[protocol]`), never shown with its information dropped.
+
+`request_info` is additive within ABI 15: no call, error code or
+existing member changed, so `ABIVersion` is unchanged, and a wrapper
+that predates it ignores it. Kotlin's `ProximityPresentation.Request`
+and Swift's `Request` carry it as `requestInfo`; Kotlin code compiled
+against an earlier release must be rebuilt (see `README.md`).
 
 ## ProximityReader
 

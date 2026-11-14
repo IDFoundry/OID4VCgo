@@ -156,6 +156,18 @@ Errors are `WalletError`s. Each has:
 - `isRetryable`
 - a `localizedDescription` you can show the holder
 
+## Compatibility
+
+This package's version, not the Go side's ABI number, says what it
+carries: additions to the Go side's JSON results come within one ABI.
+In-person requests carry `ProximityPresentation.Request.requestInfo`,
+a second-edition reader's use cases and purpose hints, with `signed`
+(whether a verified whole-request signature covers them, apart from
+whether the reader is trusted), or `nil`. It is a new stored property;
+`Request`'s initializer stays internal, so code using it compiles as
+before. Rebuild against each release's framework, as always. The
+Kotlin library of the same version comes from the same commit.
+
 ## Documentation
 
 - [The OID4VCWallet documentation](@DOCS@): getting started, an article

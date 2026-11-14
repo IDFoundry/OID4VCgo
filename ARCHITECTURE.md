@@ -264,6 +264,12 @@ changes whether *every* bullet below is `(done)`.
   a reader signs is what a holder checks: a COSE_Sign1 with a detached
   payload and the reader's chain in `x5chain`, the algorithm taken from
   the certificate's key, and Annex B's reader EKU (1.0.18013.5.1.6).
+  `AuthenticationBytes` and `AuthenticationAllBytes` are the one
+  construction of the detached ReaderAuthentication and the second
+  edition's ReaderAuthenticationAll bytes, from the unwrapped
+  SessionTranscript and the ItemsRequestBytes and DeviceRequestInfoBytes
+  as received. Only the bytes are shared: each package keeps its own
+  acceptance policy.
 - **`credential/mdoc`** (done) — ISO/IEC 18013-5 mdoc, both roles:
   - **Issuer side**: `Issue`/`Verify` for `IssuerSigned`
     (namespace/data-element digest+salt selective disclosure, §10.3.3),
@@ -1280,10 +1286,23 @@ changes whether *every* bullet below is `(done)`.
   `CombinedDeviceSession` offers QR and NFC at once as independent
   sessions; native code keeps the one the reader connects with.
   Reader authentication (§9.1.4): `WithReaderAuth` signs each request,
-  and `VerifyReaderAuth` checks it against the holder's `ReaderTrust`,
-  sharing `internal/readerauth` with `mdocdcapi`. A request the holder
-  can't parse or answer gets an in-session `ErrorResponse` (status 11
-  or 12). The transport — BLE GATT, and chunking — stays in the mobile
+  and `VerifyReaderAuth` checks one document's against the holder's
+  `ReaderTrust`, sharing `internal/readerauth` with `mdocdcapi`. The
+  holder's request-level path, `DecodeDeviceRequest` and
+  `VerifyDeviceRequest`, also reads the second-edition draft's
+  `readerAuthAll` and `deviceRequestInfo` (use cases, document sets,
+  purpose hints, as Multipaz 0.102.0 builds them, within fixed resource
+  limits) into an opaque `DeviceRequest` that owns copies of what it
+  read. Every signature must verify; with `readerAuthAll` its first
+  trusted signer is the reader (no fallback to per-document signers),
+  and coverage of the information by a verified whole-request signature
+  is reported apart from trust. `mdocdcapi` keeps its own policy (first
+  trusted `ReaderAuthAll`, else complete per-document signatures) and
+  doesn't expose the information. `walletflow.ProximityPresentation`
+  uses the request-level path and exposes `RequestInfo()`; the mobile
+  `request_info` JSON and the Kotlin and Swift `requestInfo` carry it.
+  A request the holder can't parse or answer gets an in-session
+  `ErrorResponse` (status 11 or 12). The transport — BLE GATT, and chunking — stays in the mobile
   app, as does the NFC radio; see `proximity/README.md`. Not yet:
   BLE L2CAP, and more than one request per session.
 - **`proximity/nfcapdu`** (done) — NFC's byte protocols for
