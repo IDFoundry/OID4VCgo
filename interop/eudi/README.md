@@ -29,33 +29,39 @@ chain to an anchor is checked for the host name. So this pins the
 verifier's certificate rather than verifying its name.
 Its engine `walletflow` presents through `walletflow` instead
 (`StartPresentation`, `Presentation.Respond`), as a wallet app does,
-with walletflow's own request fetch and `wallet_metadata`:
+with walletflow's own request fetch and `wallet_metadata`.
 
-| Case | Expected |
-|---|---|
-| SD-JWT VC PID, `haip` profile, `direct_post.jwt` | accepted |
-| The same, `openid4vp` profile | accepted |
-| mdoc PID, `haip` profile | accepted |
-| mdoc PID, `openid4vp` profile | accepted |
-| SD-JWT VC PID and mdoc PID, `haip` profile, `request_uri_method=post` | accepted |
-| mdoc PID over the Digital Credentials API (`openid4vp-v1-signed`) | accepted |
-| The answered request launched again | refused |
-| The verifier trusts an unrelated issuer CA | the verifier refuses the credential |
-| The launch's `client_id` isn't the signed request's | the wallet refuses |
-| A query for a credential the wallet doesn't hold | the verifier receives `access_denied` |
-| The wallet trusts an unrelated CA for the verifier | the wallet refuses |
-| An SD-JWT VC at a fresh status list index, then revoked (INVALID) by the issuer side and presented again | accepted, then refused (`StatusNotValid`) |
-| The same, suspended (SUSPENDED) | accepted, then refused (`StatusNotValid`) |
-| An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata, before the verifier has the metadata cached | the verifier refuses it |
-| An mdoc at a fresh status list index, then revoked by the issuer side and presented again | accepted, then refused (`DocumentHasBeenRevoked`) |
-| SD-JWT VC PID, `openid4vp` profile, the verifier's `client_id` `x509_san_dns:localhost`, by GET and by `request_uri_method=post`, to a wallet with `accept_x509_san_dns` | accepted |
-| The same `x509_san_dns` request to a wallet without `accept_x509_san_dns` | the wallet refuses |
-| walletflow: SD-JWT VC PID and mdoc PID, `haip` profile, by GET and by `request_uri_method=post` | accepted |
-| walletflow: the `x509_san_dns` SD-JWT VC cases, with `Config.AcceptX509SANDNS` | accepted |
-| The wallet doesn't trust the verifier's TLS certificate | the wallet refuses to fetch the request |
-| The Access Certificate's CA revokes it (its CRL names the certificate) | the wallet refuses: `untrusted verifier: … certrevocation: certificate is revoked` |
-| The Access Certificate's CA publishes no current CRL (its distribution point serves one past its `nextUpdate`) | the wallet refuses: `untrusted verifier: … certrevocation: no current CRL from the certificate's issuer` |
-| The verifier's response encryption key, `client_metadata.jwks` | as v0.12.0 sends it (below) |
+The walletflow presentations of both formats present credentials
+OID4VCgo's own issuer issued ([below](#credentials-oid4vcgos-issuer-issued)):
+issued over OID4VCI to the wallet, stored in `sqlstore`, presented from
+there, and revoked by the issuer. The rest present fixtures, credentials
+`scripts/setup` signs, which `cmd/conformance-wallet-vp` holds in its
+configuration; each covers something the issued ones don't, which the
+last column says.
+
+| Case | Expected | Credential |
+|---|---|---|
+| walletflow: SD-JWT VC PID and mdoc PID from OID4VCgo's issuer, `haip` profile, by GET and by `request_uri_method=post`, presented from the wallet's store | accepted | issued |
+| The same, after the issuer revoked it (INVALID on its status list) | refused (`StatusNotValid`; mdoc: `DocumentHasBeenRevoked`) | issued |
+| SD-JWT VC PID, `haip` profile, `direct_post.jwt` | accepted | fixture: the default engine (the `wallet` package, step by step) |
+| The same, `openid4vp` profile | accepted | fixture: the `openid4vp` profile |
+| mdoc PID, `haip` profile | accepted | fixture: the default engine |
+| mdoc PID, `openid4vp` profile | accepted | fixture: the `openid4vp` profile |
+| mdoc PID, `haip` profile, `request_uri_method=post` | accepted | fixture: the default engine |
+| mdoc PID over the Digital Credentials API (`openid4vp-v1-signed`) | accepted | fixture: the DC API, which `/dcapi` stands in for |
+| The answered request launched again | refused | fixture: the request's, whatever the credential |
+| The verifier trusts an unrelated issuer CA | the verifier refuses the credential | fixture: the default engine |
+| The launch's `client_id` isn't the signed request's | the wallet refuses | fixture: the wallet's refusal, before it presents |
+| A query for a credential the wallet doesn't hold | the verifier receives `access_denied` | fixture: the default engine's error response |
+| The wallet trusts an unrelated CA for the verifier | the wallet refuses | fixture: the wallet's refusal, before it presents |
+| An SD-JWT VC at a fresh status list index, suspended (SUSPENDED) by the issuer side and presented again | accepted, then refused (`StatusNotValid`) | fixture: a suspension, which OID4VCgo's issuer's 1-bit list can't hold |
+| An SD-JWT VC whose `vct#integrity` doesn't match its Type Metadata, before the verifier has the metadata cached | the verifier refuses it | fixture: `vct#integrity`, which OID4VCgo's issuer doesn't issue |
+| SD-JWT VC PID, `openid4vp` profile, the verifier's `client_id` `x509_san_dns:localhost`, by GET and by `request_uri_method=post`, to a wallet with `accept_x509_san_dns`, and through walletflow with `Config.AcceptX509SANDNS` | accepted | fixture: the `x509_san_dns` prefix |
+| The same `x509_san_dns` request to a wallet without `accept_x509_san_dns` | the wallet refuses | fixture: the wallet's refusal |
+| The wallet doesn't trust the verifier's TLS certificate | the wallet refuses to fetch the request | fixture: the wallet's refusal |
+| The Access Certificate's CA revokes it (its CRL names the certificate) | the wallet refuses: `untrusted verifier: … certrevocation: certificate is revoked` | fixture: the wallet's refusal |
+| The Access Certificate's CA publishes no current CRL (its distribution point serves one past its `nextUpdate`) | the wallet refuses: `untrusted verifier: … certrevocation: no current CRL from the certificate's issuer` | fixture: the wallet's refusal |
+| The verifier's response encryption key, `client_metadata.jwks` | as v0.12.0 sends it (below) | — |
 
 In every case the wallet checks the Access Certificate against its
 CA's CRL (`verifier_crl`): the CA, `scripts/setup`'s, names an https
@@ -99,23 +105,23 @@ The verifier is run as strictly as it can be configured:
   one for the mdoc, and refuses a credential whose entry isn't valid.
   It never verifies the token's signature (below), so this exercises
   the reference and the entry, not the list's authenticity.
-- The lists are published as an issuer publishes them, by OID4VCgo's
-  `statuslist` ([`scripts/serve`](scripts/serve) `-publish`): an
-  `Allocator` hands each fixture credential its index, at random, and
-  keeps its status, and a `Publisher` signs the list from it on each
-  fetch, by the credential's issuer (the SD-JWT VC's key, `x5c` its
-  certificate; the mdoc's Document Signer, `x5chain` its certificate).
-  The SD-JWT VC's list takes 2 bits a status, the mdoc's 1 (ISO/IEC
-  18013-5 §12.3.6.5). serve's loopback admin listener is the issuer's
-  side: `POST /allocate` hands out an index, and `POST /status` sets
-  one's status through `Allocator.SetStatus`, so the next fetch reads
-  it (`Publisher.Invalidate`; the tokens carry no `ttl`). Each status
-  control presents a credential at an index of its own, which the
-  verifier accepts, has the issuer side revoke (or suspend) it, and
-  presents it again, which the verifier must refuse: the two
-  presentations differ in that status alone. The verifier fetched the
-  list for each presentation, the run's serve.log shows: v0.12.0
-  doesn't cache it.
+- The issued credentials' list is OID4VCgo's issuer's own (below). The
+  fixtures' lists are published as an issuer publishes them, by
+  OID4VCgo's `statuslist` ([`scripts/serve`](scripts/serve)
+  `-publish`): an `Allocator` hands each fixture credential its index,
+  at random, and keeps its status, and a `Publisher` signs the list
+  from it on each fetch, by the credential's issuer (the SD-JWT VC's
+  key, `x5c` its certificate; the mdoc's Document Signer, `x5chain` its
+  certificate). The SD-JWT VC's list takes 2 bits a status, the mdoc's
+  1 (ISO/IEC 18013-5 §12.3.6.5). serve's loopback admin listener is the
+  issuer's side: `POST /allocate` hands out an index, and `POST /status`
+  sets one's status through `Allocator.SetStatus`, so the next fetch
+  reads it (`Publisher.Invalidate`; the tokens carry no `ttl`). Each
+  status control presents a credential, which the verifier accepts,
+  has the issuer revoke (or suspend) it, and presents it again, which
+  the verifier must refuse: the two presentations differ in that status
+  alone. The verifier fetched the fixtures' list for each presentation,
+  the run's serve.log shows: v0.12.0 doesn't cache it.
 - SD-JWT VC Type Metadata is required (`always_required`), resolved for
   `urn:eudi:pid:1` and checked against the credential's `vct#integrity`
   (`..._INTEGRITY_ENABLED`).
@@ -131,8 +137,11 @@ The verifier is run as strictly as it can be configured:
   own docker-compose configures it, so the wallet's ES512 verification
   is what each accepted case runs through.
 
-The run also checks the verifier fetched each status list and the Type
-Metadata, so a run in which it silently skipped a check fails.
+The run also checks the verifier fetched each fixture status list and
+the Type Metadata, so a run in which it silently skipped a check fails.
+The issuer doesn't log fetches of its list; the verifier's refusal of
+an issued credential once revoked, after accepting it, shows it read
+it.
 
 The wallet is lenient about some of what it receives (SPECIFICATIONS.md,
 "Known leniencies"). Of that, the verifier sends its response
@@ -172,7 +181,12 @@ Every key, certificate and document is throwaway, made per run by
   TLS listener, and a Relying Party registration certificate, which EUDI
   refuses a transaction without;
 - `scripts/serve`'s TLS certificate, for `host.docker.internal`, under
-  its own CA.
+  its own CA;
+- with `-issued-issuer`, OID4VCgo's issuer's config: its SD-JWT VC
+  signer under a CA of its own and its Document Signer under an IACA,
+  both CAs naming https CRL distribution points on `localhost:$CRL_PORT`,
+  its TLS certificate, and vpholder's CRL publisher and trust for those
+  CAs and the verifier's.
 
 What isn't covered:
 
@@ -180,13 +194,13 @@ What isn't covered:
   response.
 - ISO/IEC 18013-7 Annex C (`org-iso-mdoc`): the EUDI verifier has no
   such endpoint.
-- Credentials an OID4VCgo issuer issued: the fixtures are signed by
-  `scripts/setup`, and their status lists published by `scripts/serve`'s
-  `statuslist` `Allocator` over an in-memory store, as
-  `cmd/conformance-wallet-vp` presents the credentials its configuration
-  holds rather than ones it obtains. `cmd/conformance-issuer`'s
-  production setup, its status lists in `sqlstore`, issues to wallets in
-  the issuer and walt.id runs, where Verifier2 checks its lists.
+- An issued credential suspended: OID4VCgo's issuer serves one list
+  for both formats at 1 bit a status, as the mdoc's takes it, so its
+  `Allocator` refuses SUSPENDED; the fixture SD-JWT VC's suspension
+  covers the verifier's refusal of one.
+- Issued credentials through the default engine, under the `openid4vp`
+  profile or over the DC API: the fixtures cover those, on the same
+  verifier checks.
 
 Run it locally (Docker, Go, jq, curl and openssl; on Apple silicon the
 amd64 image runs emulated and takes a couple of minutes to start):
@@ -196,11 +210,52 @@ interop/eudi/run-verifier.sh
 VERIFIER_IMAGE=ghcr.io/eu-digital-identity-wallet/eudi-srv-verifier-endpoint:latest interop/eudi/run-verifier.sh
 ```
 
-`PORT`, `WALLET_PORT`, `SERVE_PORT`, `ADMIN_PORT` and `CRL_PORT`
-(18443 to 18446, and 18448) move the listeners, `CONTAINER` names the
-verifier's container, and `WORK` keeps the run's files. On Linux, `serve`
-listens on the Docker bridge's gateway, which the verifier reaches as
-`host.docker.internal`.
+`PORT`, `WALLET_PORT`, `SERVE_PORT`, `ADMIN_PORT`, `CRL_PORT`,
+`ISSUER_PORT`, `OFFERS_PORT`, `WP_PORT` and `WP_ADMIN_PORT` (18443 to
+18446, and 18448 to 18452) move the listeners, `CONTAINER` names the
+verifier's container (and prefixes the run's others), and `WORK` keeps
+the run's files. The issuer and the Wallet Provider run only while the
+issued cases do, with no fixture wallet running, so a run short of
+ports may give `WP_PORT` `WALLET_PORT`'s value and `WP_ADMIN_PORT` 0.
+On Linux, `serve` listens on the Docker bridge's gateway, which the
+verifier reaches as `host.docker.internal`, and a relay there
+(`scripts/tcprelay`) reaches the issuer and the Wallet Provider on
+loopback.
+
+### Credentials OID4VCgo's issuer issued
+
+The walletflow presentations present what OID4VCgo's side issued, as
+deployed:
+
+| Step | What runs | Settings |
+|---|---|---|
+| Issuer | `cmd/conformance-issuer`'s production setup (`conformance_production`, [`../production.sh`](../production.sh)), its config from `scripts/setup -issued-issuer` | `AssuranceProduction` for the Authorization Server and the Credential Issuer, sealed SQLite stores (its status list indices among them), pre-authorized code offers, DPoP nonces, `jwt` proofs carrying a key attestation, batches of 5; Wallet Attestations and Key Attestations trusted by their `x5c` chain to the Wallet Provider's CA, and their status checked on its lists (fetched from loopback, `attestation_status_allow_loopback`) |
+| Status lists | the issuer's `statuslist` `Allocator` and `Publisher` | each copy its own index, at random; the SD-JWT VC's list a JWT signed by its signer (`x5c`), the mdoc's the same list as a CWT signed by the Document Signer, at `https://issuer.eudi.test:$ISSUER_PORT/statuslists/1[/cwt]` (`status_lists.base_url`), which the verifier fetches over TLS it verifies |
+| Attestation | `interop/walletprovider` (`walletprovider.Provider` over sealed SQLite stores, its status lists served), registered with over `interop/internal/interopwp` | only the platform evidence is a stand-in (`walletprovidertest.FakeVerifier`) |
+| Issuance | [`scripts/vpholder`](scripts/vpholder) `receive`: `walletflow` (`StartIssuance`, `RedeemPreAuthorizedCode`, `RequestCredentials`) | the credential's chain to the issued CAs (`setup`'s `issued-issuer-ca.pem`, `issued-iaca.pem`); the SD-JWT VC signer's, the Document Signer's and the status list signer's certificates against their CAs' CRLs (`IssuerRevocation`, `StatusRevocation`), which vpholder publishes on its own loopback at the distribution points the certificates name (`holder-crl-*.json`); once stored, at production assurance, its status (`Wallet.CheckStatus`, which must read VALID), the list's signer checked against its CA's CRL too |
+| Storage | `internal/prodwallet`: sqlstore's walletflow stores, sealed, in a SQLite file per store directory | one store per credential; each step a process of its own |
+| Presentation | `scripts/vpholder` `present`, a later launch over the same store: `walletflow` (`StartPresentation`, `DefaultSelection`, `Respond`) | the verifier's Access Certificate under its CA and against its CRL; the store held the one credential, the issuer's |
+| Revocation | the issuer's `POST /status`, on its loopback offers listener | every copy's index set to INVALID, after the verifier accepted the credential by GET and by `request_uri_method=post` |
+
+The run checks each credential arrived with one status list entry per
+copy, at the issuer's list; that the store held it, from the issuer,
+when the wallet presented; and that the Wallet Provider attested the
+wallet and the issuer fetched its status list. The revocation control
+differs from the two accepted presentations before it in the status
+alone, and is graded by the verifier's reason, `StatusNotValid` for
+the SD-JWT VC and `DocumentHasBeenRevoked` for the mdoc, as the
+fixtures' are. The wallet presents a revoked credential: walletflow
+doesn't check its own credentials' status before presenting, so the
+refusal is the verifier's.
+
+In the development run vpholder runs walletflow's `Development` over
+its own client, which reaches the issuer and the Wallet Provider on
+loopback as `localhost`; at production assurance (below) it reaches
+them by name on the wallet's network. The development run's wallet
+doesn't read the credentials' status: their lists are named
+`issuer.eudi.test`, for the verifier, which only the containers
+resolve, and `statuslist`'s fetcher resolves a name itself, whatever
+the client's dialer.
 
 ### The wallet at production assurance
 
@@ -220,40 +275,50 @@ leaf for any host name) is refused under production.
 | | Development run | Production run |
 |---|---|---|
 | Assurance | `Development: true` | production (`Development: false`) |
-| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only and `verifier.eudi.test`'s private one (`allowed_private_hosts`), the system roots |
+| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only and `verifier.eudi.test`'s private one (`allowed_private_hosts`), and in [`scripts/vpholder`](scripts/vpholder) `issuer.eudi.test`'s and `wp.eudi.test`'s too (`-allowed-private-host`), the system roots |
 | Where the verifier is | `localhost` | `verifier.eudi.test`, on the wallet's network (below) |
 | Verifier trust | `X5CVerifierRoots`, the run's verifier CA | the same |
 | Revocation | the Access Certificate against its CA's CRL | the same |
-| Stores, keys | the fixture credential, in memory | the same (presenting needs no durable store) |
+| Stores, keys | the issued credentials in sqlstore's sealed stores (`internal/prodwallet`); the fixture, in memory | the same |
+| Where the issuer and the Wallet Provider are | `localhost` | `issuer.eudi.test` and `wp.eudi.test`, on the wallet's network (below) |
 
 Where it runs, as [`../prodnet.sh`](../prodnet.sh) sets it up:
 production's client never dials loopback, so the wallet runs, built for
 Linux, in a container on an internal Docker network, on a private
 subnet Docker assigns, which the verifier's container joins as
-`verifier.eudi.test`, the one host the wallet may reach at a private
-address (`allowed_private_hosts`), as a deployment inside its own
-network names its services; and the wallet's system roots are the
-verifier's TLS certificate, through
-`SSL_CERT_FILE` (setup's `-verifier-host` names it, and the Access
-Certificate's dNSName, for that host). The CRL publisher stays in the
-wallet's process, on its loopback, as above.
+`verifier.eudi.test`, and a relay's ([`scripts/tcprelay`](scripts/tcprelay),
+passing TLS through unchanged) as `issuer.eudi.test` and `wp.eudi.test`,
+reaching the issuer and the Wallet Provider on this host: the hosts the
+wallet may reach at a private address (`allowed_private_hosts`,
+vpholder's `-allowed-private-host`), as a
+deployment inside its own network names its services; and the wallet's
+system roots are the verifier's and the issuer's TLS certificates,
+through `SSL_CERT_FILE` (setup's `-verifier-host` names the verifier's,
+and the Access Certificate's dNSName, for that host). The CRL publishers
+stay in the wallet's process, on its loopback, as above. The issuer's
+identifier is `https://issuer.eudi.test:$ISSUER_PORT` in this run.
 
 | Case | Expected |
 |---|---|
-| SD-JWT VC and mdoc PIDs, `haip`, `request_uri_method` `get` and `post` | the verifier accepts each vp_token |
-| SD-JWT VC PID, `openid4vp`, `x509_san_dns:verifier.eudi.test`, `get` and `post` | accepted |
+| SD-JWT VC and mdoc PIDs issued by OID4VCgo's issuer at production assurance, stored, then presented from the store, `haip`, `request_uri_method` `get` and `post` | the verifier accepts each vp_token |
+| The same credential after the issuer revoked it | the verifier refuses it: `StatusNotValid`; `DocumentHasBeenRevoked` |
+| Fixture SD-JWT VC PID, `openid4vp`, `x509_san_dns:verifier.eudi.test`, `get` and `post` | accepted |
 | A launch whose `client_id` isn't the signed request's | the wallet refuses: `client_id … does not match x5c leaf's own x509_hash` |
 | The wallet trusts an unrelated CA for the verifier | refused: `untrusted verifier: … certificate signed by unknown authority` |
 | The Access Certificate's CA revoked it; publishes no current CRL | refused: `… certrevocation: certificate is revoked`; `… no current CRL from the certificate's issuer` |
 | The wallet's system roots are another CA's | refused by walletflow's client: `fetch request_uri: … tls: failed to verify certificate: x509: certificate signed by unknown authority` |
 
-Each control is graded by walletflow's own error, in full, and differs
-from a case that passes in the one thing it names. The verifier sends
-nothing production's wallet refuses: every case that passes in
-development passes at production. Not run at production:
+Each wallet control is graded by walletflow's own error, in full, and
+the revocation controls by the verifier's reason; each differs from a
+case that passes in the one thing it names. The wallet's controls run
+on the fixture SD-JWT VC: they're its refusals of the verifier, before
+it answers, whatever it holds. Neither the verifier nor OID4VCgo's
+issuer sends anything production's wallet refuses: every case that
+passes in development passes at production. Not run at production:
 the DC API (`/dcapi` is the harness's stand-in for the browser), the
 default engine (the binary's own steps over `wallet`), and the
-verifier's own refusals, which don't depend on the wallet's assurance.
+verifier's other refusals, which don't depend on the wallet's
+assurance.
 
 ### Moving the pin
 

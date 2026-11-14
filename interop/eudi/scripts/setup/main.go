@@ -10,7 +10,7 @@
 // under a CA the verifier is told to trust; and unrelated CAs for the
 // controls.
 //
-// Usage: go run ./interop/eudi/scripts/setup -out DIR -serve-url URL [-verifier-curve P-521]
+// Usage: go run ./interop/eudi/scripts/setup -out DIR -serve-url URL [-verifier-curve P-521] [-issued-issuer URL [-issued-status-url URL]]
 //
 // URL is where the verifier reaches serve (https://host:port), whose
 // host must be one of -serve-hosts. -verifier-curve P-521 makes the
@@ -31,6 +31,9 @@
 //	serve-ca.pem                         the CA the verifier trusts for serve
 //	statuslist.jwt, statuslist.cwt       the Status List Tokens: index 0 valid, 1 invalid
 //	type-metadata.json                   the PID's Type Metadata
+//
+// and with -issued-issuer, OID4VCgo's issuer for the issued-credential
+// cases and what the wallet trusts it by (issued.go).
 package main
 
 import (
@@ -119,16 +122,18 @@ func main() {
 	verifierCurve := flag.String("verifier-curve", "P-256", "the Access Certificate key's curve: P-256, signing ES256, or P-521, signing ES512")
 	crlHost := flag.String("crl-host", "localhost:18448", "host:port of the https CRL distribution point the Access Certificate's CA names, which the wallet serves and fetches (run-verifier.sh's CRL_PORT)")
 	verifierHost := flag.String("verifier-host", "localhost", "the verifier's host name: its TLS certificate's and its Access Certificate's dNSName")
+	issuedIssuer := flag.String("issued-issuer", "", "the https origin of OID4VCgo's issuer for the issued-credential cases (issued.go); none when empty")
+	issuedStatus := flag.String("issued-status-url", "", "with -issued-issuer, the https origin the verifier fetches that issuer's status lists at; -issued-issuer when empty")
 	flag.Parse()
 	if *out == "" || *serveURL == "" {
 		fail("-out and -serve-url are required")
 	}
-	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve, *crlHost, *verifierHost); err != nil {
+	if err := run(*out, strings.TrimSuffix(*serveURL, "/"), strings.Split(*serveHosts, ","), *verifierCurve, *crlHost, *verifierHost, *issuedIssuer, *issuedStatus); err != nil {
 		fail(err.Error())
 	}
 }
 
-func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost, verifierHost string) error {
+func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost, verifierHost, issuedIssuer, issuedStatus string) error {
 	if u, err := url.Parse(serveURL); err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("-serve-url %q isn't an https URL", serveURL)
 	}
@@ -146,6 +151,14 @@ func run(dir, serveURL string, serveHosts []string, verifierCurve, crlHost, veri
 		return fmt.Errorf("unrelated ca: %w", err)
 	}
 	put("other-ca.pem", otherCAPEM)
+	if issuedIssuer != "" {
+		if issuedStatus == "" {
+			issuedStatus = issuedIssuer
+		}
+		if err := issuedFiles(files, issuedIssuer, issuedStatus, crlHost); err != nil {
+			return err
+		}
+	}
 
 	base, err := baseWalletConfig(string(files["verifier-ca.pem"]))
 	if err != nil {
