@@ -1660,6 +1660,17 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   wait for `canSendWriteWithoutResponse`. Chunk sizes come from the
   central's `maximumUpdateValueLength` and the peripheral's
   `maximumWriteValueLength`.
+- **A queue that never drains ends the session:** a send waits up to
+  5 s for that room. Its timeout was the library's internal one, which
+  the sessions don't take as a transport failure: `respond` passed it
+  to the app and left the session in `Responding`, and a reader failed
+  with an internal error. The transports now throw their own error, so
+  the session fails as `ConnectionLost`. A peripheral whose session
+  fails (the central unsubscribes or ends it, Bluetooth turns off) also
+  fails a send waiting for room at once, as the central already did:
+  its chunk was never queued. This is read from the code: not yet run
+  on a device. Not looked into: whether a send can return normally
+  after the other device has gone, when the queue still has room.
 - **Apps need `NSBluetoothAlwaysUsageDescription`** in Info.plist.
 
 ### Phase 10 findings: the demos

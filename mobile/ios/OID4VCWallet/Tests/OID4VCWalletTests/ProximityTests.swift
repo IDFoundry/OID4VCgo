@@ -47,6 +47,29 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
     }
 }
 
+/// A transport whose `send` fails once `lose` was called: the other
+/// device has gone.
+final class LosingTransport: ProximityTransport, @unchecked Sendable {
+    private let inner: PipeTransport
+    private let lock = NSLock()
+    private var lost = false
+
+    init(_ inner: PipeTransport) { self.inner = inner }
+
+    func lose() { lock.withLock { lost = true } }
+
+    func connect() async throws { try await inner.connect() }
+
+    func send(_ message: Data) async throws {
+        if lock.withLock({ lost }) { throw ProximityTransportError("a notification couldn't be queued") }
+        try await inner.send(message)
+    }
+
+    func receive() async throws -> Data { try await inner.receive() }
+
+    func close() { inner.close() }
+}
+
 /// In-person presentation through the Swift API, holder and reader in one
 /// process over an in-memory transport: the Go sessions, the key store and
 /// both state machines, without BLE.
@@ -340,6 +363,30 @@ final class ProximityTests: XCTestCase {
         } catch let e as WalletError {
             XCTAssertEqual(e.code, .invalidInput)
         }
+    }
+
+    /// A response the transport can't deliver fails the session as a
+    /// lost connection, and `respond` throws that.
+    func testAnUndeliveredResponseFailsTheSession() async throws {
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        let losing = LosingTransport(holderEnd)
+        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in losing }
+        let reader = try s.reader.start(qrCode: holder.qrCode, docType: Self.docType,
+                                        elements: [Self.namespace: ["family_name", "given_name"]], timeouts: timeouts) { _ in readerEnd }
+        _ = try await request(holder)
+        losing.lose()
+        do {
+            _ = try await holder.respond(document: 0, credentialID: s.mdocID,
+                                         elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+            XCTFail("an undelivered response was reported presented")
+        } catch let e as ProximityError {
+            XCTAssertEqual(e.reason, .connectionLost)
+        }
+        guard case .failed(let error) = holder.state, let e = error as? ProximityError else { return XCTFail("holder: \(holder.state)") }
+        XCTAssertEqual(e.reason, .connectionLost)
+        reader.cancel()
     }
 
     func testReaderCancels() async throws {
