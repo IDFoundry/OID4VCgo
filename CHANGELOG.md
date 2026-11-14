@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.78.0...v0.79.0) (2026-11-14)
+
+
+### Features
+
+* **walletflow:** add Config.AllowedPrivateHosts for services on a private network ([0b89316](https://github.com/IDFoundry/OID4VCgo/commit/0b89316649ed73ae5caa7c1f5e3df542a2704b0b))
+
 ## [0.78.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.77.1...v0.78.0) (2026-11-13)
 
 

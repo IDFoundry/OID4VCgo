@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.1...sqlstore/v0.12.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **sqlstore:** keep mdoc credentials whose claims hold maps ([3aa55fc](https://github.com/IDFoundry/OID4VCgo/commit/3aa55fc3955833a0da621841fcb12e150e1a4b57))
+
 ## [0.12.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.0...sqlstore/v0.12.1) (2026-11-12)
 
 
