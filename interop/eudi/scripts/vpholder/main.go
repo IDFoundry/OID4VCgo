@@ -31,7 +31,8 @@
 // over this process's own HTTP client, its TLS roots -tls-ca;
 // -assurance production runs it as a wallet
 // app runs it (walletflow's own client, which dials public addresses
-// only, the system's TLS roots), for run-verifier.sh's production run,
+// only, and the private ones of the hosts -allowed-private-host names,
+// the system's TLS roots), for run-verifier.sh's production run,
 // which runs it in a container on interop/prodnet.sh's network. The
 // stores are sqlstore's in both.
 //
@@ -78,6 +79,9 @@ type options struct {
 	issuerCA, iaca, verifierCA     string
 	crlPublisher, crlTrust         string
 	clientID                       string
+	// allowedPrivateHosts are the hosts production's client may reach
+	// at a private address (walletflow.Config.AllowedPrivateHosts).
+	allowedPrivateHosts []string
 	// receive's.
 	offer, walletProvider, walletProviderTLS string
 	checkStatus                              bool
@@ -142,6 +146,10 @@ func main() {
 	fs.StringVar(&o.crlPublisher, "crl-publisher", "", "the CRLs to publish, a conformancecrl.Publisher's JSON (required)")
 	fs.StringVar(&o.crlTrust, "crl-trust", "", "the CRL distribution points to check against, a conformancecrl.Trust's JSON (required)")
 	fs.StringVar(&o.clientID, "client-id", "", "the client_id the Wallet Provider attests the wallet as (required)")
+	fs.Func("allowed-private-host", "production: a host the wallet may reach at a private address (repeatable)", func(host string) error {
+		o.allowedPrivateHosts = append(o.allowedPrivateHosts, host)
+		return nil
+	})
 	fs.StringVar(&o.offer, "offer", "", "receive: the issuer's credential offer")
 	fs.StringVar(&o.walletProvider, "wallet-provider", "", "receive: the Wallet Provider's base URL")
 	fs.StringVar(&o.walletProviderTLS, "wallet-provider-tls", "", "receive: the Wallet Provider's TLS certificate, PEM")
@@ -171,6 +179,9 @@ func (o options) check() error {
 	case assuranceDevelopment:
 		if o.tlsCA == "" {
 			return errors.New("-assurance development needs -tls-ca")
+		}
+		if len(o.allowedPrivateHosts) > 0 {
+			return errors.New("-allowed-private-host is production's: Development's client is this process's own")
 		}
 	case assuranceProduction:
 		if o.tlsCA != "" {
@@ -248,6 +259,9 @@ func newWallet(o options, stores *prodwallet.Stores, provider walletflow.WalletP
 		IssuerRevocation: revocation, StatusRevocation: revocation,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 		Development:   o.assurance == assuranceDevelopment,
+	}
+	if !cfg.Development {
+		cfg.AllowedPrivateHosts = o.allowedPrivateHosts
 	}
 	deps := walletflow.Dependencies{Provider: provider}
 	if cfg.Development {

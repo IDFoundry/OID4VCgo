@@ -426,8 +426,10 @@ refused() {  # $1 label, $2 dcql, $3 issuer chain file, $4 the cause
 # Under WALLET_ASSURANCE=production it runs at production assurance, in
 # a container on the wallet's network, where a relay of its own
 # (scripts/tcprelay) answers as the issuer and the Wallet Provider,
-# relaying to them on this host; the verifier reaches the issuer
-# directly, as it reaches serve.
+# relaying to them on this host, the issuer's, the Wallet Provider's
+# and the verifier's names the hosts it may reach at a private address
+# (-allowed-private-host); the verifier reaches the issuer directly, as
+# it reaches serve.
 ISSUED_CLIENT_ID="$(jq -r '.client.id' issued-issuer.json)"
 # The wallet's TLS roots: the verifier's certificate and the issuer's.
 cat tls-cert.pem issued-issuer-tls-cert.pem > holder-tls-roots.pem
@@ -484,7 +486,8 @@ holder() {  # $1 name, $2 receive or present, $3 the store; then the step's flag
   rm -f "result-issued-$name.json"
   if [[ "$WALLET_ASSURANCE" = production ]]; then
     prodnet_run "$PRODNET" "$WORK" holder-tls-roots.pem "$CONTAINER-holder" vpholder-linux "$step" "${common[@]}" \
-      -assurance production "$@" >> holder.log 2>&1 || true
+      -assurance production -allowed-private-host "$ISSUER_HOST" -allowed-private-host "$WP_HOST" \
+      -allowed-private-host "$VERIFIER_HOST" "$@" >> holder.log 2>&1 || true
   else
     ./vpholder "$step" "${common[@]}" -tls-ca holder-tls-roots.pem "$@" >> holder.log 2>&1 || true
   fi

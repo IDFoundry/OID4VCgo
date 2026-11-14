@@ -275,7 +275,7 @@ leaf for any host name) is refused under production.
 | | Development run | Production run |
 |---|---|---|
 | Assurance | `Development: true` | production (`Development: false`) |
-| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only and `verifier.eudi.test`'s private one (`allowed_private_hosts`), the system roots |
+| Fetchers | the binary's client, the verifier's TLS certificate pinned | walletflow's own (`fapihttp.NewClient`), public addresses only and `verifier.eudi.test`'s private one (`allowed_private_hosts`), and in [`scripts/vpholder`](scripts/vpholder) `issuer.eudi.test`'s and `wp.eudi.test`'s too (`-allowed-private-host`), the system roots |
 | Where the verifier is | `localhost` | `verifier.eudi.test`, on the wallet's network (below) |
 | Verifier trust | `X5CVerifierRoots`, the run's verifier CA | the same |
 | Revocation | the Access Certificate against its CA's CRL | the same |
@@ -289,7 +289,8 @@ subnet Docker assigns, which the verifier's container joins as
 `verifier.eudi.test`, and a relay's ([`scripts/tcprelay`](scripts/tcprelay),
 passing TLS through unchanged) as `issuer.eudi.test` and `wp.eudi.test`,
 reaching the issuer and the Wallet Provider on this host: the hosts the
-wallet may reach at a private address (`allowed_private_hosts`), as a
+wallet may reach at a private address (`allowed_private_hosts`,
+vpholder's `-allowed-private-host`), as a
 deployment inside its own network names its services; and the wallet's
 system roots are the verifier's and the issuer's TLS certificates,
 through `SSL_CERT_FILE` (setup's `-verifier-host` names the verifier's,
