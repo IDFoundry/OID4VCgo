@@ -143,6 +143,10 @@ func TestSessions_ProximityRequestInfo(t *testing.T) {
 			`{"use_cases":[{"mandatory":true,"document_sets":[[0],[0,0]],"purpose_hints":{"org.example.max":2147483647,"org.example.min":-2147483648}},{"mandatory":false,"document_sets":[],"purpose_hints":{}}],"signed":true}`},
 		"document trust alone: unsigned": {&trusted, nil, infoBytes(t, map[string]any{}), "trusted",
 			`{"use_cases":[],"signed":false}`},
+		// Known fields this side can't read: the request stands, its
+		// signature checked over the information as received, which isn't
+		// shown.
+		"whole request, unreadable information": {nil, []testReader{trusted}, infoBytes(t, map[string]any{"useCases": nil}), "trusted", `null`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, err := h.w.StartProximityPresentation()
@@ -162,8 +166,8 @@ func TestSessions_ProximityRequestInfo(t *testing.T) {
 }
 
 // A refused request — an untrusted whole-request signer under
-// require_trusted_mdoc_reader, or malformed information — leaves
-// request_info null.
+// require_trusted_mdoc_reader, or information that isn't
+// #6.24(bstr .cbor map) — leaves request_info null.
 func TestSessions_ProximityRequestInfoRefused(t *testing.T) {
 	trusted, other := newTestReader(t), newTestReader(t)
 	h := newHarness(t, false).withReaderRoots(t, trusted)
@@ -176,7 +180,7 @@ func TestSessions_ProximityRequestInfoRefused(t *testing.T) {
 		code string
 	}{
 		"untrusted whole-request signer": {strict, []testReader{other}, infoBytes(t, map[string]any{}), CodeUntrustedVerifier},
-		"malformed information":          {h, []testReader{trusted}, infoBytes(t, map[string]any{"useCases": nil}), CodeProtocol},
+		"untagged information":           {h, []testReader{trusted}, []byte{0xa0}, CodeProtocol},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, err := tc.h.w.StartProximityPresentation()

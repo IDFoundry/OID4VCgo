@@ -269,9 +269,6 @@ func TestParseDeviceRequest_LegacyAcceptanceKept(t *testing.T) {
 		"empty readerAuthAll":    func(m map[string]cbor.RawMessage) { m["readerAuthAll"] = cbor.RawMessage{0x80} },
 		"null deviceRequestInfo": func(m map[string]cbor.RawMessage) { m["deviceRequestInfo"] = cbor.RawMessage{0xf6} },
 		"untagged information":   func(m map[string]cbor.RawMessage) { m["deviceRequestInfo"] = cbor.RawMessage{0xa0} },
-		"index past the documents": func(m map[string]cbor.RawMessage) {
-			m["deviceRequestInfo"] = infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": true, "documentSets": [][]int{{2}}}}})
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := editRequest(t, good, edit)
@@ -282,6 +279,32 @@ func TestParseDeviceRequest_LegacyAcceptanceKept(t *testing.T) {
 				t.Errorf("DecodeDeviceRequest = %v, want a validation error", err)
 			}
 		})
+	}
+}
+
+// Information whose known fields can't be read neither refuses the
+// request nor goes unchecked: a readerAuthAll over it as received
+// verifies, and the information is reported unsigned, as it isn't shown.
+func TestDecodeDeviceRequest_UnreadableInfoStillSigned(t *testing.T) {
+	transcript := testTranscriptBytes(t, "unreadable")
+	signer := newTestSigner(t)
+	info := infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": true, "documentSets": [][]int{{2}}}}})
+	b := testRequest{docs: testDocs(2, nil), all: []testSigner{signer}, info: info}.build(t, transcript)
+	if _, err := ParseDeviceRequest(b); err != nil {
+		t.Fatalf("ParseDeviceRequest: %v", err)
+	}
+	req, err := DecodeDeviceRequest(b)
+	requireUnread(t, req, err)
+	got := VerifyDeviceRequest(req, transcript, ReaderTrust{Roots: signer.roots})
+	if got.Reader.Status != ReaderTrusted || got.RequestInfoSigned {
+		t.Errorf("VerifyDeviceRequest = %+v, want trusted, information unsigned", got)
+	}
+	// The signature covers the information as received: another one fails.
+	other := infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": false, "documentSets": [][]int{{2}}}}})
+	swapped, err := DecodeDeviceRequest(editRequest(t, b, func(m map[string]cbor.RawMessage) { m["deviceRequestInfo"] = other }))
+	requireUnread(t, swapped, err)
+	if got := VerifyDeviceRequest(swapped, transcript, ReaderTrust{Roots: signer.roots}); got.Reader.Status != ReaderInvalid {
+		t.Errorf("changed information: %v, want invalid", got.Reader.Status)
 	}
 }
 

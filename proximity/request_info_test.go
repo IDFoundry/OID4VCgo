@@ -108,10 +108,9 @@ func TestDecodeDeviceRequest_AbsentAndEmpty(t *testing.T) {
 	}
 }
 
-// Known fields of the wrong shape are refused, the request with them:
-// never dropped and treated as absent.
+// Information that isn't #6.24(bstr .cbor map), well-formed and free of
+// duplicate keys, is refused, the request with it.
 func TestDecodeDeviceRequest_RefusesMalformedInfo(t *testing.T) {
-	ok := [][]int{{0}}
 	for name, tc := range map[string]struct {
 		info cbor.RawMessage
 		want error
@@ -125,34 +124,60 @@ func TestDecodeDeviceRequest_RefusesMalformedInfo(t *testing.T) {
 		"embedded trailing bytes": {tagged(t, []byte{0xa0, 0xa0}), ErrCBORDecoding},
 		"duplicate key":           {tagged(t, append(append([]byte{0xa2}, mustCBOR(t, "useCases")...), append(append([]byte{0x80}, mustCBOR(t, "useCases")...), 0x80)...)), ErrCBORDecoding},
 		"duplicate extension key": {tagged(t, []byte{0xa1, 0x61, 'x', 0xa2, 0x01, 0x01, 0x01, 0x02}), ErrCBORDecoding},
-		"null useCases":           {infoOf(t, map[string]any{"useCases": nil}), ErrCBORValidation},
-		"useCases a map":          {infoOf(t, map[string]any{"useCases": map[string]any{}}), ErrCBORValidation},
-		"use case not a map":      {infoOf(t, map[string]any{"useCases": []any{1}}), ErrCBORValidation},
-		"no mandatory":            {infoOf(t, map[string]any{"useCases": []any{map[string]any{"documentSets": ok}}}), ErrCBORValidation},
-		"mandatory not boolean":   {infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": 1, "documentSets": ok}}}), ErrCBORValidation},
-		"null mandatory":          {infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": nil, "documentSets": ok}}}), ErrCBORValidation},
-		"no documentSets":         {infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": true}}}), ErrCBORValidation},
-		"null documentSets":       {infoOf(t, map[string]any{"useCases": []any{useCase(nil)}}), ErrCBORValidation},
-		"document set not array":  {infoOf(t, map[string]any{"useCases": []any{useCase([]any{0})}}), ErrCBORValidation},
-		"index past documents":    {infoOf(t, map[string]any{"useCases": []any{useCase([][]int{{1}})}}), ErrCBORValidation},
-		"negative index":          {infoOf(t, map[string]any{"useCases": []any{useCase([][]int{{-1}})}}), ErrCBORValidation},
-		"float index":             {infoOf(t, map[string]any{"useCases": []any{useCase([][]float64{{0}})}}), ErrCBORValidation},
-		"text index":              {infoOf(t, map[string]any{"useCases": []any{useCase([][]string{{"0"}})}}), ErrCBORValidation},
-		"null purposeHints":       {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", nil)}}), ErrCBORValidation},
-		"purposeHints an array":   {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", []int{1})}}), ErrCBORValidation},
-		"integer controller ID":   {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[int]int{1: 1})}}), ErrCBORValidation},
-		"text purpose code":       {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]string{"c": "1"})}}), ErrCBORValidation},
-		"float purpose code":      {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]float64{"c": 1})}}), ErrCBORValidation},
-		"bignum purpose code":     {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]any{"c": cbor.Tag{Number: 2, Content: []byte{1}}})}}), ErrCBORValidation},
-		"code above int32":        {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]int64{"c": math.MaxInt32 + 1})}}), ErrCBORValidation},
-		"code below int32":        {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]int64{"c": math.MinInt32 - 1})}}), ErrCBORValidation},
-		"code past int64":         {infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]uint64{"c": math.MaxUint64})}}), ErrCBORValidation},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := decodeInfo(t, 1, tc.info)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("DecodeDeviceRequest = %v, want %v", err, tc.want)
 			}
+		})
+	}
+}
+
+// requireUnread checks that req, decoded, carries information it
+// couldn't read: none shown, and why.
+func requireUnread(t *testing.T, req *DeviceRequest, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("DecodeDeviceRequest = %v, want the request without its information", err)
+	}
+	if req.RequestInfo() != nil || !errors.Is(req.RequestInfoError(), ErrCBORValidation) {
+		t.Errorf("RequestInfo %+v, RequestInfoError %v; want nil and a validation error", req.RequestInfo(), req.RequestInfoError())
+	}
+}
+
+// Known fields of another shape than RequestInfo's don't refuse the
+// request: the second edition's final text may shape them otherwise.
+// The request stands without them, RequestInfoError saying why.
+func TestDecodeDeviceRequest_UnreadableInfo(t *testing.T) {
+	ok := [][]int{{0}}
+	for name, info := range map[string]cbor.RawMessage{
+		"null useCases":          infoOf(t, map[string]any{"useCases": nil}),
+		"useCases a map":         infoOf(t, map[string]any{"useCases": map[string]any{}}),
+		"use case not a map":     infoOf(t, map[string]any{"useCases": []any{1}}),
+		"no mandatory":           infoOf(t, map[string]any{"useCases": []any{map[string]any{"documentSets": ok}}}),
+		"mandatory not boolean":  infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": 1, "documentSets": ok}}}),
+		"null mandatory":         infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": nil, "documentSets": ok}}}),
+		"no documentSets":        infoOf(t, map[string]any{"useCases": []any{map[string]any{"mandatory": true}}}),
+		"null documentSets":      infoOf(t, map[string]any{"useCases": []any{useCase(nil)}}),
+		"document set not array": infoOf(t, map[string]any{"useCases": []any{useCase([]any{0})}}),
+		"index past documents":   infoOf(t, map[string]any{"useCases": []any{useCase([][]int{{1}})}}),
+		"negative index":         infoOf(t, map[string]any{"useCases": []any{useCase([][]int{{-1}})}}),
+		"float index":            infoOf(t, map[string]any{"useCases": []any{useCase([][]float64{{0}})}}),
+		"text index":             infoOf(t, map[string]any{"useCases": []any{useCase([][]string{{"0"}})}}),
+		"null purposeHints":      infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", nil)}}),
+		"purposeHints an array":  infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", []int{1})}}),
+		"integer controller ID":  infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[int]int{1: 1})}}),
+		"text purpose code":      infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]string{"c": "1"})}}),
+		"float purpose code":     infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]float64{"c": 1})}}),
+		"bignum purpose code":    infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]any{"c": cbor.Tag{Number: 2, Content: []byte{1}}})}}),
+		"code above int32":       infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]int64{"c": math.MaxInt32 + 1})}}),
+		"code below int32":       infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]int64{"c": math.MinInt32 - 1})}}),
+		"code past int64":        infoOf(t, map[string]any{"useCases": []any{useCase(ok, "purposeHints", map[string]uint64{"c": math.MaxUint64})}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, err := decodeInfo(t, 1, info)
+			requireUnread(t, req, err)
 		})
 	}
 }
@@ -173,7 +198,10 @@ func TestDecodeDeviceRequest_AcceptsBoundaryValues(t *testing.T) {
 	}
 }
 
-// Every limit: its exact value is accepted, one more refused, whole.
+// Every limit: its exact value is accepted, and one more isn't read.
+// Over a count limit, the request stands without its information, as
+// for any it can't read; over MaxDeviceRequestInfoBytes, the request
+// is refused.
 func TestDecodeDeviceRequest_Limits(t *testing.T) {
 	sets := func(n, per int) [][]int {
 		out := make([][]int, n)
@@ -264,9 +292,14 @@ func TestDecodeDeviceRequest_Limits(t *testing.T) {
 			if _, err := decodeInfo(t, 1, tc.at); err != nil {
 				t.Errorf("at the limit: %v", err)
 			}
-			if _, err := decodeInfo(t, 1, tc.over); !errors.Is(err, ErrCBORValidation) {
-				t.Errorf("over the limit: %v, want a validation error", err)
+			req, err := decodeInfo(t, 1, tc.over)
+			if name == "information bytes" {
+				if !errors.Is(err, ErrCBORValidation) {
+					t.Errorf("over the limit: %v, want a validation error", err)
+				}
+				return
 			}
+			requireUnread(t, req, err)
 		})
 	}
 	if n := len(paddedInfo(t, MaxDeviceRequestInfoBytes-11)); n != MaxDeviceRequestInfoBytes {

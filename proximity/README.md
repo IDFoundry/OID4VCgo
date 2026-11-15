@@ -190,15 +190,23 @@ text, so they are this library's profile, not a conformance claim.
 `DecodeDeviceRequest` returns an opaque `*DeviceRequest`. Its
 `DocRequests()` and `RequestInfo()` return copies, nil `RequestInfo`
 when the reader sent none and an empty one for present but empty
-information. It checks what it reads: a present `readerAuthAll` is an
-array of 1 to `MaxReaderSignatures` (8) signatures, a present
-`deviceRequestInfo` is `#6.24(bstr .cbor map)`, neither may be null,
-known fields must have their types, document indices must name one of
-the request's documents and purpose codes must fit a signed 32-bit
-integer. Unknown fields are accepted and stay signed as received; they
-aren't interpreted. Duplicate keys are refused anywhere, the embedded
-information included. A request over any limit is refused whole, never
-truncated:
+information. It checks what it reads. A present `readerAuthAll` must
+be an array of 1 to `MaxReaderSignatures` (8) signatures, and a present
+`deviceRequestInfo` must be `#6.24(bstr .cbor map)` of at most
+`MaxDeviceRequestInfoBytes`, well-formed; neither may be null, and
+duplicate keys are refused anywhere, the embedded information included.
+A request failing any of these is refused.
+
+The information's known fields are read only when they have the
+working representation's types, document indices name one of the
+request's documents, purpose codes fit a signed 32-bit integer, and the
+counts are within the limits below. Otherwise the request isn't
+refused, since the second edition's final text may shape them
+otherwise: it stands without its information (`RequestInfo()` is nil,
+`RequestInfoError()` says why), its signatures still checked over the
+information as received, which is then reported unsigned. Nothing is
+truncated to fit. Unknown fields are accepted and stay signed as
+received; they aren't interpreted.
 
 | Limit | Value |
 |---|---:|

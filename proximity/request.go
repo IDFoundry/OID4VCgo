@@ -101,11 +101,15 @@ func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 // MaxReaderSignatures signatures (their contents are checked by
 // VerifyDeviceRequest), and deviceRequestInfo, when present, must be
 // #6.24(bstr .cbor map) of at most MaxDeviceRequestInfoBytes; neither
-// may be null. Its known fields must have the working representation
-// RequestInfo describes, within this package's other Max limits, and
-// with every document index naming one of the request's DocRequests;
-// unknown fields are accepted, and signed as received. Nothing is
-// truncated or dropped to fit.
+// may be null. Its known fields are read only when they have the
+// working representation RequestInfo describes, within this package's
+// other Max limits, with every document index naming one of the
+// request's DocRequests: otherwise the request stands without them
+// (RequestInfo is nil and RequestInfoError says why), since the second
+// edition's final text may shape them otherwise, and its signatures
+// are still checked over the information as received. Nothing is
+// truncated to fit. Unknown fields are accepted, and signed as
+// received.
 //
 // An error wraps ErrCBORDecoding for bytes, or embedded
 // deviceRequestInfo bytes, that aren't well-formed CBOR, or
@@ -153,8 +157,12 @@ func DecodeDeviceRequest(b []byte) (*DeviceRequest, error) {
 		}
 	}
 	if haveInfo {
-		if out.info, err = parseDeviceRequestInfo(info, len(docs)); err != nil {
+		var unread error
+		if out.info, unread, err = parseDeviceRequestInfo(info, len(docs)); err != nil {
 			return nil, fmt.Errorf("proximity: %w", err)
+		}
+		if unread != nil {
+			out.infoErr = fmt.Errorf("proximity: deviceRequestInfo: %w", unread)
 		}
 		out.infoBytes = bytes.Clone(info)
 	}

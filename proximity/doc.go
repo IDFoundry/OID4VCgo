@@ -95,7 +95,9 @@
 //     against the ballot text: DecodeDeviceRequest reads readerAuthAll
 //     and deviceRequestInfo (use cases with their mandatory flags,
 //     document sets and purpose hints) within this package's Max
-//     limits, and VerifyDeviceRequest verifies every signature a
+//     limits, setting aside information whose known fields it can't
+//     read rather than refusing the request (RequestInfoError), and
+//     VerifyDeviceRequest verifies every signature a
 //     request carries. With readerAuthAll, its first trusted signer is
 //     the reader, and RequestAuthentication.RequestInfoSigned says
 //     whether a verified whole-request signature covers the

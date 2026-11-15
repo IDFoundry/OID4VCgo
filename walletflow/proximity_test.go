@@ -482,17 +482,35 @@ func TestProximityPresentation_RequestInfoSnapshot(t *testing.T) {
 	}
 }
 
-// A request whose known information fields are malformed is refused
-// with the existing protocol error response (status 12), publishing no
-// request and no information: not shown with the information dropped.
+// Information that isn't #6.24(bstr .cbor map) is refused with the
+// existing protocol error response (status 12), publishing no request
+// and no information.
 func TestProximityPresentation_MalformedRequestInfo(t *testing.T) {
 	pw := newProximityWallet(t)
-	bad := requestInfo(t, map[string]any{"useCases": []any{map[string]any{"mandatory": "yes", "documentSets": [][]int{{0}}}}})
-	p, ev := pw.start(t, false, deviceRequest{docs: []proximityDoc{harmless(nil), held(nil)}, all: []mdocReader{pw.reader}, info: bad})
+	p, ev := pw.start(t, false, deviceRequest{docs: []proximityDoc{harmless(nil), held(nil)}, all: []mdocReader{pw.reader}, info: []byte{0xa0}})
 	if ev.Request || !ev.Ended || ev.Send == nil || !errors.Is(ev.Err, proximity.ErrCBORValidation) {
 		t.Fatalf("event %+v, want ended with an error response for a validation error", ev)
 	}
 	if p.RequestInfo() != nil || len(p.Requests()) != 0 {
 		t.Error("a refused request published information or documents")
+	}
+}
+
+// Information whose known fields this side can't read (the second
+// edition's final text may shape them otherwise) doesn't refuse the
+// request: it stands, its whole-request signature checked over the
+// information as received, and no information is shown.
+func TestProximityPresentation_UnreadableRequestInfo(t *testing.T) {
+	pw := newProximityWallet(t)
+	odd := requestInfo(t, map[string]any{"useCases": []any{map[string]any{"mandatory": "yes", "documentSets": [][]int{{0}}}}})
+	p, ev := pw.start(t, true, deviceRequest{docs: []proximityDoc{harmless(nil), held(nil)}, all: []mdocReader{pw.reader}, info: odd})
+	if !ev.Request || ev.Err != nil {
+		t.Fatalf("event %+v, want the request", ev)
+	}
+	if got := p.Reader().Status; got != proximity.ReaderTrusted {
+		t.Errorf("reader %v, want trusted: the signature covers the information as received", got)
+	}
+	if p.RequestInfo() != nil || len(p.Requests()) != 2 {
+		t.Errorf("RequestInfo %+v, %d requests; want none shown, both documents", p.RequestInfo(), len(p.Requests()))
 	}
 }

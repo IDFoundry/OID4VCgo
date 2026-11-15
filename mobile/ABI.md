@@ -1224,8 +1224,10 @@ ballot text):
 ```
 
 - It is `null` before the `request` event, after a request the holder
-  refused, and when the reader sent no `deviceRequestInfo` (a
-  first-edition reader). The member is always present, so `null` is an
+  refused, when the reader sent no `deviceRequestInfo` (a
+  first-edition reader), and when its known fields aren't in the shape
+  above or exceed the library's limits: the request still stands, its
+  signatures checked over the information as received. The member is always present, so `null` is an
   explicit "none": a library from before it omits the member, which
   says nothing about the reader.
 - Present but empty information is `{"use_cases": [], "signed": …}`;

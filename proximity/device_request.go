@@ -26,6 +26,9 @@ type DeviceRequest struct {
 	// ReaderAuthenticationAll.
 	info      *RequestInfo
 	infoBytes []byte
+	// infoErr is why info is nil though the request carries
+	// information: its known fields couldn't be read.
+	infoErr error
 	// readerAuthAll are the whole-request signatures as received; nil
 	// when the request has none.
 	readerAuthAll [][]byte
@@ -51,6 +54,21 @@ func (r *DeviceRequest) RequestInfo() *RequestInfo {
 	return r.info.clone()
 }
 
+// RequestInfoError is why RequestInfo is nil though the request
+// carries deviceRequestInfo: its known fields don't have the shape
+// RequestInfo describes, or exceed one of this package's limits. It
+// wraps ErrCBORValidation, and is nil when RequestInfo isn't nil or
+// the request carries no information. Such a request is still
+// decoded, and VerifyDeviceRequest checks its signatures over the
+// information as received, but reports it unsigned: nothing of it is
+// shown.
+func (r *DeviceRequest) RequestInfoError() error {
+	if r == nil || !r.decoded {
+		return nil
+	}
+	return r.infoErr
+}
+
 func cloneDocRequests(docs []DocRequest) []DocRequest {
 	out := make([]DocRequest, len(docs))
 	for i, d := range docs {
@@ -72,7 +90,8 @@ type RequestAuthentication struct {
 	Reader ReaderAuthentication
 	// RequestInfoSigned reports whether a verified whole-request
 	// signature covers the request's information: it carries
-	// deviceRequestInfo and at least one readerAuthAll, and every
+	// deviceRequestInfo this package could read (DeviceRequest.RequestInfo
+	// isn't nil) and at least one readerAuthAll, and every
 	// signature it carries verified. It is independent of whether the
 	// signer is trusted, and never set by per-document signatures.
 	RequestInfoSigned bool

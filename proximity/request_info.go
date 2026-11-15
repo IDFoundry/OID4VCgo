@@ -116,29 +116,37 @@ type requestInfoBudget struct {
 
 // parseDeviceRequestInfo decodes raw, a DeviceRequest's
 // deviceRequestInfo as received — #6.24(bstr .cbor DeviceRequestInfo) —
-// for a request with docCount DocRequests.
-func parseDeviceRequestInfo(raw []byte, docCount int) (*RequestInfo, error) {
+// for a request with docCount DocRequests. err is for an envelope that
+// isn't that, which refuses the request: null, untagged, over
+// MaxDeviceRequestInfoBytes, not well-formed, or not a map. unread is
+// for a well-formed map whose known fields don't have RequestInfo's
+// shape, or exceed this package's other limits: the information is
+// then not shown (info is nil), but the request stands, its signatures
+// checked over raw as received. The second edition's final text may
+// shape them otherwise than the working representation does, and a
+// request from a reader following it isn't malformed for that.
+func parseDeviceRequestInfo(raw []byte, docCount int) (info *RequestInfo, unread, err error) {
 	if len(raw) > MaxDeviceRequestInfoBytes {
-		return nil, fmt.Errorf("deviceRequestInfo is %d bytes, over %d: %w", len(raw), MaxDeviceRequestInfoBytes, ErrCBORValidation)
+		return nil, nil, fmt.Errorf("deviceRequestInfo is %d bytes, over %d: %w", len(raw), MaxDeviceRequestInfoBytes, ErrCBORValidation)
 	}
 	if len(raw) > 0 && raw[0] == 0xf6 {
-		return nil, fmt.Errorf("deviceRequestInfo is null: %w", ErrCBORValidation)
+		return nil, nil, fmt.Errorf("deviceRequestInfo is null: %w", ErrCBORValidation)
 	}
 	content, err := unwrapTag24(raw)
 	if err != nil {
-		return nil, fmt.Errorf("deviceRequestInfo isn't #6.24(bstr): %w: %w", ErrCBORValidation, err)
+		return nil, nil, fmt.Errorf("deviceRequestInfo isn't #6.24(bstr): %w: %w", ErrCBORValidation, err)
 	}
 	// The outer walk doesn't look inside byte strings: check the
 	// embedded item, its duplicate keys and nesting, here.
 	if err := decMode.Wellformed(content); err != nil {
-		return nil, fmt.Errorf("decode DeviceRequestInfo: %w: %w", ErrCBORDecoding, err)
+		return nil, nil, fmt.Errorf("decode DeviceRequestInfo: %w: %w", ErrCBORDecoding, err)
 	}
 	if !strictcbor.IsMap(content) {
-		return nil, fmt.Errorf("DeviceRequestInfo isn't a map: %w", ErrCBORValidation)
+		return nil, nil, fmt.Errorf("DeviceRequestInfo isn't a map: %w", ErrCBORValidation)
 	}
-	info := &RequestInfo{UseCases: []UseCase{}}
+	info = &RequestInfo{UseCases: []UseCase{}}
 	var budget requestInfoBudget
-	err = mapEntries(content, -1, "DeviceRequestInfo", func(key string, known bool, value []byte) error {
+	unread = mapEntries(content, -1, "DeviceRequestInfo", func(key string, known bool, value []byte) error {
 		if !known || key != "useCases" {
 			return nil // an extension: signed as received, not interpreted
 		}
@@ -151,10 +159,10 @@ func parseDeviceRequestInfo(raw []byte, docCount int) (*RequestInfo, error) {
 			return nil
 		})
 	})
-	if err != nil {
-		return nil, err
+	if unread != nil {
+		return nil, unread, nil
 	}
-	return info, nil
+	return info, nil, nil
 }
 
 func parseUseCase(raw []byte, docCount int, budget *requestInfoBudget) (UseCase, error) {
