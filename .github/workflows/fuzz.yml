@@ -109,6 +109,12 @@ jobs:
           - id: proximity-parse-device-request
             pkg: ./proximity
             name: FuzzParseDeviceRequest
+          - id: proximity-decode-device-request
+            pkg: ./proximity
+            name: FuzzDecodeDeviceRequest
+          - id: proximity-verify-device-request
+            pkg: ./proximity
+            name: FuzzVerifyDeviceRequest
           - id: proximity-new-reader-session
             pkg: ./proximity
             name: FuzzNewReaderSession

@@ -46,7 +46,7 @@ plain FAPI 2.0" below.
 | [ISO/IEC 18013-5:2021 — mdoc][iso18013-5] | OID4VCI 1.0 Appendix A.2, HAIP §5.3.1 | — |
 | ISO/IEC 23220 series | HAIP §5.3.1 (mdoc presentation specifics) | — |
 | [ISO/IEC TS 18013-7:2025 — mdoc online presentation][iso18013-7], Annex C (`org-iso-mdoc` over the Digital Credentials API) | — (`mdocdcapi`; outside HAIP, which uses OpenID4VP over the DC API) | — |
-| ISO/IEC 18013-5 second edition: `ReaderAuthAll`, DeviceRequest version "1.1" | — (`mdocdcapi` only, which Apple's implementation expects; `proximity` uses the first edition's per-`DocRequest` `ReaderAuth`) | CD ballot resolution draft |
+| ISO/IEC 18013-5 second edition: `ReaderAuthAll`, DeviceRequest version "1.1" | — (`mdocdcapi`, which Apple's implementation expects, signs and verifies it; `proximity`'s holder side, `DecodeDeviceRequest`/`VerifyDeviceRequest`, verifies it and decodes `DeviceRequestInfo` use cases, document sets and purpose hints in Multipaz 0.102.0's working representation, which `walletflow` and the mobile libraries expose; `proximity`'s reader still sends the first edition's per-`DocRequest` `ReaderAuth`) | CD ballot resolution draft. The `DeviceRequestInfo` representation and the proximity validity profile are checked against Multipaz 0.102.0 (interop cases and a checked-in fixture bundle), not yet against the ballot text: the ballot revision and clauses remain to be identified before a release describes it as conformant |
 | ISO/IEC TS 23220-2 and the 23220-4 draft — Photo ID (`org.iso.23220.photoid.1`) | — (`examples/passport-vdc` only; checked against open implementations, not 23220-4 itself) | — |
 
 ## Beyond HAIP
@@ -289,7 +289,8 @@ guard against a third party say so.
   refused (proximity and ISO/IEC 18013-7 Annex C): documents are
   matched to the reader's requests by docType, so a request can't ask
   for one docType twice. The holder side refuses such a DeviceRequest
-  too (`proximity.ParseDeviceRequest`, `mdocdcapi.ParseRequest`).
+  too (`proximity.ParseDeviceRequest` and `DecodeDeviceRequest`,
+  `mdocdcapi.ParseRequest`).
 - **The `attestation` proof type** (OpenID4VCI 1.0 Appendix F.3, one
   of the two combinations HAIP 1.0 §4.5.1 names) is refused by
   `issuer.New` under `AssuranceProduction` unless

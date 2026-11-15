@@ -313,7 +313,7 @@ func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 	var allErr error
 	if len(in.readerAuthAll) > 0 {
 		// Every ReaderAuthAll signs the same structure: encode it once.
-		detached, err := wrapTag24(readerAuthenticationAll(in.transcript, items, in.deviceRequestInfo))
+		detached, err := readerauth.AuthenticationAllBytes(in.transcript, items, in.deviceRequestInfo)
 		if err != nil {
 			return nil, fmt.Errorf("mdocdcapi: encode ReaderAuthenticationAll: %w", err)
 		}
@@ -355,7 +355,7 @@ func (in Incoming) verifyDocumentReaderAuth(t ReaderTrust) (reader *x509.Certifi
 		if d.readerAuth == nil {
 			return nil, signed, errors.New("a document request isn't signed")
 		}
-		detached, err := wrapTag24(readerAuthentication(in.transcript, d.itemsRequestBytes))
+		detached, err := readerauth.AuthenticationBytes(in.transcript, d.itemsRequestBytes)
 		if err != nil {
 			return nil, signed, fmt.Errorf("mdocdcapi: encode ReaderAuthentication: %w", err)
 		}

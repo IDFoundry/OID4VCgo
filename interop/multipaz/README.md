@@ -15,6 +15,13 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 | Multipaz reader → OID4VCgo's holder (`walletflow`) | mDL, QR engagement, reader authentication, device signature | Multipaz verifies it; only the requested elements disclosed; the holder recognizes the reader |
 | | The same, deviceMac | Multipaz verifies the MAC |
 | | The reader's certificate under a CA the holder doesn't trust | the holder shows the reader as untrusted |
+| Multipaz reader, second edition → OID4VCgo's holder (`walletflow`) | A request for the mDL and a second document, signed only as a whole (`readerAuthAll`), with `deviceRequestInfo`: two use cases, purpose hints (one negative), an extension | the holder recognizes the reader; its request information is the use cases sent, signed; Multipaz verifies the answer |
+| | The same, with present but empty information | the reader recognized; the information present, empty, signed |
+| | The same, with no information | the reader recognized; no information |
+| | Signed per document and as a whole by the trusted reader | the reader recognized; the information signed |
+| | Signed as a whole by an untrusted reader, then by the trusted one | the trusted one is the reader |
+| | Trusted per-document signatures, the whole request signed only by an untrusted reader | the holder shows the reader as untrusted (no fallback to the documents' signer), the information still signed |
+| | The whole-request signature made over another session's transcript | the holder shows the reader as invalid, the information unsigned |
 | OID4VCgo's reader (`proximity`) → Multipaz holder (`Iso18013Presentment`) | mDL, QR engagement, reader authentication, device signature | OID4VCgo verifies it; Multipaz recognizes the reader |
 | | The same, deviceMac | OID4VCgo verifies the MAC |
 | | The mDL from an IACA the reader doesn't trust | the reader refuses it |
@@ -254,7 +261,12 @@ session transcript; so the origin control uses an unsigned request.
   distribution point it names (`https://github.com/IDFoundry/OID4VCgo/crl`)
   serves nothing; OID4VCgo's own certificates for it name one nothing
   serves either.
-- Requests for several documents, transaction data, zero-knowledge
+- Second-edition requests beyond the cases above: OID4VCgo's reader
+  sending `readerAuthAll` or `deviceRequestInfo`, Multipaz's holder
+  receiving them from OID4VCgo, and whether Multipaz's request
+  representation matches the ISO/IEC 18013-5 second edition text.
+- Requests for several documents (beyond the second-edition cases,
+  whose second document the holder doesn't hold), transaction data, zero-knowledge
   proofs, and OpenID4VCI's refresh tokens, deferred issuance,
   Transaction Codes, batches, and encryption.
 - Status lists beyond the OpenID4VP cases above: Multipaz's reader and
@@ -276,6 +288,37 @@ another Multipaz release (`latest`: Maven Central's newest, found with
 release's. `WP_PORT` (22441, and the three ports after) moves the Wallet
 Providers and their admin listeners. `WORK` keeps the run's files; `driver.log` has
 Multipaz's own logging.
+
+### The second-edition fixture bundle
+
+The second-edition requests are also checked in, for `proximity`'s Go
+tests to verify offline (`proximity/multipaz_test.go`, no JDK or
+network): [`proximity/testdata/multipaz/reader_auth_all.json`](../../proximity/testdata/multipaz/reader_auth_all.json).
+The driver's `-fixtures` mode writes it and runs no case:
+
+```sh
+cd interop/multipaz/driver && ./gradlew --no-daemon installDist && cd ../../..
+interop/multipaz/driver/build/install/multipaz-interop/bin/multipaz-interop -fixtures proximity/testdata/multipaz/reader_auth_all.json
+go test ./proximity/ -run Multipaz
+```
+
+Each request is built and signed by Multipaz's request builder
+(`buildDeviceRequest`, `addReaderAuthAll`), never by OID4VCgo's code,
+over a fixed synthetic session transcript, and Multipaz verifies every
+signature (`verifyReaderAuthentication`) before the bundle is written.
+The bundle names the Multipaz release that made it, carries the test
+reader root as its trust anchor, and fixes the time the Go tests verify
+at (`verification_time`): its certificates are valid from an hour
+before it for twenty years, since Multipaz checks validity at the
+current time. Its keys are made afresh each time, so a regenerated
+bundle has equivalent cases, not the same bytes. The Go tests also
+change what the signatures cover, the session, the trust anchor and the
+time, and expect each refused.
+
+The bundle is evidence that OID4VCgo reads and verifies what this
+Multipaz release builds; it is not a live BLE run, not a check against
+the ISO/IEC 18013-5 second edition text, and its purpose codes are test
+values from no registry.
 
 ## Moving the pin
 

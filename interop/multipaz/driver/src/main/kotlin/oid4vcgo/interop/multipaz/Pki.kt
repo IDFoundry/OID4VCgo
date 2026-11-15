@@ -10,15 +10,22 @@ import org.multipaz.crypto.X509CertChain
 import org.multipaz.mdoc.util.MdocUtil
 import org.multipaz.util.truncateToWholeSeconds
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Instant
 
 /**
  * Multipaz's own certificates, from its own generators: an IACA and a
  * document signer for its holder's mDL, and two reader roots, each
  * with a reader certificate: the one OID4VCgo's holder trusts, and one
- * it doesn't. The trusted root has a second reader certificate,
- * [sibling], another Verifier the holder trusts.
+ * it doesn't ([otherReader], which also signs the multiple-signer
+ * second-edition cases). The trusted root has a second reader
+ * certificate, [sibling], another Verifier the holder trusts. Each is
+ * valid from an hour before [create]'s time to validFor after it: for a
+ * run, now and a day; for the fixture bundle, a fixed time and long
+ * enough that Multipaz, which checks validity at the current time, can
+ * still verify what it signs when the bundle is regenerated.
  */
 class Pki private constructor(
     val iaca: X509Cert,
@@ -29,10 +36,10 @@ class Pki private constructor(
     val sibling: AsymmetricKey.X509CertifiedExplicit,
 ) {
     companion object {
-        suspend fun create(): Pki {
-            val now = Clock.System.now().truncateToWholeSeconds()
+        suspend fun create(at: Instant = Clock.System.now(), validFor: Duration = 1.days): Pki {
+            val now = at.truncateToWholeSeconds()
             val from = now - 1.hours
-            val until = now + 1.days
+            val until = now + validFor
 
             val iacaKey = Crypto.createEcPrivateKey(EcCurve.P256)
             val iaca = MdocUtil.generateIacaCertificate(

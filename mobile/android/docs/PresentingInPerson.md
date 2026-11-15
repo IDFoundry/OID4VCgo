@@ -68,6 +68,7 @@ import dev.idfoundry.oid4vcwallet.MdocPresentation
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
+import dev.idfoundry.oid4vcwallet.ProximityReaderIdentity
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
 import dev.idfoundry.oid4vcwallet.VerifiedMdoc
 import dev.idfoundry.oid4vcwallet.Wallet
@@ -110,6 +111,41 @@ certificate chains to `WalletConfiguration.mdocReaderRoots`. An
 unsigned request could come from anyone who scanned the code.
 `WalletConfiguration.requireTrustedMdocReader` ends a session from any
 other reader before the holder sees it.
+
+### Use cases and purpose hints
+
+A reader following the ISO/IEC 18013-5 second-edition draft may sign
+the whole request rather than each document, and say why it asks:
+`Request.requestInfo` holds its use cases, each with a `mandatory` flag,
+`documentSets` (groups of indices into `Request.documents`) and
+`purposeHints` (an integer purpose code per controller ID, as the reader
+sent it). It is null when the reader sent none, as a first-edition
+reader doesn't, so keep a consent screen that works without it.
+
+Read `signed` together with the reader's status. `signed` is true when
+a verified signature over the whole request covers this information;
+it says nothing about who signed. `reader.status` says whether that
+signer is one the wallet trusts. A trusted reader with signed
+information is the only case where the hints are vouched for by a
+reader you recognise, and even then they are the reader's claims: the
+library doesn't check that a purpose is true, or that the reader's
+certificate allows it to ask, and translating purpose codes is the
+app's.
+
+```kotlin
+/** The purpose hints to show, and whether a reader the wallet trusts vouched for them. */
+fun purposeHints(request: ProximityPresentation.Request): Pair<List<String>, Boolean> {
+    val info = request.requestInfo ?: return emptyList<String>() to false // a first-edition reader
+    val hints = info.useCases.flatMap { useCase ->
+        useCase.purposeHints.map { (controller, code) -> "$controller: $code" }
+    }
+    val vouched = info.signed && request.reader.status == ProximityReaderIdentity.Status.Trusted
+    return hints to vouched
+}
+```
+
+Apps compiled against an earlier release must be rebuilt for this one:
+`Request` gained the `requestInfo` constructor parameter.
 
 ### Several documents at once
 

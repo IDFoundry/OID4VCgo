@@ -437,3 +437,80 @@ func TestDeviceMACPreferredOnlyInPerson(t *testing.T) {
 		t.Errorf("agreed keys %d times outside proximity", keys.agreed)
 	}
 }
+
+// RequestInfo is published with the accepted request and no sooner: nil
+// while waiting and after a refused request; nil for a request without
+// information, and present but empty for an empty one; a copy each time;
+// kept after the holder declines.
+func TestProximityPresentation_RequestInfoSnapshot(t *testing.T) {
+	pw := newProximityWallet(t)
+	r := pw.reader
+	docs := []proximityDoc{harmless(nil), held(nil)}
+
+	p, err := pw.wallets[false].StartProximityPresentation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.RequestInfo() != nil {
+		t.Error("RequestInfo before any request isn't nil")
+	}
+	ev := p.HandleMessage(context.Background(), deviceRequest{docs: docs, all: []mdocReader{r}, info: purposeInfo(t)}.establishment(t, p))
+	if !ev.Request {
+		t.Fatalf("event %+v", ev)
+	}
+	info := p.RequestInfo()
+	info.Signed = false
+	info.UseCases[0].Mandatory = false
+	info.UseCases[0].DocumentSets[0][0] = 9
+	info.UseCases[0].PurposeHints["org.example.controller"] = 0
+	info.UseCases = nil
+	again := p.RequestInfo()
+	if !again.Signed || len(again.UseCases) != 1 || !again.UseCases[0].Mandatory || again.UseCases[0].DocumentSets[0][0] != 0 || again.UseCases[0].PurposeHints["org.example.controller"] != 3 {
+		t.Errorf("RequestInfo changed through a returned copy: %+v", again)
+	}
+	p.Terminate()
+	if p.RequestInfo() == nil {
+		t.Error("RequestInfo gone after the holder declined")
+	}
+
+	if p, ev := pw.start(t, false, deviceRequest{docs: docs, all: []mdocReader{r}}); !ev.Request || p.RequestInfo() != nil {
+		t.Errorf("no information: %+v, RequestInfo %+v; want nil", ev, p.RequestInfo())
+	}
+	p, ev = pw.start(t, false, deviceRequest{docs: docs, all: []mdocReader{r}, info: requestInfo(t, map[string]any{})})
+	if got := p.RequestInfo(); !ev.Request || got == nil || got.UseCases == nil || len(got.UseCases) != 0 || !got.Signed {
+		t.Errorf("empty information: %+v, RequestInfo %+v; want present, empty, signed", ev, got)
+	}
+}
+
+// Information that isn't #6.24(bstr .cbor map) is refused with the
+// existing protocol error response (status 12), publishing no request
+// and no information.
+func TestProximityPresentation_MalformedRequestInfo(t *testing.T) {
+	pw := newProximityWallet(t)
+	p, ev := pw.start(t, false, deviceRequest{docs: []proximityDoc{harmless(nil), held(nil)}, all: []mdocReader{pw.reader}, info: []byte{0xa0}})
+	if ev.Request || !ev.Ended || ev.Send == nil || !errors.Is(ev.Err, proximity.ErrCBORValidation) {
+		t.Fatalf("event %+v, want ended with an error response for a validation error", ev)
+	}
+	if p.RequestInfo() != nil || len(p.Requests()) != 0 {
+		t.Error("a refused request published information or documents")
+	}
+}
+
+// Information whose known fields this side can't read (the second
+// edition's final text may shape them otherwise) doesn't refuse the
+// request: it stands, its whole-request signature checked over the
+// information as received, and no information is shown.
+func TestProximityPresentation_UnreadableRequestInfo(t *testing.T) {
+	pw := newProximityWallet(t)
+	odd := requestInfo(t, map[string]any{"useCases": []any{map[string]any{"mandatory": "yes", "documentSets": [][]int{{0}}}}})
+	p, ev := pw.start(t, true, deviceRequest{docs: []proximityDoc{harmless(nil), held(nil)}, all: []mdocReader{pw.reader}, info: odd})
+	if !ev.Request || ev.Err != nil {
+		t.Fatalf("event %+v, want the request", ev)
+	}
+	if got := p.Reader().Status; got != proximity.ReaderTrusted {
+		t.Errorf("reader %v, want trusted: the signature covers the information as received", got)
+	}
+	if p.RequestInfo() != nil || len(p.Requests()) != 2 {
+		t.Errorf("RequestInfo %+v, %d requests; want none shown, both documents", p.RequestInfo(), len(p.Requests()))
+	}
+}

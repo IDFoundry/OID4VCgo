@@ -109,6 +109,10 @@ type reply struct {
 	// asked (proximity.ReaderStatus, or the org-iso-mdoc reader's name).
 	Ended  bool   `json:"ended,omitempty"`
 	Reader string `json:"reader,omitempty"`
+	// RequestInfo is what the holder made of the request's
+	// second-edition information, and whether a verified whole-request
+	// signature covers it (observe.go's describeRequestInfo).
+	RequestInfo string `json:"request_info,omitempty"`
 
 	// What a reader verified.
 	Claims     map[string]any `json:"claims,omitempty"`
@@ -375,7 +379,7 @@ func (p *peer) holderMessage(ctx context.Context, req request) (reply, error) {
 		return reply{}, err
 	}
 	ev := p.holder.HandleMessage(ctx, msg)
-	rep := reply{Send: encode(ev.Send), Ended: ev.Ended, Reader: p.holder.Reader().Status.String()}
+	rep := reply{Send: encode(ev.Send), Ended: ev.Ended, Reader: p.holder.Reader().Status.String(), RequestInfo: describeRequestInfo(p.holder.RequestInfo())}
 	if ev.Err != nil {
 		return rep, ev.Err
 	}
