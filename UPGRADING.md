@@ -7,6 +7,36 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.79.0 → v0.80.0
+
+### FAPIgo v0.75.0
+
+OID4VCgo now requires FAPIgo v0.75.0, which also carries v0.74.0's
+changes; see FAPIgo's UPGRADING.md, sections v0.75.0 and v0.74.0. Both
+are breaking for redirect URIs only: a redirect URI must be written
+exactly as it is sent.
+
+- **Refused now:** an uppercase scheme or host
+  (`https://RP.example/cb`), an uppercase private-use authority
+  (`com.example.app://Wallet/cb`), a character RFC 3986 doesn't allow
+  left unencoded in the path or query, a malformed `%` escape, a `.`
+  or `..` path segment (written or as `%2e`), and an empty or
+  impossible port (`https://rp.example:/cb`, `:0`).
+- **Wallet (`walletflow`, `mobile`):** `walletflow.New` refuses a
+  `Config.RedirectURI` written that way (the mobile configuration's
+  `redirect_uri`). Write it in the form the error gives, and register
+  the same string with the issuer. `com.example.app:/cb`,
+  `eu.europa.ec.euidi://authorization` and loopback `http` redirects
+  are unaffected.
+- **Issuer (`haip`, `issuer`):** `storage.NewRegisteredClient` refuses
+  a wallet client registered with such a URI, and a client stored
+  before the upgrade that a repository rebuilds with it fails to
+  resolve. Re-register it in the normalized form, and update the
+  wallet's configuration to match. `fapi.CheckRedirectURIForm` runs
+  the same check ahead of registration.
+- **Also in these releases:** FAPIgo no longer issues a refresh token
+  whose grant was revoked while it was being issued.
+
 ## v0.78.0 → v0.79.0
 
 ### Wallet (`walletflow`, `mobile`)
