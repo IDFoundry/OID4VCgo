@@ -30,6 +30,43 @@ CHANGELOG.md's BREAKING CHANGES sections.
   `TransportConfig.AllowedPrivateHosts`: outside `Development`, `New`
   refuses one whose list differs.
 
+### In-person presentation (`proximity`, `walletflow`, `mobile`)
+
+- **Second-edition requests are read whole.**
+  `walletflow.ProximityPresentation` now decodes and verifies the whole
+  DeviceRequest (`proximity.DecodeDeviceRequest`,
+  `VerifyDeviceRequest`), not only its document requests. What changes
+  for a request that carries the second edition's fields:
+  - A reader that signs only through `readerAuthAll` is now recognised:
+    it was `unauthenticated` before, so `RequireTrustedMdocReader`
+    ended the session.
+  - Every signature the request carries must verify. A `readerAuthAll`
+    that doesn't, or is malformed, makes the reader `invalid`; it used
+    to be ignored.
+  - With a `readerAuthAll`, only its signers can be the reader. A
+    trusted per-document `readerAuth` no longer makes the reader trusted
+    when the whole-request signer isn't.
+  - A request whose `readerAuthAll` isn't an array of 1 to 8
+    signatures, or whose `deviceRequestInfo` isn't
+    `#6.24(bstr .cbor map)` (null, untagged, over 64 KiB, malformed,
+    duplicate keys), is refused with the status 11/12 error response.
+    Both used to be ignored.
+
+  First-edition requests, with per-document `readerAuth` only, are
+  handled as before.
+- **New: the request's information.** `ProximityPresentation.RequestInfo()`
+  (the mobile `Request()` JSON's `request_info`, `requestInfo` in the
+  Kotlin and Swift libraries) is the request's use cases, document sets
+  and purpose hints, with `Signed` saying whether a verified
+  whole-request signature covers them. `Signed` isn't reader trust, and
+  neither shows that a purpose is true. Information whose known fields
+  this library can't read leaves it nil without refusing the request
+  (`DeviceRequest.RequestInfoError` says why).
+- `proximity.ParseDeviceRequest` and `VerifyReaderAuth` are unchanged.
+  If you call them directly, move to `DecodeDeviceRequest` and
+  `VerifyDeviceRequest` to take `readerAuthAll` and the information
+  into account.
+
 ## v0.77.1 → v0.78.0
 
 ### Verifier (`verifier`)
