@@ -13,6 +13,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -433,7 +435,9 @@ public class ProximityPresentation internal constructor(
      * - A [ProximityException]: the response couldn't be delivered, and
      *   the state is [State.Failed] with it.
      * - The caller's cancellation while the response was being sent: the
-     *   reader may hold part of it, so the state is [State.Cancelled].
+     *   reader may hold part of it, so the state is [State.Cancelled]. A
+     *   cancellation from inside the transport, the caller still active,
+     *   is a [ProximityException] instead, as above.
      * - A [WalletException] with [WalletException.Code.internal] from
      *   sending: the state is [State.Failed] with it.
      *
@@ -479,6 +483,15 @@ public class ProximityPresentation internal constructor(
             finish(State.Failed(error))
             throw error
         } catch (e: CancellationException) {
+            if (currentCoroutineContext().isActive) {
+                // Not the caller's: a cancellation from inside the
+                // transport, a timeout of its own say. The response may be
+                // partly sent, and the caller wasn't cancelled.
+                val reason = if (e is TimeoutCancellationException) ProximityException.Reason.TimedOut else ProximityException.Reason.ConnectionLost
+                val error = ProximityException(reason, "sending the response: ${e.message}", e)
+                finish(State.Failed(error))
+                throw error
+            }
             // The caller's own cancellation, mid-send: the reader may hold
             // part of the response, so it can't be sent again.
             finish(State.Cancelled)
