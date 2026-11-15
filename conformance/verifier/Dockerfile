@@ -7,7 +7,7 @@
 # production store (cmd/conformance-verifier/production.go), which is
 # sqlstore's: that build needs a Go workspace holding ./sqlstore as
 # well, as conformance/issuer/Dockerfile's does.
-FROM golang:1.26.11@sha256:7af425da11f4fc1a9308eb704369e3f6d1c44e35bac0f874a59ade3f20fdc07e AS build
+FROM golang:1.26.11@sha256:957952ae74dc010608717144399a59a2c6e82ea03d63be1c7ff6577c5a135f93 AS build
 ARG GO_BUILD_TAGS=""
 WORKDIR /src
 COPY . .
