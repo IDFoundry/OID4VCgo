@@ -7,6 +7,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/idfoundry/oid4vcgo/internal/displaytext"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 )
 
@@ -84,7 +85,10 @@ type UseCase struct {
 
 	// PurposeHints maps each controller ID to a purpose code, as the
 	// reader sent them: the code is neither translated nor checked
-	// against what the reader's certificate allows. Empty, not nil,
+	// against what the reader's certificate allows. Controller IDs are
+	// identifiers, not names, but hold no control, line separator or
+	// invisible format characters, nor surrounding space: information
+	// with one isn't read (DeviceRequest.RequestInfoError). Empty, not nil,
 	// when the use case carries none.
 	PurposeHints map[string]int32
 }
@@ -218,6 +222,12 @@ func parseUseCase(raw []byte, docCount int, budget *requestInfoBudget) (UseCase,
 				if len(controllerID) > MaxControllerIDBytes {
 					return fmt.Errorf("a controller ID is %d bytes, over %d: %w", len(controllerID), MaxControllerIDBytes, ErrCBORValidation)
 				}
+				// An identifier, which an app may still show: none that
+				// display text would have to clean (control, line
+				// separator or invisible characters, surrounding space).
+				if displaytext.Clean(controllerID, MaxControllerIDBytes) != controllerID {
+					return fmt.Errorf("a controller ID %q isn't plain text: %w", controllerID, ErrCBORValidation)
+				}
 				v, err := purposeCode(code)
 				if err != nil {
 					return fmt.Errorf("purpose hint %q: %w", controllerID, err)
@@ -299,7 +309,8 @@ func mapEntries(raw []byte, limit int, what string, fn func(key string, known bo
 }
 
 // arrayItems calls fn with each item of raw, a CBOR array, in order.
-// raw must already have been walked by decMode. limit bounds the items,
+// raw must already have been walked by decMode. limit, if not
+// negative, bounds the items,
 // checked against a definite length before any is read, and before
 // each of an indefinite array's.
 func arrayItems(raw []byte, limit int, what string, fn func(i int, item []byte) error) error {
@@ -307,7 +318,7 @@ func arrayItems(raw []byte, limit int, what string, fn func(i int, item []byte) 
 	if err != nil {
 		return fmt.Errorf("%s isn't an array: %w", what, ErrCBORValidation)
 	}
-	if !indefinite && (limit < 0 || n > uint64(limit)) {
+	if limit >= 0 && !indefinite && n > uint64(limit) {
 		return fmt.Errorf("%s has %d items, over %d: %w", what, n, limit, ErrCBORValidation)
 	}
 	for i := 0; indefinite || uint64(i) < n; i++ {
@@ -319,7 +330,7 @@ func arrayItems(raw []byte, limit int, what string, fn func(i int, item []byte) 
 				break
 			}
 		}
-		if i >= limit {
+		if limit >= 0 && i >= limit {
 			return fmt.Errorf("%s has over %d items: %w", what, limit, ErrCBORValidation)
 		}
 		var item cbor.RawMessage

@@ -1236,7 +1236,9 @@ ballot text):
 - `document_sets` are arrays of indices into `documents`, in order,
   repeats kept. `purpose_hints` maps each controller ID, as the reader
   sent it, to an integer purpose code from −2³¹ to 2³¹−1, neither
-  translated nor checked. What `mandatory` obliges is the app's call.
+  translated nor checked. A controller ID is an identifier, not a
+  name, but holds no control, line separator or invisible format
+  characters, nor surrounding space: information with one is `null`. What `mandatory` obliges is the app's call.
 - `signed` is true only when a verified whole-request signature
   (`readerAuthAll`) covers the information and every signature the
   request carries verified. It is not reader trust: an `untrusted`

@@ -199,7 +199,9 @@ A request failing any of these is refused.
 
 The information's known fields are read only when they have the
 working representation's types, document indices name one of the
-request's documents, purpose codes fit a signed 32-bit integer, and the
+request's documents, purpose codes fit a signed 32-bit integer,
+controller IDs hold no control, line separator or invisible format
+characters nor surrounding space (what display text is cleaned of), and the
 counts are within the limits below. Otherwise the request isn't
 refused, since the second edition's final text may shape them
 otherwise: it stands without its information (`RequestInfo()` is nil,
