@@ -8,6 +8,14 @@ import kotlin.time.Duration.Companion.minutes
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.first
@@ -93,7 +101,7 @@ class ProximityTest {
     private suspend fun setup(
         signed: Boolean = true,
         requireTrusted: Boolean = false,
-        holderKeys: AndroidKeystoreKeyStore = keys,
+        holderKeys: KeyStore = keys,
         deviceAuth: WalletConfiguration.ProximityDeviceAuth = WalletConfiguration.ProximityDeviceAuth.SIGNATURE,
     ): Setup {
         val env = TestEnv().also { envs += it }
@@ -575,6 +583,87 @@ class ProximityTest {
         val error = (holder.state.value as? ProximityPresentation.State.Failed)?.error as? ProximityException
             ?: throw AssertionError("holder: ${holder.state.value}")
         assertEquals(ProximityException.Reason.ConnectionLost, error.reason)
+        reader.cancel()
+    }
+
+    /** Cancelling the caller of `respond` while the response is being sent ends the session: the reader may hold part of it. */
+    @Test
+    fun cancellingRespondMidSendEndsTheSession(): Unit = runBlocking {
+        val s = setup()
+        val (holderEnd, readerEnd) = PipeTransport.pair()
+        val stall = java.util.concurrent.atomic.AtomicBoolean()
+        val sending = CompletableDeferred<Unit>()
+        val stalling = object : ProximityTransport by holderEnd {
+            override suspend fun send(message: ByteArray) {
+                if (stall.get()) {
+                    sending.complete(Unit)
+                    awaitCancellation()
+                }
+                holderEnd.send(message)
+            }
+        }
+        val holder = s.wallet.startProximityPresentation(timeouts, stalling, setOf(ProximityBLEMode.PERIPHERAL_SERVER))
+        val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name", "given_name")), timeouts, readerEnd)
+        awaitRequest(holder)
+        stall.set(true)
+        val responding = launch(Dispatchers.Default) {
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        }
+        sending.await()
+        responding.cancelAndJoin()
+        assertEquals(ProximityPresentation.State.Cancelled, holder.state.value)
+        reader.cancel()
+    }
+
+    /** Cancelling the caller of `respond` before anything is sent leaves the request standing. */
+    @Test
+    fun cancellingRespondBeforeSendingKeepsTheRequest(): Unit = runBlocking {
+        val s = setup()
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        val responding = launch(Dispatchers.Default) {
+            // Cancelled before the call into Go can return.
+            currentCoroutineContext().cancel()
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        }
+        responding.join()
+        assertTrue(responding.isCancelled)
+        assertTrue(holder.state.value is ProximityPresentation.State.RequestReceived)
+        holder.decline()
+        assertEquals(ProximityPresentation.State.Declined, holder.state.value)
+        reader.cancel()
+    }
+
+    /**
+     * Cancelling the caller of `respond` as Go's respond returns ends the
+     * session, though nothing was sent: Go's session is over, so the
+     * request can't stand.
+     */
+    @Test
+    fun cancellingRespondAsTheResponseIsBuiltEndsTheSession(): Unit = runBlocking {
+        // The holder key cancels the caller as it signs, then signs: Go
+        // checks its context only before each document, so with one
+        // document its respond returns the response, and the cancellation
+        // reaches respond only once it has.
+        val responding = CompletableDeferred<Job>()
+        val arm = java.util.concurrent.atomic.AtomicBoolean()
+        val cancelling = object : KeyStore by keys {
+            override fun sign(id: String, digest: ByteArray): ByteArray {
+                if (arm.getAndSet(false)) runBlocking { responding.await().cancel() }
+                return keys.sign(id, digest)
+            }
+        }
+        val s = setup(holderKeys = cancelling)
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        arm.set(true)
+        val job = launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        }
+        responding.complete(job)
+        job.join()
+        assertTrue(job.isCancelled)
+        assertEquals(ProximityPresentation.State.Cancelled, holder.state.value)
         reader.cancel()
     }
 

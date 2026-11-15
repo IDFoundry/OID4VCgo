@@ -31,6 +31,7 @@ import java.security.cert.X509Certificate
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
@@ -233,7 +234,10 @@ public class ProximityPresentation internal constructor(
         /** The reader ended the session first. */
         public data object ReaderEnded : State
 
-        /** [cancel] was called, or the app is gone. */
+        /**
+         * [cancel] was called, the app is gone, or the caller of [respond]
+         * was cancelled while the response was being sent.
+         */
         public data object Cancelled : State
 
         /**
@@ -374,15 +378,49 @@ public class ProximityPresentation internal constructor(
      * On a [WalletException] — one prompt cancelled, say — nothing was
      * sent, the keys after it weren't asked, and the request stands:
      * try again, or [decline].
+     *
+     * It never leaves the session in [State.Responding]:
+     * - Returning: the response was sent, and the state is [State.Presented].
+     * - A [WalletException], or the caller's cancellation, before
+     *   the response was built: the state is [State.RequestReceived]
+     *   again. Cancelled once it was built, though not sent, the state
+     *   is [State.Cancelled]: the response can't be built again.
+     * - A [ProximityException]: the response couldn't be delivered, and
+     *   the state is [State.Failed] with it.
+     * - The caller's cancellation while the response was being sent: the
+     *   reader may hold part of it, so the state is [State.Cancelled].
+     * - A [WalletException] with [WalletException.Code.internal] from
+     *   sending: the state is [State.Failed] with it.
+     *
+     * After [cancel], the state is [State.Cancelled] whatever it throws.
      */
     public suspend fun respond(answers: List<MdocPresentation.Answer>): Responded {
         val request = _state.value as? State.RequestReceived
             ?: throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
         if (!_state.compareAndSet(request, State.Responding)) throw WalletException(WalletException.Code.wrongStep, null, "no request to answer")
         val answersJSON = MdocPresentation.answersJSON(answers)
+        // Whether Go's respond returned a response: its session has ended
+        // then, and the copies count as seen. cancellable returns only
+        // once the call has, so this is settled whatever it throws.
+        val returned = AtomicBoolean()
         val answer = try {
-            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON) })
-        } catch (e: WalletException) {
+            decode<RespondedJSON>(OID4VC.cancellable { op -> handle.respondDocuments(op, answersJSON).also { returned.set(true) } })
+        } catch (e: Exception) {
+            if (returned.get()) {
+                // Go's session is over, so the request can't stand, though
+                // nothing was sent. The caller was cancelled as Go's
+                // respond returned (await reports the cancellation even
+                // though the call completed), or its answer didn't decode.
+                if (e is CancellationException) {
+                    finish(State.Cancelled)
+                    throw e
+                }
+                val error = WalletException(WalletException.Code.internal, null, e.toString())
+                finish(State.Failed(error))
+                throw error
+            }
+            // Nothing was sent: a refusal of Go's, or the caller's own
+            // cancellation before Go's respond returned. The request stands.
             _state.compareAndSet(State.Responding, request)
             throw e
         }
@@ -393,6 +431,15 @@ public class ProximityPresentation internal constructor(
             transport.send(answer.send)
         } catch (e: ProximityTransportException) {
             val error = transportFailure(e)
+            finish(State.Failed(error))
+            throw error
+        } catch (e: CancellationException) {
+            // The caller's own cancellation, mid-send: the reader may hold
+            // part of the response, so it can't be sent again.
+            finish(State.Cancelled)
+            throw e
+        } catch (e: Exception) {
+            val error = WalletException(WalletException.Code.internal, null, e.toString())
             finish(State.Failed(error))
             throw error
         }
