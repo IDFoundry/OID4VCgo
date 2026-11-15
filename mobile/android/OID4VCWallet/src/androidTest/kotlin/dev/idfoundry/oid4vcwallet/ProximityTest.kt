@@ -708,6 +708,72 @@ class ProximityTest {
         reader.cancel()
     }
 
+    /**
+     * A cancellation from inside the transport's send, its caller still
+     * active (a timeout of the transport's own, say), fails the session
+     * rather than reporting the caller cancelled.
+     */
+    @Test
+    fun aCancellationInsideSendFailsTheSession(): Unit = runBlocking {
+        val s = setup()
+        val (holderEnd, readerEnd) = PipeTransport.pair()
+        val stray = java.util.concurrent.atomic.AtomicBoolean()
+        val timingOut = object : ProximityTransport by holderEnd {
+            override suspend fun send(message: ByteArray) {
+                if (stray.get()) withTimeout(1) { awaitCancellation() }
+                holderEnd.send(message)
+            }
+        }
+        val holder = s.wallet.startProximityPresentation(timeouts, timingOut, setOf(ProximityBLEMode.PERIPHERAL_SERVER))
+        val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name", "given_name")), timeouts, readerEnd)
+        awaitRequest(holder)
+        stray.set(true)
+        val thrown = runCatching { holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name"))) }.exceptionOrNull()
+        assertTrue("respond threw $thrown", thrown is ProximityException && thrown.reason == ProximityException.Reason.TimedOut)
+        val state = holder.state.value
+        assertTrue("state $state", state is ProximityPresentation.State.Failed && state.error === thrown)
+        reader.cancel()
+    }
+
+    /**
+     * Cancelling the caller of `respond` while the holder key waits to
+     * sign ends that wait (the key store's cancelKeyUse), and Go's respond
+     * returns cancelled with nothing built: the request stands.
+     */
+    @Test
+    fun cancellingRespondWhileTheKeySignsKeepsTheRequest(): Unit = runBlocking {
+        val signing = CompletableDeferred<Unit>()
+        val released = java.util.concurrent.CountDownLatch(1)
+        val arm = java.util.concurrent.atomic.AtomicBoolean()
+        val waiting = object : KeyStore by keys {
+            override fun sign(id: String, digest: ByteArray): ByteArray {
+                if (!arm.getAndSet(false)) return keys.sign(id, digest)
+                signing.complete(Unit)
+                // As a prompt does, until cancelKeyUse dismisses it.
+                released.await()
+                throw IllegalStateException("the holder prompt was dismissed")
+            }
+
+            override fun cancelKeyUse(id: String) {
+                released.countDown()
+            }
+        }
+        val s = setup(holderKeys = waiting)
+        val (holder, reader) = start(s)
+        awaitRequest(holder)
+        arm.set(true)
+        val responding = launch(Dispatchers.Default) {
+            holder.respond(0, s.mdocID, listOf(MdocPresentation.Element(NAMESPACE, "family_name")))
+        }
+        signing.await()
+        responding.cancelAndJoin()
+        assertTrue(responding.isCancelled)
+        assertTrue("state ${holder.state.value}", holder.state.value is ProximityPresentation.State.RequestReceived)
+        holder.decline()
+        assertEquals(ProximityPresentation.State.Declined, holder.state.value)
+        reader.cancel()
+    }
+
     @Test
     fun readerCancels(): Unit = runBlocking {
         val (holder, reader) = start(setup())

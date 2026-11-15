@@ -1656,7 +1656,10 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   completed, and Go's session is over by then, so the request can't
   stand. Cancelled while the response is being sent, the session ends as
   `Cancelled`: the reader may hold part of the response, so it can't be
-  sent again. Any other error from sending ends it as `Failed`. The KDoc of `respond` lists what it
+  sent again. A cancellation from inside the transport, its caller
+  still active (a timeout of its own), ends it as `Failed` with a
+  `ProximityException`, not as the caller's cancellation. Any other
+  error from sending ends it as `Failed`. The KDoc of `respond` lists what it
   throws and the state each leaves.
 
 ### Phase 10 findings: the iOS SDK
