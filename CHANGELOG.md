@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.79.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.78.0...v0.79.0) (2026-11-15)
+
+
+### Features
+
+* **proximity:** decode and verify whole second-edition DeviceRequests ([4a36d6b](https://github.com/IDFoundry/OID4VCgo/commit/4a36d6b7016e7ae79f20c655aba240e723a7ef06)), closes [#1017](https://github.com/IDFoundry/OID4VCgo/issues/1017)
+* **walletflow:** add Config.AllowedPrivateHosts for services on a private network ([0b89316](https://github.com/IDFoundry/OID4VCgo/commit/0b89316649ed73ae5caa7c1f5e3df542a2704b0b))
+* **walletflow:** verify whole proximity requests and expose RequestInfo ([6f01c01](https://github.com/IDFoundry/OID4VCgo/commit/6f01c014a0889f4da28b899892c2129f67cf5cb7)), closes [#1017](https://github.com/IDFoundry/OID4VCgo/issues/1017)
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.73.1 ([5a26bc2](https://github.com/IDFoundry/OID4VCgo/commit/5a26bc257ead3a6175a45180ebda55988863d620))
+* **proximity:** bound conversions and a nil check that lint flags ([914cb06](https://github.com/IDFoundry/OID4VCgo/commit/914cb06639d81591884391c86aabd37dbb507bc7)), closes [#1017](https://github.com/IDFoundry/OID4VCgo/issues/1017)
+* **proximity:** keep a request whose deviceRequestInfo can't be read ([09ea1d0](https://github.com/IDFoundry/OID4VCgo/commit/09ea1d007eec0f58310da37fe141fc9c9c13c201))
+* **proximity:** read no controller ID that display text would clean ([06c79cc](https://github.com/IDFoundry/OID4VCgo/commit/06c79ccd8ac57fcab10fa72269164c82a4377340))
+
 ## [0.78.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.77.1...v0.78.0) (2026-11-13)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.2](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.1...sqlstore/v0.12.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.73.1 ([5a26bc2](https://github.com/IDFoundry/OID4VCgo/commit/5a26bc257ead3a6175a45180ebda55988863d620))
+* **sqlstore:** keep mdoc credentials whose claims hold maps ([3aa55fc](https://github.com/IDFoundry/OID4VCgo/commit/3aa55fc3955833a0da621841fcb12e150e1a4b57))
+
 ## [0.12.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.0...sqlstore/v0.12.1) (2026-11-12)
 
 
