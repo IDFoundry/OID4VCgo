@@ -177,15 +177,17 @@ type VerifiedEvidence struct {
 	// of any Kind, has. Set only at registration; ignored afterwards.
 	CredentialID string
 
-	// Facts, if set, are what the verifier wants kept of the
-	// registration evidence: the facts its checks rested on, in a
-	// format of its own (androidkey's: the chain's certificate serial
-	// numbers, the app's signing certificates, the patch level and the
-	// root of trust). The provider stores them in Instance.EvidenceFacts
-	// at registration and ignores them afterwards, so an operator can
-	// find the instances whose evidence a later finding taints
-	// (Provider.RevokeWhere), and an EvidenceRechecker can check them
-	// again. Opaque here.
+	// Facts, if set, are what the verifier wants kept of the evidence:
+	// the facts its checks rested on, in a format of its own
+	// (androidkey's: the chain's certificate serial numbers, the app's
+	// signing certificates, the patch level and the root of trust). The
+	// provider stores the registration evidence's in
+	// Instance.EvidenceFacts, and an instance key's, when it records the
+	// key, in InstanceKey.EvidenceFacts, so an operator can find the
+	// instances whose evidence a later finding taints
+	// (Provider.RevokeWhere), and an EvidenceRechecker or
+	// InstanceKeyRechecker can check them again; a holder key's evidence
+	// is used once, and its Facts aren't kept. Opaque here.
 	Facts []byte
 
 	// Counter, if set, is the instance's new signature counter (App
@@ -223,9 +225,10 @@ type EvidenceVerifier interface {
 // calls Recheck with the instance, for the verifier of the Kind it
 // registered with, before each Wallet Attestation and Key Attestation:
 // Android Key Attestation evidence is verified only for a key the
-// instance hasn't used before, so a recorded instance key would
-// otherwise never be checked again. androidkey.EvidenceVerifier is
-// one.
+// instance hasn't used before, so the instance would otherwise never
+// be checked again. It judges the registration evidence alone; a
+// recorded instance key's own evidence is judged by an
+// InstanceKeyRechecker. androidkey.EvidenceVerifier is both.
 type EvidenceRechecker interface {
 	EvidenceVerifier
 
@@ -241,4 +244,37 @@ type EvidenceRechecker interface {
 	// revokes or suspends the instance; any other refusal only refuses
 	// the request, since the operator can undo what caused it.
 	Recheck(ctx context.Context, in Instance) error
+}
+
+// InstanceKeyRechecker is an EvidenceVerifier that can check a recorded
+// instance key's own evidence again, as an EvidenceRechecker does the
+// instance's registration evidence. An instance key's evidence is
+// verified once, when the provider records the key; later Wallet
+// Attestations for the key, and Key Attestations issued with it, rely
+// on the record without evidence. Its chain needn't be the
+// registration chain, nor share its certificates — Android's Remote
+// Key Provisioning rotates a device's attestation keys, so two keys of
+// one installation may be attested under different intermediates —
+// so a certificate of it revoked since is found only by checking it
+// again. The provider calls RecheckInstanceKey, for the verifier of the
+// Kind the instance registered with, each time it relies on a recorded
+// instance key: a Wallet Attestation for a key recorded before, and
+// every Key Attestation, after the instance's own Recheck accepted it.
+// androidkey.EvidenceVerifier is one.
+type InstanceKeyRechecker interface {
+	EvidenceVerifier
+
+	// RecheckInstanceKey checks k's evidence again, from what Verify
+	// reported of it when the provider recorded k
+	// (InstanceKey.EvidenceFacts), for in, the instance k belongs to.
+	// k's EvidenceFacts are empty for a key recorded before the provider
+	// kept them (OID4VCgo v0.80.0 and before), or by a verifier that
+	// reports none; the provider then relies on the record as before,
+	// and a rechecker should accept it. Its errors are read as
+	// Recheck's are: an error wrapping ErrPolicy or ErrEvidenceRejected
+	// refuses the request, and, wrapping ErrEvidenceRevoked or
+	// ErrEvidenceSuspended too, revokes or suspends the whole instance —
+	// the device's attestation was withdrawn, not only the key's — and
+	// any other error fails the request as the provider's own failure.
+	RecheckInstanceKey(ctx context.Context, in Instance, k InstanceKey) error
 }

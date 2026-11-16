@@ -64,7 +64,10 @@ type EvidenceVerifier struct {
 // the window the EUDI reference wallet gives its holder keys.
 const DefaultMaxAuthTimeout = 30 * time.Second
 
-var _ walletprovider.EvidenceRechecker = EvidenceVerifier{}
+var (
+	_ walletprovider.EvidenceRechecker    = EvidenceVerifier{}
+	_ walletprovider.InstanceKeyRechecker = EvidenceVerifier{}
+)
 
 // Kind implements walletprovider.EvidenceVerifier: EvidenceKind.
 func (EvidenceVerifier) Kind() string { return EvidenceKind }

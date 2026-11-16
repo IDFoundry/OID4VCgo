@@ -52,9 +52,12 @@ type WalletAttestationRequest struct {
 // the instance's new counter if the evidence advanced it (an App
 // Attest assertion), refusing an assertion a concurrent request used
 // meanwhile, and only then records the key for the instance
-// (InstanceKeyStore) with a status list index of its own. Later
-// requests for the key reuse the record, without evidence, and its
-// index while it's on the current period's lists
+// (InstanceKeyStore) with a status list index of its own, and the
+// facts the verifier reported of the key's evidence. Later requests
+// for the key reuse the record, without evidence — once the
+// instance's verifier, if an InstanceKeyRechecker, has checked the
+// key's evidence again and accepted it — and its index while it's on
+// the current period's lists
 // (Config.StatusListPeriod); in a later period, the key gets an index
 // on that period's lists first. A key unused for
 // Config.InstanceKeyRetention, whose record the InstanceKeyStore has
@@ -121,7 +124,7 @@ func (p *Provider) instanceKeyFor(ctx context.Context, in Instance, key marshale
 	case ik.InstanceID != in.ID:
 		return InstanceKey{}, fmt.Errorf("%w: the instance key is another instance's", ErrInstanceKeyRegistered)
 	}
-	return ik, p.checkInstanceKey(in, ik)
+	return ik, p.checkRecordedInstanceKey(ctx, in, ik)
 }
 
 // recordInstanceKey verifies req's evidence for the new instance key
@@ -154,7 +157,8 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 	}
 	ik := InstanceKey{
 		Thumbprint: key.thumbprint, Key: key.json, InstanceID: in.ID,
-		SecurityLevel: attested.SecurityLevel, Binding: attested.Binding, CreatedAt: p.now(),
+		SecurityLevel: attested.SecurityLevel, Binding: attested.Binding,
+		EvidenceFacts: slices.Clone(ev.Facts), CreatedAt: p.now(),
 	}
 	if err := p.checkInstanceKey(in, ik); err != nil {
 		return InstanceKey{}, err
@@ -204,9 +208,29 @@ func (p *Provider) checkInstanceKey(in Instance, ik InstanceKey) error {
 	return nil
 }
 
+// checkRecordedInstanceKey refuses a recorded instance key of in that
+// the provider is about to rely on without fresh evidence: one at a
+// security level the Policy no longer accepts, or whose own evidence
+// the instance's verifier, an InstanceKeyRechecker, refuses now. Its
+// refusal is acted on as the instance's own recheck's is
+// (recheckRefused). A record without EvidenceFacts, from before the
+// provider kept them, is rechecked too: the rechecker decides what to
+// make of it (androidkey's accepts it).
+func (p *Provider) checkRecordedInstanceKey(ctx context.Context, in Instance, ik InstanceKey) error {
+	if err := p.checkInstanceKey(in, ik); err != nil {
+		return err
+	}
+	if r, ok := p.verifiers[in.Evidence.Kind].(InstanceKeyRechecker); ok {
+		if err := r.RecheckInstanceKey(ctx, in, ik); err != nil {
+			return p.recheckRefused(ctx, in, fmt.Errorf("walletprovider: rechecking the instance key's evidence: %w", err))
+		}
+	}
+	return nil
+}
+
 // recordedInstanceKey returns the instance key pub of in, refusing a
-// key not recorded for in with ErrUnknownInstanceKey, or one the
-// Policy no longer accepts.
+// key not recorded for in with ErrUnknownInstanceKey, or one
+// checkRecordedInstanceKey refuses.
 func (p *Provider) recordedInstanceKey(ctx context.Context, in Instance, pub crypto.PublicKey) (InstanceKey, error) {
 	key, err := marshalKey(pub)
 	if err != nil {
@@ -223,7 +247,7 @@ func (p *Provider) recordedInstanceKey(ctx context.Context, in Instance, pub cry
 		// this instance's business.
 		return InstanceKey{}, ErrUnknownInstanceKey
 	}
-	return ik, p.checkInstanceKey(in, ik)
+	return ik, p.checkRecordedInstanceKey(ctx, in, ik)
 }
 
 // recordUse updates the instance in with count, only while it's still
@@ -298,8 +322,9 @@ type KeyAttestationResult struct {
 // evidence the Policy still accepts, for the issuance of one of its
 // instance keys (ErrUnknownInstanceKey for a key a Wallet Attestation
 // didn't record for the instance, or whose record retention deleted:
-// Config.InstanceKeyRetention). It consumes the challenge and
-// verifies each piece of evidence; evidence must be of the Kind the
+// Config.InstanceKeyRetention), whose own evidence the instance's
+// verifier, if an InstanceKeyRechecker, still accepts. It consumes the
+// challenge and verifies each piece of evidence; evidence must be of the Kind the
 // instance registered with, from its platform and app. attested_keys
 // lists only the keys some evidence that passed vouches for at a
 // security level the Policy accepts — a key without one is left out, and the request fails with

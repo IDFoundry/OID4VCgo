@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -132,6 +133,9 @@ func (l *refusalLog) expect(t *testing.T, n int, stored walletprovider.Instance,
 	if len(l.calls) != n {
 		t.Fatalf("OnRecheckRefused called %d times, want %d", len(l.calls), n)
 	}
+	if n == 0 {
+		return
+	}
 	got := l.calls[n-1]
 	if got.in.ID != stored.ID || got.in.State != stored.State || got.in.Reason != stored.Reason || !errors.Is(got.err, want) {
 		t.Fatalf("OnRecheckRefused(%s, %s %q, %v), want (%s, %s %q, %v)", got.in.ID, got.in.State, got.in.Reason, got.err, stored.ID, stored.State, stored.Reason, want)
@@ -256,4 +260,141 @@ func TestRecheckRevokeRacingResume(t *testing.T) {
 		t.Fatalf("the instance is %s, want revoked", stored.State)
 	}
 	h.expectStatus(statuslist.StatusInvalid, key)
+}
+
+// keyRecheckingVerifier is a recheckingVerifier that is an
+// InstanceKeyRechecker too: it records the instance keys it rechecks,
+// and refuses one with err when it's set.
+type keyRecheckingVerifier struct {
+	*recheckingVerifier
+	keyErr    error
+	rechecked []walletprovider.InstanceKey
+}
+
+func (v *keyRecheckingVerifier) RecheckInstanceKey(_ context.Context, in walletprovider.Instance, k walletprovider.InstanceKey) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if k.InstanceID != in.ID {
+		return fmt.Errorf("rechecking instance %s's key for %s", k.InstanceID, in.ID)
+	}
+	v.rechecked = append(v.rechecked, k)
+	return v.keyErr
+}
+
+func (v *keyRecheckingVerifier) refuseKey(err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.keyErr = err
+}
+
+func (v *keyRecheckingVerifier) recheckedKeys() []walletprovider.InstanceKey {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return slices.Clone(v.rechecked)
+}
+
+// keyRecheckHarness is a harness whose Android verifier is v,
+// reporting recheck refusals to log.
+func keyRecheckHarness(t *testing.T, v *keyRecheckingVerifier, log *refusalLog) *harness {
+	t.Helper()
+	return recheckHarness(t, v.recheckingVerifier, log, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		for i, e := range d.Evidence {
+			if e == walletprovider.EvidenceVerifier(v.recheckingVerifier) {
+				d.Evidence[i] = v
+			}
+		}
+	})
+}
+
+// TestRecheckInstanceKeyEvidence: the facts the verifier reports of an
+// instance key's evidence are kept with its record, and an
+// InstanceKeyRechecker judges them again each time the provider relies
+// on the record — a Wallet Attestation for a recorded key, and every
+// Key Attestation — but not when fresh evidence records it.
+func TestRecheckInstanceKeyEvidence(t *testing.T) {
+	v := &keyRecheckingVerifier{recheckingVerifier: &recheckingVerifier{}}
+	h := keyRecheckHarness(t, v, &refusalLog{})
+	in, _ := h.register(kindStrongBox)
+	key := h.newInstanceKey(in.ID, kindStrongBox)
+	if facts := h.instanceKey(&key.PublicKey).EvidenceFacts; !bytes.Equal(facts, testFacts) {
+		t.Fatalf("the instance key's facts = %q, want %q", facts, testFacts)
+	}
+	if n := len(v.recheckedKeys()); n != 0 {
+		t.Fatalf("recording the key rechecked %d keys, want none", n)
+	}
+	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.keyAttestation(in.ID, &key.PublicKey, []*ecdsa.PrivateKey{newKey(t)}, kindStrongBox); err != nil {
+		t.Fatal(err)
+	}
+	rechecked := v.recheckedKeys()
+	if len(rechecked) != 2 {
+		t.Fatalf("rechecked %d keys, want 2", len(rechecked))
+	}
+	for _, k := range rechecked {
+		if k.Thumbprint != h.thumbprint(&key.PublicKey) || !bytes.Equal(k.EvidenceFacts, testFacts) {
+			t.Fatalf("rechecked %s with facts %q, want the instance key's", k.Thumbprint, k.EvidenceFacts)
+		}
+	}
+}
+
+// TestRecheckInstanceKeyRefusals: an InstanceKeyRechecker's refusal is
+// acted on as an EvidenceRechecker's is, on either request that relies
+// on a recorded instance key: evidence revoked or suspended by its
+// issuer revokes or suspends the whole instance, any other refusal only
+// refuses, every refusal is reported to OnRecheckRefused, and a recheck
+// that couldn't check fails the request as the provider's own failure,
+// unreported.
+func TestRecheckInstanceKeyRefusals(t *testing.T) {
+	requests := map[string]func(h *harness, id string, key *ecdsa.PrivateKey) error{
+		"Wallet Attestation": func(h *harness, id string, key *ecdsa.PrivateKey) error {
+			_, err := h.walletAttestation(id, &key.PublicKey, "")
+			return err
+		},
+		"Key Attestation": func(h *harness, id string, key *ecdsa.PrivateKey) error {
+			_, err := h.keyAttestation(id, &key.PublicKey, []*ecdsa.PrivateKey{newKey(h.t)}, kindStrongBox)
+			return err
+		},
+	}
+	cases := []struct {
+		name     string
+		refusal  error
+		state    walletprovider.State
+		status   statuslist.StatusType
+		reported bool
+	}{
+		{"revoked", fmt.Errorf("%w: %w: certificate 1 is named", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked), walletprovider.StateRevoked, statuslist.StatusInvalid, true},
+		{"suspended", fmt.Errorf("%w: %w: certificate 1 is named", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceSuspended), walletprovider.StateSuspended, statuslist.StatusSuspended, true},
+		{"policy", fmt.Errorf("%w: patch level too old", walletprovider.ErrPolicy), walletprovider.StateActive, statuslist.StatusValid, true},
+		{"couldn't check", errors.New("status list unavailable"), walletprovider.StateActive, statuslist.StatusValid, false},
+	}
+	for name, request := range requests {
+		for _, tc := range cases {
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				v, log := &keyRecheckingVerifier{recheckingVerifier: &recheckingVerifier{}}, &refusalLog{}
+				h := keyRecheckHarness(t, v, log)
+				in, _ := h.register(kindStrongBox)
+				key := h.newInstanceKey(in.ID, kindStrongBox)
+				v.refuseKey(tc.refusal)
+				err := request(h, in.ID, key)
+				if !errors.Is(err, tc.refusal) {
+					t.Fatalf("request = %v, want %v", err, tc.refusal)
+				}
+				if !tc.reported && (errors.Is(err, walletprovider.ErrPolicy) || errors.Is(err, walletprovider.ErrEvidenceRejected)) {
+					t.Fatalf("a recheck that couldn't check = %v, want the provider's own failure", err)
+				}
+				stored := h.stored(in.ID)
+				if stored.State != tc.state || (tc.state != walletprovider.StateActive) != (stored.Reason != "") {
+					t.Fatalf("the instance is %s (%q), want %s", stored.State, stored.Reason, tc.state)
+				}
+				h.expectStatus(tc.status, key)
+				if tc.reported {
+					log.expect(t, 1, stored, tc.refusal)
+				} else {
+					log.expect(t, 0, stored, nil)
+				}
+			})
+		}
+	}
 }
