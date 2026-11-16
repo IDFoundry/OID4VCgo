@@ -10,7 +10,7 @@ its page. Register the `openid4vp` URL scheme in the app's Info.plist so
 links open the app, and hand the link to
 ``Wallet/startPresentation(request:)``. It fetches the Verifier's
 signed request, checks its certificate against
-``WalletConfiguration/verifierRoots``, and finds the credentials that
+``WalletConfiguration/VerifierTrust/roots``, and finds the credentials that
 can answer it. A request from a Verifier the wallet doesn't trust
 throws ``WalletError/Code/untrustedVerifier`` before anything is shown.
 
@@ -18,7 +18,7 @@ The ``Presentation`` it returns says:
 
 - who is asking: ``Presentation/verifier``, its name, and its
   ``Presentation/Registration`` when a registrar the
-  wallet trusts (``WalletConfiguration/registrarRoots``) registered it,
+  wallet trusts (``WalletConfiguration/VerifierTrust/registrarRoots``) registered it,
   with its purpose and the claims it's registered to ask for;
 - what it asks for: ``Presentation/queries``, each with the held
   credentials that can answer it, and ``Presentation/credentialSets``,
@@ -114,7 +114,7 @@ Nothing is refused for them: show them, and let the holder decide.
 
 Each presentation uses a copy of the credential, bound to its own key,
 so two Verifiers can't link the holder's presentations by the
-credential. ``WalletConfiguration/copyPolicy`` chooses which copy:
+credential. ``WalletConfiguration/PresentationOptions/copyPolicy`` chooses which copy:
 
 - ``WalletConfiguration/CopyPolicy/perPresentation``, the default: a
   copy no Verifier has seen, every time.

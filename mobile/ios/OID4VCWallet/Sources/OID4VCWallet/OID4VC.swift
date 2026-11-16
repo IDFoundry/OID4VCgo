@@ -57,9 +57,9 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// whether the Verifier received it: it's not sent again.
         public static let deliveryUnknown = Code(rawValue: MobileCodeDeliveryUnknown)
         /// The Verifier's request is signed with a certificate that
-        /// doesn't chain to `verifierRoots`: it's refused unread.
+        /// doesn't chain to `verifiers.roots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
-        /// A pinned host's certificate matched none of its `tlsPins`: an
+        /// A pinned host's certificate matched none of its `network.tlsPins`: an
         /// interception, or a server whose keys changed beyond its pins.
         /// Nothing was sent to it.
         public static let tlsPin = Code(rawValue: MobileCodeTLSPin)
@@ -101,8 +101,8 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
     /// `no_current_crl` (``isCertificateRevoked``, ``isNoCurrentCRL``). For
     /// ``Code/invalidInput`` it's `not_configured` (`MobileDetailNotConfigured`)
     /// when the wallet's configuration lacks what the call needs — such
-    /// as `issuerRoots` or `redirectURI` to receive credentials, or
-    /// `verifierRoots` to present them — rather than an argument being
+    /// as `issuers.roots` or `redirectURI` to receive credentials, or
+    /// `verifiers.roots` to present them — rather than an argument being
     /// malformed: the app's configuration to fix, which `message` names
     /// by its JSON key (`issuer_roots`). For ``Code/platform`` it's the
     /// Wallet Provider's error code when the provider refused
@@ -118,7 +118,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
     public let message: String
 
     /// Whether a certificate revocation check caused this: a certificate
-    /// in a chain checked under `revocation` is on its CA's revocation
+    /// in a chain checked under `revocation.roles` is on its CA's revocation
     /// list — a credential's issuer on receipt, a Verifier's or reader's
     /// request signer, a status list's signer, or a document's signer a
     /// ``ProximityReader`` verified. ``protocolError`` is then

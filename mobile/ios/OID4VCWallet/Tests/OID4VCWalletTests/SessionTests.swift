@@ -297,7 +297,7 @@ final class SessionTests: XCTestCase {
     func testRegistration() async throws {
         let env = try TestEnv(batchSize: 3)
         defer { env.close() }
-        XCTAssertFalse(try env.configuration.registrarRoots.isEmpty)
+        XCTAssertFalse(try env.configuration.verifiers.registrarRoots.isEmpty)
         let w = try wallet(env)
         _ = try await Self.receive(env, w)
 
@@ -324,7 +324,7 @@ final class SessionTests: XCTestCase {
     func testRefresh() async throws {
         let env = try TestEnv(batchSize: 3)
         defer { env.close() }
-        XCTAssertTrue(try env.configuration.requestRefresh)
+        XCTAssertTrue(try env.configuration.issuance.requestRefresh)
         let w = try wallet(env)
         _ = try await Self.receive(env, w)
         let held = try await w.credentials()
@@ -354,7 +354,7 @@ final class SessionTests: XCTestCase {
         let env = try TestEnv(batchSize: 3)
         defer { env.close() }
         var configuration = try env.configuration
-        configuration.copyPolicy = .perVerifier
+        configuration.presentation.copyPolicy = .perVerifier
         let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
                            credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
         _ = try await Self.receive(env, w)
@@ -380,7 +380,7 @@ final class SessionTests: XCTestCase {
         defer { env.close() }
         let pin = Data(repeating: 0, count: 32).base64EncodedString()
         var configuration = try env.configuration
-        configuration.tlsPins = ["127.0.0.1": [pin]]
+        configuration.network.tlsPins = ["127.0.0.1": [pin]]
         do {
             _ = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
                            credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
@@ -388,7 +388,7 @@ final class SessionTests: XCTestCase {
         } catch let e as WalletError {
             XCTAssertEqual(e.code, .invalidInput)
         }
-        configuration.tlsPins = ["issuer.example": [pin]]
+        configuration.network.tlsPins = ["issuer.example": [pin]]
         let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
                            credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
         _ = try await Self.receive(env, w)
@@ -401,7 +401,7 @@ final class SessionTests: XCTestCase {
         let env = try TestEnv()
         defer { env.close() }
         var configuration = try env.configuration
-        configuration.revocation = [.issuer]
+        configuration.revocation.roles = [.issuer]
         let w = try Wallet(configuration: configuration, keys: KeyStoreAdapter(keyStore()),
                            credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
         do {

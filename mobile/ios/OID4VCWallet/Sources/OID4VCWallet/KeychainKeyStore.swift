@@ -22,7 +22,7 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         /// every signature with a holder key: to present a credential,
         /// and to sign the Credential Request's jwt proofs, so receiving
         /// and refreshing credentials ask too — once per copy
-        /// (``WalletConfiguration/batchSize``), or once per Credential
+        /// (``WalletConfiguration/IssuanceOptions/batchSize``), or once per Credential
         /// Request when its jwt proof carries a key attestation, and
         /// again if the issuer refuses the nonce — and a refresh can't
         /// run without the holder. The Secure Enclave

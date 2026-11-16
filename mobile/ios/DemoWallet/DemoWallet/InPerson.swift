@@ -208,14 +208,18 @@ final class InPersonModel {
     /// for services that publish no CRLs. A shipping reader checks both.
     private static func configuration(_ r: DemoConfiguration.Reader, crls: String) -> ProximityReaderConfiguration {
         let checked = r.revocation ?? []
-        return ProximityReaderConfiguration(issuerRoots: r.issuerRoots, readerKeyID: DemoReaderKeys.id,
-                                            readerChain: r.readerChain, maxClockSkewSeconds: 300,
-                                            crls: crls, revocation: checked,
-                                            noRevocationCheck: ProximityReaderConfiguration.RevocationRole.allCases.filter { !checked.contains($0) },
-                                            anyIssuerForAnyType: true, statusCheck: .check, development: r.development ?? false,
-                                            crlDistributionPoints: r.crlDistributionPoints ?? [],
-                                            crlDistributionPointsFromRoots: r.crlDistributionPointsFromRoots ?? false,
-                                            crlRequireHTTPS: r.crlRequireHTTPS ?? false)
+        return ProximityReaderConfiguration(
+            issuers: .init(roots: r.issuerRoots, anyIssuerForAnyType: true),
+            readerAuthentication: .init(keyID: DemoReaderKeys.id, chain: r.readerChain),
+            maxClockSkewSeconds: 300,
+            revocation: .init(roles: checked,
+                              declined: ProximityReaderConfiguration.RevocationRole.allCases.filter { !checked.contains($0) },
+                              crls: crls,
+                              distributionPoints: r.crlDistributionPoints ?? [],
+                              distributionPointsFromRoots: r.crlDistributionPointsFromRoots ?? false,
+                              requireHTTPS: r.crlRequireHTTPS ?? false),
+            statusCheck: .check,
+            development: r.development == true ? Development() : nil)
     }
 
     /// Whether the configuration has the reader fetch revocation lists.

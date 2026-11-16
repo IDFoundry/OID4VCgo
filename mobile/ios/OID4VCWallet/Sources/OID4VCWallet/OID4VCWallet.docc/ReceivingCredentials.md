@@ -198,15 +198,15 @@ its access token has expired, say (``DeferredCredential/accessTokenExpiresAt``).
 - ``Wallet/credentials()`` lists them, and ``Wallet/credential(id:)``
   returns one with its claims, for display. ``CredentialSummary/display``
   carries the issuer's names, logos and colours, in the holder's
-  language (``WalletConfiguration/locales``).
+  language (``WalletConfiguration/IssuanceOptions/locales``).
 - ``Wallet/checkStatus(id:)`` checks revocation against the issuer's
   status list, which covers many credentials, so the issuer can't tell
   which one is checked.
 - Each credential arrives as a batch of copies, each bound to its own
-  key (``WalletConfiguration/batchSize``), so presentations can't be
+  key (``WalletConfiguration/IssuanceOptions/batchSize``), so presentations can't be
   linked by the credential. When ``CredentialSummary/copiesLeft``
   reaches zero, ``Wallet/refreshCredential(id:)`` replaces them, if the
-  issuance kept a refresh token (``WalletConfiguration/requestRefresh``).
+  issuance kept a refresh token (``WalletConfiguration/IssuanceOptions/requestRefresh``).
   Otherwise it throws ``WalletError/Code/reissueRequired``: receive the
   credential again. A refresh needs no sign-in, but the new copies'
   holder keys sign the Credential Request's proof, so with

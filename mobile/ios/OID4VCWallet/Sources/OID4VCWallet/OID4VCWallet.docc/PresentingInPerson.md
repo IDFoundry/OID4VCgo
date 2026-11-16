@@ -88,9 +88,9 @@ func shareInPerson(wallet: Wallet, showQRCode: (String) -> Void,
 Show ``ProximityPresentation/Request/reader`` on the consent screen. A
 reader that signs its request (reader authentication) is named, and
 ``ProximityReaderIdentity/Status/trusted`` when its certificate chains
-to ``WalletConfiguration/mdocReaderRoots``. An unsigned request could
+to ``WalletConfiguration/VerifierTrust/mdocReaderRoots``. An unsigned request could
 come from anyone who scanned the code. As over the Digital Credentials
-API, ``WalletConfiguration/requireTrustedMdocReader`` ends a session
+API, ``WalletConfiguration/VerifierTrust/requireTrustedMdocReader`` ends a session
 from any other reader before the holder sees it.
 
 ### Use cases and purpose hints
@@ -179,10 +179,10 @@ asking, a key in a ``KeyStore`` and its certificate chain, with the
 reader authentication extended key usage
 (``ProximityReaderConfiguration``). The reader is a production one: it
 refuses (`invalidInput`) a configuration that leaves a decision open:
-which IACAs issue which document types (`anyIssuerForAnyType`, or
-`issuerRootsByDocType`), each role's revocation (`revocation` with
-`crls`, or `noRevocationCheck` to decline), and whether a document's
-revocation status is checked (`statusCheck`). `development` relaxes
+which IACAs issue which document types (`issuers.anyIssuerForAnyType`,
+or `issuers.rootsByDocType`), each role's revocation (`revocation.roles`
+with `revocation.crls`, or `revocation.declined` to decline), and whether
+a document's revocation status is checked (`statusCheck`). `development` relaxes
 this, for trying out a development issuer's documents; never ship an
 app with it set. ``ProximityReader/start(qrCode:docType:elements:timeouts:)``
 takes the holder's QR code and what to ask for.
@@ -199,8 +199,8 @@ struct UnacceptedIssuer: Error {}
 func readInPerson(qrCode: String, mdlIACAs: String, crls: String,
                   accepts: ([SecCertificate]) -> Bool) async throws -> VerifiedMdoc? {
     let reader = try ProximityReader(configuration: ProximityReaderConfiguration(
-        issuerRoots: "", issuerRootsByDocType: ["org.iso.18013.5.1.mDL": mdlIACAs],
-        crls: crls, revocation: [.issuer, .status], statusCheck: .check))
+        issuers: .init(roots: "", rootsByDocType: ["org.iso.18013.5.1.mDL": mdlIACAs]),
+        revocation: .init(roles: [.issuer, .status], crls: crls), statusCheck: .check))
     let session = try reader.start(qrCode: qrCode, docType: "org.iso.18013.5.1.mDL",
                                    elements: ["org.iso.18013.5.1": ["given_name", "family_name", "portrait"]])
     for await state in session.states {

@@ -66,7 +66,7 @@ struct RequestView: View {
     /// shared.
     private var recognizedReader: (name: String, certificate: Data)? {
         guard let chain = context.request.requestAuthentications.first?.authenticationCertificateChain, let leaf = chain.first,
-              let roots = DemoConfiguration.load()?.wallet.mdocReaderRoots, !roots.isEmpty else { return nil }
+              let roots = DemoConfiguration.load()?.wallet.verifiers.mdocReaderRoots, !roots.isEmpty else { return nil }
         let anchors = roots.components(separatedBy: "-----BEGIN CERTIFICATE-----").dropFirst().compactMap { block -> SecCertificate? in
             guard let body = block.components(separatedBy: "-----END CERTIFICATE-----").first,
                   let der = Data(base64Encoded: body, options: .ignoreUnknownCharacters) else { return nil }

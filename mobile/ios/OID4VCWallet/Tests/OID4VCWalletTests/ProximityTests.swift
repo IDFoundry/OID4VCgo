@@ -133,10 +133,10 @@ final class ProximityTests: XCTestCase {
         let adapter = KeyStoreAdapter(keys)
         let readerSetup = try JSONDecoder().decode(ReaderSetup.self, from: Data(try OID4VC.call { env.env.proximityReader(adapter, error: $0) }.utf8))
         var config = try env.configuration
-        config.mdocReaderRoots = readerSetup.mdocReaderRoots
-        config.mdocReaderRequireEKU = true
-        config.requireTrustedMdocReader = requireTrusted
-        config.proximityDeviceAuth = deviceAuth
+        config.verifiers.mdocReaderRoots = readerSetup.mdocReaderRoots
+        config.verifiers.mdocReaderRequireEKU = true
+        config.verifiers.requireTrustedMdocReader = requireTrusted
+        config.presentation.proximityDeviceAuth = deviceAuth
         let wallet = try Wallet(configuration: config, keys: adapter, credentials: CredentialStoreAdapter(InMemoryCredentialStore()),
                                 provider: env.env.provider(), agreement: KeyAgreementAdapter(keys))
         let result = try await SessionTests.receive(env, wallet)
@@ -145,7 +145,7 @@ final class ProximityTests: XCTestCase {
         readerConfig.statusCheck = .check
         let reader = signed
             ? try ProximityReader(configuration: readerConfig, keys: adapter)
-            : try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: readerConfig.issuerRoots, development: true), keys: nil)
+            : try ProximityReader(configuration: ProximityReaderConfiguration(issuers: .init(roots: readerConfig.issuers.roots), development: Development()), keys: nil)
         return Setup(env: env, wallet: wallet, reader: reader, mdocID: mdocID)
     }
 
@@ -209,18 +209,18 @@ final class ProximityTests: XCTestCase {
     /// A reader is a production one unless `development` is set: a
     /// configuration leaving its decisions open is `invalidInput`.
     func testReaderIsProductionByDefault() throws {
-        let issuerRoots = try TestEnv().configuration.issuerRoots
-        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots), keys: nil)) {
+        let issuerRoots = try TestEnv().configuration.issuers.roots
+        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(issuers: .init(roots: issuerRoots)), keys: nil)) {
             XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
         }
-        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots, development: true), keys: nil))
+        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(issuers: .init(roots: issuerRoots), development: Development()), keys: nil))
         // The status decision is one of a production reader's.
         XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true), keys: nil)) {
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status])), keys: nil)) {
             XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
         }
         XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuerRoots: issuerRoots, noRevocationCheck: [.issuer, .status], anyIssuerForAnyType: true, statusCheck: .check), keys: nil))
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]), statusCheck: .check), keys: nil))
     }
 
     /// A reader configuration with a key it doesn't know — a misspelled

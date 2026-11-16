@@ -13,10 +13,9 @@ func makeWallet(issuerRoots: String, verifierRoots: String, crls: String) throws
         configuration: WalletConfiguration(
             clientID: "my-wallet",
             redirectURI: "com.example.wallet:/callback",  // a URL scheme in your Info.plist
-            issuerRoots: issuerRoots,                      // PEM: the issuers you trust
-            verifierRoots: verifierRoots,                  // PEM: the Verifiers you answer
-            crls: crls,
-            revocation: [.issuer, .status, .verifier]),
+            issuers: .init(roots: issuerRoots),            // PEM: the issuers you trust
+            verifiers: .init(roots: verifierRoots),        // PEM: the Verifiers you answer
+            revocation: .init(roles: [.issuer, .status, .verifier], crls: crls)),
         keyStore: keys,
         credentialStore: try FileCredentialStore.standard(),
         provider: provider)
