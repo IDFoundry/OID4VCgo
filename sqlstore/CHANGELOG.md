@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.2...sqlstore/v0.13.0) (2026-11-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** walletflow.New refuses a Config.RedirectURI (mobile redirect_uri) with an uppercase scheme, host or private-use authority, an unencoded or malformed path or query character, a dot segment, or an empty or impossible port, and storage.NewRegisteredClient refuses a wallet client registered that way. Write and register the URI in its normalized form; see UPGRADING.md and FAPIgo's UPGRADING.md (v0.74.0, v0.75.0).
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.75.0 ([0598b12](https://github.com/IDFoundry/OID4VCgo/commit/0598b1272731cef611473c99b6152ec51cd9ae9e))
+
 ## [0.12.2](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.1...sqlstore/v0.12.2) (2026-11-15)
 
 
