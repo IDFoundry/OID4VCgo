@@ -88,26 +88,36 @@ func openFileInstanceStore(path string) (*fileInstanceStore, error) {
 	if s.state.InstanceKeys == nil {
 		s.state.InstanceKeys = map[string]wp.InstanceKey{}
 	}
+	if err := s.state.checkLoaded(path); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// checkLoaded checks the instances and instance keys of a file read
+// from path, refusing a damaged or duplicate one, and gives each
+// instance key from before revisions its first.
+func (f *instanceFile) checkLoaded(path string) error {
 	keys := map[string]bool{}
-	for id, in := range s.state.Instances {
+	for id, in := range f.Instances {
 		if in.ID != id || in.KeyThumbprint == "" || keys[in.KeyThumbprint] {
-			return nil, fmt.Errorf("walletprovider: %s: instance %q is damaged or a duplicate", path, id)
+			return fmt.Errorf("walletprovider: %s: instance %q is damaged or a duplicate", path, id)
 		}
 		keys[in.KeyThumbprint] = true
 	}
-	for tp, k := range s.state.InstanceKeys {
+	for tp, k := range f.InstanceKeys {
 		if k.Thumbprint != tp || keys[tp] {
-			return nil, fmt.Errorf("walletprovider: %s: instance key %q is damaged or a registration key", path, tp)
+			return fmt.Errorf("walletprovider: %s: instance key %q is damaged or a registration key", path, tp)
 		}
-		if _, ok := s.state.Instances[k.InstanceID]; !ok {
-			return nil, fmt.Errorf("walletprovider: %s: instance key %q is of an unknown instance", path, tp)
+		if _, ok := f.Instances[k.InstanceID]; !ok {
+			return fmt.Errorf("walletprovider: %s: instance key %q is of an unknown instance", path, tp)
 		}
 		// A file from before instance keys could move has no Revision:
 		// each was created, at 1.
 		k.Revision = max(k.Revision, 1)
-		s.state.InstanceKeys[tp] = k
+		f.InstanceKeys[tp] = k
 	}
-	return s, nil
+	return nil
 }
 
 // save writes the store to its file. Called with s.mu held.

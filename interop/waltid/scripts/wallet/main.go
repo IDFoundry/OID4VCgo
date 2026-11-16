@@ -264,7 +264,7 @@ func main() {
 	if *tlsCA == "" || *issuerCA == "" || *verifierCA == "" || len(offered) == 0 || *out == "" {
 		log.Fatal("-tls-ca, -issuer-ca, -verifier-ca, -offer and -out are required")
 	}
-	res := run(*tlsCA, *issuerCA, *verifierCA, *resolve, offered, *request, *tamper, *verifier2Key, opts)
+	res := run(parties{tlsCA: *tlsCA, issuerCA: *issuerCA, verifierCA: *verifierCA, resolve: *resolve}, offered, *request, *tamper, *verifier2Key, opts)
 	raw, err := json.MarshalIndent(res, "", "  ")
 	if err != nil {
 		log.Fatal(err)
@@ -274,7 +274,15 @@ func main() {
 	}
 }
 
-func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request, tamper, verifier2Key string, opts options) (res result) {
+// parties is where the wallet finds the parties, and the CAs their
+// TLS, issuer and Verifier certificates chain to.
+type parties struct {
+	tlsCA, issuerCA, verifierCA string
+	// resolve is HOST=ADDR: dial ADDR for HOST; or "".
+	resolve string
+}
+
+func run(pt parties, offered []string, request, tamper, verifier2Key string, opts options) (res result) {
 	res.Stage = "setup"
 	res.Observed = &observed{}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -283,32 +291,14 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 		res.Error = err.Error()
 		return res
 	}
-	tlsRoots, err := pool(tlsCA)
+	tlsRoots, issuerRoots, verifierRoots, err := pt.roots()
 	if err != nil {
 		return fail(err)
 	}
-	issuerRoots, err := pool(issuerCA)
-	if err != nil {
+	var transport http.RoundTripper
+	if transport, err = pt.transport(tlsRoots, res.Observed); err != nil {
 		return fail(err)
 	}
-	verifierRoots, err := pool(verifierCA)
-	if err != nil {
-		return fail(err)
-	}
-	host, addr, ok := strings.Cut(resolve, "=")
-	if resolve != "" && !ok {
-		return fail(fmt.Errorf("-resolve %q isn't HOST=ADDR", resolve))
-	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	var transport http.RoundTripper = recorder{seen: res.Observed, next: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12},
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if h, port, err := net.SplitHostPort(address); err == nil && ok && h == host {
-				address = net.JoinHostPort(addr, port)
-			}
-			return dialer.DialContext(ctx, network, address)
-		},
-	}}
 	keys := &keyring{KeyStore: walletflow.NewMemoryKeyStore()}
 	var t *tamperer
 	if tamper != "" {
@@ -331,24 +321,8 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 	}
 	deps := walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client}
-	if opts.attesterConfig != "" {
-		p, err := loadProvider(opts.attesterConfig)
-		if err != nil {
-			return fail(err)
-		}
-		cfg.ClientID, deps.Provider = p.cfg.ClientID, p
-	}
-	if opts.walletProvider != "" {
-		p, err := registerAtProvider(ctx, opts.walletProvider, opts.walletProviderTLS)
-		if err != nil {
-			return fail(err)
-		}
-		cfg.ClientID, deps.Provider = opts.clientID, p
-	}
-	if opts.mdocIssuerCA != "" {
-		if cfg.MdocIssuerRoots, err = pool(opts.mdocIssuerCA); err != nil {
-			return fail(err)
-		}
+	if err := configure(ctx, opts, &cfg, &deps); err != nil {
+		return fail(err)
 	}
 	stores, err := assurance(opts, &cfg, &deps, revocation)
 	if err != nil {
@@ -360,43 +334,119 @@ func run(tlsCA, issuerCA, verifierCA, resolve string, offered []string, request,
 		return fail(err)
 	}
 
-	var got []walletflow.StoredCredential
-	for _, offer := range offered {
-		creds, err := redeem(ctx, w, offer, &res)
-		if err != nil {
-			return fail(err)
-		}
-		got = append(got, creds...)
-	}
-	if opts.revoke != "" {
-		res.Stage = "revoke"
-		if err := revoke(ctx, opts.revoke, got, &res); err != nil {
-			return fail(err)
-		}
+	if err := receive(ctx, w, offered, opts.revoke, &res); err != nil {
+		return fail(err)
 	}
 	if request == "" {
 		res.Stage = "done"
 		return res
 	}
+	if err := present(ctx, w, request, &res); err != nil {
+		return fail(err)
+	}
+	res.Stage = "done"
+	return res
+}
 
+// roots reads the CAs pt's certificates chain to.
+func (pt parties) roots() (tlsRoots, issuerRoots, verifierRoots *x509.CertPool, err error) {
+	if tlsRoots, err = pool(pt.tlsCA); err != nil {
+		return nil, nil, nil, err
+	}
+	if issuerRoots, err = pool(pt.issuerCA); err != nil {
+		return nil, nil, nil, err
+	}
+	if verifierRoots, err = pool(pt.verifierCA); err != nil {
+		return nil, nil, nil, err
+	}
+	return tlsRoots, issuerRoots, verifierRoots, nil
+}
+
+// transport is the wallet's transport to the parties: TLS to
+// tlsRoots, dialing as pt.resolve says, recording into seen what each
+// response says.
+func (pt parties) transport(tlsRoots *x509.CertPool, seen *observed) (http.RoundTripper, error) {
+	host, addr, ok := strings.Cut(pt.resolve, "=")
+	if pt.resolve != "" && !ok {
+		return nil, fmt.Errorf("-resolve %q isn't HOST=ADDR", pt.resolve)
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return recorder{seen: seen, next: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: tlsRoots, MinVersion: tls.VersionTLS12},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if h, port, err := net.SplitHostPort(address); err == nil && ok && h == host {
+				address = net.JoinHostPort(addr, port)
+			}
+			return dialer.DialContext(ctx, network, address)
+		},
+	}}, nil
+}
+
+// configure sets in cfg and deps what opts says beyond the parties'
+// trust: the wallet's attestations and client_id, and the IACA mdocs
+// chain to.
+func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *walletflow.Dependencies) error {
+	if opts.attesterConfig != "" {
+		p, err := loadProvider(opts.attesterConfig)
+		if err != nil {
+			return err
+		}
+		cfg.ClientID, deps.Provider = p.cfg.ClientID, p
+	}
+	if opts.walletProvider != "" {
+		p, err := registerAtProvider(ctx, opts.walletProvider, opts.walletProviderTLS)
+		if err != nil {
+			return err
+		}
+		cfg.ClientID, deps.Provider = opts.clientID, p
+	}
+	if opts.mdocIssuerCA != "" {
+		var err error
+		if cfg.MdocIssuerRoots, err = pool(opts.mdocIssuerCA); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// receive redeems each offer, then, with revokeURL, revokes every
+// credential received, recording in res how far it got.
+func receive(ctx context.Context, w *walletflow.Wallet, offered []string, revokeURL string, res *result) error {
+	var got []walletflow.StoredCredential
+	for _, offer := range offered {
+		creds, err := redeem(ctx, w, offer, res)
+		if err != nil {
+			return err
+		}
+		got = append(got, creds...)
+	}
+	if revokeURL == "" {
+		return nil
+	}
+	res.Stage = "revoke"
+	return revoke(ctx, revokeURL, got, res)
+}
+
+// present answers request with the default selection, recording in res
+// how far it got and the queries answered.
+func present(ctx context.Context, w *walletflow.Wallet, request string, res *result) error {
 	res.Stage = "request"
 	p, err := w.StartPresentation(ctx, request)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	res.Stage = "selection"
 	sel, err := p.DefaultSelection(ctx)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	res.Stage = "response"
 	presented, err := p.Respond(ctx, sel)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	res.QueryIDs = presented.QueryIDs
-	res.Stage = "done"
-	return res
+	return nil
 }
 
 // redeem redeems offer's pre-authorized code, recording in res how far

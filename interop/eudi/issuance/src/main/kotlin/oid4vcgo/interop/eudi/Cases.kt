@@ -142,6 +142,20 @@ private suspend fun Run.notifyAccepted(
     expect(n?.status == 204 && n.authorizationScheme == "DPoP" && n.dpop, "notification credential_accepted answered 204") { n.toString() }
 }
 
+/** Sends the Notification Endpoint a credential_deleted event (§11). */
+private suspend fun Run.notifyDeleted(
+    issuer: Issuer,
+    authorized: AuthorizedRequest,
+    notificationId: eu.europa.ec.eudi.openid4vci.NotificationId?,
+) {
+    if (notificationId == null) {
+        bad("the Credential Response carries a notification_id")
+        return
+    }
+    with(issuer) { authorized.notify(CredentialIssuanceEvent.Deleted(notificationId, "the End-User deleted it")) }.getOrThrow()
+    expect(wallet.recorder.to("/notification").lastOrNull()?.status == 204, "notification credential_deleted answered 204")
+}
+
 /** FAPIgo's error_description for a Wallet Attestation whose attester it has no key for. */
 private const val UNTRUSTED_ATTESTER = "no matching attester key"
 
@@ -174,6 +188,38 @@ private fun isOAuthError(
     t: Throwable,
     code: String,
 ): Boolean = generateSequence(t) { it.cause }.any { (it.message ?: "").contains(code) || it.toString().contains(code) }
+
+/**
+ * Redeems a pre-authorized code for [sdjwt], asking for
+ * authorization_details at the Token Endpoint, and checks the issuer's
+ * answer to how the wallet sent them.
+ */
+private suspend fun Wallet.authorizationDetailsAtTokenEndpoint(
+    run: Run,
+    sdjwt: String,
+) {
+    val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
+    val issuer = fromOffer(uri)
+    val attempt = runCatching { with(this) { issuer.authorizeByPreAuthorizedCode(requestAuthorizationDetails = true) } }
+    val sent = recorder.to(TOKEN_PATH).lastOrNull()?.form?.get("authorization_details").orEmpty()
+    if (sent.startsWith("%5B")) {
+        // README finding 2: the library form-encodes the JSON array
+        // itself, and the form encoding then encodes it again.
+        run.known("the wallet sends authorization_details URL-encoded twice (README finding 2)")
+        run.expect(
+            attempt.exceptionOrNull()?.let { isOAuthError(it, "invalid_authorization_details") } == true,
+            "the issuer refuses it as invalid_authorization_details",
+        ) { attempt.toString() }
+        val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
+        run.ok("the refused request didn't spend the code: it still redeems without authorization_details")
+        run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
+        return
+    }
+    val authorized = attempt.getOrThrow()
+    run.ok("the wallet sends authorization_details encoded once: README finding 2 is fixed")
+    run.expect(authorized.credentialIdentifiers.orEmpty().keys.map { it.value } == listOf(sdjwt), "the Token Response grants a credential_identifier for it") { authorized.credentialIdentifiers.toString() }
+    run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
+}
 
 // --- the profiles ---
 
@@ -241,27 +287,7 @@ suspend fun baseCases(run: Run) {
     }
 
     run.case("pre-authorized code, the wallet asking for authorization_details at the Token Endpoint") {
-        val (uri, _) = offer(PRE_AUTHORIZED_CODE, listOf(sdjwt))
-        val issuer = fromOffer(uri)
-        val attempt = runCatching { with(this) { issuer.authorizeByPreAuthorizedCode(requestAuthorizationDetails = true) } }
-        val sent = recorder.to(TOKEN_PATH).lastOrNull()?.form?.get("authorization_details").orEmpty()
-        if (sent.startsWith("%5B")) {
-            // README finding 2: the library form-encodes the JSON array
-            // itself, and the form encoding then encodes it again.
-            run.known("the wallet sends authorization_details URL-encoded twice (README finding 2)")
-            run.expect(
-                attempt.exceptionOrNull()?.let { isOAuthError(it, "invalid_authorization_details") } == true,
-                "the issuer refuses it as invalid_authorization_details",
-            ) { attempt.toString() }
-            val authorized = with(this) { issuer.authorizeByPreAuthorizedCode() }
-            run.ok("the refused request didn't spend the code: it still redeems without authorization_details")
-            run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
-            return@case
-        }
-        val authorized = attempt.getOrThrow()
-        run.ok("the wallet sends authorization_details encoded once: README finding 2 is fixed")
-        run.expect(authorized.credentialIdentifiers.orEmpty().keys.map { it.value } == listOf(sdjwt), "the Token Response grants a credential_identifier for it") { authorized.credentialIdentifiers.toString() }
-        run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
+        authorizationDetailsAtTokenEndpoint(run, sdjwt)
     }
 
     run.case("authorization code, wallet-initiated, SD-JWT VC") {
@@ -301,13 +327,7 @@ suspend fun baseCases(run: Run) {
         val (next, _) = run.issueAndVerify(issuer, authorized, sdjwt, Proofs.jwt())
         val (last, success) = run.issueAndVerify(issuer, next, mdoc, Proofs.jwt())
         run.checkCredentialRequests()
-        val id = success.notificationId
-        if (id == null) {
-            run.bad("the Credential Response carries a notification_id")
-        } else {
-            with(issuer) { last.notify(CredentialIssuanceEvent.Deleted(id, "the End-User deleted it")) }.getOrThrow()
-            run.expect(recorder.to("/notification").lastOrNull()?.status == 204, "notification credential_deleted answered 204")
-        }
+        run.notifyDeleted(issuer, last, success.notificationId)
     }
 
     run.case("batch issuance: three jwt proofs, SD-JWT VC") {

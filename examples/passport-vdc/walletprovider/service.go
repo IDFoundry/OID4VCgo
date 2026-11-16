@@ -629,50 +629,16 @@ func (s *service) holderIssuance(ctx context.Context) (string, crypto.PublicKey,
 
 func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 	var req KeyAttestationRequest
-	if !decodeRequest(w, r, &req) {
+	if !decodeRequest(w, r, &req) || !checkKeyAttestationRequest(w, &req) {
 		return
 	}
-	if len(req.Keys) == 0 || len(req.Keys) > maxAttestedKeys {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("keys must hold 1 to %d keys", maxAttestedKeys))
+	instanceKey, instanceID, ok := s.requestInstance(w, r, req.InstanceKey)
+	if !ok {
 		return
 	}
-	if req.CertificateChains != nil && len(req.CertificateChains) != len(req.Keys) {
-		writeError(w, http.StatusBadRequest, "certificate_chains must have one chain for each key")
+	keys, thumbprints, ok := parseRequestKeys(w, req.Keys)
+	if !ok {
 		return
-	}
-	if !validNonce(req.Nonce) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce must be 1 to %d printable ASCII characters", maxNonceLength))
-		return
-	}
-	var instanceKey crypto.PublicKey
-	var instanceID string
-	if len(req.InstanceKey) > 0 {
-		key, thumbprint, err := parseP256Key(req.InstanceKey)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "instance_key: "+err.Error())
-			return
-		}
-		id, err := s.instanceOf(r.Context(), thumbprint)
-		switch {
-		case errors.Is(err, wp.ErrNotFound):
-			writeError(w, http.StatusBadRequest, "instance_key isn't one a Wallet Attestation recorded")
-			return
-		case err != nil:
-			s.cfg.Logf("wallet provider: Key Attestation for instance key %s: %v", thumbprint, err)
-			writeAttestation(w, "", err)
-			return
-		}
-		instanceKey, instanceID = key, id
-	}
-	keys := make([]*ecdsa.PublicKey, len(req.Keys))
-	thumbprints := make([]string, len(req.Keys))
-	for i, raw := range req.Keys {
-		key, thumbprint, err := parseP256Key(raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("keys[%d]: %v", i, err))
-			return
-		}
-		keys[i], thumbprints[i] = key, thumbprint
 	}
 	outcomes := make([]string, len(keys))
 	vouched := make([]demoKey, len(keys))
@@ -703,6 +669,68 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeAttestation(w, jwt, err)
+}
+
+// checkKeyAttestationRequest checks req's key count, certificate chain
+// count and nonce, writing the error and returning false for one out
+// of bounds.
+func checkKeyAttestationRequest(w http.ResponseWriter, req *KeyAttestationRequest) bool {
+	if len(req.Keys) == 0 || len(req.Keys) > maxAttestedKeys {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("keys must hold 1 to %d keys", maxAttestedKeys))
+		return false
+	}
+	if req.CertificateChains != nil && len(req.CertificateChains) != len(req.Keys) {
+		writeError(w, http.StatusBadRequest, "certificate_chains must have one chain for each key")
+		return false
+	}
+	if !validNonce(req.Nonce) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce must be 1 to %d printable ASCII characters", maxNonceLength))
+		return false
+	}
+	return true
+}
+
+// requestInstance returns the Key Attestation request's instance key,
+// raw, and the instance a Wallet Attestation recorded it for; none for
+// an empty raw. For one it can't, it writes the error and returns
+// false.
+func (s *service) requestInstance(w http.ResponseWriter, r *http.Request, raw json.RawMessage) (crypto.PublicKey, string, bool) {
+	if len(raw) == 0 {
+		return nil, "", true
+	}
+	key, thumbprint, err := parseP256Key(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "instance_key: "+err.Error())
+		return nil, "", false
+	}
+	id, err := s.instanceOf(r.Context(), thumbprint)
+	switch {
+	case errors.Is(err, wp.ErrNotFound):
+		writeError(w, http.StatusBadRequest, "instance_key isn't one a Wallet Attestation recorded")
+		return nil, "", false
+	case err != nil:
+		s.cfg.Logf("wallet provider: Key Attestation for instance key %s: %v", thumbprint, err)
+		writeAttestation(w, "", err)
+		return nil, "", false
+	}
+	return key, id, true
+}
+
+// parseRequestKeys parses the Key Attestation request's keys, returning
+// each with its thumbprint; for one it can't, it writes the error and
+// returns false.
+func parseRequestKeys(w http.ResponseWriter, raws []json.RawMessage) ([]*ecdsa.PublicKey, []string, bool) {
+	keys := make([]*ecdsa.PublicKey, len(raws))
+	thumbprints := make([]string, len(raws))
+	for i, raw := range raws {
+		key, thumbprint, err := parseP256Key(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("keys[%d]: %v", i, err))
+			return nil, nil, false
+		}
+		keys[i], thumbprints[i] = key, thumbprint
+	}
+	return keys, thumbprints, true
 }
 
 // issueKeyAttestation has the library issue a Key Attestation over the

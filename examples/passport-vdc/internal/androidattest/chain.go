@@ -56,6 +56,29 @@ func Verify(chain [][]byte, roots []*x509.Certificate, now time.Time) (*Attestat
 	if len(chain) == 0 || len(chain) > MaxChainLength {
 		return nil, fmt.Errorf("androidattest: a chain of %d certificates, want 1 to %d", len(chain), MaxChainLength)
 	}
+	certs, err := parseChain(chain)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkChainSignatures(certs); err != nil {
+		return nil, err
+	}
+	ext, err := leafExtension(certs)
+	if err != nil {
+		return nil, err
+	}
+	kd, err := ParseKeyDescription(ext)
+	if err != nil {
+		return nil, err
+	}
+	a := &Attestation{Leaf: certs[0], KeyDescription: kd}
+	assessChain(a, certs, roots, now)
+	return a, nil
+}
+
+// parseChain parses each DER certificate of chain, refusing an RSA key
+// larger or with another exponent than Android's.
+func parseChain(chain [][]byte) ([]*x509.Certificate, error) {
 	certs := make([]*x509.Certificate, len(chain))
 	for i, der := range chain {
 		c, err := x509.ParseCertificate(der)
@@ -69,14 +92,26 @@ func Verify(chain [][]byte, roots []*x509.Certificate, now time.Time) (*Attestat
 		}
 		certs[i] = c
 	}
+	return certs, nil
+}
+
+// checkChainSignatures checks that each certificate is signed by the
+// next.
+func checkChainSignatures(certs []*x509.Certificate) error {
 	for i := 0; i+1 < len(certs); i++ {
 		// CheckSignature rather than CheckSignatureFrom: Android's
 		// attestation keys needn't be marked as CAs.
 		child, parent := certs[i], certs[i+1]
 		if err := parent.CheckSignature(child.SignatureAlgorithm, child.RawTBSCertificate, child.Signature); err != nil {
-			return nil, fmt.Errorf("androidattest: certificate %d isn't signed by certificate %d: %w", i, i+1, err)
+			return fmt.Errorf("androidattest: certificate %d isn't signed by certificate %d: %w", i, i+1, err)
 		}
 	}
+	return nil
+}
+
+// leafExtension returns the leaf's attestation extension, refusing a
+// chain in which another certificate has one too.
+func leafExtension(certs []*x509.Certificate) ([]byte, error) {
 	var ext []byte
 	for i, c := range certs {
 		for _, e := range c.Extensions {
@@ -92,11 +127,12 @@ func Verify(chain [][]byte, roots []*x509.Certificate, now time.Time) (*Attestat
 	if ext == nil {
 		return nil, errors.New("androidattest: the leaf has no attestation extension")
 	}
-	kd, err := ParseKeyDescription(ext)
-	if err != nil {
-		return nil, err
-	}
-	a := &Attestation{Leaf: certs[0], KeyDescription: kd}
+	return ext, nil
+}
+
+// assessChain records in a whether certs ends at one of roots, and
+// which of certs aren't valid at now.
+func assessChain(a *Attestation, certs, roots []*x509.Certificate, now time.Time) {
 	top := certs[len(certs)-1]
 	for i, c := range certs {
 		root := isRoot(c, roots)
@@ -107,7 +143,6 @@ func Verify(chain [][]byte, roots []*x509.Certificate, now time.Time) (*Attestat
 			a.OutOfValidity = append(a.OutOfValidity, i)
 		}
 	}
-	return a, nil
 }
 
 // isRoot reports whether c has the key of one of roots: a root itself,
