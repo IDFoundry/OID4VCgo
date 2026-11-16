@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.81.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.80.0...v0.81.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **walletprovider:** androidkey.EvidenceVerifier now refuses (403 evidence_rejected) Android instances and instance keys whose kept attestation chain has a certificate past its validity period, and, unless the new AllowUncheckedLegacyEvidence is set, instances registered with v0.75.3 or before, instance keys recorded with v0.80.0 or before, and instances whose facts were saved by v0.80.0 or before. Such wallets must register again or attest a new instance key; set AllowUncheckedLegacyEvidence for an upgrade window to keep accepting the legacy records meanwhile (see DEPLOYING.md). Verifier.Recheck refuses Facts without validity periods with ErrLegacyFacts.
+* **wallet:** with no IssuerLeafPolicy, a wallet (wallet.VerifyIssuedCredential, walletflow.Config, the mobile libraries without issuer_require_eku) now refuses an SD-JWT VC whose issuer certificate's key usage doesn't allow digital signatures, that is an OCSP signer, whose extended key usage lists only other roles' purposes (TLS server or client, code signing, email, time stamping, IPsec) or includes mdoc reader authentication, or whose every verified path has an intermediate CA restricted to such purposes. Set IssuerLeafPolicy: verifier.AnyIssuerLeaf to accept every chain-verified leaf again, for IssuerRoots that anchor only issuers' certificates.
+
+### Features
+
+* **walletprovider:** say when fresh evidence would recover a refused instance or key ([6e737a2](https://github.com/IDFoundry/OID4VCgo/commit/6e737a25e1ba334c074b9fd23a4ed8afa1cb44fb))
+
+
+### Bug Fixes
+
+* **issuer:** keep a deferred credential to the identifier its token authorized ([f564601](https://github.com/IDFoundry/OID4VCgo/commit/f564601aa91073ebdd81060407dc8d21459d009f))
+* register again or reissue when the Wallet Provider asks for fresh evidence ([a797e54](https://github.com/IDFoundry/OID4VCgo/commit/a797e54a63a9b7ee4f2933a83dd0b98b3d7e9f3d))
+* **walletflow:** don't count opt-outs or role defaults as separating trust roles ([0fe1639](https://github.com/IDFoundry/OID4VCgo/commit/0fe16395ddb2a45a20eec24b75e00086d0fe255f))
+* **walletflow:** drop a refresh's grant when its Key Attestation finds the instance key retired ([7f12ac0](https://github.com/IDFoundry/OID4VCgo/commit/7f12ac01663014106eeb9c493c4e033cff328589))
+* **walletprovider:** recheck a recorded instance key's own attestation evidence ([2a5f23e](https://github.com/IDFoundry/OID4VCgo/commit/2a5f23eafd0827d3883a33e90e4c2552e19c627d))
+* **walletprovider:** recheck App Attest instances against the current environment and app policy ([c5fac07](https://github.com/IDFoundry/OID4VCgo/commit/c5fac07e3a621592bbde9911131ffc019224f663))
+* **walletprovider:** refuse Android evidence past its certificates' validity, and unchecked records in production ([1b5c235](https://github.com/IDFoundry/OID4VCgo/commit/1b5c23595116625fa2d09c716631f3459b9e251e))
+* **wallet:** refuse a role-restricted SD-JWT VC issuer certificate by default ([3e93e2b](https://github.com/IDFoundry/OID4VCgo/commit/3e93e2b7096f7ba24e4d3e1690870124bd8fdca8))
+
 ## [0.80.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.79.0...v0.80.0) (2026-11-15)
 
 

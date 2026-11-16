@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.13.0...sqlstore/v0.13.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **issuer:** keep a deferred credential to the identifier its token authorized ([f564601](https://github.com/IDFoundry/OID4VCgo/commit/f564601aa91073ebdd81060407dc8d21459d009f))
+
 ## [0.13.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.12.2...sqlstore/v0.13.0) (2026-11-15)
 
 
