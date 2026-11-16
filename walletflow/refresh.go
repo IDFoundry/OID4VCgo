@@ -342,7 +342,7 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	}
 	stored, deferred, err := s.request(ctx, old.ConfigurationID, identifier, requestEnc, responseEnc)
 	if err != nil {
-		return StoredCredential{}, nil, err
+		return StoredCredential{}, nil, w.retiredInstanceKey(ctx, g, err)
 	}
 	if deferred != nil {
 		return old, deferred, nil
@@ -639,17 +639,11 @@ func (s *Issuance) refreshAsPublicClient(ctx context.Context, g RefreshGrant, as
 // resource client for the new tokens.
 func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (refreshResult, error) {
 	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
-		switch {
-		case errors.Is(err, ErrClientAuthUnsupported):
+		if errors.Is(err, ErrClientAuthUnsupported) {
 			// A wallet without its Wallet Provider now.
 			return refreshResult{}, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
-		case instanceKeyRetired(err):
-			// No refresh will authenticate with it again: a new
-			// issuance makes a new instance key.
-			s.w.forgetGrant(context.WithoutCancel(ctx), g)
-			return refreshResult{}, fmt.Errorf("walletflow: refresh credential: the Wallet Provider no longer attests its instance key: %w: %w", ErrReissueRequired, err)
 		}
-		return refreshResult{}, err
+		return refreshResult{}, s.w.retiredInstanceKey(ctx, g, err)
 	}
 	// The grant's own authorization server, so fapigo/client refuses to
 	// send its refresh token to any other, and its Credential Issuer as
@@ -684,6 +678,24 @@ func instanceKeyRetired(err error) bool {
 	return errors.Is(err, walletprovider.ErrInstanceKeyExpired) ||
 		errors.Is(err, walletprovider.ErrRegistrationExpired) ||
 		errors.Is(err, walletprovider.ErrInstanceKeyRegistered)
+}
+
+// retiredInstanceKey is err, a refresh's failure with grant g, unless
+// it's the Wallet Provider refusing for good to attest g's instance key
+// (instanceKeyRetired), at the Wallet Attestation that authenticates the
+// refresh or at the Key Attestation of its new holder keys, which is for
+// the same instance key: then no refresh will be attested with it again,
+// so g and its instance key are forgotten, and the refresh is
+// ErrReissueRequired — a new issuance makes a new instance key. A
+// GrantAuthNone grant has no instance key: a Key Attestation's, made for
+// the refresh alone (attestationInstanceKey), isn't the grant's, so the
+// refusal is returned as is, and the next refresh makes another.
+func (w *Wallet) retiredInstanceKey(ctx context.Context, g RefreshGrant, err error) error {
+	if g.ClientAuth == GrantAuthNone || !instanceKeyRetired(err) {
+		return err
+	}
+	w.forgetGrant(context.WithoutCancel(ctx), g)
+	return fmt.Errorf("walletflow: refresh credential: the Wallet Provider no longer attests its instance key: %w: %w", ErrReissueRequired, err)
 }
 
 // refreshFailed is a refresh's failure: ErrReissueRequired, with the

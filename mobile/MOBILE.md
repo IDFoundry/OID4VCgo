@@ -322,8 +322,15 @@ key are deleted: Go recognises those three codes in the
 `[refused:code]` marker (`walletprovider.CodeError`), as it does a
 `walletprovider.Client` refusal with `errors.Is`, and walletflow's
 refresh stops there, since only receiving the credential again, with a
-new instance key, helps. Before, it was `platform`, and every later
-refresh asked the provider again and failed alike. Its JVM
+new instance key, helps. That holds whether the refusal comes at the
+refresh's Wallet Attestation or, after that passed, at the Key
+Attestation of its new holder keys, which names the same instance key
+(the provider rechecks the key's evidence there too). Before, it was
+`platform`, and every later refresh asked the provider again and failed
+alike. A new issuance's Key Attestation refused so stays `platform`,
+and walletflow deletes nothing: the instance key is the issuance's own,
+and the next issuance makes another, after the native provider, which
+forgot its registration on `registration_expired`, registers again. Its JVM
 tests run it against a fake provider checking each request as the Go
 handler does; it was also run against the Go handler itself
 (`walletprovider.Provider.Handler` over HTTP, with an `android-key`

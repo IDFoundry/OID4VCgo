@@ -191,7 +191,7 @@ format or error code below changes incompatibly.
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
-| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (a `WalletAttestation` refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
+| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
@@ -434,11 +434,15 @@ for them, and tells the CallbackCanceller, if any, to cancel them. An error whos
 failure, reported as `network` (retryable); one starting with
 `[refused:code]` — the provider refused with `code`, one of its
 protocol's error codes — is `platform` with the detail `code`, except
-that a refresh whose `WalletAttestation` is refused with
+that a refresh whose `WalletAttestation`, or whose `KeyAttestation`
+for its grant's instance key, is refused with
 `instance_key_expired`, `registration_expired` or
 `instance_key_registered` is `reissue_required`: the provider won't
 attest its grant's instance key again, so the grant and its key are
-deleted; any other is `platform`. The Swift package's adapter marks a `URLError` as
+deleted. An issuance's `KeyAttestation` refused so stays `platform`,
+and nothing is deleted: its instance key is its own, and the next
+issuance makes another (registering again first, where the native
+provider forgot its registration). Any other is `platform`. The Swift package's adapter marks a `URLError` as
 network and a `WalletProviderRefusedError` with an error code as
 refused, and the Kotlin library's an `IOException` and a
 `WalletProviderRefusedException` likewise.
