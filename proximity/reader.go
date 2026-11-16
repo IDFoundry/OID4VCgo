@@ -202,7 +202,14 @@ func DefaultDocumentSignerPolicy(leaf *x509.Certificate, chains [][]*x509.Certif
 
 // AnyDocumentSigner is a WithDocumentSignerPolicy policy accepting any
 // certificate chain validation accepts.
+//
+// It tells no role's certificates apart, so walletflow.New doesn't
+// count it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config): there
+// it's as if unset.
 func AnyDocumentSigner(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func init() { certchain.RegisterNonSeparating(AnyDocumentSigner) }
 
 // MDLDocumentSignerEKU is the extended key usage of an mDL document
 // signer certificate (ISO/IEC 18013-5 Annex B: id-mdl-kp-mdlDS,

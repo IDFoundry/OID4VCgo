@@ -128,9 +128,17 @@ func (r X5CIssuerKeyResolver) leafPolicy() func(*x509.Certificate, [][]*x509.Cer
 // A wallet receiving an SD-JWT VC makes the same check where no
 // IssuerLeafPolicy is set (wallet.VerifyIssuedCredentialParams,
 // walletflow.Config).
+//
+// Without an extended key usage to require, it can't tell this role's
+// certificates from another's that carry none, so walletflow.New
+// doesn't count it as a leaf policy separating a trust pool from
+// another role's that shares an anchor with it (walletflow.Config):
+// there it's as if unset.
 func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return certchain.SDJWTIssuerRole.Check(leaf, chains)
 }
+
+func init() { certchain.RegisterNonSeparating(DefaultSDJWTIssuerLeafPolicy) }
 
 // AnyIssuerLeaf is a LeafPolicy that accepts every chain-verified
 // leaf: the explicit opt-out of DefaultSDJWTIssuerLeafPolicy (or of
@@ -138,7 +146,14 @@ func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certi
 // Roots that anchor only issuers' certificates. A wallet opts out of
 // the same defaults by setting it as its IssuerLeafPolicy
 // (wallet.VerifyIssuedCredentialParams, walletflow.Config).
+//
+// It tells no role's certificates apart, so walletflow.New doesn't
+// count it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config): there
+// it's as if unset.
 func AnyIssuerLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func init() { certchain.RegisterNonSeparating(AnyIssuerLeaf) }
 
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths
 // from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
