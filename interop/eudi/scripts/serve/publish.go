@@ -89,8 +89,9 @@ func newPublishedLists(dir string) (publishedLists, error) {
 }
 
 func newPublishedList(uri string, key crypto.Signer, cert *x509.Certificate, form statuslist.Form) (*publishedList, error) {
-	i := strings.Index(strings.TrimPrefix(uri, "https://"), "/")
-	if !strings.HasPrefix(uri, "https://") || i < 0 {
+	rest, isHTTPS := strings.CutPrefix(uri, "https://")
+	i := strings.Index(rest, "/")
+	if !isHTTPS || i < 0 {
 		return nil, fmt.Errorf("status_list_uri %q has no https path", uri)
 	}
 	// The SD-JWT VC's list takes 2 bits a status, so it can say
@@ -111,7 +112,7 @@ func newPublishedList(uri string, key crypto.Signer, cert *x509.Certificate, for
 	if _, err := publisher.Token(context.Background(), form == statuslist.FormCWT); err != nil {
 		return nil, err
 	}
-	return &publishedList{path: uri[len("https://")+i:], allocator: allocator, publisher: publisher}, nil
+	return &publishedList{path: rest[i:], allocator: allocator, publisher: publisher}, nil
 }
 
 // route serves each list at its path, logging each fetch and the form

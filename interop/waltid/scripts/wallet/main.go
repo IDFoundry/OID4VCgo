@@ -142,6 +142,11 @@ func (r recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	return res, nil
 }
 
+// jwkSet is a JWK Set's keys, each as its JSON members.
+type jwkSet struct {
+	Keys []map[string]any `json:"keys"`
+}
+
 func (o *observed) record(req *http.Request, contentType string, body []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -149,9 +154,7 @@ func (o *observed) record(req *http.Request, contentType string, body []byte) {
 	case strings.HasPrefix(contentType, "application/oauth-authz-req+jwt"):
 		var claims struct {
 			ClientMetadata struct {
-				JWKS struct {
-					Keys []map[string]any `json:"keys"`
-				} `json:"jwks"`
+				JWKS jwkSet `json:"jwks"`
 			} `json:"client_metadata"`
 		}
 		if segments := strings.Split(string(body), "."); len(segments) == 3 {
@@ -162,9 +165,7 @@ func (o *observed) record(req *http.Request, contentType string, body []byte) {
 	case strings.Contains(req.URL.Path, "/.well-known/openid-credential-issuer"):
 		var meta struct {
 			Encryption *struct {
-				JWKS struct {
-					Keys []map[string]any `json:"keys"`
-				} `json:"jwks"`
+				JWKS jwkSet `json:"jwks"`
 			} `json:"credential_request_encryption"`
 		}
 		if json.Unmarshal(body, &meta) != nil {
