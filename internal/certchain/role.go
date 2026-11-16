@@ -53,6 +53,18 @@ func CheckSigningLeaf(name string, leaf *x509.Certificate) error {
 	return nil
 }
 
+// SDJWTIssuerRole is an SD-JWT VC issuer certificate's role: the
+// default leaf policy of verifier.X5CIssuerKeyResolver
+// (verifier.DefaultSDJWTIssuerLeafPolicy) and of a wallet receiving an
+// SD-JWT VC (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy), so
+// both sides refuse the same certificates. The mDL document signer's
+// extended key usage isn't among its other roles: an issuer may sign
+// its SD-JWT VCs with its document signer's certificate.
+var SDJWTIssuerRole = LeafRole{
+	Name:         "the issuer certificate",
+	OtherISOEKUs: []asn1.ObjectIdentifier{ReaderAuthenticationEKU},
+}
+
 // LeafRole is a signing role's default leaf policy, which the
 // LeafPolicy defaults of verifier.X5CIssuerKeyResolver,
 // issuer.X5CAttestationVerifier and X5CProofBindingKeyResolver, and

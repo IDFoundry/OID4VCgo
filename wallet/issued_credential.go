@@ -55,10 +55,20 @@ type VerifyIssuedCredentialParams struct {
 	// certificate policy the ecosystem marks its issuers' certificates
 	// with, so a certificate issued under the same roots for another
 	// role, such as a Verifier's, isn't taken for an issuer's. For an
-	// mdoc, nil means mdoc.DefaultDocumentSignerPolicy, which refuses
-	// the certificates an IACA issues for other jobs and requires the
-	// mDL document signer's extended key usage; a policy that's set
-	// replaces it.
+	// SD-JWT VC, nil means the check verifier.X5CIssuerKeyResolver makes
+	// by default (verifier.DefaultSDJWTIssuerLeafPolicy), which refuses
+	// a certificate whose key usage clearly denotes another role: one
+	// whose extended key usage lists only TLS, code signing, email, time
+	// stamping or IPsec purposes, or includes mdoc reader
+	// authentication, say. It can't tell an issuer's certificate from a
+	// Verifier's that carries no extended key usage. For an mdoc, nil
+	// means mdoc.DefaultDocumentSignerPolicy, which refuses the
+	// certificates an IACA issues for other jobs and requires the mDL
+	// document signer's extended key usage. A policy that's set replaces
+	// either: one adding a requirement calls the default first, so as
+	// not to drop its refusals, and verifier.AnyIssuerLeaf opts out of
+	// both explicitly, for IssuerRoots that anchor only issuers'
+	// certificates.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// IssuerRevocation, if set, checks the credential's issuer
@@ -197,7 +207,11 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, p.IssuerLeafPolicy, p.IssuerRevocation, now)
+	policy := p.IssuerLeafPolicy
+	if policy == nil {
+		policy = certchain.SDJWTIssuerRole.Check
+	}
+	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}

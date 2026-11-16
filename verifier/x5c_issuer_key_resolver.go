@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"encoding/asn1"
 	"errors"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -103,15 +102,6 @@ func (r X5CIssuerKeyResolver) leafPolicy() func(*x509.Certificate, [][]*x509.Cer
 	return DefaultSDJWTIssuerLeafPolicy
 }
 
-// sdjwtIssuerRole is DefaultSDJWTIssuerLeafPolicy's role. The mDL
-// document signer's extended key usage (mdoc.MDLDocumentSignerEKU)
-// isn't among its other roles: an issuer may sign its SD-JWT VCs with
-// its document signer's certificate.
-var sdjwtIssuerRole = certchain.LeafRole{
-	Name:         "the issuer certificate",
-	OtherISOEKUs: []asn1.ObjectIdentifier{certchain.ReaderAuthenticationEKU},
-}
-
 // DefaultSDJWTIssuerLeafPolicy is the issuer certificate check
 // X5CIssuerKeyResolver makes where no LeafPolicy is set. Chain
 // validation alone accepts any certificate under Roots, so a TLS
@@ -130,15 +120,24 @@ var sdjwtIssuerRole = certchain.LeafRole{
 // lists any other purpose (anyExtendedKeyUsage, the mDL document
 // signer's, or a private one): SD-JWT VC defines no issuer purpose to
 // require. A deployment whose issuer certificates carry one sets
-// LeafPolicy to require it, after calling this.
+// LeafPolicy to require it, after calling this. The mDL document
+// signer's extended key usage (mdoc.MDLDocumentSignerEKU) isn't another
+// role's: an issuer may sign its SD-JWT VCs with its document signer's
+// certificate.
+//
+// A wallet receiving an SD-JWT VC makes the same check where no
+// IssuerLeafPolicy is set (wallet.VerifyIssuedCredentialParams,
+// walletflow.Config).
 func DefaultSDJWTIssuerLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-	return sdjwtIssuerRole.Check(leaf, chains)
+	return certchain.SDJWTIssuerRole.Check(leaf, chains)
 }
 
 // AnyIssuerLeaf is a LeafPolicy that accepts every chain-verified
 // leaf: the explicit opt-out of DefaultSDJWTIssuerLeafPolicy (or of
 // mdoc.DefaultDocumentSignerPolicy, for X5ChainIssuerKeyResolver), for
-// Roots that anchor only issuers' certificates.
+// Roots that anchor only issuers' certificates. A wallet opts out of
+// the same defaults by setting it as its IssuerLeafPolicy
+// (wallet.VerifyIssuedCredentialParams, walletflow.Config).
 func AnyIssuerLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
 
 // ResolveIssuerChains implements SDJWTVCIssuerChainResolver: the paths

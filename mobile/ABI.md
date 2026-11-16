@@ -516,7 +516,13 @@ and `issuer_metadata_roots` whose extended key usage extension lists
 that OID: the one an ecosystem marks its Verifiers', registrars',
 issuers' or issuer-metadata signers' certificates with (OpenID4VP and
 HAIP define none). `anyExtendedKeyUsage` (2.5.29.37.0) is refused as
-one. Outside `development`, two roles whose roots may vouch for the same
+one. Without `issuer_require_eku`, a received SD-JWT VC's issuer
+certificate is held to the check a Verifier makes by default: one whose
+key usage doesn't allow digital signatures, that is an OCSP signer, or
+whose extended key usage lists only other roles' purposes (TLS,
+code signing, email, time stamping, IPsec) or includes mdoc reader
+authentication, is refused; `issuer_require_eku` replaces that check.
+Outside `development`, two roles whose roots may vouch for the same
 certificates each need theirs (`mdoc_reader_require_eku` for
 `mdoc_reader_roots`, whose EKU is 1.0.18013.5.1.6), and the two must
 differ: otherwise an issuer's signing certificate would be taken for a

@@ -74,7 +74,16 @@ type Config struct {
 	// (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy): set it
 	// where IssuerRoots also anchor another role, such as Verifiers.
 	// It applies to an mdoc too unless MdocIssuerLeafPolicy is set or
-	// the mdoc's roots are mdoc-specific.
+	// the mdoc's roots are mdoc-specific. Unset, an SD-JWT VC's issuer
+	// certificate gets the verifier's default check
+	// (verifier.DefaultSDJWTIssuerLeafPolicy), refusing one whose key
+	// usage clearly denotes another role, a TLS server's say, and an
+	// mdoc's mdoc.DefaultDocumentSignerPolicy. A policy that's set
+	// replaces those; verifier.AnyIssuerLeaf opts out of them. Only a
+	// policy that's set tells IssuerRoots apart from another role's
+	// pool sharing an anchor with them (see New): the defaults can't
+	// tell an issuer's certificate from a Verifier's without an
+	// extended key usage.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// MdocIssuerRoots, if set, are the trust anchors for mdoc document
@@ -791,6 +800,16 @@ func (c Config) checkRevocationChosen() error {
 // pass for a trusted Verifier or mdoc reader, or a Verifier register
 // itself. mayShareAnchor says what it can see of a pool.
 //
+// Only a leaf policy that's set counts. Each role's default (the
+// issuer's verifier.DefaultSDJWTIssuerLeafPolicy, the registrar's
+// registration.DefaultRegistrarLeafPolicy, and so on) refuses only
+// certificates whose key usage clearly denotes another role, so it
+// can't tell two roles' certificates apart when neither carries an
+// extended key usage. The check can't tell a policy that narrows from
+// one that opts out of the default (verifier.AnyIssuerLeaf,
+// registration.AnyRegistrarLeaf): those are for pools that anchor only
+// their own role's certificates.
+//
 // The credential issuers' pools, IssuerRoots and the mdoc ones, are
 // one role: an ecosystem's CA may certify both its SD-JWT VC issuers
 // and its document signers, and what tells those apart is their leaf
@@ -988,7 +1007,8 @@ func (c Config) receivesCredentials() bool {
 // MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
 // IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
 // wallet.VerifyIssuedCredential, as a nil policy means
-// mdoc.DefaultDocumentSignerPolicy there.
+// mdoc.DefaultDocumentSignerPolicy there for an mdoc, and the
+// verifier's default issuer check for an SD-JWT VC.
 func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
 	if format != mdoc.CredentialFormat {
 		return c.IssuerRoots, c.IssuerLeafPolicy
