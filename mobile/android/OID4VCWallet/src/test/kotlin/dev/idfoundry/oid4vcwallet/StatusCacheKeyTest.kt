@@ -99,8 +99,8 @@ class StatusCacheKeyTest {
 
     @Test
     fun configurationsLeaveItUnset() {
-        val encoded = json.encodeToString(WalletConfiguration.serializer(), WalletConfiguration(clientID = "c", locales = listOf("en")))
+        val encoded = json.encodeToString(WalletConfiguration.serializer(), WalletConfiguration(clientID = "c", issuance = WalletConfiguration.IssuanceOptions(locales = listOf("en"))))
         assertFalse(json.parseToJsonElement(encoded).jsonObject.containsKey("status_cache_dir"))
-        assertEquals(null, ProximityReaderConfiguration(issuerRoots = "").statusCacheDir)
+        assertEquals(null, ProximityReaderConfiguration(ProximityReaderConfiguration.IssuerTrust("")).status.cacheDir)
     }
 }

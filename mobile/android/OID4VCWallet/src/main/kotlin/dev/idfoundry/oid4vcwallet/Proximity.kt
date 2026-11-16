@@ -21,11 +21,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonObject
 import java.io.ByteArrayInputStream
 import java.security.cert.CertificateFactory
@@ -155,7 +161,7 @@ public data class ProximityReaderIdentity(
     public val status: Status,
     /**
      * The reader's name, from a certificate that chains to
-     * [WalletConfiguration.mdocReaderRoots]: set only when [status] is
+     * [WalletConfiguration.VerifierTrust.mdocReaderRoots]: set only when [status] is
      * [Status.Trusted].
      */
     public val name: String,
@@ -178,7 +184,7 @@ public data class ProximityReaderIdentity(
 ) {
     /** How far a request's reader authentication goes. */
     public enum class Status {
-        /** Signed by a certificate that chains to [WalletConfiguration.mdocReaderRoots]. */
+        /** Signed by a certificate that chains to [WalletConfiguration.VerifierTrust.mdocReaderRoots]. */
         Trusted,
 
         /** Signed, by a certificate that doesn't chain to them: its name is unproven. */
@@ -703,88 +709,28 @@ internal data class EventJSON(
 @Serializable
 internal data class SendJSON(@Serializable(Base64Serializer::class) val send: ByteArray)
 
-/** A [ProximityReader]'s configuration. */
-@Serializable
+/**
+ * A [ProximityReader]'s configuration, its options grouped by what
+ * they're for. It serializes to the flat JSON object
+ * `NewProximityReader` reads (ABI.md), with the same keys as before the
+ * options were grouped.
+ */
+@Serializable(with = ProximityReaderConfigurationSerializer::class)
 public data class ProximityReaderConfiguration(
-    /** PEM certificates: the IACAs whose mdocs the reader accepts. */
-    @SerialName("issuer_roots") val issuerRoots: String,
+    /** Which issuers' documents the reader accepts. */
+    val issuers: IssuerTrust,
     /**
-     * The reader's key in the [KeyStore] and its PEM certificate chain,
-     * leaf first: with both, requests are signed (reader authentication),
-     * so holders see who is asking. The leaf should carry the mdoc reader
-     * authentication extended key usage (1.0.18013.5.1.6).
+     * The reader's key and certificate chain: with them, requests are
+     * signed (reader authentication), so holders see who is asking. Null,
+     * the default, sends unsigned requests.
      */
-    @SerialName("reader_key_id") val readerKeyID: String? = null,
-    /** The reader's PEM certificate chain, leaf first, for [readerKeyID]. */
-    @SerialName("reader_chain") val readerChain: String? = null,
+    val readerAuthentication: ReaderAuthentication? = null,
     /** Tolerates an issuer's clock this far off the reader's, at most an hour. */
-    @SerialName("max_clock_skew_seconds") val maxClockSkewSeconds: Long? = null,
-    /**
-     * Deprecated, and does nothing: the default check already requires
-     * the mDL document signer extended key usage, refusing a document
-     * signer certificate without it (or an OCSP signer's), so setting
-     * this changes nothing. It still can't be set with
-     * [acceptMDLSignerWithoutEKU]. Its `require_mdl_signer_eku` key is
-     * still accepted within ABI 15, and goes at the next ABI version,
-     * with this property.
-     */
-    @Deprecated("the default check already requires the mDL document signer extended key usage; setting it changes nothing")
-    @SerialName("require_mdl_signer_eku") val requireMDLSignerEKU: Boolean = false,
-    /**
-     * Each document type's own IACAs, as PEM certificates: a document of
-     * a type named here must chain to them, not to [issuerRoots], so an
-     * issuer trusted for one document type can't sign another. With it,
-     * [issuerRoots] may be empty, and then only the types named here are
-     * accepted.
-     */
-    @SerialName("issuer_roots_by_doctype") val issuerRootsByDocType: Map<String, String> = emptyMap(),
-    /**
-     * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
-     * [revocation] are checked against. Replace them at runtime with
-     * [ProximityReader.setCRLs] as they expire.
-     */
-    @SerialName("crls") val crls: String = "",
-    /**
-     * The roles whose certificate chains must pass a CRL check against
-     * [crls]. A role listed fails closed for any CA it has no current CRL
-     * from, until [ProximityReader.setCRLs] supplies one.
-     */
-    @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
-    /**
-     * PEM certificates of the CAs that issued certificates pinned in the
-     * roots, for a role in [revocation], as [WalletConfiguration.crlIssuers].
-     */
-    @SerialName("crl_issuers") val crlIssuers: String = "",
-    /** Where [ProximityReader.refreshCRLs] fetches the lists from, as [WalletConfiguration.crlDistributionPoints]. */
-    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
-    /**
-     * Also fetches the distribution point each self-signed IACA in
-     * [issuerRoots], [issuerRootsByDocType] (with [RevocationRole.ISSUER]
-     * or [RevocationRole.STATUS] in [revocation]) and [crlIssuers] names
-     * for its own list.
-     */
-    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
-    /** Refuses plain `http` distribution points. */
-    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
-    /**
-     * Also accepts a document signer certificate with no extended key
-     * usage, which is refused by default for lacking the mDL document
-     * signer's, for issuers whose document signers have none. It can't be
-     * set with [requireMDLSignerEKU].
-     */
-    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
-    /**
-     * The roles that decline checking revocation, for where something
-     * else stands in for it. Outside [development], each role must be in
-     * [revocation] or here; a role can't be in both.
-     */
-    @SerialName("no_revocation_check") val noRevocationCheck: List<RevocationRole> = emptyList(),
-    /**
-     * Declares that every IACA in [issuerRoots] may issue every document
-     * type the reader asks for. Outside [development], [issuerRoots] needs
-     * it; otherwise name each type's IACAs in [issuerRootsByDocType].
-     */
-    @SerialName("any_issuer_for_any_type") val anyIssuerForAnyType: Boolean = false,
+    val maxClockSkewSeconds: Long? = null,
+    /** Which roles' certificates are checked for revocation, and against which lists. */
+    val revocation: Revocation = Revocation(),
+    /** How a session's status check reads and keeps status and identifier lists. */
+    val status: StatusLists = StatusLists(),
     /**
      * Whether a session checks a verified document's revocation status
      * before reporting it. Outside [development], it's required: null
@@ -795,34 +741,103 @@ public data class ProximityReaderConfiguration(
      * nothing checks it, for a reader where something else stands in. In
      * development, null is [StatusCheck.DECLINE].
      */
-    @SerialName("status") val statusCheck: StatusCheck? = null,
+    val statusCheck: StatusCheck? = null,
     /**
      * Relaxes what production requires, for a reader trying out a
-     * development issuer's documents. Never ship an app with it set.
-     * Without it, [ProximityReader] requires a production reader's
-     * decisions, throwing `invalid_input` otherwise: each role in
-     * [revocation] or [noRevocationCheck], and [anyIssuerForAnyType] with
-     * [issuerRoots]. With it, a role in neither checks no revocation, and
-     * any IACA in [issuerRoots] may issue any document type. Refused
+     * development issuer's documents; null, the default, is production.
+     * Never ship an app with it set. Without it, [ProximityReader]
+     * requires a production reader's decisions, throwing `invalid_input`
+     * otherwise: each role in [Revocation.roles] or [Revocation.declined],
+     * and [IssuerTrust.anyIssuerForAnyType] with [IssuerTrust.roots]. With
+     * it, a role in neither checks no revocation, and any IACA in
+     * [IssuerTrust.roots] may issue any document type. [Development.roots]
+     * is only for it (`invalid_input` otherwise). Refused
      * (`invalid_input`) unless the app called [OID4VC.allowDevelopment].
      */
-    @SerialName("development") val development: Boolean = false,
-    /**
-     * PEM certificates [ProximityReader.refreshCRLs]'s `https` fetches trust besides the
-     * system's, as [WalletConfiguration.developmentRoots]: a development CA's distribution
-     * points served under its own TLS certificate, which Go on Android can't otherwise be
-     * given. Only with [development] (`invalid_input` otherwise). From OID4VCWallet 0.27.0.
-     */
-    @SerialName("development_roots") val developmentRoots: String = "",
-    /** The largest status list `checkStatus` reads, in bytes; 0 means 1 MiB. */
-    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
-    /** The largest identifier list `checkStatus` reads, in bytes; 0 means 4 MiB. */
-    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
-    /** How long `checkStatus` uses a list it fetched, in seconds, as [WalletConfiguration.statusCacheMaxAgeSeconds]. */
-    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
-    /** Where `checkStatus` keeps lists across launches, as [WalletConfiguration.statusCacheDir]. */
-    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    val development: Development? = null,
 ) {
+    /** Which issuers' documents the reader accepts. */
+    public data class IssuerTrust(
+        /** PEM certificates: the IACAs whose mdocs the reader accepts. */
+        val roots: String,
+        /**
+         * Each document type's own IACAs, as PEM certificates: a document of
+         * a type named here must chain to them, not to [roots], so an
+         * issuer trusted for one document type can't sign another. With it,
+         * [roots] may be empty, and then only the types named here are
+         * accepted.
+         */
+        val rootsByDocType: Map<String, String> = emptyMap(),
+        /**
+         * Declares that every IACA in [roots] may issue every document
+         * type the reader asks for. Outside
+         * [ProximityReaderConfiguration.development], [roots] needs it;
+         * otherwise name each type's IACAs in [rootsByDocType].
+         */
+        val anyIssuerForAnyType: Boolean = false,
+        /**
+         * Also accepts a document signer certificate with no extended key
+         * usage, which is refused by default for lacking the mDL document
+         * signer's, for issuers whose document signers have none.
+         */
+        val acceptMDLSignerWithoutEKU: Boolean = false,
+    )
+
+    /**
+     * The reader's key in the [KeyStore] and its PEM certificate chain,
+     * leaf first: with both, requests are signed (reader authentication),
+     * so holders see who is asking.
+     */
+    public data class ReaderAuthentication(
+        /** The reader's key in the [KeyStore]. */
+        val keyID: String,
+        /**
+         * The reader's PEM certificate chain, leaf first, for [keyID]. The
+         * leaf should carry the mdoc reader authentication extended key
+         * usage (1.0.18013.5.1.6).
+         */
+        val chain: String,
+    )
+
+    /** Which roles' certificates are checked for revocation, and against which lists. */
+    public data class Revocation(
+        /**
+         * The roles whose certificate chains must pass a CRL check against
+         * [crls]. A role listed fails closed for any CA it has no current CRL
+         * from, until [ProximityReader.setCRLs] supplies one.
+         */
+        val roles: List<RevocationRole> = emptyList(),
+        /**
+         * The roles that decline checking revocation, for where something
+         * else stands in for it. Outside
+         * [ProximityReaderConfiguration.development], each role must be in
+         * [roles] or here; a role can't be in both.
+         */
+        val declined: List<RevocationRole> = emptyList(),
+        /**
+         * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
+         * [roles] are checked against. Replace them at runtime with
+         * [ProximityReader.setCRLs] as they expire.
+         */
+        val crls: String = "",
+        /**
+         * PEM certificates of the CAs that issued certificates pinned in the
+         * roots, for a role in [roles], as [WalletConfiguration.Revocation.crlIssuers].
+         */
+        val crlIssuers: String = "",
+        /** Where [ProximityReader.refreshCRLs] fetches the lists from, as [WalletConfiguration.Revocation.distributionPoints]. */
+        val distributionPoints: List<CRLDistributionPoint> = emptyList(),
+        /**
+         * Also fetches the distribution point each self-signed IACA in
+         * [IssuerTrust.roots], [IssuerTrust.rootsByDocType] (with
+         * [RevocationRole.ISSUER] or [RevocationRole.STATUS] in [roles]) and
+         * [crlIssuers] names for its own list.
+         */
+        val distributionPointsFromRoots: Boolean = false,
+        /** Refuses plain `http` distribution points. */
+        val requireHTTPS: Boolean = false,
+    )
+
     /** A reader's trust role whose certificates can be checked for revocation. */
     @Serializable
     public enum class RevocationRole {
@@ -845,16 +860,120 @@ public data class ProximityReaderConfiguration(
 }
 
 /**
+ * [ProximityReaderConfiguration]'s wire form: the flat JSON object
+ * `NewProximityReader` reads (ABI.md), its keys and their order as they
+ * were before the options were grouped. `require_mdl_signer_eku`, which
+ * did nothing, is still read from old JSON and ignored, and never written;
+ * set with `accept_mdl_signer_without_eku`, it's refused, as Go refused it.
+ */
+@Serializable
+internal data class ProximityReaderConfigurationJSON(
+    @SerialName("issuer_roots") val issuerRoots: String,
+    @SerialName("reader_key_id") val readerKeyID: String? = null,
+    @SerialName("reader_chain") val readerChain: String? = null,
+    @SerialName("max_clock_skew_seconds") val maxClockSkewSeconds: Long? = null,
+    @SerialName("require_mdl_signer_eku") val requireMDLSignerEKU: Boolean = false,
+    @SerialName("issuer_roots_by_doctype") val issuerRootsByDocType: Map<String, String> = emptyMap(),
+    @SerialName("crls") val crls: String = "",
+    @SerialName("revocation") val revocation: List<ProximityReaderConfiguration.RevocationRole> = emptyList(),
+    @SerialName("crl_issuers") val crlIssuers: String = "",
+    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
+    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
+    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
+    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
+    @SerialName("no_revocation_check") val noRevocationCheck: List<ProximityReaderConfiguration.RevocationRole> = emptyList(),
+    @SerialName("any_issuer_for_any_type") val anyIssuerForAnyType: Boolean = false,
+    @SerialName("status") val statusCheck: ProximityReaderConfiguration.StatusCheck? = null,
+    @SerialName("development") val development: Boolean = false,
+    @SerialName("development_roots") val developmentRoots: String = "",
+    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
+    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
+    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
+    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+)
+
+/** Encodes a [ProximityReaderConfiguration] as its flat [ProximityReaderConfigurationJSON], and decodes one from it. */
+internal object ProximityReaderConfigurationSerializer : KSerializer<ProximityReaderConfiguration> {
+    @OptIn(ExperimentalSerializationApi::class)
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration", ProximityReaderConfigurationJSON.serializer().descriptor)
+
+    override fun serialize(encoder: Encoder, value: ProximityReaderConfiguration): Unit =
+        encoder.encodeSerializableValue(ProximityReaderConfigurationJSON.serializer(), flat(value))
+
+    override fun deserialize(decoder: Decoder): ProximityReaderConfiguration =
+        grouped(decoder.decodeSerializableValue(ProximityReaderConfigurationJSON.serializer()))
+
+    private fun flat(c: ProximityReaderConfiguration): ProximityReaderConfigurationJSON = ProximityReaderConfigurationJSON(
+        issuerRoots = c.issuers.roots,
+        readerKeyID = c.readerAuthentication?.keyID,
+        readerChain = c.readerAuthentication?.chain,
+        maxClockSkewSeconds = c.maxClockSkewSeconds,
+        issuerRootsByDocType = c.issuers.rootsByDocType,
+        crls = c.revocation.crls,
+        revocation = c.revocation.roles,
+        crlIssuers = c.revocation.crlIssuers,
+        crlDistributionPoints = c.revocation.distributionPoints,
+        crlDistributionPointsFromRoots = c.revocation.distributionPointsFromRoots,
+        crlRequireHTTPS = c.revocation.requireHTTPS,
+        acceptMDLSignerWithoutEKU = c.issuers.acceptMDLSignerWithoutEKU,
+        noRevocationCheck = c.revocation.declined,
+        anyIssuerForAnyType = c.issuers.anyIssuerForAnyType,
+        statusCheck = c.statusCheck,
+        development = c.development != null,
+        developmentRoots = c.development?.roots ?: "",
+        statusMaxBytes = c.status.maxBytes,
+        identifierListMaxBytes = c.status.identifierListMaxBytes,
+        statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
+        statusCacheDir = c.status.cacheDir,
+    )
+
+    // One of reader_key_id and reader_chain without the other is kept,
+    // the missing one empty, for Go to refuse as it did.
+    private fun grouped(j: ProximityReaderConfigurationJSON): ProximityReaderConfiguration {
+        // Ignored alone, but refused with its opposite, as Go refused it.
+        if (j.requireMDLSignerEKU && j.acceptMDLSignerWithoutEKU) {
+            throw SerializationException("require_mdl_signer_eku and accept_mdl_signer_without_eku can't both be set")
+        }
+        return groupedChecked(j)
+    }
+
+    private fun groupedChecked(j: ProximityReaderConfigurationJSON): ProximityReaderConfiguration = ProximityReaderConfiguration(
+        issuers = ProximityReaderConfiguration.IssuerTrust(
+            roots = j.issuerRoots,
+            rootsByDocType = j.issuerRootsByDocType,
+            anyIssuerForAnyType = j.anyIssuerForAnyType,
+            acceptMDLSignerWithoutEKU = j.acceptMDLSignerWithoutEKU,
+        ),
+        readerAuthentication = if (j.readerKeyID == null && j.readerChain == null) null
+        else ProximityReaderConfiguration.ReaderAuthentication(j.readerKeyID ?: "", j.readerChain ?: ""),
+        maxClockSkewSeconds = j.maxClockSkewSeconds,
+        revocation = ProximityReaderConfiguration.Revocation(
+            roles = j.revocation,
+            declined = j.noRevocationCheck,
+            crls = j.crls,
+            crlIssuers = j.crlIssuers,
+            distributionPoints = j.crlDistributionPoints,
+            distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
+            requireHTTPS = j.crlRequireHTTPS,
+        ),
+        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        statusCheck = j.statusCheck,
+        development = Development.decoded(j.development, j.developmentRoots),
+    )
+}
+
+/**
  * An ISO/IEC 18013-5 mdoc reader: a verifier asking for an mdoc in
  * person over BLE. It needs no [Wallet]. [keyStore] holds the reader's
- * key, [ProximityReaderConfiguration.readerKeyID]; null for a reader
+ * key, [ProximityReaderConfiguration.ReaderAuthentication.keyID]; null for a reader
  * that doesn't sign.
  */
 public class ProximityReader(configuration: ProximityReaderConfiguration, keyStore: KeyStore? = null) {
     private val adapter = keyStore?.let(::KeyStoreAdapter)
     private val handle: MobileProximityReader = OID4VC.wrap {
-        OID4VC.checkDevelopment(configuration.development)
-        Mobile.newProximityReader(StatusCacheKey.configuration(json.encodeToString(ProximityReaderConfiguration.serializer(), configuration), configuration.statusCacheDir), adapter)
+        OID4VC.checkDevelopment(configuration.development != null)
+        Mobile.newProximityReader(StatusCacheKey.configuration(json.encodeToString(ProximityReaderConfiguration.serializer(), configuration), configuration.status.cacheDir), adapter)
     }
 
     /**
@@ -906,7 +1025,7 @@ public class ProximityReader(configuration: ProximityReaderConfiguration, keySto
 
     /**
      * Replaces the Certificate Revocation Lists the configuration's
-     * [ProximityReaderConfiguration.revocation] roles are checked against
+     * [ProximityReaderConfiguration.Revocation.roles] are checked against
      * with [pem]'s `X509 CRL` blocks, for sessions already started too.
      * CRLs expire at their nextUpdate: fetch fresh ones and call this
      * before then. Text holding anything else, or a CA's list older than
@@ -1247,7 +1366,7 @@ public data class VerifiedMdoc(
     val statusList: StatusListReference?,
     /**
      * The document signer's verified certificate path, leaf first, ending at the IACA in
-     * [ProximityReaderConfiguration.issuerRoots] it chains to: decide which issuers to accept on
+     * [ProximityReaderConfiguration.IssuerTrust.roots] it chains to: decide which issuers to accept on
      * it.
      */
     val issuerChain: List<X509Certificate> = emptyList(),

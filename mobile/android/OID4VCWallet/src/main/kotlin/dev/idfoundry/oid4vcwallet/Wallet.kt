@@ -3,12 +3,16 @@ package dev.idfoundry.oid4vcwallet
 import android.content.Context
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -22,16 +26,19 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.Wallet as MobileWallet
 
 private const val NO_BLE_MODE = "no BLE mode"
 
-/** NewWallet's configuration. */
-@OptIn(ExperimentalSerializationApi::class)
-@Serializable
+/**
+ * NewWallet's configuration, its options grouped by what they're for.
+ * It serializes to the flat JSON object `NewWallet` reads (ABI.md), with
+ * the same keys as before the options were grouped.
+ */
+@Serializable(with = WalletConfigurationSerializer::class)
 public data class WalletConfiguration(
     /**
      * The wallet's registration with Authorization Servers: empty for a
      * wallet with no [WalletProvider], receiving credentials only from
      * pre-authorized codes redeemed with no client authentication.
      */
-    @SerialName("client_id") val clientID: String = "",
+    val clientID: String = "",
     /**
      * Where the issuer's pages send the holder back to: a private-use URI
      * the app receives, in `reverse.domain:/path` form
@@ -39,332 +46,345 @@ public data class WalletConfiguration(
      * (`com.example.wallet://callback`). Empty for a wallet that receives
      * only pre-authorized codes.
      */
-    @SerialName("redirect_uri") val redirectURI: String = "",
-    /** PEM certificates: the trust anchors for issuers' credentials. A credential signed by a certificate that doesn't chain to them is refused. */
-    @SerialName("issuer_roots") val issuerRoots: String = "",
-    /** PEM certificates: the trust anchors for Verifiers' requests. */
-    @SerialName("verifier_roots") val verifierRoots: String = "",
-    /**
-     * PEM certificates: the registrars whose registrations of Verifiers
-     * the wallet checks ([Presentation.Verifier.registration]). Empty:
-     * registrations are ignored.
-     */
-    @SerialName("registrar_roots") val registrarRoots: String = "",
-    /**
-     * PEM certificates: the mdoc readers recognized when one signs an
-     * `org-iso-mdoc` request ([MdocPresentation.Request.reader]). Empty:
-     * every such request is shown by its origin.
-     */
-    @SerialName("mdoc_reader_roots") val mdocReaderRoots: String = "",
-    /**
-     * Recognizes only reader certificates with the ISO/IEC 18013-5
-     * reader authentication extended key usage (1.0.18013.5.1.6), so a
-     * certificate issued for another role under [mdocReaderRoots] isn't
-     * taken for a reader's.
-     */
-    @SerialName("mdoc_reader_require_eku") val mdocReaderRequireEKU: Boolean = false,
-    /**
-     * Refuses an `org-iso-mdoc` request no recognized reader signed:
-     * [Wallet.startMdocPresentation] throws `untrustedVerifier`, and
-     * nothing is shown to the holder. Needs [mdocReaderRoots].
-     */
-    @SerialName("require_trusted_mdoc_reader") val requireTrustedMdocReader: Boolean = false,
-    /**
-     * Refuses an unsigned OpenID4VP request over the Digital Credentials
-     * API: [Wallet.startDCAPIPresentation] throws `untrustedVerifier`,
-     * before the holder sees it. Its only identity is the origin the
-     * platform reports; HAIP requires a wallet to support unsigned
-     * requests, so set it only where every Verifier must be one
-     * [verifierRoots] accepts.
-     */
-    @SerialName("require_signed_dcapi_requests") val requireSignedDCAPIRequests: Boolean = false,
-    /**
-     * Also answers Verifiers whose client ID has the `x509_san_dns`
-     * prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
-     * 1.0 has Verifiers use: the DNS name must be one of the request's
-     * signing certificate, which must chain to [verifierRoots], and, for
-     * a request from a link, the host of its response URI; a Digital
-     * Credentials API request is bound to the calling origin by its
-     * `expected_origins` instead. Needs [verifierRoots]. Every name in a
-     * certificate under [verifierRoots] is then a Verifier the wallet
-     * answers, so set it only where those roots certify Verifiers alone,
-     * or with [verifierRequireEKU].
-     */
-    @SerialName("accept_x509_san_dns") val acceptX509SANDNS: Boolean = false,
+    val redirectURI: String = "",
+    /** Which issuers' credentials the wallet accepts. */
+    val issuers: IssuerTrust = IssuerTrust(),
+    /** Which signed Credential Issuer Metadata the wallet trusts. */
+    val issuerMetadata: IssuerMetadataTrust = IssuerMetadataTrust(),
+    /** Which Verifiers, registrars and mdoc readers the wallet recognizes. */
+    val verifiers: VerifierTrust = VerifierTrust(),
+    /** Which trust roles' certificates are checked for revocation, and against which lists. */
+    val revocation: Revocation = Revocation(),
+    /** How [Wallet.checkStatus] reads and keeps status and identifier lists. */
+    val status: StatusLists = StatusLists(),
+    /** The wallet's own HTTPS requests. */
+    val network: Network = Network(),
+    /** How the wallet receives credentials. */
+    val issuance: IssuanceOptions = IssuanceOptions(),
+    /** How the wallet presents credentials. */
+    val presentation: PresentationOptions = PresentationOptions(),
     /**
      * Relaxes what production requires, for a wallet talking to services
-     * on a development machine. Never ship an app with it set. It lets
-     * issuers, Authorization Servers, Verifiers and status lists be on
-     * loopback addresses, over http there too; makes requests through an
-     * ordinary HTTPS client, which reaches private network addresses,
-     * instead of the hardened one (trusting [developmentRoots] too, when
-     * set); requires no revocation choice for a trust role, so a role in
-     * neither [revocation] nor [noRevocationCheck] is checked for nothing;
-     * skips the check that different roles' roots share no anchor; and
-     * skips the production checks on receiving credentials: durable
-     * stores and keys, and the random source. Refused (`invalid_input`)
-     * unless the app called [OID4VC.allowDevelopment], from a debuggable
-     * build only.
+     * on a development machine; null, the default, is production. Never
+     * ship an app with it set. It lets issuers, Authorization Servers,
+     * Verifiers and status lists be on loopback addresses, over http there
+     * too; makes requests through an ordinary HTTPS client, which reaches
+     * private network addresses, instead of the hardened one (trusting
+     * [Development.roots] too, when set); requires no revocation choice
+     * for a trust role, so a role in neither [Revocation.roles] nor
+     * [Revocation.declined] is checked for nothing; skips the check that
+     * different roles' roots share no anchor; and skips the production
+     * checks on receiving credentials: durable stores and keys, and the
+     * random source. Refused (`invalid_input`) unless the app called
+     * [OID4VC.allowDevelopment], from a debuggable build only.
      */
-    val development: Boolean = false,
-    /**
-     * PEM certificates the wallet's HTTPS requests trust besides the
-     * system's: a development service's own CA (Go reads only Android's
-     * system CA files, so a CA installed on the device doesn't reach it).
-     * [Wallet.refreshCRLs]'s fetches trust them too, from OID4VCWallet
-     * 0.27.0. Only with [development].
-     */
-    @SerialName("development_roots") val developmentRoots: String = "",
-    /**
-     * The holder's preferred languages (BCP 47, most preferred first),
-     * for issuers' display metadata. The device's languages are the
-     * usual choice, and the default.
-     */
-    @EncodeDefault val locales: List<String> = defaultLocales(),
-    /**
-     * How many copies of each credential to request when an issuer
-     * offers batches, each bound to its own key, so each presentation
-     * can use one no Verifier has seen. 0 means the SDK's default (5);
-     * it's capped at the issuer's batch size.
-     */
-    @SerialName("batch_size") val batchSize: Int = 0,
-    /**
-     * Asks Authorization Servers for a refresh token, so
-     * [Wallet.refreshCredential] can later replace a credential's copies
-     * without the holder signing in. The server must allow the wallet the
-     * `offline_access` scope, or the authorization fails.
-     */
-    @SerialName("request_refresh") val requestRefresh: Boolean = false,
-    /** Which copy of a credential a presentation uses. */
-    @SerialName("copy_policy") val copyPolicy: CopyPolicy = CopyPolicy.PER_PRESENTATION,
-    /**
-     * Pins hosts' certificates for the wallet's own HTTPS requests:
-     * host → base64 SHA-256 digests of a certificate's
-     * SubjectPublicKeyInfo, one of which a certificate in the verified
-     * chain must have, or the request fails as `tlsPin` before anything
-     * is sent. A host is a name, or `*.` and one, matching any name a
-     * label below it; not an IP address. Pins add to certificate
-     * verification, never replace it: pin a CA's key, so a leaf renewal
-     * doesn't break the app, and keep a backup pin. They cover the
-     * requests the SDK makes (issuers, Authorization Servers, Verifiers,
-     * status lists), not the app's own, such as to its Wallet Provider:
-     * pin that client yourself (OkHttp's CertificatePinner, or a network
-     * security configuration).
-     */
-    @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
-    /**
-     * Hosts the wallet may reach at a private address (10/8, 172.16/12,
-     * 192.168/16, fc00::/7) outside [development]: issuers, Verifiers,
-     * status lists and CRL distribution points inside the deployment's
-     * own network, an enterprise's or a test environment's. Each is a
-     * host name, matched exactly and without case: no wildcard, IP
-     * address, port or loopback name. Nothing else is lifted: a listed
-     * host is still refused at a loopback or link-local address, and
-     * every request is still HTTPS with its certificate verified. List
-     * only hosts the deployment runs: anyone who can hand the wallet an
-     * offer or a request can have it send a request to them.
-     */
-    @SerialName("allowed_private_hosts") val allowedPrivateHosts: List<String> = emptyList(),
-    /** The profile issuance follows. */
-    @SerialName("issuance_profile") val issuanceProfile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
-    /**
-     * Names the key of a jwt proof carrying a key attestation in `jwk`
-     * rather than by its index in the attestation (`kid` `"0"`), the
-     * default, which issuers following ETSI TS 119 472-3, such as the
-     * EUDI reference PID issuer, require. Set it only for an issuer that
-     * takes no index.
-     */
-    @SerialName("proof_key_by_jwk") val proofKeyByJWK: Boolean = false,
-    /**
-     * Names the key of a jwt proof carrying a key attestation by its
-     * index in the attestation, which is now the default: it has no
-     * effect, and can't be set with [proofKeyByJWK].
-     */
-    @SerialName("proof_key_by_index") val proofKeyByIndex: Boolean = false,
-    /**
-     * How an in-person response authenticates the mdoc. [ProximityDeviceAuth.MAC_PREFERRED]
-     * needs a key store that is also a [KeyAgreement].
-     */
-    @SerialName("proximity_device_auth") val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
-    /**
-     * A dotted object identifier: recognizes only Verifier certificates
-     * under [verifierRoots] with that extended key usage, the one your
-     * ecosystem marks its Verifiers' certificates with. Outside
-     * [development], required when [verifierRoots] shares a trust anchor
-     * with another role's roots.
-     */
-    @SerialName("verifier_require_eku") val verifierRequireEKU: String = "",
-    /**
-     * A dotted object identifier: recognizes only registrar certificates
-     * under [registrarRoots] with that extended key usage. Outside
-     * [development], required when [registrarRoots] shares a trust
-     * anchor with another role's roots.
-     */
-    @SerialName("registrar_require_eku") val registrarRequireEKU: String = "",
-    /**
-     * The Status Issuers that may sign a credential issuer's status lists
-     * on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
-     * Issuer identifiers, each recognized by a certificate under
-     * [issuerRoots] naming it. Without it, [Wallet.checkStatus] accepts
-     * only a status list the issuer signed itself.
-     */
-    @SerialName("status_issuers") val statusIssuers: Map<String, List<String>> = emptyMap(),
-    /**
-     * Refuses a received SD-JWT VC whose `iss` its signing certificate
-     * doesn't name. SD-JWT VC doesn't require them to correspond: set it
-     * where [issuerRoots] certify several issuers.
-     */
-    @SerialName("require_issuer_name") val requireIssuerName: Boolean = false,
-    /**
-     * PEM certificates: the trust anchors for signed Credential Issuer
-     * Metadata. With them, signed metadata is asked for and verified.
-     */
-    @SerialName("issuer_metadata_roots") val issuerMetadataRoots: String = "",
-    /**
-     * Refuses an issuer whose metadata isn't signed under
-     * [issuerMetadataRoots], before the holder signs in or enters a code.
-     */
-    @SerialName("require_signed_issuer_metadata") val requireSignedIssuerMetadata: Boolean = false,
-    /** Refuses signed metadata whose certificate doesn't name the issuer. */
-    @SerialName("require_issuer_metadata_name") val requireIssuerMetadataName: Boolean = false,
-    /** Refuses signed metadata signed longer ago than this many seconds; 0 doesn't limit it. */
-    @SerialName("max_issuer_metadata_age_seconds") val maxIssuerMetadataAgeSeconds: Long = 0,
-    /**
-     * A dotted object identifier: recognizes only issuer certificates
-     * under [issuerRoots] with that extended key usage. Outside
-     * [development], required when [issuerRoots] may share a trust
-     * anchor with another role's roots.
-     */
-    @SerialName("issuer_require_eku") val issuerRequireEKU: String = "",
-    /**
-     * A dotted object identifier: recognizes only issuer metadata signed
-     * by a certificate under [issuerMetadataRoots] with that extended key
-     * usage. Outside [development], required when [issuerMetadataRoots]
-     * may share a trust anchor with another role's roots.
-     */
-    @SerialName("issuer_metadata_require_eku") val issuerMetadataRequireEKU: String = "",
-    /**
-     * Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
-     * was requested from, which is otherwise refused so an issuer can't
-     * hand over another's credential as its own. Set it only for issuers
-     * that name themselves differently, where [issuerRoots] certify them
-     * alone.
-     */
-    @SerialName("allow_foreign_iss") val allowForeignIss: Boolean = false,
-    /**
-     * PEM certificates: the IACAs a received mdoc must chain to, in place
-     * of [issuerRoots], so an [issuerRoots] anchor alone, an SD-JWT VC
-     * issuer's CA say, can't sign an mDL. Empty: mdocs chain to
-     * [issuerRoots].
-     */
-    @SerialName("mdoc_issuer_roots") val mdocIssuerRoots: String = "",
-    /**
-     * Each document type's own IACAs, as PEM certificates: an mdoc of a
-     * type named here must chain to them, not to [mdocIssuerRoots] or
-     * [issuerRoots]. A type named with an empty string is refused.
-     */
-    @SerialName("mdoc_issuer_roots_by_doctype") val mdocIssuerRootsByDocType: Map<String, String> = emptyMap(),
-    /**
-     * A dotted object identifier: recognizes only document signer
-     * certificates with that extended key usage (the mDL's is
-     * 1.0.18013.5.1.2), in place of [issuerRequireEKU], so a wallet
-     * receiving both formats can require each its own.
-     */
-    @SerialName("mdoc_issuer_require_eku") val mdocIssuerRequireEKU: String = "",
-    /**
-     * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
-     * in [revocation] are checked against. Replace them at runtime with
-     * [Wallet.setCRLs] as they expire.
-     */
-    @SerialName("crls") val crls: String = "",
-    /**
-     * The trust roles whose certificate chains must pass a CRL check
-     * against [crls]. A role listed fails closed for any CA it has no
-     * current CRL from, until [Wallet.setCRLs] supplies one. Outside
-     * [development], each role whose roots are set must be listed here or
-     * in [noRevocationCheck], or the wallet isn't made (`invalid_input`).
-     */
-    @SerialName("revocation") val revocation: List<RevocationRole> = emptyList(),
-    /**
-     * PEM certificates of the CAs that issued certificates pinned in the
-     * roots (a leaf in [verifierRoots], say), for a role in [revocation]:
-     * a pinned certificate is checked against its CA's CRL, verified with
-     * the CA's certificate from here. They aren't trust anchors. Without
-     * its CA here, a pinned certificate that isn't self-signed is refused.
-     */
-    @SerialName("crl_issuers") val crlIssuers: String = "",
-    /**
-     * The trust roles that decline checking revocation, as an explicit
-     * choice: only where something else stands in for it, such as
-     * certificates too short-lived to be worth revoking. A role can't be
-     * in both this and [revocation].
-     */
-    @SerialName("no_revocation_check") val noRevocationCheck: List<RevocationRole> = emptyList(),
-    /**
-     * Also accepts a document signer certificate with no extended key
-     * usage, which is refused by default for lacking the mDL document
-     * signer's (1.0.18013.5.1.2), for issuers whose document signers have
-     * none. Any certificate without one under the same IACAs, such as a
-     * revocation list signer's, can then sign mdocs the wallet accepts.
-     * It can't be set with [mdocIssuerRequireEKU], or with
-     * [issuerRequireEKU] unless [mdocIssuerRoots] is set.
-     */
-    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
-    /**
-     * Where [Wallet.refreshCRLs] fetches the lists from, each bound to the
-     * CA whose list it serves.
-     */
-    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
-    /**
-     * Also fetches, in [Wallet.refreshCRLs], the distribution point each
-     * self-signed CA certificate names for its own list (as an IACA does),
-     * among [crlIssuers] and the roots of the roles in [revocation].
-     */
-    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
-    /** Refuses plain `http` distribution points, and leaves them out of [crlDistributionPointsFromRoots]. */
-    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
-    /** The largest status list [Wallet.checkStatus] reads, in bytes; 0 means 1 MiB. Raise it for issuers whose lists are larger. */
-    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
-    /** The largest mdoc identifier list [Wallet.checkStatus] reads, in bytes; 0 means 4 MiB. */
-    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
-    /**
-     * How long [Wallet.checkStatus] uses a status or identifier list it fetched before
-     * revalidating it, in seconds: 0 means 5 minutes, at most a day, and never past the
-     * list's own `ttl` or `exp`. Longer means fewer requests, and a revocation seen that much later.
-     */
-    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
-    /**
-     * Where [Wallet.checkStatus] keeps the lists it verified across launches: a launch then
-     * asks each list's server whether the list it kept is current, a `304 Not Modified`
-     * rather than the list, and never uses one the server hasn't confirmed. The lists are
-     * authenticated with a key the library makes, wrapped by an Android Keystore key, so
-     * one anyone else wrote to the directory is dropped. Null, the default, keeps them in
-     * `oid4vcwallet-status-lists` in the app's `context.cacheDir` (found from `java.io.tmpdir`,
-     * and used only when that is the app's own cache directory), or in memory only when it
-     * isn't, or that key can't be had; an absolute path, the app's own, keeps them there;
-     * empty keeps them in memory only. The directory isn't encrypted beyond the app's
-     * storage: it shows whoever can read it which status lists the wallet checks (their
-     * URIs, so the issuers of its credentials, not which entries), the lists themselves, and
-     * when each was last checked.
-     */
-    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    val development: Development? = null,
 ) {
+    /** Which issuers' credentials the wallet accepts. */
+    public data class IssuerTrust(
+        /** PEM certificates: the trust anchors for issuers' credentials. A credential signed by a certificate that doesn't chain to them is refused. */
+        val roots: String = "",
+        /**
+         * A dotted object identifier: recognizes only issuer certificates
+         * under [roots] with that extended key usage. Outside
+         * [WalletConfiguration.development], required when [roots] may
+         * share a trust anchor with another role's roots.
+         */
+        val requireEKU: String = "",
+        /**
+         * PEM certificates: the IACAs a received mdoc must chain to, in place
+         * of [roots], so a [roots] anchor alone, an SD-JWT VC issuer's CA
+         * say, can't sign an mDL. Empty: mdocs chain to [roots].
+         */
+        val mdocRoots: String = "",
+        /**
+         * Each document type's own IACAs, as PEM certificates: an mdoc of a
+         * type named here must chain to them, not to [mdocRoots] or
+         * [roots]. A type named with an empty string is refused.
+         */
+        val mdocRootsByDocType: Map<String, String> = emptyMap(),
+        /**
+         * A dotted object identifier: recognizes only document signer
+         * certificates with that extended key usage (the mDL's is
+         * 1.0.18013.5.1.2), in place of [requireEKU], so a wallet
+         * receiving both formats can require each its own.
+         */
+        val mdocRequireEKU: String = "",
+        /**
+         * Also accepts a document signer certificate with no extended key
+         * usage, which is refused by default for lacking the mDL document
+         * signer's (1.0.18013.5.1.2), for issuers whose document signers have
+         * none. Any certificate without one under the same IACAs, such as a
+         * revocation list signer's, can then sign mdocs the wallet accepts.
+         * It can't be set with [mdocRequireEKU], or with [requireEKU] unless
+         * [mdocRoots] is set.
+         */
+        val acceptMDLSignerWithoutEKU: Boolean = false,
+        /**
+         * Refuses a received SD-JWT VC whose `iss` its signing certificate
+         * doesn't name. SD-JWT VC doesn't require them to correspond: set it
+         * where [roots] certify several issuers.
+         */
+        val requireIssuerName: Boolean = false,
+        /**
+         * Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
+         * was requested from, which is otherwise refused so an issuer can't
+         * hand over another's credential as its own. Set it only for issuers
+         * that name themselves differently, where [roots] certify them
+         * alone.
+         */
+        val allowForeignIss: Boolean = false,
+        /**
+         * The Status Issuers that may sign a credential issuer's status lists
+         * on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
+         * Issuer identifiers, each recognized by a certificate under
+         * [roots] naming it. Without it, [Wallet.checkStatus] accepts
+         * only a status list the issuer signed itself.
+         */
+        val statusIssuers: Map<String, List<String>> = emptyMap(),
+    )
+
+    /** Which signed Credential Issuer Metadata the wallet trusts. */
+    public data class IssuerMetadataTrust(
+        /**
+         * PEM certificates: the trust anchors for signed Credential Issuer
+         * Metadata. With them, signed metadata is asked for and verified.
+         */
+        val roots: String = "",
+        /**
+         * A dotted object identifier: recognizes only issuer metadata signed
+         * by a certificate under [roots] with that extended key usage.
+         * Outside [WalletConfiguration.development], required when [roots]
+         * may share a trust anchor with another role's roots.
+         */
+        val requireEKU: String = "",
+        /**
+         * Refuses an issuer whose metadata isn't signed under [roots],
+         * before the holder signs in or enters a code.
+         */
+        val requireSigned: Boolean = false,
+        /** Refuses signed metadata whose certificate doesn't name the issuer. */
+        val requireName: Boolean = false,
+        /** Refuses signed metadata signed longer ago than this many seconds; 0 doesn't limit it. */
+        val maxAgeSeconds: Long = 0,
+    )
+
+    /** Which Verifiers, registrars and mdoc readers the wallet recognizes. */
+    public data class VerifierTrust(
+        /** PEM certificates: the trust anchors for Verifiers' requests. */
+        val roots: String = "",
+        /**
+         * A dotted object identifier: recognizes only Verifier certificates
+         * under [roots] with that extended key usage, the one your
+         * ecosystem marks its Verifiers' certificates with. Outside
+         * [WalletConfiguration.development], required when [roots] shares
+         * a trust anchor with another role's roots.
+         */
+        val requireEKU: String = "",
+        /**
+         * Also answers Verifiers whose client ID has the `x509_san_dns`
+         * prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
+         * 1.0 has Verifiers use: the DNS name must be one of the request's
+         * signing certificate, which must chain to [roots], and, for
+         * a request from a link, the host of its response URI; a Digital
+         * Credentials API request is bound to the calling origin by its
+         * `expected_origins` instead. Needs [roots]. Every name in a
+         * certificate under [roots] is then a Verifier the wallet
+         * answers, so set it only where those roots certify Verifiers alone,
+         * or with [requireEKU].
+         */
+        val acceptX509SANDNS: Boolean = false,
+        /**
+         * PEM certificates: the registrars whose registrations of Verifiers
+         * the wallet checks ([Presentation.Verifier.registration]). Empty:
+         * registrations are ignored.
+         */
+        val registrarRoots: String = "",
+        /**
+         * A dotted object identifier: recognizes only registrar certificates
+         * under [registrarRoots] with that extended key usage. Outside
+         * [WalletConfiguration.development], required when [registrarRoots]
+         * shares a trust anchor with another role's roots.
+         */
+        val registrarRequireEKU: String = "",
+        /**
+         * PEM certificates: the mdoc readers recognized when one signs an
+         * `org-iso-mdoc` request ([MdocPresentation.Request.reader]). Empty:
+         * every such request is shown by its origin.
+         */
+        val mdocReaderRoots: String = "",
+        /**
+         * Recognizes only reader certificates with the ISO/IEC 18013-5
+         * reader authentication extended key usage (1.0.18013.5.1.6), so a
+         * certificate issued for another role under [mdocReaderRoots] isn't
+         * taken for a reader's.
+         */
+        val mdocReaderRequireEKU: Boolean = false,
+        /**
+         * Refuses an `org-iso-mdoc` request no recognized reader signed:
+         * [Wallet.startMdocPresentation] throws `untrustedVerifier`, and
+         * nothing is shown to the holder. Needs [mdocReaderRoots].
+         */
+        val requireTrustedMdocReader: Boolean = false,
+        /**
+         * Refuses an unsigned OpenID4VP request over the Digital Credentials
+         * API: [Wallet.startDCAPIPresentation] throws `untrustedVerifier`,
+         * before the holder sees it. Its only identity is the origin the
+         * platform reports; HAIP requires a wallet to support unsigned
+         * requests, so set it only where every Verifier must be one
+         * [roots] accepts.
+         */
+        val requireSignedDCAPIRequests: Boolean = false,
+    )
+
+    /** Which trust roles' certificates are checked for revocation, and against which lists. */
+    public data class Revocation(
+        /**
+         * The trust roles whose certificate chains must pass a CRL check
+         * against [crls]. A role listed fails closed for any CA it has no
+         * current CRL from, until [Wallet.setCRLs] supplies one. Outside
+         * [WalletConfiguration.development], each role whose roots are set
+         * must be listed here or in [declined], or the wallet isn't made
+         * (`invalid_input`).
+         */
+        val roles: List<RevocationRole> = emptyList(),
+        /**
+         * The trust roles that decline checking revocation, as an explicit
+         * choice: only where something else stands in for it, such as
+         * certificates too short-lived to be worth revoking. A role can't be
+         * in both this and [roles].
+         */
+        val declined: List<RevocationRole> = emptyList(),
+        /**
+         * PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
+         * in [roles] are checked against. Replace them at runtime with
+         * [Wallet.setCRLs] as they expire.
+         */
+        val crls: String = "",
+        /**
+         * PEM certificates of the CAs that issued certificates pinned in the
+         * roots (a leaf in [VerifierTrust.roots], say), for a role in
+         * [roles]: a pinned certificate is checked against its CA's CRL,
+         * verified with the CA's certificate from here. They aren't trust
+         * anchors. Without its CA here, a pinned certificate that isn't
+         * self-signed is refused.
+         */
+        val crlIssuers: String = "",
+        /**
+         * Where [Wallet.refreshCRLs] fetches the lists from, each bound to the
+         * CA whose list it serves.
+         */
+        val distributionPoints: List<CRLDistributionPoint> = emptyList(),
+        /**
+         * Also fetches, in [Wallet.refreshCRLs], the distribution point each
+         * self-signed CA certificate names for its own list (as an IACA does),
+         * among [crlIssuers] and the roots of the roles in [roles].
+         */
+        val distributionPointsFromRoots: Boolean = false,
+        /** Refuses plain `http` distribution points, and leaves them out of [distributionPointsFromRoots]. */
+        val requireHTTPS: Boolean = false,
+    )
+
+    /** The wallet's own HTTPS requests. */
+    public data class Network(
+        /**
+         * Pins hosts' certificates for the wallet's own HTTPS requests:
+         * host → base64 SHA-256 digests of a certificate's
+         * SubjectPublicKeyInfo, one of which a certificate in the verified
+         * chain must have, or the request fails as `tlsPin` before anything
+         * is sent. A host is a name, or `*.` and one, matching any name a
+         * label below it; not an IP address. Pins add to certificate
+         * verification, never replace it: pin a CA's key, so a leaf renewal
+         * doesn't break the app, and keep a backup pin. They cover the
+         * requests the SDK makes (issuers, Authorization Servers, Verifiers,
+         * status lists), not the app's own, such as to its Wallet Provider:
+         * pin that client yourself (OkHttp's CertificatePinner, or a network
+         * security configuration).
+         */
+        val tlsPins: Map<String, List<String>> = emptyMap(),
+        /**
+         * Hosts the wallet may reach at a private address (10/8, 172.16/12,
+         * 192.168/16, fc00::/7) outside [WalletConfiguration.development]:
+         * issuers, Verifiers, status lists and CRL distribution points inside
+         * the deployment's own network, an enterprise's or a test
+         * environment's. Each is a host name, matched exactly and without
+         * case: no wildcard, IP address, port or loopback name. Nothing else
+         * is lifted: a listed host is still refused at a loopback or
+         * link-local address, and every request is still HTTPS with its
+         * certificate verified. List only hosts the deployment runs: anyone
+         * who can hand the wallet an offer or a request can have it send a
+         * request to them.
+         */
+        val allowedPrivateHosts: List<String> = emptyList(),
+    )
+
+    /** How the wallet receives credentials. */
+    public data class IssuanceOptions(
+        /**
+         * The holder's preferred languages (BCP 47, most preferred first),
+         * for issuers' display metadata. The device's languages are the
+         * usual choice, and the default.
+         */
+        val locales: List<String> = defaultLocales(),
+        /**
+         * How many copies of each credential to request when an issuer
+         * offers batches, each bound to its own key, so each presentation
+         * can use one no Verifier has seen. 0 means the SDK's default (5);
+         * it's capped at the issuer's batch size.
+         */
+        val batchSize: Int = 0,
+        /**
+         * Asks Authorization Servers for a refresh token, so
+         * [Wallet.refreshCredential] can later replace a credential's copies
+         * without the holder signing in. The server must allow the wallet the
+         * `offline_access` scope, or the authorization fails.
+         */
+        val requestRefresh: Boolean = false,
+        /** The profile issuance follows. */
+        val profile: IssuanceProfile = IssuanceProfile.OPENID4VCI,
+        /**
+         * Names the key of a jwt proof carrying a key attestation in `jwk`
+         * rather than by its index in the attestation (`kid` `"0"`), the
+         * default, which issuers following ETSI TS 119 472-3, such as the
+         * EUDI reference PID issuer, require. Set it only for an issuer that
+         * takes no index.
+         */
+        val proofKeyByJWK: Boolean = false,
+        /**
+         * Names the key of a jwt proof carrying a key attestation by its
+         * index in the attestation, which is now the default: it has no
+         * effect, and can't be set with [proofKeyByJWK].
+         */
+        val proofKeyByIndex: Boolean = false,
+    )
+
+    /** How the wallet presents credentials. */
+    public data class PresentationOptions(
+        /** Which copy of a credential a presentation uses. */
+        val copyPolicy: CopyPolicy = CopyPolicy.PER_PRESENTATION,
+        /**
+         * How an in-person response authenticates the mdoc. [ProximityDeviceAuth.MAC_PREFERRED]
+         * needs a key store that is also a [KeyAgreement].
+         */
+        val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
+    )
+
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable
     public enum class RevocationRole {
-        /** The issuers' signing certificates ([issuerRoots] and the mdoc roots), on receipt, deferral and refresh. */
+        /** The issuers' signing certificates ([IssuerTrust.roots] and the mdoc roots), on receipt, deferral and refresh. */
         @SerialName("issuer") ISSUER,
 
-        /** The signers of Credential Issuer Metadata ([issuerMetadataRoots]). */
+        /** The signers of Credential Issuer Metadata ([IssuerMetadataTrust.roots]). */
         @SerialName("issuer_metadata") ISSUER_METADATA,
 
-        /** The registrars of Verifiers ([registrarRoots]). */
+        /** The registrars of Verifiers ([VerifierTrust.registrarRoots]). */
         @SerialName("registrar") REGISTRAR,
 
-        /** The mdoc readers ([mdocReaderRoots]), online and in person. */
+        /** The mdoc readers ([VerifierTrust.mdocReaderRoots]), online and in person. */
         @SerialName("mdoc_reader") MDOC_READER,
 
-        /** The Verifiers' request-signing certificates ([verifierRoots]). */
+        /** The Verifiers' request-signing certificates ([VerifierTrust.roots]). */
         @SerialName("verifier") VERIFIER,
 
         /** The signers of status lists, in [Wallet.checkStatus]. */
@@ -448,6 +468,184 @@ public data class WalletConfiguration(
             return (0 until list.size()).map { list[it].toLanguageTag() }.ifEmpty { listOf(Locale.getDefault().toLanguageTag()) }
         }
     }
+}
+
+/**
+ * [WalletConfiguration]'s wire form: the flat JSON object `NewWallet`
+ * reads (ABI.md), its keys and their order as they were before the
+ * options were grouped, so a configuration encodes as it did and old
+ * JSON decodes.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+internal data class WalletConfigurationJSON(
+    @SerialName("client_id") val clientID: String = "",
+    @SerialName("redirect_uri") val redirectURI: String = "",
+    @SerialName("issuer_roots") val issuerRoots: String = "",
+    @SerialName("verifier_roots") val verifierRoots: String = "",
+    @SerialName("registrar_roots") val registrarRoots: String = "",
+    @SerialName("mdoc_reader_roots") val mdocReaderRoots: String = "",
+    @SerialName("mdoc_reader_require_eku") val mdocReaderRequireEKU: Boolean = false,
+    @SerialName("require_trusted_mdoc_reader") val requireTrustedMdocReader: Boolean = false,
+    @SerialName("require_signed_dcapi_requests") val requireSignedDCAPIRequests: Boolean = false,
+    @SerialName("accept_x509_san_dns") val acceptX509SANDNS: Boolean = false,
+    val development: Boolean = false,
+    @SerialName("development_roots") val developmentRoots: String = "",
+    @EncodeDefault val locales: List<String> = WalletConfiguration.defaultLocales(),
+    @SerialName("batch_size") val batchSize: Int = 0,
+    @SerialName("request_refresh") val requestRefresh: Boolean = false,
+    @SerialName("copy_policy") val copyPolicy: WalletConfiguration.CopyPolicy = WalletConfiguration.CopyPolicy.PER_PRESENTATION,
+    @SerialName("tls_pins") val tlsPins: Map<String, List<String>> = emptyMap(),
+    @SerialName("allowed_private_hosts") val allowedPrivateHosts: List<String> = emptyList(),
+    @SerialName("issuance_profile") val issuanceProfile: WalletConfiguration.IssuanceProfile = WalletConfiguration.IssuanceProfile.OPENID4VCI,
+    @SerialName("proof_key_by_jwk") val proofKeyByJWK: Boolean = false,
+    @SerialName("proof_key_by_index") val proofKeyByIndex: Boolean = false,
+    @SerialName("proximity_device_auth") val proximityDeviceAuth: WalletConfiguration.ProximityDeviceAuth = WalletConfiguration.ProximityDeviceAuth.SIGNATURE,
+    @SerialName("verifier_require_eku") val verifierRequireEKU: String = "",
+    @SerialName("registrar_require_eku") val registrarRequireEKU: String = "",
+    @SerialName("status_issuers") val statusIssuers: Map<String, List<String>> = emptyMap(),
+    @SerialName("require_issuer_name") val requireIssuerName: Boolean = false,
+    @SerialName("issuer_metadata_roots") val issuerMetadataRoots: String = "",
+    @SerialName("require_signed_issuer_metadata") val requireSignedIssuerMetadata: Boolean = false,
+    @SerialName("require_issuer_metadata_name") val requireIssuerMetadataName: Boolean = false,
+    @SerialName("max_issuer_metadata_age_seconds") val maxIssuerMetadataAgeSeconds: Long = 0,
+    @SerialName("issuer_require_eku") val issuerRequireEKU: String = "",
+    @SerialName("issuer_metadata_require_eku") val issuerMetadataRequireEKU: String = "",
+    @SerialName("allow_foreign_iss") val allowForeignIss: Boolean = false,
+    @SerialName("mdoc_issuer_roots") val mdocIssuerRoots: String = "",
+    @SerialName("mdoc_issuer_roots_by_doctype") val mdocIssuerRootsByDocType: Map<String, String> = emptyMap(),
+    @SerialName("mdoc_issuer_require_eku") val mdocIssuerRequireEKU: String = "",
+    @SerialName("crls") val crls: String = "",
+    @SerialName("revocation") val revocation: List<WalletConfiguration.RevocationRole> = emptyList(),
+    @SerialName("crl_issuers") val crlIssuers: String = "",
+    @SerialName("no_revocation_check") val noRevocationCheck: List<WalletConfiguration.RevocationRole> = emptyList(),
+    @SerialName("accept_mdl_signer_without_eku") val acceptMDLSignerWithoutEKU: Boolean = false,
+    @SerialName("crl_distribution_points") val crlDistributionPoints: List<CRLDistributionPoint> = emptyList(),
+    @SerialName("crl_distribution_points_from_roots") val crlDistributionPointsFromRoots: Boolean = false,
+    @SerialName("crl_require_https") val crlRequireHTTPS: Boolean = false,
+    @SerialName("status_max_bytes") val statusMaxBytes: Int = 0,
+    @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
+    @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
+    @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+)
+
+/** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
+internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration> {
+    @OptIn(ExperimentalSerializationApi::class)
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("dev.idfoundry.oid4vcwallet.WalletConfiguration", WalletConfigurationJSON.serializer().descriptor)
+
+    override fun serialize(encoder: Encoder, value: WalletConfiguration): Unit =
+        encoder.encodeSerializableValue(WalletConfigurationJSON.serializer(), flat(value))
+
+    override fun deserialize(decoder: Decoder): WalletConfiguration =
+        grouped(decoder.decodeSerializableValue(WalletConfigurationJSON.serializer()))
+
+    private fun flat(c: WalletConfiguration): WalletConfigurationJSON = WalletConfigurationJSON(
+        clientID = c.clientID,
+        redirectURI = c.redirectURI,
+        issuerRoots = c.issuers.roots,
+        verifierRoots = c.verifiers.roots,
+        registrarRoots = c.verifiers.registrarRoots,
+        mdocReaderRoots = c.verifiers.mdocReaderRoots,
+        mdocReaderRequireEKU = c.verifiers.mdocReaderRequireEKU,
+        requireTrustedMdocReader = c.verifiers.requireTrustedMdocReader,
+        requireSignedDCAPIRequests = c.verifiers.requireSignedDCAPIRequests,
+        acceptX509SANDNS = c.verifiers.acceptX509SANDNS,
+        development = c.development != null,
+        developmentRoots = c.development?.roots ?: "",
+        locales = c.issuance.locales,
+        batchSize = c.issuance.batchSize,
+        requestRefresh = c.issuance.requestRefresh,
+        copyPolicy = c.presentation.copyPolicy,
+        tlsPins = c.network.tlsPins,
+        allowedPrivateHosts = c.network.allowedPrivateHosts,
+        issuanceProfile = c.issuance.profile,
+        proofKeyByJWK = c.issuance.proofKeyByJWK,
+        proofKeyByIndex = c.issuance.proofKeyByIndex,
+        proximityDeviceAuth = c.presentation.proximityDeviceAuth,
+        verifierRequireEKU = c.verifiers.requireEKU,
+        registrarRequireEKU = c.verifiers.registrarRequireEKU,
+        statusIssuers = c.issuers.statusIssuers,
+        requireIssuerName = c.issuers.requireIssuerName,
+        issuerMetadataRoots = c.issuerMetadata.roots,
+        requireSignedIssuerMetadata = c.issuerMetadata.requireSigned,
+        requireIssuerMetadataName = c.issuerMetadata.requireName,
+        maxIssuerMetadataAgeSeconds = c.issuerMetadata.maxAgeSeconds,
+        issuerRequireEKU = c.issuers.requireEKU,
+        issuerMetadataRequireEKU = c.issuerMetadata.requireEKU,
+        allowForeignIss = c.issuers.allowForeignIss,
+        mdocIssuerRoots = c.issuers.mdocRoots,
+        mdocIssuerRootsByDocType = c.issuers.mdocRootsByDocType,
+        mdocIssuerRequireEKU = c.issuers.mdocRequireEKU,
+        crls = c.revocation.crls,
+        revocation = c.revocation.roles,
+        crlIssuers = c.revocation.crlIssuers,
+        noRevocationCheck = c.revocation.declined,
+        acceptMDLSignerWithoutEKU = c.issuers.acceptMDLSignerWithoutEKU,
+        crlDistributionPoints = c.revocation.distributionPoints,
+        crlDistributionPointsFromRoots = c.revocation.distributionPointsFromRoots,
+        crlRequireHTTPS = c.revocation.requireHTTPS,
+        statusMaxBytes = c.status.maxBytes,
+        identifierListMaxBytes = c.status.identifierListMaxBytes,
+        statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
+        statusCacheDir = c.status.cacheDir,
+    )
+
+    private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
+        clientID = j.clientID,
+        redirectURI = j.redirectURI,
+        issuers = WalletConfiguration.IssuerTrust(
+            roots = j.issuerRoots,
+            requireEKU = j.issuerRequireEKU,
+            mdocRoots = j.mdocIssuerRoots,
+            mdocRootsByDocType = j.mdocIssuerRootsByDocType,
+            mdocRequireEKU = j.mdocIssuerRequireEKU,
+            acceptMDLSignerWithoutEKU = j.acceptMDLSignerWithoutEKU,
+            requireIssuerName = j.requireIssuerName,
+            allowForeignIss = j.allowForeignIss,
+            statusIssuers = j.statusIssuers,
+        ),
+        issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
+            roots = j.issuerMetadataRoots,
+            requireEKU = j.issuerMetadataRequireEKU,
+            requireSigned = j.requireSignedIssuerMetadata,
+            requireName = j.requireIssuerMetadataName,
+            maxAgeSeconds = j.maxIssuerMetadataAgeSeconds,
+        ),
+        verifiers = WalletConfiguration.VerifierTrust(
+            roots = j.verifierRoots,
+            requireEKU = j.verifierRequireEKU,
+            acceptX509SANDNS = j.acceptX509SANDNS,
+            registrarRoots = j.registrarRoots,
+            registrarRequireEKU = j.registrarRequireEKU,
+            mdocReaderRoots = j.mdocReaderRoots,
+            mdocReaderRequireEKU = j.mdocReaderRequireEKU,
+            requireTrustedMdocReader = j.requireTrustedMdocReader,
+            requireSignedDCAPIRequests = j.requireSignedDCAPIRequests,
+        ),
+        revocation = WalletConfiguration.Revocation(
+            roles = j.revocation,
+            declined = j.noRevocationCheck,
+            crls = j.crls,
+            crlIssuers = j.crlIssuers,
+            distributionPoints = j.crlDistributionPoints,
+            distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
+            requireHTTPS = j.crlRequireHTTPS,
+        ),
+        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        network = WalletConfiguration.Network(tlsPins = j.tlsPins, allowedPrivateHosts = j.allowedPrivateHosts),
+        issuance = WalletConfiguration.IssuanceOptions(
+            locales = j.locales,
+            batchSize = j.batchSize,
+            requestRefresh = j.requestRefresh,
+            profile = j.issuanceProfile,
+            proofKeyByJWK = j.proofKeyByJWK,
+            proofKeyByIndex = j.proofKeyByIndex,
+        ),
+        presentation = WalletConfiguration.PresentationOptions(copyPolicy = j.copyPolicy, proximityDeviceAuth = j.proximityDeviceAuth),
+        development = Development.decoded(j.development, j.developmentRoots),
+    )
 }
 
 /**
@@ -630,7 +828,7 @@ public data class CredentialSummary(
     @SerialName("copies_left") val copiesLeft: Int = 0,
     /**
      * Whether its issuance kept a refresh token
-     * ([WalletConfiguration.requestRefresh]), so
+     * ([WalletConfiguration.IssuanceOptions.requestRefresh]), so
      * [Wallet.refreshCredential] can replace its copies. The
      * Authorization Server may still refuse
      * ([WalletException.Code.reissueRequired]).
@@ -763,14 +961,14 @@ public class Wallet(
                 "the linked Go library has ABI ${OID4VC.abiVersion}, these sources ABI ${OID4VC.expectedABIVersion}: rebuild it",
             )
         }
-        OID4VC.checkDevelopment(configuration.development)
+        OID4VC.checkDevelopment(configuration.development != null)
         // Keys are made over the provider's attestation challenges, and
         // reach it with their attestation chains.
         val created = CreatedKeys()
         val keys = KeyStoreAdapter(keyStore, provider, created)
         val credentials = CredentialStoreAdapter(credentialStore)
         val wp = provider?.let { WalletProviderAdapter(it, keyStore, created) }
-        val config = StatusCacheKey.configuration(json.encodeToString(WalletConfiguration.serializer(), configuration), configuration.statusCacheDir)
+        val config = StatusCacheKey.configuration(json.encodeToString(WalletConfiguration.serializer(), configuration), configuration.status.cacheDir)
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)
         agreement?.let(handle::setKeyAgreement)
@@ -877,7 +1075,7 @@ public class Wallet(
 
     /**
      * Replaces the Certificate Revocation Lists the configuration's
-     * [WalletConfiguration.revocation] roles are checked against with
+     * [WalletConfiguration.Revocation.roles] are checked against with
      * [pem]'s `X509 CRL` blocks, for every check from now on. CRLs expire
      * at their nextUpdate: fetch fresh ones and call this before then.
      * Text holding anything else, a list that doesn't parse, or a CA's
@@ -893,8 +1091,8 @@ public class Wallet(
 
     /**
      * Fetches the Certificate Revocation Lists of the configuration's
-     * [WalletConfiguration.crlDistributionPoints] (and, with
-     * [WalletConfiguration.crlDistributionPointsFromRoots], those its
+     * [WalletConfiguration.Revocation.distributionPoints] (and, with
+     * [WalletConfiguration.Revocation.distributionPointsFromRoots], those its
      * roots name) and keeps each one its CA signed that is current and not
      * older than the one held, for every check from now on, presentations
      * already running included. A failed point keeps its list. Fetches go
@@ -1300,7 +1498,7 @@ public class Presentation internal constructor(private val handle: MobilePresent
         @SerialName("response_uri") val responseURI: String = "",
         /**
          * The Verifier's registration, from its request, checked against
-         * [WalletConfiguration.registrarRoots].
+         * [WalletConfiguration.VerifierTrust.registrarRoots].
          */
         val registration: Registration,
         /**
@@ -1493,7 +1691,7 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         /**
          * The subject common name of the reader that signed the request,
          * when its certificate chains to
-         * [WalletConfiguration.mdocReaderRoots]; "" when the holder can
+         * [WalletConfiguration.VerifierTrust.mdocReaderRoots]; "" when the holder can
          * only be shown [origin].
          */
         val reader: String = "",

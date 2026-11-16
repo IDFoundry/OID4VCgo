@@ -15,7 +15,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
 /**
- * The key authenticating the status lists a `statusCacheDir` keeps
+ * The key authenticating the status lists a `status.cacheDir` keeps
  * (`status_cache_key` in ABI.md): 32 random bytes, made on first use and
  * kept in the directory wrapped by an Android Keystore key, so that a
  * list anyone else wrote to the directory is dropped rather than used.
@@ -33,7 +33,7 @@ internal object StatusCacheKey {
     private const val TAG_BYTES = 16
     const val KEY_BYTES = 32
 
-    /** The directory a null `statusCacheDir` keeps lists in, in the app's cache directory. */
+    /** The directory a null `status.cacheDir` keeps lists in, in the app's cache directory. */
     const val DEFAULT_DIR = "oid4vcwallet-status-lists"
 
     /** Where the key for a directory comes from: the Keystore-wrapped file, unless a test replaced it. */
@@ -41,7 +41,7 @@ internal object StatusCacheKey {
     var source: (File) -> ByteArray = ::wrappedKey
 
     /**
-     * Where a null `statusCacheDir` keeps lists, unless a test replaced
+     * Where a null `status.cacheDir` keeps lists, unless a test replaced
      * it: [DEFAULT_DIR] in `java.io.tmpdir`, which Android sets to the
      * app's `context.cacheDir` as each of its processes starts. It's a
      * process-wide property any code in the app can change, though, and
@@ -80,16 +80,16 @@ internal object StatusCacheKey {
 
     /**
      * [encoded], a configuration's JSON, keeping lists in
-     * [statusCacheDir] with the `status_cache_key` that authenticates
+     * [cacheDir] with the `status_cache_key` that authenticates
      * them. Empty keeps them in memory only. Null keeps them in
      * [defaultDir], or in memory only when there's none or its key
      * can't be had (nor the directory made): the default never stops a
      * wallet being made.
      */
-    fun configuration(encoded: String, statusCacheDir: String?): String {
-        if (statusCacheDir?.isEmpty() == true) return encoded
-        val dir = statusCacheDir?.let(::File) ?: defaultDir() ?: return encoded
-        val key = if (statusCacheDir != null) source(dir) else runCatching { source(dir) }.getOrNull() ?: return encoded
+    fun configuration(encoded: String, cacheDir: String?): String {
+        if (cacheDir?.isEmpty() == true) return encoded
+        val dir = cacheDir?.let(::File) ?: defaultDir() ?: return encoded
+        val key = if (cacheDir != null) source(dir) else runCatching { source(dir) }.getOrNull() ?: return encoded
         val config = json.parseToJsonElement(encoded).jsonObject
         return JsonObject(
             config + mapOf(

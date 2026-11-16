@@ -39,7 +39,7 @@ func TestConfigKeysParity(t *testing.T) {
 		swiftKeys = append(swiftKeys, key)
 	}
 
-	kotlin := between(t, "android/OID4VCWallet/src/main/kotlin/dev/idfoundry/oid4vcwallet/Wallet.kt", "data class WalletConfiguration(", "", "\n) {")
+	kotlin := between(t, "android/OID4VCWallet/src/main/kotlin/dev/idfoundry/oid4vcwallet/Wallet.kt", "data class WalletConfigurationJSON(", "", "\n)")
 	var kotlinKeys []string
 	for _, m := range regexp.MustCompile(`(?m)^\s*(?:@\w+(?:\("([a-z0-9_]+)"\))?\s+)*val (\w+)`).FindAllStringSubmatch(kotlin, -1) {
 		key := m[1]

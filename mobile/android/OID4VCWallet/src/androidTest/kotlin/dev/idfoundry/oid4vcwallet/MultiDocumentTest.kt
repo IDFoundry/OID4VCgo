@@ -37,7 +37,9 @@ class MultiDocumentTest {
         val readerConfig = json.decodeFromString(ProximityReaderConfiguration.serializer(), readerSetup["reader_config"]!!.jsonPrimitive.content)
             .copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK)
         val wallet = Wallet(
-            env.configuration.copy(mdocReaderRoots = readerSetup["mdoc_reader_roots"]!!.jsonPrimitive.content, mdocReaderRequireEKU = true),
+            env.configuration.let {
+                it.copy(verifiers = it.verifiers.copy(mdocReaderRoots = readerSetup["mdoc_reader_roots"]!!.jsonPrimitive.content, mdocReaderRequireEKU = true))
+            },
             keys, InMemoryCredentialStore(), ProviderOf(env),
         )
         val s = wallet.startIssuance(env.env.multiDocumentOffer())

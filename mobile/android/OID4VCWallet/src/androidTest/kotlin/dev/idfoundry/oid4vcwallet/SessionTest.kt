@@ -272,7 +272,7 @@ class SessionTest {
     @Test
     fun registration(): Unit = runBlocking {
         val env = env(batchSize = 3)
-        assertTrue(env.configuration.registrarRoots.isNotEmpty())
+        assertTrue(env.configuration.verifiers.registrarRoots.isNotEmpty())
         val w = wallet(env)
         receive(env, w)
 
@@ -296,7 +296,7 @@ class SessionTest {
     @Test
     fun refresh(): Unit = runBlocking {
         val env = env(batchSize = 3)
-        assertTrue(env.configuration.requestRefresh)
+        assertTrue(env.configuration.issuance.requestRefresh)
         val w = wallet(env)
         receive(env, w)
         assertTrue(w.credentials().all { it.refreshable })
@@ -316,7 +316,7 @@ class SessionTest {
     @Test
     fun copyPolicyPerVerifier(): Unit = runBlocking {
         val env = env(batchSize = 3)
-        val w = wallet(env, configuration = env.configuration.copy(copyPolicy = WalletConfiguration.CopyPolicy.PER_VERIFIER))
+        val w = wallet(env, configuration = env.configuration.let { it.copy(presentation = it.presentation.copy(copyPolicy = WalletConfiguration.CopyPolicy.PER_VERIFIER)) })
         receive(env, w)
         val candidates = (0 until 2).map {
             val p = w.startPresentation(env.request(SD_JWT).second)
@@ -338,8 +338,8 @@ class SessionTest {
     fun tlsPins(): Unit = runBlocking {
         val env = env()
         val pin = java.util.Base64.getEncoder().encodeToString(ByteArray(32))
-        expectCode(WalletException.Code.invalidInput) { wallet(env, configuration = env.configuration.copy(tlsPins = mapOf("127.0.0.1" to listOf(pin)))) }
-        receive(env, wallet(env, configuration = env.configuration.copy(tlsPins = mapOf("issuer.example" to listOf(pin)))))
+        expectCode(WalletException.Code.invalidInput) { wallet(env, configuration = env.configuration.let { it.copy(network = it.network.copy(tlsPins = mapOf("127.0.0.1" to listOf(pin)))) }) }
+        receive(env, wallet(env, configuration = env.configuration.let { it.copy(network = it.network.copy(tlsPins = mapOf("issuer.example" to listOf(pin)))) }))
     }
 
     /**
@@ -350,7 +350,7 @@ class SessionTest {
     @Test
     fun issuerRevocation(): Unit = runBlocking {
         val env = env()
-        val w = wallet(env, configuration = env.configuration.copy(revocation = listOf(WalletConfiguration.RevocationRole.ISSUER)))
+        val w = wallet(env, configuration = env.configuration.let { it.copy(revocation = it.revocation.copy(roles = listOf(WalletConfiguration.RevocationRole.ISSUER))) })
         val refused = runCatching { receive(env, w) }.exceptionOrNull()
         assertTrue("received a credential with no CRL for its issuer's CA: $refused", refused is WalletException)
         expectCode(WalletException.Code.invalidInput) { w.setCRLs("not a CRL") }

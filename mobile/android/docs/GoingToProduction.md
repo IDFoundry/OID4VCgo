@@ -20,7 +20,7 @@ services on loopback addresses are refused. The rest is the app's.
   and the Credential Request's jwt proof when receiving or refreshing.
   With `AndroidKeystoreKeyStore.Options.holderUserAuthentication` on,
   the default, Keystore enforces the check, but receiving a credential
-  asks once per copy (`WalletConfiguration.batchSize`), or once when the
+  asks once per copy (`WalletConfiguration.issuance.batchSize`), or once when the
   jwt proof carries a key attestation (again if the issuer refuses the
   nonce), and a refresh asks too, so it
   can't run in the background. Turned off, as the demo app does (and
@@ -198,13 +198,14 @@ authorizations: it is for development only.
 
 ## Trust
 
-- Configure only your ecosystem's roots: `issuerRoots` for credentials,
-  `verifierRoots` for the Verifiers the wallet answers, and
-  `registrarRoots` only for registrars, never for Verifiers or issuers,
+- Configure only your ecosystem's roots: `issuers.roots` for
+  credentials, `verifiers.roots` for the Verifiers the wallet answers,
+  and `verifiers.registrarRoots` only for registrars, never for Verifiers or issuers,
   which could then register themselves.
-- For readers, `mdocReaderRoots` with `mdocReaderRequireEKU`, and
-  `requireTrustedMdocReader` where every reader must be a known one.
-- Never ship with `development` set, or `developmentRoots`. A `Wallet`
+- For readers, `verifiers.mdocReaderRoots` with
+  `verifiers.mdocReaderRequireEKU`, and
+  `verifiers.requireTrustedMdocReader` where every reader must be a known one.
+- Never ship with `development` set (its `Development.roots` too). A `Wallet`
   or `ProximityReader` refuses a `development` configuration
   (`invalid_input`) unless the app called `OID4VC.allowDevelopment()`:
   call it only from a debuggable build
@@ -215,7 +216,7 @@ authorizations: it is for development only.
   for its process only: call it in `Application.onCreate`, which runs
   in each of the app's processes, so a component in its own
   `android:process` is allowed too.
-- To pin your services' certificates, set `tlsPins`: host → base64
+- To pin your services' certificates, set `network.tlsPins`: host → base64
   SHA-256 digests of a certificate's SubjectPublicKeyInfo. Pin a CA's
   key, so a leaf renewal doesn't break the app, and keep a backup pin:
   a wrong set locks the wallet out of that host until an update. Pins
@@ -225,31 +226,31 @@ authorizations: it is for development only.
 - Outside `development` the SDK's requests reach public addresses only.
   If your issuers, Verifiers, status lists or CRL distribution points
   are inside your own network (an enterprise's, or a test
-  environment's), name those hosts in `allowedPrivateHosts`: each host
+  environment's), name those hosts in `network.allowedPrivateHosts`: each host
   name exactly, no wildcard or IP address. Only their private addresses
   are allowed, never loopback or link-local, and TLS is still verified.
   List only hosts you run: anyone who can hand the wallet an offer or a
   request can have it send a request to them.
 - To refuse certificates your ecosystem's CAs have revoked, list the
-  roles to check in `revocation` and give their CAs' CRLs (PEM
-  `X509 CRL` blocks) in `crls`. A role listed fails closed for any CA it
+  roles to check in `revocation.roles` and give their CAs' CRLs (PEM
+  `X509 CRL` blocks) in `revocation.crls`. A role listed fails closed for any CA it
   has no current CRL from, so list only roles whose CAs publish CRLs.
-  Every role whose roots you set must be in `revocation` or in
-  `noRevocationCheck`, which declines checking it, or the wallet isn't
+  Every role whose roots you set must be in `revocation.roles` or in
+  `revocation.declined`, which declines checking it, or the wallet isn't
   made (`invalidInput`): decline only where something else stands in
   for revocation, such as certificates too short-lived to be worth
-  revoking. `issuerRoots` and the mdoc roots bring two roles, `ISSUER`
+  revoking. `issuers.roots` and the mdoc roots bring two roles, `ISSUER`
   and `STATUS` (the status lists' signers). CRLs expire at their nextUpdate: fetch fresh ones in the background
   and hand them over with `Wallet.setCRLs`, which replaces them all
   (empty text removes them) and throws `invalidInput`, keeping the old
   lists, for anything that isn't a CRL, a CA's list older than the one
-  held, or a list naming a CA your configuration has (in `crlIssuers`, a
+  held, or a list naming a CA your configuration has (in `revocation.crlIssuers`, a
   distribution point's issuer, or a CA certificate in the roots) that
   the CA didn't sign. Only lists such a CA signed are held to the
   older-list rule, so give an intermediate CA's certificate in
-  `crlIssuers` to have its lists checked too. A certificate pinned in the
-  roots, such as a Verifier's leaf in `verifierRoots`, is checked
-  against its CA's CRL: give that CA's certificate in `crlIssuers`, or
+  `revocation.crlIssuers` to have its lists checked too. A certificate pinned in the
+  roots, such as a Verifier's leaf in `verifiers.roots`, is checked
+  against its CA's CRL: give that CA's certificate in `revocation.crlIssuers`, or
   it's refused. A `ProximityReader` takes the same, for its document
   signers and status lists. `Wallet.refreshCRLs` can do the fetching:
   see [Keeping revocation lists current](#keeping-revocation-lists-current).
@@ -259,24 +260,24 @@ authorizations: it is for development only.
 ### Keeping revocation lists current
 
 Rather than fetching CRLs yourself, name the distribution points in
-`crlDistributionPoints`, each with the certificate of the CA whose list
-it serves, or set `crlDistributionPointsFromRoots` to fetch the points
+`revocation.distributionPoints`, each with the certificate of the CA
+whose list it serves, or set `revocation.distributionPointsFromRoots` to fetch the points
 your roots' self-signed CAs (IACAs, say) name for their own lists.
 `Wallet.refreshCRLs` then fetches each one, keeps every list its CA
 signed that is current and not older than the one held, and returns a
 `CRLRefreshResult`: each point's outcome, every list now held as `crls`,
 and `nextRefresh`. A failed point keeps its list, so a refresh never
 makes things worse. Fetches go to public addresses only (outside
-`development`), and the private ones of `allowedPrivateHosts`, over
+`development`), and the private ones of `network.allowedPrivateHosts`, over
 `http` or `https`: CRLs are signed, so
-distribution points are usually plain `http`; `crlRequireHTTPS` refuses
+distribution points are usually plain `http`; `revocation.requireHTTPS` refuses
 those, where your CAs serve `https`. A `ProximityReader` has the same
 `refreshCRLs`.
 
 The library schedules nothing and depends on no scheduler. Refresh when
 the app starts, when it comes to the foreground once the last result's
 `nextRefresh` has passed (not at every foreground: a fleet of devices
-adds up), and in the background with WorkManager, and keep `crls` to pass back as `WalletConfiguration.crls`
+adds up), and in the background with WorkManager, and keep `crls` to pass back as `WalletConfiguration.revocation.crls`
 at the next launch, so checks work before the first refresh and an
 older list is still refused after a restart:
 
@@ -287,7 +288,7 @@ import java.io.File
 import java.time.Duration
 import java.time.Instant
 
-/** The lists kept last time, for `WalletConfiguration.crls`. */
+/** The lists kept last time, for `WalletConfiguration.revocation.crls`. */
 fun savedCRLs(file: File): String = if (file.exists()) file.readText() else ""
 
 /**
@@ -344,30 +345,29 @@ role's checks closed until a fresh one arrives.
 Each of these is off or open by default. Decide each for your
 ecosystem, and record why:
 
-- `issuanceProfile`: `IssuanceProfile.HAIP` refuses issuers that don't
+- `issuance.profile`: `IssuanceProfile.HAIP` refuses issuers that don't
   follow HAIP 1.0 (`profileViolation`); it needs a `WalletProvider` and
   `clientID`. Set it where every issuer should be a HAIP one.
-- Signed issuer metadata: `issuerMetadataRoots` asks for and verifies
-  it; `requireSignedIssuerMetadata` refuses an issuer without it before
-  the holder signs in or enters a code; `requireIssuerMetadataName`
-  refuses metadata whose certificate doesn't name the issuer;
-  `maxIssuerMetadataAgeSeconds` bounds its age; and
-  `issuerMetadataRequireEKU` its signer's extended key usage. Set them
+- Signed issuer metadata (`issuerMetadata`): `roots` asks for and
+  verifies it; `requireSigned` refuses an issuer without it before the
+  holder signs in or enters a code; `requireName` refuses metadata
+  whose certificate doesn't name the issuer; `maxAgeSeconds` bounds its
+  age; and `requireEKU` its signer's extended key usage. Set them
   together where your issuers sign their metadata.
-- `requireIssuerName`: refuses an SD-JWT VC whose `iss` its signing
-  certificate doesn't name. Set it where `issuerRoots` certify several
+- `issuers.requireIssuerName`: refuses an SD-JWT VC whose `iss` its
+  signing certificate doesn't name. Set it where `issuers.roots` certify several
   issuers, so one can't issue in another's name.
-- `allowForeignIss`: receives an SD-JWT VC whose `iss` isn't the issuer
-  it came from. Leave it off unless an issuer names itself differently,
-  and `issuerRoots` certify it alone.
-- `statusIssuers`: the Status Issuers that may sign an issuer's status
+- `issuers.allowForeignIss`: receives an SD-JWT VC whose `iss` isn't
+  the issuer it came from. Leave it off unless an issuer names itself
+  differently, and `issuers.roots` certify it alone.
+- `issuers.statusIssuers`: the Status Issuers that may sign an issuer's status
   lists for it. Without it, only the issuer's own lists are accepted:
   add only delegations your ecosystem publishes.
-- `statusMaxBytes` and `identifierListMaxBytes`: the largest status list
+- `status.maxBytes` and `status.identifierListMaxBytes`: the largest status list
   (1 MiB) and identifier list (4 MiB) `checkStatus` reads. A larger
   list fails every check of the credentials on it: raise them only for
   issuers whose lists are larger.
-- `statusCacheDir`: where `checkStatus` keeps the lists it verified
+- `status.cacheDir`: where `checkStatus` keeps the lists it verified
   across launches. Each launch then revalidates a kept list with its
   server (a `304 Not Modified`) instead of downloading it again, which
   matters for lists of millions of entries; a list the server doesn't
@@ -384,42 +384,43 @@ ecosystem, and record why:
   whoever can read it which status lists the wallet checks (their URIs,
   so the issuers of its credentials, not which entries), the lists, and
   when each was last checked. Use `""` if that's too much.
-- `mdocIssuerRoots` and `mdocIssuerRootsByDocType`: the IACAs mdocs, or
-  each document type, must chain to, instead of `issuerRoots`, so an
-  SD-JWT VC issuer's CA can't sign an mDL. `mdocIssuerRequireEKU`
+- `issuers.mdocRoots` and `issuers.mdocRootsByDocType`: the IACAs
+  mdocs, or each document type, must chain to, instead of
+  `issuers.roots`, so an SD-JWT VC issuer's CA can't sign an mDL.
+  `issuers.mdocRequireEKU`
   requires document signers' extended key usage (the mDL's is
   1.0.18013.5.1.2).
-- `proximityDeviceAuth`: `MAC_PREFERRED` answers readers with deviceMac,
+- `presentation.proximityDeviceAuth`: `MAC_PREFERRED` answers readers with deviceMac,
   which the reader can't show anyone else; it needs
   `holderKeyAgreement`. `SIGNATURE`, the default, signs.
-- `proofKeyByJWK`: names a key-attested jwt proof's key in `jwk`
+- `issuance.proofKeyByJWK`: names a key-attested jwt proof's key in `jwk`
   instead of by its index in the key attestation (`kid` `"0"`), the
   default, which issuers following ETSI TS 119 472-3 require and refuse
   `jwk` in place of. Set it only for an issuer that takes no index.
-  `proofKeyByIndex`, which named the key by its index before that was
+  `issuance.proofKeyByIndex`, which named the key by its index before that was
   the default, has no effect.
-- `acceptX509SANDNS`: also answers Verifiers identified by the
+- `verifiers.acceptX509SANDNS`: also answers Verifiers identified by the
   `x509_san_dns` client ID prefix, as some deployments' Verifiers are,
   besides the `x509_hash` HAIP has Verifiers use. The client ID's DNS
   name must be in the signing certificate, which must chain to
-  `verifierRoots`, and be the host of the request's response URI. Every
-  name in a certificate under `verifierRoots` is then a Verifier the
-  wallet answers: set it only where those roots certify Verifiers
-  alone, or with `verifierRequireEKU`. It needs `verifierRoots`.
-- `acceptMDLSignerWithoutEKU`, on a `WalletConfiguration` and a
+  `verifiers.roots`, and be the host of the request's response URI.
+  Every name in a certificate under `verifiers.roots` is then a Verifier
+  the wallet answers: set it only where those roots certify Verifiers
+  alone, or with `verifiers.requireEKU`. It needs `verifiers.roots`.
+- `issuers.acceptMDLSignerWithoutEKU`, on a `WalletConfiguration` and a
   `ProximityReaderConfiguration`: also accepts a document signer
   certificate with no extended key usage, which the default check
   refuses for lacking the mDL document signer's. Any end-entity
   certificate without one under the same IACAs can then sign mdocs that
   are accepted. Leave it off unless an issuer's document signers carry
   no extended key usage.
-- For a `ProximityReader`: `issuerRootsByDocType` confines each document
+- For a `ProximityReader`: `issuers.rootsByDocType` confines each document
   type to its own IACAs.
 
 ## Privacy
 
-- Request batches of copies (`batchSize`) and refresh them as they're
-  used up (`requestRefresh`), so presentations stay unlinkable; warn the
+- Request batches of copies (`issuance.batchSize`) and refresh them as
+  they're used up (`issuance.requestRefresh`), so presentations stay unlinkable; warn the
   holder when one wouldn't be (`linkableHere`).
 - Log `WalletException.message`, never claims, credentials or QR codes.
 - Set `FLAG_SECURE` on windows that show credentials, so the recents

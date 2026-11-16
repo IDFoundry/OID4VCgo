@@ -36,6 +36,7 @@ import dev.idfoundry.oid4vcwallet.ProximityException
 import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.NfcEngagementOptions
 import dev.idfoundry.oid4vcwallet.ProximityReader
+import dev.idfoundry.oid4vcwallet.Development
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
@@ -159,7 +160,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         }
         copyPolicy = prefs.getString(COPY_POLICY, null)?.let { saved ->
             WalletConfiguration.CopyPolicy.entries.firstOrNull { it.name == saved }
-        } ?: config.wallet.copyPolicy
+        } ?: config.wallet.presentation.copyPolicy
         try {
             wallet = makeWallet()
             configured = true
@@ -192,14 +193,14 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         return sharedWallet(config, copyPolicy) {
             val make = { crls: String ->
                 Wallet(
-                    config.wallet.copy(copyPolicy = copyPolicy, crls = crls), keys!!,
+                    config.wallet.let { it.copy(presentation = it.presentation.copy(copyPolicy = copyPolicy), revocation = it.revocation.copy(crls = crls)) }, keys!!,
                     FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
                 )
             }
             // With the revocation lists last fetched (DemoConfiguration.CRLS).
-            val saved = prefs.getString(DemoConfiguration.CRLS, null)?.takeIf { it.isNotEmpty() && config.wallet.revocation.isNotEmpty() }
+            val saved = prefs.getString(DemoConfiguration.CRLS, null)?.takeIf { it.isNotEmpty() && config.wallet.revocation.roles.isNotEmpty() }
             if (saved == null) {
-                make(config.wallet.crls)
+                make(config.wallet.revocation.crls)
             } else {
                 try {
                     make(saved)
@@ -208,7 +209,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                     // Saved lists the wallet refuses: start without them,
                     // and the next refresh fetches them again.
                     prefs.edit().remove(DemoConfiguration.CRLS).apply()
-                    make(config.wallet.crls)
+                    make(config.wallet.revocation.crls)
                 }
             }
         }
@@ -746,7 +747,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
 
     /** Whether the configuration has the wallet fetch revocation lists. */
     val walletFetchesCRLs: Boolean
-        get() = config?.wallet?.let { it.crlDistributionPointsFromRoots || it.crlDistributionPoints.isNotEmpty() } ?: false
+        get() = config?.wallet?.revocation?.let { it.distributionPointsFromRoots || it.distributionPoints.isNotEmpty() } ?: false
 
     /** Whether the configuration has the reader fetch revocation lists. */
     val readerFetchesCRLs: Boolean
@@ -1197,17 +1198,21 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     private fun readerConfiguration(r: DemoConfiguration.Reader, crls: String): ProximityReaderConfiguration {
         val checked = r.revocation.orEmpty()
         return ProximityReaderConfiguration(
-            issuerRoots = r.issuerRoots, readerKeyID = DemoReaderKeys.ID, readerChain = r.readerChain, maxClockSkewSeconds = 300,
-            crls = crls, revocation = checked,
-            noRevocationCheck = ProximityReaderConfiguration.RevocationRole.entries.filter { it !in checked },
-            crlDistributionPoints = r.crlDistributionPoints.orEmpty(), crlDistributionPointsFromRoots = r.crlDistributionPointsFromRoots,
-            crlRequireHTTPS = r.crlRequireHTTPS,
-            anyIssuerForAnyType = true,
+            issuers = ProximityReaderConfiguration.IssuerTrust(r.issuerRoots, anyIssuerForAnyType = true),
+            readerAuthentication = ProximityReaderConfiguration.ReaderAuthentication(DemoReaderKeys.ID, r.readerChain),
+            maxClockSkewSeconds = 300,
+            revocation = ProximityReaderConfiguration.Revocation(
+                roles = checked,
+                declined = ProximityReaderConfiguration.RevocationRole.entries.filter { it !in checked },
+                crls = crls,
+                distributionPoints = r.crlDistributionPoints.orEmpty(),
+                distributionPointsFromRoots = r.crlDistributionPointsFromRoots,
+                requireHTTPS = r.crlRequireHTTPS,
+            ),
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
-            development = r.development,
-            // The development CA the wallet trusts (DevelopmentTLS), for
-            // refreshCRLs's https fetches.
-            developmentRoots = if (r.development) config?.wallet?.developmentRoots.orEmpty() else "",
+            // With the development CA the wallet trusts (DevelopmentTLS),
+            // for refreshCRLs's https fetches.
+            development = if (r.development) Development(config?.wallet?.development?.roots.orEmpty()) else null,
         )
     }
 
