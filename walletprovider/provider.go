@@ -192,8 +192,9 @@ type Config struct {
 	// provider has acted on it: StateRevoked or StateSuspended when the
 	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
 	// provider revoked or suspended it, with a Reason naming the
-	// recheck), StateActive otherwise (a policy refusal, or a root no
-	// longer trusted: the request is refused, the instance and its live
+	// recheck), StateActive otherwise (a policy refusal, a root no
+	// longer trusted, a certificate past its validity period, or a
+	// record too old to judge: the request is refused, the instance and its live
 	// attestations left as they are). Use it to alert, or to revoke from
 	// your own logic. It's called on the request's path, before the
 	// refusal is answered: keep it quick, and hand anything slow to

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -24,7 +25,7 @@ import (
 )
 
 // providerFixture is a walletprovider.Provider verifying Android Key
-// Attestation evidence with v, served over TLS, a Client of it, and
+// Attestation evidence with e, served over TLS, a Client of it, and
 // its stores.
 type providerFixture struct {
 	client    *walletprovider.Client
@@ -35,7 +36,7 @@ type providerFixture struct {
 	refused []error // OnRecheckRefused's errors
 }
 
-func newProviderFixture(t *testing.T, v *androidkey.Verifier) *providerFixture {
+func newProviderFixture(t *testing.T, e androidkey.EvidenceVerifier) *providerFixture {
 	t.Helper()
 	ca, caKey := testcert.CA(t, "Wallet Provider CA")
 	id, err := url.Parse("https://provider.example")
@@ -64,7 +65,7 @@ func newProviderFixture(t *testing.T, v *androidkey.Verifier) *providerFixture {
 		Signer: signer, Chain: []*x509.Certificate{leafCert},
 		Instances: f.instances, InstanceKeys: f.keys,
 		Challenges:    &walletprovider.MemoryChallengeStore{},
-		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{androidkey.EvidenceVerifier{Verifier: v}},
+		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{e},
 		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -128,10 +129,22 @@ func newAttestationCA(t *testing.T) attestationCA {
 // with serial number serial and its leaf serial+1.
 func (ca attestationCA) chain(t *testing.T, serial int64, challenge []byte) testChain {
 	t.Helper()
+	return ca.chainUntil(t, serial, challenge, time.Time{})
+}
+
+// chainUntil is chain, with an intermediate valid until notAfter
+// (zero: certTemplate's default), as Remote Key Provisioning's
+// short-lived attestation certificates are.
+func (ca attestationCA) chainUntil(t *testing.T, serial int64, challenge []byte, notAfter time.Time) testChain {
+	t.Helper()
 	s := goodSpec(t)
 	s.challenge = challenge
 	interKey := newKey(t, elliptic.P256())
-	inter := issue(t, certTemplate("Test Attestation Intermediate", serial, true), ca.root, ca.rootKey, &interKey.PublicKey)
+	interTmpl := certTemplate("Test Attestation Intermediate", serial, true)
+	if !notAfter.IsZero() {
+		interTmpl.NotAfter = notAfter
+	}
+	inter := issue(t, interTmpl, ca.root, ca.rootKey, &interKey.PublicKey)
 	leafKey := newKey(t, elliptic.P256())
 	leaf := issue(t, leafTemplate(s.encode(t), serial+1), inter, interKey, &leafKey.PublicKey)
 	return testChain{der: [][]byte{leaf.Raw, inter.Raw, ca.root.Raw}, root: ca.root, inter: inter, interKey: interKey, leafKey: leafKey}
@@ -149,30 +162,54 @@ type rkpWallet struct {
 	registration, instance testChain
 }
 
-func newRKPWallet(t *testing.T) *rkpWallet {
+// rkpOpts are an rkpWallet's options: when its registration and
+// instance key chains' intermediates expire (zero: certTemplate's
+// default), and whether its provider accepts legacy records.
+type rkpOpts struct {
+	registrationUntil, instanceUntil time.Time
+	allowLegacy                      bool
+}
+
+func newRKPWallet(t *testing.T, o rkpOpts) *rkpWallet {
 	t.Helper()
-	ctx := context.Background()
 	w := &rkpWallet{ca: newAttestationCA(t)}
 	w.v = &androidkey.Verifier{Roots: []*x509.Certificate{w.ca.root}, Revocation: &androidkey.StatusList{}, Apps: []androidkey.AllowedApp{testApp}}
-	w.f = newProviderFixture(t, w.v)
+	w.f = newProviderFixture(t, androidkey.EvidenceVerifier{Verifier: w.v, AllowUncheckedLegacyEvidence: o.allowLegacy})
 
-	ch, raw := w.f.challenge(t, walletprovider.PurposeRegistration)
-	w.registration = w.ca.chain(t, 101, raw)
 	var err error
-	if w.id, err = w.f.client.Register(ctx, walletprovider.RegisterRequest{
-		Challenge: ch, RegistrationKey: &w.registration.leafKey.PublicKey, Evidence: androidkey.Evidence(w.registration.der),
-	}); err != nil {
+	if w.id, w.registration, err = w.register(t, 101, o.registrationUntil); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	ch, raw = w.f.challenge(t, walletprovider.PurposeInstance)
-	w.instance = w.ca.chain(t, 201, raw)
-	if _, err := w.f.client.WalletAttestation(ctx, w.registration.leafKey, walletprovider.WalletAttestationRequest{
-		InstanceID: w.id, ClientID: "wallet", InstanceKey: &w.instance.leafKey.PublicKey,
-		Challenge: ch, Evidence: androidkey.Evidence(w.instance.der),
-	}); err != nil {
+	if w.instance, err = w.attestInstanceKey(t, 201, o.instanceUntil); err != nil {
 		t.Fatalf("recording the instance key: %v", err)
 	}
 	return w
+}
+
+// register registers a new instance with a fresh chain, its
+// intermediate serial and valid until notAfter.
+func (w *rkpWallet) register(t *testing.T, serial int64, notAfter time.Time) (string, testChain, error) {
+	t.Helper()
+	ch, raw := w.f.challenge(t, walletprovider.PurposeRegistration)
+	c := w.ca.chainUntil(t, serial, raw, notAfter)
+	id, err := w.f.client.Register(context.Background(), walletprovider.RegisterRequest{
+		Challenge: ch, RegistrationKey: &c.leafKey.PublicKey, Evidence: androidkey.Evidence(c.der),
+	})
+	return id, c, err
+}
+
+// attestInstanceKey asks for a Wallet Attestation for a new instance
+// key, with a fresh chain, its intermediate serial and valid until
+// notAfter.
+func (w *rkpWallet) attestInstanceKey(t *testing.T, serial int64, notAfter time.Time) (testChain, error) {
+	t.Helper()
+	ch, raw := w.f.challenge(t, walletprovider.PurposeInstance)
+	c := w.ca.chainUntil(t, serial, raw, notAfter)
+	_, err := w.f.client.WalletAttestation(context.Background(), w.registration.leafKey, walletprovider.WalletAttestationRequest{
+		InstanceID: w.id, ClientID: "wallet", InstanceKey: &c.leafKey.PublicKey,
+		Challenge: ch, Evidence: androidkey.Evidence(c.der),
+	})
+	return c, err
 }
 
 // renew asks for a Wallet Attestation for the recorded instance key,
@@ -223,7 +260,7 @@ func TestRecheckInstanceKeyChain(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w := newRKPWallet(t)
+			w := newRKPWallet(t, rkpOpts{})
 			if err := w.renew(); err != nil {
 				t.Fatalf("renewal before the status list names the chain: %v", err)
 			}
@@ -250,7 +287,7 @@ func TestRecheckInstanceKeyChain(t *testing.T) {
 	}
 
 	t.Run("the registration chain still refuses", func(t *testing.T) {
-		w := newRKPWallet(t)
+		w := newRKPWallet(t, rkpOpts{})
 		w.v.Revocation = revokingSerial(t, serialKey(w.registration.inter))
 		var refused *walletprovider.RefusedError
 		if err := w.renew(); !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
@@ -258,33 +295,6 @@ func TestRecheckInstanceKeyChain(t *testing.T) {
 		}
 		if got := w.f.state(t, w.id); got != walletprovider.StateRevoked {
 			t.Fatalf("the instance is %s, want revoked", got)
-		}
-	})
-
-	// A key recorded before the provider kept its chain's facts can't be
-	// judged, and is relied on as before.
-	t.Run("a recorded key without facts renews", func(t *testing.T) {
-		w := newRKPWallet(t)
-		ctx := context.Background()
-		recorded, err := w.f.keys.List(ctx, w.id, "", 2)
-		if err != nil || len(recorded) != 1 || len(recorded[0].EvidenceFacts) == 0 {
-			t.Fatalf("the instance's keys = %+v, %v; want one, with facts", recorded, err)
-		}
-		facts, ok, err := androidkey.InstanceKeyFacts(walletprovider.Instance{Evidence: walletprovider.EvidenceSummary{Kind: androidkey.EvidenceKind}}, recorded[0])
-		if err != nil || !ok || len(facts.Certificates) != 3 || facts.Certificates[1].Serial != serialKey(w.instance.inter) {
-			t.Fatalf("the instance key's facts = %+v, %t, %v; want its own chain's", facts, ok, err)
-		}
-		legacy := recorded[0]
-		legacy.EvidenceFacts = nil
-		if err := w.f.keys.Update(ctx, legacy); err != nil {
-			t.Fatal(err)
-		}
-		w.v.Revocation = revokingSerial(t, serialKey(w.instance.inter))
-		if err := w.renew(); err != nil {
-			t.Fatalf("renewal of a key recorded without facts: %v", err)
-		}
-		if got := w.f.state(t, w.id); got != walletprovider.StateActive {
-			t.Fatalf("the instance is %s, want active", got)
 		}
 	})
 }

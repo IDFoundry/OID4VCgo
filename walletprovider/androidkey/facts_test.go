@@ -49,6 +49,9 @@ func TestRecheck(t *testing.T) {
 	case len(f.Certificates) != 3 || f.Certificates[0].Serial != "1" || f.Certificates[1].Serial != "2" ||
 		f.Certificates[0].Issuer != c.inter.Subject.String():
 		t.Fatalf("certificates = %+v", f.Certificates)
+	case !f.ValidityRecorded() || !f.Certificates[1].NotAfter.Equal(c.inter.NotAfter) || !f.Certificates[1].NotBefore.Equal(c.inter.NotBefore) ||
+		f.Certificates[0].RootKey || f.Certificates[1].RootKey || !f.Certificates[2].RootKey:
+		t.Fatalf("certificates' validity = %+v", f.Certificates)
 	case string(f.RootKeyDigest) != string(rootDigest[:]):
 		t.Fatalf("root key digest = %x, want %x", f.RootKeyDigest, rootDigest)
 	case f.App == nil || f.App.Packages[0].Name != appPackage || f.OSPatchLevel == nil || *f.OSPatchLevel != 202509 ||
@@ -141,17 +144,12 @@ func TestRecheck(t *testing.T) {
 		})
 	}
 
-	// An instance without facts, from before they were kept or of
-	// another Kind, can't be judged, and is accepted.
+	// An instance of another Kind isn't this verifier's to judge.
 	strict := androidkey.EvidenceVerifier{Verifier: verifierFor(t, c)}
 	strict.Verifier.Revocation = revokingSerial(t, "2")
-	for _, other := range []walletprovider.Instance{
-		{ID: "old", Evidence: walletprovider.EvidenceSummary{Kind: androidkey.EvidenceKind}},
-		{ID: "ios", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}, EvidenceFacts: ev.Facts},
-	} {
-		if err := strict.Recheck(ctx, other); err != nil {
-			t.Fatalf("Recheck(%s) = %v", other.ID, err)
-		}
+	ios := walletprovider.Instance{ID: "ios", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}, EvidenceFacts: ev.Facts}
+	if err := strict.Recheck(ctx, ios); err != nil {
+		t.Fatalf("Recheck(ios) = %v", err)
 	}
 	// Facts that don't decode are the provider's failure, not a refusal.
 	in.EvidenceFacts = []byte("{")
@@ -161,9 +159,10 @@ func TestRecheck(t *testing.T) {
 }
 
 // TestRecheckInstanceKey: RecheckInstanceKey judges an instance key's
-// own Facts, not the instance's, accepts a key with none (recorded
-// before they were kept) or of an instance registered with another
-// Kind, and returns undecodable Facts as its own failure, not a refusal.
+// own Facts, not the instance's, refuses a key with none (recorded
+// before they were kept) unless AllowUncheckedLegacyEvidence, accepts
+// one of an instance registered with another Kind, and returns
+// undecodable Facts as its own failure, not a refusal.
 func TestRecheckInstanceKey(t *testing.T) {
 	ctx := context.Background()
 	c := newChain(t, goodSpec(t), chainOpts{serials: [3]int64{11, 12, 13}})
@@ -179,22 +178,28 @@ func TestRecheckInstanceKey(t *testing.T) {
 		t.Fatalf("RecheckInstanceKey = %v, want it accepted", err)
 	}
 	v.Revocation = revokingSerial(t, serialKey(c.inter))
-	if err := e.Recheck(ctx, in); err != nil {
-		t.Fatalf("Recheck of an instance without facts = %v, want it accepted", err)
-	}
 	if err := e.RecheckInstanceKey(ctx, in, k); !errors.Is(err, walletprovider.ErrEvidenceRevoked) || !errors.Is(err, androidkey.ErrRevoked) {
 		t.Fatalf("RecheckInstanceKey of a revoked chain = %v, want ErrEvidenceRevoked", err)
 	}
-	for name, tc := range map[string]struct {
-		in walletprovider.Instance
-		k  walletprovider.InstanceKey
-	}{
-		"no facts":     {in, walletprovider.InstanceKey{Thumbprint: "tp", InstanceID: "i"}},
-		"another Kind": {walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}}, k},
-	} {
-		if err := e.RecheckInstanceKey(ctx, tc.in, tc.k); err != nil {
-			t.Fatalf("%s: RecheckInstanceKey = %v, want it accepted", name, err)
+	// The instance, and a key, without facts can't be judged: refused,
+	// with neither revocation verdict, unless the operator allows them.
+	noFacts := walletprovider.InstanceKey{Thumbprint: "tp", InstanceID: "i"}
+	legacy := map[string]func(androidkey.EvidenceVerifier) error{
+		"Recheck":            func(e androidkey.EvidenceVerifier) error { return e.Recheck(ctx, in) },
+		"RecheckInstanceKey": func(e androidkey.EvidenceVerifier) error { return e.RecheckInstanceKey(ctx, in, noFacts) },
+	}
+	for name, recheck := range legacy {
+		if err := recheck(e); !errors.Is(err, walletprovider.ErrEvidenceRejected) || !errors.Is(err, androidkey.ErrLegacyFacts) ||
+			errors.Is(err, walletprovider.ErrEvidenceRevoked) {
+			t.Fatalf("%s without facts = %v, want ErrLegacyFacts refused", name, err)
 		}
+		if err := recheck(androidkey.EvidenceVerifier{Verifier: v, AllowUncheckedLegacyEvidence: true}); err != nil {
+			t.Fatalf("%s without facts, allowed = %v, want it accepted", name, err)
+		}
+	}
+	ios := walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}}
+	if err := e.RecheckInstanceKey(ctx, ios, k); err != nil {
+		t.Fatalf("RecheckInstanceKey of another Kind's instance = %v, want it accepted", err)
 	}
 	k.EvidenceFacts = []byte("{")
 	err = e.RecheckInstanceKey(ctx, in, k)

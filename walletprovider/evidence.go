@@ -235,14 +235,20 @@ type EvidenceRechecker interface {
 	// Recheck checks in's registration evidence again, from what Verify
 	// reported of it (Instance.EvidenceFacts; empty for an instance
 	// registered before the provider kept them, which it then can't
-	// check, and should accept). It returns nil to accept the instance,
+	// check: it may accept such an instance, or refuse it, for the
+	// wallet to register again, as androidkey's does unless told to
+	// accept it). It returns nil to accept the instance,
 	// an error wrapping ErrPolicy or ErrEvidenceRejected to refuse it,
 	// and any other error when it couldn't check: the request then
 	// fails as the provider's own failure. A refusal because the
 	// evidence's issuer has revoked or suspended its attestation wraps
 	// ErrEvidenceRevoked or ErrEvidenceSuspended too, and the provider
 	// revokes or suspends the instance; any other refusal only refuses
-	// the request, since the operator can undo what caused it.
+	// the request, since the operator can undo what caused it, or, for
+	// evidence past its lifetime (an expired certificate), the wallet
+	// can register again with fresh evidence: such a refusal wraps
+	// ErrEvidenceExpired too, and the provider answers it as
+	// ErrRegistrationExpired (registration_expired).
 	Recheck(ctx context.Context, in Instance) error
 }
 
@@ -269,12 +275,17 @@ type InstanceKeyRechecker interface {
 	// (InstanceKey.EvidenceFacts), for in, the instance k belongs to.
 	// k's EvidenceFacts are empty for a key recorded before the provider
 	// kept them (OID4VCgo v0.80.0 and before), or by a verifier that
-	// reports none; the provider then relies on the record as before,
-	// and a rechecker should accept it. Its errors are read as
+	// reports none; a rechecker may accept such a record, for the
+	// provider to rely on as before, or refuse it, for the wallet to
+	// attest a new instance key with fresh evidence, as androidkey's
+	// does unless told to accept it. Its errors are read as
 	// Recheck's are: an error wrapping ErrPolicy or ErrEvidenceRejected
 	// refuses the request, and, wrapping ErrEvidenceRevoked or
 	// ErrEvidenceSuspended too, revokes or suspends the whole instance —
 	// the device's attestation was withdrawn, not only the key's — and
 	// any other error fails the request as the provider's own failure.
+	// A refusal fresh evidence would fix wraps ErrEvidenceExpired too,
+	// and the provider answers it as ErrInstanceKeyExpired
+	// (instance_key_expired): the wallet attests a new instance key.
 	RecheckInstanceKey(ctx context.Context, in Instance, k InstanceKey) error
 }

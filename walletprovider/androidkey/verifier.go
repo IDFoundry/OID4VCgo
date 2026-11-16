@@ -274,11 +274,17 @@ func (v *Verifier) anchor(certs []*x509.Certificate) (*x509.Certificate, error) 
 	}
 	for i, c := range certs {
 		if !within(c, now) && !bytes.Equal(c.RawSubjectPublicKeyInfo, root.RawSubjectPublicKeyInfo) {
-			return nil, fail(ErrCertificateValidity, "certificate %d is valid from %s to %s, not at %s", i,
-				c.NotBefore.UTC().Format(time.RFC3339), c.NotAfter.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
+			return nil, outsideValidity(i, c.NotBefore, c.NotAfter, now)
 		}
 	}
 	return root, nil
+}
+
+// outsideValidity is the error for certificate i, valid from notBefore
+// to notAfter, and not at now.
+func outsideValidity(i int, notBefore, notAfter, now time.Time) error {
+	return fail(ErrCertificateValidity, "certificate %d is valid from %s to %s, not at %s", i,
+		notBefore.UTC().Format(time.RFC3339), notAfter.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 }
 
 // roots are the configured roots: Roots, or Google's.

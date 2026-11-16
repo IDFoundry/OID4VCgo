@@ -78,9 +78,10 @@ type Instance struct {
 	// evidence (VerifiedEvidence.Facts), in its own format: decode
 	// androidkey's with androidkey.InstanceFacts, to find the instances
 	// a revoked certificate or a vulnerable patch level taints
-	// (Provider.RevokeWhere). Empty when the verifier reported none, or
-	// for an instance registered before the provider kept them (v0.75.3
-	// and before).
+	// (Provider.RevokeWhere), and those whose chain expires soon
+	// (androidkey.Facts.Expiry). Empty when the verifier reported none,
+	// or for an instance registered before the provider kept them
+	// (v0.75.3 and before).
 	EvidenceFacts []byte
 
 	// Counter is the instance's signature counter (App Attest): the last

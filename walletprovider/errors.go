@@ -34,6 +34,30 @@ var (
 	ErrEvidenceRevoked   = errors.New("walletprovider: evidence revoked by its issuer")
 	ErrEvidenceSuspended = errors.New("walletprovider: evidence suspended by its issuer")
 
+	// ErrEvidenceExpired: an EvidenceRechecker or InstanceKeyRechecker
+	// refuses kept evidence that fresh evidence would replace — evidence
+	// past its lifetime, such as an Android chain with a certificate
+	// past its validity period, or a record kept by an earlier version
+	// that can't be judged (androidkey.ErrLegacyFacts). A recheck error
+	// wrapping it also wraps ErrEvidenceRejected; the provider neither
+	// revokes nor suspends the instance, and refuses the request with
+	// ErrRegistrationExpired or ErrInstanceKeyExpired, for the wallet to
+	// know what to send fresh evidence for.
+	ErrEvidenceExpired = errors.New("walletprovider: evidence expired")
+
+	// ErrRegistrationExpired: the instance's registration evidence no
+	// longer passes its recheck for a reason fresh evidence would fix
+	// (ErrEvidenceExpired): the wallet must register again, as a new
+	// instance. Answered as registration_expired.
+	ErrRegistrationExpired = errors.New("walletprovider: the instance's registration evidence expired")
+
+	// ErrInstanceKeyExpired: a recorded instance key's own evidence no
+	// longer passes its recheck for a reason fresh evidence would fix
+	// (ErrEvidenceExpired), while the instance's registration does: the
+	// wallet must attest a new instance key, with fresh evidence.
+	// Answered as instance_key_expired.
+	ErrInstanceKeyExpired = errors.New("walletprovider: the instance key's evidence expired")
+
 	// ErrPolicy: the evidence verified, but the Policy refuses it.
 	ErrPolicy = errors.New("walletprovider: refused by policy")
 

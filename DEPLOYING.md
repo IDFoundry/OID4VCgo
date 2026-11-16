@@ -264,6 +264,51 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   them with `p.RevokeWhere(ctx, match, reason)`, `match` calling the
   adapter's `Recheck` or reading `androidkey.InstanceFacts` (a
   certificate serial, a patch level).
+- [ ] **Expect Android instances to re-attest.** The recheck also
+  judges each kept certificate's validity period, as `Verify` judges a
+  chain's, so an instance whose registration chain has a certificate
+  past its `NotAfter` gets nothing more until it registers again, and
+  an instance key whose own chain has expired until the wallet attests
+  a new instance key (the instance itself stays usable for that).
+  Attestation certificates Remote Key Provisioning issues live for
+  weeks, so on most current devices this is routine, not an incident:
+  the refusal is HTTP 403 `registration_expired` or
+  `instance_key_expired` (`walletprovider.ErrRegistrationExpired`,
+  `ErrInstanceKeyExpired`), which tells the wallet what to send fresh
+  evidence for; it wraps `androidkey.ErrCertificateValidity` and
+  `walletprovider.ErrEvidenceExpired`, reaches `OnRecheckRefused`, and
+  neither revokes nor suspends the instance. `androidkey.Facts.Expiry`
+  says when an instance's (`InstanceFacts`) or instance key's
+  (`InstanceKeyFacts`) chain expires.
+- [ ] **Records from before an upgrade: `AllowUncheckedLegacyEvidence`.**
+  An Android instance registered with v0.75.3 or before has no facts,
+  an instance key recorded with v0.80.0 or before has none, and facts
+  saved by v0.80.0 or before hold no validity periods: none can be
+  judged in full, and `androidkey.EvidenceVerifier` refuses them
+  (`androidkey.ErrLegacyFacts`; `registration_expired` or
+  `instance_key_expired`), so their wallets
+  must register again, or attest a new instance key. To give wallets
+  in the field time to, set `AllowUncheckedLegacyEvidence` for an
+  upgrade window: such records are then accepted, their expiry
+  unchecked, and whatever facts they hold still judged (root, status
+  list, policy). Before ending the window, find the instances still
+  affected (a `match` that records them and returns false only lists
+  them), and revoke them if you'd rather their live attestations read
+  `INVALID`:
+
+  ```go
+  legacy := func(in walletprovider.Instance) bool {
+  	f, ok, err := androidkey.InstanceFacts(in)
+  	return in.Evidence.Kind == androidkey.EvidenceKind && err == nil && (!ok || !f.ValidityRecorded())
+  }
+  // An instance's own facts only: an instance key recorded with
+  // v0.80.0 or before is refused on its own, and the wallet attests a
+  // new one.
+  n, err := p.RevokeWhere(ctx, legacy, "registered before evidence facts were kept in full")
+  ```
+
+  Leave the option unset outside the window; set it in development,
+  where a provider's stores may outlive its upgrades.
 - [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
   called with each refusal and the instance as stored afterwards
   (revoked, suspended or still active): alert on it, and revoke from
