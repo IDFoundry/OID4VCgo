@@ -44,50 +44,64 @@ const requestObjectMediaType = "application/oauth-authz-req+jwt"
 // one; a POST the Verifier fails to sign a Request Object for, 500
 // server_error.
 func (t *Transactions) RequestObjectHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		post := r.Method == http.MethodPost && t.cfg.RequestURIMethodPost
-		if r.Method != http.MethodGet && !post {
-			allow := http.MethodGet
-			if t.cfg.RequestURIMethodPost {
-				allow += ", " + http.MethodPost
-			}
-			w.Header().Set("Allow", allow)
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
+	return http.HandlerFunc(t.serveRequestObject)
+}
+
+// serveRequestObject answers r, a GET or request_uri POST, as
+// RequestObjectHandler documents.
+func (t *Transactions) serveRequestObject(w http.ResponseWriter, r *http.Request) {
+	post := r.Method == http.MethodPost && t.cfg.RequestURIMethodPost
+	if r.Method != http.MethodGet && !post {
+		allow := http.MethodGet
+		if t.cfg.RequestURIMethodPost {
+			allow += ", " + http.MethodPost
 		}
-		id := r.PathValue("id")
-		if id == "" {
-			id = path.Base(r.URL.Path)
+		w.Header().Set("Allow", allow)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		id = path.Base(r.URL.Path)
+	}
+	object, ok := t.requestObjectFor(w, r, id, post)
+	if !ok {
+		return
+	}
+	w.Header().Set(headerContentType, requestObjectMediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(headerCacheControl, cacheNoStore)
+	_, _ = w.Write([]byte(object)) // #nosec G705 -- a JWT this Verifier signed, served as application/oauth-authz-req+jwt with nosniff, never HTML
+}
+
+// requestObjectFor is the Request Object for id, fetched by r, a POST
+// if post, and true; or, having answered r with why not, false.
+func (t *Transactions) requestObjectFor(w http.ResponseWriter, r *http.Request, id string, post bool) (string, bool) {
+	var object string
+	var err error
+	if post {
+		fetch, status, description := readRequestURIPost(w, r)
+		if status != 0 {
+			writeRequestURIPostError(w, status, description)
+			return "", false
 		}
-		var object string
-		var err error
-		if post {
-			fetch, status, description := readRequestURIPost(w, r)
-			if status != 0 {
-				writeRequestURIPostError(w, status, description)
-				return
-			}
-			object, err = t.RequestObjectPost(r.Context(), id, fetch)
-		} else {
-			object, err = t.RequestObject(r.Context(), id)
-		}
-		var metadataErr *WalletMetadataError
-		switch {
-		case errors.As(err, &metadataErr):
-			writeRequestURIPostError(w, http.StatusBadRequest, metadataErr.Reason)
-			return
-		case errors.As(err, new(*serverFault)):
-			writeServerError(w)
-			return
-		case err != nil:
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set(headerContentType, requestObjectMediaType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set(headerCacheControl, cacheNoStore)
-		_, _ = w.Write([]byte(object)) // #nosec G705 -- a JWT this Verifier signed, served as application/oauth-authz-req+jwt with nosniff, never HTML
-	})
+		object, err = t.RequestObjectPost(r.Context(), id, fetch)
+	} else {
+		object, err = t.RequestObject(r.Context(), id)
+	}
+	var metadataErr *WalletMetadataError
+	switch {
+	case errors.As(err, &metadataErr):
+		writeRequestURIPostError(w, http.StatusBadRequest, metadataErr.Reason)
+		return "", false
+	case errors.As(err, new(*serverFault)):
+		writeServerError(w)
+		return "", false
+	case err != nil:
+		http.NotFound(w, r)
+		return "", false
+	}
+	return object, true
 }
 
 // maxRequestURIPostBytes bounds a request_uri POST's body: a

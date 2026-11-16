@@ -206,10 +206,9 @@ func (w *Wallet) postToken(
 	observer, _ := attestation.(AttestationChallengeObserver)
 	// At most three attempts: one retry after a DPoP nonce challenge,
 	// and one after an attestation challenge, in either order.
-	var nonce string
-	var nonceRetried, challengeRetried bool
+	var retry tokenRetry
 	for {
-		res, err := w.postTokenOnce(ctx, post, nonce)
+		res, err := w.postTokenOnce(ctx, post, retry.nonce)
 		if err != nil {
 			return nil, err
 		}
@@ -221,23 +220,40 @@ func (w *Wallet) postToken(
 		if res.status == http.StatusOK {
 			return res.body, nil
 		}
-		if dpopKey != nil && !nonceRetried {
-			if next := dpopNonceChallenge(res.status, res.header, res.body); next != "" {
-				nonce, nonceRetried = next, true
-				continue
-			}
-		}
-		if observer != nil && !challengeRetried && attestationChallenge(res.status, res.header, res.body) {
-			// The retry carries a DPoP nonce the response supplies, or
-			// else the one this attempt did.
-			if next := res.header.Get("DPoP-Nonce"); dpopKey != nil && next != "" {
-				nonce = next
-			}
-			challengeRetried = true
+		if retry.next(res, dpopKey, observer) {
 			continue
 		}
 		return nil, parseError(EndpointToken, res.status, res.body)
 	}
+}
+
+// tokenRetry is postToken's retry state: the DPoP nonce the next
+// attempt carries, and which challenges have been retried.
+type tokenRetry struct {
+	nonce                          string
+	nonceRetried, challengeRetried bool
+}
+
+// next reports whether res, a failed attempt's response, is retried,
+// readying r for the retry: once on a DPoP nonce challenge, with
+// dpopKey, and once on an attestation challenge, with observer.
+func (r *tokenRetry) next(res tokenHTTPResponse, dpopKey crypto.Signer, observer AttestationChallengeObserver) bool {
+	if dpopKey != nil && !r.nonceRetried {
+		if next := dpopNonceChallenge(res.status, res.header, res.body); next != "" {
+			r.nonce, r.nonceRetried = next, true
+			return true
+		}
+	}
+	if observer == nil || r.challengeRetried || !attestationChallenge(res.status, res.header, res.body) {
+		return false
+	}
+	// The retry carries a DPoP nonce the response supplies, or
+	// else the one this attempt did.
+	if next := res.header.Get("DPoP-Nonce"); dpopKey != nil && next != "" {
+		r.nonce = next
+	}
+	r.challengeRetried = true
+	return true
 }
 
 // attestationChallenge reports whether a Token Response asks for a retry

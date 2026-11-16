@@ -103,32 +103,51 @@ func (p Policy) validate() error {
 		return errors.New("Policy.Platforms needs at least one platform")
 	}
 	for name, pp := range p.Platforms {
-		if name == "" {
-			return errors.New("Policy.Platforms has an empty platform name")
-		}
-		if len(pp.SecurityLevels) == 0 {
-			return fmt.Errorf("Policy.Platforms[%q].SecurityLevels needs at least one level", name)
-		}
-		if slices.Contains(pp.SecurityLevels, "") {
-			return fmt.Errorf("Policy.Platforms[%q].SecurityLevels has an empty level", name)
+		if err := validatePlatform(name, pp); err != nil {
+			return err
 		}
 	}
 	if p.MaxKeys < 0 {
 		return fmt.Errorf("Policy.MaxKeys is %d, negative", p.MaxKeys)
 	}
 	for i, r := range p.KeyStorage {
-		switch {
-		case r.Platform == "" || r.SecurityLevel == "":
-			return fmt.Errorf("Policy.KeyStorage[%d] needs a Platform and a SecurityLevel", i)
-		case r.Binding != "" && r.Binding != KeyBindingAttested && r.Binding != KeyBindingAppAssertion:
-			return fmt.Errorf("Policy.KeyStorage[%d].Binding %q is unknown", i, r.Binding)
-		case len(r.KeyStorage) == 0 && len(r.UserAuthenticationLevels) == 0:
-			return fmt.Errorf("Policy.KeyStorage[%d] claims nothing", i)
-		case r.UserAuthentication == "" && len(r.UserAuthenticationLevels) > 0:
-			return fmt.Errorf("Policy.KeyStorage[%d] claims user_authentication without requiring any UserAuthentication of the key", i)
-		case slices.Contains(r.KeyStorage, "") || slices.Contains(r.UserAuthenticationLevels, ""):
-			return fmt.Errorf("Policy.KeyStorage[%d] lists an empty value", i)
+		if err := r.validate(i); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// validatePlatform refuses pp, Policy.Platforms[name], without a name
+// or without a security level, or with an empty one.
+func validatePlatform(name Platform, pp PlatformPolicy) error {
+	if name == "" {
+		return errors.New("Policy.Platforms has an empty platform name")
+	}
+	if len(pp.SecurityLevels) == 0 {
+		return fmt.Errorf("Policy.Platforms[%q].SecurityLevels needs at least one level", name)
+	}
+	if slices.Contains(pp.SecurityLevels, "") {
+		return fmt.Errorf("Policy.Platforms[%q].SecurityLevels has an empty level", name)
+	}
+	return nil
+}
+
+// validate refuses r, Policy.KeyStorage[i], if it's incomplete, of an
+// unknown binding, claims nothing or what it can't, or lists an empty
+// value.
+func (r KeyStorageRule) validate(i int) error {
+	switch {
+	case r.Platform == "" || r.SecurityLevel == "":
+		return fmt.Errorf("Policy.KeyStorage[%d] needs a Platform and a SecurityLevel", i)
+	case r.Binding != "" && r.Binding != KeyBindingAttested && r.Binding != KeyBindingAppAssertion:
+		return fmt.Errorf("Policy.KeyStorage[%d].Binding %q is unknown", i, r.Binding)
+	case len(r.KeyStorage) == 0 && len(r.UserAuthenticationLevels) == 0:
+		return fmt.Errorf("Policy.KeyStorage[%d] claims nothing", i)
+	case r.UserAuthentication == "" && len(r.UserAuthenticationLevels) > 0:
+		return fmt.Errorf("Policy.KeyStorage[%d] claims user_authentication without requiring any UserAuthentication of the key", i)
+	case slices.Contains(r.KeyStorage, "") || slices.Contains(r.UserAuthenticationLevels, ""):
+		return fmt.Errorf("Policy.KeyStorage[%d] lists an empty value", i)
 	}
 	return nil
 }

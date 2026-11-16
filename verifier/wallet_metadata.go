@@ -77,27 +77,14 @@ func (v *Verifier) fitWalletMetadata(raw []byte, query dcql.Query) (*walletFit, 
 	if err := strictjson.Unmarshal(raw, &m); err != nil || !bytes.HasPrefix(bytes.TrimLeft(raw, " \t\r\n"), []byte("{")) {
 		return nil, &WalletMetadataError{Reason: "wallet_metadata isn't a JSON object of the members OpenID4VP 1.0 §10 defines"}
 	}
-	if m.ClientIDPrefixesSupported != nil && !slices.Contains(*m.ClientIDPrefixesSupported, clientIDPrefixX509Hash) {
-		return nil, &WalletMetadataError{Reason: "client_id_prefixes_supported doesn't include x509_hash, this Verifier's Client Identifier Prefix"}
+	if err := v.checkWalletAlgorithms(m); err != nil {
+		return nil, err
 	}
-	if m.RequestObjectSigningAlgValuesSupported != nil && !slices.Contains(*m.RequestObjectSigningAlgValuesSupported, string(v.cfg.SigningAlg)) {
-		return nil, &WalletMetadataError{Reason: "request_object_signing_alg_values_supported doesn't include the algorithm this Verifier signs with"}
+	encValues, err := v.fitEncValues(m.AuthorizationEncryptionEncValues)
+	if err != nil {
+		return nil, err
 	}
-	if m.AuthorizationEncryptionAlgValues != nil && !slices.Contains(*m.AuthorizationEncryptionAlgValues, string(jwe.ECDHES)) {
-		return nil, &WalletMetadataError{Reason: "authorization_encryption_alg_values_supported doesn't include ECDH-ES"}
-	}
-	fit := &walletFit{encValues: v.cfg.EncValuesSupported}
-	if m.AuthorizationEncryptionEncValues != nil {
-		fit.encValues = nil
-		for _, enc := range v.cfg.EncValuesSupported {
-			if slices.Contains(*m.AuthorizationEncryptionEncValues, string(enc)) {
-				fit.encValues = append(fit.encValues, enc)
-			}
-		}
-		if len(fit.encValues) == 0 {
-			return nil, &WalletMetadataError{Reason: "authorization_encryption_enc_values_supported has none of the content encryption algorithms this Verifier decrypts"}
-		}
-	}
+	fit := &walletFit{encValues: encValues}
 	vpFormats, err := v.fitVPFormats(m.VPFormatsSupported)
 	if err != nil {
 		return nil, err
@@ -107,6 +94,42 @@ func (v *Verifier) fitWalletMetadata(raw []byte, query dcql.Query) (*walletFit, 
 		return nil, &WalletMetadataError{Reason: "vp_formats_supported leaves the request's credential queries no way to be answered"}
 	}
 	return fit, nil
+}
+
+// checkWalletAlgorithms refuses m if it lists client_id_prefixes_supported
+// without x509_hash, request_object_signing_alg_values_supported without
+// Config.SigningAlg, or authorization_encryption_alg_values_supported
+// without ECDH-ES.
+func (v *Verifier) checkWalletAlgorithms(m walletMetadata) error {
+	if m.ClientIDPrefixesSupported != nil && !slices.Contains(*m.ClientIDPrefixesSupported, clientIDPrefixX509Hash) {
+		return &WalletMetadataError{Reason: "client_id_prefixes_supported doesn't include x509_hash, this Verifier's Client Identifier Prefix"}
+	}
+	if m.RequestObjectSigningAlgValuesSupported != nil && !slices.Contains(*m.RequestObjectSigningAlgValuesSupported, string(v.cfg.SigningAlg)) {
+		return &WalletMetadataError{Reason: "request_object_signing_alg_values_supported doesn't include the algorithm this Verifier signs with"}
+	}
+	if m.AuthorizationEncryptionAlgValues != nil && !slices.Contains(*m.AuthorizationEncryptionAlgValues, string(jwe.ECDHES)) {
+		return &WalletMetadataError{Reason: "authorization_encryption_alg_values_supported doesn't include ECDH-ES"}
+	}
+	return nil
+}
+
+// fitEncValues is Config.EncValuesSupported narrowed to wallet, a
+// Wallet's authorization_encryption_enc_values_supported, refused if
+// that leaves none. A nil wallet narrows nothing.
+func (v *Verifier) fitEncValues(wallet *[]string) ([]jwe.Enc, error) {
+	if wallet == nil {
+		return v.cfg.EncValuesSupported, nil
+	}
+	var fitted []jwe.Enc
+	for _, enc := range v.cfg.EncValuesSupported {
+		if slices.Contains(*wallet, string(enc)) {
+			fitted = append(fitted, enc)
+		}
+	}
+	if len(fitted) == 0 {
+		return nil, &WalletMetadataError{Reason: "authorization_encryption_enc_values_supported has none of the content encryption algorithms this Verifier decrypts"}
+	}
+	return fitted, nil
 }
 
 // fitVPFormats is Config.VPFormatsSupported narrowed to wallet, a

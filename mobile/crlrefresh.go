@@ -154,21 +154,38 @@ func pointsFromRoots(points []crlPoint, roots []string, requireHTTPS bool) ([]cr
 	explicit := len(points)
 	for _, pemText := range roots {
 		for _, cert := range parseCertificates(pemCertificates(pemText)) {
-			if !cert.BasicConstraintsValid || !cert.IsCA || !bytes.Equal(cert.RawSubject, cert.RawIssuer) || cert.CheckSignatureFrom(cert) != nil {
+			if !isSelfSignedCA(cert) {
 				continue
 			}
-			for _, u := range cert.CRLDistributionPoints {
-				if !fetchableURL(u, requireHTTPS) {
-					continue
-				}
-				i := slices.IndexFunc(points, func(p crlPoint) bool { return p.url == u })
-				switch {
-				case i < 0:
-					points = append(points, crlPoint{url: u, issuer: cert})
-				case i >= explicit && !points[i].issuer.Equal(cert):
-					return nil, newError(CodeInvalidInput, fmt.Errorf("crl_distribution_points_from_roots: two roots, %q and %q, name %s: bind it in crl_distribution_points", points[i].issuer.Subject, cert.Subject, redactedURL(u)))
-				}
+			var err error
+			if points, err = addRootPoints(points, explicit, cert, requireHTTPS); err != nil {
+				return nil, err
 			}
+		}
+	}
+	return points, nil
+}
+
+// isSelfSignedCA reports whether cert is a CA certificate signed by its
+// own key.
+func isSelfSignedCA(cert *x509.Certificate) bool {
+	return cert.BasicConstraintsValid && cert.IsCA && bytes.Equal(cert.RawSubject, cert.RawIssuer) && cert.CheckSignatureFrom(cert) == nil
+}
+
+// addRootPoints adds to points, of which the first explicit are the
+// explicit ones, each fetchable CRL distribution point root names, as
+// pointsFromRoots does.
+func addRootPoints(points []crlPoint, explicit int, root *x509.Certificate, requireHTTPS bool) ([]crlPoint, error) {
+	for _, u := range root.CRLDistributionPoints {
+		if !fetchableURL(u, requireHTTPS) {
+			continue
+		}
+		i := slices.IndexFunc(points, func(p crlPoint) bool { return p.url == u })
+		switch {
+		case i < 0:
+			points = append(points, crlPoint{url: u, issuer: root})
+		case i >= explicit && !points[i].issuer.Equal(root):
+			return nil, newError(CodeInvalidInput, fmt.Errorf("crl_distribution_points_from_roots: two roots, %q and %q, name %s: bind it in crl_distribution_points", points[i].issuer.Subject, root.Subject, redactedURL(u)))
 		}
 	}
 	return points, nil
