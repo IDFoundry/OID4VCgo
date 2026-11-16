@@ -192,12 +192,16 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 # allocate prints a fresh index of list $1 (jwt or cwt).
-allocate() { curl -sSf --max-time 10 -X POST "$ADMIN/allocate?list=$1" | jq -er '.idx'; }
+allocate() {
+  local list="$1"
+  curl -sSf --max-time 10 -X POST "$ADMIN/allocate?list=$list" | jq -er '.idx'
+}
 # set_status sets index $2 of list $1 to status $3, as the issuer
 # suspends a credential.
 set_status() {
+  local list="$1" idx="$2" status="$3"
   curl -sSf --max-time 10 -X POST -H 'Content-Type: application/json' \
-    -d "$(jq -cn --arg l "$1" --argjson i "$2" --arg s "$3" '{list: $l, idx: $i, status: $s}')" "$ADMIN/status" >/dev/null
+    -d "$(jq -cn --arg l "$list" --argjson i "$idx" --arg s "$status" '{list: $l, idx: $i, status: $s}')" "$ADMIN/status" >/dev/null
 }
 # Each fixture credential its own index, valid: the credentials revoked
 # are OID4VCgo's issuer's (issued_cases), but for the suspended fixture
@@ -493,7 +497,10 @@ holder() {  # $1 name, $2 receive or present, $3 the store; then the step's flag
   fi
   [[ -s "result-issued-$name.json" ]] || echo '{"stage": "run", "error": "no result; see holder.log"}' > "result-issued-$name.json"
 }
-holder_why() { jq -r '"\(.stage): \(.error // "" | .[0:300])"' "result-issued-$1.json" 2>/dev/null || echo unreadable; }
+holder_why() {
+  local name="$1"
+  jq -r '"\(.stage): \(.error // "" | .[0:300])"' "result-issued-$name.json" 2>/dev/null || echo unreadable
+}
 
 # request_link is the transaction's request, as a same-device launch
 # hands it to the wallet.
@@ -887,8 +894,9 @@ issued_cases
 
 # present_walletflow is present, checking walletflow answered.
 present_walletflow() {  # present's arguments, its label starting walletflow-
+  local label="$1"
   present "$@"
-  if grep -q 'walletflow answered pid\.' "wallet-$1.txt"; then ok "walletflow answered the query"
+  if grep -q 'walletflow answered pid\.' "wallet-$label.txt"; then ok "walletflow answered the query"
   else bad "walletflow answered the query"; fi
 }
 

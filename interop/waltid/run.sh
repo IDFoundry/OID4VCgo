@@ -486,7 +486,8 @@ tamper() {  # $1 mode: the session's info in tamper-$1-info.json, the wallet's o
   session_info "$id" > "tamper-$mode-info.json"
 }
 tampered() {  # $1 mode: what was changed, Verifier2's answer and the session's status
-  echo "$(jq -c '.tampered | {changed, reply}' "tamper-$1.json" 2>/dev/null | head -c 400), session $(jq -r '.status' "tamper-$1-info.json" 2>/dev/null)"
+  local mode="$1"
+  echo "$(jq -c '.tampered | {changed, reply}' "tamper-$mode.json" 2>/dev/null | head -c 400), session $(jq -r '.status' "tamper-$mode-info.json" 2>/dev/null)"
 }
 tamper relay
 if jq -e '.stage == "done" and .tampered.changed == "nothing" and .tampered.reply.status == 200' tamper-relay.json >/dev/null \
@@ -498,7 +499,7 @@ else bad "pid, relayed: $(why tamper-relay.json); $(tampered relay)"; fi
 # and the session's status.
 refused_by_policy() {  # $1 mode, $2 the policy, $3 what was changed
   local mode="$1" policy="$2" changed="$3"
-  if jq -e --arg c "$changed" --arg p "Presentation validation failed. Failed VP policies: pid/dc+sd-jwt/$2" \
+  if jq -e --arg c "$changed" --arg p "Presentation validation failed. Failed VP policies: pid/dc+sd-jwt/$policy" \
       '.stage == "response" and (.tampered.changed | startswith($c)) and .tampered.reply.status == 400
        and (.tampered.reply.body | fromjson | .error == "invalid_request" and .error_description == $p)' \
       "tamper-$mode.json" >/dev/null 2>&1 \
@@ -607,14 +608,16 @@ for _ in $(seq 1 50); do
 done
 STATUS_POLICIES='{"vc_policies": ["signature", {"policy": "credential-status", "argument": {"discriminator": "ietf", "value": 0}}]}'
 status_session() {  # $1 the DCQL query: prints the session's id and link
+  local query="$1"
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --argjson q "$1" --argjson p "$STATUS_POLICIES" \
+    --data "$(jq -cn --argjson q "$query" --argjson p "$STATUS_POLICIES" \
       '{flow_type: "cross_device", core_flow: {signed_request: true, encrypted_response: true, dcql_query: $q, policies: $p}}')" \
     "http://127.0.0.1:$VERIFIER2_HTTP/verification-session/create" | jq -r '"\(.sessionId) \(.bootstrapAuthorizationRequestUrl)"'
 }
 status_offer() {  # $1 the configuration: an offer of it by OID4VCgo's second issuer
+  local config="$1"
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --arg c "$1" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}')" \
+    --data "$(jq -cn --arg c "$config" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}')" \
     "http://127.0.0.1:$STATUS_OFFERS_PORT/offers" | jq -r '.uri'
 }
 OUR_VCT="$(jq -r '.vct' issuer-files/driver.json)" OUR_DOCTYPE="$(jq -r '.doctype' issuer-files/driver.json)"
@@ -626,8 +629,8 @@ OUR_MDOC_QUERY="$(jq -cn --arg d "$OUR_DOCTYPE" --arg n "$OUR_NAMESPACE" '{crede
 # "revoked", has the issuer revoke it first. The wallet's outcome is in
 # status-$1.json, the session's info in status-$1-info.json.
 status_present() {  # $1 name, $2 configuration, $3 query, $4 "valid" or "revoked"
-  local name="$1" config="$2" query="$3" id link revoke=()
-  if [[ "$4" = revoked ]]; then revoke=(-revoke "http://127.0.0.1:$STATUS_OFFERS_PORT/status"); fi
+  local name="$1" config="$2" query="$3" want="$4" id link revoke=()
+  if [[ "$want" = revoked ]]; then revoke=(-revoke "http://127.0.0.1:$STATUS_OFFERS_PORT/status"); fi
   read -r id link <<< "$(status_session "$query")"
   # -crl-set none: OID4VCgo's issuer's CAs (setup-issuer's) publish no
   # CRL, so this wallet checks no certificate's revocation here.
@@ -646,13 +649,15 @@ status_present() {  # $1 name, $2 configuration, $3 query, $4 "valid" or "revoke
 # answered reports whether the wallet's response reached Verifier2: it
 # finished, or it gave up waiting for Verifier2's answer to it.
 answered() {
-  jq -e '.stage == "done" or (.stage == "response" and (.error | contains("may or may not have reached the verifier")))' "$1" >/dev/null 2>&1
+  local result="$1"
+  jq -e '.stage == "done" or (.stage == "response" and (.error | contains("may or may not have reached the verifier")))' "$result" >/dev/null 2>&1
 }
 # status_policy prints the credential-status policy's results in the
 # session status-$1-info.json: success, and error when it failed.
 status_policy() {
+  local name="$1"
   jq -c '[.. | objects | select((.policy? | type) == "object" and .policy.id? == "credential-status")
-    | {success, error: (.error // .result.error // null)}]' "status-$1-info.json" 2>/dev/null | head -c 600
+    | {success, error: (.error // .result.error // null)}]' "status-$name-info.json" 2>/dev/null | head -c 600
 }
 STATUS_REFUSAL='Status validation failed: expected one of [0], but got 1'
 for case in "pid eu.europa.ec.eudi.pid_vc_sd_jwt OUR_PID_QUERY" "mdoc eu.europa.ec.eudi.pid_mso_mdoc OUR_MDOC_QUERY"; do
@@ -715,7 +720,8 @@ authorize() {
 # $1, as a deployment's page does, its browser binding kept in the
 # cookie jar $2, and prints the openid4vp:// launch.
 tx_authorize() {
-  tls "$1" -c "$2" -o /dev/null -w '%{redirect_url}' "https://$HOST:$1/authorize"
+  local port="$1" jar="$2"
+  tls "$port" -c "$jar" -o /dev/null -w '%{redirect_url}' "https://$HOST:$port/authorize"
 }
 # tx_result saves the transactions verifier's page for the request
 # Wallet2 answered ($1, its answer): its redirect_to, the redirect_uri

@@ -54,7 +54,8 @@ start_wallet_provider() {  # $1 binary, $2 dir, $3 port, $4 admin port, $5 clien
 # one registered instance, trusting the TLS certificate the provider
 # wrote to $2; it logs to $2/agent.log. The caller takes its PID from $!.
 start_provider_agent() {  # $1 binary, $2 the provider's dir, $3 its port, $4 the agent's port
-  "$1" agent -provider "https://localhost:$3" -tls-cert "$2/tls-cert.pem" -addr "127.0.0.1:$4" > "$2/agent.log" 2>&1 &
+  local binary="$1" dir="$2" port="$3" agent_port="$4"
+  "$binary" agent -provider "https://localhost:$port" -tls-cert "$dir/tls-cert.pem" -addr "127.0.0.1:$agent_port" > "$dir/agent.log" 2>&1 &
 }
 
 # wait_ready waits for each URL to answer, failing the run if one
