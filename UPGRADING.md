@@ -9,8 +9,24 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## OID4VCWallet 0.39.0 → 0.40.0
 
-A release of the Swift and Kotlin libraries alone; the Go library and
-the gomobile ABI (15) are unchanged.
+Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 15.
+
+### A Wallet Provider's request for fresh evidence (Swift, Kotlin)
+
+`HttpWalletProvider` now forgets its registration on
+`registration_expired`, as on `instance_revoked`, registers again and
+sends the Wallet Attestation request once more. A refresh whose grant's
+instance key the provider no longer attests (`instance_key_expired`,
+`registration_expired`, or `instance_key_registered` after registering
+again) deletes the grant and its key and fails with `reissue_required`:
+issue the credential again. An app with its own Wallet Provider
+callbacks reports such a refusal as `[refused:code]`, as before, and
+forgets its registration on `registration_expired` itself.
+
+Update Android wallets to this release before their Wallet Provider
+refuses legacy or expired evidence (v0.81.0 below): an older wallet
+refused so fails every attestation until its app data is cleared.
 
 ### Configurations are grouped (Swift, Kotlin)
 
@@ -83,6 +99,85 @@ Two JSON configurations Go refused are now refused when they're
 decoded, before any call reaches Go: `development_roots` without
 `development`, and `require_mdl_signer_eku` set together with
 `accept_mdl_signer_without_eku`.
+
+## v0.80.0 → v0.81.0
+
+### Android Wallet Provider evidence past its validity (`walletprovider/androidkey`)
+
+`androidkey.EvidenceVerifier` now refuses, at every recheck, an
+instance or instance key whose kept attestation chain has a
+certificate outside its validity period. Remote Key Provisioning's
+certificates are short-lived, so this reaches wallets in the field
+within weeks. It also refuses records it can't judge in full: an
+instance registered with v0.75.3 or before, an instance key recorded
+with v0.80.0 or before, and facts saved by v0.80.0 or before.
+
+- **Wallet's answer:** `403 registration_expired` (the registration's
+  chain) or `403 instance_key_expired` (an instance key's), new codes.
+  The instance stays active: the wallet registers again or attests a
+  new instance key. `walletprovider.Client` returns
+  `ErrRegistrationExpired` and `ErrInstanceKeyExpired` for them
+  (`errors.Is`), and walletflow and OID4VCWallet 0.40.0 recover on
+  their own; older mobile wallets don't (see above).
+- **Upgrade window:** set `EvidenceVerifier.AllowUncheckedLegacyEvidence`
+  to keep accepting the legacy records, their expiry unchecked, while
+  wallets update. DEPLOYING.md shows how to find the instances still
+  affected before ending it. Leave it unset in a new deployment.
+- **Recheck refusals of your own:** an `EvidenceRechecker` or
+  `InstanceKeyRechecker` that wraps the new
+  `walletprovider.ErrEvidenceExpired` gets the same two codes instead
+  of `evidence_rejected`.
+
+### Instance keys rechecked (`walletprovider`)
+
+The provider now keeps the verifier's facts about each instance key's
+evidence (`InstanceKey.EvidenceFacts`) and rechecks them, through the
+new `InstanceKeyRechecker`, each time it relies on the key: a revoked
+certificate revokes the instance, a suspended one suspends it.
+`androidkey.EvidenceVerifier` implements it. A custom
+`InstanceKeyStore` must keep `EvidenceFacts`; `sqlstore`'s stores the
+whole record and needs no change.
+
+`appattest.EvidenceVerifier` is now an `EvidenceRechecker`: an instance
+whose App Attest key is a development key once `AllowDevelopment` is
+off, or whose app is no longer in `Apps`, is refused (`policy_refused`)
+but left active.
+
+### Deferred credentials keep their `credential_identifier` (`issuer`)
+
+`DeferredTransactionRecord.CredentialIdentifier` is new: a transaction
+requested by `credential_identifier` is answered only to a token that
+still authorizes that identifier. A custom `DeferredTransactionStore`
+must keep the field; `sqlstore`'s stores the whole record. A record
+saved before the upgrade keeps the configuration check.
+
+### A wallet's default SD-JWT VC issuer check (`wallet`, `walletflow`, mobile)
+
+With no `IssuerLeafPolicy` (`issuer_require_eku` in the mobile
+configuration), a wallet now refuses an SD-JWT VC whose issuer
+certificate a Verifier refuses by default
+(`verifier.DefaultSDJWTIssuerLeafPolicy`): one whose key usage doesn't
+allow digital signatures, that is an OCSP signer, whose extended key
+usage lists only other roles' purposes (TLS, code signing, email, time
+stamping, IPsec) or includes mdoc reader authentication, or whose
+every path has an intermediate restricted so. Set `IssuerLeafPolicy:
+verifier.AnyIssuerLeaf` to accept any chain-verified leaf again, for
+`IssuerRoots` that anchor issuers' certificates alone.
+
+### Role separation ignores opt-outs and defaults (`walletflow`)
+
+Outside development, `walletflow.New` refuses two roles' pools that may
+share a trust anchor unless each has a leaf policy telling its
+certificates apart. Setting an opt-out (`verifier.AnyIssuerLeaf`,
+`registration.AnyRegistrarLeaf`, `proximity.AnyDocumentSigner`,
+`issuer.AnyAttestationLeaf`, `statuslist.AnyListSigner`,
+`identifierlist.AnyListSigner`) or a role's default
+(`verifier.DefaultSDJWTIssuerLeafPolicy`,
+`registration.DefaultRegistrarLeafPolicy`,
+`issuer.DefaultAttestationLeafPolicy`) no longer passes that check. A
+`Config` that relied on one is refused with the existing "may share a
+trust anchor" error: separate the pools, or set a policy that requires
+the role's extended key usage.
 
 ## v0.79.0 → v0.80.0
 
