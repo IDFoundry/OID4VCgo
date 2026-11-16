@@ -100,6 +100,11 @@ func classifyCode(err error) error {
 		return newError(CodeNetwork, errors.New("the request timed out"))
 	case errors.Is(err, walletflow.ErrTLSPinMismatch):
 		return newError(CodeTLSPin, walletflow.ErrTLSPinMismatch)
+	case errors.Is(err, walletflow.ErrReissueRequired):
+		// Before a callback's error, which it may wrap: a Wallet
+		// Provider's refusal to attest a refresh grant's instance key
+		// again (instance_key_expired, …) means receiving it again.
+		return newError(CodeReissueRequired, err)
 	case errors.As(err, &mobileErr):
 		// A KeyStore or other callback's error, inside walletflow's
 		// context, with its detail: a Wallet Provider's error code.
@@ -126,8 +131,6 @@ func classifyCode(err error) error {
 		// Likewise: a selected credential was refreshed since the
 		// holder was shown it. Nothing was sent.
 		return newError(CodeInvalidSelection, walletflow.ErrCredentialChanged)
-	case errors.Is(err, walletflow.ErrReissueRequired):
-		return newError(CodeReissueRequired, err)
 	case errors.Is(err, walletflow.ErrRefreshInProgress):
 		// The app's other process is refreshing with the grant: retry
 		// once it's done.

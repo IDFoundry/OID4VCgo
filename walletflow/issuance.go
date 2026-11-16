@@ -1088,6 +1088,14 @@ func invalidNonce(err error) bool {
 // the Wallet Provider attest them together for nonce, for the
 // issuance's instance key (attestationInstanceKey): the issuer issues
 // one copy bound to each. A key created before a failure is deleted.
+//
+// The provider's refusal is returned as is. A refresh's Key Attestation
+// is for its grant's instance key, so RefreshCredential forgets the
+// grant when the refusal retires that key (retiredInstanceKey). A new
+// issuance's instance key is its own, and no grant has it yet: a
+// refusal such as registration_expired just fails the issuance, and the
+// next makes a new instance key (a native provider having forgotten its
+// registration, it registers again first).
 func (s *Issuance) attestedHolders(ctx context.Context, nonce string) ([]Key, string, error) {
 	instanceKey, err := s.attestationInstanceKey(ctx)
 	if err != nil {

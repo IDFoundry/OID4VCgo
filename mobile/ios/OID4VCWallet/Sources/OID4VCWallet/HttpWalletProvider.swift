@@ -68,9 +68,20 @@ import Foundation
 /// `invalid_signed_request`, …), which `localizedDescription` explains to
 /// the holder. On `instance_revoked`, it forgets the
 /// registration and deletes its registration key: the next Wallet
-/// Attestation registers the installation again. The revoked instance's
-/// instance keys stay its own (`instance_key_registered`), so a
-/// credential whose refresh needs one must be received again. On
+/// Attestation registers the installation again. On
+/// `registration_expired` — the provider no longer accepts the evidence
+/// the installation registered with, for a reason fresh evidence fixes —
+/// it forgets the registration likewise, and a Wallet Attestation
+/// registers again, with new keys and a new App Attest attestation, and
+/// asks once more; refused again, it fails. A Key Attestation refused so
+/// isn't asked again: its instance key is the old registration's, which
+/// a new one doesn't know (`unknown_instance_key`); the next issuance's
+/// Wallet Attestation registers again. The old instance's instance keys
+/// stay its own (`instance_key_registered`), so a credential whose
+/// refresh needs one must be received again: the wallet reports that
+/// refresh as `.reissueRequired`, and forgets its refresh grant, as it
+/// does on `instance_key_expired` (the instance key's own evidence
+/// expired: a new issuance makes a new instance key). On
 /// `instance_not_active` (suspended) it keeps the registration: tell the
 /// holder, as the provider may resume it. A signed request refused as
 /// `invalid_signed_request` isn't retried: check the device's clock, and
@@ -168,14 +179,24 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         let instance = try await registered()
         do {
             return try await walletAttestation(clientID: clientID, point: point, instance: instance)
-        } catch is AppAttestKeyLostError {
+        } catch let error where Self.registersAgain(error) {
             // Restored or reinstalled: forget the registration whose App
             // Attest key is gone — not one another call has made since —
             // register again, with a new App Attest key, and attest the
-            // (new) instance key under it.
-            try await forget(instance)
+            // (new) instance key under it. On registration_expired,
+            // signed(_:_:_:) forgot the registration already. Once: a
+            // second failure is thrown.
+            if error is AppAttestKeyLostError { try await forget(instance) }
             return try await walletAttestation(clientID: clientID, point: point, instance: try await registered())
         }
+    }
+
+    /// Whether a Wallet Attestation that failed with `error` registers
+    /// again and asks once more: the registration's App Attest key is
+    /// lost, or the provider no longer accepts the registration's
+    /// evidence (`registration_expired`).
+    private static func registersAgain(_ error: Error) -> Bool {
+        error is AppAttestKeyLostError || (error as? WalletProviderRefusedError)?.error == registrationExpired
     }
 
     private func walletAttestation(clientID: String, point: Data, instance: RegisteredInstance) async throws -> String {
@@ -371,15 +392,15 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     }
 
     /// Posts `body` to `path`, signed with `instance`'s registration key
-    /// over a fresh `request` challenge. On `instance_revoked`, forgets
-    /// the instance.
+    /// over a fresh `request` challenge. On `instance_revoked` or
+    /// `registration_expired`, forgets the instance.
     private func signed(_ instance: RegisteredInstance, _ path: String, _ body: [String: Any]) async throws -> [String: Any] {
         let challenge = try await challenge(Self.purposeRequest)
         do {
             return try await post(path, body, sign: { target, bytes in
                 try self.signRequest(instance, challenge: challenge.value, path: target, body: bytes)
             }, want: 200)
-        } catch let e as WalletProviderRefusedError where e.error == Self.instanceRevoked {
+        } catch let e as WalletProviderRefusedError where Self.forgetsRegistration.contains(e.error ?? "") {
             try await forget(instance)
             throw e
         }
@@ -469,6 +490,10 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     static let purposeRequest = "request"
 
     static let instanceRevoked = "instance_revoked"
+    static let registrationExpired = "registration_expired"
+    /// The refusals of a signed request that end the registration: it's
+    /// forgotten, and the next one registers again.
+    static let forgetsRegistration: Set<String> = [instanceRevoked, registrationExpired]
     static let instanceKeyRegistered = "instance_key_registered"
 
     /// The largest answer read, as the protocol's request limit.

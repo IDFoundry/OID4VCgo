@@ -49,6 +49,7 @@ private const val OK = "200 OK"
 private const val INSTANCE_KEY = "instance_key"
 private const val EVIDENCE = "evidence"
 private const val KEY_REGISTERED = "instance_key_registered"
+private const val REGISTRATION_EXPIRED = "registration_expired"
 private const val NETWORK = "[network]"
 
 /**
@@ -111,6 +112,9 @@ class HttpWalletProviderTest {
         /** An error to answer the next request to a path with: status, error. */
         val refuse = mutableMapOf<String, Pair<Int, String>>()
 
+        /** Errors to answer the next requests to a path with, one each, after [refuse]'s. */
+        val refuseEach = mutableMapOf<String, ArrayDeque<Pair<Int, String>>>()
+
         /** Changes the claims of the attestations issued. */
         var tamper: (MutableMap<String, JsonElement>) -> Unit = {}
 
@@ -127,7 +131,7 @@ class HttpWalletProviderTest {
             assertTrue(url.rawPath.startsWith(prefix))
             val o = json.parseToJsonElement(body.decodeToString()).jsonObject
             requests += path to o
-            refuse.remove(path)?.let { (status, error) -> return error(status, error) }
+            (refuse.remove(path) ?: refuseEach[path]?.removeFirstOrNull())?.let { (status, error) -> return error(status, error) }
             return when (path) {
                 CHALLENGE -> challenge(o)
                 INSTANCES -> register(o)
@@ -569,9 +573,99 @@ class HttpWalletProviderTest {
         assertTrue(e.message!!.contains("instance_revoked"))
         assertNull(s.registry.instance())
         assertNull(s.registrationKeys.publicKey(revoked.keyID))
+        // Not asked again, nor registered again, until the next request.
+        assertEquals(2, s.provider.count(WALLET_ATTESTATION))
+        assertEquals(1, s.provider.count(INSTANCES))
         // The next issuance registers afresh.
         s.walletAttestation(s.newInstanceKey())
         assertEquals("inst1", s.registry.instance()!!.instanceID)
+    }
+
+    @Test
+    fun registrationExpiredRegistersAgainAndAsksOnce() = runBlocking {
+        val s = Setup()
+        s.walletAttestation(s.newInstanceKey())
+        val expired = s.registry.instance()!!
+        s.provider.refuse[WALLET_ATTESTATION] = 403 to REGISTRATION_EXPIRED
+        val key = s.newInstanceKey()
+        val jwt = s.walletAttestation(key)
+        assertTrue(jwt.isNotEmpty())
+        // Forgotten, its key deleted; a new registration, with a new key,
+        // and the same request under it.
+        assertNull(s.registrationKeys.publicKey(expired.keyID))
+        val now = s.registry.instance()!!
+        assertEquals("inst1", now.instanceID)
+        assertNotEquals(expired.keyID, now.keyID)
+        assertEquals(2, s.provider.count(INSTANCES))
+        assertEquals(3, s.provider.count(WALLET_ATTESTATION))
+        assertEquals("inst1", s.provider.signedClaims.last()["sub"]!!.jsonPrimitive.content)
+        // The key's evidence went with it again, and the new instance recorded it.
+        assertTrue(EVIDENCE in s.provider.last(WALLET_ATTESTATION))
+        assertEquals("inst1", s.provider.instanceKeys.values.last())
+    }
+
+    @Test
+    fun registrationExpiredTwiceFails() = runBlocking {
+        val s = Setup()
+        s.walletAttestation(s.newInstanceKey())
+        s.provider.refuseEach[WALLET_ATTESTATION] = ArrayDeque(listOf(403 to REGISTRATION_EXPIRED, 403 to REGISTRATION_EXPIRED))
+        val e = runCatching { s.walletAttestation(s.newInstanceKey()) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.status == 403 && e.error == REGISTRATION_EXPIRED)
+        // One registration again, one request again, and no more.
+        assertEquals(2, s.provider.count(INSTANCES))
+        assertEquals(3, s.provider.count(WALLET_ATTESTATION))
+        // The second registration is forgotten too: the next issuance registers.
+        assertNull(s.registry.instance())
+        assertTrue(s.registrationKeys.pairs.isEmpty())
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals("inst2", s.registry.instance()!!.instanceID)
+    }
+
+    @Test
+    fun registrationExpiredAtARefreshLeavesTheInstanceKeyTheOldInstances() = runBlocking {
+        val s = Setup()
+        val recorded = s.newInstanceKey()
+        s.walletAttestation(recorded)
+        s.provider.now += 600 // the instance challenge expired: the key goes alone
+        s.provider.refuse[WALLET_ATTESTATION] = 403 to REGISTRATION_EXPIRED
+        val e = runCatching { s.walletAttestation(recorded) }.exceptionOrNull()
+        // Registered again, but the key is the expired instance's: the
+        // wallet's refresh then needs a new issuance.
+        assertTrue("$e", e is WalletProviderRefusedException && e.status == 409 && e.error == KEY_REGISTERED)
+        assertEquals("inst1", s.registry.instance()!!.instanceID)
+        assertEquals(3, s.provider.count(WALLET_ATTESTATION))
+    }
+
+    @Test
+    fun registrationExpiredAtAKeyAttestationForgetsWithoutAskingAgain() = runBlocking {
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
+        s.provider.refuse[KEY_ATTESTATION] = 403 to REGISTRATION_EXPIRED
+        val e = runCatching { s.keyAttestation(instance, listOf(s.newHolderKey())) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.error == REGISTRATION_EXPIRED)
+        assertEquals(1, s.provider.count(KEY_ATTESTATION))
+        assertEquals(1, s.provider.count(INSTANCES))
+        assertNull(s.registry.instance())
+        // The next issuance registers again.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals("inst1", s.registry.instance()!!.instanceID)
+    }
+
+    @Test
+    fun instanceKeyExpiredKeepsTheRegistration() = runBlocking {
+        val s = Setup()
+        val key = s.newInstanceKey()
+        s.walletAttestation(key)
+        val kept = s.registry.instance()!!
+        s.provider.refuse[WALLET_ATTESTATION] = 403 to "instance_key_expired"
+        val e = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+        assertTrue("$e", e is WalletProviderRefusedException && e.error == "instance_key_expired")
+        assertEquals(2, s.provider.count(WALLET_ATTESTATION))
+        assertEquals(kept.instanceID, s.registry.instance()!!.instanceID)
+        // A new instance key, with fresh evidence, is attested under it.
+        s.walletAttestation(s.newInstanceKey())
+        assertEquals(1, s.provider.count(INSTANCES))
     }
 
     @Test
