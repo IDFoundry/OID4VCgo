@@ -51,13 +51,13 @@ is a complete, working app on this package to compare against.
   ``WalletError/isRetryable`` says so. (<doc:HandlingErrors>)
 - Revocation, for every role whose roots you set: where your
   ecosystem's CAs publish CRLs, the role in
-  ``WalletConfiguration/Revocation/roles``, its CAs' CRLs in
-  ``WalletConfiguration/Revocation/crls``, and, for a certificate pinned in the
-  roots, its CA's certificate in ``WalletConfiguration/Revocation/crlIssuers``;
-  otherwise the role in ``WalletConfiguration/Revocation/declined``, a
+  ``RevocationChecking/roles``, its CAs' CRLs in
+  ``RevocationChecking/crls``, and, for a certificate pinned in the
+  roots, its CA's certificate in ``RevocationChecking/crlIssuers``;
+  otherwise the role in ``RevocationChecking/declined``, a
   deliberate decision. Fresh CRLs are fetched before the old ones
   expire: by ``Wallet/refreshCRLs()`` over
-  ``WalletConfiguration/Revocation/distributionPoints``, at foreground and in a
+  ``RevocationChecking/distributionPoints``, at foreground and in a
   `BGAppRefreshTask`, its ``CRLRefreshResult/crls`` kept for the next
   launch, or by the app and handed over with ``Wallet/setCRLs(_:)``.
   *Check:* `Wallet(...)` succeeds with your production configuration,

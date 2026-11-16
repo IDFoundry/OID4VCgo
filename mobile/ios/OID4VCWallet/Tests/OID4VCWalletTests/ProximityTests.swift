@@ -132,9 +132,7 @@ final class ProximityTests: XCTestCase {
         let keys = keyStore()
         let adapter = KeyStoreAdapter(keys)
         let readerSetup = try JSONDecoder().decode(ReaderSetup.self, from: Data(try OID4VC.call { env.env.proximityReader(adapter, error: $0) }.utf8))
-        var config = try env.configuration
-        config.verifiers.mdocReaderRoots = readerSetup.mdocReaderRoots
-        config.verifiers.mdocReaderRequireEKU = true
+        var config = try env.configuration(recognizing: readerSetup.mdocReaderRoots)
         config.verifiers.requireTrustedMdocReader = requireTrusted
         config.presentation.proximityDeviceAuth = deviceAuth
         let wallet = try Wallet(configuration: config, keys: adapter, credentials: CredentialStoreAdapter(InMemoryCredentialStore()),

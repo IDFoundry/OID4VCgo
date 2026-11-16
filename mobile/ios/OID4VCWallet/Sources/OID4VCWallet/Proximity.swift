@@ -798,47 +798,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     }
 
     /// How the reader's trust roles' certificates are checked for revocation.
-    public struct Revocation: Sendable {
-        /// The roles whose certificate chains must pass a CRL check against
-        /// `crls`. A role listed fails closed for any CA it has no current CRL
-        /// from, until `ProximityReader.setCRLs(_:)` supplies one.
-        public var roles: [RevocationRole]
-        /// The roles that decline checking revocation, for where something
-        /// else stands in for it. Outside `development`, each role must be in
-        /// `roles` or here; a role can't be in both.
-        public var declined: [RevocationRole]
-        /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
-        /// `roles` are checked against. Replace them at runtime with
-        /// `ProximityReader.setCRLs(_:)` as they expire.
-        public var crls: String
-        /// PEM certificates of the CAs that issued certificates pinned in the
-        /// roots, for a role in `roles`, as
-        /// ``WalletConfiguration/Revocation/crlIssuers``.
-        public var crlIssuers: String
-        /// Where `ProximityReader.refreshCRLs()` fetches the lists from, as
-        /// ``WalletConfiguration/Revocation/distributionPoints``.
-        public var distributionPoints: [CRLDistributionPoint]
-        /// Also fetches the distribution point each self-signed IACA in
-        /// `issuers.roots`, `issuers.rootsByDocType` (with `.issuer` or
-        /// `.status` in `roles`) and `crlIssuers` names for its own list.
-        public var distributionPointsFromRoots: Bool
-        /// Refuses plain `http` distribution points.
-        public var requireHTTPS: Bool
-
-        /// Revocation checking: every field has a default.
-        public init(roles: [RevocationRole] = [], declined: [RevocationRole] = [], crls: String = "",
-                    crlIssuers: String = "", distributionPoints: [CRLDistributionPoint] = [],
-                    distributionPointsFromRoots: Bool = false, requireHTTPS: Bool = false) {
-            self.roles = roles
-            self.declined = declined
-            self.crls = crls
-            self.crlIssuers = crlIssuers
-            self.distributionPoints = distributionPoints
-            self.distributionPointsFromRoots = distributionPointsFromRoots
-            self.requireHTTPS = requireHTTPS
-        }
-    }
-
+    public typealias Revocation = RevocationChecking<RevocationRole>
     /// A reader's trust role whose certificates can be checked for
     /// revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -923,21 +883,10 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
                 acceptMDLSignerWithoutEKU: try value(.acceptMDLSignerWithoutEKU, false)),
             readerAuthentication: keyID == nil && chain == nil ? nil : ReaderAuthentication(keyID: keyID ?? "", chain: chain ?? ""),
             maxClockSkewSeconds: try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds),
-            revocation: Revocation(
-                roles: try value(.revocation, []),
-                declined: try value(.noRevocationCheck, []),
-                crls: try value(.crls, ""),
-                crlIssuers: try value(.crlIssuers, ""),
-                distributionPoints: try value(.crlDistributionPoints, []),
-                distributionPointsFromRoots: try value(.crlDistributionPointsFromRoots, false),
-                requireHTTPS: try value(.crlRequireHTTPS, false)),
-            status: StatusLists(
-                maxBytes: try value(.statusMaxBytes, 0),
-                identifierListMaxBytes: try value(.identifierListMaxBytes, 0),
-                cacheMaxAgeSeconds: try value(.statusCacheMaxAgeSeconds, 0),
-                cacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir)),
+            revocation: try Revocation(decodingFrom: c),
+            status: try StatusLists(decodingFrom: c),
             statusCheck: try c.decodeIfPresent(StatusCheck.self, forKey: .statusCheck),
-            development: try Development.decode(c, development: .development, roots: .developmentRoots))
+            development: try Development.decode(c))
     }
 
     /// Encodes the configuration as its flat JSON: every option's key,
@@ -951,20 +900,10 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         try c.encodeIfPresent(readerAuthentication?.keyID, forKey: .readerKeyID)
         try c.encodeIfPresent(readerAuthentication?.chain, forKey: .readerChain)
         try c.encodeIfPresent(maxClockSkewSeconds, forKey: .maxClockSkewSeconds)
-        try c.encode(revocation.roles, forKey: .revocation)
-        try c.encode(revocation.declined, forKey: .noRevocationCheck)
-        try c.encode(revocation.crls, forKey: .crls)
-        try c.encode(revocation.crlIssuers, forKey: .crlIssuers)
-        try c.encode(revocation.distributionPoints, forKey: .crlDistributionPoints)
-        try c.encode(revocation.distributionPointsFromRoots, forKey: .crlDistributionPointsFromRoots)
-        try c.encode(revocation.requireHTTPS, forKey: .crlRequireHTTPS)
-        try c.encode(status.maxBytes, forKey: .statusMaxBytes)
-        try c.encode(status.identifierListMaxBytes, forKey: .identifierListMaxBytes)
-        try c.encode(status.cacheMaxAgeSeconds, forKey: .statusCacheMaxAgeSeconds)
-        try c.encodeIfPresent(status.cacheDir, forKey: .statusCacheDir)
+        try revocation.encode(into: &c)
+        try status.encode(into: &c)
         try c.encodeIfPresent(statusCheck, forKey: .statusCheck)
-        try c.encode(development != nil, forKey: .development)
-        try c.encode(development?.roots ?? "", forKey: .developmentRoots)
+        try Development.encode(development, into: &c)
     }
 }
 

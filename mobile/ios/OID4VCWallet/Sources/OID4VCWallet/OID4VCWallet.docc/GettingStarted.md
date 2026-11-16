@@ -124,8 +124,8 @@ makes no network requests. At launch, before anything else, sweep the
 Keychain of keys no credential uses: an issuance the app quit in the
 middle of leaves its keys behind. Each trust role whose roots you set
 needs a revocation choice: checked against the CRLs your app fetches
-(``WalletConfiguration/Revocation/roles``), or declined
-(``WalletConfiguration/Revocation/declined``); see <doc:GoingToProduction>.
+(``RevocationChecking/roles``), or declined
+(``RevocationChecking/declined``); see <doc:GoingToProduction>.
 
 ```swift
 /// The app's wallet, created once at launch.

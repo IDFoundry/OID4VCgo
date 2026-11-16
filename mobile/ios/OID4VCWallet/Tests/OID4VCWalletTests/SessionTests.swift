@@ -20,6 +20,15 @@ final class TestEnv: Sendable {
         get throws { try JSONDecoder().decode(WalletConfiguration.self, from: Data(env.configJSON().utf8)) }
     }
 
+    /// The configuration, recognizing only readers under `readerRoots`
+    /// with the reader authentication extended key usage.
+    func configuration(recognizing readerRoots: String) throws -> WalletConfiguration {
+        var config = try configuration
+        config.verifiers.mdocReaderRoots = readerRoots
+        config.verifiers.mdocReaderRequireEKU = true
+        return config
+    }
+
     func approve(_ url: URL) throws -> URL { URL(string: try OID4VC.call { env.approve(url.absoluteString, error: $0) })! }
 
     func request(format: String = "") throws -> (id: String, link: String) {

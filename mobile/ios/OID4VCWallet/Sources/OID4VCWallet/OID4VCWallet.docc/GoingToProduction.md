@@ -167,12 +167,12 @@ along with its Wallet Attestations (the Wallet Provider protocol's
   hosts you run: anyone who can hand the wallet an offer or a request
   can have it send a request to them.
 - To refuse certificates your ecosystem's CAs have revoked, list the
-  roles to check in ``WalletConfiguration/Revocation/roles`` and give their
-  CAs' CRLs (PEM `X509 CRL` blocks) in ``WalletConfiguration/Revocation/crls``. A
+  roles to check in ``RevocationChecking/roles`` and give their
+  CAs' CRLs (PEM `X509 CRL` blocks) in ``RevocationChecking/crls``. A
   role listed fails closed for any CA it has no current CRL from, so
   list only roles whose CAs publish CRLs. Every role whose roots you set
-  must be in ``WalletConfiguration/Revocation/roles`` or in
-  ``WalletConfiguration/Revocation/declined``, which declines checking
+  must be in ``RevocationChecking/roles`` or in
+  ``RevocationChecking/declined``, which declines checking
   it, or the wallet isn't made (`invalidInput`): decline only where
   something else stands in for revocation, such as certificates too
   short-lived to be worth revoking. ``WalletConfiguration/IssuerTrust/roots``
@@ -186,11 +186,11 @@ along with its Wallet Attestations (the Wallet Provider protocol's
   distribution point's issuer, or a CA certificate in the roots) that
   the CA didn't sign. Only lists such a CA signed are held to the
   older-list rule, so give an intermediate CA's certificate in
-  ``WalletConfiguration/Revocation/crlIssuers`` to have its lists checked too. A
+  ``RevocationChecking/crlIssuers`` to have its lists checked too. A
   certificate pinned in the roots, such as
   a Verifier's leaf in ``WalletConfiguration/VerifierTrust/roots``, is checked
   against its CA's CRL: give that CA's certificate in
-  ``WalletConfiguration/Revocation/crlIssuers``, or it's refused. A
+  ``RevocationChecking/crlIssuers``, or it's refused. A
   ``ProximityReader`` takes the same, for its document signers and
   status lists. ``Wallet/refreshCRLs()`` can do the fetching: see
   below.
@@ -198,9 +198,9 @@ along with its Wallet Attestations (the Wallet Provider protocol's
 ### Keeping revocation lists current
 
 Rather than fetching CRLs yourself, name the distribution points in
-``WalletConfiguration/Revocation/distributionPoints``, each with the
+``RevocationChecking/distributionPoints``, each with the
 certificate of the CA whose list it serves, or set
-``WalletConfiguration/Revocation/distributionPointsFromRoots`` to fetch the
+``RevocationChecking/distributionPointsFromRoots`` to fetch the
 points your roots' self-signed CAs (IACAs, say) name for their own
 lists. ``Wallet/refreshCRLs()`` then fetches each one, keeps every list
 its CA signed that is current and not older than the one held, and
@@ -211,7 +211,7 @@ refresh never makes things worse. Fetches go to public addresses only
 (outside `development`), and the private ones of
 ``WalletConfiguration/Network/allowedPrivateHosts``, over `http` or `https`: CRLs are signed, so
 distribution points are usually plain `http`;
-``WalletConfiguration/Revocation/requireHTTPS`` refuses those, where your CAs
+``RevocationChecking/requireHTTPS`` refuses those, where your CAs
 serve `https`. A ``ProximityReader`` has the same
 ``ProximityReader/refreshCRLs()``.
 
@@ -219,7 +219,7 @@ The SDK schedules nothing: an iOS app's process is suspended in the
 background. Refresh when the app comes to the foreground, once
 ``CRLRefreshResult/nextRefresh`` has passed, and in a
 `BGAppRefreshTask`, and keep ``CRLRefreshResult/crls`` to pass back as
-``WalletConfiguration/Revocation/crls`` at the next launch, so checks work before
+``RevocationChecking/crls`` at the next launch, so checks work before
 the first refresh and an older list is still refused after a restart.
 Register the task identifier under `BGTaskSchedulerPermittedIdentifiers`
 in `Info.plist`, and add `fetch` to `UIBackgroundModes`:

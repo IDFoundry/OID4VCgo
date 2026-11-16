@@ -51,9 +51,7 @@ final class MultiDocumentTests: XCTestCase {
         let keys = keyStore()
         let adapter = KeyStoreAdapter(keys)
         let readerSetup = try JSONDecoder().decode(ReaderSetup.self, from: Data(try OID4VC.call { env.env.proximityReader(adapter, error: $0) }.utf8))
-        var config = try env.configuration
-        config.verifiers.mdocReaderRoots = readerSetup.mdocReaderRoots
-        config.verifiers.mdocReaderRequireEKU = true
+        let config = try env.configuration(recognizing: readerSetup.mdocReaderRoots)
         let wallet = try Wallet(configuration: config, keys: adapter, credentials: CredentialStoreAdapter(InMemoryCredentialStore()),
                                 provider: env.env.provider(), agreement: KeyAgreementAdapter(keys))
         let offer = try OID4VC.call { env.env.multiDocumentOffer($0) }

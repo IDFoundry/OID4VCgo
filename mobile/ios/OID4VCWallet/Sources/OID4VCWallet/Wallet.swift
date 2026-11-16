@@ -207,56 +207,7 @@ public struct WalletConfiguration: Codable, Sendable {
     }
 
     /// How the trust roles' certificates are checked for revocation.
-    public struct Revocation: Sendable {
-        /// The trust roles whose certificate chains must pass a CRL check
-        /// against `crls`. A role listed fails closed for any CA it has no
-        /// current CRL from, until `Wallet.setCRLs(_:)` supplies one.
-        /// Outside `development`, each role whose roots are set must be
-        /// listed here or in `declined`, or the wallet isn't made
-        /// (`invalidInput`).
-        public var roles: [RevocationRole]
-        /// The trust roles that decline checking revocation, as an explicit
-        /// choice: only where something else stands in for it, such as
-        /// certificates too short-lived to be worth revoking. A role can't be
-        /// in both this and `roles`.
-        public var declined: [RevocationRole]
-        /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
-        /// in `roles` are checked against. Replace them at runtime with
-        /// `Wallet.setCRLs(_:)` as they expire.
-        public var crls: String
-        /// PEM certificates of the CAs that issued certificates pinned in the
-        /// roots (a leaf in `verifiers.roots`, say), for a role in
-        /// `roles`: a pinned certificate is checked against its CA's CRL,
-        /// verified with the CA's certificate from here. They aren't trust
-        /// anchors. Without its CA here, a pinned certificate that isn't
-        /// self-signed is refused.
-        public var crlIssuers: String
-        /// Where `Wallet.refreshCRLs()` fetches the lists from, each bound to
-        /// the CA whose list it serves.
-        public var distributionPoints: [CRLDistributionPoint]
-        /// Also fetches, in `Wallet.refreshCRLs()`, the distribution point
-        /// each self-signed CA certificate names for its own list (as an IACA
-        /// does), among `crlIssuers` and the roots of the roles in
-        /// `roles`.
-        public var distributionPointsFromRoots: Bool
-        /// Refuses plain `http` distribution points, and leaves them out of
-        /// `distributionPointsFromRoots`.
-        public var requireHTTPS: Bool
-
-        /// Revocation checking: every field has a default.
-        public init(roles: [RevocationRole] = [], declined: [RevocationRole] = [], crls: String = "",
-                    crlIssuers: String = "", distributionPoints: [CRLDistributionPoint] = [],
-                    distributionPointsFromRoots: Bool = false, requireHTTPS: Bool = false) {
-            self.roles = roles
-            self.declined = declined
-            self.crls = crls
-            self.crlIssuers = crlIssuers
-            self.distributionPoints = distributionPoints
-            self.distributionPointsFromRoots = distributionPointsFromRoots
-            self.requireHTTPS = requireHTTPS
-        }
-    }
-
+    public typealias Revocation = RevocationChecking<RevocationRole>
     /// The wallet's own HTTPS requests.
     public struct Network: Sendable {
         /// Pins hosts' certificates for the wallet's own HTTPS requests:
@@ -490,19 +441,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 mdocReaderRoots: try value(.mdocReaderRoots, ""),
                 mdocReaderRequireEKU: try value(.mdocReaderRequireEKU, false),
                 requireTrustedMdocReader: try value(.requireTrustedMdocReader, false)),
-            revocation: Revocation(
-                roles: try value(.revocation, []),
-                declined: try value(.noRevocationCheck, []),
-                crls: try value(.crls, ""),
-                crlIssuers: try value(.crlIssuers, ""),
-                distributionPoints: try value(.crlDistributionPoints, []),
-                distributionPointsFromRoots: try value(.crlDistributionPointsFromRoots, false),
-                requireHTTPS: try value(.crlRequireHTTPS, false)),
-            status: StatusLists(
-                maxBytes: try value(.statusMaxBytes, 0),
-                identifierListMaxBytes: try value(.identifierListMaxBytes, 0),
-                cacheMaxAgeSeconds: try value(.statusCacheMaxAgeSeconds, 0),
-                cacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir)),
+            revocation: try Revocation(decodingFrom: c),
+            status: try StatusLists(decodingFrom: c),
             network: Network(
                 tlsPins: try value(.tlsPins, [:]),
                 allowedPrivateHosts: try value(.allowedPrivateHosts, [])),
@@ -516,7 +456,7 @@ public struct WalletConfiguration: Codable, Sendable {
             presentation: PresentationOptions(
                 copyPolicy: try value(.copyPolicy, CopyPolicy.perPresentation),
                 proximityDeviceAuth: try value(.proximityDeviceAuth, ProximityDeviceAuth.signature)),
-            development: try Development.decode(c, development: .development, roots: .developmentRoots))
+            development: try Development.decode(c))
     }
 
     /// Encodes the configuration as its flat JSON, every option's key,
@@ -547,17 +487,8 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(verifiers.mdocReaderRoots, forKey: .mdocReaderRoots)
         try c.encode(verifiers.mdocReaderRequireEKU, forKey: .mdocReaderRequireEKU)
         try c.encode(verifiers.requireTrustedMdocReader, forKey: .requireTrustedMdocReader)
-        try c.encode(revocation.roles, forKey: .revocation)
-        try c.encode(revocation.declined, forKey: .noRevocationCheck)
-        try c.encode(revocation.crls, forKey: .crls)
-        try c.encode(revocation.crlIssuers, forKey: .crlIssuers)
-        try c.encode(revocation.distributionPoints, forKey: .crlDistributionPoints)
-        try c.encode(revocation.distributionPointsFromRoots, forKey: .crlDistributionPointsFromRoots)
-        try c.encode(revocation.requireHTTPS, forKey: .crlRequireHTTPS)
-        try c.encode(status.maxBytes, forKey: .statusMaxBytes)
-        try c.encode(status.identifierListMaxBytes, forKey: .identifierListMaxBytes)
-        try c.encode(status.cacheMaxAgeSeconds, forKey: .statusCacheMaxAgeSeconds)
-        try c.encodeIfPresent(status.cacheDir, forKey: .statusCacheDir)
+        try revocation.encode(into: &c)
+        try status.encode(into: &c)
         try c.encode(network.tlsPins, forKey: .tlsPins)
         try c.encode(network.allowedPrivateHosts, forKey: .allowedPrivateHosts)
         try c.encode(issuance.locales, forKey: .locales)
@@ -568,87 +499,12 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(issuance.proofKeyByIndex, forKey: .proofKeyByIndex)
         try c.encode(presentation.copyPolicy, forKey: .copyPolicy)
         try c.encode(presentation.proximityDeviceAuth, forKey: .proximityDeviceAuth)
-        try c.encode(development != nil, forKey: .development)
-        try c.encode(development?.roots ?? "", forKey: .developmentRoots)
+        try Development.encode(development, into: &c)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
     /// ASWebAuthenticationSession waits for.
     public var callbackScheme: String? { URL(string: redirectURI)?.scheme }
-}
-
-/// How `checkStatus` fetches and keeps status lists and mdoc identifier
-/// lists, for a ``WalletConfiguration`` or a
-/// ``ProximityReaderConfiguration``.
-public struct StatusLists: Sendable {
-    /// The largest status list `checkStatus` reads, in bytes; 0 means 1
-    /// MiB. Raise it for issuers whose lists are larger.
-    public var maxBytes: Int
-    /// The largest mdoc identifier list `checkStatus` reads, in bytes; 0
-    /// means 4 MiB.
-    public var identifierListMaxBytes: Int
-    /// How long `checkStatus` uses a status or identifier list it fetched
-    /// before revalidating it, in seconds: 0 means 5 minutes, at most a
-    /// day, and never past the list's own `ttl` or `exp`. Longer means
-    /// fewer requests, and a revocation seen that much later.
-    public var cacheMaxAgeSeconds: Int
-    /// Where `checkStatus` keeps the lists it verified across launches: a
-    /// launch then asks each list's server whether the list it kept is
-    /// current, a `304 Not Modified` rather than the list, and never uses
-    /// one the server hasn't confirmed. The lists are authenticated with
-    /// a key the library makes and keeps in the Keychain, so one anyone
-    /// else wrote to the directory is dropped. Nil, the default, keeps
-    /// them in `oid4vcwallet-status-lists` in the app's Caches directory,
-    /// with complete file protection, or in memory only when that key
-    /// can't be had or the directory made, and on macOS; an absolute
-    /// path, the app's own, keeps them there, with the protection the
-    /// app gives it; empty keeps them in memory only. The directory shows
-    /// whoever can read it which status lists the wallet checks (their
-    /// URIs, so the issuers of its credentials, not which entries), the
-    /// lists themselves, and when each was last checked. A check while
-    /// the device is locked can't read this directory under complete
-    /// protection, and with ``FileCredentialStore``'s default complete
-    /// protection it can't read the credential either: it fails as
-    /// `.platform`. Check status when the app comes to the foreground.
-    public var cacheDir: String?
-
-    /// Status list options: every field has a default.
-    public init(maxBytes: Int = 0, identifierListMaxBytes: Int = 0, cacheMaxAgeSeconds: Int = 0, cacheDir: String? = nil) {
-        self.maxBytes = maxBytes
-        self.identifierListMaxBytes = identifierListMaxBytes
-        self.cacheMaxAgeSeconds = cacheMaxAgeSeconds
-        self.cacheDir = cacheDir
-    }
-}
-
-/// A development configuration, for a ``WalletConfiguration`` or a
-/// ``ProximityReaderConfiguration``: set, it relaxes what production
-/// requires, as each configuration's `development` says. Never ship an
-/// app with it set.
-public struct Development: Sendable {
-    /// PEM certificates the HTTPS requests and CRL fetches trust besides
-    /// the system's: a development service's own CA. Empty: only the
-    /// system's.
-    public var roots: String
-
-    /// Development, trusting `roots` besides the system's certificates.
-    public init(roots: String = "") {
-        self.roots = roots
-    }
-
-    /// The flat `development` and `development_roots` keys' value: nil
-    /// unless `development` is true. Roots without `development` are
-    /// refused, as the library refuses them.
-    static func decode<Key: CodingKey>(_ c: KeyedDecodingContainer<Key>, development: Key, roots: Key) throws -> Development? {
-        let roots = try c.decodeIfPresent(String.self, forKey: roots) ?? ""
-        guard try c.decodeIfPresent(Bool.self, forKey: development) ?? false else {
-            if !roots.isEmpty {
-                throw DecodingError.dataCorruptedError(forKey: development, in: c, debugDescription: "development_roots is set without development")
-            }
-            return nil
-        }
-        return Development(roots: roots)
-    }
 }
 
 /// An image the issuer names for display: an https URL or a data: image
