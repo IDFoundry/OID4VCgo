@@ -69,26 +69,7 @@ internal class CombinedTransport(
     @Volatile private var chosen: ProximityTransport? = null
 
     override suspend fun connect(): Unit = coroutineScope {
-        val qrJob = qr?.let { transport -> launch {
-            try {
-                ProximityDiagnostics.event("QR offer starting")
-                transport.connect()
-                if (!arbiter.select(false)) transport.close()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                transport.close()
-                // Bluetooth off: the QR code shown is dead, and an NFC
-                // handover to BLE can't work either. Only NFC data
-                // retrieval goes on without it.
-                if (e is ProximityTransportException && e.bluetoothUnavailable && !arbiter.nfcData) {
-                    ProximityDiagnostics.event("QR offer failed: Bluetooth is off; ending the session")
-                    throw e
-                }
-                // A failed QR offer must not break NFC-only retrieval.
-                ProximityDiagnostics.event("QR offer failed; NFC remains available")
-            }
-        } }
+        val qrJob = qr?.let { transport -> launch { offerQR(transport) } }
         try {
             if (arbiter.await() == SelectedEngagement.QR) {
                 qrJob?.join()
@@ -103,6 +84,32 @@ internal class CombinedTransport(
             }
         } finally {
             qrJob?.cancelAndJoin()
+        }
+    }
+
+    /**
+     * Connects the QR [transport] and selects QR, closing it when NFC
+     * was selected first. A failure ends the session only with Bluetooth
+     * off and no NFC data retrieval to go on with.
+     */
+    private suspend fun offerQR(transport: ProximityTransport) {
+        try {
+            ProximityDiagnostics.event("QR offer starting")
+            transport.connect()
+            if (!arbiter.select(false)) transport.close()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            transport.close()
+            // Bluetooth off: the QR code shown is dead, and an NFC
+            // handover to BLE can't work either. Only NFC data
+            // retrieval goes on without it.
+            if (e is ProximityTransportException && e.bluetoothUnavailable && !arbiter.nfcData) {
+                ProximityDiagnostics.event("QR offer failed: Bluetooth is off; ending the session")
+                throw e
+            }
+            // A failed QR offer must not break NFC-only retrieval.
+            ProximityDiagnostics.event("QR offer failed; NFC remains available")
         }
     }
 

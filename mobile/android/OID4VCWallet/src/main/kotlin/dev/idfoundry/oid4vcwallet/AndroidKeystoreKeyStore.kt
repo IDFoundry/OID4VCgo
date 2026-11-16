@@ -321,12 +321,7 @@ public class AndroidKeystoreKeyStore(
      * TEE, as [StrongBox] says.
      */
     override fun createKey(purpose: KeyPurpose, attestationChallenge: ByteArray?): String {
-        if (attestationChallenge != null && (attestationChallenge.isEmpty() || attestationChallenge.size > MAX_ATTESTATION_CHALLENGE)) {
-            throw StoreException("an attestation challenge must be 1 to $MAX_ATTESTATION_CHALLENGE bytes, not ${attestationChallenge.size}")
-        }
-        if (options.strongBox == StrongBox.REQUIRED && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            throw StoreException("StrongBox needs API 28")
-        }
+        checkCreatable(attestationChallenge)
         val id = UUID.randomUUID().toString()
         val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, PROVIDER)
         val agree = purpose == KeyPurpose.HOLDER && options.holderKeyAgreement
@@ -346,6 +341,19 @@ public class AndroidKeystoreKeyStore(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && e is StrongBoxUnavailableException) noStrongBox = true
         }
         throw failure ?: StoreException("no key storage to try")
+    }
+
+    /**
+     * Throws when [createKey] can't try at all: an [attestationChallenge]
+     * outside 1 to 128 bytes, or [StrongBox.REQUIRED] below API 28.
+     */
+    private fun checkCreatable(attestationChallenge: ByteArray?) {
+        if (attestationChallenge != null && (attestationChallenge.isEmpty() || attestationChallenge.size > MAX_ATTESTATION_CHALLENGE)) {
+            throw StoreException("an attestation challenge must be 1 to $MAX_ATTESTATION_CHALLENGE bytes, not ${attestationChallenge.size}")
+        }
+        if (options.strongBox == StrongBox.REQUIRED && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            throw StoreException("StrongBox needs API 28")
+        }
     }
 
     /**

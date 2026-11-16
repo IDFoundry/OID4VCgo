@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +85,7 @@ import dev.idfoundry.oid4vcwallet.ProximityPresentation
 import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderIdentity
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
+import dev.idfoundry.oid4vcwallet.VerifiedMdoc
 import dev.idfoundry.oid4vcwallet.WalletException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -580,68 +582,90 @@ private fun ReaderOutcome(
 ) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         when (state) {
-            is ProximityReaderSession.State.Verified -> {
-                val verified = state.documents
-                item {
-                    Row(Modifier.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (verified.size > 1) "Verified ${verified.size} documents" else "Verified",
-                            style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(READER_OUTCOME),
-                        )
-                    }
-                }
-                for ((n, v) in verified.withIndex()) {
-                    if (verified.size > 1) item { Text(v.doctype, Modifier.padding(top = 8.dp).testTag("reader-document"), fontWeight = FontWeight.SemiBold) }
-                    val asked = preset?.elementsFor(v.doctype).orEmpty()
-                    for ((namespace, elements) in v.claims) {
-                        val o = elements as? JsonObject ?: continue
-                        for ((identifier, value) in o) item { ReaderClaim(identifier, value) }
-                        // What was asked for and withheld.
-                        val missing = asked[namespace].orEmpty().filter { it !in o }
-                        if (missing.isNotEmpty()) item { Labeled("Not shared", missing.joinToString { elementLabel(it) }) }
-                    }
-                    item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
-                    item { Labeled("Document", v.doctype) }
-                    if (n == 0) item { ReaderDataTransport(usesNfcData, mode) }
-                    item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
-                    item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
-                    item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
-                    v.statusList?.let { s ->
-                        item { Labeled("Status list", "${v.status?.let(::statusWord) ?: "not checked"}: ${s.uri} #${s.index}") }
-                    }
-                    item {
-                        Labeled(
-                            "Issuer certificate",
-                            if (checksIssuerRevocation) "not revoked (checked against its CA's revocation list)" else "revocation not checked",
-                            Modifier.testTag("reader-issuer-revocation"),
-                        )
-                    }
-                }
-                // Asked for and not shared at all: the holder may share some documents and not others.
-                val absent = preset?.documents.orEmpty().map { it.docType }.filter { dt -> verified.none { it.doctype == dt } }
-                if (absent.isNotEmpty()) item { Labeled("Not shared", absent.joinToString(), Modifier.testTag("reader-absent")) }
-            }
+            is ProximityReaderSession.State.Verified -> verifiedItems(state.documents, preset, usesNfcData, mode, checksIssuerRevocation)
             ProximityReaderSession.State.Declined -> item { Text("The holder declined.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
             ProximityReaderSession.State.Cancelled -> item { Text("Cancelled.", Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME)) }
             is ProximityReaderSession.State.Failed -> item {
-                val e = state.error
-                Text(
-                    when (e) {
-                        is ProximityException -> e.description
-                        // A revoked document signer, or no current list to
-                        // tell, says so; anything else, the error.
-                        is WalletException -> "Not verified: ${WalletModel.revocationReason(e) ?: WalletModel.describe(e)}"
-                        else -> e.toString()
-                    },
-                    Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME), color = Color(0xFFC62828),
-                )
+                Text(failureText(state.error), Modifier.padding(vertical = 24.dp).testTag(READER_OUTCOME), color = Color(0xFFC62828))
             }
             else -> {}
         }
         item { Button(onDone, Modifier.padding(vertical = 16.dp).testTag("reader-done")) { Text("Done") } }
     }
+}
+
+/** [ReaderOutcome]'s items for verified [documents]: a heading, each document, and what wasn't shared at all. */
+private fun LazyListScope.verifiedItems(
+    documents: List<VerifiedMdoc>,
+    preset: ReaderPreset?,
+    usesNfcData: Boolean,
+    mode: ProximityBLEMode?,
+    checksIssuerRevocation: Boolean,
+) {
+    item {
+        Row(Modifier.padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF2E7D32))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (documents.size > 1) "Verified ${documents.size} documents" else "Verified",
+                style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(READER_OUTCOME),
+            )
+        }
+    }
+    for ((n, v) in documents.withIndex()) {
+        if (documents.size > 1) item { Text(v.doctype, Modifier.padding(top = 8.dp).testTag("reader-document"), fontWeight = FontWeight.SemiBold) }
+        claimItems(v, preset?.elementsFor(v.doctype).orEmpty())
+        documentItems(v, n == 0, usesNfcData, mode, checksIssuerRevocation)
+    }
+    // Asked for and not shared at all: the holder may share some documents and not others.
+    val absent = preset?.documents.orEmpty().map { it.docType }.filter { dt -> documents.none { it.doctype == dt } }
+    if (absent.isNotEmpty()) item { Labeled("Not shared", absent.joinToString(), Modifier.testTag("reader-absent")) }
+}
+
+/** Verified document [v]'s elements, by namespace, each followed by what was [asked] for and withheld. */
+private fun LazyListScope.claimItems(v: VerifiedMdoc, asked: Map<String, List<String>>) {
+    for ((namespace, elements) in v.claims) {
+        val o = elements as? JsonObject ?: continue
+        for ((identifier, value) in o) item { ReaderClaim(identifier, value) }
+        // What was asked for and withheld.
+        val missing = asked[namespace].orEmpty().filter { it !in o }
+        if (missing.isNotEmpty()) item { Labeled("Not shared", missing.joinToString { elementLabel(it) }) }
+    }
+}
+
+/** How far verified document [v] was checked; the [first] shows the session's data transport too. */
+private fun LazyListScope.documentItems(
+    v: VerifiedMdoc,
+    first: Boolean,
+    usesNfcData: Boolean,
+    mode: ProximityBLEMode?,
+    checksIssuerRevocation: Boolean,
+) {
+    item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+    item { Labeled("Document", v.doctype) }
+    if (first) item { ReaderDataTransport(usesNfcData, mode) }
+    item { Labeled("Issued by", "${v.issuer} (trusted via ${v.trustAnchor})") }
+    item { Labeled("Valid", "${dateFormat.format(v.validFrom)} to ${dateFormat.format(v.validUntil)}") }
+    item { Labeled("Holder's device", if (v.deviceAuth == "mac") "authenticated (MAC)" else "authenticated (signature)") }
+    v.statusList?.let { s ->
+        item { Labeled("Status list", "${v.status?.let(::statusWord) ?: "not checked"}: ${s.uri} #${s.index}") }
+    }
+    item {
+        Labeled(
+            "Issuer certificate",
+            if (checksIssuerRevocation) "not revoked (checked against its CA's revocation list)" else "revocation not checked",
+            Modifier.testTag("reader-issuer-revocation"),
+        )
+    }
+}
+
+/** Why a reading failed, as [ReaderOutcome] shows it. */
+private fun failureText(e: Throwable): String = when (e) {
+    is ProximityException -> e.description
+    // A revoked document signer, or no current list to
+    // tell, says so; anything else, the error.
+    is WalletException -> "Not verified: ${WalletModel.revocationReason(e) ?: WalletModel.describe(e)}"
+    else -> e.toString()
 }
 
 /** A verified document's status, as the session checked it. */
