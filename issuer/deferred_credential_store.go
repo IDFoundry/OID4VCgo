@@ -98,6 +98,19 @@ type DeferredTransactionRecord struct {
 	BindingKeys               []json.RawMessage
 	ExpiresAt                 time.Time
 
+	// CredentialIdentifier is the credential_identifier the deferred
+	// Credential Request named (§8.2), "" for one that named a
+	// credential_configuration_id. RequestCredential sets it when it
+	// defers. RequestDeferredCredential then answers only an access
+	// token that still authorizes this identifier for
+	// CredentialConfigurationID (§9: "valid for the issuance of the
+	// Credential(s) previously requested"), not merely one granting the
+	// configuration through another of its identifiers. A record
+	// without it, one by credential_configuration_id or saved before
+	// this field existed, is checked against the configuration alone. A
+	// store must persist it like any other field.
+	CredentialIdentifier string
+
 	// KeyAttestations are the compact Key Attestation JWTs (Appendix D)
 	// that attested BindingKeys, each once, when the request's proofs
 	// carried any. IssueDeferredCredential verifies each again, its

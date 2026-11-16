@@ -396,6 +396,9 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
+	// The identifier configID was resolved from, before prepare could
+	// change req: a deferred transaction stays bound to it.
+	identifier := req.CredentialIdentifier
 	if req.Defer != nil {
 		if err := iss.requireDeferral(auth); err != nil {
 			return oid4vci.CredentialResponse{}, err
@@ -433,7 +436,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 		}
 	}
 	if req.Defer != nil {
-		return iss.startDeferral(ctx, auth, configID, proofType, keys, *req.Defer)
+		return iss.startDeferral(ctx, auth, configID, identifier, proofType, keys, *req.Defer)
 	}
 
 	credentials, err := iss.issueBatch(ctx, cc, req, keys)

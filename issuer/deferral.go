@@ -89,10 +89,11 @@ func (iss *Issuer) requireDeferral(auth AuthorizedRequest) error {
 	return nil
 }
 
-// startDeferral saves a pending transaction for a checked request, whose
-// proofs were of proofType, and returns the Credential Response that
-// tells the Wallet to poll for it.
-func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID, proofType string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
+// startDeferral saves a pending transaction for a checked request for
+// configID, by credential_identifier identifier ("" for one by
+// credential_configuration_id), whose proofs were of proofType, and
+// returns the Credential Response that tells the Wallet to poll for it.
+func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID, identifier, proofType string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
 	raw := make([]byte, transactionIDEntropyBytes)
 	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: transaction_id: %w", err)
@@ -116,7 +117,8 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 	record := DeferredTransactionRecord{
 		Owner:    iss.storeOwner(),
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
-		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
+		CredentialConfigurationID: configID, CredentialIdentifier: identifier,
+		BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 		KeyAttestations: keyAttestations, ProofKeyHeaders: proofKeyHeaders,
 	}
@@ -477,11 +479,22 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 
 // deferredAuthorized reports whether auth may poll record: it's
 // record's owner (deferredOwner), and, §9, the access token is still
-// "valid for the issuance of the Credential(s) previously requested":
-// it grants the transaction's credential configuration.
+// "valid for the issuance of the Credential(s) previously requested".
+// For a transaction requested by credential_identifier (§8.2), that is
+// the token still authorizing that identifier, for the transaction's
+// configuration, as RequestCredential resolves one: a token authorized
+// only for another identifier of the same configuration (another
+// dataset) may not collect it. For one requested by
+// credential_configuration_id, or saved before
+// DeferredTransactionRecord.CredentialIdentifier existed, it is the
+// token granting the transaction's configuration at all.
 func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
 	if !deferredOwner(record, auth) {
 		return false
+	}
+	if record.CredentialIdentifier != "" {
+		configID, _, err := iss.resolveCredentialConfiguration(auth, CredentialRequest{CredentialIdentifier: record.CredentialIdentifier})
+		return err == nil && (record.CredentialConfigurationID == "" || configID == record.CredentialConfigurationID)
 	}
 	return record.CredentialConfigurationID == "" ||
 		iss.grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])

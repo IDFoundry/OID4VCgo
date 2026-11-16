@@ -409,7 +409,8 @@ func writePrepareError(w http.ResponseWriter, err error) {
 
 // resolvePending calls resolve for transactionID when it's pending,
 // belongs to grant's client and subject, and grant covers its
-// credential configuration. Anything else — unknown, resolved,
+// credential configuration, or credential_identifier
+// (deferredAuthorized). Anything else — unknown, resolved,
 // expired, someone else's, not granted — is left for
 // RequestDeferredCredential to answer, as is a transaction a concurrent
 // poll resolved first, or is resolving: resolving holds the

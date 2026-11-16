@@ -922,8 +922,9 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 	t.Run("CreateThenGet", func(t *testing.T) {
 		store := seed(t, "txn1", issuer.DeferredTransactionRecord{})
 		ctx := context.Background()
-		want := issuer.DeferredTransactionRecord{
-			Owner: contractOwner, ClientID: contractClientID, Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid",
+		want := issuer.DeferredTransactionRecord{ // #nosec G101 -- a fixture credential_identifier, not a secret
+			Owner: contractOwner, ClientID: contractClientID, Status: issuer.DeferredTransactionPending,
+			CredentialConfigurationID: "pid", CredentialIdentifier: "pid-dataset-1",
 			BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, Reference: "ref-1",
 			KeyAttestations:         []string{"key-attestation-1"},
 			KeyAttestationProofType: oid4vci.ProofTypeJWT,
@@ -936,7 +937,7 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if err != nil {
 			t.Fatalf(msgGetFailed, err)
 		}
-		if got.CredentialConfigurationID != "pid" || got.Reference != "ref-1" || len(got.BindingKeys) != 1 || string(got.BindingKeys[0]) != `{"kty":"EC"}` ||
+		if got.CredentialConfigurationID != "pid" || got.CredentialIdentifier != "pid-dataset-1" || got.Reference != "ref-1" || len(got.BindingKeys) != 1 || string(got.BindingKeys[0]) != `{"kty":"EC"}` ||
 			len(got.KeyAttestations) != 1 || got.KeyAttestations[0] != "key-attestation-1" ||
 			len(got.ProofKeyHeaders) != 1 || string(got.ProofKeyHeaders[0]) != `{"x5c":["AAAA"]}` {
 			t.Errorf("Get after Create = %+v, want %+v", got, want)
