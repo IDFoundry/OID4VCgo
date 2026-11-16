@@ -114,7 +114,7 @@ type CRLControl struct {
 
 // issuerRevocationRefusal is the result page's reason line for a
 // credential whose issuer certificate chain fails the revocation check.
-var issuerRevocationRefusal = "reason: " + string(verifier.ReasonUntrustedIssuer)
+var issuerRevocationRefusal = refusal(verifier.ReasonUntrustedIssuer)
 
 func (p *issuerPKI) controls() []CRLControl {
 	const prefix = "resolve issuer key: certchain: revocation: no verified path passes it: "

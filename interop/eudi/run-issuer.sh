@@ -285,6 +285,7 @@ for profile in $PROFILES; do
   case "$profile" in
     production) check_status_fetches "$WORK/wallet-provider/wallet-provider.log" ;;
     production-scaled) check_status_fetches "$WORK/scaled-wallet-provider/wallet-provider.log"; check_scaled ;;
+    *) ;; # the other profiles run no Wallet Provider of their own
   esac
 done
 

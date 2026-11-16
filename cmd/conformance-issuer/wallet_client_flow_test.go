@@ -260,7 +260,7 @@ func TestFullFlow_NativeClientWithAuthorityRedirect(t *testing.T) {
 		t.Fatalf("BeginAuthorization: %v", err)
 	}
 	redirectURL := driveConsentToCallback(t, httpClient, cfg.Issuer, session.URL().String(), cfg.DefaultSubject, cfg.Scope)
-	if got := (&url.URL{Scheme: redirectURL.Scheme, Host: redirectURL.Host, Path: redirectURL.Path}).String(); got != eudiWalletRedirectURI {
+	if (&url.URL{Scheme: redirectURL.Scheme, Host: redirectURL.Host, Path: redirectURL.Path}).String() != eudiWalletRedirectURI {
 		t.Fatalf("the consent redirected to %q, want %q", redirectURL, eudiWalletRedirectURI)
 	}
 	result, err := c.CompleteAuthorization(ctx, client.AuthorizationCallback{RawQuery: redirectURL.RawQuery, Session: session.Handle()})

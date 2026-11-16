@@ -237,7 +237,7 @@ func browserBinding(r *http.Request) string {
 func (t *txServer) handleRedirectBack(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if code := q.Get("error"); code != "" && q.Get("response_code") == "" {
-		writeResultPage(w, http.StatusOK, "Verification failed", "the wallet answered with an error: "+code)
+		writeResultPage(w, http.StatusOK, verificationFailed, "the wallet answered with an error: "+code)
 		return
 	}
 	view, err := t.txs.Redeem(r.Context(), q.Get("response_code"), browserBinding(r))
@@ -289,14 +289,14 @@ func (t *txServer) writeView(w http.ResponseWriter, view verifier.TransactionVie
 		}
 		writeResultPage(w, http.StatusOK, "Verification succeeded", claims...)
 	case verifier.TransactionClosed, verifier.TransactionExpired:
-		writeResultPage(w, http.StatusOK, "Verification failed", fmt.Sprintf("the request ended without a result (status %d): %s", view.Status, view.LastError))
+		writeResultPage(w, http.StatusOK, verificationFailed, fmt.Sprintf("the request ended without a result (status %d): %s", view.Status, view.LastError))
 	default:
 		if view.Status == verifier.TransactionPending && view.LastError != "" {
 			lines := []string{view.LastError}
 			if refusal, ok := t.refusals.Load(view.ID); ok {
 				lines = append(lines, refusal.([]string)...)
 			}
-			writeResultPage(w, http.StatusOK, "Verification failed", lines...)
+			writeResultPage(w, http.StatusOK, verificationFailed, lines...)
 			return
 		}
 		writeResultPage(w, http.StatusOK, "Pending", fmt.Sprintf("request %s has no verified result yet", view.ID))
@@ -317,6 +317,10 @@ func refusalLines(err error) []string {
 // refusalReasonPrefix starts the result page line naming a refusal's
 // verifier.Reason.
 const refusalReasonPrefix = "reason: "
+
+// verificationFailed heads the result page of a request that didn't
+// verify.
+const verificationFailed = "Verification failed"
 
 // writeResultPage writes a plain HTML page headed heading, each of
 // lines escaped in its own <pre>.

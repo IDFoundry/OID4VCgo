@@ -47,7 +47,9 @@ class CallbackMarksTest {
         override fun createKey(purpose: KeyPurpose): String = "k"
         override fun publicKey(id: String): ByteArray? = null
         override fun sign(id: String, digest: ByteArray): ByteArray = throw failure
-        override fun deleteKey(id: String) {}
+        override fun deleteKey(id: String) {
+            // Nothing to delete: these tests only sign.
+        }
     }
 
     @Test
@@ -62,9 +64,7 @@ class CallbackMarksTest {
         val other = failure { KeyStoreAdapter(CancellingStore(StoreException("keystore busy"))).sign("k", ByteArray(32)) }
         assertEquals("keystore busy", other.message)
 
-        val agreement = KeyAgreementAdapter(object : KeyAgreement {
-            override fun agree(id: String, peerPublicKey: ByteArray): ByteArray = throw HolderCancelledException("dismissed")
-        })
+        val agreement = KeyAgreementAdapter(KeyAgreement { _, _ -> throw HolderCancelledException("dismissed") })
         assertEquals("[cancelled] dismissed", failure { agreement.agree("k", ByteArray(65)) }.message)
     }
 

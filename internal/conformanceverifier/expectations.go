@@ -116,7 +116,7 @@ var refusals = map[string][]string{
 	"oid4vp-1final-verifier-invalid-session-transcript": {reasonHolderBinding, "mdoc: verify DeviceSignature: cose: ES256 signature verification failed"},
 	"oid4vp-1final-verifier-invalid-kb-jwt-signature":   {reasonHolderBinding, "verify key binding JWT signature: jose: ES256 signature verification failed"},
 	"oid4vp-1final-verifier-invalid-credential-signature": {
-		"reason: " + string(verifier.ReasonInvalidCredential), "verify issuer JWT: jose: ES256 signature verification failed",
+		refusal(verifier.ReasonInvalidCredential), "verify issuer JWT: jose: ES256 signature verification failed",
 	},
 	"oid4vp-1final-verifier-invalid-sd-hash":      {reasonHolderBinding, "key binding JWT sd_hash does not match the presented SD-JWT"},
 	"oid4vp-1final-verifier-invalid-kb-jwt-nonce": {reasonHolderBinding, "key binding JWT is for another request: its nonce does not match"},
@@ -124,7 +124,7 @@ var refusals = map[string][]string{
 	"oid4vp-1final-verifier-kb-jwt-iat-in-past":   {reasonHolderBinding, "key binding JWT is too old"},
 	"oid4vp-1final-verifier-kb-jwt-iat-in-future": {reasonHolderBinding, "key binding JWT iat is too far in the future"},
 	"oid4vp-1final-verifier-wrong-vct": {
-		"reason: " + string(verifier.ReasonNotAnswered), `credential's own vct "urn:conformance-suite:unrequested:credential:1", and its aka_vcts, are not among the requested vct_values`,
+		refusal(verifier.ReasonNotAnswered), `credential's own vct "urn:conformance-suite:unrequested:credential:1", and its aka_vcts, are not among the requested vct_values`,
 	},
 	// A status refusal carries no verifier.Reason: the status check runs
 	// once the presentation itself has verified.
@@ -134,7 +134,11 @@ var refusals = map[string][]string{
 
 // reasonHolderBinding is the result page's line for a refusal whose
 // verifier.Reason is ReasonHolderBinding.
-var reasonHolderBinding = "reason: " + string(verifier.ReasonHolderBinding)
+var reasonHolderBinding = refusal(verifier.ReasonHolderBinding)
+
+// refusal is the line cmd/conformance-verifier's result page shows for
+// a refusal with reason.
+func refusal(reason verifier.Reason) string { return "reason: " + string(reason) }
 
 // notDriven names the plan's modules this repo doesn't drive, with why.
 // A module the plan lists that is in neither this nor expectations

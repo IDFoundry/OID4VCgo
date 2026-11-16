@@ -176,67 +176,18 @@ func parseUseCase(raw []byte, docCount int, budget *requestInfoBudget) (UseCase,
 		if !known {
 			return nil
 		}
+		var err error
 		switch key {
 		case "mandatory":
 			mandatory = true
-			switch {
-			case len(value) == 1 && value[0] == 0xf5:
-				uc.Mandatory = true
-			case len(value) == 1 && value[0] == 0xf4:
-				uc.Mandatory = false
-			default:
-				return fmt.Errorf("mandatory isn't a boolean: %w", ErrCBORValidation)
-			}
+			uc.Mandatory, err = cborBool(value, "mandatory")
 		case "documentSets":
 			documentSets = true
-			return arrayItems(value, MaxDocumentSetsPerUseCase, "documentSets", func(i int, item []byte) error {
-				if budget.documentSets++; budget.documentSets > MaxDocumentSets {
-					return fmt.Errorf("the request lists over %d document sets: %w", MaxDocumentSets, ErrCBORValidation)
-				}
-				set := []int{}
-				err := arrayItems(item, MaxDocumentReferencesPerSet, "document set", func(_ int, ref []byte) error {
-					if budget.references++; budget.references > MaxDocumentReferences {
-						return fmt.Errorf("the request lists over %d document references: %w", MaxDocumentReferences, ErrCBORValidation)
-					}
-					index, err := documentIndex(ref, docCount)
-					if err != nil {
-						return err
-					}
-					set = append(set, index)
-					return nil
-				})
-				if err != nil {
-					return fmt.Errorf("documentSets[%d]: %w", i, err)
-				}
-				uc.DocumentSets = append(uc.DocumentSets, set)
-				return nil
-			})
+			uc.DocumentSets, err = parseDocumentSets(value, docCount, budget)
 		case "purposeHints":
-			return mapEntries(value, MaxPurposeHintsPerUseCase, "purposeHints", func(controllerID string, text bool, code []byte) error {
-				if budget.hints++; budget.hints > MaxPurposeHints {
-					return fmt.Errorf("the request carries over %d purpose hints: %w", MaxPurposeHints, ErrCBORValidation)
-				}
-				if !text {
-					return fmt.Errorf("a purpose hint's controller ID isn't text: %w", ErrCBORValidation)
-				}
-				if len(controllerID) > MaxControllerIDBytes {
-					return fmt.Errorf("a controller ID is %d bytes, over %d: %w", len(controllerID), MaxControllerIDBytes, ErrCBORValidation)
-				}
-				// An identifier, which an app may still show: none that
-				// display text would have to clean (control, line
-				// separator or invisible characters, surrounding space).
-				if displaytext.Clean(controllerID, MaxControllerIDBytes) != controllerID {
-					return fmt.Errorf("a controller ID %q isn't plain text: %w", controllerID, ErrCBORValidation)
-				}
-				v, err := purposeCode(code)
-				if err != nil {
-					return fmt.Errorf("purpose hint %q: %w", controllerID, err)
-				}
-				uc.PurposeHints[controllerID] = v
-				return nil
-			})
+			uc.PurposeHints, err = parsePurposeHints(value, budget)
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return UseCase{}, err
@@ -248,6 +199,92 @@ func parseUseCase(raw []byte, docCount int, budget *requestInfoBudget) (UseCase,
 		return UseCase{}, fmt.Errorf("use case has no documentSets: %w", ErrCBORValidation)
 	}
 	return uc, nil
+}
+
+// cborBool is raw, a CBOR true or false.
+func cborBool(raw []byte, what string) (bool, error) {
+	switch {
+	case len(raw) == 1 && raw[0] == 0xf5:
+		return true, nil
+	case len(raw) == 1 && raw[0] == 0xf4:
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s isn't a boolean: %w", what, ErrCBORValidation)
+	}
+}
+
+// parseDocumentSets is a use case's documentSets, each a set of indexes
+// into the request's docCount DocRequests, counted against budget.
+func parseDocumentSets(raw []byte, docCount int, budget *requestInfoBudget) ([][]int, error) {
+	sets := [][]int{}
+	err := arrayItems(raw, MaxDocumentSetsPerUseCase, "documentSets", func(i int, item []byte) error {
+		if budget.documentSets++; budget.documentSets > MaxDocumentSets {
+			return fmt.Errorf("the request lists over %d document sets: %w", MaxDocumentSets, ErrCBORValidation)
+		}
+		set, err := parseDocumentSet(item, docCount, budget)
+		if err != nil {
+			return fmt.Errorf("documentSets[%d]: %w", i, err)
+		}
+		sets = append(sets, set)
+		return nil
+	})
+	return sets, err
+}
+
+// parseDocumentSet is one document set's indexes into the request's
+// docCount DocRequests, counted against budget.
+func parseDocumentSet(raw []byte, docCount int, budget *requestInfoBudget) ([]int, error) {
+	set := []int{}
+	err := arrayItems(raw, MaxDocumentReferencesPerSet, "document set", func(_ int, ref []byte) error {
+		if budget.references++; budget.references > MaxDocumentReferences {
+			return fmt.Errorf("the request lists over %d document references: %w", MaxDocumentReferences, ErrCBORValidation)
+		}
+		index, err := documentIndex(ref, docCount)
+		if err != nil {
+			return err
+		}
+		set = append(set, index)
+		return nil
+	})
+	return set, err
+}
+
+// parsePurposeHints is a use case's purposeHints, keyed by controller
+// ID, counted against budget.
+func parsePurposeHints(raw []byte, budget *requestInfoBudget) (map[string]int32, error) {
+	hints := map[string]int32{}
+	err := mapEntries(raw, MaxPurposeHintsPerUseCase, "purposeHints", func(controllerID string, text bool, code []byte) error {
+		if budget.hints++; budget.hints > MaxPurposeHints {
+			return fmt.Errorf("the request carries over %d purpose hints: %w", MaxPurposeHints, ErrCBORValidation)
+		}
+		if !text {
+			return fmt.Errorf("a purpose hint's controller ID isn't text: %w", ErrCBORValidation)
+		}
+		if err := checkControllerID(controllerID); err != nil {
+			return err
+		}
+		v, err := purposeCode(code)
+		if err != nil {
+			return fmt.Errorf("purpose hint %q: %w", controllerID, err)
+		}
+		hints[controllerID] = v
+		return nil
+	})
+	return hints, err
+}
+
+// checkControllerID refuses a controller ID over MaxControllerIDBytes,
+// or one that display text would have to clean (control, line
+// separator or invisible characters, surrounding space): it is an
+// identifier, which an app may still show.
+func checkControllerID(controllerID string) error {
+	if len(controllerID) > MaxControllerIDBytes {
+		return fmt.Errorf("a controller ID is %d bytes, over %d: %w", len(controllerID), MaxControllerIDBytes, ErrCBORValidation)
+	}
+	if displaytext.Clean(controllerID, MaxControllerIDBytes) != controllerID {
+		return fmt.Errorf("a controller ID %q isn't plain text: %w", controllerID, ErrCBORValidation)
+	}
+	return nil
 }
 
 // documentIndex is raw, an unsigned integer, as an index into a

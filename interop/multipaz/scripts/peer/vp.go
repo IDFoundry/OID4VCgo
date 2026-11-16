@@ -134,7 +134,7 @@ func (p *peer) issuePID(iaca ca) error {
 	exp := now.Add(24 * time.Hour).Unix()
 	claims := map[string]any{"family_name": "Mustermann", "given_name": "Erika", "birthdate": "1971-09-01"}
 	// Its entry in its issuer's status list (status.go).
-	ref, err := p.allocateStatus("dc+sd-jwt", signerKey, []*x509.Certificate{signer}, statuslist.FormJWT)
+	ref, err := p.allocateStatus(sdjwtvc.CredentialFormat, signerKey, []*x509.Certificate{signer}, statuslist.FormJWT)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func (p *peer) issuePID(iaca ca) error {
 		return err
 	}
 	return p.store.Put(ctx, walletflow.StoredCredential{ // #nosec G101 -- the PID just issued above, not a secret
-		ID: "pid", CredentialIssuer: "https://oid4vcgo.example", ConfigurationID: "pid", Format: "dc+sd-jwt", VCT: pidVCT,
+		ID: "pid", CredentialIssuer: "https://oid4vcgo.example", ConfigurationID: "pid", Format: sdjwtvc.CredentialFormat, VCT: pidVCT,
 		Credential: credential, HolderKeyID: k.ID(), Claims: claims, ReceivedAt: now, ValidUntil: time.Unix(exp, 0),
 	})
 }
@@ -202,7 +202,7 @@ func (p *peer) verifierStart(req request) (reply, error) {
 		DCAPIOrigins: []string{req.Origin},
 	}
 	switch req.Format {
-	case "dc+sd-jwt":
+	case sdjwtvc.CredentialFormat:
 		cfg.VCT, cfg.Claims, cfg.CredentialIssuerTrustAnchorsPEM = pidVCT, []string{"family_name", "given_name"}, anchor
 	case "mso_mdoc":
 		cfg.CredentialFormat, cfg.Doctype, cfg.Namespace = "mso_mdoc", docType, nameSpace
