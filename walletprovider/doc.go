@@ -176,7 +176,9 @@
 // attestation endpoints write to the stores on each request.
 //
 // Evidence kinds plug in from subpackages: androidkey.EvidenceVerifier
-// for Android Key Attestation. A verifier may report facts about the
+// for Android Key Attestation, appattest.EvidenceVerifier for Apple App
+// Attest (an EvidenceRechecker of the instance's App Attest environment
+// and App ID). A verifier may report facts about the
 // registration evidence (VerifiedEvidence.Facts), kept with the
 // instance (Instance.EvidenceFacts), and, as an EvidenceRechecker,
 // judge them again before each attestation, so an instance whose

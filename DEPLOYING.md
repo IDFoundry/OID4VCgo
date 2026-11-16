@@ -281,7 +281,12 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   (`walletprovider/appattest`). For App Attest, list each app's App ID
   (team ID and bundle ID) in `appattest.Verifier.Apps`, and leave
   `AllowDevelopment` unset in production, so only released builds
-  register. App Attest proves the app, not where its keys are: claim
+  register. Both are rechecked before each Wallet and Key Attestation:
+  unsetting `AllowDevelopment` at a production cutover, or removing an
+  app from `Apps`, refuses the instances registered before it at their
+  next request (a policy refusal: they stay active, and
+  `OnRecheckRefused` hears of it; revoke them with `RevokeWhere` to
+  make their attestations `INVALID`). App Attest proves the app, not where its keys are: claim
   `key_storage` for iOS keys only by a `KeyStorageRule` naming
   `KeyBindingAppAssertion`, and only if you rely on your app keeping
   them in the Secure Enclave. The Swift library's `HttpWalletProvider`

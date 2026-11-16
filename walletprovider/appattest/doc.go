@@ -43,6 +43,16 @@
 // the caller's part: EvidenceVerifier hands it to the provider, which
 // stores it with a compare-and-swap.
 //
+// EvidenceVerifier is a walletprovider.EvidenceRechecker: before each
+// Wallet Attestation and Key Attestation, the provider has it judge
+// the instance's stored App Attest key and App ID by the Verifier as it
+// is now, so unsetting Verifier.AllowDevelopment or removing an app
+// from Verifier.Apps refuses the instances registered before the
+// change at their next request, even for an instance key recorded
+// before, which needs no fresh assertion. Such a refusal is a policy
+// refusal: the instance stays active, and restoring the setting lets
+// it through again.
+//
 // mobile/WALLET_PROVIDER.md in the repository is the protocol an app
 // follows: what each request's evidence is, and the client data's
 // exact bytes, with test vectors.

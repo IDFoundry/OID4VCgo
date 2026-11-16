@@ -64,14 +64,19 @@ var (
 // zero-valued fields are the strict choice.
 type Verifier struct {
 	// Apps are the App IDs accepted: an app's team ID and bundle ID,
-	// "ABCDE12345.com.example.wallet". REQUIRED.
+	// "ABCDE12345.com.example.wallet". REQUIRED. Removing an app
+	// applies to the instances registered with it too: through
+	// EvidenceVerifier.Recheck, each gets no more Wallet or Key
+	// Attestations from its next request on.
 	Apps []string
 
 	// AllowDevelopment accepts attestations from App Attest's
 	// development environment as well as production. A development
 	// build's key is a Secure Enclave key Apple attested all the same;
 	// leave this unset in production so only a released build
-	// registers.
+	// registers. Unsetting it applies to the instances registered with
+	// a development key too: through EvidenceVerifier.Recheck, each
+	// gets no more Wallet or Key Attestations from its next request on.
 	AllowDevelopment bool
 
 	// Roots are the trust anchors; nil means AppleRoots().
@@ -290,6 +295,10 @@ func (v *Verifier) checkConfig(clientDataHash []byte) error {
 	if len(clientDataHash) != sha256.Size {
 		return fail(ErrConfig, "a %d-byte client data hash, want %d", len(clientDataHash), sha256.Size)
 	}
+	return v.checkApps()
+}
+
+func (v *Verifier) checkApps() error {
 	if len(v.Apps) == 0 {
 		return fail(ErrConfig, "no allowed apps")
 	}
@@ -414,12 +423,21 @@ func (v *Verifier) environment(aaguid []byte) (Environment, error) {
 	case bytes.Equal(aaguid, aaguidProduction):
 		return EnvironmentProduction, nil
 	case bytes.Equal(aaguid, aaguidDevelopment):
-		if !v.AllowDevelopment {
-			return "", fail(ErrEnvironment, "a development environment key, and AllowDevelopment isn't set")
+		if err := v.acceptsEnvironment(EnvironmentDevelopment); err != nil {
+			return "", err
 		}
 		return EnvironmentDevelopment, nil
 	}
 	return "", fail(ErrEnvironment, "AAGUID %x is neither environment's", aaguid)
+}
+
+// acceptsEnvironment refuses a key of env unless the Verifier accepts
+// that environment: development only with AllowDevelopment.
+func (v *Verifier) acceptsEnvironment(env Environment) error {
+	if env == EnvironmentDevelopment && !v.AllowDevelopment {
+		return fail(ErrEnvironment, "a development environment key, and AllowDevelopment isn't set")
+	}
+	return nil
 }
 
 func (v *Verifier) roots() []*x509.Certificate {
