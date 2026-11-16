@@ -383,13 +383,7 @@ func (iss *Issuer) requestCredentialAudited(ctx context.Context, auth Authorized
 }
 
 func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest, req CredentialRequest, prepare preparer) (oid4vci.CredentialResponse, error) {
-	if err := requireClientIdentityDecision(auth); err != nil {
-		return oid4vci.CredentialResponse{}, err
-	}
-	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
-		return oid4vci.CredentialResponse{}, err
-	}
-	if err := iss.requireResponseEncryption(req.ResponseEncryption); err != nil {
+	if err := iss.checkCredentialRequestTransport(auth, req); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 	configID, cc, err := iss.resolveCredentialConfiguration(auth, req)
@@ -399,40 +393,17 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	// The identifier configID was resolved from, before prepare could
 	// change req: a deferred transaction stays bound to it.
 	identifier := req.CredentialIdentifier
-	if req.Defer != nil {
-		if err := iss.requireDeferral(auth); err != nil {
-			return oid4vci.CredentialResponse{}, err
-		}
-	}
-
-	proofType, values, err := singleProofType(req.Proofs, cc)
-	if err != nil {
+	if err := iss.requireDeferral(auth, req.Defer); err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	if err := iss.checkBatchSize(values); err != nil {
-		return oid4vci.CredentialResponse{}, err
-	}
-	ptc, ok := cc.ProofTypesSupported[proofType]
-	if !ok {
-		// An unsupported parameter value (§8.3.1.2), not an invalid proof.
-		return oid4vci.CredentialResponse{}, newError(ErrorInvalidCredentialRequest, 400,
-			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
-	}
 
-	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
+	proofType, keys, err := iss.requestProofKeys(ctx, auth, req, cc)
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
 	if prepare != nil {
-		req.ResolvedConfigurationID = configID
-		req.AuthorizedClaims = iss.authorizedClaims(auth, req, configID)
-		if err := prepare(ctx, &req); err != nil {
+		if err := iss.runPrepare(ctx, auth, &req, configID, prepare); err != nil {
 			return oid4vci.CredentialResponse{}, err
-		}
-		if req.Defer != nil {
-			if err := iss.requireDeferral(auth); err != nil {
-				return oid4vci.CredentialResponse{}, err
-			}
 		}
 	}
 	if req.Defer != nil {
@@ -443,15 +414,69 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-
-	var notificationID string
-	if !iss.cfg.Endpoints.Notification.IsZero() {
-		notificationID, err = iss.IssueNotificationID(ctx, auth)
-		if err != nil {
-			return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
-		}
+	notificationID, err := iss.notificationIDFor(ctx, auth)
+	if err != nil {
+		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
 	}
 	return oid4vci.CredentialResponse{Credentials: credentials, NotificationID: notificationID}, nil
+}
+
+// checkCredentialRequestTransport checks what comes before the request
+// itself: auth's client identity was decided, and req's request and
+// response encryption meet this issuer's requirements.
+func (iss *Issuer) checkCredentialRequestTransport(auth AuthorizedRequest, req CredentialRequest) error {
+	if err := requireClientIdentityDecision(auth); err != nil {
+		return err
+	}
+	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {
+		return err
+	}
+	return iss.requireResponseEncryption(req.ResponseEncryption)
+}
+
+// requestProofKeys checks req's proofs against cc — one proof type, the
+// batch size, a proof type cc supports — and verifies them, returning
+// the proof type and the binding keys they establish.
+func (iss *Issuer) requestProofKeys(ctx context.Context, auth AuthorizedRequest, req CredentialRequest, cc CredentialConfiguration) (string, []resolvedKey, error) {
+	proofType, values, err := singleProofType(req.Proofs, cc)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := iss.checkBatchSize(values); err != nil {
+		return "", nil, err
+	}
+	ptc, ok := cc.ProofTypesSupported[proofType]
+	if !ok {
+		// An unsupported parameter value (§8.3.1.2), not an invalid proof.
+		return "", nil, newError(ErrorInvalidCredentialRequest, 400,
+			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
+	}
+	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
+	if err != nil {
+		return "", nil, err
+	}
+	return proofType, keys, nil
+}
+
+// runPrepare calls prepare for a checked req of configuration configID,
+// and checks again that this issuer can defer it if prepare deferred
+// it.
+func (iss *Issuer) runPrepare(ctx context.Context, auth AuthorizedRequest, req *CredentialRequest, configID string, prepare preparer) error {
+	req.ResolvedConfigurationID = configID
+	req.AuthorizedClaims = iss.authorizedClaims(auth, *req, configID)
+	if err := prepare(ctx, req); err != nil {
+		return err
+	}
+	return iss.requireDeferral(auth, req.Defer)
+}
+
+// notificationIDFor issues a notification_id bound to auth when
+// Endpoints.Notification is set, and returns "" otherwise.
+func (iss *Issuer) notificationIDFor(ctx context.Context, auth AuthorizedRequest) (string, error) {
+	if iss.cfg.Endpoints.Notification.IsZero() {
+		return "", nil
+	}
+	return iss.IssueNotificationID(ctx, auth)
 }
 
 // maxBatchSize returns this issuer's own effective batch_size ceiling
@@ -667,6 +692,33 @@ func checkDistinctKeys(keys []resolvedKey) error {
 // req's claims as req.PerCredential left it, refusing a batch in which
 // two would carry the same status reference.
 func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, req CredentialRequest, keys []resolvedKey) ([]oid4vci.IssuedCredential, error) {
+	instances, err := buildInstances(ctx, cc, req, keys)
+	if err != nil {
+		return nil, err
+	}
+	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
+	statusRefs := make(map[string]int, len(keys))
+	for i, instance := range instances {
+		if err := checkBatchInstance(cc, i, instance, statusRefs); err != nil {
+			return nil, err
+		}
+		credential, err := iss.issueInstance(cc, instance, keys[i])
+		if err != nil {
+			// The signer's failure, or claims the deployment built that
+			// can't be signed: a server error the Wallet may retry, not
+			// credential_request_denied, which it SHOULD treat as
+			// unrecoverable (§8.3.1.2).
+			return nil, fmt.Errorf("issuer: credential issuance failed: %w", err)
+		}
+		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
+	}
+	return credentials, nil
+}
+
+// buildInstances builds one CredentialInstance per binding key from
+// req's claims, and lets req.PerCredential, then req.PerBatch, complete
+// them.
+func buildInstances(ctx context.Context, cc CredentialConfiguration, req CredentialRequest, keys []resolvedKey) ([]CredentialInstance, error) {
 	instances := make([]CredentialInstance, len(keys))
 	for i, key := range keys {
 		instance, err := newCredentialInstance(cc, req, i, key)
@@ -680,41 +732,44 @@ func (iss *Issuer) issueBatch(ctx context.Context, cc CredentialConfiguration, r
 		}
 		instances[i] = instance
 	}
-	if req.PerBatch != nil {
-		batch := make([]*CredentialInstance, len(instances))
-		for i := range instances {
-			batch[i] = &instances[i]
-		}
-		if err := req.PerBatch(ctx, batch); err != nil {
-			return nil, fmt.Errorf("issuer: request credential: per-batch claims: %w", err)
-		}
+	if err := runPerBatch(ctx, req, instances); err != nil {
+		return nil, err
 	}
-	credentials := make([]oid4vci.IssuedCredential, 0, len(keys))
-	statusRefs := make(map[string]int, len(keys))
-	for i, instance := range instances {
-		if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
-			return nil, fmt.Errorf("issuer: request credential: credential %d's claims for format %q were removed or replaced by another format's, in PerCredential or PerBatch", i, cc.Format)
-		}
-		if ref, ok := instance.statusRef(); ok {
-			if first, dup := statusRefs[ref]; dup {
-				return nil, fmt.Errorf("issuer: request credential: credentials %d and %d of the batch carry the same status reference; HAIP 1.0 §6.1 requires each its own — set it in CredentialRequest.PerCredential or PerBatch", first, i)
-			}
-			statusRefs[ref] = i
-		}
-		if err := checkInstanceType(cc, instance); err != nil {
-			return nil, fmt.Errorf("issuer: request credential: %w", err)
-		}
-		credential, err := iss.issueInstance(cc, instance, keys[i])
-		if err != nil {
-			// The signer's failure, or claims the deployment built that
-			// can't be signed: a server error the Wallet may retry, not
-			// credential_request_denied, which it SHOULD treat as
-			// unrecoverable (§8.3.1.2).
-			return nil, fmt.Errorf("issuer: credential issuance failed: %w", err)
-		}
-		credentials = append(credentials, oid4vci.IssuedCredential{Credential: credential})
+	return instances, nil
+}
+
+// runPerBatch lets req.PerBatch, if set, complete instances together.
+func runPerBatch(ctx context.Context, req CredentialRequest, instances []CredentialInstance) error {
+	if req.PerBatch == nil {
+		return nil
 	}
-	return credentials, nil
+	batch := make([]*CredentialInstance, len(instances))
+	for i := range instances {
+		batch[i] = &instances[i]
+	}
+	if err := req.PerBatch(ctx, batch); err != nil {
+		return fmt.Errorf("issuer: request credential: per-batch claims: %w", err)
+	}
+	return nil
+}
+
+// checkBatchInstance checks the i-th instance of a batch before it's
+// signed: it still has claims of cc's format only, a status reference
+// no earlier instance has (statusRefs records them), and cc's type.
+func checkBatchInstance(cc CredentialConfiguration, i int, instance CredentialInstance, statusRefs map[string]int) error {
+	if (cc.Format == sdjwtvc.CredentialFormat) != (instance.SDJWTClaims != nil) || (cc.Format == mdoc.CredentialFormat) != (instance.MdocClaims != nil) {
+		return fmt.Errorf("issuer: request credential: credential %d's claims for format %q were removed or replaced by another format's, in PerCredential or PerBatch", i, cc.Format)
+	}
+	if ref, ok := instance.statusRef(); ok {
+		if first, dup := statusRefs[ref]; dup {
+			return fmt.Errorf("issuer: request credential: credentials %d and %d of the batch carry the same status reference; HAIP 1.0 §6.1 requires each its own — set it in CredentialRequest.PerCredential or PerBatch", first, i)
+		}
+		statusRefs[ref] = i
+	}
+	if err := checkInstanceType(cc, instance); err != nil {
+		return fmt.Errorf("issuer: request credential: %w", err)
+	}
+	return nil
 }
 
 // newCredentialInstance copies the claims cc's format uses for the i-th
