@@ -1,8 +1,9 @@
 import Foundation
 import Security
 
-/// The key authenticating the status lists a `statusCacheDir` keeps
-/// (`status_cache_key` in ABI.md): 32 random bytes, made on first use and
+/// The key authenticating the status lists a configuration's
+/// `status.cacheDir` keeps (`status_cache_key` in ABI.md): 32 random
+/// bytes, made on first use and
 /// kept in the Keychain on this device only, so that a list anyone else
 /// wrote to the directory is dropped rather than used. A 304 from a
 /// list's server confirms the `ETag` a kept list names, not the list
@@ -11,14 +12,14 @@ enum StatusCacheKey {
     static let service = "dev.idfoundry.oid4vcwallet.status-cache-key"
     static let bytes = 32
 
-    /// The directory a nil `statusCacheDir` keeps lists in, in the app's
+    /// The directory a nil `status.cacheDir` keeps lists in, in the app's
     /// Caches directory.
     static let defaultDirName = "oid4vcwallet-status-lists"
 
     /// Where the key comes from: the Keychain, unless a test replaced it.
     static let source = Locked<@Sendable () throws -> Data>(initialState: keychainKey)
 
-    /// Where a nil `statusCacheDir` keeps lists, unless a test replaced
+    /// Where a nil `status.cacheDir` keeps lists, unless a test replaced
     /// it: `defaultDirName` in the app's Caches directory. None on macOS,
     /// where Caches is every app's of the user's.
     static let defaultDir = Locked<@Sendable () -> String?>(initialState: cachesDir)
@@ -28,18 +29,18 @@ enum StatusCacheKey {
     static let prepareDefault = Locked<@Sendable (String) throws -> Void>(initialState: protectedDir)
 
     /// `encoded`, a configuration's JSON, keeping lists in
-    /// `statusCacheDir` with the `status_cache_key` that authenticates
+    /// `status.cacheDir` with the `status_cache_key` that authenticates
     /// them. Empty keeps them in memory only. Nil keeps them in
     /// `defaultDir`, made with complete file protection, or in memory
     /// only when there's none, it can't be made, or its key can't be had
     /// (before the device is first unlocked, say): the default never
     /// stops a wallet being made.
-    static func configuration(_ encoded: Data, statusCacheDir: String?) throws -> String {
+    static func configuration(_ encoded: Data, cacheDir: String?) throws -> String {
         let unchanged = String(decoding: encoded, as: UTF8.self)
         let load = source.withLock { $0 }
         let dir: String
         let key: Data
-        switch statusCacheDir {
+        switch cacheDir {
         case ""?:
             return unchanged
         case let chosen?:

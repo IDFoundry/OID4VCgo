@@ -63,7 +63,7 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 | ``WalletError/Code/credentialDenied`` | The issuer refused a deferred credential | Tell the holder |
 | ``WalletError/Code/untrustedVerifier`` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
 | ``WalletError/Code/requestRefused`` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; ``WalletError/protocolError`` is the code it sent. Nothing was shown | Open ``Wallet/takeRefusalRedirect()`` if it returns a URL; tell the holder the request wasn't answered |
-| ``WalletError/Code/tlsPin`` | A pinned host's certificate matched none of its ``WalletConfiguration/tlsPins``: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
+| ``WalletError/Code/tlsPin`` | A pinned host's certificate matched none of its ``WalletConfiguration/Network/tlsPins``: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
 | ``WalletError/Code/documentNotValid`` | A ``ProximityReader`` checking status (`statusCheck: .check`) verified a document whose revocation status isn't valid; ``WalletError/protocolError`` is the status (`invalid`, `suspended`, `unknown`, or `0x` and a value) | Don't accept the document, and show its `localizedDescription` |
 | ``WalletError/Code/noMatchingCredential`` | No held credential answers the request | Decline |
 | ``WalletError/Code/invalidSelection`` | The selection doesn't answer the request | Choose again |
@@ -82,7 +82,7 @@ func describe(_ error: Error) -> (message: String, canRetry: Bool) {
 ### Revoked certificates and out-of-date revocation lists
 
 Where a trust role is checked against Certificate Revocation Lists
-(`revocation`), a refusal for a revoked certificate has
+(`revocation.roles`), a refusal for a revoked certificate has
 ``WalletError/isCertificateRevoked`` set, and one for want of a current
 list from the certificate's CA ``WalletError/isNoCurrentCRL``, whatever
 the ``WalletError/code`` (``WalletError/Code/protocolError`` for a

@@ -116,7 +116,7 @@ public struct ProximityError: Error, Sendable, CustomStringConvertible {
 public struct ProximityReaderIdentity: Sendable {
     /// How far the request's reader authentication goes.
     public enum Status: String, Sendable {
-        /// Signed by a certificate that chains to `WalletConfiguration.mdocReaderRoots`.
+        /// Signed by a certificate that chains to `WalletConfiguration.verifiers.mdocReaderRoots`.
         case trusted
         /// Signed, by a certificate that doesn't chain to them: its name is unproven.
         case untrusted
@@ -129,7 +129,8 @@ public struct ProximityReaderIdentity: Sendable {
     /// Whether the request was signed, and by a reader the wallet recognizes.
     public let status: Status
     /// The reader's name, from a certificate that chains to
-    /// `mdocReaderRoots`: set only when `status` is `.trusted`.
+    /// `WalletConfiguration.verifiers.mdocReaderRoots`: set only when
+    /// `status` is `.trusted`.
     public let name: String
     /// The certificate chain the request carried, leaf first.
     public let chain: [SecCertificate]
@@ -710,87 +711,23 @@ extension Wallet {
     }
 }
 
-/// A `ProximityReader`'s configuration.
+/// A `ProximityReader`'s configuration, its options grouped by what they
+/// concern. Its JSON form is flat, one key per option, and unchanged by
+/// the grouping.
 public struct ProximityReaderConfiguration: Codable, Sendable {
-    /// PEM certificates: the IACAs whose mdocs the reader accepts.
-    public var issuerRoots: String
-    /// The reader's key in the `KeyStore` and its PEM certificate chain,
-    /// leaf first: with both, requests are signed (reader authentication),
-    /// so holders see who is asking. The leaf should carry the mdoc reader
-    /// authentication extended key usage (1.0.18013.5.1.6).
-    public var readerKeyID: String?
-    /// The reader's PEM certificate chain, leaf first, for `readerKeyID`.
-    public var readerChain: String?
+    /// Which issuers' documents the reader accepts.
+    public var issuers: IssuerTrust
+    /// The reader's key and certificate chain: with them, requests are
+    /// signed (reader authentication), so holders see who is asking. Nil:
+    /// requests aren't signed.
+    public var readerAuthentication: ReaderAuthentication?
     /// Tolerates an issuer's clock this far off the reader's, at most an hour.
     public var maxClockSkewSeconds: Int?
-    /// Deprecated, and does nothing: the default check already requires
-    /// the mDL document signer extended key usage, refusing a document
-    /// signer certificate without it (or an OCSP signer's), so setting
-    /// this changes nothing. It still can't be set with
-    /// `acceptMDLSignerWithoutEKU`. Its `require_mdl_signer_eku` key is
-    /// still accepted within ABI 15, and goes at the next ABI version,
-    /// with this property and the initializer's parameter.
-    @available(*, deprecated, message: "the default check already requires the mDL document signer extended key usage; setting it changes nothing")
-    public var requireMDLSignerEKU: Bool {
-        get { requireMDLSignerEKUValue }
-        set { requireMDLSignerEKUValue = newValue }
-    }
-    // requireMDLSignerEKU's storage, which the initializers and Codable
-    // use without a deprecation warning.
-    private var requireMDLSignerEKUValue: Bool
-    /// Also accepts a document signer certificate with no extended key
-    /// usage, which is refused by default for lacking the mDL document
-    /// signer's, for issuers whose document signers have none. It can't
-    /// be set with `requireMDLSignerEKU`.
-    public var acceptMDLSignerWithoutEKU: Bool
-    /// Each document type's own IACAs, as PEM certificates: a document of a
-    /// type named here must chain to them, not to `issuerRoots`, so an
-    /// issuer trusted for one document type can't sign another. With it,
-    /// `issuerRoots` may be empty, and then only the types named here are
-    /// accepted.
-    public var issuerRootsByDocType: [String: String]
-    /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles in
-    /// `revocation` are checked against. Replace them at runtime with
-    /// `ProximityReader.setCRLs(_:)` as they expire.
-    public var crls: String
-    /// The roles whose certificate chains must pass a CRL check against
-    /// `crls`. A role listed fails closed for any CA it has no current CRL
-    /// from, until `ProximityReader.setCRLs(_:)` supplies one.
-    public var revocation: [RevocationRole]
-    /// PEM certificates of the CAs that issued certificates pinned in the
-    /// roots, for a role in `revocation`, as
-    /// `WalletConfiguration.crlIssuers`.
-    public var crlIssuers: String
-    /// Where `ProximityReader.refreshCRLs()` fetches the lists from, as
-    /// `WalletConfiguration.crlDistributionPoints`.
-    public var crlDistributionPoints: [CRLDistributionPoint]
-    /// Also fetches the distribution point each self-signed IACA in
-    /// `issuerRoots`, `issuerRootsByDocType` (with `.issuer` or `.status`
-    /// in `revocation`) and `crlIssuers` names for its own list.
-    public var crlDistributionPointsFromRoots: Bool
-    /// Refuses plain `http` distribution points.
-    public var crlRequireHTTPS: Bool
-    /// The largest status list `checkStatus` reads, in bytes; 0 means 1
-    /// MiB.
-    public var statusMaxBytes: Int
-    /// The largest identifier list `checkStatus` reads, in bytes; 0 means
-    /// 4 MiB.
-    public var identifierListMaxBytes: Int
-    /// How long `checkStatus` uses a status or identifier list it fetched
-    /// before revalidating it, in seconds, as
-    /// ``WalletConfiguration/statusCacheMaxAgeSeconds``.
-    public var statusCacheMaxAgeSeconds: Int
-    /// Where `checkStatus` keeps lists across launches, as
-    /// ``WalletConfiguration/statusCacheDir``.
-    public var statusCacheDir: String?
-    /// The roles that decline checking revocation, for where something
-    /// else stands in for it. Outside `development`, each role must be in
-    /// `revocation` or here; a role can't be in both.
-    public var noRevocationCheck: [RevocationRole]
-    /// Declares that every IACA in `issuerRoots` may issue every document
-    /// type the reader asks for. Outside `development`, `issuerRoots`
-    /// needs it; otherwise name each type's IACAs in `issuerRootsByDocType`.
-    public var anyIssuerForAnyType: Bool
+    /// How the reader's trust roles' certificates are checked for revocation.
+    public var revocation: Revocation
+    /// How `checkStatus` fetches and keeps status and identifier lists, as
+    /// ``WalletConfiguration/status``.
+    public var status: StatusLists
     /// Whether a session checks a verified document's revocation status
     /// before reporting it. Outside `development`, it's required: nil
     /// fails with `invalidInput`. With `.check`, a session reports
@@ -800,24 +737,68 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// something else stands in. In development, nil is `.decline`.
     public var statusCheck: StatusCheck?
     /// Relaxes what production requires, for a reader trying out a
-    /// development issuer's documents. Never ship an app with it set.
-    /// Without it, `ProximityReader` requires a production reader's
-    /// decisions, failing with `invalidInput` otherwise: each
-    /// role in `revocation` or `noRevocationCheck`, and
-    /// `anyIssuerForAnyType` with `issuerRoots`. With it, a role in
-    /// neither checks no revocation, and any IACA in `issuerRoots` may
-    /// issue any document type. A release build refuses it
-    /// (`invalidInput`) unless the app called
-    /// `OID4VC.allowDevelopmentInRelease()`.
-    public var development: Bool
-    /// PEM certificates ``ProximityReader/refreshCRLs()``'s `https`
-    /// fetches trust besides the system's, as
-    /// ``WalletConfiguration/developmentRoots``: a development CA's
-    /// distribution points served under its own TLS certificate. Only
-    /// with `development` (`invalidInput` otherwise). From OID4VCWallet
-    /// 0.27.0.
-    public var developmentRoots: String
+    /// development issuer's documents; nil, the default, is production.
+    /// Never ship an app with it set. Without it, `ProximityReader`
+    /// requires a production reader's decisions, failing with
+    /// `invalidInput` otherwise: each role in `revocation.roles` or
+    /// `revocation.declined`, and `issuers.anyIssuerForAnyType` with
+    /// `issuers.roots`. With it, a role in neither checks no revocation,
+    /// and any IACA in `issuers.roots` may issue any document type. A
+    /// release build refuses it (`invalidInput`) unless the app called
+    /// `OID4VC.allowDevelopmentInRelease()`. Its ``Development/roots``
+    /// are PEM certificates ``ProximityReader/refreshCRLs()``'s `https`
+    /// fetches trust besides the system's: a development CA's
+    /// distribution points served under its own TLS certificate (from
+    /// OID4VCWallet 0.27.0).
+    public var development: Development?
 
+    /// Which issuers' documents the reader accepts.
+    public struct IssuerTrust: Sendable {
+        /// PEM certificates: the IACAs whose mdocs the reader accepts.
+        public var roots: String
+        /// Each document type's own IACAs, as PEM certificates: a document of a
+        /// type named here must chain to them, not to `roots`, so an
+        /// issuer trusted for one document type can't sign another. With it,
+        /// `roots` may be empty, and then only the types named here are
+        /// accepted.
+        public var rootsByDocType: [String: String]
+        /// Declares that every IACA in `roots` may issue every document
+        /// type the reader asks for. Outside `development`, `roots`
+        /// needs it; otherwise name each type's IACAs in `rootsByDocType`.
+        public var anyIssuerForAnyType: Bool
+        /// Also accepts a document signer certificate with no extended key
+        /// usage, which is refused by default for lacking the mDL document
+        /// signer's, for issuers whose document signers have none.
+        public var acceptMDLSignerWithoutEKU: Bool
+
+        /// Issuer trust in the IACAs `roots`.
+        public init(roots: String, rootsByDocType: [String: String] = [:], anyIssuerForAnyType: Bool = false,
+                    acceptMDLSignerWithoutEKU: Bool = false) {
+            self.roots = roots
+            self.rootsByDocType = rootsByDocType
+            self.anyIssuerForAnyType = anyIssuerForAnyType
+            self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
+        }
+    }
+
+    /// The reader's key and its certificate chain, for signing requests.
+    public struct ReaderAuthentication: Sendable {
+        /// The reader's key in the `KeyStore`.
+        public var keyID: String
+        /// The reader's PEM certificate chain, leaf first, for `keyID`. The
+        /// leaf should carry the mdoc reader authentication extended key
+        /// usage (1.0.18013.5.1.6).
+        public var chain: String
+
+        /// Reader authentication with the key `keyID` and its `chain`.
+        public init(keyID: String, chain: String) {
+            self.keyID = keyID
+            self.chain = chain
+        }
+    }
+
+    /// How the reader's trust roles' certificates are checked for revocation.
+    public typealias Revocation = RevocationChecking<RevocationRole>
     /// A reader's trust role whose certificates can be checked for
     /// revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
@@ -838,45 +819,27 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case decline
     }
 
-    /// A configuration accepting mdocs under `issuerRoots`; with `readerKeyID`
-    /// and `readerChain`, requests are signed. `requireMDLSignerEKU` is
-    /// deprecated, as the property is: leave it out.
-    public init(issuerRoots: String, readerKeyID: String? = nil, readerChain: String? = nil,
-                maxClockSkewSeconds: Int? = nil, requireMDLSignerEKU: Bool = false, acceptMDLSignerWithoutEKU: Bool = false,
-                issuerRootsByDocType: [String: String] = [:], crls: String = "", revocation: [RevocationRole] = [],
-                crlIssuers: String = "", noRevocationCheck: [RevocationRole] = [], anyIssuerForAnyType: Bool = false,
-                statusCheck: StatusCheck? = nil, development: Bool = false,
-                crlDistributionPoints: [CRLDistributionPoint] = [], crlDistributionPointsFromRoots: Bool = false,
-                crlRequireHTTPS: Bool = false, developmentRoots: String = "",
-                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0,
-                statusCacheDir: String? = nil) {
-        self.issuerRoots = issuerRoots
-        self.readerKeyID = readerKeyID
-        self.readerChain = readerChain
+    /// A configuration accepting mdocs under `issuers`; with
+    /// `readerAuthentication`, requests are signed.
+    public init(issuers: IssuerTrust, readerAuthentication: ReaderAuthentication? = nil, maxClockSkewSeconds: Int? = nil,
+                revocation: Revocation = Revocation(), status: StatusLists = StatusLists(),
+                statusCheck: StatusCheck? = nil, development: Development? = nil) {
+        self.issuers = issuers
+        self.readerAuthentication = readerAuthentication
         self.maxClockSkewSeconds = maxClockSkewSeconds
-        requireMDLSignerEKUValue = requireMDLSignerEKU
-        self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
-        self.issuerRootsByDocType = issuerRootsByDocType
-        self.crls = crls
         self.revocation = revocation
-        self.crlIssuers = crlIssuers
-        self.noRevocationCheck = noRevocationCheck
-        self.anyIssuerForAnyType = anyIssuerForAnyType
+        self.status = status
         self.statusCheck = statusCheck
         self.development = development
-        self.crlDistributionPoints = crlDistributionPoints
-        self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
-        self.crlRequireHTTPS = crlRequireHTTPS
-        self.developmentRoots = developmentRoots
-        self.statusMaxBytes = statusMaxBytes
-        self.identifierListMaxBytes = identifierListMaxBytes
-        self.statusCacheMaxAgeSeconds = statusCacheMaxAgeSeconds
-        self.statusCacheDir = statusCacheDir
     }
 
+    // The flat JSON keys, one per option, as NewProximityReader reads
+    // them. require_mdl_signer_eku, which did nothing, is still read
+    // and ignored (refused with accept_mdl_signer_without_eku), and
+    // never written.
     enum CodingKeys: String, CodingKey {
         case issuerRoots = "issuer_roots", readerKeyID = "reader_key_id", readerChain = "reader_chain"
-        case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKUValue = "require_mdl_signer_eku"
+        case maxClockSkewSeconds = "max_clock_skew_seconds", requireMDLSignerEKU = "require_mdl_signer_eku"
         case acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case issuerRootsByDocType = "issuer_roots_by_doctype"
         case crls, revocation, crlIssuers = "crl_issuers"
@@ -889,43 +852,64 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
     }
 
-    /// Decodes a configuration, refusing a key it doesn't know, as
-    /// ``WalletConfiguration`` does: a misspelled option would otherwise
-    /// be dropped here and silently left at its default.
+    /// Decodes a configuration from its flat JSON, refusing a key it
+    /// doesn't know, as ``WalletConfiguration`` does: a misspelled option
+    /// would otherwise be dropped here and silently left at its default.
+    /// `reader_key_id` or `reader_chain` alone makes a
+    /// `readerAuthentication` with the other empty, which the reader
+    /// refuses. `require_mdl_signer_eku`, which did nothing, is read and
+    /// ignored, but refused with `accept_mdl_signer_without_eku`, as the
+    /// library refused it.
     public init(from decoder: any Decoder) throws {
         let all = try decoder.container(keyedBy: AnyCodingKey.self)
         if let unknown = all.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {
             throw DecodingError.dataCorruptedError(forKey: unknown, in: all, debugDescription: "unknown configuration key \(unknown.stringValue)")
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        issuerRootsByDocType = try c.decodeIfPresent([String: String].self, forKey: .issuerRootsByDocType) ?? [:]
-        issuerRoots = try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? ""
-        readerKeyID = try c.decodeIfPresent(String.self, forKey: .readerKeyID)
-        readerChain = try c.decodeIfPresent(String.self, forKey: .readerChain)
-        maxClockSkewSeconds = try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds)
-        requireMDLSignerEKUValue = try c.decodeIfPresent(Bool.self, forKey: .requireMDLSignerEKUValue) ?? false
-        acceptMDLSignerWithoutEKU = try c.decodeIfPresent(Bool.self, forKey: .acceptMDLSignerWithoutEKU) ?? false
-        crls = try c.decodeIfPresent(String.self, forKey: .crls) ?? ""
-        revocation = try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? []
-        crlIssuers = try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? ""
-        noRevocationCheck = try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? []
-        anyIssuerForAnyType = try c.decodeIfPresent(Bool.self, forKey: .anyIssuerForAnyType) ?? false
-        statusCheck = try c.decodeIfPresent(StatusCheck.self, forKey: .statusCheck)
-        development = try c.decodeIfPresent(Bool.self, forKey: .development) ?? false
-        crlDistributionPoints = try c.decodeIfPresent([CRLDistributionPoint].self, forKey: .crlDistributionPoints) ?? []
-        crlDistributionPointsFromRoots = try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false
-        crlRequireHTTPS = try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false
-        developmentRoots = try c.decodeIfPresent(String.self, forKey: .developmentRoots) ?? ""
-        statusMaxBytes = try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0
-        identifierListMaxBytes = try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0
-        statusCacheMaxAgeSeconds = try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0
-        statusCacheDir = try c.decodeIfPresent(String.self, forKey: .statusCacheDir)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        if try value(.requireMDLSignerEKU, false), try value(.acceptMDLSignerWithoutEKU, false) {
+            throw DecodingError.dataCorruptedError(forKey: .requireMDLSignerEKU, in: c,
+                                                   debugDescription: "require_mdl_signer_eku and accept_mdl_signer_without_eku can't both be set")
+        }
+        let keyID = try c.decodeIfPresent(String.self, forKey: .readerKeyID)
+        let chain = try c.decodeIfPresent(String.self, forKey: .readerChain)
+        self.init(
+            issuers: IssuerTrust(
+                roots: try value(.issuerRoots, ""),
+                rootsByDocType: try value(.issuerRootsByDocType, [:]),
+                anyIssuerForAnyType: try value(.anyIssuerForAnyType, false),
+                acceptMDLSignerWithoutEKU: try value(.acceptMDLSignerWithoutEKU, false)),
+            readerAuthentication: keyID == nil && chain == nil ? nil : ReaderAuthentication(keyID: keyID ?? "", chain: chain ?? ""),
+            maxClockSkewSeconds: try c.decodeIfPresent(Int.self, forKey: .maxClockSkewSeconds),
+            revocation: try Revocation(decodingFrom: c),
+            status: try StatusLists(decodingFrom: c),
+            statusCheck: try c.decodeIfPresent(StatusCheck.self, forKey: .statusCheck),
+            development: try Development.decode(c))
+    }
+
+    /// Encodes the configuration as its flat JSON: every option's key,
+    /// those of nil options left out.
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(issuers.roots, forKey: .issuerRoots)
+        try c.encode(issuers.rootsByDocType, forKey: .issuerRootsByDocType)
+        try c.encode(issuers.anyIssuerForAnyType, forKey: .anyIssuerForAnyType)
+        try c.encode(issuers.acceptMDLSignerWithoutEKU, forKey: .acceptMDLSignerWithoutEKU)
+        try c.encodeIfPresent(readerAuthentication?.keyID, forKey: .readerKeyID)
+        try c.encodeIfPresent(readerAuthentication?.chain, forKey: .readerChain)
+        try c.encodeIfPresent(maxClockSkewSeconds, forKey: .maxClockSkewSeconds)
+        try revocation.encode(into: &c)
+        try status.encode(into: &c)
+        try c.encodeIfPresent(statusCheck, forKey: .statusCheck)
+        try Development.encode(development, into: &c)
     }
 }
 
 /// An ISO/IEC 18013-5 mdoc reader: a verifier asking for an mdoc in
 /// person over BLE. It needs no `Wallet`. The key store holds the
-/// reader's key, `ProximityReaderConfiguration.readerKeyID`; none for a
+/// reader's key, `ProximityReaderConfiguration.readerAuthentication.keyID`; none for a
 /// reader that doesn't sign.
 public final class ProximityReader: @unchecked Sendable {
     private let handle: MobileProximityReader
@@ -938,8 +922,8 @@ public final class ProximityReader: @unchecked Sendable {
     }
 
     init(configuration: ProximityReaderConfiguration, keys: KeyStoreAdapter?) throws {
-        try OID4VC.checkDevelopment(configuration.development)
-        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), statusCacheDir: configuration.statusCacheDir)
+        try OID4VC.checkDevelopment(configuration.development != nil)
+        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), cacheDir: configuration.status.cacheDir)
         adapter = keys
         handle = try OID4VC.call { MobileNewProximityReader(json, keys, $0) }!
     }
@@ -986,7 +970,7 @@ public final class ProximityReader: @unchecked Sendable {
     }
 
     /// Replaces the Certificate Revocation Lists the configuration's
-    /// `revocation` roles are checked against with `pem`'s `X509 CRL`
+    /// `revocation.roles` are checked against with `pem`'s `X509 CRL`
     /// blocks, for sessions already started too. CRLs expire at their
     /// nextUpdate: fetch fresh ones and call this before then. Text holding
     /// anything else, or a CA's list older than the one held, throws
@@ -1304,7 +1288,7 @@ public struct VerifiedMdoc: Sendable {
     /// both.
     public let identifierList: IdentifierListReference?
     /// The document signer's verified certificate path, leaf first,
-    /// ending at the IACA in `ProximityReaderConfiguration.issuerRoots`
+    /// ending at the IACA in `ProximityReaderConfiguration.issuers.roots`
     /// it chains to: decide which issuers to accept on it.
     public let issuerChain: [SecCertificate]
     /// Its revocation status as the session checked it, `.valid` or

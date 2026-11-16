@@ -170,12 +170,12 @@ issuance the app has in progress.
 
 ## Trust
 
-- A signed request is checked against `WalletConfiguration.verifierRoots`,
+- A signed request is checked against `WalletConfiguration.verifiers.roots`,
   and its `expected_origins` must include the origin: another site
   can't replay it.
 - An unsigned request has only its origin for identity: show it on the
   consent screen, and a signed request's alongside the Verifier's name.
-  `WalletConfiguration.requireSignedDCAPIRequests` refuses those before
+  `WalletConfiguration.verifiers.requireSignedDCAPIRequests` refuses those before
   the holder sees them; HAIP requires wallets to support them, so set it
   only where every Verifier must be a known one.
 - Each presentation is recorded as shown to the page's origin, for

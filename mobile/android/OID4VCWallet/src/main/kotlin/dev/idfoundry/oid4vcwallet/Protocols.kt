@@ -116,7 +116,7 @@ public interface KeyStore {
 /**
  * ECDH with the wallet's holder keys inside the key store, for deviceMac
  * in person (ISO/IEC 18013-5 §9.1.3.5). A [KeyStore] that is also one is
- * used for it when [WalletConfiguration.proximityDeviceAuth] is
+ * used for it when [WalletConfiguration.PresentationOptions.proximityDeviceAuth] is
  * [WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED].
  */
 public fun interface KeyAgreement {

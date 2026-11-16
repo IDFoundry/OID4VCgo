@@ -46,7 +46,7 @@ public struct CRLRefreshResult: Decodable, Sendable, Equatable {
     /// One per configured distribution point, in configuration order.
     public let results: [Point]
     /// Every list now held, as PEM `X509 CRL` blocks: persist it, and
-    /// pass it back as the configuration's `crls` at the next launch, so
+    /// pass it back as the configuration's `revocation.crls` at the next launch, so
     /// checks work before the first refresh and an older list is still
     /// refused after a restart.
     public let crls: String

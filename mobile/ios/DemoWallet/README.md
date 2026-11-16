@@ -71,7 +71,7 @@ which shows each distribution point's outcome (updated, unchanged or
 failed, with why), when the lists were fetched and when they're next
 due, and **Refresh revocation lists**. It keeps the lists it gets (the
 result's `crls`) in the app group's defaults and passes them back as
-`crls` at the next launch, so checks work before the first refresh, and
+`revocation.crls` at the next launch, so checks work before the first refresh, and
 the document provider extension checks against them too. A new
 configuration starts without them. Nothing refreshes them while the app
 is closed: a shipping app would schedule `refreshCRLs()` with

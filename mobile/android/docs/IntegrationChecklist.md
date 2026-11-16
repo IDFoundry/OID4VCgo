@@ -53,10 +53,11 @@ is a complete, working app on this library to compare against.
 - [ ] Each setting in [Going to production](GoingToProduction.md)'s
   "Settings to decide" is decided and recorded.
 - [ ] Trust roots are PEM in `WalletConfiguration`, each in its own
-  role: `issuerRoots`, `verifierRoots`, `mdocReaderRoots` and the rest.
+  role: `issuers.roots`, `verifiers.roots`, `verifiers.mdocReaderRoots`
+  and the rest.
   Outside development, two roles whose roots may vouch for the same
   certificates (a shared anchor, or an intermediate in either) each
-  need their own, distinct `*RequireEKU`, or the wallet isn't made.
+  need their own, distinct `requireEKU`, or the wallet isn't made.
   *Check:* `Wallet(...)` succeeds with your production configuration.
   ([Going to production](GoingToProduction.md))
 - [ ] Errors are shown with `WalletException.description` and
@@ -64,11 +65,11 @@ is a complete, working app on this library to compare against.
   says so. ([Handling errors](HandlingErrors.md))
 - [ ] Revocation, for every role whose roots you set: where your
   ecosystem's CAs publish CRLs, the role in `revocation`, its CAs' CRLs
-  in `crls`, and, for a certificate pinned in the roots, its CA's
-  certificate in `crlIssuers`; otherwise the role in
-  `noRevocationCheck`, a deliberate decision. Fresh CRLs are fetched
+  in `revocation.crls`, and, for a certificate pinned in the roots, its
+  CA's certificate in `revocation.crlIssuers`; otherwise the role in
+  `revocation.declined`, a deliberate decision. Fresh CRLs are fetched
   before the old ones expire: by `Wallet.refreshCRLs` over
-  `crlDistributionPoints`, at start, at foreground and from WorkManager,
+  `revocation.distributionPoints`, at start, at foreground and from WorkManager,
   its `crls` kept for the next launch, or by the app and handed over
   with `Wallet.setCRLs`. *Check:* `Wallet(...)` succeeds with your production
   configuration, and a certificate on a CRL is refused.
@@ -102,7 +103,7 @@ is a complete, working app on this library to compare against.
   and `CredentialStatus.reason` to say why (an issuer certificate
   revoked since receipt, revocation lists out of date).
 - [ ] *Check:* both grants against your issuer, including a killed
-  process during sign-in; an offer from an issuer outside `issuerRoots`
+  process during sign-in; an offer from an issuer outside `issuers.roots`
   is refused. ([Receiving credentials](ReceivingCredentials.md))
 
 ## 3. Presenting from a link
@@ -124,7 +125,7 @@ is a complete, working app on this library to compare against.
   to the page. ([Handling errors](HandlingErrors.md))
 - [ ] `deliveryUnknown` isn't retried: tell the holder to check with the
   Verifier.
-- [ ] *Check:* a Verifier outside `verifierRoots` is refused before
+- [ ] *Check:* a Verifier outside `verifiers.roots` is refused before
   anything is shown; the Verifier receives exactly the claims the
   holder chose. ([Presenting from a link](PresentingFromALink.md))
 
@@ -153,7 +154,7 @@ is a complete, working app on this library to compare against.
   says the selection would disclose. Respond with that selection, or
   `decline()`; return `DigitalCredentials.response(request,
   dcapiResponse)` with `setResult(RESULT_OK, …)`, and finish.
-- [ ] Decide `WalletConfiguration.requireSignedDCAPIRequests`: on, an
+- [ ] Decide `WalletConfiguration.verifiers.requireSignedDCAPIRequests`: on, an
   unsigned request is refused before the holder sees it; set it only
   where every Verifier must be a known one.
 - [ ] *Check:* on a device with Google Play services, a page in Chrome
@@ -245,13 +246,13 @@ is a complete, working app on this library to compare against.
 
 ## 7. In person, reader (verifier)
 
-- [ ] `ProximityReader(ProximityReaderConfiguration(issuerRoots = …))`,
+- [ ] `ProximityReader(ProximityReaderConfiguration(IssuerTrust(roots = …)))`,
   plus a reader key and chain with the reader-authentication EKU if
   holders should see who's asking.
 - [ ] `development` not set, with each role (`ISSUER`, `STATUS`) in
-  `revocation` (with `crls`, refreshed by `refreshCRLs` or `setCRLs`) or
-  `noRevocationCheck`, `anyIssuerForAnyType` or
-  `issuerRootsByDocType` deciding which IACAs issue which document type,
+  `revocation.roles` (with `revocation.crls`, refreshed by `refreshCRLs`
+  or `setCRLs`) or `revocation.declined`, `issuers.anyIssuerForAnyType`
+  or `issuers.rootsByDocType` deciding which IACAs issue which document type,
   and `statusCheck = StatusCheck.CHECK`, so a session is `Verified` only
   for a document that isn't revoked or suspended.
 - [ ] QR: `reader.start(context, qrCode, docType, elements)` after
@@ -266,7 +267,7 @@ is a complete, working app on this library to compare against.
 - [ ] Decide which issuers to accept on `VerifiedMdoc.issuerChain`, not
   on its `issuer` name.
 - [ ] *Check:* both a QR holder and an NFC holder verify; an mdoc from
-  an issuer outside `issuerRoots` is refused.
+  an issuer outside `issuers.roots` is refused.
 
 ## 8. Before shipping
 

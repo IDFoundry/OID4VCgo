@@ -21,7 +21,7 @@ import javax.net.ssl.TrustManagerFactory
 object DevelopmentTLS {
     /** The configuration, trusting the pushed CA too when it's for development. */
     fun install(context: Context, config: DemoConfiguration): DemoConfiguration {
-        if (!config.wallet.development) return config
+        val development = config.wallet.development ?: return config
         val kept = File(context.filesDir, "dev-ca.pem")
         context.getExternalFilesDir(null)?.let { File(it, "dev-ca.pem") }?.takeIf { it.isFile }?.let {
             it.copyTo(kept, overwrite = true)
@@ -31,7 +31,7 @@ object DevelopmentTLS {
         val pem = kept.readText()
         val extra = CertificateFactory.getInstance("X.509").generateCertificates(pem.byteInputStream()).map { it as X509Certificate }
         HttpsURLConnection.setDefaultSSLSocketFactory(withExtra(extra).socketFactory)
-        return config.copy(wallet = config.wallet.copy(developmentRoots = pem))
+        return config.copy(wallet = config.wallet.copy(development = development.copy(roots = pem)))
     }
 
     /**

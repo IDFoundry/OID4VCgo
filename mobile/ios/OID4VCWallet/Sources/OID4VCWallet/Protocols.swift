@@ -58,7 +58,7 @@ public extension KeyStore {
 
 /// ECDH with the wallet's holder keys inside the key store, for deviceMac
 /// in person (ISO/IEC 18013-5 §9.1.3.5). A `KeyStore` that is also one is
-/// used for it when `WalletConfiguration.proximityDeviceAuth` is
+/// used for it when `WalletConfiguration.presentation.proximityDeviceAuth` is
 /// `.macPreferred`. `KeychainKeyStore` is one.
 public protocol KeyAgreement: Sendable {
     /// Runs ECDH between key `id` and `peerPublicKey`, an uncompressed

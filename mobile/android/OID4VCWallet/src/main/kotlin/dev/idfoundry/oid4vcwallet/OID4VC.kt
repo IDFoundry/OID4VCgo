@@ -30,8 +30,8 @@ public class WalletException internal constructor(
      * code: `certificate_revoked` or `no_current_crl` ([isCertificateRevoked],
      * [isNoCurrentCRL]). For [Code.invalidInput] it's `not_configured`
      * (`Mobile.DetailNotConfigured`) when the wallet's configuration lacks what the call
-     * needs — such as `issuerRoots` or `redirectURI` to receive credentials, or
-     * `verifierRoots` to present them — rather than an argument being malformed: the
+     * needs — such as `issuers.roots` or `redirectURI` to receive credentials, or
+     * `verifiers.roots` to present them — rather than an argument being malformed: the
      * app's configuration to fix, which [message] names by its JSON key (`issuer_roots`).
      * For [Code.platform] it's the Wallet Provider's error code when the provider refused
      * ([WalletProviderRefusedException]): `instance_not_active` (the installation is
@@ -105,7 +105,7 @@ public class WalletException internal constructor(
 
             /**
              * The Verifier's request is signed with a certificate that
-             * doesn't chain to `verifierRoots`: it's refused unread.
+             * doesn't chain to `verifiers.roots`: it's refused unread.
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
             /**

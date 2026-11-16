@@ -124,7 +124,7 @@ storage and the UI:
   Attest evidence; for another backend you implement `WalletProvider`,
   making the checks the Getting started article lists. Pass `nil` for
   issuers that don't ask. Issuance follows each issuer's metadata, or
-  with `issuanceProfile: .haip` refuses issuers outside HAIP.
+  with `issuance: .init(profile: .haip)` refuses issuers outside HAIP.
 
 ## Install
 

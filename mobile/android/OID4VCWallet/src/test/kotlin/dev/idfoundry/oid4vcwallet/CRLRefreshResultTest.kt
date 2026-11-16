@@ -41,11 +41,13 @@ class CRLRefreshResultTest {
     @Test
     fun configurationKeys() {
         val config = WalletConfiguration(
-            crlDistributionPoints = listOf(CRLDistributionPoint("http://ca.example/ca.crl", "PEM")),
-            crlDistributionPointsFromRoots = true,
-            crlRequireHTTPS = true,
+            revocation = WalletConfiguration.Revocation(
+                distributionPoints = listOf(CRLDistributionPoint("http://ca.example/ca.crl", "PEM")),
+                distributionPointsFromRoots = true,
+                requireHTTPS = true,
+            ),
             // The default reads the device's locales, an Android API.
-            locales = listOf("en"),
+            issuance = WalletConfiguration.IssuanceOptions(locales = listOf("en")),
         )
         val o = json.parseToJsonElement(json.encodeToString(WalletConfiguration.serializer(), config)).jsonObject
         val point = o["crl_distribution_points"]!!.jsonArray[0] as JsonObject

@@ -144,7 +144,7 @@ library. Your app owns the keys, the storage and the UI:
   \`WalletProvider\`, making the checks
   [Getting started](docs/GettingStarted.md#if-your-backend-isnt-oid4vcgos-walletprovider)
   lists. Pass \`null\` for issuers that don't ask. Issuance follows each
-  issuer's metadata, or with \`issuanceProfile = IssuanceProfile.HAIP\`
+  issuer's metadata, or with \`issuance.profile = IssuanceProfile.HAIP\`
   refuses issuers outside HAIP.
 
 ## Install

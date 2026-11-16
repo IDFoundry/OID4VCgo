@@ -107,9 +107,9 @@ suspend fun shareInPerson(
 
 Show the request's `reader` on the consent screen. A reader that signs
 its request (reader authentication) is named, and `Trusted` when its
-certificate chains to `WalletConfiguration.mdocReaderRoots`. An
+certificate chains to `WalletConfiguration.verifiers.mdocReaderRoots`. An
 unsigned request could come from anyone who scanned the code.
-`WalletConfiguration.requireTrustedMdocReader` ends a session from any
+`WalletConfiguration.verifiers.requireTrustedMdocReader` ends a session from any
 other reader before the holder sees it.
 
 ### Use cases and purpose hints
@@ -169,7 +169,7 @@ the holder cancels any prompt, nothing is sent and the request stands.
 
 ### deviceMac
 
-`WalletConfiguration.proximityDeviceAuth = MAC_PREFERRED` answers with
+`WalletConfiguration.presentation.proximityDeviceAuth = MAC_PREFERRED` answers with
 deviceMac, which the reader can check but can't show anyone else, where
 the holder key can agree keys, and signs otherwise — silently: nothing
 fails, and the response is a signature. Under
@@ -211,9 +211,9 @@ in a `KeyStore` and its certificate chain, with the reader
 authentication extended key usage (`ProximityReaderConfiguration`). The
 reader is a production one: it refuses (`invalid_input`) a
 configuration that leaves a decision open: which IACAs issue which
-document types (`anyIssuerForAnyType`, or `issuerRootsByDocType`),
-each role's revocation (`revocation` with `crls`, or
-`noRevocationCheck` to decline), and whether a document's revocation
+document types (`issuers.anyIssuerForAnyType`, or
+`issuers.rootsByDocType`), each role's revocation (`revocation.roles`
+with `revocation.crls`, or `revocation.declined` to decline), and whether a document's revocation
 status is checked (`statusCheck`). `development` relaxes this, for trying
 out a development issuer's documents; never ship an app with it set. `start` takes the holder's QR code and what to ask for.
 
@@ -232,8 +232,11 @@ suspend fun readInPerson(
 ): VerifiedMdoc? {
     val reader = ProximityReader(
         ProximityReaderConfiguration(
-            issuerRoots = "", issuerRootsByDocType = mapOf("org.iso.18013.5.1.mDL" to mdlIACAs), crls = crls,
-            revocation = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+            issuers = ProximityReaderConfiguration.IssuerTrust(roots = "", rootsByDocType = mapOf("org.iso.18013.5.1.mDL" to mdlIACAs)),
+            revocation = ProximityReaderConfiguration.Revocation(
+                roles = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
+                crls = crls,
+            ),
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
         ),
     )

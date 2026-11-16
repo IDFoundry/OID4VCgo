@@ -7,7 +7,7 @@ A Verifier asks with an `openid4vp://` link, as a QR code or a link on
 its page. Declare that scheme in an intent filter so links open the
 app, and hand the link to `Wallet.startPresentation`. It fetches the
 Verifier's signed request, checks its certificate against
-`WalletConfiguration.verifierRoots`, and finds the credentials that can
+`WalletConfiguration.verifiers.roots`, and finds the credentials that can
 answer it. A request from a Verifier the wallet doesn't trust throws a
 `WalletException` with code `untrustedVerifier` before anything is
 shown.
@@ -15,7 +15,7 @@ shown.
 The `Presentation` it returns says:
 
 - who is asking: `verifier`, its name, and its `registration` when a
-  registrar the wallet trusts (`WalletConfiguration.registrarRoots`)
+  registrar the wallet trusts (`WalletConfiguration.verifiers.registrarRoots`)
   registered it, with its purpose and the claims it's registered to ask
   for;
 - what it asks for: `queries`, each with the held credentials that can
@@ -107,7 +107,7 @@ Nothing is refused for them: show them, and let the holder decide.
 
 Each presentation uses a copy of the credential, bound to its own key,
 so two Verifiers can't link the holder's presentations by the
-credential. `WalletConfiguration.copyPolicy` chooses which copy:
+credential. `WalletConfiguration.presentation.copyPolicy` chooses which copy:
 
 - `PER_PRESENTATION`, the default: a copy no Verifier has seen, every
   time.

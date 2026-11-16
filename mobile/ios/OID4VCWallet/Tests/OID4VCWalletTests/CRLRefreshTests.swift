@@ -18,38 +18,37 @@ final class CRLRefreshTests: XCTestCase {
     /// The distribution points reach the Go side under its keys.
     func testConfigurationKeys() throws {
         let point = CRLDistributionPoint(url: "http://ca.example/ca.crl", issuer: "PEM")
-        let config = WalletConfiguration(crlDistributionPoints: [point], crlDistributionPointsFromRoots: true, crlRequireHTTPS: true)
+        let config = WalletConfiguration(revocation: .init(distributionPoints: [point], distributionPointsFromRoots: true, requireHTTPS: true))
         let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any]
         XCTAssertEqual((object?["crl_distribution_points"] as? [[String: String]])?.first, ["url": "http://ca.example/ca.crl", "issuer": "PEM"])
         XCTAssertEqual(object?["crl_distribution_points_from_roots"] as? Bool, true)
         XCTAssertEqual(object?["crl_require_https"] as? Bool, true)
         let decoded = try JSONDecoder().decode(WalletConfiguration.self, from: JSONEncoder().encode(config))
-        XCTAssertEqual(decoded.crlDistributionPoints, [point])
+        XCTAssertEqual(decoded.revocation.distributionPoints, [point])
     }
 
-    /// `developmentRoots` reaches the Go side as `development_roots`, for
-    /// a wallet and a reader alike, and a reader refuses it outside
-    /// development.
+    /// `development.roots` reaches the Go side as `development_roots`, for
+    /// a wallet and a reader alike, and `development_roots` without
+    /// `development`, which the Go side refuses, can't be decoded.
     func testDevelopmentRoots() throws {
         let wallet = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
-            WalletConfiguration(development: true, developmentRoots: "PEM"))) as? [String: Any]
+            WalletConfiguration(development: Development(roots: "PEM")))) as? [String: Any]
         XCTAssertEqual(wallet?["development_roots"] as? String, "PEM")
         let decoded = try JSONDecoder().decode(WalletConfiguration.self, from: Data(#"{"development":true,"development_roots":"PEM"}"#.utf8))
-        XCTAssertEqual(decoded.developmentRoots, "PEM")
+        XCTAssertEqual(decoded.development?.roots, "PEM")
 
-        let readerConfig = ProximityReaderConfiguration(issuerRoots: "", development: true, developmentRoots: "PEM")
+        let readerConfig = ProximityReaderConfiguration(issuers: .init(roots: ""), development: Development(roots: "PEM"))
         let reader = try JSONSerialization.jsonObject(with: JSONEncoder().encode(readerConfig)) as? [String: Any]
         XCTAssertEqual(reader?["development_roots"] as? String, "PEM")
-        XCTAssertEqual(try JSONDecoder().decode(ProximityReaderConfiguration.self, from: JSONEncoder().encode(readerConfig)).developmentRoots, "PEM")
+        XCTAssertEqual(try JSONDecoder().decode(ProximityReaderConfiguration.self, from: JSONEncoder().encode(readerConfig)).development?.roots, "PEM")
 
-        let issuerRoots = try TestEnv().configuration.issuerRoots
-        do {
-            _ = try ProximityReader(configuration: ProximityReaderConfiguration(
-                issuerRoots: issuerRoots, revocation: [.issuer, .status], anyIssuerForAnyType: true, statusCheck: .check,
-                developmentRoots: issuerRoots), keys: nil)
-            XCTFail("a production reader took development_roots")
-        } catch let error as WalletError {
-            XCTAssertEqual(error.code, .invalidInput)
+        XCTAssertThrowsError(try JSONDecoder().decode(ProximityReaderConfiguration.self,
+                                                      from: Data(#"{"issuer_roots":"","development_roots":"PEM"}"#.utf8))) {
+            XCTAssertTrue($0 is DecodingError, "\($0)")
+        }
+        XCTAssertThrowsError(try JSONDecoder().decode(WalletConfiguration.self,
+                                                      from: Data(#"{"development":false,"development_roots":"PEM"}"#.utf8))) {
+            XCTAssertTrue($0 is DecodingError, "\($0)")
         }
     }
 
@@ -57,8 +56,8 @@ final class CRLRefreshTests: XCTestCase {
     /// `not_configured`; outside development, a point on a loopback
     /// address fails as `network`, and the result still comes back.
     func testReaderRefresh() async throws {
-        let issuerRoots = try TestEnv().configuration.issuerRoots
-        let none = try ProximityReader(configuration: ProximityReaderConfiguration(issuerRoots: issuerRoots, development: true), keys: nil)
+        let issuerRoots = try TestEnv().configuration.issuers.roots
+        let none = try ProximityReader(configuration: ProximityReaderConfiguration(issuers: .init(roots: issuerRoots), development: Development()), keys: nil)
         do {
             _ = try await none.refreshCRLs()
             XCTFail("a refresh with no distribution points ran")
@@ -68,8 +67,10 @@ final class CRLRefreshTests: XCTestCase {
         }
 
         let reader = try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuerRoots: issuerRoots, revocation: [.issuer, .status], anyIssuerForAnyType: true, statusCheck: .check,
-            crlDistributionPoints: [CRLDistributionPoint(url: "http://127.0.0.1:9/ca.crl", issuer: issuerRoots)]), keys: nil)
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true),
+            revocation: .init(roles: [.issuer, .status],
+                              distributionPoints: [CRLDistributionPoint(url: "http://127.0.0.1:9/ca.crl", issuer: issuerRoots)]),
+            statusCheck: .check), keys: nil)
         let r = try await reader.refreshCRLs()
         XCTAssertEqual(r.results.map(\.outcome), [.failed])
         XCTAssertTrue(r.results[0].error?.hasPrefix("[network]") ?? false, r.results[0].error ?? "")

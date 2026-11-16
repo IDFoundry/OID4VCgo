@@ -46,8 +46,8 @@ private-use scheme for it, and declare it in an intent filter on the
 activity that receives the redirect.
 
 The wallet trusts only what chains to the roots you give it, as PEM
-certificates: `issuerRoots` for credentials, and `verifierRoots` for the
-Verifiers it answers. A Credential Offer's issuer isn't trusted just
+certificates: `issuers.roots` for credentials, and `verifiers.roots` for
+the Verifiers it answers. A Credential Offer's issuer isn't trusted just
 because it sent the offer.
 
 ## Provide the keys and the storage
@@ -157,8 +157,8 @@ and keep it. Creating it makes no network requests. At launch, before
 anything else, sweep the Keystore of keys no credential uses: an
 issuance the app quit in the middle of leaves its keys behind. Each
 trust role whose roots you set needs a revocation choice: checked against
-the CRLs your app fetches (`revocation`), or declined
-(`noRevocationCheck`); see [Going to production](GoingToProduction.md).
+the CRLs your app fetches (`revocation.roles`), or declined
+(`revocation.declined`); see [Going to production](GoingToProduction.md).
 
 ```kotlin
 /** The app's wallet, created once. `currentActivity` is the activity the holder sees, for the biometric prompt. */
@@ -171,13 +171,15 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
         WalletConfiguration(
             clientID = "https://wallet.example.com",
             redirectURI = "com.example.wallet:/callback",
-            issuerRoots = issuerRoots,
-            verifierRoots = verifierRoots,
-            crls = crls,
-            revocation = listOf(
-                WalletConfiguration.RevocationRole.ISSUER,
-                WalletConfiguration.RevocationRole.STATUS,
-                WalletConfiguration.RevocationRole.VERIFIER,
+            issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots),
+            verifiers = WalletConfiguration.VerifierTrust(roots = verifierRoots),
+            revocation = WalletConfiguration.Revocation(
+                roles = listOf(
+                    WalletConfiguration.RevocationRole.ISSUER,
+                    WalletConfiguration.RevocationRole.STATUS,
+                    WalletConfiguration.RevocationRole.VERIFIER,
+                ),
+                crls = crls,
             ),
         ),
         keys,

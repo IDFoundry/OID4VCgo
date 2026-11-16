@@ -70,7 +70,7 @@ final class WalletModel {
         guard let config, let keys else { throw NotConfigured() }
         // With the revocation lists last fetched (SharedWallet.crlsKey).
         var configuration = SharedWallet.applyingHolderChoices(to: config.wallet)
-        configuration.copyPolicy = copyPolicy
+        configuration.presentation.copyPolicy = copyPolicy
         let provider = try Self.walletProvider(config)
         let make = {
             try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
@@ -78,11 +78,11 @@ final class WalletModel {
         }
         do {
             return try make()
-        } catch let e as WalletError where e.code == .invalidInput && configuration.crls != config.wallet.crls {
+        } catch let e as WalletError where e.code == .invalidInput && configuration.revocation.crls != config.wallet.revocation.crls {
             // Saved lists the wallet refuses: start without them, and the
             // next refresh fetches them again.
             SharedWallet.forgetCRLs()
-            configuration.crls = config.wallet.crls
+            configuration.revocation.crls = config.wallet.revocation.crls
             return try make()
         }
     }
@@ -131,7 +131,7 @@ final class WalletModel {
                let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
                 copyPolicy = policy
             } else {
-                copyPolicy = config.wallet.copyPolicy
+                copyPolicy = config.wallet.presentation.copyPolicy
             }
             wallet = try makeWallet()
             configured = true
@@ -643,7 +643,7 @@ final class WalletModel {
     /// Whether the configuration has the wallet fetch revocation lists.
     var fetchesCRLs: Bool {
         guard let w = config?.wallet else { return false }
-        return w.crlDistributionPointsFromRoots || !w.crlDistributionPoints.isEmpty
+        return w.revocation.distributionPointsFromRoots || !w.revocation.distributionPoints.isEmpty
     }
 
     /// Whether the lists are due again: the last refresh failed, or its
@@ -700,7 +700,7 @@ final class WalletModel {
             await loadClaims(reload: [])
             // In the background: the list needn't wait for iOS.
             let held = credentials
-            let roots = config?.wallet.mdocReaderRoots ?? ""
+            let roots = config?.wallet.verifiers.mdocReaderRoots ?? ""
             Task.detached { await DocumentRegistrations.sync(held, readerRootsPEM: roots) }
         } catch {
             phase = .failed("Couldn't list credentials: " + Self.describe(error))

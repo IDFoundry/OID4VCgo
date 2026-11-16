@@ -228,10 +228,10 @@ credential and a linkability warning.
 
 A page's request may be signed by its reader's certificate (ISO/IEC
 18013-5 reader authentication). When the certificate chains to
-``WalletConfiguration/mdocReaderRoots``, ``MdocPresentation/Request/reader``
+``WalletConfiguration/VerifierTrust/mdocReaderRoots``, ``MdocPresentation/Request/reader``
 names it; otherwise show only the website's origin.
-``WalletConfiguration/mdocReaderRequireEKU`` accepts only certificates
-issued for readers, and ``WalletConfiguration/requireTrustedMdocReader``
+``WalletConfiguration/VerifierTrust/mdocReaderRequireEKU`` accepts only certificates
+issued for readers, and ``WalletConfiguration/VerifierTrust/requireTrustedMdocReader``
 refuses requests from any other reader before the holder sees them.
 
 ### Warn of linkable presentations

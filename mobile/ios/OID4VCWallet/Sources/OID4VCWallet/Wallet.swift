@@ -1,7 +1,10 @@
 import Foundation
 import Mobile
 
-/// A ``Wallet``'s configuration.
+/// A ``Wallet``'s configuration, its options grouped by what they
+/// concern: issuers, issuer metadata, Verifiers, revocation, status
+/// lists, the network, issuance and presentation. Its JSON form is flat,
+/// one key per option, and unchanged by the grouping.
 public struct WalletConfiguration: Codable, Sendable {
     /// The wallet's registration with Authorization Servers. Empty for a
     /// wallet with no `WalletProvider`.
@@ -12,259 +15,300 @@ public struct WalletConfiguration: Codable, Sendable {
     /// an authority (`com.example.wallet://callback`). Empty
     /// for a wallet that receives only pre-authorized codes.
     public var redirectURI: String
-    /// PEM certificates: the trust anchors for issuers' credentials. A
-    /// credential signed by a certificate that doesn't chain to them is
-    /// refused.
-    public var issuerRoots: String
-    /// PEM certificates: the trust anchors for Verifiers' requests. A request
-    /// signed by a certificate that doesn't chain to them is refused unread.
-    public var verifierRoots: String
-    /// PEM certificates: the registrars whose registrations of Verifiers
-    /// the wallet checks (`Presentation.Verifier.registration`). Empty:
-    /// registrations are ignored.
-    public var registrarRoots: String
-    /// PEM certificates: the mdoc readers recognized when one signs an
-    /// `org-iso-mdoc` request (`MdocPresentation.Request.reader`). Empty:
-    /// every such request is shown by its origin.
-    public var mdocReaderRoots: String
-    /// Recognizes only reader certificates with the ISO/IEC 18013-5
-    /// reader authentication extended key usage (1.0.18013.5.1.6), so a
-    /// certificate issued for another role under `mdocReaderRoots`
-    /// isn't taken for a reader's.
-    public var mdocReaderRequireEKU: Bool
-    /// Refuses an `org-iso-mdoc` request no recognized reader signed:
-    /// `startMdocPresentation` throws `untrustedVerifier`, and nothing is
-    /// shown to the holder. Needs `mdocReaderRoots`.
-    public var requireTrustedMdocReader: Bool
-    /// A dotted object identifier: recognizes only Verifier certificates
-    /// under `verifierRoots` with that extended key usage, the one your
-    /// ecosystem marks its Verifiers' certificates with. Outside
-    /// `development`, required when `verifierRoots` shares a trust anchor
-    /// with another role's roots.
-    public var verifierRequireEKU: String
-    /// A dotted object identifier: recognizes only registrar certificates
-    /// under `registrarRoots` with that extended key usage. Outside
-    /// `development`, required when `registrarRoots` shares a trust anchor
-    /// with another role's roots.
-    public var registrarRequireEKU: String
-    /// A dotted object identifier: recognizes only issuer certificates
-    /// under `issuerRoots` with that extended key usage. Outside
-    /// `development`, required when `issuerRoots` may share a trust
-    /// anchor with another role's roots.
-    public var issuerRequireEKU: String
-    /// A dotted object identifier: recognizes only issuer metadata signed
-    /// by a certificate under `issuerMetadataRoots` with that extended key
-    /// usage. Outside `development`, required when `issuerMetadataRoots`
-    /// may share a trust anchor with another role's roots.
-    public var issuerMetadataRequireEKU: String
-    /// PEM certificates: the IACAs a received mdoc must chain to, in place
-    /// of `issuerRoots`, so an `issuerRoots` anchor alone, an SD-JWT VC
-    /// issuer's CA say, can't sign an mDL. Empty: mdocs chain to
-    /// `issuerRoots`.
-    public var mdocIssuerRoots: String
-    /// Each document type's own IACAs, as PEM certificates: an mdoc of a
-    /// type named here must chain to them, not to `mdocIssuerRoots` or
-    /// `issuerRoots`. A type named with an empty string is refused.
-    public var mdocIssuerRootsByDocType: [String: String]
-    /// A dotted object identifier: recognizes only document signer
-    /// certificates with that extended key usage (the mDL's is
-    /// 1.0.18013.5.1.2), in place of `issuerRequireEKU`, so a wallet
-    /// receiving both formats can require each its own.
-    public var mdocIssuerRequireEKU: String
-    /// Also accepts a document signer certificate with no extended key
-    /// usage, which is refused by default for lacking the mDL document
-    /// signer's (1.0.18013.5.1.2), for issuers whose document signers have
-    /// none. Any certificate without one under the same IACAs, such as a
-    /// revocation list signer's, can then sign mdocs the wallet accepts.
-    /// It can't be set with `mdocIssuerRequireEKU`, or with
-    /// `issuerRequireEKU` unless `mdocIssuerRoots` is set.
-    public var acceptMDLSignerWithoutEKU: Bool
+    /// Which issuers' credentials the wallet accepts.
+    public var issuers: IssuerTrust
+    /// Which signed Credential Issuer Metadata the wallet trusts.
+    public var issuerMetadata: IssuerMetadataTrust
+    /// Which Verifiers, registrars and mdoc readers the wallet recognizes.
+    public var verifiers: VerifierTrust
+    /// How the trust roles' certificates are checked for revocation.
+    public var revocation: Revocation
+    /// How `checkStatus` fetches and keeps status and identifier lists.
+    public var status: StatusLists
+    /// The wallet's own HTTPS requests: pins and private hosts.
+    public var network: Network
+    /// How credentials are requested.
+    public var issuance: IssuanceOptions
+    /// How credentials are presented.
+    public var presentation: PresentationOptions
     /// Relaxes what production requires, for a wallet talking to services
-    /// on a development machine. Never ship an app with it set. It lets
-    /// issuers, Authorization Servers, Verifiers and status lists be on
-    /// loopback addresses, over http there too; makes requests through an
-    /// ordinary HTTPS client, which reaches private network addresses,
-    /// instead of the hardened one; requires no revocation choice for a
-    /// trust role, so a role in neither `revocation` nor
-    /// `noRevocationCheck` is checked for nothing; skips the check that
-    /// different roles' roots share no anchor; and skips the production
-    /// checks on receiving credentials: durable stores and keys, and the
-    /// random source. A release build refuses it (`invalidInput`) unless
-    /// the app called `OID4VC.allowDevelopmentInRelease()`.
-    public var development: Bool
-    /// PEM certificates the wallet's HTTPS requests, and
+    /// on a development machine; nil, the default, is production. Never
+    /// ship an app with it set. It lets issuers, Authorization Servers,
+    /// Verifiers and status lists be on loopback addresses, over http
+    /// there too; makes requests through an ordinary HTTPS client, which
+    /// reaches private network addresses, instead of the hardened one;
+    /// requires no revocation choice for a trust role, so a role in
+    /// neither `revocation.roles` nor `revocation.declined` is checked for
+    /// nothing; skips the check that different roles' roots share no
+    /// anchor; and skips the production checks on receiving credentials:
+    /// durable stores and keys, and the random source. A release build
+    /// refuses it (`invalidInput`) unless the app called
+    /// `OID4VC.allowDevelopmentInRelease()`. Its ``Development/roots``
+    /// are PEM certificates the wallet's HTTPS requests, and
     /// ``Wallet/refreshCRLs()``'s fetches, trust besides the system's: a
     /// development service's own CA, without installing and trusting a
-    /// profile on the device. Only with `development` (`invalidInput`
-    /// otherwise). From OID4VCWallet 0.27.0.
-    public var developmentRoots: String
-    /// The holder's preferred languages (BCP 47, most preferred first),
-    /// for issuers' display metadata. `Locale.preferredLanguages` is the
-    /// usual choice.
-    public var locales: [String]
-    /// How many copies of each credential to request when an issuer
-    /// offers batches, each bound to its own key, so each presentation
-    /// can use one no Verifier has seen. 0 means the SDK's default (5);
-    /// it's capped at the issuer's batch size.
-    public var batchSize: Int
-    /// Asks Authorization Servers for a refresh token, so
-    /// `Wallet.refreshCredential(id:)` can later replace a credential's
-    /// copies without the holder signing in. The server must allow the
-    /// wallet the `offline_access` scope, or the authorization fails.
-    public var requestRefresh: Bool
-    /// Which copy of a credential a presentation uses.
-    public var copyPolicy: CopyPolicy
-    /// Pins hosts' certificates for the wallet's own HTTPS requests:
-    /// host → base64 SHA-256 digests of a certificate's
-    /// SubjectPublicKeyInfo, one of which a certificate in the verified
-    /// chain must have, or the request fails as `tlsPin` before anything
-    /// is sent. A host is a name, or `*.` and one, matching any name a
-    /// label below it; not an IP address. Pins add to certificate
-    /// verification, never replace it: pin a CA's key, so a leaf renewal
-    /// doesn't break the app, and keep a backup pin. They cover the
-    /// requests the SDK makes (issuers, Authorization Servers,
-    /// Verifiers, status lists), not the app's own, such as to its
-    /// Wallet Provider: pin that client yourself.
-    public var tlsPins: [String: [String]]
-    /// Hosts the wallet may reach at a private address (10/8, 172.16/12,
-    /// 192.168/16, fc00::/7) outside `development`: issuers, Verifiers,
-    /// status lists and CRL distribution points inside the deployment's
-    /// own network, an enterprise's or a test environment's. Each is a
-    /// host name, matched exactly and without case: no wildcard, IP
-    /// address, port or loopback name. Nothing else is lifted: a listed
-    /// host is still refused at a loopback or link-local address, and
-    /// every request is still HTTPS with its certificate verified. List
-    /// only hosts the deployment runs: anyone who can hand the wallet an
-    /// offer or a request can have it send a request to them.
-    public var allowedPrivateHosts: [String]
-    /// The Status Issuers that may sign a credential issuer's status lists
-    /// on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
-    /// Issuer identifiers, each recognized by a certificate under
-    /// `issuerRoots` naming it. Without it, `checkStatus` accepts only a
-    /// status list the issuer signed itself.
-    public var statusIssuers: [String: [String]]
-    /// Refuses a received SD-JWT VC whose `iss` its signing certificate
-    /// doesn't name. SD-JWT VC doesn't require them to correspond: set it
-    /// where `issuerRoots` certify several issuers.
-    public var requireIssuerName: Bool
-    /// PEM certificates: the trust anchors for signed Credential Issuer
-    /// Metadata. With them, signed metadata is asked for and verified.
-    public var issuerMetadataRoots: String
-    /// Refuses an issuer whose metadata isn't signed under
-    /// `issuerMetadataRoots`, before the holder signs in or enters a code.
-    public var requireSignedIssuerMetadata: Bool
-    /// Refuses signed metadata whose certificate doesn't name the issuer.
-    public var requireIssuerMetadataName: Bool
-    /// Refuses signed metadata signed longer ago than this many seconds;
-    /// 0 doesn't limit it.
-    public var maxIssuerMetadataAgeSeconds: Int
-    /// Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
-    /// was requested from, which is otherwise refused so an issuer can't
-    /// hand over another's credential as its own. Set it only for issuers
-    /// that name themselves differently, where `issuerRoots` certify them
-    /// alone.
-    public var allowForeignIss: Bool
-    /// The profile issuance follows.
-    public var issuanceProfile: IssuanceProfile
-    /// Names the key of a jwt proof carrying a key attestation in `jwk`
-    /// rather than by its index in the attestation (`kid` `"0"`), the
-    /// default, which issuers following ETSI TS 119 472-3, such as the
-    /// EUDI reference PID issuer, require. Set it only for an issuer that
-    /// takes no index.
-    public var proofKeyByJWK: Bool
-    /// Names the key of a jwt proof carrying a key attestation by its
-    /// index in the attestation, which is now the default: it has no
-    /// effect, and can't be set with `proofKeyByJWK`.
-    public var proofKeyByIndex: Bool
-    /// Also answers Verifiers whose client ID has the `x509_san_dns`
-    /// prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
-    /// 1.0 has Verifiers use: the DNS name must be one of the request's
-    /// signing certificate, which must chain to `verifierRoots`, and the
-    /// host of its response URI. Needs `verifierRoots`. Every name in a
-    /// certificate under `verifierRoots` is then a Verifier the wallet
-    /// answers, so set it only where those roots certify Verifiers alone,
-    /// or with `verifierRequireEKU`.
-    public var acceptX509SANDNS: Bool
-    /// How an in-person response authenticates the mdoc. `.macPreferred`
-    /// needs a key store that is also a `KeyAgreement`.
-    public var proximityDeviceAuth: ProximityDeviceAuth
-    /// PEM `X509 CRL` blocks: the Certificate Revocation Lists the roles
-    /// in `revocation` are checked against. Replace them at runtime with
-    /// `Wallet.setCRLs(_:)` as they expire.
-    public var crls: String
-    /// The trust roles whose certificate chains must pass a CRL check
-    /// against `crls`. A role listed fails closed for any CA it has no
-    /// current CRL from, until `Wallet.setCRLs(_:)` supplies one.
-    /// Outside `development`, each role whose roots are set must be
-    /// listed here or in `noRevocationCheck`, or the wallet isn't made
-    /// (`invalidInput`).
-    public var revocation: [RevocationRole]
-    /// The trust roles that decline checking revocation, as an explicit
-    /// choice: only where something else stands in for it, such as
-    /// certificates too short-lived to be worth revoking. A role can't be
-    /// in both this and `revocation`.
-    public var noRevocationCheck: [RevocationRole]
-    /// PEM certificates of the CAs that issued certificates pinned in the
-    /// roots (a leaf in `verifierRoots`, say), for a role in
-    /// `revocation`: a pinned certificate is checked against its CA's CRL,
-    /// verified with the CA's certificate from here. They aren't trust
-    /// anchors. Without its CA here, a pinned certificate that isn't
-    /// self-signed is refused.
-    public var crlIssuers: String
-    /// Where `Wallet.refreshCRLs()` fetches the lists from, each bound to
-    /// the CA whose list it serves.
-    public var crlDistributionPoints: [CRLDistributionPoint]
-    /// Also fetches, in `Wallet.refreshCRLs()`, the distribution point
-    /// each self-signed CA certificate names for its own list (as an IACA
-    /// does), among `crlIssuers` and the roots of the roles in
-    /// `revocation`.
-    public var crlDistributionPointsFromRoots: Bool
-    /// Refuses plain `http` distribution points, and leaves them out of
-    /// `crlDistributionPointsFromRoots`.
-    public var crlRequireHTTPS: Bool
-    /// The largest status list `checkStatus` reads, in bytes; 0 means 1
-    /// MiB. Raise it for issuers whose lists are larger.
-    public var statusMaxBytes: Int
-    /// The largest mdoc identifier list `checkStatus` reads, in bytes; 0
-    /// means 4 MiB.
-    public var identifierListMaxBytes: Int
-    /// How long `checkStatus` uses a status or identifier list it fetched
-    /// before revalidating it, in seconds: 0 means 5 minutes, at most a
-    /// day, and never past the list's own `ttl` or `exp`. Longer means
-    /// fewer requests, and a revocation seen that much later.
-    public var statusCacheMaxAgeSeconds: Int
-    /// Where `checkStatus` keeps the lists it verified across launches: a
-    /// launch then asks each list's server whether the list it kept is
-    /// current, a `304 Not Modified` rather than the list, and never uses
-    /// one the server hasn't confirmed. The lists are authenticated with
-    /// a key the library makes and keeps in the Keychain, so one anyone
-    /// else wrote to the directory is dropped. Nil, the default, keeps
-    /// them in `oid4vcwallet-status-lists` in the app's Caches directory,
-    /// with complete file protection, or in memory only when that key
-    /// can't be had or the directory made, and on macOS; an absolute
-    /// path, the app's own, keeps them there, with the protection the
-    /// app gives it; empty keeps them in memory only. The directory shows
-    /// whoever can read it which status lists the wallet checks (their
-    /// URIs, so the issuers of its credentials, not which entries), the
-    /// lists themselves, and when each was last checked. A check while
-    /// the device is locked can't read this directory under complete
-    /// protection, and with ``FileCredentialStore``'s default complete
-    /// protection it can't read the credential either: it fails as
-    /// `.platform`. Check status when the app comes to the foreground.
-    public var statusCacheDir: String?
+    /// profile on the device (from OID4VCWallet 0.27.0).
+    public var development: Development?
+
+    /// Which issuers' credentials the wallet accepts.
+    public struct IssuerTrust: Sendable {
+        /// PEM certificates: the trust anchors for issuers' credentials. A
+        /// credential signed by a certificate that doesn't chain to them is
+        /// refused.
+        public var roots: String
+        /// A dotted object identifier: recognizes only issuer certificates
+        /// under `roots` with that extended key usage. Outside
+        /// `development`, required when `roots` may share a trust
+        /// anchor with another role's roots.
+        public var requireEKU: String
+        /// PEM certificates: the IACAs a received mdoc must chain to, in place
+        /// of `roots`, so a `roots` anchor alone, an SD-JWT VC
+        /// issuer's CA say, can't sign an mDL. Empty: mdocs chain to
+        /// `roots`.
+        public var mdocRoots: String
+        /// Each document type's own IACAs, as PEM certificates: an mdoc of a
+        /// type named here must chain to them, not to `mdocRoots` or
+        /// `roots`. A type named with an empty string is refused.
+        public var mdocRootsByDocType: [String: String]
+        /// A dotted object identifier: recognizes only document signer
+        /// certificates with that extended key usage (the mDL's is
+        /// 1.0.18013.5.1.2), in place of `requireEKU`, so a wallet
+        /// receiving both formats can require each its own.
+        public var mdocRequireEKU: String
+        /// Also accepts a document signer certificate with no extended key
+        /// usage, which is refused by default for lacking the mDL document
+        /// signer's (1.0.18013.5.1.2), for issuers whose document signers have
+        /// none. Any certificate without one under the same IACAs, such as a
+        /// revocation list signer's, can then sign mdocs the wallet accepts.
+        /// It can't be set with `mdocRequireEKU`, or with
+        /// `requireEKU` unless `mdocRoots` is set.
+        public var acceptMDLSignerWithoutEKU: Bool
+        /// Refuses a received SD-JWT VC whose `iss` its signing certificate
+        /// doesn't name. SD-JWT VC doesn't require them to correspond: set it
+        /// where `roots` certify several issuers.
+        public var requireIssuerName: Bool
+        /// Receives an SD-JWT VC whose `iss` isn't the `credential_issuer` it
+        /// was requested from, which is otherwise refused so an issuer can't
+        /// hand over another's credential as its own. Set it only for issuers
+        /// that name themselves differently, where `roots` certify them
+        /// alone.
+        public var allowForeignIss: Bool
+        /// The Status Issuers that may sign a credential issuer's status lists
+        /// on its behalf: credential issuer (an SD-JWT VC's `iss`) → Status
+        /// Issuer identifiers, each recognized by a certificate under
+        /// `roots` naming it. Without it, `checkStatus` accepts only a
+        /// status list the issuer signed itself.
+        public var statusIssuers: [String: [String]]
+
+        /// Issuer trust: every field has a default.
+        public init(roots: String = "", requireEKU: String = "", mdocRoots: String = "",
+                    mdocRootsByDocType: [String: String] = [:], mdocRequireEKU: String = "",
+                    acceptMDLSignerWithoutEKU: Bool = false, requireIssuerName: Bool = false,
+                    allowForeignIss: Bool = false, statusIssuers: [String: [String]] = [:]) {
+            self.roots = roots
+            self.requireEKU = requireEKU
+            self.mdocRoots = mdocRoots
+            self.mdocRootsByDocType = mdocRootsByDocType
+            self.mdocRequireEKU = mdocRequireEKU
+            self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
+            self.requireIssuerName = requireIssuerName
+            self.allowForeignIss = allowForeignIss
+            self.statusIssuers = statusIssuers
+        }
+    }
+
+    /// Which signed Credential Issuer Metadata the wallet trusts.
+    public struct IssuerMetadataTrust: Sendable {
+        /// PEM certificates: the trust anchors for signed Credential Issuer
+        /// Metadata. With them, signed metadata is asked for and verified.
+        public var roots: String
+        /// A dotted object identifier: recognizes only issuer metadata signed
+        /// by a certificate under `roots` with that extended key
+        /// usage. Outside `development`, required when `roots`
+        /// may share a trust anchor with another role's roots.
+        public var requireEKU: String
+        /// Refuses an issuer whose metadata isn't signed under
+        /// `roots`, before the holder signs in or enters a code.
+        public var requireSigned: Bool
+        /// Refuses signed metadata whose certificate doesn't name the issuer.
+        public var requireName: Bool
+        /// Refuses signed metadata signed longer ago than this many seconds;
+        /// 0 doesn't limit it.
+        public var maxAgeSeconds: Int
+
+        /// Issuer metadata trust: every field has a default.
+        public init(roots: String = "", requireEKU: String = "", requireSigned: Bool = false,
+                    requireName: Bool = false, maxAgeSeconds: Int = 0) {
+            self.roots = roots
+            self.requireEKU = requireEKU
+            self.requireSigned = requireSigned
+            self.requireName = requireName
+            self.maxAgeSeconds = maxAgeSeconds
+        }
+    }
+
+    /// Which Verifiers, registrars and mdoc readers the wallet recognizes.
+    public struct VerifierTrust: Sendable {
+        /// PEM certificates: the trust anchors for Verifiers' requests. A request
+        /// signed by a certificate that doesn't chain to them is refused unread.
+        public var roots: String
+        /// A dotted object identifier: recognizes only Verifier certificates
+        /// under `roots` with that extended key usage, the one your
+        /// ecosystem marks its Verifiers' certificates with. Outside
+        /// `development`, required when `roots` shares a trust anchor
+        /// with another role's roots.
+        public var requireEKU: String
+        /// Also answers Verifiers whose client ID has the `x509_san_dns`
+        /// prefix (OpenID4VP 1.0 §5.9.3), besides `x509_hash`, the one HAIP
+        /// 1.0 has Verifiers use: the DNS name must be one of the request's
+        /// signing certificate, which must chain to `roots`, and the
+        /// host of its response URI. Needs `roots`. Every name in a
+        /// certificate under `roots` is then a Verifier the wallet
+        /// answers, so set it only where those roots certify Verifiers alone,
+        /// or with `requireEKU`.
+        public var acceptX509SANDNS: Bool
+        /// PEM certificates: the registrars whose registrations of Verifiers
+        /// the wallet checks (`Presentation.Verifier.registration`). Empty:
+        /// registrations are ignored.
+        public var registrarRoots: String
+        /// A dotted object identifier: recognizes only registrar certificates
+        /// under `registrarRoots` with that extended key usage. Outside
+        /// `development`, required when `registrarRoots` shares a trust anchor
+        /// with another role's roots.
+        public var registrarRequireEKU: String
+        /// PEM certificates: the mdoc readers recognized when one signs an
+        /// `org-iso-mdoc` request (`MdocPresentation.Request.reader`). Empty:
+        /// every such request is shown by its origin.
+        public var mdocReaderRoots: String
+        /// Recognizes only reader certificates with the ISO/IEC 18013-5
+        /// reader authentication extended key usage (1.0.18013.5.1.6), so a
+        /// certificate issued for another role under `mdocReaderRoots`
+        /// isn't taken for a reader's.
+        public var mdocReaderRequireEKU: Bool
+        /// Refuses an `org-iso-mdoc` request no recognized reader signed:
+        /// `startMdocPresentation` throws `untrustedVerifier`, and nothing is
+        /// shown to the holder. Needs `mdocReaderRoots`.
+        public var requireTrustedMdocReader: Bool
+
+        /// Verifier trust: every field has a default.
+        public init(roots: String = "", requireEKU: String = "", acceptX509SANDNS: Bool = false,
+                    registrarRoots: String = "", registrarRequireEKU: String = "",
+                    mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false,
+                    requireTrustedMdocReader: Bool = false) {
+            self.roots = roots
+            self.requireEKU = requireEKU
+            self.acceptX509SANDNS = acceptX509SANDNS
+            self.registrarRoots = registrarRoots
+            self.registrarRequireEKU = registrarRequireEKU
+            self.mdocReaderRoots = mdocReaderRoots
+            self.mdocReaderRequireEKU = mdocReaderRequireEKU
+            self.requireTrustedMdocReader = requireTrustedMdocReader
+        }
+    }
+
+    /// How the trust roles' certificates are checked for revocation.
+    public typealias Revocation = RevocationChecking<RevocationRole>
+    /// The wallet's own HTTPS requests.
+    public struct Network: Sendable {
+        /// Pins hosts' certificates for the wallet's own HTTPS requests:
+        /// host → base64 SHA-256 digests of a certificate's
+        /// SubjectPublicKeyInfo, one of which a certificate in the verified
+        /// chain must have, or the request fails as `tlsPin` before anything
+        /// is sent. A host is a name, or `*.` and one, matching any name a
+        /// label below it; not an IP address. Pins add to certificate
+        /// verification, never replace it: pin a CA's key, so a leaf renewal
+        /// doesn't break the app, and keep a backup pin. They cover the
+        /// requests the SDK makes (issuers, Authorization Servers,
+        /// Verifiers, status lists), not the app's own, such as to its
+        /// Wallet Provider: pin that client yourself.
+        public var tlsPins: [String: [String]]
+        /// Hosts the wallet may reach at a private address (10/8, 172.16/12,
+        /// 192.168/16, fc00::/7) outside `development`: issuers, Verifiers,
+        /// status lists and CRL distribution points inside the deployment's
+        /// own network, an enterprise's or a test environment's. Each is a
+        /// host name, matched exactly and without case: no wildcard, IP
+        /// address, port or loopback name. Nothing else is lifted: a listed
+        /// host is still refused at a loopback or link-local address, and
+        /// every request is still HTTPS with its certificate verified. List
+        /// only hosts the deployment runs: anyone who can hand the wallet an
+        /// offer or a request can have it send a request to them.
+        public var allowedPrivateHosts: [String]
+
+        /// Network options: every field has a default.
+        public init(tlsPins: [String: [String]] = [:], allowedPrivateHosts: [String] = []) {
+            self.tlsPins = tlsPins
+            self.allowedPrivateHosts = allowedPrivateHosts
+        }
+    }
+
+    /// How credentials are requested.
+    public struct IssuanceOptions: Sendable {
+        /// The holder's preferred languages (BCP 47, most preferred first),
+        /// for issuers' display metadata. `Locale.preferredLanguages`, the
+        /// default, is the usual choice.
+        public var locales: [String]
+        /// How many copies of each credential to request when an issuer
+        /// offers batches, each bound to its own key, so each presentation
+        /// can use one no Verifier has seen. 0 means the SDK's default (5);
+        /// it's capped at the issuer's batch size.
+        public var batchSize: Int
+        /// Asks Authorization Servers for a refresh token, so
+        /// `Wallet.refreshCredential(id:)` can later replace a credential's
+        /// copies without the holder signing in. The server must allow the
+        /// wallet the `offline_access` scope, or the authorization fails.
+        public var requestRefresh: Bool
+        /// The profile issuance follows.
+        public var profile: IssuanceProfile
+        /// Names the key of a jwt proof carrying a key attestation in `jwk`
+        /// rather than by its index in the attestation (`kid` `"0"`), the
+        /// default, which issuers following ETSI TS 119 472-3, such as the
+        /// EUDI reference PID issuer, require. Set it only for an issuer that
+        /// takes no index.
+        public var proofKeyByJWK: Bool
+        /// Names the key of a jwt proof carrying a key attestation by its
+        /// index in the attestation, which is now the default: it has no
+        /// effect, and can't be set with `proofKeyByJWK`.
+        public var proofKeyByIndex: Bool
+
+        /// Issuance options: every field has a default.
+        public init(locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
+                    profile: IssuanceProfile = .openID4VCI, proofKeyByJWK: Bool = false, proofKeyByIndex: Bool = false) {
+            self.locales = locales
+            self.batchSize = batchSize
+            self.requestRefresh = requestRefresh
+            self.profile = profile
+            self.proofKeyByJWK = proofKeyByJWK
+            self.proofKeyByIndex = proofKeyByIndex
+        }
+    }
+
+    /// How credentials are presented.
+    public struct PresentationOptions: Sendable {
+        /// Which copy of a credential a presentation uses.
+        public var copyPolicy: CopyPolicy
+        /// How an in-person response authenticates the mdoc. `.macPreferred`
+        /// needs a key store that is also a `KeyAgreement`.
+        public var proximityDeviceAuth: ProximityDeviceAuth
+
+        /// Presentation options: every field has a default.
+        public init(copyPolicy: CopyPolicy = .perPresentation, proximityDeviceAuth: ProximityDeviceAuth = .signature) {
+            self.copyPolicy = copyPolicy
+            self.proximityDeviceAuth = proximityDeviceAuth
+        }
+    }
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
-        /// The issuers' signing certificates (`issuerRoots` and the mdoc
+        /// The issuers' signing certificates (`issuers.roots` and the mdoc
         /// roots), on receipt, deferral and refresh.
         case issuer
-        /// The signers of Credential Issuer Metadata (`issuerMetadataRoots`).
+        /// The signers of Credential Issuer Metadata (`issuerMetadata.roots`).
         case issuerMetadata = "issuer_metadata"
-        /// The registrars of Verifiers (`registrarRoots`).
+        /// The registrars of Verifiers (`verifiers.registrarRoots`).
         case registrar
-        /// The mdoc readers (`mdocReaderRoots`), online and in person.
+        /// The mdoc readers (`verifiers.mdocReaderRoots`), online and in person.
         case mdocReader = "mdoc_reader"
-        /// The Verifiers' request-signing certificates (`verifierRoots`).
+        /// The Verifiers' request-signing certificates (`verifiers.roots`).
         case verifier
         /// The signers of status lists, in `checkStatus`.
         case status
@@ -312,72 +356,26 @@ public struct WalletConfiguration: Codable, Sendable {
     /// `WalletProvider`, receiving credentials only from pre-authorized
     /// codes redeemed with no client authentication, leaves the client ID
     /// and the redirect URI empty.
-    public init(clientID: String = "", redirectURI: String = "", issuerRoots: String = "", verifierRoots: String = "", registrarRoots: String = "",
-                mdocReaderRoots: String = "", mdocReaderRequireEKU: Bool = false, requireTrustedMdocReader: Bool = false,
-                development: Bool = false, developmentRoots: String = "", locales: [String] = Locale.preferredLanguages, batchSize: Int = 0, requestRefresh: Bool = false,
-                copyPolicy: CopyPolicy = .perPresentation, issuanceProfile: IssuanceProfile = .openID4VCI, proofKeyByJWK: Bool = false, proofKeyByIndex: Bool = false,
-                acceptX509SANDNS: Bool = false, tlsPins: [String: [String]] = [:], allowedPrivateHosts: [String] = [], proximityDeviceAuth: ProximityDeviceAuth = .signature,
-                verifierRequireEKU: String = "", registrarRequireEKU: String = "",
-                issuerRequireEKU: String = "", issuerMetadataRequireEKU: String = "",
-                statusIssuers: [String: [String]] = [:], requireIssuerName: Bool = false,
-                issuerMetadataRoots: String = "", requireSignedIssuerMetadata: Bool = false,
-                requireIssuerMetadataName: Bool = false, maxIssuerMetadataAgeSeconds: Int = 0, allowForeignIss: Bool = false,
-                mdocIssuerRoots: String = "", mdocIssuerRootsByDocType: [String: String] = [:], mdocIssuerRequireEKU: String = "",
-                acceptMDLSignerWithoutEKU: Bool = false,
-                crls: String = "", revocation: [RevocationRole] = [], crlIssuers: String = "",
-                noRevocationCheck: [RevocationRole] = [], crlDistributionPoints: [CRLDistributionPoint] = [],
-                crlDistributionPointsFromRoots: Bool = false, crlRequireHTTPS: Bool = false,
-                statusMaxBytes: Int = 0, identifierListMaxBytes: Int = 0, statusCacheMaxAgeSeconds: Int = 0,
-                statusCacheDir: String? = nil) {
+    public init(clientID: String = "", redirectURI: String = "",
+                issuers: IssuerTrust = IssuerTrust(), issuerMetadata: IssuerMetadataTrust = IssuerMetadataTrust(),
+                verifiers: VerifierTrust = VerifierTrust(), revocation: Revocation = Revocation(),
+                status: StatusLists = StatusLists(), network: Network = Network(),
+                issuance: IssuanceOptions = IssuanceOptions(), presentation: PresentationOptions = PresentationOptions(),
+                development: Development? = nil) {
         self.clientID = clientID
         self.redirectURI = redirectURI
-        self.issuerRoots = issuerRoots
-        self.verifierRoots = verifierRoots
-        self.registrarRoots = registrarRoots
-        self.mdocReaderRoots = mdocReaderRoots
-        self.mdocReaderRequireEKU = mdocReaderRequireEKU
-        self.requireTrustedMdocReader = requireTrustedMdocReader
-        self.development = development
-        self.developmentRoots = developmentRoots
-        self.locales = locales
-        self.batchSize = batchSize
-        self.requestRefresh = requestRefresh
-        self.copyPolicy = copyPolicy
-        self.tlsPins = tlsPins
-        self.allowedPrivateHosts = allowedPrivateHosts
-        self.issuanceProfile = issuanceProfile
-        self.proofKeyByJWK = proofKeyByJWK
-        self.proofKeyByIndex = proofKeyByIndex
-        self.acceptX509SANDNS = acceptX509SANDNS
-        self.proximityDeviceAuth = proximityDeviceAuth
-        self.verifierRequireEKU = verifierRequireEKU
-        self.registrarRequireEKU = registrarRequireEKU
-        self.issuerRequireEKU = issuerRequireEKU
-        self.issuerMetadataRequireEKU = issuerMetadataRequireEKU
-        self.statusIssuers = statusIssuers
-        self.requireIssuerName = requireIssuerName
-        self.issuerMetadataRoots = issuerMetadataRoots
-        self.requireSignedIssuerMetadata = requireSignedIssuerMetadata
-        self.requireIssuerMetadataName = requireIssuerMetadataName
-        self.maxIssuerMetadataAgeSeconds = maxIssuerMetadataAgeSeconds
-        self.allowForeignIss = allowForeignIss
-        self.mdocIssuerRoots = mdocIssuerRoots
-        self.mdocIssuerRootsByDocType = mdocIssuerRootsByDocType
-        self.mdocIssuerRequireEKU = mdocIssuerRequireEKU
-        self.acceptMDLSignerWithoutEKU = acceptMDLSignerWithoutEKU
-        self.crls = crls
+        self.issuers = issuers
+        self.issuerMetadata = issuerMetadata
+        self.verifiers = verifiers
         self.revocation = revocation
-        self.crlIssuers = crlIssuers
-        self.noRevocationCheck = noRevocationCheck
-        self.crlDistributionPoints = crlDistributionPoints
-        self.crlDistributionPointsFromRoots = crlDistributionPointsFromRoots
-        self.crlRequireHTTPS = crlRequireHTTPS
-        self.statusMaxBytes = statusMaxBytes
-        self.identifierListMaxBytes = identifierListMaxBytes
-        self.statusCacheMaxAgeSeconds = statusCacheMaxAgeSeconds
-        self.statusCacheDir = statusCacheDir
+        self.status = status
+        self.network = network
+        self.issuance = issuance
+        self.presentation = presentation
+        self.development = development
     }
 
+    // The flat JSON keys, one per option, as NewWallet reads them.
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
@@ -402,62 +400,106 @@ public struct WalletConfiguration: Codable, Sendable {
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
     }
 
-    /// Decodes a configuration, refusing a key it doesn't know: a
-    /// misspelled option would otherwise be dropped here, before the
-    /// wallet could refuse it, and silently left at its default.
+    /// Decodes a configuration from its flat JSON, refusing a key it
+    /// doesn't know: a misspelled option would otherwise be dropped here,
+    /// before the wallet could refuse it, and silently left at its
+    /// default.
     public init(from decoder: Decoder) throws {
         let all = try decoder.container(keyedBy: AnyCodingKey.self)
         if let unknown = all.allKeys.first(where: { CodingKeys(stringValue: $0.stringValue) == nil }) {
             throw DecodingError.dataCorruptedError(forKey: unknown, in: all, debugDescription: "unknown configuration key \(unknown.stringValue)")
         }
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(clientID: try c.decodeIfPresent(String.self, forKey: .clientID) ?? "",
-                  redirectURI: try c.decodeIfPresent(String.self, forKey: .redirectURI) ?? "",
-                  issuerRoots: try c.decodeIfPresent(String.self, forKey: .issuerRoots) ?? "",
-                  verifierRoots: try c.decodeIfPresent(String.self, forKey: .verifierRoots) ?? "",
-                  registrarRoots: try c.decodeIfPresent(String.self, forKey: .registrarRoots) ?? "",
-                  mdocReaderRoots: try c.decodeIfPresent(String.self, forKey: .mdocReaderRoots) ?? "",
-                  mdocReaderRequireEKU: try c.decodeIfPresent(Bool.self, forKey: .mdocReaderRequireEKU) ?? false,
-                  requireTrustedMdocReader: try c.decodeIfPresent(Bool.self, forKey: .requireTrustedMdocReader) ?? false,
-                  development: try c.decodeIfPresent(Bool.self, forKey: .development) ?? false,
-                  developmentRoots: try c.decodeIfPresent(String.self, forKey: .developmentRoots) ?? "",
-                  locales: try c.decodeIfPresent([String].self, forKey: .locales) ?? Locale.preferredLanguages,
-                  batchSize: try c.decodeIfPresent(Int.self, forKey: .batchSize) ?? 0,
-                  requestRefresh: try c.decodeIfPresent(Bool.self, forKey: .requestRefresh) ?? false,
-                  copyPolicy: try c.decodeIfPresent(CopyPolicy.self, forKey: .copyPolicy) ?? .perPresentation,
-                  issuanceProfile: try c.decodeIfPresent(IssuanceProfile.self, forKey: .issuanceProfile) ?? .openID4VCI,
-                  proofKeyByJWK: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByJWK) ?? false,
-                  proofKeyByIndex: try c.decodeIfPresent(Bool.self, forKey: .proofKeyByIndex) ?? false,
-                  acceptX509SANDNS: try c.decodeIfPresent(Bool.self, forKey: .acceptX509SANDNS) ?? false,
-                  tlsPins: try c.decodeIfPresent([String: [String]].self, forKey: .tlsPins) ?? [:],
-                  allowedPrivateHosts: try c.decodeIfPresent([String].self, forKey: .allowedPrivateHosts) ?? [],
-                  proximityDeviceAuth: try c.decodeIfPresent(ProximityDeviceAuth.self, forKey: .proximityDeviceAuth) ?? .signature,
-                  verifierRequireEKU: try c.decodeIfPresent(String.self, forKey: .verifierRequireEKU) ?? "",
-                  registrarRequireEKU: try c.decodeIfPresent(String.self, forKey: .registrarRequireEKU) ?? "",
-                  issuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .issuerRequireEKU) ?? "",
-                  issuerMetadataRequireEKU: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRequireEKU) ?? "",
-                  statusIssuers: try c.decodeIfPresent([String: [String]].self, forKey: .statusIssuers) ?? [:],
-                  requireIssuerName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerName) ?? false,
-                  issuerMetadataRoots: try c.decodeIfPresent(String.self, forKey: .issuerMetadataRoots) ?? "",
-                  requireSignedIssuerMetadata: try c.decodeIfPresent(Bool.self, forKey: .requireSignedIssuerMetadata) ?? false,
-                  requireIssuerMetadataName: try c.decodeIfPresent(Bool.self, forKey: .requireIssuerMetadataName) ?? false,
-                  maxIssuerMetadataAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .maxIssuerMetadataAgeSeconds) ?? 0,
-                  allowForeignIss: try c.decodeIfPresent(Bool.self, forKey: .allowForeignIss) ?? false,
-                  mdocIssuerRoots: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRoots) ?? "",
-                  mdocIssuerRootsByDocType: try c.decodeIfPresent([String: String].self, forKey: .mdocIssuerRootsByDocType) ?? [:],
-                  mdocIssuerRequireEKU: try c.decodeIfPresent(String.self, forKey: .mdocIssuerRequireEKU) ?? "",
-                  acceptMDLSignerWithoutEKU: try c.decodeIfPresent(Bool.self, forKey: .acceptMDLSignerWithoutEKU) ?? false,
-                  crls: try c.decodeIfPresent(String.self, forKey: .crls) ?? "",
-                  revocation: try c.decodeIfPresent([RevocationRole].self, forKey: .revocation) ?? [],
-                  crlIssuers: try c.decodeIfPresent(String.self, forKey: .crlIssuers) ?? "",
-                  noRevocationCheck: try c.decodeIfPresent([RevocationRole].self, forKey: .noRevocationCheck) ?? [],
-                  crlDistributionPoints: try c.decodeIfPresent([CRLDistributionPoint].self, forKey: .crlDistributionPoints) ?? [],
-                  crlDistributionPointsFromRoots: try c.decodeIfPresent(Bool.self, forKey: .crlDistributionPointsFromRoots) ?? false,
-                  crlRequireHTTPS: try c.decodeIfPresent(Bool.self, forKey: .crlRequireHTTPS) ?? false,
-                  statusMaxBytes: try c.decodeIfPresent(Int.self, forKey: .statusMaxBytes) ?? 0,
-                  identifierListMaxBytes: try c.decodeIfPresent(Int.self, forKey: .identifierListMaxBytes) ?? 0,
-                  statusCacheMaxAgeSeconds: try c.decodeIfPresent(Int.self, forKey: .statusCacheMaxAgeSeconds) ?? 0,
-                  statusCacheDir: try c.decodeIfPresent(String.self, forKey: .statusCacheDir))
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        self.init(
+            clientID: try value(.clientID, ""),
+            redirectURI: try value(.redirectURI, ""),
+            issuers: IssuerTrust(
+                roots: try value(.issuerRoots, ""),
+                requireEKU: try value(.issuerRequireEKU, ""),
+                mdocRoots: try value(.mdocIssuerRoots, ""),
+                mdocRootsByDocType: try value(.mdocIssuerRootsByDocType, [:]),
+                mdocRequireEKU: try value(.mdocIssuerRequireEKU, ""),
+                acceptMDLSignerWithoutEKU: try value(.acceptMDLSignerWithoutEKU, false),
+                requireIssuerName: try value(.requireIssuerName, false),
+                allowForeignIss: try value(.allowForeignIss, false),
+                statusIssuers: try value(.statusIssuers, [:])),
+            issuerMetadata: IssuerMetadataTrust(
+                roots: try value(.issuerMetadataRoots, ""),
+                requireEKU: try value(.issuerMetadataRequireEKU, ""),
+                requireSigned: try value(.requireSignedIssuerMetadata, false),
+                requireName: try value(.requireIssuerMetadataName, false),
+                maxAgeSeconds: try value(.maxIssuerMetadataAgeSeconds, 0)),
+            verifiers: VerifierTrust(
+                roots: try value(.verifierRoots, ""),
+                requireEKU: try value(.verifierRequireEKU, ""),
+                acceptX509SANDNS: try value(.acceptX509SANDNS, false),
+                registrarRoots: try value(.registrarRoots, ""),
+                registrarRequireEKU: try value(.registrarRequireEKU, ""),
+                mdocReaderRoots: try value(.mdocReaderRoots, ""),
+                mdocReaderRequireEKU: try value(.mdocReaderRequireEKU, false),
+                requireTrustedMdocReader: try value(.requireTrustedMdocReader, false)),
+            revocation: try Revocation(decodingFrom: c),
+            status: try StatusLists(decodingFrom: c),
+            network: Network(
+                tlsPins: try value(.tlsPins, [:]),
+                allowedPrivateHosts: try value(.allowedPrivateHosts, [])),
+            issuance: IssuanceOptions(
+                locales: try value(.locales, Locale.preferredLanguages),
+                batchSize: try value(.batchSize, 0),
+                requestRefresh: try value(.requestRefresh, false),
+                profile: try value(.issuanceProfile, IssuanceProfile.openID4VCI),
+                proofKeyByJWK: try value(.proofKeyByJWK, false),
+                proofKeyByIndex: try value(.proofKeyByIndex, false)),
+            presentation: PresentationOptions(
+                copyPolicy: try value(.copyPolicy, CopyPolicy.perPresentation),
+                proximityDeviceAuth: try value(.proximityDeviceAuth, ProximityDeviceAuth.signature)),
+            development: try Development.decode(c))
+    }
+
+    /// Encodes the configuration as its flat JSON, every option's key,
+    /// `status_cache_dir` only when `status.cacheDir` is set.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(clientID, forKey: .clientID)
+        try c.encode(redirectURI, forKey: .redirectURI)
+        try c.encode(issuers.roots, forKey: .issuerRoots)
+        try c.encode(issuers.requireEKU, forKey: .issuerRequireEKU)
+        try c.encode(issuers.mdocRoots, forKey: .mdocIssuerRoots)
+        try c.encode(issuers.mdocRootsByDocType, forKey: .mdocIssuerRootsByDocType)
+        try c.encode(issuers.mdocRequireEKU, forKey: .mdocIssuerRequireEKU)
+        try c.encode(issuers.acceptMDLSignerWithoutEKU, forKey: .acceptMDLSignerWithoutEKU)
+        try c.encode(issuers.requireIssuerName, forKey: .requireIssuerName)
+        try c.encode(issuers.allowForeignIss, forKey: .allowForeignIss)
+        try c.encode(issuers.statusIssuers, forKey: .statusIssuers)
+        try c.encode(issuerMetadata.roots, forKey: .issuerMetadataRoots)
+        try c.encode(issuerMetadata.requireEKU, forKey: .issuerMetadataRequireEKU)
+        try c.encode(issuerMetadata.requireSigned, forKey: .requireSignedIssuerMetadata)
+        try c.encode(issuerMetadata.requireName, forKey: .requireIssuerMetadataName)
+        try c.encode(issuerMetadata.maxAgeSeconds, forKey: .maxIssuerMetadataAgeSeconds)
+        try c.encode(verifiers.roots, forKey: .verifierRoots)
+        try c.encode(verifiers.requireEKU, forKey: .verifierRequireEKU)
+        try c.encode(verifiers.acceptX509SANDNS, forKey: .acceptX509SANDNS)
+        try c.encode(verifiers.registrarRoots, forKey: .registrarRoots)
+        try c.encode(verifiers.registrarRequireEKU, forKey: .registrarRequireEKU)
+        try c.encode(verifiers.mdocReaderRoots, forKey: .mdocReaderRoots)
+        try c.encode(verifiers.mdocReaderRequireEKU, forKey: .mdocReaderRequireEKU)
+        try c.encode(verifiers.requireTrustedMdocReader, forKey: .requireTrustedMdocReader)
+        try revocation.encode(into: &c)
+        try status.encode(into: &c)
+        try c.encode(network.tlsPins, forKey: .tlsPins)
+        try c.encode(network.allowedPrivateHosts, forKey: .allowedPrivateHosts)
+        try c.encode(issuance.locales, forKey: .locales)
+        try c.encode(issuance.batchSize, forKey: .batchSize)
+        try c.encode(issuance.requestRefresh, forKey: .requestRefresh)
+        try c.encode(issuance.profile, forKey: .issuanceProfile)
+        try c.encode(issuance.proofKeyByJWK, forKey: .proofKeyByJWK)
+        try c.encode(issuance.proofKeyByIndex, forKey: .proofKeyByIndex)
+        try c.encode(presentation.copyPolicy, forKey: .copyPolicy)
+        try c.encode(presentation.proximityDeviceAuth, forKey: .proximityDeviceAuth)
+        try Development.encode(development, into: &c)
     }
 
     /// The scheme of `redirectURI`: the callback scheme an
@@ -613,7 +655,7 @@ public struct CredentialSummary: Decodable, Equatable, Sendable {
     /// How many copies no Verifier has seen.
     public let copiesLeft: Int
     /// Whether its issuance kept a refresh token
-    /// (`WalletConfiguration.requestRefresh`), so
+    /// (`WalletConfiguration.issuance.requestRefresh`), so
     /// `Wallet.refreshCredential(id:)` can replace its copies. The
     /// Authorization Server may still refuse
     /// (`WalletError.Code.reissueRequired`).
@@ -751,8 +793,8 @@ public final class Wallet: @unchecked Sendable {
             throw WalletError(code: .internalError,
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
-        try OID4VC.checkDevelopment(configuration.development)
-        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), statusCacheDir: configuration.statusCacheDir)
+        try OID4VC.checkDevelopment(configuration.development != nil)
+        let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), cacheDir: configuration.status.cacheDir)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         // A key store that also agrees keys answers in person with deviceMac
         // under .macPreferred; Go keeps signing without one.
@@ -863,7 +905,7 @@ public final class Wallet: @unchecked Sendable {
     }
 
     /// Replaces the Certificate Revocation Lists the configuration's
-    /// `revocation` roles are checked against with `pem`'s `X509 CRL`
+    /// `revocation.roles` are checked against with `pem`'s `X509 CRL`
     /// blocks, for every check from now on. CRLs expire at their
     /// nextUpdate: fetch fresh ones and call this before then. Text
     /// holding anything else, a list that doesn't parse, or a CA's list
@@ -878,7 +920,7 @@ public final class Wallet: @unchecked Sendable {
     }
 
     /// Fetches the Certificate Revocation Lists of the configuration's
-    /// `crlDistributionPoints` (and, with `crlDistributionPointsFromRoots`,
+    /// `revocation.distributionPoints` (and, with `revocation.distributionPointsFromRoots`,
     /// those its roots name) and keeps each one its CA signed that is
     /// current and not older than the one held, for every check from now
     /// on, presentations already running included. A failed point keeps
@@ -1187,7 +1229,7 @@ public final class Presentation: @unchecked Sendable {
         /// Where the response is sent.
         public let responseURI: String
         /// The Verifier's registration, from its request, checked against
-        /// `WalletConfiguration.registrarRoots`.
+        /// `WalletConfiguration.verifiers.registrarRoots`.
         public let registration: Registration
         enum CodingKeys: String, CodingKey { case clientID = "client_id", name, responseURI = "response_uri", registration }
     }
@@ -1390,7 +1432,7 @@ public final class MdocPresentation: @unchecked Sendable {
         public let origin: String
         /// The subject common name of the reader that signed the request,
         /// when its certificate chains to
-        /// `WalletConfiguration.mdocReaderRoots`, without control or
+        /// `WalletConfiguration.verifiers.mdocReaderRoots`, without control or
         /// invisible format characters; "" when the holder can only be
         /// shown `origin`.
         public let reader: String

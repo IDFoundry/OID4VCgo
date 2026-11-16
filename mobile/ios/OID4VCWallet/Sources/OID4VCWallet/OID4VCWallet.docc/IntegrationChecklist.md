@@ -40,8 +40,8 @@ is a complete, working app on this package to compare against.
 - Each setting in <doc:GoingToProduction>'s "Settings to decide" is
   decided and recorded.
 - Trust roots are PEM in ``WalletConfiguration``, each in its own role:
-  ``WalletConfiguration/issuerRoots``, ``WalletConfiguration/verifierRoots``,
-  ``WalletConfiguration/mdocReaderRoots`` and the rest. Outside
+  ``WalletConfiguration/IssuerTrust/roots``, ``WalletConfiguration/VerifierTrust/roots``,
+  ``WalletConfiguration/VerifierTrust/mdocReaderRoots`` and the rest. Outside
   development, two roles whose roots may vouch for the same certificates
   (a shared anchor, or an intermediate in either) each need their own,
   distinct `RequireEKU`, or the wallet isn't made. *Check:* `Wallet(...)`
@@ -51,13 +51,13 @@ is a complete, working app on this package to compare against.
   ``WalletError/isRetryable`` says so. (<doc:HandlingErrors>)
 - Revocation, for every role whose roots you set: where your
   ecosystem's CAs publish CRLs, the role in
-  ``WalletConfiguration/revocation``, its CAs' CRLs in
-  ``WalletConfiguration/crls``, and, for a certificate pinned in the
-  roots, its CA's certificate in ``WalletConfiguration/crlIssuers``;
-  otherwise the role in ``WalletConfiguration/noRevocationCheck``, a
+  ``RevocationChecking/roles``, its CAs' CRLs in
+  ``RevocationChecking/crls``, and, for a certificate pinned in the
+  roots, its CA's certificate in ``RevocationChecking/crlIssuers``;
+  otherwise the role in ``RevocationChecking/declined``, a
   deliberate decision. Fresh CRLs are fetched before the old ones
   expire: by ``Wallet/refreshCRLs()`` over
-  ``WalletConfiguration/crlDistributionPoints``, at foreground and in a
+  ``RevocationChecking/distributionPoints``, at foreground and in a
   `BGAppRefreshTask`, its ``CRLRefreshResult/crls`` kept for the next
   launch, or by the app and handed over with ``Wallet/setCRLs(_:)``.
   *Check:* `Wallet(...)` succeeds with your production configuration,
@@ -96,7 +96,7 @@ is a complete, working app on this package to compare against.
   since receipt, revocation lists out of date).
 - *Check:* both grants against your issuer, including the app being
   terminated during sign-in; an offer from an issuer outside
-  ``WalletConfiguration/issuerRoots`` is refused.
+  ``WalletConfiguration/IssuerTrust/roots`` is refused.
   (<doc:ReceivingCredentials>)
 
 ### 3. Presenting from a link
@@ -121,7 +121,7 @@ is a complete, working app on this package to compare against.
   holder the request wasn't answered. (<doc:HandlingErrors>)
 - ``WalletError/Code/deliveryUnknown`` isn't retried: tell the holder to
   check with the Verifier.
-- *Check:* a Verifier outside ``WalletConfiguration/verifierRoots`` is
+- *Check:* a Verifier outside ``WalletConfiguration/VerifierTrust/roots`` is
   refused before anything is shown; the Verifier receives exactly the
   claims the holder chose. (<doc:PresentingFromALink>)
 
@@ -183,13 +183,14 @@ is a complete, working app on this package to compare against.
 ### 6. In person, reader
 
 - ``ProximityReader`` with ``ProximityReaderConfiguration``'s
-  `issuerRoots`, plus a reader key and chain with the
-  reader-authentication extended key usage if holders should see who's
-  asking.
+  `issuers.roots`, plus a reader key and chain
+  (`readerAuthentication`) with the reader-authentication extended key
+  usage if holders should see who's asking.
 - `development` not set, with each role (`issuer`, `status`) in
-  `revocation` (with `crls`, refreshed by `refreshCRLs` or `setCRLs`) or
-  `noRevocationCheck`, `anyIssuerForAnyType` or
-  `issuerRootsByDocType` deciding which IACAs issue which document type,
+  `revocation.roles` (with `revocation.crls`, refreshed by
+  `refreshCRLs` or `setCRLs`) or `revocation.declined`,
+  `issuers.anyIssuerForAnyType` or `issuers.rootsByDocType` deciding
+  which IACAs issue which document type,
   and `statusCheck: .check`, so a session is `.verified` only for a
   document that isn't revoked or suspended.
 - ``ProximityReader/start(qrCode:docType:elements:timeouts:)`` with the
@@ -197,7 +198,7 @@ is a complete, working app on this package to compare against.
 - Decide which issuers to accept on ``VerifiedMdoc/issuerChain``, not
   on its ``VerifiedMdoc/issuer`` name.
 - *Check:* a holder verifies; an mdoc from an issuer outside the
-  reader's `issuerRoots` is refused. (<doc:PresentingInPerson>)
+  reader's `issuers.roots` is refused. (<doc:PresentingInPerson>)
 
 ### 7. Before shipping
 

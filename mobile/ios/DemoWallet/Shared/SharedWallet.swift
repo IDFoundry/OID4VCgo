@@ -34,7 +34,7 @@ enum SharedWallet {
     /// The Certificate Revocation Lists the app last fetched
     /// (`refreshCRLs()`'s `crls`), PEM, in the shared defaults: the
     /// wallet's, which the extension checks Verifiers and readers against
-    /// too, and the reader's. Passed back as the configuration's `crls`
+    /// too, and the reader's. Passed back as the configuration's `revocation.crls`
     /// at each launch, so checks work before the next refresh, and a list
     /// older than these is still refused.
     static let crlsKey = "demo-crls"
@@ -52,10 +52,10 @@ enum SharedWallet {
     static func applyingHolderChoices(to configuration: WalletConfiguration) -> WalletConfiguration {
         var configuration = configuration
         if let saved = defaults.string(forKey: copyPolicyKey), let policy = WalletConfiguration.CopyPolicy(rawValue: saved) {
-            configuration.copyPolicy = policy
+            configuration.presentation.copyPolicy = policy
         }
-        if let crls = defaults.string(forKey: crlsKey), !crls.isEmpty, !configuration.revocation.isEmpty {
-            configuration.crls = crls
+        if let crls = defaults.string(forKey: crlsKey), !crls.isEmpty, !configuration.revocation.roles.isEmpty {
+            configuration.revocation.crls = crls
         }
         return configuration
     }

@@ -32,8 +32,8 @@ app's Info.plist (`CFBundleURLTypes`), and pass the URL the app receives
 to the issuance.
 
 The wallet trusts only what chains to the roots you give it, as PEM
-certificates: `issuerRoots` for credentials, and `verifierRoots` for
-the Verifiers it answers. A Credential Offer's issuer isn't trusted just
+certificates: `issuers.roots` for credentials, and `verifiers.roots`
+for the Verifiers it answers. A Credential Offer's issuer isn't trusted just
 because it sent the offer.
 
 ### Provide the keys and the storage
@@ -124,8 +124,8 @@ makes no network requests. At launch, before anything else, sweep the
 Keychain of keys no credential uses: an issuance the app quit in the
 middle of leaves its keys behind. Each trust role whose roots you set
 needs a revocation choice: checked against the CRLs your app fetches
-(``WalletConfiguration/revocation``), or declined
-(``WalletConfiguration/noRevocationCheck``); see <doc:GoingToProduction>.
+(``RevocationChecking/roles``), or declined
+(``RevocationChecking/declined``); see <doc:GoingToProduction>.
 
 ```swift
 /// The app's wallet, created once at launch.
@@ -139,10 +139,9 @@ final class AppWallet {
         let configuration = WalletConfiguration(
             clientID: clientID,
             redirectURI: redirectURI,
-            issuerRoots: issuerRoots,
-            verifierRoots: verifierRoots,
-            crls: crls,
-            revocation: [.issuer, .status, .verifier])
+            issuers: .init(roots: issuerRoots),
+            verifiers: .init(roots: verifierRoots),
+            revocation: .init(roles: [.issuer, .status, .verifier], crls: crls))
         keys = KeychainKeyStore()
         provider = try makeWalletProvider()
         wallet = try Wallet(
