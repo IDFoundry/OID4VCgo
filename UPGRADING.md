@@ -7,6 +7,83 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.39.0 → 0.40.0
+
+A release of the Swift and Kotlin libraries alone; the Go library and
+the gomobile ABI (15) are unchanged.
+
+### Configurations are grouped (Swift, Kotlin)
+
+`WalletConfiguration` and `ProximityReaderConfiguration` take their
+options in groups instead of one flat list. The same names are used in
+Swift and Kotlin. A configuration decoded from JSON is unaffected: the
+JSON keeps its flat keys, and encodes as before.
+
+```swift
+// Before
+ProximityReaderConfiguration(issuerRoots: iacas, readerKeyID: id, readerChain: chain,
+                             revocation: [.issuer, .status], crls: crls, statusCheck: .check)
+// After
+ProximityReaderConfiguration(
+    issuers: .init(roots: iacas),
+    readerAuthentication: .init(keyID: id, chain: chain),
+    revocation: .init(roles: [.issuer, .status], crls: crls),
+    statusCheck: .check)
+```
+
+In both configurations:
+
+| Before | After |
+|---|---|
+| `revocation` | `revocation.roles` |
+| `noRevocationCheck` | `revocation.declined` |
+| `crls`, `crlIssuers` | `revocation.crls`, `revocation.crlIssuers` |
+| `crlDistributionPoints` | `revocation.distributionPoints` |
+| `crlDistributionPointsFromRoots` | `revocation.distributionPointsFromRoots` |
+| `crlRequireHTTPS` | `revocation.requireHTTPS` |
+| `statusMaxBytes` | `status.maxBytes` (`StatusLists`) |
+| `identifierListMaxBytes` | `status.identifierListMaxBytes` |
+| `statusCacheMaxAgeSeconds` | `status.cacheMaxAgeSeconds` |
+| `statusCacheDir` | `status.cacheDir` |
+| `development = true`, `developmentRoots` | `development = Development(roots:)`; nil is production |
+
+`ProximityReaderConfiguration` only:
+
+| Before | After |
+|---|---|
+| `issuerRoots` | `issuers.roots` |
+| `issuerRootsByDocType` | `issuers.rootsByDocType` |
+| `anyIssuerForAnyType` | `issuers.anyIssuerForAnyType` |
+| `acceptMDLSignerWithoutEKU` | `issuers.acceptMDLSignerWithoutEKU` |
+| `readerKeyID`, `readerChain` | `readerAuthentication = ReaderAuthentication(keyID:chain:)`; nil sends unsigned requests |
+| `requireMDLSignerEKU` (deprecated) | removed: the default check already requires the extended key usage |
+
+`maxClockSkewSeconds` and `statusCheck` stay where they were.
+
+`WalletConfiguration` only (`clientID` and `redirectURI` stay where
+they were):
+
+| Before | After |
+|---|---|
+| `issuerRoots`, `issuerRequireEKU` | `issuers.roots`, `issuers.requireEKU` |
+| `mdocIssuerRoots`, `mdocIssuerRootsByDocType`, `mdocIssuerRequireEKU` | `issuers.mdocRoots`, `issuers.mdocRootsByDocType`, `issuers.mdocRequireEKU` |
+| `acceptMDLSignerWithoutEKU`, `requireIssuerName`, `allowForeignIss`, `statusIssuers` | the same names under `issuers` |
+| `issuerMetadataRoots`, `issuerMetadataRequireEKU` | `issuerMetadata.roots`, `issuerMetadata.requireEKU` |
+| `requireSignedIssuerMetadata`, `requireIssuerMetadataName` | `issuerMetadata.requireSigned`, `issuerMetadata.requireName` |
+| `maxIssuerMetadataAgeSeconds` | `issuerMetadata.maxAgeSeconds` |
+| `verifierRoots`, `verifierRequireEKU` | `verifiers.roots`, `verifiers.requireEKU` |
+| `acceptX509SANDNS`, `registrarRoots`, `registrarRequireEKU`, `mdocReaderRoots`, `mdocReaderRequireEKU`, `requireTrustedMdocReader` | the same names under `verifiers` |
+| `requireSignedDCAPIRequests` (Kotlin) | `verifiers.requireSignedDCAPIRequests` |
+| `tlsPins`, `allowedPrivateHosts` | `network.tlsPins`, `network.allowedPrivateHosts` |
+| `locales`, `batchSize`, `requestRefresh`, `proofKeyByJWK`, `proofKeyByIndex` | the same names under `issuance` |
+| `issuanceProfile` | `issuance.profile` |
+| `copyPolicy`, `proximityDeviceAuth` | `presentation.copyPolicy`, `presentation.proximityDeviceAuth` |
+
+Two JSON configurations Go refused are now refused when they're
+decoded, before any call reaches Go: `development_roots` without
+`development`, and `require_mdl_signer_eku` set together with
+`accept_mdl_signer_without_eku`.
+
 ## v0.79.0 → v0.80.0
 
 ### FAPIgo v0.75.0
