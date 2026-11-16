@@ -15,6 +15,13 @@ import (
 	"github.com/idfoundry/fapigo/keys"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/identifierlist"
+	"github.com/idfoundry/oid4vcgo/issuer"
+	"github.com/idfoundry/oid4vcgo/proximity"
+	"github.com/idfoundry/oid4vcgo/registration"
+	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
@@ -208,6 +215,65 @@ func TestNew_RoleSeparation(t *testing.T) {
 		if refused == tc.ok {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// The library's accept-every-leaf opt-outs, and its role defaults that
+// refuse only another role's evident certificates, tell no role's
+// certificates apart, so on pools that share an anchor they count as
+// unset: New refuses them, as it does no policy, while a policy that
+// narrows, mdoc.DefaultDocumentSignerPolicy among them, or one of them
+// on pools with nothing in common, is still accepted.
+func TestNew_RoleSeparationOptOuts(t *testing.T) {
+	deps := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(), Authorizations: durableAuthorizations{NewMemoryAuthorizationStore()}}
+	sharedCA, _ := testcert.CA(t, "shared CA")
+	otherCA, _ := testcert.CA(t, "other CA")
+	shared, other := x509.NewCertPool(), x509.NewCertPool()
+	shared.AddCert(sharedCA)
+	other.AddCert(otherCA)
+	narrowing := func(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+	optOuts := map[string]func(*x509.Certificate, [][]*x509.Certificate) error{
+		"verifier.AnyIssuerLeaf":        verifier.AnyIssuerLeaf,
+		"registration.AnyRegistrarLeaf": registration.AnyRegistrarLeaf,
+		"proximity.AnyDocumentSigner":   proximity.AnyDocumentSigner,
+		"issuer.AnyAttestationLeaf":     issuer.AnyAttestationLeaf,
+		"statuslist.AnyListSigner":      statuslist.AnyListSigner,
+		"identifierlist.AnyListSigner":  identifierlist.AnyListSigner,
+		// The defaults that refuse only another role's evident
+		// certificates count as unset too.
+		"verifier.DefaultSDJWTIssuerLeafPolicy":   verifier.DefaultSDJWTIssuerLeafPolicy,
+		"registration.DefaultRegistrarLeafPolicy": registration.DefaultRegistrarLeafPolicy,
+		"issuer.DefaultAttestationLeafPolicy":     issuer.DefaultAttestationLeafPolicy,
+	}
+	for optOutName, optOut := range optOuts {
+		for name, tc := range map[string]struct {
+			cfg Config
+			ok  bool
+		}{
+			"issuers' opt-out, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}, false},
+			"mdoc issuers' opt-out, one pool":   {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: optOut, MdocReaderRoots: shared, MdocReaderLeafPolicy: narrowing}, false},
+			"registrars' opt-out, one pool":     {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
+			"metadata's opt-out, one pool":      {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, IssuerMetadataRoots: shared, IssuerMetadataLeafPolicy: optOut}, false},
+			"readers' opt-out, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, MdocReaderRoots: shared, MdocReaderLeafPolicy: optOut}, false},
+			"Verifiers' opt-out, one pool":      {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, VerifierTrust: &wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: optOut}}, false},
+			"opt-outs on both, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
+			"issuers' opt-out, separate pools":  {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: other}}, true},
+			"registrars' opt-out, separate":     {Config{IssuerRoots: other, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, true},
+			"both narrowed, one pool":           {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing}, true},
+			"issuers' opt-out, one pool in dev": {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing, Development: true}, true},
+		} {
+			_, err := New(declined(tc.cfg), deps)
+			refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")
+			if refused == tc.ok {
+				t.Errorf("%s, %s: %v", optOutName, name, err)
+			}
+		}
+	}
+	// The mDL document signer's extended key usage, which the mdoc
+	// default requires, tells a document signer from a reader.
+	cfg := Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: mdoc.DefaultDocumentSignerPolicy, MdocReaderRoots: shared, MdocReaderLeafPolicy: narrowing}
+	if _, err := New(declined(cfg), deps); err != nil {
+		t.Errorf("mdoc.DefaultDocumentSignerPolicy, one pool: %v", err)
 	}
 }
 

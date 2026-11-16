@@ -179,7 +179,14 @@ type VerifyOptions struct {
 
 // AnyListSigner is a VerifyOptions.UnboundSigner accepting every Status
 // List Token signer under the roots.
+//
+// It tells no role's certificates apart, so walletflow.New doesn't
+// count it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config): there
+// it's as if unset.
 func AnyListSigner(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func init() { certchain.RegisterNonSeparating(AnyListSigner) }
 
 // errUnboundSigner refuses a check that nothing ties the token's signer
 // to the Referenced Token's issuer for.

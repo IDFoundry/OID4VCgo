@@ -271,13 +271,28 @@ var registrarRole = certchain.LeafRole{
 // registrar's certificate from a Verifier's that carries no extended
 // key usage: Roots must still anchor only registrars, or LeafPolicy
 // require the ecosystem's registrar purpose.
+//
+// Without an extended key usage to require, it can't tell this role's
+// certificates from another's that carry none, so walletflow.New
+// doesn't count it as a leaf policy separating a trust pool from
+// another role's that shares an anchor with it (walletflow.Config):
+// there it's as if unset.
 func DefaultRegistrarLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return registrarRole.Check(leaf, chains)
 }
 
+func init() { certchain.RegisterNonSeparating(DefaultRegistrarLeafPolicy) }
+
 // AnyRegistrarLeaf is a LeafPolicy that accepts every chain-verified
 // leaf: the explicit opt-out of DefaultRegistrarLeafPolicy.
+//
+// It tells no role's certificates apart, so walletflow.New doesn't
+// count it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config): there
+// it's as if unset.
 func AnyRegistrarLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func init() { certchain.RegisterNonSeparating(AnyRegistrarLeaf) }
 
 // Verify checks token, a registration JWT, and returns what it attests:
 // its typ is Type, it's signed with ES256 by an end-entity certificate

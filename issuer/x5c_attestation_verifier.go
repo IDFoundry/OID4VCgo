@@ -421,15 +421,30 @@ var attestationRole = certchain.LeafRole{
 // of its own: OpenID4VCI defines no Wallet Provider purpose to require.
 // A deployment whose providers' certificates carry one sets LeafPolicy
 // to require it, after calling this.
+//
+// Without an extended key usage to require, it can't tell this role's
+// certificates from another's that carry none, so walletflow.New
+// doesn't count it as a leaf policy separating a trust pool from
+// another role's that shares an anchor with it (walletflow.Config):
+// there it's as if unset.
 func DefaultAttestationLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return attestationRole.Check(leaf, chains)
 }
+
+func init() { certchain.RegisterNonSeparating(DefaultAttestationLeafPolicy) }
 
 // AnyAttestationLeaf is a LeafPolicy that accepts every chain-verified
 // leaf: the explicit opt-out of DefaultAttestationLeafPolicy, for an
 // X5CAttestationVerifier or X5CProofBindingKeyResolver whose Roots
 // anchor only that role's certificates.
+//
+// It tells no role's certificates apart, so walletflow.New doesn't
+// count it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config): there
+// it's as if unset.
 func AnyAttestationLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
+
+func init() { certchain.RegisterNonSeparating(AnyAttestationLeaf) }
 
 // attestationLeafPolicy is policy, or DefaultAttestationLeafPolicy when
 // it's nil.

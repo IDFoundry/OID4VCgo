@@ -80,10 +80,11 @@ type Config struct {
 	// usage clearly denotes another role, a TLS server's say, and an
 	// mdoc's mdoc.DefaultDocumentSignerPolicy. A policy that's set
 	// replaces those; verifier.AnyIssuerLeaf opts out of them. Only a
-	// policy that's set tells IssuerRoots apart from another role's
-	// pool sharing an anchor with them (see New): the defaults can't
-	// tell an issuer's certificate from a Verifier's without an
-	// extended key usage.
+	// policy that's set, other than verifier.AnyIssuerLeaf or
+	// verifier.DefaultSDJWTIssuerLeafPolicy, tells IssuerRoots apart
+	// from another role's pool sharing an anchor with them (see New):
+	// neither the defaults nor the opt-out can tell an issuer's
+	// certificate from a Verifier's without an extended key usage.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// MdocIssuerRoots, if set, are the trust anchors for mdoc document
@@ -800,15 +801,25 @@ func (c Config) checkRevocationChosen() error {
 // pass for a trusted Verifier or mdoc reader, or a Verifier register
 // itself. mayShareAnchor says what it can see of a pool.
 //
-// Only a leaf policy that's set counts. Each role's default (the
-// issuer's verifier.DefaultSDJWTIssuerLeafPolicy, the registrar's
-// registration.DefaultRegistrarLeafPolicy, and so on) refuses only
-// certificates whose key usage clearly denotes another role, so it
-// can't tell two roles' certificates apart when neither carries an
-// extended key usage. The check can't tell a policy that narrows from
-// one that opts out of the default (verifier.AnyIssuerLeaf,
-// registration.AnyRegistrarLeaf): those are for pools that anchor only
-// their own role's certificates.
+// Only a leaf policy that's set counts, and not every one: the
+// library's policies that can't tell two roles' certificates apart
+// count as unset (certchain.SeparatesRoles). Those are the role
+// defaults that refuse only certificates whose key usage clearly
+// denotes another role, so accept two roles' certificates alike when
+// neither carries an extended key usage
+// (verifier.DefaultSDJWTIssuerLeafPolicy,
+// registration.DefaultRegistrarLeafPolicy,
+// issuer.DefaultAttestationLeafPolicy), and the opt-outs that accept
+// every leaf, for pools that anchor only their own role's certificates
+// (verifier.AnyIssuerLeaf, registration.AnyRegistrarLeaf,
+// proximity.AnyDocumentSigner, issuer.AnyAttestationLeaf,
+// statuslist.AnyListSigner, identifierlist.AnyListSigner).
+// mdoc.DefaultDocumentSignerPolicy, which requires the mDL document
+// signer's extended key usage, does count. They're recognised as those
+// functions themselves: a closure or function wrapping one, or an
+// application's own policy that accepts as much, counts as one that
+// separates roles, so don't set one on a pool that shares an anchor
+// with another role's.
 //
 // The credential issuers' pools, IssuerRoots and the mdoc ones, are
 // one role: an ecosystem's CA may certify both its SD-JWT VC issuers
@@ -816,14 +827,14 @@ func (c Config) checkRevocationChosen() error {
 // policies, not their anchors.
 func checkRoleSeparation(c Config) error {
 	roles := []trustRole{
-		{"IssuerRoots", c.IssuerRoots, c.IssuerLeafPolicy != nil, roleIssuer},
-		{"MdocIssuerRoots", c.MdocIssuerRoots, c.MdocIssuerLeafPolicy != nil, roleIssuer},
-		{"IssuerMetadataRoots", c.IssuerMetadataRoots, c.IssuerMetadataLeafPolicy != nil, ""},
-		{"RegistrarRoots", c.RegistrarRoots, c.RegistrarLeafPolicy != nil, ""},
-		{"MdocReaderRoots", c.MdocReaderRoots, c.MdocReaderLeafPolicy != nil, ""},
+		{"IssuerRoots", c.IssuerRoots, certchain.SeparatesRoles(c.IssuerLeafPolicy), roleIssuer},
+		{"MdocIssuerRoots", c.MdocIssuerRoots, certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer},
+		{"IssuerMetadataRoots", c.IssuerMetadataRoots, certchain.SeparatesRoles(c.IssuerMetadataLeafPolicy), ""},
+		{"RegistrarRoots", c.RegistrarRoots, certchain.SeparatesRoles(c.RegistrarLeafPolicy), ""},
+		{"MdocReaderRoots", c.MdocReaderRoots, certchain.SeparatesRoles(c.MdocReaderLeafPolicy), ""},
 	}
 	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
-		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], c.MdocIssuerLeafPolicy != nil, roleIssuer})
+		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
 	}
 	if r, ok := verifierTrustRole(c.VerifierTrust); ok {
 		roles = append(roles, r)
@@ -861,7 +872,7 @@ func verifierTrustRole(t wallet.VerifierTrust) (trustRole, bool) {
 	if !ok {
 		return trustRole{}, false
 	}
-	return trustRole{"VerifierTrust", v.Roots, v.LeafPolicy != nil, ""}, true
+	return trustRole{"VerifierTrust", v.Roots, certchain.SeparatesRoles(v.LeafPolicy), ""}, true
 }
 
 // x5cVerifierRoots is t as a wallet.X5CVerifierRoots, by value or by
