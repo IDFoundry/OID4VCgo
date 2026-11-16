@@ -350,18 +350,7 @@ public class ProximityPresentation internal constructor(
             }
             val request = decodeProximityRequest(handle.request())
             if (!advance(State.Connected, State.RequestReceived(request))) return
-            // The holder decides; meanwhile the reader can only end the
-            // session. Responding can take a while (a biometric prompt):
-            // the idle timeout runs only while the request waits.
-            while (!_state.value.isFinal) {
-                val next = withTimeoutOrNull(timeouts.idle) { transport.receive() }
-                if (next != null) {
-                    handleMessage(next)
-                } else if (_state.value is State.RequestReceived) {
-                    sendTermination()
-                    finish(State.Failed(ProximityException(ProximityException.Reason.TimedOut, "the holder didn't decide in time")))
-                }
-            }
+            awaitDecision()
         } catch (e: CancellationException) {
             throw e
         } catch (e: ProximityTransportException) {
@@ -374,6 +363,24 @@ public class ProximityPresentation internal constructor(
             finish(State.Failed(e))
         } catch (e: Exception) {
             finish(State.Failed(WalletException(WalletException.Code.internal, null, e.toString())))
+        }
+    }
+
+    /**
+     * Until the session is over: the holder decides; meanwhile the
+     * reader can only end the session. Responding can take a while (a
+     * biometric prompt): the idle timeout runs only while the request
+     * waits. [run] handles what it throws.
+     */
+    private suspend fun awaitDecision() {
+        while (!_state.value.isFinal) {
+            val next = withTimeoutOrNull(timeouts.idle) { transport.receive() }
+            if (next != null) {
+                handleMessage(next)
+            } else if (_state.value is State.RequestReceived) {
+                sendTermination()
+                finish(State.Failed(ProximityException(ProximityException.Reason.TimedOut, "the holder didn't decide in time")))
+            }
         }
     }
 
@@ -476,8 +483,18 @@ public class ProximityPresentation internal constructor(
         // Cancelled once Go's respond had returned (cancelled before, it
         // gives nothing to send): the response stays here.
         if (ending != null) throw WalletException(WalletException.Code.cancelled, null, "the session was cancelled")
+        sendResponse(answer.send)
+        finish(State.Presented(answer.linkable), letReaderEnd = true)
+        return Responded(answer.linkable, answer.linkableCredentials)
+    }
+
+    /**
+     * Sends [respond]'s built response [message]; on a failure, moves
+     * to the final state [respond] describes and throws.
+     */
+    private suspend fun sendResponse(message: ByteArray) {
         try {
-            transport.send(answer.send)
+            transport.send(message)
         } catch (e: ProximityTransportException) {
             val error = transportFailure(e)
             finish(State.Failed(error))
@@ -501,8 +518,6 @@ public class ProximityPresentation internal constructor(
             finish(State.Failed(error))
             throw error
         }
-        finish(State.Presented(answer.linkable), letReaderEnd = true)
-        return Responded(answer.linkable, answer.linkableCredentials)
     }
 
     /** Declines the request, or ends the session before one: the reader is told, and nothing is disclosed. */
