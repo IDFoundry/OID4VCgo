@@ -67,38 +67,53 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 			r.set("verifier_jwks", verifierJWKs(payload))
 		}
 	case strings.HasPrefix(req.URL.Path, "/.well-known/openid-credential-issuer"):
-		metadata := body
-		if !strings.HasPrefix(contentType, "application/json") {
-			if metadata, err = jwtPayload(string(body)); err != nil {
-				return res, nil
-			}
-		}
-		var m struct {
-			Encryption *struct {
-				JWKS json.RawMessage `json:"jwks"`
-			} `json:"credential_request_encryption"`
-		}
-		if json.Unmarshal(metadata, &m) == nil {
-			if m.Encryption == nil {
-				r.set("request_enc_jwks", "none")
-			} else {
-				r.set("request_enc_jwks", describeJWKs(m.Encryption.JWKS))
-			}
-		}
+		r.observeIssuerMetadata(contentType, body)
 	case res.StatusCode == http.StatusOK && strings.HasPrefix(contentType, "application/json") && req.Method == http.MethodPost:
-		var t struct {
-			AccessToken string  `json:"access_token"`
-			TokenType   *string `json:"token_type"`
-		}
-		if json.Unmarshal(body, &t) == nil && t.AccessToken != "" {
-			if t.TokenType == nil {
-				r.set("token_type", "-")
-			} else {
-				r.set("token_type", *t.TokenType)
-			}
-		}
+		r.observeTokenResponse(body)
 	}
 	return res, nil
+}
+
+// observeIssuerMetadata records request_enc_jwks from Credential Issuer
+// Metadata, plain JSON or a signed JWT.
+func (r *recorder) observeIssuerMetadata(contentType string, body []byte) {
+	metadata := body
+	if !strings.HasPrefix(contentType, "application/json") {
+		var err error
+		if metadata, err = jwtPayload(string(body)); err != nil {
+			return
+		}
+	}
+	var m struct {
+		Encryption *struct {
+			JWKS json.RawMessage `json:"jwks"`
+		} `json:"credential_request_encryption"`
+	}
+	if json.Unmarshal(metadata, &m) != nil {
+		return
+	}
+	if m.Encryption == nil {
+		r.set("request_enc_jwks", "none")
+	} else {
+		r.set("request_enc_jwks", describeJWKs(m.Encryption.JWKS))
+	}
+}
+
+// observeTokenResponse records token_type from what may be a Token
+// Response: a JSON object with an access_token.
+func (r *recorder) observeTokenResponse(body []byte) {
+	var t struct {
+		AccessToken string  `json:"access_token"`
+		TokenType   *string `json:"token_type"`
+	}
+	if json.Unmarshal(body, &t) != nil || t.AccessToken == "" {
+		return
+	}
+	if t.TokenType == nil {
+		r.set("token_type", "-")
+	} else {
+		r.set("token_type", *t.TokenType)
+	}
 }
 
 func (r *recorder) set(name, value string) {
