@@ -56,8 +56,9 @@ type InstanceKey struct {
 	// evidence's: an InstanceKeyRechecker checks them again each time
 	// the provider relies on the record. Empty for a key recorded
 	// before the provider kept them (OID4VCgo v0.80.0 and before), or
-	// whose verifier reports none, which the provider relies on as
-	// before.
+	// whose verifier reports none; the rechecker decides whether such a
+	// key is relied on (androidkey's refuses it, unless
+	// AllowUncheckedLegacyEvidence).
 	EvidenceFacts []byte
 
 	CreatedAt time.Time

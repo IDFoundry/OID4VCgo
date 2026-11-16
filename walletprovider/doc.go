@@ -193,5 +193,13 @@
 // Google's attestation status list naming a certificate of an Android
 // chain — revokes (or suspends) the instance too, so the attestations
 // it holds read INVALID (or SUSPENDED); Config.OnRecheckRefused hears
-// of every recheck refusal.
+// of every recheck refusal. Any other refusal only refuses the request
+// (ErrEvidenceRejected or ErrPolicy). Among them is evidence past its
+// lifetime: an Android chain with a certificate past its validity
+// period, which Remote Key Provisioning's short-lived attestation
+// certificates soon are, after which the wallet sends fresh evidence —
+// registering again if the registration chain expired, attesting a new
+// instance key if only the key's did — and a record an earlier version
+// kept that androidkey can't judge (androidkey.ErrLegacyFacts), refused
+// unless androidkey.EvidenceVerifier.AllowUncheckedLegacyEvidence.
 package walletprovider

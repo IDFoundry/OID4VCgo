@@ -52,6 +52,12 @@ var (
 	// ErrKeyNotRequested: the chain attests a key the request to the
 	// Wallet Provider doesn't name (EvidenceVerifier).
 	ErrKeyNotRequested = errors.New("androidkey: attested key not one the request names")
+	// ErrLegacyFacts: Recheck can't judge a record kept by an earlier
+	// version: Facts without the certificates' validity periods
+	// (Facts.ValidityRecorded), or, from EvidenceVerifier, an Android
+	// instance or instance key with no Facts at all. Fresh evidence
+	// replaces it (EvidenceVerifier.AllowUncheckedLegacyEvidence).
+	ErrLegacyFacts = errors.New("androidkey: evidence facts too old to recheck")
 )
 
 func fail(kind error, format string, args ...any) error {

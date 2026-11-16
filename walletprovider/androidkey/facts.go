@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
@@ -50,10 +51,53 @@ type Facts struct {
 
 // CertificateFacts are a chain certificate's serial number, as Google's
 // status list keys it (lowercase hexadecimal without leading zeros),
-// and its issuer's name, as crypto/x509/pkix.Name.String writes it.
+// its issuer's name, as crypto/x509/pkix.Name.String writes it, and its
+// validity period.
 type CertificateFacts struct {
 	Serial string `json:"serial"`
 	Issuer string `json:"issuer"`
+
+	// NotBefore and NotAfter are the certificate's validity period, in
+	// UTC. Both are zero in Facts saved by OID4VCgo v0.80.0 and before,
+	// which didn't keep them (Facts.ValidityRecorded).
+	NotBefore time.Time `json:"not_before,omitzero"`
+	NotAfter  time.Time `json:"not_after,omitzero"`
+
+	// RootKey reports that the certificate has the key of the root the
+	// chain is anchored at: it is that root, or a re-issue of it, and,
+	// as Verify judges it, the configured root's validity counts, not
+	// its own (Google's 2016 root certificate has expired, while its key
+	// lives on in the 2022 one).
+	RootKey bool `json:"root_key,omitempty"`
+}
+
+// ValidityRecorded reports whether f holds every certificate's validity
+// period, which Facts saved by OID4VCgo v0.80.0 and before don't:
+// Recheck can't tell whether such a chain has expired, and refuses it
+// (ErrLegacyFacts), as EvidenceVerifier does unless
+// AllowUncheckedLegacyEvidence.
+func (f *Facts) ValidityRecorded() bool {
+	return len(f.Certificates) > 0 && !slices.ContainsFunc(f.Certificates, func(c CertificateFacts) bool {
+		return c.NotBefore.IsZero() || c.NotAfter.IsZero()
+	})
+}
+
+// Expiry is when the first of f's certificates to expire does, those
+// with the root's key (CertificateFacts.RootKey) aside: from then on
+// Recheck refuses the chain, and the instance, or instance key, it
+// attested needs fresh evidence. It's zero when f doesn't hold the
+// certificates' validity periods (ValidityRecorded).
+func (f *Facts) Expiry() time.Time {
+	if !f.ValidityRecorded() {
+		return time.Time{}
+	}
+	var first time.Time
+	for _, c := range f.Certificates {
+		if !c.RootKey && (first.IsZero() || c.NotAfter.Before(first)) {
+			first = c.NotAfter
+		}
+	}
+	return first
 }
 
 // FactsOf returns the Facts of r.
@@ -65,7 +109,11 @@ func FactsOf(r *Result) Facts {
 		App:                      r.App,
 	}
 	for _, c := range r.Chain {
-		f.Certificates = append(f.Certificates, CertificateFacts{Serial: serialKey(c.SerialNumber), Issuer: c.Issuer.String()})
+		f.Certificates = append(f.Certificates, CertificateFacts{
+			Serial: serialKey(c.SerialNumber), Issuer: c.Issuer.String(),
+			NotBefore: c.NotBefore.UTC(), NotAfter: c.NotAfter.UTC(),
+			RootKey: r.Root != nil && bytes.Equal(c.RawSubjectPublicKeyInfo, r.Root.RawSubjectPublicKeyInfo),
+		})
 	}
 	if r.Root != nil {
 		digest := sha256.Sum256(r.Root.RawSubjectPublicKeyInfo)
@@ -82,7 +130,9 @@ func FactsOf(r *Result) Facts {
 // registered with another Kind, or before the provider kept them
 // (OID4VCgo v0.75.3 and before). A Provider.RevokeWhere match function
 // can use it to find the instances a revoked attestation key, or a
-// vulnerable patch level, taints.
+// vulnerable patch level, taints, and those EvidenceVerifier.Recheck
+// refuses as legacy records: an EvidenceKind instance with no Facts, or
+// Facts without validity periods (Facts.ValidityRecorded).
 func InstanceFacts(in walletprovider.Instance) (Facts, bool, error) {
 	if in.Evidence.Kind != EvidenceKind || len(in.EvidenceFacts) == 0 {
 		return Facts{}, false, nil
@@ -95,22 +145,55 @@ func InstanceFacts(in walletprovider.Instance) (Facts, bool, error) {
 }
 
 // Recheck judges f, the Facts of a chain Verify accepted, by v as it is
-// now: the chain's root must still be one of Roots, no certificate may
-// be on the status list, and the attestation version, the security
-// levels, the root of trust, the OS patch level and the app must still
-// pass v's policy. What only the chain itself can show — signatures,
-// validity periods, the challenge, the key's properties — was judged by
-// Verify and isn't again. Errors wrap the Err values Verify's do.
+// now: the chain's root must still be one of Roots, and valid at v.Now;
+// the attestation version, the security levels, the root of trust, the
+// OS patch level and the app must still pass v's policy; no certificate
+// may be on the status list; and every certificate must still be within
+// its validity period at v.Now, a certificate with the root's key
+// (CertificateFacts.RootKey) aside, as Verify judges them. Attestation
+// certificates Remote Key Provisioning issues live for weeks, so a
+// chain Verify accepted expires long before the instance does: its
+// instance must then register again, or its instance key be attested
+// anew, with fresh evidence. Facts saved without the validity periods
+// (by OID4VCgo v0.80.0 and before: Facts.ValidityRecorded) are refused
+// with ErrLegacyFacts. What only the chain itself can show — signatures,
+// the challenge, the key's properties — was judged by Verify and isn't
+// again. Errors wrap the Err values Verify's do.
 func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
+	return v.recheck(ctx, f, false)
+}
+
+// recheck is Recheck, accepting Facts without validity periods, whose
+// validity it then can't judge, when allowUnrecordedValidity.
+func (v *Verifier) recheck(ctx context.Context, f *Facts, allowUnrecordedValidity bool) error {
 	if err := v.checkPolicyConfig(); err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(v.roots(), func(r *x509.Certificate) bool {
+	i := slices.IndexFunc(v.roots(), func(r *x509.Certificate) bool {
 		digest := sha256.Sum256(r.RawSubjectPublicKeyInfo)
 		return bytes.Equal(digest[:], f.RootKeyDigest)
-	}) {
+	})
+	if i < 0 {
 		return fail(ErrUntrustedRoot, "the chain's root isn't among the configured roots")
 	}
+	if err := v.recheckPolicy(f); err != nil {
+		return err
+	}
+	serials, err := f.serials()
+	if err != nil {
+		return err
+	}
+	// Revocation before validity: Google's verdict on a chain that has
+	// also expired is the one the provider acts on.
+	if _, err := v.checkRevocation(ctx, serials); err != nil {
+		return err
+	}
+	return v.recheckValidity(f, v.roots()[i], allowUnrecordedValidity)
+}
+
+// recheckPolicy judges f's attestation version, security levels, root
+// of trust, OS patch level and app by v's policy.
+func (v *Verifier) recheckPolicy(f *Facts) error {
 	enforced := AuthorizationList{RootOfTrust: f.RootOfTrust, OSPatchLevel: f.OSPatchLevel, ApplicationID: f.App}
 	r := &Result{KeyDescription: &KeyDescription{
 		AttestationVersion:       f.AttestationVersion,
@@ -124,30 +207,71 @@ func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// recheckValidity checks root, the configured root f's chain is
+// anchored at, and every certificate of f but one with root's key, are
+// valid now, as anchor does a chain's.
+func (v *Verifier) recheckValidity(f *Facts, root *x509.Certificate, allowUnrecorded bool) error {
+	now := v.now()
+	if !within(root, now) {
+		return fail(ErrCertificateValidity, "root %q isn't valid at %s", root.Subject.String(), now.UTC().Format(time.RFC3339))
+	}
+	if !f.ValidityRecorded() {
+		if allowUnrecorded {
+			return nil
+		}
+		return fail(ErrLegacyFacts, "the facts don't hold the certificates' validity periods (saved by OID4VCgo v0.80.0 or before)")
+	}
+	for i, c := range f.Certificates {
+		if !c.RootKey && (now.Before(c.NotBefore) || now.After(c.NotAfter)) {
+			return outsideValidity(i, c.NotBefore, c.NotAfter, now)
+		}
+	}
+	return nil
+}
+
+// serials are f's certificates' serial numbers, leaf first.
+func (f *Facts) serials() ([]*big.Int, error) {
 	serials := make([]*big.Int, len(f.Certificates))
 	for i, c := range f.Certificates {
 		serial, ok := new(big.Int).SetString(c.Serial, 16)
 		if !ok {
-			return fail(ErrMalformed, "certificate %d's serial %q isn't hexadecimal", i, c.Serial)
+			return nil, fail(ErrMalformed, "certificate %d's serial %q isn't hexadecimal", i, c.Serial)
 		}
 		serials[i] = serial
 	}
-	_, err := v.checkRevocation(ctx, serials)
-	return err
+	return serials, nil
 }
+
+// What a wallet must do once a recheck refuses its evidence as expired
+// or uncheckable: send fresh evidence, for a new registration or a new
+// instance key.
+const (
+	remedyRegister    = "the instance must register again, with fresh evidence"
+	remedyInstanceKey = "the wallet must attest a new instance key, with fresh evidence"
+)
 
 // Recheck implements walletprovider.EvidenceRechecker: it judges the
 // Facts kept for the instance's registration chain by the Verifier as
 // it is now (Verifier.Recheck), so an instance whose attestation key
-// Google has since revoked, or that the Verifier's policy has since
-// been tightened to refuse, gets no more attestations, even for an
-// instance key it recorded before. It accepts an instance with no Facts
-// kept (InstanceFacts), which it can't judge. A refusal wraps
-// walletprovider.ErrEvidenceRejected for a certificate the status list
-// names or a root no longer trusted, and walletprovider.ErrPolicy
-// otherwise; a status list it couldn't get, or a misconfigured
-// Verifier, is returned as it is, for the provider to fail the request
-// as its own failure.
+// Google has since revoked, whose chain has since expired, or that the
+// Verifier's policy has since been tightened to refuse, gets no more
+// attestations, even for an instance key it recorded before. A refusal
+// wraps walletprovider.ErrEvidenceRejected for a certificate the status
+// list names, a root no longer trusted, a certificate outside its
+// validity period (ErrCertificateValidity) or a record it can't judge
+// (ErrLegacyFacts), and walletprovider.ErrPolicy otherwise; a status
+// list it couldn't get, or a misconfigured Verifier, is returned as it
+// is, for the provider to fail the request as its own failure.
+//
+// An instance with no Facts kept (InstanceFacts: one registered with
+// OID4VCgo v0.75.3 and before) can't be judged, and Facts saved by
+// OID4VCgo v0.80.0 and before hold no validity periods
+// (Facts.ValidityRecorded), so whether its chain has expired can't be:
+// both are refused, with ErrLegacyFacts, unless
+// AllowUncheckedLegacyEvidence, and the instance must register again.
 //
 // Google's status list naming a certificate of the chain is Google's
 // verdict on the device's attestation key, not a change the operator
@@ -156,7 +280,9 @@ func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 // the instance, and a SUSPENDED entry's walletprovider.ErrEvidenceSuspended,
 // for it to suspend it (Provider.Resume makes it active again, once
 // Google lifts the suspension). An entry with another status only
-// refuses, as a root removed from Roots or a tightened policy does.
+// refuses, as a root removed from Roots, a tightened policy, an expired
+// certificate or a legacy record does: the provider neither revokes nor
+// suspends the instance for those, which may register again.
 //
 // Recheck judges the registration chain alone. An instance key's chain
 // needn't share its certificates: Remote Key Provisioning rotates a
@@ -166,10 +292,13 @@ func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 // used once, for the Key Attestation it's sent with, and isn't kept.
 func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instance) error {
 	f, ok, err := InstanceFacts(in)
-	if err != nil || !ok {
+	switch {
+	case err != nil || in.Evidence.Kind != EvidenceKind:
 		return err
+	case !ok:
+		return e.unchecked("the instance has no evidence facts (registered with OID4VCgo v0.75.3 or before)", remedyRegister)
 	}
-	return e.recheck(ctx, &f)
+	return e.recheck(ctx, &f, remedyRegister)
 }
 
 // RecheckInstanceKey implements walletprovider.InstanceKeyRechecker: it
@@ -177,16 +306,22 @@ func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instanc
 // (InstanceKeyFacts) as Recheck does the registration chain's, with
 // the same verdicts, so a certificate of k's chain that Google's status
 // list names REVOKED or SUSPENDED revokes or suspends the instance,
-// though the registration chain's certificates are unnamed. It accepts
-// a key with no Facts kept, one recorded before the provider kept them
-// (OID4VCgo v0.80.0 and before), which it can't judge, as Recheck
-// accepts such an instance.
+// though the registration chain's certificates are unnamed, and a
+// certificate of k's chain that has expired refuses k alone: the
+// wallet attests a new instance key, with fresh evidence, while the
+// instance's registration chain is still valid. A key with no Facts
+// kept (recorded with OID4VCgo v0.80.0 and before), or Facts without
+// validity periods, is refused as Recheck refuses such an instance,
+// unless AllowUncheckedLegacyEvidence.
 func (e EvidenceVerifier) RecheckInstanceKey(ctx context.Context, in walletprovider.Instance, k walletprovider.InstanceKey) error {
 	f, ok, err := InstanceKeyFacts(in, k)
-	if err != nil || !ok {
+	switch {
+	case err != nil || in.Evidence.Kind != EvidenceKind:
 		return err
+	case !ok:
+		return e.unchecked("the instance key has no evidence facts (recorded with OID4VCgo v0.80.0 or before)", remedyInstanceKey)
 	}
-	return e.recheck(ctx, &f)
+	return e.recheck(ctx, &f, remedyInstanceKey)
 }
 
 // InstanceKeyFacts decodes the Facts kept for k, an instance key of the
@@ -205,19 +340,32 @@ func InstanceKeyFacts(in walletprovider.Instance, k walletprovider.InstanceKey) 
 	return f, true, nil
 }
 
+// unchecked is the verdict on a record with no Facts kept: nil when
+// AllowUncheckedLegacyEvidence, a refusal saying what, and remedy,
+// otherwise.
+func (e EvidenceVerifier) unchecked(what, remedy string) error {
+	if e.AllowUncheckedLegacyEvidence {
+		return nil
+	}
+	return fmt.Errorf("%w: %w; %s", walletprovider.ErrEvidenceRejected, fail(ErrLegacyFacts, "%s", what), remedy)
+}
+
 // recheck judges f by the Verifier as it is now, wrapping a refusal as
-// Recheck describes.
-func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts) error {
+// Recheck describes; remedy says what the wallet must do once f's chain
+// has expired or can't be judged.
+func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) error {
 	if e.Verifier == nil {
 		return fail(ErrConfig, "EvidenceVerifier has no Verifier")
 	}
-	switch err := e.Verifier.Recheck(ctx, f); {
+	switch err := e.Verifier.recheck(ctx, f, e.AllowUncheckedLegacyEvidence); {
 	case err == nil:
 		return nil
 	case errors.Is(err, ErrStatusUnavailable), errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
 		return err
 	case errors.Is(err, ErrRevoked):
 		return fmt.Errorf("%w: %w", revocationVerdict(err), err)
+	case errors.Is(err, ErrCertificateValidity), errors.Is(err, ErrLegacyFacts):
+		return fmt.Errorf("%w: %w; %s", walletprovider.ErrEvidenceRejected, err, remedy)
 	case errors.Is(err, ErrUntrustedRoot):
 		return fmt.Errorf("%w: %w", walletprovider.ErrEvidenceRejected, err)
 	default:

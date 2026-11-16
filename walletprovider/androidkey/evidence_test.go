@@ -230,7 +230,7 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 	// chain's root is trusted.
 	var roots []*x509.Certificate
 	v := &androidkey.Verifier{Revocation: statusFixture(t), Apps: []androidkey.AllowedApp{testApp}}
-	f := newProviderFixture(t, v)
+	f := newProviderFixture(t, androidkey.EvidenceVerifier{Verifier: v})
 	client := f.client
 
 	chainFor := func(purpose walletprovider.Purpose, strongBox bool) (string, testChain) {

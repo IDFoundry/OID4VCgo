@@ -390,9 +390,14 @@ func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileIns
 		platforms[wp.PlatformIOS] = wp.PlatformPolicy{SecurityLevels: []wp.SecurityLevel{wp.SecurityLevelSecureEnclave}}
 	}
 	if len(cfg.AndroidApps) > 0 {
-		verifiers = append(verifiers, androidkey.EvidenceVerifier{Verifier: &androidkey.Verifier{
-			Apps: cfg.AndroidApps, Revocation: &androidkey.StatusSource{}, Now: cfg.Now,
-		}})
+		verifiers = append(verifiers, androidkey.EvidenceVerifier{
+			Verifier: &androidkey.Verifier{Apps: cfg.AndroidApps, Revocation: &androidkey.StatusSource{}, Now: cfg.Now},
+			// A demo's instances file outlives its upgrades: keep
+			// accepting the instances and instance keys it recorded
+			// before their facts were kept in full. A production
+			// provider leaves this unset, outside an upgrade window.
+			AllowUncheckedLegacyEvidence: true,
+		})
 		platforms[wp.PlatformAndroid] = wp.PlatformPolicy{
 			SecurityLevels:      []wp.SecurityLevel{wp.SecurityLevelTEE, wp.SecurityLevelStrongBox},
 			RequireVerifiedBoot: true,

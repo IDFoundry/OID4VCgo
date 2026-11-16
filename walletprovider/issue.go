@@ -215,7 +215,8 @@ func (p *Provider) checkInstanceKey(in Instance, ik InstanceKey) error {
 // refusal is acted on as the instance's own recheck's is
 // (recheckRefused). A record without EvidenceFacts, from before the
 // provider kept them, is rechecked too: the rechecker decides what to
-// make of it (androidkey's accepts it).
+// make of it (androidkey's refuses it, unless
+// AllowUncheckedLegacyEvidence).
 func (p *Provider) checkRecordedInstanceKey(ctx context.Context, in Instance, ik InstanceKey) error {
 	if err := p.checkInstanceKey(in, ik); err != nil {
 		return err

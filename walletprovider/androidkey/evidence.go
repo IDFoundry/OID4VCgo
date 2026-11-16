@@ -58,6 +58,22 @@ type EvidenceVerifier struct {
 	// means DefaultMaxAuthTimeout; negative, that only a key needing an
 	// authentication for every use is reported as requiring the user.
 	MaxAuthTimeout time.Duration
+
+	// AllowUncheckedLegacyEvidence accepts, in Recheck and
+	// RecheckInstanceKey, the records an earlier version kept that they
+	// can't fully judge: an instance with no Facts (registered with
+	// OID4VCgo v0.75.3 and before), an instance key with none (recorded
+	// with v0.80.0 and before), and Facts without the certificates'
+	// validity periods (saved by v0.80.0 and before), whose expiry is
+	// then not checked; whatever else such Facts hold — the root, the
+	// status list, the policy — is still judged. Unset, the strict
+	// choice, they're refused with ErrLegacyFacts, and the instance must
+	// register again, or its instance key be attested anew. Set it for
+	// an upgrade window only, while the wallets in the field move to
+	// fresh evidence (Facts.ValidityRecorded and InstanceFacts find
+	// the instances still needing to), or in development, where a
+	// provider's stores outlive its upgrades.
+	AllowUncheckedLegacyEvidence bool
 }
 
 // DefaultMaxAuthTimeout is EvidenceVerifier.MaxAuthTimeout's default:

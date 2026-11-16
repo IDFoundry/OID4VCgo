@@ -54,11 +54,20 @@
 // each attestation, Verifier.Recheck judges the instance's Facts, and
 // those of the recorded instance key the attestation relies on, by the
 // Verifier as it is then, so a certificate the status list names since,
-// in either chain, or a policy tightened since, refuses it. A certificate the list names
+// in either chain, a certificate of either chain past its validity
+// period (Remote Key Provisioning's attestation certificates live for
+// weeks), or a policy tightened since, refuses it. A certificate the list names
 // REVOKED or SUSPENDED also has the provider revoke or suspend the
 // instance (walletprovider.ErrEvidenceRevoked, ErrEvidenceSuspended);
-// a root removed from Roots or a tightened policy only refuses, since
-// the operator may undo it.
+// a root removed from Roots, a tightened policy or an expired
+// certificate only refuses, since the operator may undo the first two,
+// and the wallet can send fresh evidence for the last: register again
+// when the registration chain expired, or attest a new instance key
+// when only an instance key's did. A record an earlier version kept
+// that can't be judged — an instance or instance key with no Facts, or
+// Facts without the certificates' validity periods — is refused too
+// (ErrLegacyFacts), unless EvidenceVerifier.AllowUncheckedLegacyEvidence,
+// for an upgrade window.
 //
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension
