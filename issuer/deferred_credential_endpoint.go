@@ -127,8 +127,12 @@ func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req De
 // offer.
 //
 // It answers only the client and access token Subject the transaction
-// was created for (DeferredTransactionRecord's ClientID and Subject);
-// anyone else gets invalid_transaction_id, as for an unknown one.
+// was created for (DeferredTransactionRecord's ClientID and Subject),
+// with an access token that still grants its credential configuration,
+// or, for a transaction requested by credential_identifier, still
+// authorizes that identifier (DeferredTransactionRecord's
+// CredentialIdentifier); anyone else gets invalid_transaction_id, as
+// for an unknown one, and the transaction is left as it was.
 // RequestCredential creates the transaction when a request defers
 // (CredentialRequest.Defer). Request/response encryption (§10) is supported the same way
 // RequestCredential's own is — see DecryptRequestBody/EncryptResponseBody
@@ -161,10 +165,10 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 		// As for an unknown one: whether another holder's transaction
 		// exists is none of this one's business. The same client and
 		// subject aren't enough either, if the token doesn't grant the
-		// transaction's configuration (a narrower refreshed token, or
-		// one from another grant).
+		// transaction's configuration, or credential_identifier (a
+		// narrower refreshed token, or one from another grant).
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID,
-			errors.New("transaction_id was not issued to this access token's client and subject, or the token doesn't grant its credential configuration"))
+			errors.New("transaction_id was not issued to this access token's client and subject, or the token doesn't grant its credential configuration or identifier"))
 	}
 
 	switch record.Status {

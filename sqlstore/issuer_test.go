@@ -135,7 +135,7 @@ func TestIssuerRecordsRoundTrip(t *testing.T) {
 		deferred := issuer.DeferredTransactionRecord{
 			Owner: "o", ClientID: "c", Subject: "s", Status: issuer.DeferredTransactionIssued,
 			Credentials: []oid4vci.IssuedCredential{{Credential: "credential"}}, NotificationID: "n",
-			CredentialConfigurationID: "pid", BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, ExpiresAt: exp,
+			CredentialConfigurationID: "pid", CredentialIdentifier: "pid-dataset-1", BindingKeys: []json.RawMessage{json.RawMessage(`{"kty":"EC"}`)}, ExpiresAt: exp,
 			KeyAttestations: []string{"ka"}, ProofKeyHeaders: []json.RawMessage{json.RawMessage(`{"kid":"k"}`)}, Reference: "r",
 		}
 		if err := d.DeferredTransactions().Create(ctx, "txn", deferred); err != nil {

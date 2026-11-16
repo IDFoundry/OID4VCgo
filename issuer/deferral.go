@@ -76,10 +76,14 @@ var ErrDeferredProofKeyTrustUnknown = errors.New("issuer: the trust of a proof k
 // more: already issued, denied or expired.
 var ErrDeferredTransactionResolved = errors.New("issuer: the deferred transaction is no longer pending")
 
-// requireDeferral checks this Issuer can defer auth's request: it has a
-// Deferred Credential Endpoint to poll and a store for the
-// transactions, and auth has a Subject to bind the transaction to.
-func (iss *Issuer) requireDeferral(auth AuthorizedRequest) error {
+// requireDeferral checks this Issuer can defer auth's request when it
+// asks for deferral (d isn't nil): it has a Deferred Credential
+// Endpoint to poll and a store for the transactions, and auth has a
+// Subject to bind the transaction to.
+func (iss *Issuer) requireDeferral(auth AuthorizedRequest, d *Deferral) error {
+	if d == nil {
+		return nil
+	}
 	if iss.cfg.Endpoints.DeferredCredential.IsZero() || iss.deps.DeferredTransactions == nil {
 		return fmt.Errorf("issuer: request credential: deferral needs Endpoints.DeferredCredential and Dependencies.DeferredTransactions")
 	}
@@ -89,10 +93,11 @@ func (iss *Issuer) requireDeferral(auth AuthorizedRequest) error {
 	return nil
 }
 
-// startDeferral saves a pending transaction for a checked request, whose
-// proofs were of proofType, and returns the Credential Response that
-// tells the Wallet to poll for it.
-func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID, proofType string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
+// startDeferral saves a pending transaction for a checked request for
+// configID, by credential_identifier identifier ("" for one by
+// credential_configuration_id), whose proofs were of proofType, and
+// returns the Credential Response that tells the Wallet to poll for it.
+func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, configID, identifier, proofType string, keys []resolvedKey, d Deferral) (oid4vci.CredentialResponse, error) {
 	raw := make([]byte, transactionIDEntropyBytes)
 	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: transaction_id: %w", err)
@@ -116,7 +121,8 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 	record := DeferredTransactionRecord{
 		Owner:    iss.storeOwner(),
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
-		CredentialConfigurationID: configID, BindingKeys: bindingKeys, Reference: d.Reference,
+		CredentialConfigurationID: configID, CredentialIdentifier: identifier,
+		BindingKeys: bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 		KeyAttestations: keyAttestations, ProofKeyHeaders: proofKeyHeaders,
 	}
@@ -202,22 +208,12 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 	if !ok || len(record.BindingKeys) == 0 {
 		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: the transaction wasn't created by a deferred Credential Request")
 	}
-	keys := make([]resolvedKey, len(record.BindingKeys))
-	for i, raw := range record.BindingKeys {
-		pub, err := jwk.ParsePublicKey(raw)
-		if err != nil {
-			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: binding key %d: %w", i, err)
-		}
-		keys[i] = resolvedKey{Public: pub, JWKRaw: raw}
+	keys, err := deferredBindingKeys(record)
+	if err != nil {
+		return record.ClientID, err
 	}
-	if err := iss.recheckDeferredTrust(ctx, cc, record, keys); err != nil {
-		if !errors.Is(err, ErrDeferredKeyAttestation) && !errors.Is(err, ErrDeferredProofKey) {
-			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
-		}
-		if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
-			return record.ClientID, denyErr
-		}
-		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
+	if err := iss.recheckOrDeny(ctx, transactionID, cc, record, keys); err != nil {
+		return record.ClientID, err
 	}
 	credentials, err := iss.issueBatch(ctx, cc, CredentialRequest{
 		SDJWTClaims: content.SDJWTClaims, MdocClaims: content.MdocClaims,
@@ -226,13 +222,48 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 	if err != nil {
 		return record.ClientID, err
 	}
-	var notificationID string
-	if !iss.cfg.Endpoints.Notification.IsZero() {
-		if notificationID, err = iss.IssueNotificationID(ctx, deferredClient(record)); err != nil {
-			return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
-		}
+	notificationID, err := iss.notificationIDFor(ctx, deferredClient(record))
+	if err != nil {
+		return record.ClientID, fmt.Errorf("issuer: issue deferred credential: %w", err)
 	}
-	err = iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
+	return record.ClientID, iss.saveDeferredIssued(ctx, transactionID, credentials, notificationID)
+}
+
+// deferredBindingKeys parses record's BindingKeys.
+func deferredBindingKeys(record DeferredTransactionRecord) ([]resolvedKey, error) {
+	keys := make([]resolvedKey, len(record.BindingKeys))
+	for i, raw := range record.BindingKeys {
+		pub, err := jwk.ParsePublicKey(raw)
+		if err != nil {
+			return nil, fmt.Errorf("issuer: issue deferred credential: binding key %d: %w", i, err)
+		}
+		keys[i] = resolvedKey{Public: pub, JWKRaw: raw}
+	}
+	return keys, nil
+}
+
+// recheckOrDeny runs recheckDeferredTrust for transactionID, denying
+// the transaction when a key is no longer trusted, and returns its
+// error, if any.
+func (iss *Issuer) recheckOrDeny(ctx context.Context, transactionID string, cc CredentialConfiguration, record DeferredTransactionRecord, keys []resolvedKey) error {
+	err := iss.recheckDeferredTrust(ctx, cc, record, keys)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrDeferredKeyAttestation) && !errors.Is(err, ErrDeferredProofKey) {
+		return fmt.Errorf("issuer: issue deferred credential: %w", err)
+	}
+	if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
+		return denyErr
+	}
+	return fmt.Errorf("issuer: issue deferred credential: %w", err)
+}
+
+// saveDeferredIssued marks transactionID issued with credentials and
+// notificationID if it's still pending, restarting its lifetime when
+// it has one.
+func (iss *Issuer) saveDeferredIssued(ctx context.Context, transactionID string, credentials []oid4vci.IssuedCredential, notificationID string) error {
+	return iss.deps.DeferredTransactions.Update(ctx, transactionID, func(cur *DeferredTransactionRecord) error {
 		if err := iss.checkPending(*cur); err != nil {
 			return err
 		}
@@ -242,7 +273,6 @@ func (iss *Issuer) issueDeferredCredential(ctx context.Context, transactionID st
 		}
 		return nil
 	})
-	return record.ClientID, err
 }
 
 // DenyDeferredCredential resolves the pending transaction
@@ -318,28 +348,42 @@ func (iss *Issuer) recheckProofKeys(ctx context.Context, record DeferredTransact
 	ctx = certchain.WithTime(ctx, iss.deps.Clock.Now())
 	var undecided error
 	for i, raw := range record.ProofKeyHeaders {
-		if len(raw) == 0 || string(raw) == "null" {
-			continue // a key conveyed by jwk, or attested
-		}
-		var header map[string]any
-		if err := strictjson.Unmarshal(raw, &header); err != nil || header == nil {
-			return fmt.Errorf("%w: binding key %d: proof key header isn't a JSON object: %w", ErrDeferredProofKey, i, err)
-		}
-		pub, _, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
-		if err != nil && trustUndecided(err) {
-			if undecided == nil {
-				undecided = fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKeyTrustUnknown, i, err)
-			}
-			continue
-		}
+		keyUndecided, err := iss.recheckProofKey(ctx, i, raw, keys[i])
 		if err != nil {
-			return fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKey, i, err)
+			return err
 		}
-		if !sameKey(pub, keys[i].Public) {
-			return fmt.Errorf("%w: binding key %d: its proof's header now resolves to another key", ErrDeferredProofKey, i)
+		if undecided == nil {
+			undecided = keyUndecided
 		}
 	}
 	return undecided
+}
+
+// recheckProofKey resolves the i-th binding key's proof key header raw
+// again, as recheckProofKeys does. It returns, as undecided, an error
+// wrapping ErrDeferredProofKeyTrustUnknown when the key's trust can't
+// be decided now, and, as err, one wrapping ErrDeferredProofKey when it
+// no longer resolves to key; both nil for a key conveyed otherwise
+// (raw null or empty), or still trusted.
+func (iss *Issuer) recheckProofKey(ctx context.Context, i int, raw json.RawMessage, key resolvedKey) (undecided, err error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil // a key conveyed by jwk, or attested
+	}
+	var header map[string]any
+	if err := strictjson.Unmarshal(raw, &header); err != nil || header == nil {
+		return nil, fmt.Errorf("%w: binding key %d: proof key header isn't a JSON object: %w", ErrDeferredProofKey, i, err)
+	}
+	pub, _, err := iss.deps.ProofBindingKeys.ResolveProofBindingKey(ctx, header)
+	if err != nil && trustUndecided(err) {
+		return fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKeyTrustUnknown, i, err), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: binding key %d: %w", ErrDeferredProofKey, i, err)
+	}
+	if !sameKey(pub, key.Public) {
+		return nil, fmt.Errorf("%w: binding key %d: its proof's header now resolves to another key", ErrDeferredProofKey, i)
+	}
+	return nil, nil
 }
 
 // sameKey reports whether a and b are one public key, by their JWKs.
@@ -477,11 +521,22 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 
 // deferredAuthorized reports whether auth may poll record: it's
 // record's owner (deferredOwner), and, §9, the access token is still
-// "valid for the issuance of the Credential(s) previously requested":
-// it grants the transaction's credential configuration.
+// "valid for the issuance of the Credential(s) previously requested".
+// For a transaction requested by credential_identifier (§8.2), that is
+// the token still authorizing that identifier, for the transaction's
+// configuration, as RequestCredential resolves one: a token authorized
+// only for another identifier of the same configuration (another
+// dataset) may not collect it. For one requested by
+// credential_configuration_id, or saved before
+// DeferredTransactionRecord.CredentialIdentifier existed, it is the
+// token granting the transaction's configuration at all.
 func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
 	if !deferredOwner(record, auth) {
 		return false
+	}
+	if record.CredentialIdentifier != "" {
+		configID, _, err := iss.resolveCredentialConfiguration(auth, CredentialRequest{CredentialIdentifier: record.CredentialIdentifier})
+		return err == nil && (record.CredentialConfigurationID == "" || configID == record.CredentialConfigurationID)
 	}
 	return record.CredentialConfigurationID == "" ||
 		iss.grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])
