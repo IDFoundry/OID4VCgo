@@ -1,6 +1,7 @@
 package walletprovidertest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -319,7 +320,8 @@ func sampleInstanceKey(thumbprint, instanceID string) walletprovider.InstanceKey
 		Status:         statuslist.StatusListRef{Idx: 1234, URI: "https://provider.example/status/1762300800/0"},
 		PreviousStatus: statuslist.StatusListRef{Idx: 77, URI: "https://provider.example/status/1761696000/3"},
 		SecurityLevel:  walletprovider.SecurityLevelStrongBox, Binding: walletprovider.KeyBindingAttested,
-		CreatedAt: created, RetainUntil: created.Add(90 * 24 * time.Hour),
+		EvidenceFacts: []byte(`{"certificates":[{"serial":"c9"}]}`),
+		CreatedAt:     created, RetainUntil: created.Add(90 * 24 * time.Hour),
 	}
 }
 
@@ -585,28 +587,30 @@ func instanceKeyListUnretained(t *testing.T, s walletprovider.InstanceKeyStore) 
 func instanceKeyCopies(t *testing.T, s walletprovider.InstanceKeyStore) {
 	k := sampleInstanceKey("tp-1", "a")
 	mustCreateInstanceKey(t, s, k)
-	k.Key[0] = 'X' // the caller's copy, after Create
+	// Each copy's Key and EvidenceFacts are changed at index i.
+	scribble := func(k walletprovider.InstanceKey, i int) { k.Key[i], k.EvidenceFacts[i] = 'X', 'X' }
+	scribble(k, 0) // the caller's copy, after Create
 	got, err := s.Get(context.Background(), "tp-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got.Key[1] = 'X' // a returned copy
+	scribble(got, 1) // a returned copy
 	listed, err := s.List(context.Background(), "a", "", 1)
 	if err != nil || len(listed) != 1 {
 		t.Fatalf("List = %v, %v", listed, err)
 	}
-	listed[0].Key[2] = 'X'
+	scribble(listed[0], 2)
 	updated := mustGetInstanceKey(t, s, "tp-1")
 	if err := s.Update(context.Background(), updated); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	updated.Key[3] = 'X' // the caller's copy, after Update
+	scribble(updated, 3) // the caller's copy, after Update
 	again, err := s.Get(context.Background(), "tp-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Key[0] == 'X' || again.Key[1] == 'X' || again.Key[2] == 'X' || again.Key[3] == 'X' {
-		t.Fatalf("the stored record shares memory with the caller's: %s", again.Key)
+	if bytes.ContainsRune(again.Key[:4], 'X') || bytes.ContainsRune(again.EvidenceFacts[:4], 'X') {
+		t.Fatalf("the stored record shares memory with the caller's: %s %s", again.Key, again.EvidenceFacts)
 	}
 }
 

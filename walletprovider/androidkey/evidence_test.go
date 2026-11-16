@@ -4,23 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/idfoundry/oid4vcgo/internal/testcert"
-	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
 )
@@ -233,56 +224,17 @@ func TestEvidenceVerifier_RealChains(t *testing.T) {
 // and gets a Key Attestation for a StrongBox holder key with its own.
 func TestEvidenceVerifierProvider(t *testing.T) {
 	ctx := context.Background()
-	ca, caKey := testcert.CA(t, "Wallet Provider CA")
-	id, err := url.Parse("https://provider.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafCert, signer := testcert.Issue(t, &x509.Certificate{
-		Subject: pkix.Name{CommonName: "Wallet Provider"}, KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{id},
-	}, ca, caKey)
 
 	// Each chain is made over a challenge the provider issued, so the
 	// chains are made in the test as the device would make them; every
 	// chain's root is trusted.
 	var roots []*x509.Certificate
 	v := &androidkey.Verifier{Revocation: statusFixture(t), Apps: []androidkey.AllowedApp{testApp}}
-	adapter := androidkey.EvidenceVerifier{Verifier: v}
-	p, err := walletprovider.New(walletprovider.Config{
-		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListBaseURI: "https://provider.example/v1/status",
-		StatusListSize: 1024,
-		Policy: walletprovider.Policy{
-			Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{walletprovider.PlatformAndroid: {
-				SecurityLevels: []walletprovider.SecurityLevel{walletprovider.SecurityLevelTEE, walletprovider.SecurityLevelStrongBox},
-				MinAppVersion:  42, RequireVerifiedBoot: true,
-			}},
-		},
-	}, walletprovider.Dependencies{
-		Signer: signer, Chain: []*x509.Certificate{leafCert},
-		Instances: &walletprovider.MemoryInstanceStore{}, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
-		Challenges:    &walletprovider.MemoryChallengeStore{},
-		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{adapter},
-		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewTLSServer(p.Handler())
-	defer ts.Close()
-	client, err := walletprovider.NewClient(ts.URL, walletprovider.ClientOptions{HTTP: ts.Client()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := newProviderFixture(t, v)
+	client := f.client
 
 	chainFor := func(purpose walletprovider.Purpose, strongBox bool) (string, testChain) {
-		ch, err := client.Challenge(ctx, purpose)
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(ch.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ch, raw := f.challenge(t, purpose)
 		s := goodSpec(t)
 		s.challenge = raw
 		if strongBox {
@@ -291,7 +243,7 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		c := newChain(t, s, chainOpts{})
 		roots = append(roots, c.root)
 		v.Roots = roots
-		return ch.Value, c
+		return ch, c
 	}
 
 	ch, registration := chainFor(walletprovider.PurposeRegistration, false)

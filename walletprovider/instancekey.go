@@ -50,6 +50,16 @@ type InstanceKey struct {
 	SecurityLevel SecurityLevel
 	Binding       KeyBinding
 
+	// EvidenceFacts are the facts the verifier reported of the key's
+	// evidence when the provider recorded it (VerifiedEvidence.Facts),
+	// opaque here, as Instance.EvidenceFacts are the registration
+	// evidence's: an InstanceKeyRechecker checks them again each time
+	// the provider relies on the record. Empty for a key recorded
+	// before the provider kept them (OID4VCgo v0.80.0 and before), or
+	// whose verifier reports none, which the provider relies on as
+	// before.
+	EvidenceFacts []byte
+
 	CreatedAt time.Time
 
 	// RetainUntil is when the store may delete the record: the start of
@@ -70,6 +80,7 @@ type InstanceKey struct {
 // clone returns a copy of k sharing no memory with it.
 func (k InstanceKey) clone() InstanceKey {
 	k.Key = slices.Clone(k.Key)
+	k.EvidenceFacts = slices.Clone(k.EvidenceFacts)
 	return k
 }
 

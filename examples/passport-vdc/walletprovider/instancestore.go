@@ -351,5 +351,6 @@ func cloneInstance(in wp.Instance) wp.Instance {
 
 func cloneInstanceKey(ik wp.InstanceKey) wp.InstanceKey {
 	ik.Key = slices.Clone(ik.Key)
+	ik.EvidenceFacts = slices.Clone(ik.EvidenceFacts)
 	return ik
 }

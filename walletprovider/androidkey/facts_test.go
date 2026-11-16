@@ -159,3 +159,46 @@ func TestRecheck(t *testing.T) {
 		t.Fatalf("Recheck of malformed facts = %v", err)
 	}
 }
+
+// TestRecheckInstanceKey: RecheckInstanceKey judges an instance key's
+// own Facts, not the instance's, accepts a key with none (recorded
+// before they were kept) or of an instance registered with another
+// Kind, and returns undecodable Facts as its own failure, not a refusal.
+func TestRecheckInstanceKey(t *testing.T) {
+	ctx := context.Background()
+	c := newChain(t, goodSpec(t), chainOpts{serials: [3]int64{11, 12, 13}})
+	v := verifierFor(t, c)
+	e := androidkey.EvidenceVerifier{Verifier: v}
+	ev, err := e.Verify(ctx, evidenceInput(c.der, testChallenge, &c.leafKey.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: androidkey.EvidenceKind}}
+	k := walletprovider.InstanceKey{Thumbprint: "tp", InstanceID: "i", EvidenceFacts: ev.Facts}
+	if err := e.RecheckInstanceKey(ctx, in, k); err != nil {
+		t.Fatalf("RecheckInstanceKey = %v, want it accepted", err)
+	}
+	v.Revocation = revokingSerial(t, serialKey(c.inter))
+	if err := e.Recheck(ctx, in); err != nil {
+		t.Fatalf("Recheck of an instance without facts = %v, want it accepted", err)
+	}
+	if err := e.RecheckInstanceKey(ctx, in, k); !errors.Is(err, walletprovider.ErrEvidenceRevoked) || !errors.Is(err, androidkey.ErrRevoked) {
+		t.Fatalf("RecheckInstanceKey of a revoked chain = %v, want ErrEvidenceRevoked", err)
+	}
+	for name, tc := range map[string]struct {
+		in walletprovider.Instance
+		k  walletprovider.InstanceKey
+	}{
+		"no facts":     {in, walletprovider.InstanceKey{Thumbprint: "tp", InstanceID: "i"}},
+		"another Kind": {walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}}, k},
+	} {
+		if err := e.RecheckInstanceKey(ctx, tc.in, tc.k); err != nil {
+			t.Fatalf("%s: RecheckInstanceKey = %v, want it accepted", name, err)
+		}
+	}
+	k.EvidenceFacts = []byte("{")
+	err = e.RecheckInstanceKey(ctx, in, k)
+	if err == nil || errors.Is(err, walletprovider.ErrEvidenceRejected) || errors.Is(err, walletprovider.ErrPolicy) {
+		t.Fatalf("RecheckInstanceKey of undecodable facts = %v, want a failure to check", err)
+	}
+}

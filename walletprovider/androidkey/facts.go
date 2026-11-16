@@ -16,9 +16,11 @@ import (
 
 // Facts are what a verified chain proved that a Verifier's checks rest
 // on, kept so the chain can be judged again once the chain itself is
-// gone: EvidenceVerifier reports them as the registration evidence's
-// walletprovider.VerifiedEvidence.Facts, which the provider keeps as
-// walletprovider.Instance.EvidenceFacts (InstanceFacts decodes them).
+// gone: EvidenceVerifier reports them as walletprovider.VerifiedEvidence.Facts,
+// which the provider keeps as the registration chain's
+// walletprovider.Instance.EvidenceFacts (InstanceFacts decodes them)
+// and as a recorded instance key's own chain's
+// walletprovider.InstanceKey.EvidenceFacts (InstanceKeyFacts).
 // They hold no device identifier, only what the chain and its
 // attestation extension carry.
 type Facts struct {
@@ -156,18 +158,60 @@ func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 // Google lifts the suspension). An entry with another status only
 // refuses, as a root removed from Roots or a tightened policy does.
 //
-// Only the registration chain's Facts are kept: an instance key's or a
-// holder key's chain, verified once, comes from the same device and
-// attestation key.
+// Recheck judges the registration chain alone. An instance key's chain
+// needn't share its certificates: Remote Key Provisioning rotates a
+// device's attestation keys, so an instance key may be attested under
+// another intermediate than the registration key, and
+// RecheckInstanceKey judges its own Facts. A holder key's chain is
+// used once, for the Key Attestation it's sent with, and isn't kept.
 func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instance) error {
 	f, ok, err := InstanceFacts(in)
 	if err != nil || !ok {
 		return err
 	}
+	return e.recheck(ctx, &f)
+}
+
+// RecheckInstanceKey implements walletprovider.InstanceKeyRechecker: it
+// judges the Facts kept for the instance key k's own chain
+// (InstanceKeyFacts) as Recheck does the registration chain's, with
+// the same verdicts, so a certificate of k's chain that Google's status
+// list names REVOKED or SUSPENDED revokes or suspends the instance,
+// though the registration chain's certificates are unnamed. It accepts
+// a key with no Facts kept, one recorded before the provider kept them
+// (OID4VCgo v0.80.0 and before), which it can't judge, as Recheck
+// accepts such an instance.
+func (e EvidenceVerifier) RecheckInstanceKey(ctx context.Context, in walletprovider.Instance, k walletprovider.InstanceKey) error {
+	f, ok, err := InstanceKeyFacts(in, k)
+	if err != nil || !ok {
+		return err
+	}
+	return e.recheck(ctx, &f)
+}
+
+// InstanceKeyFacts decodes the Facts kept for k, an instance key of the
+// instance in, registered with EvidenceKind evidence, reporting false
+// for a key with none: one of an instance registered with another
+// Kind, or recorded before the provider kept them (OID4VCgo v0.80.0
+// and before).
+func InstanceKeyFacts(in walletprovider.Instance, k walletprovider.InstanceKey) (Facts, bool, error) {
+	if in.Evidence.Kind != EvidenceKind || len(k.EvidenceFacts) == 0 {
+		return Facts{}, false, nil
+	}
+	var f Facts
+	if err := json.Unmarshal(k.EvidenceFacts, &f); err != nil {
+		return Facts{}, false, fmt.Errorf("androidkey: instance key %q's evidence facts: %w", k.Thumbprint, err)
+	}
+	return f, true, nil
+}
+
+// recheck judges f by the Verifier as it is now, wrapping a refusal as
+// Recheck describes.
+func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts) error {
 	if e.Verifier == nil {
 		return fail(ErrConfig, "EvidenceVerifier has no Verifier")
 	}
-	switch err := e.Verifier.Recheck(ctx, &f); {
+	switch err := e.Verifier.Recheck(ctx, f); {
 	case err == nil:
 		return nil
 	case errors.Is(err, ErrStatusUnavailable), errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):

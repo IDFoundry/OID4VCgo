@@ -181,10 +181,15 @@
 // instance (Instance.EvidenceFacts), and, as an EvidenceRechecker,
 // judge them again before each attestation, so an instance whose
 // attestation key has since been revoked gets nothing more, even for
-// an instance key it recorded before. A recheck finding the evidence
-// revoked (or suspended) by its issuer — Google's attestation status
-// list naming a certificate of an Android instance's chain — revokes
-// (or suspends) the instance too, so the attestations it holds read
-// INVALID (or SUSPENDED); Config.OnRecheckRefused hears of every
-// recheck refusal.
+// an instance key it recorded before. It may report facts about an
+// instance key's evidence too, kept with the key's record
+// (InstanceKey.EvidenceFacts), and, as an InstanceKeyRechecker, judge
+// them again each time the provider relies on the record: an instance
+// key's chain may be another than the registration chain (Android
+// rotates attestation keys), revoked when that one isn't. A recheck
+// finding either evidence revoked (or suspended) by its issuer —
+// Google's attestation status list naming a certificate of an Android
+// chain — revokes (or suspends) the instance too, so the attestations
+// it holds read INVALID (or SUSPENDED); Config.OnRecheckRefused hears
+// of every recheck refusal.
 package walletprovider

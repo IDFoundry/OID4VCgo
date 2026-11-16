@@ -186,7 +186,8 @@ type Config struct {
 	Policy Policy
 
 	// OnRecheckRefused, if set, is called each time an
-	// EvidenceRechecker refuses an instance before a Wallet or Key
+	// EvidenceRechecker refuses an instance, or an InstanceKeyRechecker
+	// one of its recorded instance keys, before a Wallet or Key
 	// Attestation, with the refusal and the instance as stored once the
 	// provider has acted on it: StateRevoked or StateSuspended when the
 	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
