@@ -5,7 +5,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/base64"
+	"fmt"
 	"math"
+	"slices"
 
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
@@ -51,12 +53,16 @@ func Evidence(data []byte) walletprovider.Evidence {
 // copy of the app vouches for them, which proves nothing about where
 // the keys themselves are. The provider's Policy claims key_storage
 // for such a key only by a KeyStorageRule naming KeyBindingAppAssertion.
+//
+// It's a walletprovider.EvidenceRechecker too (Recheck), so a change to
+// Verifier.AllowDevelopment or Verifier.Apps applies to the instances
+// registered before it, at their next Wallet or Key Attestation.
 type EvidenceVerifier struct {
 	// Verifier checks the attestation and assertions. REQUIRED.
 	Verifier *Verifier
 }
 
-var _ walletprovider.EvidenceVerifier = EvidenceVerifier{}
+var _ walletprovider.EvidenceRechecker = EvidenceVerifier{}
 
 // Kind implements walletprovider.EvidenceVerifier: EvidenceKind.
 func (EvidenceVerifier) Kind() string { return EvidenceKind }
@@ -100,8 +106,8 @@ func (e EvidenceVerifier) Verify(_ context.Context, in walletprovider.EvidenceIn
 		// The Verifier's setting now, not at registration, decides: a
 		// provider that stops accepting development keys stops their
 		// instances too.
-		if env == EnvironmentDevelopment && !e.Verifier.AllowDevelopment {
-			return walletprovider.VerifiedEvidence{}, fail(ErrEnvironment, "the instance's key is a development environment key, and AllowDevelopment isn't set")
+		if err := e.Verifier.acceptsEnvironment(env); err != nil {
+			return walletprovider.VerifiedEvidence{}, err
 		}
 		if in.Instance.Counter > math.MaxUint32 {
 			return walletprovider.VerifiedEvidence{}, fail(ErrCounter, "the instance's counter %d is beyond App Attest's", in.Instance.Counter)
@@ -114,6 +120,56 @@ func (e EvidenceVerifier) Verify(_ context.Context, in walletprovider.EvidenceIn
 	}
 	out.Counter = &counter
 	return out, nil
+}
+
+// Recheck implements walletprovider.EvidenceRechecker: it judges the
+// instance's registration, as stored, by the Verifier as it is now.
+// The instance's App Attest key must be from an environment the
+// Verifier accepts (development only with AllowDevelopment), and its
+// App ID (Instance.Evidence.AppID) one of Apps. Both are checked when
+// evidence is verified, but an instance key the provider has recorded
+// gets Wallet Attestations without evidence, so without Recheck a
+// production cutover (AllowDevelopment unset) or an app withdrawn
+// from Apps would never reach the instances registered before it. The
+// provider calls Recheck before every Wallet Attestation and Key
+// Attestation, so the change applies to each existing instance at its
+// next one.
+//
+// A refusal wraps walletprovider.ErrPolicy (and ErrEnvironment or
+// ErrAppNotAllowed): the provider refuses the request and reports it to
+// Config.OnRecheckRefused, but leaves the instance active, since it's
+// the operator's configuration that changed, not Apple's verdict on the
+// key; restoring the setting lets the instance through again. To make
+// such instances' attestations INVALID, revoke them
+// (Provider.RevokeWhere). A misconfigured Verifier, or an instance whose
+// stored Credential isn't an App Attest key's, is returned wrapping
+// ErrConfig alone, for the provider to fail the request as its own
+// failure.
+//
+// EvidenceVerifier isn't an InstanceKeyRechecker, and needn't be: an
+// instance key's evidence is an assertion by the instance's own App
+// Attest key, so what it rests on — the key's environment and the App
+// ID — is the registration's, which Recheck judges before the provider
+// relies on any recorded instance key; Verify keeps no facts of its own
+// for an instance key (VerifiedEvidence.Facts is empty) to recheck.
+func (e EvidenceVerifier) Recheck(_ context.Context, in walletprovider.Instance) error {
+	if e.Verifier == nil {
+		return fail(ErrConfig, "EvidenceVerifier has no Verifier")
+	}
+	if err := e.Verifier.checkApps(); err != nil {
+		return err
+	}
+	_, env, err := decodeCredential(in.Credential)
+	if err != nil {
+		return err
+	}
+	if err := e.Verifier.acceptsEnvironment(env); err != nil {
+		return fmt.Errorf("%w: %w", walletprovider.ErrPolicy, err)
+	}
+	if !slices.Contains(e.Verifier.Apps, in.Evidence.AppID) {
+		return fmt.Errorf("%w: %w", walletprovider.ErrPolicy, fail(ErrAppNotAllowed, "the instance's app %q is no longer one of the %d allowed apps", in.Evidence.AppID, len(e.Verifier.Apps)))
+	}
+	return nil
 }
 
 // The Credential an EvidenceVerifier stores: a version byte, the

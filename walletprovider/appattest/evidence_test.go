@@ -24,13 +24,16 @@ import (
 )
 
 // app is an iOS wallet app as the tests run it: its App Attest key and
-// counter, and the registration key that signs its requests.
+// counter, and the registration key that signs its requests. Its App
+// Attest key is a development environment one unless production is
+// set.
 type app struct {
 	t               *testing.T
 	apple           *fakeApple
 	attestKey       *ecdsa.PrivateKey
 	counter         uint32
 	registrationKey *ecdsa.PrivateKey
+	production      bool
 }
 
 func (a *app) attest(challenge string, keys ...crypto.PublicKey) walletprovider.Evidence {
@@ -38,7 +41,11 @@ func (a *app) attest(challenge string, keys ...crypto.PublicKey) walletprovider.
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	obj, key := a.apple.attest(a.t, attSpec{clientDataHash: hash, aaguid: aaguidDevelopment})
+	aaguid := aaguidDevelopment
+	if a.production {
+		aaguid = aaguidProduction
+	}
+	obj, key := a.apple.attest(a.t, attSpec{clientDataHash: hash, aaguid: aaguid})
 	a.attestKey = key
 	return Evidence(obj)
 }
@@ -59,53 +66,11 @@ func (a *app) assert(purpose walletprovider.Purpose, challenge string, keys ...c
 // assertions are refused.
 func TestEvidenceVerifierProvider(t *testing.T) {
 	ctx := context.Background()
-	ca, caKey := testcert.CA(t, "Wallet Provider CA")
-	id, err := url.Parse("https://provider.example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafCert, signer := testcert.Issue(t, &x509.Certificate{
-		Subject: pkix.Name{CommonName: "Wallet Provider"}, KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{id},
-	}, ca, caKey)
 	apple := newFakeApple(t)
 	v := apple.verifier()
 	v.AllowDevelopment = true
-	instances := &walletprovider.MemoryInstanceStore{}
-	p, err := walletprovider.New(walletprovider.Config{
-		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListBaseURI: "https://provider.example/v1/status",
-		StatusListSize: 1024,
-		Policy: walletprovider.Policy{
-			Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{walletprovider.PlatformIOS: {
-				SecurityLevels: []walletprovider.SecurityLevel{walletprovider.SecurityLevelSecureEnclave},
-			}},
-			KeyStorage: []walletprovider.KeyStorageRule{{
-				Platform: walletprovider.PlatformIOS, SecurityLevel: walletprovider.SecurityLevelSecureEnclave,
-				Binding: walletprovider.KeyBindingAppAssertion, KeyStorage: []attestation.AttackPotentialResistance{attestation.ISO18045High},
-			}},
-		},
-	}, walletprovider.Dependencies{
-		Signer: signer, Chain: []*x509.Certificate{leafCert},
-		Instances: instances, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
-		Challenges:    &walletprovider.MemoryChallengeStore{},
-		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{EvidenceVerifier{Verifier: v}},
-		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts := httptest.NewTLSServer(p.Handler())
-	defer ts.Close()
-	client, err := walletprovider.NewClient(ts.URL, walletprovider.ClientOptions{HTTP: ts.Client()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	challenge := func(purpose walletprovider.Purpose) string {
-		ch, err := client.Challenge(ctx, purpose)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return ch.Value
-	}
+	tp := newTestProvider(t, v, nil)
+	client, instances, challenge := tp.client, tp.instances, tp.challenge
 	var refused *walletprovider.RefusedError
 	wantRefused := func(what string, err error, code string) {
 		t.Helper()
@@ -226,6 +191,65 @@ func TestEvidenceVerifierProvider(t *testing.T) {
 		})
 		wantRefused("another App Attest key", err, "evidence_rejected")
 	})
+}
+
+// testProvider is a Provider accepting iOS evidence through
+// EvidenceVerifier{Verifier: v}, served over HTTP, and a client of it.
+type testProvider struct {
+	t         *testing.T
+	client    *walletprovider.Client
+	instances *walletprovider.MemoryInstanceStore
+}
+
+func newTestProvider(t *testing.T, v *Verifier, onRecheckRefused func(context.Context, walletprovider.Instance, error)) *testProvider {
+	t.Helper()
+	ca, caKey := testcert.CA(t, "Wallet Provider CA")
+	id, err := url.Parse("https://provider.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafCert, signer := testcert.Issue(t, &x509.Certificate{
+		Subject: pkix.Name{CommonName: "Wallet Provider"}, KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{id},
+	}, ca, caKey)
+	instances := &walletprovider.MemoryInstanceStore{}
+	p, err := walletprovider.New(walletprovider.Config{
+		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListBaseURI: "https://provider.example/v1/status",
+		StatusListSize: 1024, OnRecheckRefused: onRecheckRefused,
+		Policy: walletprovider.Policy{
+			Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{walletprovider.PlatformIOS: {
+				SecurityLevels: []walletprovider.SecurityLevel{walletprovider.SecurityLevelSecureEnclave},
+			}},
+			KeyStorage: []walletprovider.KeyStorageRule{{
+				Platform: walletprovider.PlatformIOS, SecurityLevel: walletprovider.SecurityLevelSecureEnclave,
+				Binding: walletprovider.KeyBindingAppAssertion, KeyStorage: []attestation.AttackPotentialResistance{attestation.ISO18045High},
+			}},
+		},
+	}, walletprovider.Dependencies{
+		Signer: signer, Chain: []*x509.Certificate{leafCert},
+		Instances: instances, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
+		Challenges:    &walletprovider.MemoryChallengeStore{},
+		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{EvidenceVerifier{Verifier: v}},
+		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewTLSServer(p.Handler())
+	t.Cleanup(ts.Close)
+	client, err := walletprovider.NewClient(ts.URL, walletprovider.ClientOptions{HTTP: ts.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &testProvider{t: t, client: client, instances: instances}
+}
+
+func (tp *testProvider) challenge(purpose walletprovider.Purpose) string {
+	tp.t.Helper()
+	ch, err := tp.client.Challenge(context.Background(), purpose)
+	if err != nil {
+		tp.t.Fatal(err)
+	}
+	return ch.Value
 }
 
 func TestEvidenceVerifierRefuses(t *testing.T) {
