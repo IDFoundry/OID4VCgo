@@ -223,7 +223,7 @@ func (p *Provider) checkRecordedInstanceKey(ctx context.Context, in Instance, ik
 	}
 	if r, ok := p.verifiers[in.Evidence.Kind].(InstanceKeyRechecker); ok {
 		if err := r.RecheckInstanceKey(ctx, in, ik); err != nil {
-			return p.recheckRefused(ctx, in, fmt.Errorf("walletprovider: rechecking the instance key's evidence: %w", err))
+			return p.recheckRefused(ctx, in, recheckError("the instance key's evidence", ErrInstanceKeyExpired, err))
 		}
 	}
 	return nil
@@ -502,10 +502,22 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 	}
 	if r, ok := p.verifiers[in.Evidence.Kind].(EvidenceRechecker); ok {
 		if err := r.Recheck(ctx, in); err != nil {
-			return Instance{}, p.recheckRefused(ctx, in, fmt.Errorf("walletprovider: rechecking the instance's registration evidence: %w", err))
+			return Instance{}, p.recheckRefused(ctx, in, recheckError("the instance's registration evidence", ErrRegistrationExpired, err))
 		}
 	}
 	return in, nil
+}
+
+// recheckError is a rechecker's err for what, wrapping expired too when
+// err is a refusal fresh evidence would fix (ErrEvidenceExpired), so the
+// request is refused as needing fresh evidence for what. A revocation
+// or suspension verdict outranks it: fresh evidence doesn't undo that.
+func recheckError(what string, expired, err error) error {
+	if errors.Is(err, ErrEvidenceExpired) && errors.Is(err, ErrEvidenceRejected) &&
+		!errors.Is(err, ErrEvidenceRevoked) && !errors.Is(err, ErrEvidenceSuspended) {
+		return fmt.Errorf("walletprovider: rechecking %s: %w: %w", what, expired, err)
+	}
+	return fmt.Errorf("walletprovider: rechecking %s: %w", what, err)
 }
 
 // recheckRefused acts on err, an EvidenceRechecker's error for in, and

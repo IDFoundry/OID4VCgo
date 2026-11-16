@@ -57,6 +57,30 @@ func (e *RefusedError) Error() string {
 // Unwrap makes a RefusedError match ErrRefused.
 func (e *RefusedError) Unwrap() error { return ErrRefused }
 
+// The refusal codes that tell a wallet fresh evidence recovers it: the
+// provider no longer relies on evidence it kept (ErrEvidenceExpired).
+const (
+	// CodeRegistrationExpired: register again (ErrRegistrationExpired).
+	CodeRegistrationExpired = "registration_expired"
+	// CodeInstanceKeyExpired: attest a new instance key, with fresh
+	// evidence (ErrInstanceKeyExpired).
+	CodeInstanceKeyExpired = "instance_key_expired"
+)
+
+// Is makes a RefusedError with CodeRegistrationExpired match
+// ErrRegistrationExpired, and one with CodeInstanceKeyExpired
+// ErrInstanceKeyExpired, as the Provider's own errors do, so a wallet
+// can tell what to send fresh evidence for with errors.Is.
+func (e *RefusedError) Is(target error) bool {
+	switch e.Code {
+	case CodeRegistrationExpired:
+		return target == ErrRegistrationExpired
+	case CodeInstanceKeyExpired:
+		return target == ErrInstanceKeyExpired
+	}
+	return false
+}
+
 // Client speaks the provider's HTTP protocol (Provider.Handler) for a
 // wallet written in Go: it gets challenges, registers an instance, and
 // asks for attestations with requests signed by the instance's

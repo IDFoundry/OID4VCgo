@@ -246,7 +246,9 @@ type EvidenceRechecker interface {
 	// revokes or suspends the instance; any other refusal only refuses
 	// the request, since the operator can undo what caused it, or, for
 	// evidence past its lifetime (an expired certificate), the wallet
-	// can register again with fresh evidence.
+	// can register again with fresh evidence: such a refusal wraps
+	// ErrEvidenceExpired too, and the provider answers it as
+	// ErrRegistrationExpired (registration_expired).
 	Recheck(ctx context.Context, in Instance) error
 }
 
@@ -282,5 +284,8 @@ type InstanceKeyRechecker interface {
 	// ErrEvidenceSuspended too, revokes or suspends the whole instance —
 	// the device's attestation was withdrawn, not only the key's — and
 	// any other error fails the request as the provider's own failure.
+	// A refusal fresh evidence would fix wraps ErrEvidenceExpired too,
+	// and the provider answers it as ErrInstanceKeyExpired
+	// (instance_key_expired): the wallet attests a new instance key.
 	RecheckInstanceKey(ctx context.Context, in Instance, k InstanceKey) error
 }

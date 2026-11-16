@@ -92,6 +92,8 @@ var (
 	errNoEvidence    = apiError{http.StatusBadRequest, "evidence_required", "Platform evidence is required."}
 	errEvidenceKind  = apiError{http.StatusBadRequest, "unsupported_evidence", "The evidence kind isn't supported."}
 	errRejected      = apiError{http.StatusForbidden, "evidence_rejected", "The evidence didn't verify."}
+	errRegExpired    = apiError{http.StatusForbidden, CodeRegistrationExpired, "The instance's registration evidence expired: register again."}
+	errKeyExpired    = apiError{http.StatusForbidden, CodeInstanceKeyExpired, "The instance key's evidence expired: attest a new instance key."}
 	errPolicy        = apiError{http.StatusForbidden, "policy_refused", "The provider's policy refuses the evidence."}
 	errNotActive     = apiError{http.StatusForbidden, "instance_not_active", "The instance is suspended."}
 	errRevoked       = apiError{http.StatusForbidden, "instance_revoked", "The instance is revoked."}
@@ -127,6 +129,8 @@ func refusal(err error) apiError {
 		{ErrChallenge, errBadChallenge},
 		{ErrEvidenceRequired, errNoEvidence},
 		{ErrEvidenceKind, errEvidenceKind},
+		{ErrRegistrationExpired, errRegExpired},
+		{ErrInstanceKeyExpired, errKeyExpired},
 		{ErrPolicy, errPolicy},
 		{ErrEvidenceRejected, errRejected},
 		{ErrInvalidRequest, errMalformed},

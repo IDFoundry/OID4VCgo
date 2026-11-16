@@ -272,8 +272,11 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   a new instance key (the instance itself stays usable for that).
   Attestation certificates Remote Key Provisioning issues live for
   weeks, so on most current devices this is routine, not an incident:
-  the refusal is `evidence_rejected` (HTTP 403), wraps
-  `androidkey.ErrCertificateValidity`, reaches `OnRecheckRefused`, and
+  the refusal is HTTP 403 `registration_expired` or
+  `instance_key_expired` (`walletprovider.ErrRegistrationExpired`,
+  `ErrInstanceKeyExpired`), which tells the wallet what to send fresh
+  evidence for; it wraps `androidkey.ErrCertificateValidity` and
+  `walletprovider.ErrEvidenceExpired`, reaches `OnRecheckRefused`, and
   neither revokes nor suspends the instance. `androidkey.Facts.Expiry`
   says when an instance's (`InstanceFacts`) or instance key's
   (`InstanceKeyFacts`) chain expires.
@@ -282,7 +285,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   an instance key recorded with v0.80.0 or before has none, and facts
   saved by v0.80.0 or before hold no validity periods: none can be
   judged in full, and `androidkey.EvidenceVerifier` refuses them
-  (`androidkey.ErrLegacyFacts`, `evidence_rejected`), so their wallets
+  (`androidkey.ErrLegacyFacts`; `registration_expired` or
+  `instance_key_expired`), so their wallets
   must register again, or attest a new instance key. To give wallets
   in the field time to, set `AllowUncheckedLegacyEvidence` for an
   upgrade window: such records are then accepted, their expiry

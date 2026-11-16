@@ -262,7 +262,10 @@ const (
 // wraps walletprovider.ErrEvidenceRejected for a certificate the status
 // list names, a root no longer trusted, a certificate outside its
 // validity period (ErrCertificateValidity) or a record it can't judge
-// (ErrLegacyFacts), and walletprovider.ErrPolicy otherwise; a status
+// (ErrLegacyFacts) — these two with walletprovider.ErrEvidenceExpired
+// as well, which the provider answers as registration_expired, or, from
+// RecheckInstanceKey, instance_key_expired, so the wallet knows to send
+// fresh evidence — and walletprovider.ErrPolicy otherwise; a status
 // list it couldn't get, or a misconfigured Verifier, is returned as it
 // is, for the provider to fail the request as its own failure.
 //
@@ -347,7 +350,7 @@ func (e EvidenceVerifier) unchecked(what, remedy string) error {
 	if e.AllowUncheckedLegacyEvidence {
 		return nil
 	}
-	return fmt.Errorf("%w: %w; %s", walletprovider.ErrEvidenceRejected, fail(ErrLegacyFacts, "%s", what), remedy)
+	return fmt.Errorf("%w: %w: %w; %s", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceExpired, fail(ErrLegacyFacts, "%s", what), remedy)
 }
 
 // recheck judges f by the Verifier as it is now, wrapping a refusal as
@@ -365,7 +368,7 @@ func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) 
 	case errors.Is(err, ErrRevoked):
 		return fmt.Errorf("%w: %w", revocationVerdict(err), err)
 	case errors.Is(err, ErrCertificateValidity), errors.Is(err, ErrLegacyFacts):
-		return fmt.Errorf("%w: %w; %s", walletprovider.ErrEvidenceRejected, err, remedy)
+		return fmt.Errorf("%w: %w: %w; %s", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceExpired, err, remedy)
 	case errors.Is(err, ErrUntrustedRoot):
 		return fmt.Errorf("%w: %w", walletprovider.ErrEvidenceRejected, err)
 	default:

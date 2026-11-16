@@ -201,5 +201,10 @@
 // registering again if the registration chain expired, attesting a new
 // instance key if only the key's did — and a record an earlier version
 // kept that androidkey can't judge (androidkey.ErrLegacyFacts), refused
-// unless androidkey.EvidenceVerifier.AllowUncheckedLegacyEvidence.
+// unless androidkey.EvidenceVerifier.AllowUncheckedLegacyEvidence. Such
+// a refusal wraps ErrEvidenceExpired, and the provider refuses the
+// request with ErrRegistrationExpired or ErrInstanceKeyExpired, which
+// Handler answers as registration_expired or instance_key_expired, and
+// Client's RefusedError matches again: the wallet knows what to send
+// fresh evidence for without reading the description.
 package walletprovider

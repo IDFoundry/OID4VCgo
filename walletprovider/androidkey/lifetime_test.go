@@ -11,19 +11,38 @@ import (
 	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
 )
 
-// refusedAs checks err is the provider's evidence_rejected refusal.
-func refusedAs(t *testing.T, what string, err error) {
+// A refusal's code, and the sentinel the Client's error matches for it
+// (nil: neither expiry sentinel).
+type refusalCode struct {
+	code     string
+	sentinel error
+}
+
+var (
+	evidenceRejected    = refusalCode{"evidence_rejected", nil}
+	registrationExpired = refusalCode{walletprovider.CodeRegistrationExpired, walletprovider.ErrRegistrationExpired}
+	instanceKeyExpired  = refusalCode{walletprovider.CodeInstanceKeyExpired, walletprovider.ErrInstanceKeyExpired}
+)
+
+// refusedAs checks err is the provider's refusal with want's code, and
+// matches want's sentinel, and no other expiry sentinel.
+func refusedAs(t *testing.T, what string, err error, want refusalCode) {
 	t.Helper()
 	var refused *walletprovider.RefusedError
-	if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
-		t.Fatalf("%s: %v, want evidence_rejected", what, err)
+	if !errors.As(err, &refused) || refused.Code != want.code || refused.Status != 403 {
+		t.Fatalf("%s: %v, want 403 %s", what, err, want.code)
+	}
+	for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired} {
+		if errors.Is(err, s) != (s == want.sentinel) {
+			t.Fatalf("%s: %v matches %v: %t", what, err, s, errors.Is(err, s))
+		}
 	}
 }
 
 // onlyRefused checks every refusal OnRecheckRefused heard of, at least
-// one, wraps ErrEvidenceRejected and kind, and neither revocation
-// verdict, and that the instance is still active: a refusal the
-// provider neither revokes nor suspends the instance for.
+// one, wraps ErrEvidenceRejected, ErrEvidenceExpired and kind, and
+// neither revocation verdict, and that the instance is still active: a
+// refusal the provider neither revokes nor suspends the instance for.
 func (w *rkpWallet) onlyRefused(t *testing.T, kind error) {
 	t.Helper()
 	r := w.f.refusals()
@@ -31,7 +50,7 @@ func (w *rkpWallet) onlyRefused(t *testing.T, kind error) {
 		t.Fatal("OnRecheckRefused wasn't told")
 	}
 	for _, err := range r {
-		if !errors.Is(err, walletprovider.ErrEvidenceRejected) || !errors.Is(err, kind) ||
+		if !errors.Is(err, walletprovider.ErrEvidenceRejected) || !errors.Is(err, kind) || !errors.Is(err, walletprovider.ErrEvidenceExpired) ||
 			errors.Is(err, walletprovider.ErrEvidenceRevoked) || errors.Is(err, walletprovider.ErrEvidenceSuspended) {
 			t.Fatalf("OnRecheckRefused got %v, want a refusal wrapping %v and no revocation verdict", err, kind)
 		}
@@ -61,11 +80,20 @@ func TestRecheckExpiredChain(t *testing.T) {
 		w := newRKPWallet(t, rkpOpts{instanceUntil: soon})
 		w.mustAttest(t, "before the chain expires")
 		w.later(time.Hour)
-		refusedAs(t, "renewal once the instance key's chain expired", w.renew())
-		refusedAs(t, "Key Attestation once the instance key's chain expired", w.keyAttestation(t))
+		refusedAs(t, "renewal once the instance key's chain expired", w.renew(), instanceKeyExpired)
+		refusedAs(t, "Key Attestation once the instance key's chain expired", w.keyAttestation(t), instanceKeyExpired)
 		w.onlyRefused(t, androidkey.ErrCertificateValidity)
 
-		var err error
+		// Fresh evidence that doesn't verify is still evidence_rejected:
+		// a chain made over a challenge the provider didn't issue.
+		ch, _ := w.f.challenge(t, walletprovider.PurposeInstance)
+		bad := w.ca.chain(t, 301, []byte("a challenge the provider didn't issue"))
+		_, err := w.f.client.WalletAttestation(context.Background(), w.registration.leafKey, walletprovider.WalletAttestationRequest{
+			InstanceID: w.id, ClientID: "wallet", InstanceKey: &bad.leafKey.PublicKey,
+			Challenge: ch, Evidence: androidkey.Evidence(bad.der),
+		})
+		refusedAs(t, "a new instance key with evidence over another challenge", err, evidenceRejected)
+
 		if w.instance, err = w.attestInstanceKey(t, 401, time.Time{}); err != nil {
 			t.Fatalf("a new instance key, with fresh evidence: %v", err)
 		}
@@ -76,10 +104,10 @@ func TestRecheckExpiredChain(t *testing.T) {
 		w := newRKPWallet(t, rkpOpts{registrationUntil: soon})
 		w.mustAttest(t, "before the chain expires")
 		w.later(time.Hour)
-		refusedAs(t, "renewal once the registration chain expired", w.renew())
-		refusedAs(t, "Key Attestation once the registration chain expired", w.keyAttestation(t))
+		refusedAs(t, "renewal once the registration chain expired", w.renew(), registrationExpired)
+		refusedAs(t, "Key Attestation once the registration chain expired", w.keyAttestation(t), registrationExpired)
 		_, err := w.attestInstanceKey(t, 401, time.Time{})
-		refusedAs(t, "a new instance key of the expired registration", err)
+		refusedAs(t, "a new instance key of the expired registration", err, registrationExpired)
 		w.onlyRefused(t, androidkey.ErrCertificateValidity)
 
 		if w.id, w.registration, err = w.register(t, 501, time.Time{}); err != nil {
@@ -193,8 +221,12 @@ func TestRecheckLegacyRecords(t *testing.T) {
 		t.Run(r.name+", refused by default", func(t *testing.T) {
 			w := newRKPWallet(t, rkpOpts{})
 			r.apply(t, w)
-			refusedAs(t, "renewal", w.renew())
-			refusedAs(t, "Key Attestation", w.keyAttestation(t))
+			want := registrationExpired
+			if r.instanceKey {
+				want = instanceKeyExpired
+			}
+			refusedAs(t, "renewal", w.renew(), want)
+			refusedAs(t, "Key Attestation", w.keyAttestation(t), want)
 			w.onlyRefused(t, androidkey.ErrLegacyFacts)
 		})
 
@@ -214,7 +246,8 @@ func TestRecheckLegacyRecords(t *testing.T) {
 				}
 				return
 			}
-			refusedAs(t, "renewal once the chain is revoked", err)
+			// Revocation keeps its code, though the record is a legacy one.
+			refusedAs(t, "renewal once the chain is revoked", err, evidenceRejected)
 			if got := w.f.state(t, w.id); got != walletprovider.StateRevoked {
 				t.Fatalf("the instance is %s, want revoked", got)
 			}

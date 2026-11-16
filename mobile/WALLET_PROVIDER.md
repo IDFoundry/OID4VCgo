@@ -107,7 +107,9 @@ Clients decide on `error` and the status code, never the description.
 | 400 | `invalid_challenge` | The challenge is unknown, used, expired, or for another purpose. Get a new one. |
 | 400 | `evidence_required` | No evidence was sent: at registration, for a Key Attestation, or with a Wallet Attestation request for an instance key the provider hasn't recorded yet, or no longer has (see the provider's retention, below). |
 | 400 | `unsupported_evidence` | The provider takes no evidence of that `kind`. |
-| 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should — or, for a registered instance, the evidence the provider judges again at every attestation no longer passes: its registration chain's, or its recorded instance key's own chain's (Android: a certificate past its validity period, which Remote Key Provisioning's short-lived certificates soon are, or a record kept by an older provider that can't be judged). Fresh evidence recovers: register again, or attest a new instance key. |
+| 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should — or, for a registered instance, the evidence the provider judges again at every attestation no longer passes for a reason fresh evidence doesn't fix (a root it no longer trusts, a certificate on Google's status list). |
+| 403 | `registration_expired` | The instance's registration evidence, which the provider judges again at every attestation, no longer passes for a reason fresh evidence fixes (Android: a certificate of its chain past its validity period, which Remote Key Provisioning's short-lived certificates soon are, or a record kept by an older provider that can't be judged). The instance isn't revoked, but gets nothing more: discard it, its registration key and its instance keys, and register again. |
+| 403 | `instance_key_expired` | The instance key's own evidence, recorded with its first Wallet Attestation and judged again each time the provider relies on it, no longer passes for a reason fresh evidence fixes (as for `registration_expired`), while the instance's registration still does. Make a new instance key and ask for its Wallet Attestation with fresh evidence; an issuance that needs the old key (a refresh bound to it) must start again. |
 | 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, or the security level its instance key was recorded at, since the policy is applied again at every attestation. |
 | 409 | `instance_key_registered` | The key is already another's: a registration key that's already registered or is an instance key, an App Attest key another instance registered with, or an instance key that's another instance's or is this instance's registration key. Make a new key. |
 | 400 | `unknown_instance_key` | A Key Attestation request's `instance_key` isn't one a Wallet Attestation recorded for this instance, or the provider has deleted its record (retention). |
@@ -509,4 +511,8 @@ Credential Issuer fetches it from every attestation's `status` claim.
 5. On `instance_revoked`, discard the instance, its registration key
    and its instance keys, and register again from step 1. On
    `instance_not_active`, stop and tell the user; the provider may
-   resume it.
+   resume it. On `registration_expired`, discard the instance as for
+   `instance_revoked` and register again; on `instance_key_expired`,
+   make a new instance key and attest it with fresh evidence (step 2).
+   Retry at most once: a fresh registration or instance key refused
+   again won't be accepted by retrying.
