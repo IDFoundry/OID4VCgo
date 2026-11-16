@@ -173,6 +173,12 @@ type Options struct {
 	// of the EU reference PID: an iss its certificate doesn't name, and
 	// a status list signed with the same key.
 	SDJWTIss string
+	// IssuerSignerExtKeyUsage, if set, is the extended key usage of the
+	// certificate the credentials are signed with, in place of the mDL
+	// document signer's: x509.ExtKeyUsageServerAuth alone makes it a TLS
+	// server's, which a wallet refuses by default for an SD-JWT VC
+	// (verifier.DefaultSDJWTIssuerLeafPolicy).
+	IssuerSignerExtKeyUsage []x509.ExtKeyUsage
 
 	// MdocUnscoped publishes the mdoc configuration without a scope, as
 	// OpenID4VCI allows one only issued through a pre-authorized code or
@@ -347,6 +353,9 @@ func New(opts Options) (env *Env, err error) {
 
 	caCert, caKey := newCA("walletflowtest issuer CA")
 	signerCert, signerKey := newLeaf("walletflowtest document signer", caCert, caKey, mdoc.MDLDocumentSignerEKU)
+	if len(opts.IssuerSignerExtKeyUsage) > 0 {
+		signerCert, signerKey = newLeafWithExtKeyUsage("walletflowtest issuer", caCert, caKey, opts.IssuerSignerExtKeyUsage)
+	}
 	e.IssuerCA, e.IssuerRoots = caCert, x509.NewCertPool()
 	e.issuerCAKey, e.issuerSigner = caKey, signerCert
 	e.IssuerRoots.AddCert(caCert)
@@ -1310,6 +1319,19 @@ func newLeaf(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, e
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
 		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, UnknownExtKeyUsage: ekus,
+	}, ca, &key.PublicKey, caKey), key
+}
+
+// newLeafWithExtKeyUsage is newLeaf, with the extended key usages
+// crypto/x509 names, ekus, in place of object identifiers.
+func newLeafWithExtKeyUsage(commonName string, ca *x509.Certificate, caKey *ecdsa.PrivateKey, ekus []x509.ExtKeyUsage) (*x509.Certificate, *ecdsa.PrivateKey) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	must(err)
+	now := time.Now()
+	return newCertificate(&x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: commonName, Country: []string{"US"}},
+		NotBefore: now.Add(-25 * time.Hour), NotAfter: now.Add(72 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: ekus,
 	}, ca, &key.PublicKey, caKey), key
 }
 

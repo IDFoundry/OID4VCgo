@@ -57,7 +57,13 @@ type config struct {
 	// or issuers' certificates with. Outside development, each is
 	// required (MdocReaderRequireEKU for MdocReaderRoots) when its roots
 	// share a trust anchor with another role's, which would otherwise
-	// take that role's certificates for its own.
+	// take that role's certificates for its own. Without
+	// IssuerRequireEKU, a received SD-JWT VC's issuer certificate gets
+	// the verifier's default issuer check
+	// (verifier.DefaultSDJWTIssuerLeafPolicy), which refuses one whose
+	// key usage clearly denotes another role, a TLS server's say;
+	// IssuerRequireEKU replaces it, as a set
+	// walletflow.Config.IssuerLeafPolicy does.
 	VerifierRequireEKU  string `json:"verifier_require_eku,omitempty"`
 	RegistrarRequireEKU string `json:"registrar_require_eku,omitempty"`
 	IssuerRequireEKU    string `json:"issuer_require_eku,omitempty"`
