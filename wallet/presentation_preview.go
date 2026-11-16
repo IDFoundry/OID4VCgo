@@ -237,40 +237,53 @@ func appendRevealedLeaves(out []dcql.Path, path dcql.Path, v any, byDigest map[s
 	if depth > sdjwtvc.MaxResolveDepth {
 		return append(out, path)
 	}
-	child := func(elem dcql.PathElement) dcql.Path { return append(slices.Clone(path), elem) }
 	switch t := v.(type) {
 	case map[string]any:
 		if len(t) == 0 {
 			return append(out, path)
 		}
 		for _, m := range revealedMembers(t, byDigest, sent) {
-			out = appendRevealedLeaves(out, child(dcql.PathKey(m.name)), m.value, byDigest, sent, depth+1)
+			out = appendRevealedLeaves(out, childPath(path, dcql.PathKey(m.name)), m.value, byDigest, sent, depth+1)
 		}
 	case []any:
 		if len(t) == 0 {
 			return append(out, path)
 		}
-		i := 0
-		for _, el := range t {
-			value := el
-			if digest, isRef := arrayElementDigest(el); isRef {
-				d, held := byDigest[digest]
-				if !held {
-					continue
-				}
-				if !sent[digest] {
-					i++
-					continue
-				}
-				value = d.Value
-			}
-			out = appendRevealedLeaves(out, child(dcql.PathIndex(i)), value, byDigest, sent, depth+1)
-			i++
-		}
+		out = appendRevealedElementLeaves(out, path, t, byDigest, sent, depth)
 	default:
 		out = append(out, path)
 	}
 	return out
+}
+
+// appendRevealedElementLeaves appends to out the leaves of arr, a
+// non-empty array at path, as appendRevealedLeaves does: of each
+// element it reveals, indexed among the elements the holder's
+// credential has.
+func appendRevealedElementLeaves(out []dcql.Path, path dcql.Path, arr []any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool, depth int) []dcql.Path {
+	i := 0
+	for _, el := range arr {
+		value := el
+		if digest, isRef := arrayElementDigest(el); isRef {
+			d, held := byDigest[digest]
+			if !held {
+				continue
+			}
+			if !sent[digest] {
+				i++
+				continue
+			}
+			value = d.Value
+		}
+		out = appendRevealedLeaves(out, childPath(path, dcql.PathIndex(i)), value, byDigest, sent, depth+1)
+		i++
+	}
+	return out
+}
+
+// childPath is path extended by elem, sharing no storage with path.
+func childPath(path dcql.Path, elem dcql.PathElement) dcql.Path {
+	return append(slices.Clone(path), elem)
 }
 
 // sdDigests are obj's "_sd" digests that are strings (RFC 9901 §4.1.1).

@@ -357,28 +357,40 @@ func checkAllowed(origin string, allowed []string, allowLoopbackHTTP bool) error
 // anchor set (certchain.IsSystemPool).
 func anchoredBySystemPool(resolver verifier.MdocIssuerKeyResolver) bool {
 	for range 16 {
-		var r *verifier.X5ChainIssuerKeyResolver
-		switch v := resolver.(type) {
-		case verifier.X5ChainIssuerKeyResolver:
-			r = &v
-		case *verifier.X5ChainIssuerKeyResolver:
-			r = v
-		}
-		if r != nil {
-			if certchain.IsSystemPool(r.Roots) {
-				return true
-			}
-			for _, roots := range r.RootsByDocType {
-				if certchain.IsSystemPool(roots) {
-					return true
-				}
-			}
+		if r := asX5ChainResolver(resolver); r != nil && hasSystemPool(r) {
+			return true
 		}
 		wrapper, ok := resolver.(verifier.MdocIssuerKeyResolverWrapper)
 		if !ok {
 			return false
 		}
 		resolver = wrapper.Unwrap()
+	}
+	return false
+}
+
+// asX5ChainResolver is resolver as a verifier.X5ChainIssuerKeyResolver,
+// by value or pointer, or nil if it's neither.
+func asX5ChainResolver(resolver verifier.MdocIssuerKeyResolver) *verifier.X5ChainIssuerKeyResolver {
+	switch v := resolver.(type) {
+	case verifier.X5ChainIssuerKeyResolver:
+		return &v
+	case *verifier.X5ChainIssuerKeyResolver:
+		return v
+	}
+	return nil
+}
+
+// hasSystemPool reports whether r's Roots, or any of its RootsByDocType,
+// is a system root pool.
+func hasSystemPool(r *verifier.X5ChainIssuerKeyResolver) bool {
+	if certchain.IsSystemPool(r.Roots) {
+		return true
+	}
+	for _, roots := range r.RootsByDocType {
+		if certchain.IsSystemPool(roots) {
+			return true
+		}
 	}
 	return false
 }

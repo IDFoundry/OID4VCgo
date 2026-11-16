@@ -339,6 +339,22 @@ func (c Config) withDefaults() Config {
 }
 
 func (c Config) validate() error {
+	if err := c.validateIdentifiers(); err != nil {
+		return err
+	}
+	if err := c.validateLimits(); err != nil {
+		return err
+	}
+	if err := c.validateStatusListTiming(); err != nil {
+		return err
+	}
+	return c.Policy.validate()
+}
+
+// validateIdentifiers refuses c's Identifier, StatusListBaseURI or
+// WalletLink unless each is a usable https URI, and its ClientIDs if
+// there are none or one is empty.
+func (c Config) validateIdentifiers() error {
 	if err := httpsURI("Identifier", c.Identifier); err != nil {
 		return err
 	}
@@ -356,6 +372,13 @@ func (c Config) validate() error {
 	if slices.Contains(c.ClientIDs, "") {
 		return errors.New("ClientIDs has an empty client ID")
 	}
+	return nil
+}
+
+// validateLimits refuses c's attestation and challenge TTLs, status
+// list size and MaxInstanceKeysPerPeriod unless each is within its
+// bounds.
+func (c Config) validateLimits() error {
 	for name, d := range map[string]time.Duration{"WalletAttestationTTL": c.WalletAttestationTTL, "KeyAttestationTTL": c.KeyAttestationTTL} {
 		if d < time.Minute || d > MaxAttestationTTL {
 			return fmt.Errorf("%s is %v, not between a minute and %v", name, d, MaxAttestationTTL)
@@ -370,6 +393,13 @@ func (c Config) validate() error {
 	if c.MaxInstanceKeysPerPeriod < 0 {
 		return fmt.Errorf("MaxInstanceKeysPerPeriod is %d, not positive", c.MaxInstanceKeysPerPeriod)
 	}
+	return nil
+}
+
+// validateStatusListTiming refuses c's StatusListPeriod,
+// InstanceKeyRetention and StatusListTTL unless each is within its
+// bounds, which depend on the attestation TTLs and on each other.
+func (c Config) validateStatusListTiming() error {
 	if longest := max(c.WalletAttestationTTL, c.KeyAttestationTTL); c.StatusListPeriod < longest || c.StatusListPeriod > MaxStatusListPeriod {
 		return fmt.Errorf("StatusListPeriod is %v, not between the longest attestation TTL (%v) and %v", c.StatusListPeriod, longest, MaxStatusListPeriod)
 	}
@@ -382,7 +412,7 @@ func (c Config) validate() error {
 	if c.StatusListTTL < time.Second || c.StatusListTTL > c.StatusListLifetime {
 		return fmt.Errorf("StatusListTTL is %v, not between a second and StatusListLifetime (%v)", c.StatusListTTL, c.StatusListLifetime)
 	}
-	return c.Policy.validate()
+	return nil
 }
 
 // httpsURI refuses v unless it's an absolute https URI with a host and

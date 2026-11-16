@@ -359,24 +359,46 @@ func arrayItems(raw []byte, limit int, what string, fn func(i int, item []byte) 
 		return fmt.Errorf("%s has %d items, over %d: %w", what, n, limit, ErrCBORValidation)
 	}
 	for i := 0; indefinite || uint64(i) < n; i++ {
-		if indefinite {
-			if len(rest) == 0 {
-				return fmt.Errorf("%s: truncated: %w", what, ErrCBORDecoding)
-			}
-			if rest[0] == 0xff {
-				break
-			}
+		ended, err := indefiniteEnded(rest, indefinite, what)
+		if err != nil {
+			return err
 		}
-		if limit >= 0 && i >= limit {
-			return fmt.Errorf("%s has over %d items: %w", what, limit, ErrCBORValidation)
+		if ended {
+			break
 		}
 		var item cbor.RawMessage
-		if rest, err = decMode.UnmarshalFirst(rest, &item); err != nil {
-			return fmt.Errorf("%s[%d]: %w: %w", what, i, ErrCBORDecoding, err)
+		if item, rest, err = nextArrayItem(rest, i, limit, what); err != nil {
+			return err
 		}
 		if err := fn(i, item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// indefiniteEnded reports whether rest, the remainder of an indefinite
+// array, starts with its break; it's always false for a definite one.
+func indefiniteEnded(rest []byte, indefinite bool, what string) (bool, error) {
+	if !indefinite {
+		return false, nil
+	}
+	if len(rest) == 0 {
+		return false, fmt.Errorf("%s: truncated: %w", what, ErrCBORDecoding)
+	}
+	return rest[0] == 0xff, nil
+}
+
+// nextArrayItem is item i of an array, decoded from the start of rest,
+// and what follows it; i at limit, if limit isn't negative, is refused.
+func nextArrayItem(rest []byte, i, limit int, what string) (cbor.RawMessage, []byte, error) {
+	if limit >= 0 && i >= limit {
+		return nil, nil, fmt.Errorf("%s has over %d items: %w", what, limit, ErrCBORValidation)
+	}
+	var item cbor.RawMessage
+	rest, err := decMode.UnmarshalFirst(rest, &item)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s[%d]: %w: %w", what, i, ErrCBORDecoding, err)
+	}
+	return item, rest, nil
 }

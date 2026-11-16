@@ -420,32 +420,10 @@ func (in Incoming) RespondDocuments(ctx context.Context, answers []Answer) ([]by
 		return nil, errors.New("mdocdcapi: no document to answer")
 	}
 	selected := make([]mdoc.IssuerSigned, len(answers))
-	for i, a := range answers {
-		if a.Document < 0 || a.Document >= len(in.Documents) {
-			return nil, fmt.Errorf("mdocdcapi: no document request %d", a.Document)
-		}
-		for _, prev := range answers[:i] {
-			if prev.Document == a.Document {
-				return nil, fmt.Errorf("mdocdcapi: document request %d answered twice", a.Document)
-			}
-		}
-		if err := checkConsented(in.Documents[a.Document], a.Elements); err != nil {
+	for i := range answers {
+		var err error
+		if selected[i], err = in.checkAnswer(answers, i); err != nil {
 			return nil, err
-		}
-		if held, err := mdocresponse.UnverifiedDocType(a.IssuerSigned, MaxResponseBytes); err != nil {
-			return nil, fmt.Errorf("mdocdcapi: document request %d: %w", a.Document, err)
-		} else if held != in.Documents[a.Document].DocType {
-			return nil, fmt.Errorf("mdocdcapi: document request %d is for %q, the mdoc is a %q", a.Document, in.Documents[a.Document].DocType, held)
-		}
-		if a.Holder == nil {
-			return nil, fmt.Errorf("mdocdcapi: document request %d has no device key", a.Document)
-		}
-		if _, err := deviceAlgFor(a.Holder.Public()); err != nil {
-			return nil, err
-		}
-		selected[i] = a.IssuerSigned.SelectNameSpaces(a.Elements)
-		if len(selected[i].NameSpaces) == 0 {
-			return nil, fmt.Errorf("mdocdcapi: document request %d: the credential holds none of the elements to disclose", a.Document)
 		}
 	}
 	stBytes, err := sessionTranscriptBytes(in.transcript)
@@ -454,25 +432,70 @@ func (in Incoming) RespondDocuments(ctx context.Context, answers []Answer) ([]by
 	}
 	docs := make([]oid4vpmdoc.Document, 0, len(answers))
 	for i, a := range answers {
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("mdocdcapi: %w", err)
-		}
-		requested := in.Documents[a.Document]
-		alg, err := deviceAlgFor(a.Holder.Public())
+		doc, err := in.signDocument(ctx, a, selected[i], stBytes)
 		if err != nil {
 			return nil, err
 		}
-		deviceSigned, err := mdoc.SignDeviceSignature(a.Holder, alg, stBytes, requested.DocType, map[string]map[string]interface{}{})
-		if err != nil {
-			return nil, fmt.Errorf("mdocdcapi: device signature: %w", err)
-		}
-		docs = append(docs, oid4vpmdoc.Document{DocType: requested.DocType, IssuerSigned: selected[i], DeviceSigned: deviceSigned})
+		docs = append(docs, doc)
 	}
 	deviceResponse, err := mdocresponse.Marshal(docs...)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: %w", err)
 	}
 	return in.seal(deviceResponse)
+}
+
+// checkAnswer checks answers[i] before any key signs: a document request
+// of in's, not answered earlier in answers, consented elements, a
+// credential of the request's document type, a usable device key, and
+// an element to disclose. It returns the credential's disclosed part.
+func (in Incoming) checkAnswer(answers []Answer, i int) (mdoc.IssuerSigned, error) {
+	a := answers[i]
+	if a.Document < 0 || a.Document >= len(in.Documents) {
+		return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: no document request %d", a.Document)
+	}
+	for _, prev := range answers[:i] {
+		if prev.Document == a.Document {
+			return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: document request %d answered twice", a.Document)
+		}
+	}
+	if err := checkConsented(in.Documents[a.Document], a.Elements); err != nil {
+		return mdoc.IssuerSigned{}, err
+	}
+	if held, err := mdocresponse.UnverifiedDocType(a.IssuerSigned, MaxResponseBytes); err != nil {
+		return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: document request %d: %w", a.Document, err)
+	} else if held != in.Documents[a.Document].DocType {
+		return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: document request %d is for %q, the mdoc is a %q", a.Document, in.Documents[a.Document].DocType, held)
+	}
+	if a.Holder == nil {
+		return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: document request %d has no device key", a.Document)
+	}
+	if _, err := deviceAlgFor(a.Holder.Public()); err != nil {
+		return mdoc.IssuerSigned{}, err
+	}
+	selected := a.IssuerSigned.SelectNameSpaces(a.Elements)
+	if len(selected.NameSpaces) == 0 {
+		return mdoc.IssuerSigned{}, fmt.Errorf("mdocdcapi: document request %d: the credential holds none of the elements to disclose", a.Document)
+	}
+	return selected, nil
+}
+
+// signDocument is a's Document, disclosing selected, with a device
+// signature over stBytes by a's holder key, unless ctx has ended.
+func (in Incoming) signDocument(ctx context.Context, a Answer, selected mdoc.IssuerSigned, stBytes []byte) (oid4vpmdoc.Document, error) {
+	if err := ctx.Err(); err != nil {
+		return oid4vpmdoc.Document{}, fmt.Errorf("mdocdcapi: %w", err)
+	}
+	requested := in.Documents[a.Document]
+	alg, err := deviceAlgFor(a.Holder.Public())
+	if err != nil {
+		return oid4vpmdoc.Document{}, err
+	}
+	deviceSigned, err := mdoc.SignDeviceSignature(a.Holder, alg, stBytes, requested.DocType, map[string]map[string]interface{}{})
+	if err != nil {
+		return oid4vpmdoc.Document{}, fmt.Errorf("mdocdcapi: device signature: %w", err)
+	}
+	return oid4vpmdoc.Document{DocType: requested.DocType, IssuerSigned: selected, DeviceSigned: deviceSigned}, nil
 }
 
 // checkConsented refuses an empty disclosure, and any element doc

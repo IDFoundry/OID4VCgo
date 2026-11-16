@@ -141,22 +141,30 @@ func appendDigests(out []string, v any, depth int) []string {
 	}
 	switch t := v.(type) {
 	case map[string]any:
-		if digest, ok := t["..."].(string); ok && len(t) == 1 {
-			return append(out, digest)
-		}
-		sd, _ := t["_sd"].([]any)
-		for _, d := range sd {
-			if digest, ok := d.(string); ok {
-				out = append(out, digest)
-			}
-		}
-		for k, child := range t {
-			if k != "_sd" {
-				out = appendDigests(out, child, depth+1)
-			}
-		}
+		return appendObjectDigests(out, t, depth)
 	case []any:
 		for _, child := range t {
+			out = appendDigests(out, child, depth+1)
+		}
+	}
+	return out
+}
+
+// appendObjectDigests appends to out the digests in obj, a raw SD-JWT
+// object at depth, as appendDigests does: its own, if it's an array
+// element's {"...": digest}, else its "_sd" entries and its members'.
+func appendObjectDigests(out []string, obj map[string]any, depth int) []string {
+	if digest, ok := obj["..."].(string); ok && len(obj) == 1 {
+		return append(out, digest)
+	}
+	sd, _ := obj["_sd"].([]any)
+	for _, d := range sd {
+		if digest, ok := d.(string); ok {
+			out = append(out, digest)
+		}
+	}
+	for k, child := range obj {
+		if k != "_sd" {
 			out = appendDigests(out, child, depth+1)
 		}
 	}

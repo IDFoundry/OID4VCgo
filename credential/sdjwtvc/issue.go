@@ -344,6 +344,19 @@ func checkNoReservedNames(field string, v map[string]any) error {
 // checkIssueInputs checks Issue's claims and options: a vct, a decoy
 // count in range, and an IssuerCertificate, if given, for signer's key.
 func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) error {
+	if err := checkIssueClaims(claims); err != nil {
+		return err
+	}
+	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
+		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
+	}
+	return checkIssuerCertificate(signer, opts)
+}
+
+// checkIssueClaims checks Issue's claims: aka VCTs, Status and CNF
+// without selectively disclosable or reserved names, a vct, and a
+// well-formed vct#integrity.
+func checkIssueClaims(claims Claims) error {
 	if claims.AkaVCTs != nil {
 		if err := checkAkaVCTs(claims.VCT, claims.AkaVCTs); err != nil {
 			return err
@@ -365,36 +378,39 @@ func checkIssueInputs(signer crypto.Signer, claims Claims, opts IssueOptions) er
 			return fmt.Errorf("sdjwtvc: Claims.VCTIntegrity: %w", err)
 		}
 	}
-	if opts.Decoys < 0 || opts.Decoys > MaxDecoys {
-		return fmt.Errorf("sdjwtvc: IssueOptions.Decoys must be between 0 and %d, got %d", MaxDecoys, opts.Decoys)
-	}
-	if len(opts.IssuerIntermediates) > 0 && opts.IssuerCertificate == nil {
-		return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
-	}
-	if opts.IssuerCertificate != nil {
-		// Alone or with intermediates: an x5c leaf mustn't be
-		// self-signed (HAIP 1.0 §6.1.1).
-		if err := certchain.CheckPresentedChain(opts.IssuerCertificate, opts.IssuerIntermediates); err != nil {
-			return fmt.Errorf("sdjwtvc: issuer certificate chain: %w", err)
+	return nil
+}
+
+// checkIssuerCertificate checks opts' IssuerCertificate, if given: a
+// presentable chain with its IssuerIntermediates, for signer's key.
+// Intermediates without a certificate are refused.
+func checkIssuerCertificate(signer crypto.Signer, opts IssueOptions) error {
+	if opts.IssuerCertificate == nil {
+		if len(opts.IssuerIntermediates) > 0 {
+			return fmt.Errorf("sdjwtvc: IssueOptions.IssuerIntermediates needs IssuerCertificate")
 		}
+		return nil
 	}
-	if opts.IssuerCertificate != nil {
-		// A two-value assertion, not a direct one: signer.Public() is
-		// every stdlib key type's own crypto.PublicKey, all of which
-		// implement Equal, but a custom Signer (an HSM/KMS-backed one)
-		// may not — a direct assertion would panic instead of
-		// returning this func's own documented config-mismatch error,
-		// the same "Signer may not be comparable" risk verifier.New's
-		// own equivalent check already guards against. Found in a
-		// repo-wide spec-comprehensiveness review, as a side effect of
-		// adding the analogous check to credential/mdoc.Issue.
-		comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
-		if !ok {
-			return fmt.Errorf("sdjwtvc: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", signer.Public())
-		}
-		if !comparableKey.Equal(opts.IssuerCertificate.PublicKey) {
-			return fmt.Errorf("sdjwtvc: IssuerCertificate's public key does not match signer's public key")
-		}
+	// Alone or with intermediates: an x5c leaf mustn't be
+	// self-signed (HAIP 1.0 §6.1.1).
+	if err := certchain.CheckPresentedChain(opts.IssuerCertificate, opts.IssuerIntermediates); err != nil {
+		return fmt.Errorf("sdjwtvc: issuer certificate chain: %w", err)
+	}
+	// A two-value assertion, not a direct one: signer.Public() is
+	// every stdlib key type's own crypto.PublicKey, all of which
+	// implement Equal, but a custom Signer (an HSM/KMS-backed one)
+	// may not — a direct assertion would panic instead of
+	// returning this func's own documented config-mismatch error,
+	// the same "Signer may not be comparable" risk verifier.New's
+	// own equivalent check already guards against. Found in a
+	// repo-wide spec-comprehensiveness review, as a side effect of
+	// adding the analogous check to credential/mdoc.Issue.
+	comparableKey, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok {
+		return fmt.Errorf("sdjwtvc: signer's own public key type %T does not implement Equal(crypto.PublicKey) bool", signer.Public())
+	}
+	if !comparableKey.Equal(opts.IssuerCertificate.PublicKey) {
+		return fmt.Errorf("sdjwtvc: IssuerCertificate's public key does not match signer's public key")
 	}
 	return nil
 }
