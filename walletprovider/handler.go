@@ -97,7 +97,7 @@ var (
 	errPolicy        = apiError{http.StatusForbidden, "policy_refused", "The provider's policy refuses the evidence."}
 	errNotActive     = apiError{http.StatusForbidden, "instance_not_active", "The instance is suspended."}
 	errRevoked       = apiError{http.StatusForbidden, "instance_revoked", "The instance is revoked."}
-	errKeyRegistered = apiError{http.StatusConflict, "instance_key_registered", "The key is already registered."}
+	errKeyRegistered = apiError{http.StatusConflict, CodeInstanceKeyRegistered, "The key is already registered."}
 	errUnknownKey    = apiError{http.StatusBadRequest, "unknown_instance_key", "The instance key isn't recorded for the instance."}
 	errUnknownClient = apiError{http.StatusBadRequest, "unknown_client", "The provider doesn't attest that client."}
 	errNoKeyAttested = apiError{http.StatusForbidden, "no_key_attested", "No key could be attested."}

@@ -14,6 +14,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 // RefreshGrant is what an issuance keeps to refresh its credentials
@@ -261,11 +262,13 @@ func (w *Wallet) lockGrant(id string) func() {
 //
 // It returns an error wrapping ErrReissueRequired when the credential
 // can't be refreshed: it came without a refresh token, the
-// Authorization Server no longer accepts it (invalid_grant), or the
-// wallet can't ask for the same Credential Dataset again: its grant
-// covers several of its configuration, and the token no longer grants
-// its credential_identifier, or which one it holds wasn't kept. Receive
-// it again from a new Credential Offer then.
+// Authorization Server no longer accepts it (invalid_grant), the Wallet
+// Provider no longer attests the grant's instance key (its evidence
+// expired, or the wallet registered again as a new instance; the grant
+// is forgotten too), or the wallet can't ask for the same Credential
+// Dataset again: its grant covers several of its configuration, and the
+// token no longer grants its credential_identifier, or which one it
+// holds wasn't kept. Receive it again from a new Credential Offer then.
 //
 // If the issuer defers the new credential, the old one stays as it is
 // and the Deferred is returned to poll: once settled, its credential
@@ -636,9 +639,15 @@ func (s *Issuance) refreshAsPublicClient(ctx context.Context, g RefreshGrant, as
 // resource client for the new tokens.
 func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (refreshResult, error) {
 	if err := s.newClient(ctx, g.AuthorizationServer, false); err != nil {
-		if errors.Is(err, ErrClientAuthUnsupported) {
+		switch {
+		case errors.Is(err, ErrClientAuthUnsupported):
 			// A wallet without its Wallet Provider now.
 			return refreshResult{}, fmt.Errorf("walletflow: refresh credential: %w: %w", ErrReissueRequired, err)
+		case instanceKeyRetired(err):
+			// No refresh will authenticate with it again: a new
+			// issuance makes a new instance key.
+			s.w.forgetGrant(context.WithoutCancel(ctx), g)
+			return refreshResult{}, fmt.Errorf("walletflow: refresh credential: the Wallet Provider no longer attests its instance key: %w: %w", ErrReissueRequired, err)
 		}
 		return refreshResult{}, err
 	}
@@ -658,6 +667,23 @@ func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (
 		tokenType: tokens.TokenType, accessToken: tokens.AccessToken, details: tokens.AuthorizationDetails,
 		expiresIn: tokens.ExpiresIn, hasExpiresIn: tokens.HasExpiresIn,
 	}, nil
+}
+
+// instanceKeyRetired reports whether err is the Wallet Provider refusing
+// for good to attest a refresh grant's instance key
+// (mobile/WALLET_PROVIDER.md): the key's own evidence expired
+// (walletprovider.ErrInstanceKeyExpired), when only a new instance key,
+// with fresh evidence, is attested; the registration of the instance it
+// was recorded for expired (ErrRegistrationExpired), when the wallet
+// registers again, as a new instance; or it's recorded for an instance
+// the wallet no longer is (ErrInstanceKeyRegistered), as after
+// registering again. A walletprovider.Client's refusal matches, as does
+// a native provider's that oid4vcgo/mobile marks with
+// walletprovider.CodeError.
+func instanceKeyRetired(err error) bool {
+	return errors.Is(err, walletprovider.ErrInstanceKeyExpired) ||
+		errors.Is(err, walletprovider.ErrRegistrationExpired) ||
+		errors.Is(err, walletprovider.ErrInstanceKeyRegistered)
 }
 
 // refreshFailed is a refresh's failure: ErrReissueRequired, with the

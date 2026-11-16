@@ -22,6 +22,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 // CredentialStore holds the wallet's credentials for it — under the
@@ -905,7 +906,8 @@ const refusedPrefix = "[refused:"
 // providerError is a Wallet Provider callback's err doing what: a
 // cancellation as is, a network failure the callback marked as network,
 // a refusal it marked with the provider's error code as platform with
-// that detail, anything else as platform.
+// that detail (matching the error walletprovider.CodeError names for
+// it, if any: providerRefusal), anything else as platform.
 func providerError(what string, err error) error {
 	msg := err.Error()
 	switch {
@@ -917,11 +919,30 @@ func providerError(what string, err error) error {
 		if code, rest, ok := strings.Cut(strings.TrimPrefix(msg, refusedPrefix), "]"); ok {
 			// errorCode drops a code that isn't a plain token: the
 			// refusal is still platform, with no detail.
-			return &Error{Code: CodePlatform, Detail: errorCode(code), Message: cleanText(what + ": " + strings.TrimSpace(rest))}
+			e := &Error{Code: CodePlatform, Detail: errorCode(code), Message: cleanText(what + ": " + strings.TrimSpace(rest))}
+			if sentinel := walletprovider.CodeError(e.Detail); sentinel != nil {
+				return &providerRefusal{err: e, sentinel: sentinel}
+			}
+			return e
 		}
 	}
 	return newError(CodePlatform, fmt.Errorf("%s: %w", what, err))
 }
+
+// providerRefusal is a native Wallet Provider's refusal whose code
+// walletprovider.CodeError names an error for: reported as its *Error,
+// it matches that error too, as a walletprovider.Client's refusal
+// does, so walletflow tells what the refusal means for an instance key
+// (registration_expired, instance_key_expired, instance_key_registered:
+// a refresh grant bound to it can't be refreshed again).
+type providerRefusal struct {
+	err      *Error
+	sentinel error
+}
+
+func (r *providerRefusal) Error() string { return r.err.Error() }
+
+func (r *providerRefusal) Unwrap() []error { return []error{r.err, r.sentinel} }
 
 // jsonClaims makes claims JSON-safe: an mdoc's element values are
 // decoded CBOR, so byte strings become standard base64, a tagged value

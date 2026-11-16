@@ -61,9 +61,22 @@ import java.util.Base64
  * ([WalletProviderRefusedException]) as [WalletException.Code.platform],
  * its message naming the protocol's error code. On `instance_revoked`, it
  * forgets the registration and deletes its registration key: the next
- * Wallet Attestation registers the installation again. The revoked
- * instance's instance keys stay its own (`instance_key_registered`), so
- * a credential whose refresh needs one must be received again. On
+ * Wallet Attestation registers the installation again. On
+ * `registration_expired` — the provider no longer accepts the evidence
+ * the installation registered with, as when a certificate of its
+ * Android Key Attestation chain expired, which Remote Key
+ * Provisioning's short-lived ones soon do — it forgets the registration
+ * likewise, and a Wallet Attestation registers again, with a new
+ * registration key and fresh evidence, and asks once more; refused
+ * again, it fails. A Key Attestation refused so isn't asked again: its
+ * instance key is the old registration's, which a new one doesn't know
+ * (`unknown_instance_key`); the next issuance's Wallet Attestation
+ * registers again. The old instance's instance keys stay its own
+ * (`instance_key_registered`), so a credential whose refresh needs one
+ * must be received again: the wallet reports that refresh as
+ * [WalletException.Code.reissueRequired], and forgets its refresh grant,
+ * as it does on `instance_key_expired` (the instance key's own evidence
+ * expired: a new issuance makes a new instance key). On
  * `instance_not_active` (suspended) it keeps the registration: tell the
  * holder, as the provider may resume it. A signed request refused as
  * `invalid_signed_request` isn't retried: check the device's clock, and
@@ -180,13 +193,12 @@ public class HttpWalletProvider internal constructor(
     override suspend fun walletAttestation(request: WalletAttestationRequest): String {
         val key = request.instanceKey
         val point = jwkPoint(key.jwk) ?: throw StoreException(INSTANCE_KEY_NOT_P256)
-        val instance = registered()
         val body = linkedMapOf<String, JsonElement>("client_id" to JsonPrimitive(request.clientID), "instance_key" to jwkOf(point))
         instanceChallengeOf(key)?.let {
             body["challenge"] = JsonPrimitive(it.value)
             body["evidence"] = androidKeyEvidence(key.certificateChain)
         }
-        val jwt = signed(instance, WALLET_ATTESTATION_PATH, JsonObject(body)).string("wallet_attestation")
+        val jwt = signedRegistered(WALLET_ATTESTATION_PATH, JsonObject(body)).string("wallet_attestation")
         val claims = unverifiedClaims(jwt) ?: throw StoreException("the Wallet Attestation isn't a JWT")
         val cnf = ((claims["cnf"] as? JsonObject)?.get("jwk") as? JsonObject)?.let { jwkPoint(it.toString().toByteArray()) }
         if (claims.stringOrNull("sub") != request.clientID || cnf == null || !cnf.contentEquals(point)) {
@@ -335,7 +347,7 @@ public class HttpWalletProvider internal constructor(
     }
 
     /**
-     * Deletes the revoked [instance]'s registration key and forgets it —
+     * Deletes the revoked or expired [instance]'s registration key and forgets it —
      * in that order, so a failure leaves no key behind: a registration
      * whose key is gone is forgotten when next read ([kept]).
      */
@@ -347,16 +359,30 @@ public class HttpWalletProvider internal constructor(
     }
 
     /**
+     * Posts [body] to [path] as [signed] does, registering the
+     * installation first if it isn't yet. On `registration_expired`,
+     * which [signed] forgets the registration on, it registers again and
+     * posts once more, and no more: a second refusal is thrown.
+     */
+    private suspend fun signedRegistered(path: String, body: JsonObject): JsonObject =
+        try {
+            signed(registered(), path, body)
+        } catch (e: WalletProviderRefusedException) {
+            if (e.error != REGISTRATION_EXPIRED) throw e
+            signed(registered(), path, body)
+        }
+
+    /**
      * Posts [body] to [path], signed with [instance]'s registration key
-     * over a fresh `request` challenge. On `instance_revoked`, forgets the
-     * instance.
+     * over a fresh `request` challenge. On `instance_revoked` or
+     * `registration_expired`, forgets the instance.
      */
     private suspend fun signed(instance: RegisteredInstance, path: String, body: JsonObject): JsonObject {
         val challenge = challenge(PURPOSE_REQUEST)
         return try {
             post(path, body, { target, bytes -> signRequest(instance, challenge.value, target, bytes) }, HttpURLConnection.HTTP_OK)
         } catch (e: WalletProviderRefusedException) {
-            if (e.error == INSTANCE_REVOKED) forget(instance)
+            if (e.error in FORGETS_REGISTRATION) forget(instance)
             throw e
         }
     }
@@ -455,6 +481,10 @@ public class HttpWalletProvider internal constructor(
         internal const val PURPOSE_REQUEST = "request"
 
         internal const val INSTANCE_REVOKED = "instance_revoked"
+        internal const val REGISTRATION_EXPIRED = "registration_expired"
+
+        /** The refusals of a signed request that end the registration: it's forgotten, and the next one registers again. */
+        internal val FORGETS_REGISTRATION = setOf(INSTANCE_REVOKED, REGISTRATION_EXPIRED)
         internal const val INSTANCE_KEY_REGISTERED = "instance_key_registered"
 
         /** The largest answer read, as the protocol's request limit. */

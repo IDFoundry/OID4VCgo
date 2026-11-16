@@ -290,7 +290,15 @@ are kept in an `InstanceRegistry` (by default a file in
 `noBackupFilesDir`); a registration whose key is gone is forgotten, and
 the next Wallet Attestation registers again with a new key, as it does
 after `instance_revoked` (which also deletes the key) or once more after
-a `409 instance_key_registered` at registration. The registration key
+a `409 instance_key_registered` at registration. On
+`registration_expired` (the registration's chain no longer passes the
+provider's recheck for a reason fresh evidence fixes: a certificate
+past its validity period, which Remote Key Provisioning's short-lived
+ones soon are) it forgets the registration and deletes its key as on
+`instance_revoked`, registers again and sends the Wallet Attestation
+request once more, and no more: refused again, it fails. A Key
+Attestation refused so isn't asked again, since its instance key is
+the old registration's (`unknown_instance_key` to a new one). The registration key
 signs every later request (`KeyStore.sign`'s DER signature becomes the
 JWS's r || s). Each issuance's instance key goes as `instance_key`: with
 its chain and the `instance` challenge whose bytes are in its
@@ -305,11 +313,17 @@ Attestation uses it or it's within a minute of expiring. Refusals reach
 the app as `platform` errors naming the protocol's code; a provider
 that can't answer (HTTP 5xx or 429), or a challenge that expired before
 it was used (`invalid_challenge`), as `network`. A refresh whose
-instance key the provider recorded for an instance that was revoked, or
-that the app lost the registration of, is refused as
-`instance_key_registered` and reported as `platform`, though only
-receiving the credential again helps: reporting it as
-`reissue_required` would need Go to recognise the refusal. Its JVM
+instance key the provider no longer attests — its own evidence expired
+(`instance_key_expired`), or recorded for an instance that expired
+(`registration_expired`), was revoked, or that the app lost the
+registration of (`instance_key_registered`, once it registered again)
+— is reported as `reissue_required`, and its refresh grant and instance
+key are deleted: Go recognises those three codes in the
+`[refused:code]` marker (`walletprovider.CodeError`), as it does a
+`walletprovider.Client` refusal with `errors.Is`, and walletflow's
+refresh stops there, since only receiving the credential again, with a
+new instance key, helps. Before, it was `platform`, and every later
+refresh asked the provider again and failed alike. Its JVM
 tests run it against a fake provider checking each request as the Go
 handler does; it was also run against the Go handler itself
 (`walletprovider.Provider.Handler` over HTTP, with an `android-key`
@@ -353,7 +367,9 @@ copy policy. `DCError.invalidKey` (the App Attest key gone:
 restored or reinstalled) registers the installation again for a Wallet
 Attestation, forgetting only the registration whose key failed, and
 forgets the registration for a Key Attestation, whose
-instance key is the lost instance's; `serverUnavailable` is `network`,
+instance key is the lost instance's; `registration_expired` is handled
+the same way, as on Android, though App Attest's evidence isn't judged
+for expiry today; `serverUnavailable` is `network`,
 and the App Attest key it left unregistered is attested again by the
 next registration, as Apple asks. The provider registers an App Attest
 key once (`409 instance_key_registered` for another instance, on its

@@ -66,19 +66,23 @@ func TestRecheckExpired(t *testing.T) {
 	}
 }
 
-// TestRefusedErrorIs: a Client's RefusedError matches the expiry
-// sentinel its code names, and no other.
+// TestRefusedErrorIs: a Client's RefusedError matches the sentinel its
+// code names (CodeError), and no other.
 func TestRefusedErrorIs(t *testing.T) {
 	for code, want := range map[string]error{
-		walletprovider.CodeRegistrationExpired: walletprovider.ErrRegistrationExpired,
-		walletprovider.CodeInstanceKeyExpired:  walletprovider.ErrInstanceKeyExpired,
-		"evidence_rejected":                    nil,
+		walletprovider.CodeRegistrationExpired:   walletprovider.ErrRegistrationExpired,
+		walletprovider.CodeInstanceKeyExpired:    walletprovider.ErrInstanceKeyExpired,
+		walletprovider.CodeInstanceKeyRegistered: walletprovider.ErrInstanceKeyRegistered,
+		"evidence_rejected":                      nil,
 	} {
 		err := fmt.Errorf("asking: %w", &walletprovider.RefusedError{Status: 403, Code: code})
 		if !errors.Is(err, walletprovider.ErrRefused) {
 			t.Fatalf("%s: %v doesn't match ErrRefused", code, err)
 		}
-		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired} {
+		if got := walletprovider.CodeError(code); got != want {
+			t.Fatalf("CodeError(%s) = %v, want %v", code, got, want)
+		}
+		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered} {
 			if errors.Is(err, s) != (s == want) {
 				t.Fatalf("%s: matches %v %t", code, s, errors.Is(err, s))
 			}

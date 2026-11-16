@@ -14,6 +14,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/proximity"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 // providerDetail is err's Detail, "" for none (status_reason_test.go's
@@ -42,6 +43,37 @@ func TestProviderError_Refused(t *testing.T) {
 		if got := providerError("key attestation", errors.New(msg)); code(got) != CodePlatform || providerDetail(got) != "" {
 			t.Errorf("%q: %v, want platform without a detail", msg, got)
 		}
+	}
+}
+
+// A marked refusal whose code walletprovider.CodeError names an error
+// for matches that error, as a walletprovider.Client's refusal does, so
+// walletflow can tell it retires an instance key; it's still platform
+// with the code as the detail, and reissue_required once walletflow
+// wraps it in ErrReissueRequired.
+func TestProviderError_RefusalMatchesWalletProviderErrors(t *testing.T) {
+	for refusal, want := range map[string]error{
+		"registration_expired":    walletprovider.ErrRegistrationExpired,
+		"instance_key_expired":    walletprovider.ErrInstanceKeyExpired,
+		"instance_key_registered": walletprovider.ErrInstanceKeyRegistered,
+		"instance_revoked":        nil,
+	} {
+		got := providerError("wallet attestation", errors.New("[refused:"+refusal+"] the Wallet Provider refused /v1/wallet-attestation: HTTP 403 "+refusal))
+		if code(got) != CodePlatform || providerDetail(got) != refusal || !strings.HasPrefix(got.Error(), "[platform:"+refusal+"] wallet attestation:") {
+			t.Errorf("%s: %v, want platform with the code", refusal, got)
+		}
+		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered} {
+			if errors.Is(got, s) != (s == want) {
+				t.Errorf("%s: matches %v %t", refusal, s, errors.Is(got, s))
+			}
+		}
+		if c := classify(fmt.Errorf("walletflow: %w", got)); code(c) != CodePlatform || providerDetail(c) != refusal {
+			t.Errorf("%s: classify = %v, want platform with the code", refusal, c)
+		}
+	}
+	retired := providerError("wallet attestation", errors.New("[refused:instance_key_expired] refused"))
+	if c := classify(fmt.Errorf("walletflow: refresh credential: %w: %w", walletflow.ErrReissueRequired, retired)); code(c) != CodeReissueRequired {
+		t.Errorf("classify of a refresh it retired = %v, want reissue_required", c)
 	}
 }
 

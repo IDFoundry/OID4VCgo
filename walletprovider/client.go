@@ -67,18 +67,38 @@ const (
 	CodeInstanceKeyExpired = "instance_key_expired"
 )
 
-// Is makes a RefusedError with CodeRegistrationExpired match
-// ErrRegistrationExpired, and one with CodeInstanceKeyExpired
-// ErrInstanceKeyExpired, as the Provider's own errors do, so a wallet
-// can tell what to send fresh evidence for with errors.Is.
-func (e *RefusedError) Is(target error) bool {
-	switch e.Code {
+// CodeInstanceKeyRegistered is the refusal of a key that's already
+// another's (ErrInstanceKeyRegistered): among others, an instance key
+// recorded for an instance the wallet no longer has, as after it
+// registered again.
+const CodeInstanceKeyRegistered = "instance_key_registered"
+
+// CodeError is the error a refusal with the protocol's error code code
+// matches (errors.Is): ErrRegistrationExpired for
+// CodeRegistrationExpired, ErrInstanceKeyExpired for
+// CodeInstanceKeyExpired, ErrInstanceKeyRegistered for
+// CodeInstanceKeyRegistered, as the Provider's own errors do; nil for
+// any other code. A RefusedError matches it, and a wallet whose
+// provider client isn't this package's (a native one, say) can wrap it
+// in its own refusal, so that walletflow tells what the refusal means
+// for an instance key the same way.
+func CodeError(code string) error {
+	switch code {
 	case CodeRegistrationExpired:
-		return target == ErrRegistrationExpired
+		return ErrRegistrationExpired
 	case CodeInstanceKeyExpired:
-		return target == ErrInstanceKeyExpired
+		return ErrInstanceKeyExpired
+	case CodeInstanceKeyRegistered:
+		return ErrInstanceKeyRegistered
 	}
-	return false
+	return nil
+}
+
+// Is makes a RefusedError match the error its code does (CodeError), so
+// a wallet can tell what to send fresh evidence for with errors.Is.
+func (e *RefusedError) Is(target error) bool {
+	sentinel := CodeError(e.Code)
+	return sentinel != nil && target == sentinel
 }
 
 // Client speaks the provider's HTTP protocol (Provider.Handler) for a

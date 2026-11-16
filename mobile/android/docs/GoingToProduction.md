@@ -166,10 +166,17 @@ before it was used, is `network`: try again. A refusal is `platform`,
 its `message` naming the protocol's error code (`evidence_rejected`,
 `policy_refused`, `unknown_instance_key`, `instance_revoked`, …). On
 `instance_revoked` the registration is forgotten and its key deleted:
-the next issuance registers the installation again. The revoked
-instance's instance keys stay its own (`instance_key_registered`), so a
-credential whose refresh needs one must be received again; so must one
-whose instance key was recorded by a registration the app lost. On
+the next issuance registers the installation again. On
+`registration_expired` — the provider no longer accepts the chain the
+installation registered with, as when one of its certificates expired,
+which Remote Key Provisioning's short-lived ones soon do — it's
+forgotten likewise, and the Wallet Attestation registers again and is
+asked once more. The old instance's instance keys stay its own
+(`instance_key_registered`), so a credential whose refresh needs one
+must be received again; so must one whose instance key was recorded by
+a registration the app lost, or whose own chain expired
+(`instance_key_expired`). Its refresh fails as `reissueRequired`, and
+its refresh grant is forgotten. On
 `instance_not_active` the instance is suspended: tell the holder, since
 the provider may resume it. `invalid_signed_request` is not retried: the
 device's clock may be wrong, or the provider no longer knows the

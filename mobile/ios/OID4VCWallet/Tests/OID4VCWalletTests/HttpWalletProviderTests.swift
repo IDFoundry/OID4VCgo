@@ -127,9 +127,91 @@ final class HttpWalletProviderTests: XCTestCase {
         }
         XCTAssertNil(try env.registry.instance())
         XCTAssertNil(try env.keys.publicKey(id: first.keyID))
+        // Not registered again until the next request.
+        XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
         env.server.state.withLock { $0.revoked = false }
         _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
         XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-2")
+    }
+
+    /// `registration_expired` forgets the registration and deletes its
+    /// key, as `instance_revoked` does, then registers again, with a new
+    /// App Attest key, and asks once more under the new registration.
+    func testRegistrationExpiredRegistersAgain() async throws {
+        let env = try Env()
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        let first = try XCTUnwrap(env.registry.instance())
+        env.server.state.withLock { $0.refusals = ["registration_expired"] }
+        let jwt = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertNotNil(unverifiedClaims(jwt))
+        XCTAssertNil(try env.keys.publicKey(id: first.keyID))
+        let kept = try XCTUnwrap(env.registry.instance())
+        XCTAssertEqual(kept.instanceID, "instance-2")
+        XCTAssertEqual(kept.appAttestKeyID, "attest-key-2")
+        XCTAssertEqual(env.keys.count, 1)
+        // The first key, and the second, asked again under the new
+        // registration, each with an assertion; the refused request had one too.
+        XCTAssertEqual(env.server.state.withLock { $0.walletAttestations.map(\.hadEvidence) }, [true, true])
+        XCTAssertEqual(env.attest.calls.withLock { $0 }.filter { $0 == "generateAssertion" }.count, 3)
+    }
+
+    /// A second `registration_expired` isn't asked again: it's thrown,
+    /// and the second registration is forgotten too.
+    func testRegistrationExpiredTwiceFails() async throws {
+        let env = try Env()
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        env.server.state.withLock { $0.refusals = ["registration_expired", "registration_expired"] }
+        do {
+            _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+            XCTFail("attested after two registration_expired refusals")
+        } catch let e as WalletProviderRefusedError {
+            XCTAssertEqual(e.error, "registration_expired")
+            XCTAssertEqual(e.status, 403)
+        }
+        XCTAssertEqual(env.server.state.withLock { $0.registrations }, 2)
+        XCTAssertEqual(env.server.state.withLock { $0.refusals }, [])
+        XCTAssertNil(try env.registry.instance())
+        XCTAssertEqual(env.keys.count, 0)
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-3")
+    }
+
+    /// A Key Attestation refused as `registration_expired` forgets the
+    /// registration but isn't asked again: its instance key is the old
+    /// registration's.
+    func testRegistrationExpiredAtKeyAttestationForgets() async throws {
+        let env = try Env()
+        let instance = try env.instanceKey()
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: instance.json)
+        env.server.state.withLock { $0.refusals = ["registration_expired"] }
+        do {
+            _ = try await env.provider.keyAttestation(instanceKey: instance.json, keys: [try env.instanceKey().json], nonce: "n")
+            XCTFail("attested after registration_expired")
+        } catch let e as WalletProviderRefusedError {
+            XCTAssertEqual(e.error, "registration_expired")
+        }
+        XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
+        XCTAssertNil(try env.registry.instance())
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-2")
+    }
+
+    /// `instance_key_expired` is thrown, keeping the registration: a new
+    /// instance key is attested under it.
+    func testInstanceKeyExpiredKeepsTheRegistration() async throws {
+        let env = try Env()
+        let key = try env.instanceKey()
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: key.json)
+        env.server.state.withLock { $0.refusals = ["instance_key_expired"] }
+        do {
+            _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: key.json)
+            XCTFail("attested after instance_key_expired")
+        } catch let e as WalletProviderRefusedError {
+            XCTAssertEqual(e.error, "instance_key_expired")
+        }
+        XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-1")
+        _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+        XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
     }
 
     /// A kept registration whose key ID now names another key is
@@ -564,6 +646,9 @@ private struct ServerState: Sendable {
     var registrationError: (Int, String)?
     var challengeStatus = 200
     var revoked = false
+    /// Error codes to refuse the next signed requests with, HTTP 403, in
+    /// turn.
+    var refusals: [String] = []
     var attestStranger = false
     /// The Key Attestation's nonce claim: nil, the nonce sent, omitted
     /// when empty, as the Go provider does; .some(nil), none.
@@ -639,6 +724,7 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
     private func walletAttestation(_ path: String, _ headers: [String: String], _ body: Data, _ o: [String: Any]) throws -> WalletProviderAnswer {
         let instance = try verifySigned(path, headers, body)
         if state.withLock({ $0.revoked }) { return try answer(403, ["error": "instance_revoked"]) }
+        if let code = nextRefusal() { return try answer(403, ["error": code]) }
         let key = try jwkPoint(try XCTUnwrap(o["instance_key"] as? [String: Any]))
         let hadEvidence = o["evidence"] != nil
         state.withLock { $0.walletAttestations.append((path, hadEvidence)) }
@@ -657,6 +743,7 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
 
     private func keyAttestation(_ path: String, _ headers: [String: String], _ body: Data, _ o: [String: Any]) throws -> WalletProviderAnswer {
         let instance = try verifySigned(path, headers, body)
+        if let code = nextRefusal() { return try answer(403, ["error": code]) }
         let challenge = try use(o["challenge"], "holder")
         let keys = try XCTUnwrap(o["keys"] as? [[String: Any]]).map { try jwkPoint($0) }
         let evidence = try XCTUnwrap(o["evidence"] as? [Any])
@@ -694,6 +781,11 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
         XCTAssertEqual(claims["iat"] as? Int, 1_767_225_600)
         _ = try use(claims["challenge"], "request")
         return instance
+    }
+
+    /// The next of `refusals`, used up, if any.
+    private func nextRefusal() -> String? {
+        state.withLock { $0.refusals.isEmpty ? nil : $0.refusals.removeFirst() }
     }
 
     /// Uses up a challenge issued for `purpose`.
