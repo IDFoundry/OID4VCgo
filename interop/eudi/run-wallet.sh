@@ -217,17 +217,18 @@ refused() {  # $1 name, $2 verifier, $3 why; then driver options
 # /authorize, as a deployment's page does, its browser binding kept in
 # the cookie jar $2, and prints the openid4vp:// launch it redirects to.
 tx_begin() {  # $1 verifier, $2 cookie jar
-  curl -sk --max-time 30 -c "$2" -o /dev/null -w '%{redirect_url}' "$1/authorize"
+  local verifier="$1" jar="$2"
+  curl -sk --max-time 30 -c "$jar" -o /dev/null -w '%{redirect_url}' "$verifier/authorize"
 }
 
 # tx_page saves the transactions verifier's page $2 for the browser
 # whose cookie jar is $3 to $4, its HTML entities decoded, so that a
 # refusal's text reads as the verifier logged it.
 tx_page() {  # $1 verifier, $2 path or absolute URL, $3 cookie jar, $4 output
-  local url="$2"
-  [[ "$url" = https://* ]] || url="$1$url"
-  curl -sk --max-time 30 -b "$3" "$url" 2>/dev/null \
-    | sed -e 's/&#34;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' > "$4" || true
+  local verifier="$1" url="$2" jar="$3" out="$4"
+  [[ "$url" = https://* ]] || url="$verifier$url"
+  curl -sk --max-time 30 -b "$jar" "$url" 2>/dev/null \
+    | sed -e 's/&#34;/"/g' -e "s/&#39;/'/g" -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' > "$out" || true
 }
 
 # tx_present runs a presentation to the transactions verifier $2 that

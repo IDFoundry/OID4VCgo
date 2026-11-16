@@ -58,7 +58,8 @@ prodnet_create() {
 
 # prodnet_subnet NAME: the network's subnet, for the logs.
 prodnet_subnet() {
-  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$1" | xargs
+  local network="$1"
+  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$network" | xargs
 }
 
 # prodnet_attach NAME CONTAINER ALIAS...: connects CONTAINER to the
