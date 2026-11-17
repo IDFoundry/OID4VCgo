@@ -131,6 +131,10 @@ func (e *Error) Error() string {
 // Unwrap returns the underlying cause, if any.
 func (e *Error) Unwrap() error { return e.cause }
 
+// wwwAuthenticate is the header an insufficient_scope or invalid_token
+// error carries its challenges in (RFC 6750 §3; RFC 9449 §7.1).
+const wwwAuthenticate = "WWW-Authenticate"
+
 // WriteJSON writes e as a complete error response — a Credential Error
 // Response (§8.3.1.2) for a Credential/Deferred Credential Endpoint
 // error, or a Token Error Response (RFC 6749 §5.2) for an
@@ -144,11 +148,11 @@ func (e *Error) WriteJSON(w http.ResponseWriter) {
 	// challenge names both schemes.
 	switch e.code {
 	case ErrorInsufficientScope:
-		w.Header().Add("WWW-Authenticate", `DPoP error="insufficient_scope"`)
-		w.Header().Add("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+		w.Header().Add(wwwAuthenticate, `DPoP error="insufficient_scope"`)
+		w.Header().Add(wwwAuthenticate, `Bearer error="insufficient_scope"`)
 	case ErrorInvalidToken:
-		w.Header().Add("WWW-Authenticate", `DPoP error="invalid_token"`)
-		w.Header().Add("WWW-Authenticate", `Bearer error="invalid_token"`)
+		w.Header().Add(wwwAuthenticate, `DPoP error="invalid_token"`)
+		w.Header().Add(wwwAuthenticate, `Bearer error="invalid_token"`)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// RFC 6749 §5.2 has a Token Endpoint's error responses, which
