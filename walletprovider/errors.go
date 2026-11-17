@@ -101,6 +101,17 @@ var (
 	// or for a recorded one not yet used in the period, waits for the
 	// next period.
 	ErrTooManyInstanceKeys = errors.New("walletprovider: too many instance keys this period")
+
+	// ErrUnavailable: an EvidenceVerifier, EvidenceRechecker or
+	// InstanceKeyRechecker couldn't decide for now, for want of
+	// something it needs and may get later — a revocation list it
+	// couldn't fetch (androidkey.ErrStatusUnavailable) — and wrapped it
+	// in its error. It's neither an acceptance nor a refusal: the
+	// provider fails the request, leaves the instance as it is, and
+	// Handler answers HTTP 503 server_error with a Retry-After, for the
+	// wallet to try again later rather than take the evidence as
+	// rejected.
+	ErrUnavailable = errors.New("walletprovider: can't decide for now")
 )
 
 // Store errors, which InstanceStore, InstanceKeyStore and

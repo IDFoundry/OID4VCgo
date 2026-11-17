@@ -113,7 +113,10 @@ func (p *Provider) verify(ctx context.Context, in EvidenceInput) (VerifiedEviden
 		return VerifiedEvidence{}, fmt.Errorf("%w: %q", ErrEvidenceKind, in.Evidence.Kind)
 	}
 	ev, err := v.Verify(ctx, in)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrUnavailable):
+		return VerifiedEvidence{}, fmt.Errorf("walletprovider: verifying %q evidence: %w", in.Evidence.Kind, err)
+	case err != nil:
 		return VerifiedEvidence{}, fmt.Errorf("%w: %w", ErrEvidenceRejected, err)
 	}
 	if ev.Platform == "" {

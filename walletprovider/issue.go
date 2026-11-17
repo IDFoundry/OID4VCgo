@@ -429,6 +429,11 @@ func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge 
 	var lastErr error
 	for _, e := range req.Evidence {
 		ev, err := p.verify(ctx, EvidenceInput{Evidence: e, Challenge: challenge, Purpose: PurposeHolder, Keys: req.Keys, Instance: &in})
+		if errors.Is(err, ErrUnavailable) {
+			// Not a verdict on the key: the wallet asks again later,
+			// rather than get an attestation leaving the key out.
+			return nil, nil, err
+		}
 		if err == nil {
 			err = p.checkEvidenceFrom(in, e.Kind, ev)
 		}

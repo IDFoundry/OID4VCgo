@@ -290,8 +290,10 @@ const (
 // as well, which the provider answers as registration_expired, or, from
 // RecheckInstanceKey, instance_key_expired, so the wallet knows to send
 // fresh evidence — and walletprovider.ErrPolicy otherwise; a status
-// list it couldn't get, or a misconfigured Verifier, is returned as it
-// is, for the provider to fail the request as its own failure.
+// list it couldn't get wraps walletprovider.ErrUnavailable, for the
+// provider to answer 503 and the wallet to try again, and a
+// misconfigured Verifier is returned as it is, for the provider to
+// fail the request as its own failure.
 //
 // An instance registered with evidence of another Kind than
 // EvidenceKind is refused with ErrConfig, which the provider fails the
@@ -408,7 +410,9 @@ func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) 
 	switch err := e.Verifier.recheck(ctx, f, e.AllowUncheckedLegacyEvidence); {
 	case err == nil:
 		return nil
-	case errors.Is(err, ErrStatusUnavailable), errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
+	case errors.Is(err, ErrStatusUnavailable):
+		return undecided(err)
+	case errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
 		return err
 	case errors.Is(err, ErrRevoked):
 		return fmt.Errorf("%w: %w", revocationVerdict(err), err)
@@ -419,6 +423,17 @@ func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) 
 	default:
 		return fmt.Errorf("%w: %w", walletprovider.ErrPolicy, err)
 	}
+}
+
+// undecided wraps err with walletprovider.ErrUnavailable when it's
+// ErrStatusUnavailable: no status list could be had, which is no
+// verdict on the evidence, so the provider answers 503, for the wallet
+// to try again, not a refusal.
+func undecided(err error) error {
+	if errors.Is(err, ErrStatusUnavailable) {
+		return fmt.Errorf("%w: %w", walletprovider.ErrUnavailable, err)
+	}
+	return err
 }
 
 // revocationVerdict is what a recheck refused for ErrRevoked wraps:

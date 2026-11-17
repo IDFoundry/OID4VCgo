@@ -274,7 +274,15 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   refuses to start when they don't (a missing Sealer), rather than
   keep instances unsealed.
 - [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
-  `StatusSource` (Google's list, refreshed daily). Android instances
+  `StatusSource` (Google's list, refreshed daily, ahead of its
+  `MaxAge`, in the background). While Google can't be reached, the
+  last list is used for `StatusSource.Grace` past `MaxAge` (12 hours by
+  default; a certificate Google lists meanwhile is found only once a
+  fetch succeeds); after that, Android registrations and attestations
+  are answered HTTP 503 `server_error` with a `Retry-After`
+  (`walletprovider.ErrUnavailable`), which wallets retry, not
+  `evidence_rejected`. Alert on 503s and on `ErrStatusUnavailable` in
+  the provider's log. Android instances
   are judged again before each attestation from the facts kept at
   registration (`androidkey.EvidenceVerifier` is an
   `EvidenceRechecker`), so a revoked attestation key or a tightened

@@ -240,7 +240,9 @@ type EvidenceRechecker interface {
 	// accept it). It returns nil to accept the instance,
 	// an error wrapping ErrPolicy or ErrEvidenceRejected to refuse it,
 	// and any other error when it couldn't check: the request then
-	// fails as the provider's own failure. A refusal because the
+	// fails as the provider's own failure, answered 503 for the wallet
+	// to retry when the error wraps ErrUnavailable (something it needs,
+	// such as a revocation list, can't be had for now). A refusal because the
 	// evidence's issuer has revoked or suspended its attestation wraps
 	// ErrEvidenceRevoked or ErrEvidenceSuspended too, and the provider
 	// revokes or suspends the instance; any other refusal only refuses

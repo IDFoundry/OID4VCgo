@@ -120,6 +120,7 @@ Clients decide on `error` and the status code, never the description.
 | 403 | `no_key_attested` | None of the holder keys could be attested. |
 | 429 | `too_many_instance_keys` | The instance's instance keys have used up this status list period's allowance: a Wallet Attestation for a new instance key, or for a recorded one not yet used this period, is refused until the next period. Instance keys already used this period are still attested. |
 | 500 | `server_error` | The provider couldn't answer. |
+| 503 | `server_error` | The provider can't decide for now — it couldn't get something it needs to judge the evidence, such as Google's attestation status list for an Android chain — and neither accepts nor refuses it. It carries `Retry-After` (seconds): try again then, with a new challenge. Not a verdict on the evidence or the instance. |
 
 A path or method the protocol doesn't define gets the HTTP server's own
 `404` or `405`, which may not be JSON. Rate limiting is the

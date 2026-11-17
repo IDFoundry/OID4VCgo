@@ -137,6 +137,27 @@ byte or is signed by one (a self-signed re-issue of a root is);
 carrying a root's public key no longer suffices. Android's chains
 are unaffected.
 
+### Android status list outages (`walletprovider`, `walletprovider/androidkey`)
+
+`androidkey.StatusSource` now refreshes Google's list in the
+background ahead of `MaxAge`, and, while fetching fails, keeps using
+the last list for the new `Grace` past `MaxAge` (12 hours by
+default). Set `Grace` negative for the old behaviour, a list never
+used past `MaxAge`. A fetch is no longer cut short by the request
+that started it, and a caller waiting for one stops when its own
+context ends.
+
+When no list can be had, Android registrations and rechecks are now
+answered HTTP 503 `server_error` with a `Retry-After`, not 403
+`evidence_rejected`: `androidkey.EvidenceVerifier` wraps
+`ErrStatusUnavailable` in the new `walletprovider.ErrUnavailable`,
+which `Provider.Register`, `WalletAttestation` and `KeyAttestation`
+return without `ErrEvidenceRejected`. A custom `EvidenceVerifier` or
+rechecker that can't decide for now can wrap `ErrUnavailable` too.
+The Swift and Kotlin `HttpWalletProvider` already treat a 5xx as
+retryable; with the Go `Client`, a `RefusedError` with `Status` 503 is
+one to retry.
+
 ### Revocation outranks policy in rechecks (`walletprovider`, `walletprovider/androidkey`)
 
 An Android recheck consults Google's status list first, so a REVOKED
