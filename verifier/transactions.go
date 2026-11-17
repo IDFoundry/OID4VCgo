@@ -442,6 +442,9 @@ type Transactions struct {
 	// kept has a bit set for each kind of transaction (flowOf) the
 	// store has been seen to keep every field of that create checks.
 	kept atomic.Uint32
+
+	// requestObjects is RequestObject's cache of what it signed.
+	requestObjects requestObjectCache
 }
 
 // NewTransactions builds Transactions for v, keeping state in store.
@@ -849,19 +852,35 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 // stopped answering would tell them the holder had presented. An answer
 // a Wallet sends to a request that's no longer pending is refused.
 //
-// It's signed for each fetch, as RequestObjectPost's is, from the
-// request's query, state, nonce and response decryption key — fields a
-// sealing TransactionCodec binds — and never served as stored
-// (Transaction.RequestObject): a store writer without the sealing key
-// could otherwise hand the Wallet another request's Request Object, and
-// so have the holder answer that request. Every fetch carries the same
-// claims; only the signature differs.
+// It's signed from the request's query, state, nonce and response
+// decryption key — fields a sealing TransactionCodec binds — and never
+// served as stored (Transaction.RequestObject): a store writer without
+// the sealing key could otherwise hand the Wallet another request's
+// Request Object, and so have the holder answer that request. Each
+// Transactions signs it once per request and serves it again, from
+// memory, to the fetches that follow while the record holds the same
+// request ID and bound fields; a record that changed is signed afresh.
+// Every fetch carries the same claims; replicas sign their own, whose
+// signatures differ.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
 	tx, err := t.servable(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	return t.signRequestObject(tx, authorizationRequest{})
+	key, cacheable := requestObjectKey(tx)
+	if cacheable {
+		if object, ok := t.requestObjects.get(key, t.now()); ok {
+			return object, nil
+		}
+	}
+	object, err := t.signRequestObject(tx, authorizationRequest{})
+	if err != nil {
+		return "", err
+	}
+	if cacheable {
+		t.requestObjects.put(key, object, tx.ExpiresAt, t.now())
+	}
+	return object, nil
 }
 
 // servable is the request id, whose Request Object is served at its

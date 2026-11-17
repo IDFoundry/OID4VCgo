@@ -195,6 +195,22 @@ have failed to verify, with any further chain left unverified. Chains
 that verify aren't counted, so a response presenting credentials from
 many issuers isn't refused by it.
 
+### Request Objects at a request_uri are signed, not served from the store (`verifier`)
+
+`Transactions.RequestObject`, and `RequestObjectHandler`'s GET, no
+longer serve the Request Object kept in the transaction's record: a
+store writer without the sealing key could put another request's
+there, and have the holder answer that one. Each `Transactions` signs
+the request's Request Object from its sealed fields the first time it
+serves it, and serves that copy from memory to the fetches that follow
+while the record is unchanged. Expect one more signature per request
+and replica (a billed call with a KMS-backed signer), and Request
+Objects whose bytes differ between replicas; their claims are the
+same. A request_uri POST is signed for each fetch, as before. Upgrade
+every replica: one still on v0.81.0 serves the stored object. Rate
+limit the request_uri endpoint with the response endpoints
+(DEPLOYING.md).
+
 ### App Attest chains (`walletprovider/appattest`)
 
 `VerifyAttestation` takes only Apple's chain shape: an `x5c` of exactly

@@ -2,9 +2,12 @@ package verifier_test
 
 import (
 	"context"
+	"crypto"
 	"encoding/json"
+	"io"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -76,6 +79,69 @@ func TestTransactions_RequestObjectNotServedFromStore(t *testing.T) {
 		if !strings.HasPrefix(req.State, a.ID+".") {
 			t.Errorf("%s: A's request_uri serves state %q, not A's", name, req.State)
 		}
+	}
+}
+
+// countingSigner counts its signatures.
+type countingSigner struct {
+	crypto.Signer
+	n *atomic.Int64
+}
+
+func (s countingSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	s.n.Add(1)
+	return s.Signer.Sign(r, digest, opts)
+}
+
+// A request's Request Object is signed once by a Transactions, not for
+// each anonymous fetch of its request_uri: the fetches that follow get
+// the same object. Another request's is signed for it.
+func TestTransactions_RequestObjectSignedOncePerRequest(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	var n atomic.Int64
+	deps := f.vdeps
+	deps.Signer = countingSigner{deps.Signer, &n}
+	v, err := verifier.New(f.vcfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
+	txs, err := verifier.NewTransactions(v, store, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: f.verify})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-A-0123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-B-0123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := n.Load()
+	first, err := txs.RequestObject(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 10 {
+		again, err := txs.RequestObject(ctx, a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again != first {
+			t.Fatal("a later fetch served another Request Object")
+		}
+	}
+	other, err := txs.RequestObject(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == first {
+		t.Error("another request was served the first one's Request Object")
+	}
+	if got := n.Load() - before; got != 2 {
+		t.Errorf("%d signatures for 12 fetches of 2 requests, want 2", got)
 	}
 }
 
