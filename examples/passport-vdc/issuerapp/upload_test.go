@@ -31,7 +31,7 @@ func upload(t *testing.T, env *demotest.Env, data []byte) (*http.Response, strin
 	if err := mw.Close(); err != nil {
 		t.Fatalf("close multipart: %v", err)
 	}
-	resp, err := env.HTTP.Post(env.IssuerURL+"/demo/passport", mw.FormDataContentType(), &body)
+	resp, err := demotest.Post(env.HTTP, env.IssuerURL+"/demo/passport", mw.FormDataContentType(), &body)
 	if err != nil {
 		t.Fatalf("POST /passport: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSampleDocument(t *testing.T) {
 		t.Error("the upload page has no sample passport button")
 	}
 
-	resp, err = env.HTTP.PostForm(env.IssuerURL+"/demo/sample", url.Values{"counter": {"1"}})
+	resp, err = demotest.PostForm(env.HTTP, env.IssuerURL+"/demo/sample", url.Values{"counter": {"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestUploadPage_Options(t *testing.T) {
 			t.Errorf("the upload page lacks %q", want)
 		}
 	}
-	resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/sample", url.Values{"review": {"1"}, "keep": {"1"}})
+	resp, err := demotest.PostForm(env.HTTP, env.IssuerURL+"/demo/sample", url.Values{"review": {"1"}, "keep": {"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestOfferPage(t *testing.T) {
 		{url.Values{}, []string{"Confirmation code", "Show the confirmation code"}},
 		{url.Values{"counter": {"1"}}, []string{"PIN:", "Show the PIN", "Give it to the holder separately"}},
 	} {
-		resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/sample", tc.form)
+		resp, err := demotest.PostForm(env.HTTP, env.IssuerURL+"/demo/sample", tc.form)
 		if err != nil {
 			t.Fatal(err)
 		}

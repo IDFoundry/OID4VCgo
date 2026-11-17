@@ -227,7 +227,7 @@ func TestEndToEnd_Revocation(t *testing.T) {
 	if revoked == "" {
 		t.Fatal("the issuer recorded no mso_mdoc credential")
 	}
-	resp, err := env.HTTP.PostForm(env.IssuerURL+"/demo/status/revoke", url.Values{"handle": {revoked}})
+	resp, err := demotest.PostForm(env.HTTP, env.IssuerURL+"/demo/status/revoke", url.Values{"handle": {revoked}})
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

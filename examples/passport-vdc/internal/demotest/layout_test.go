@@ -1,10 +1,16 @@
 package demotest_test
 
 import (
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 )
 
@@ -116,5 +122,100 @@ func TestFormTargetsRedirectOnGet(t *testing.T) {
 		if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != tc.want {
 			t.Errorf("GET %s = %d to %q, want %d to %q", tc.url, resp.StatusCode, resp.Header.Get("Location"), http.StatusSeeOther, tc.want)
 		}
+	}
+}
+
+// demoRequest sends method to base+rawPath, the path spelled exactly as
+// given, with header, not following redirects; it returns the status.
+func demoRequest(t *testing.T, env *demotest.Env, method, base, rawPath string, header map[string]string) int {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path, err = url.PathUnescape(rawPath); err != nil {
+		t.Fatal(err)
+	}
+	u.RawPath = rawPath
+	var body io.Reader
+	if method == http.MethodPost {
+		body = strings.NewReader("scenario=age&keep=1")
+	}
+	req, err := http.NewRequest(method, u.String(), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+	client := *env.HTTP
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestDemoPagesRefuseAliasesAndOriginlessPosts: the pages under /demo/
+// answer only to their plain path — a percent-encoded or uncleaned
+// alias, which an edge rule on the raw path wouldn't match, is refused
+// — and a state-changing request needs the app's own Origin or
+// Referer, so a client sending neither can't revoke the document
+// signer, issue the unchecked sample or start a verifier request.
+func TestDemoPagesRefuseAliasesAndOriginlessPosts(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartVerifier(t, nil)
+	for _, tc := range []struct {
+		method, base, path string
+	}{
+		{http.MethodGet, env.IssuerURL, "/%64emo/status"},
+		{http.MethodGet, env.IssuerURL, "/demo%2Fstatus"},
+		{http.MethodPost, env.IssuerURL, "/%64emo/sample"},
+		{http.MethodPost, env.IssuerURL, "/%64emo/signer/revoke"},
+		{http.MethodPost, env.IssuerURL, "/x/%2e%2e/demo/signer/revoke"},
+		{http.MethodPost, env.VerifierURL, "/%64emo/requests"},
+	} {
+		origin := map[string]string{"Origin": tc.base}
+		if got := demoRequest(t, env, tc.method, tc.base, tc.path, origin); got != http.StatusBadRequest {
+			t.Errorf("%s %s%s = %d, want 400", tc.method, tc.base, tc.path, got)
+		}
+	}
+	for _, tc := range []struct{ base, path string }{
+		{env.IssuerURL, "/demo/sample"},
+		{env.IssuerURL, "/demo/signer/revoke"},
+		{env.IssuerURL, "/demo/status/revoke"},
+		{env.IssuerURL, "/demo/kept/forget"},
+		{env.IssuerURL, "/demo/review/decision"},
+		{env.VerifierURL, "/demo/requests"},
+	} {
+		if got := demoRequest(t, env, http.MethodPost, tc.base, tc.path, nil); got != http.StatusForbidden {
+			t.Errorf("POST %s%s with no Origin or Referer = %d, want 403", tc.base, tc.path, got)
+		}
+	}
+	if n := len(env.Issuer.RevokedSigners()); n != 0 {
+		t.Errorf("%d document signers revoked, want none", n)
+	}
+	if got := demoRequest(t, env, http.MethodPost, env.IssuerURL, "/demo/sample", map[string]string{"Referer": env.IssuerURL + "/demo/"}); got != http.StatusOK {
+		t.Errorf("POST /demo/sample with the issuer's Referer = %d, want 200", got)
+	}
+}
+
+// TestDemoPagesNeedAccessToken: with Cloudflare Access configured, the
+// pages under /demo/ need its token, and the protocol surface outside
+// them doesn't.
+func TestDemoPagesNeedAccessToken(t *testing.T) {
+	access := demoaccess.Settings{TeamDomain: "team.cloudflareaccess.example", Audience: "aud"}
+	env := demotest.New(t, nil, func(c *issuerapp.Config) { c.Access = access })
+	env.StartVerifier(t, nil, func(c *verifierapp.Config) { c.Access = access })
+	for _, base := range []string{env.IssuerURL, env.VerifierURL} {
+		if got := demoRequest(t, env, http.MethodGet, base, "/demo/", nil); got != http.StatusForbidden {
+			t.Errorf("GET %s/demo/ without an Access token = %d, want 403", base, got)
+		}
+	}
+	if got := demoRequest(t, env, http.MethodGet, env.IssuerURL, "/.well-known/openid-credential-issuer", nil); got != http.StatusOK {
+		t.Errorf("GET the issuer's metadata = %d, want it served without a token", got)
 	}
 }

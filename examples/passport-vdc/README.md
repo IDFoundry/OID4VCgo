@@ -489,6 +489,26 @@ surface wallets and verifiers call. Exposed through a tunnel, `/demo/`
 is the one path to put behind access control; see the iOS demo app's
 README ("Restricting the pages with Cloudflare Access").
 
+The servers back that rule themselves (`internal/demoaccess`):
+
+- A page under `/demo/` answers only to its plain path. A
+  percent-encoded or uncleaned alias such as `/%64emo/status` or
+  `/x/../demo/status`, which Go would otherwise route to the same page
+  but an edge rule on the raw path might not match, is refused (400).
+- A form post or other state-changing request under `/demo/` needs an
+  `Origin` header naming the server's own origin or, without one, a
+  `Referer` on it; one with neither is refused (403), as is another
+  site's. Browsers send `Origin` on every form post and `fetch`.
+- With `-cf-access-team-domain` (`example.cloudflareaccess.com`) and
+  `-cf-access-aud` (the Access application's Application Audience tag)
+  on `cmd/demo`, `cmd/issuer` or `cmd/verifier`, every request under
+  `/demo/` must carry a `Cf-Access-Jwt-Assertion` header holding a
+  token Cloudflare Access signed for that application (checked against
+  the team's keys at `https://<team domain>/cdn-cgi/access/certs`), so
+  a request reaching the origin some other way than through Access is
+  refused (403). Leave both flags unset for a local run, which has no
+  Access in front of it.
+
 ### Running the servers separately
 
 To run each server on its own (for example to restart or debug one),

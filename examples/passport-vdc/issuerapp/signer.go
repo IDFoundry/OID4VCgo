@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -78,7 +79,7 @@ func (a *App) RevokeDocumentSigner() error {
 // handleRevokeSigner revokes the document signer. A cross-origin form
 // post is refused, as handleRevoke refuses one.
 func (a *App) handleRevokeSigner(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}

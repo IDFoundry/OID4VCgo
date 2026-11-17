@@ -14,6 +14,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
@@ -401,7 +402,7 @@ func (a *App) handleUploadPage(w http.ResponseWriter, _ *http.Request) {
 // form post is refused, so another site can't start an offer through a
 // visitor's browser.
 func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
@@ -417,7 +418,7 @@ func (a *App) handleSample(w http.ResponseWriter, r *http.Request) {
 // handleUpload offers the uploaded passport once it verifies. A
 // cross-origin form post is refused, as handleSample's is.
 func (a *App) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}

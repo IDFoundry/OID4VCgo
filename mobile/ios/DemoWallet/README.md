@@ -341,6 +341,13 @@ open. So one Access rule per host guards them:
    emails a code, with no identity provider to set up.
 4. Save. Don't add `provider.example.com`: the app calls it, with no
    one to log in.
+5. Have the servers check Access's token too, so a request that reaches
+   them some other way is refused: copy the application's
+   **Application Audience (AUD) Tag** (its **Overview** tab) and your
+   team domain (`<team>.cloudflareaccess.com`, in Zero Trust's
+   **Settings**), and start the demo with
+   `-cf-access-team-domain <team>.cloudflareaccess.com -cf-access-aud <tag>`.
+   Both hostnames are in the one application, so one tag covers them.
 
 Opening `https://issuer.example.com/` then asks for your email and the
 code once, and the phone, which uses only the endpoints outside

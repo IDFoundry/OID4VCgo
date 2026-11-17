@@ -37,6 +37,7 @@ func TestEndToEnd_RevokedDocumentSigner(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", env.IssuerURL)
 	resp, err := env.HTTP.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +93,7 @@ func TestEndToEnd_RevokedDocumentSignerStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", env.IssuerURL)
 	resp, err := env.HTTP.Do(req)
 	if err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -408,7 +409,7 @@ func (a *App) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
 // handleRevoke revokes one credential. A cross-origin form post is
 // refused, so another site can't revoke through a visitor's browser.
 func (a *App) handleRevoke(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin revocation refused")
 		return
 	}

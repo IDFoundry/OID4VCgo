@@ -346,7 +346,7 @@ func cookieBrowser(t *testing.T, env *demotest.Env) *http.Client {
 // verifier's result page path and the redirect_uri the wallet sent b to.
 func shareSameDevice(t *testing.T, env *demotest.Env, b *http.Client) (resultPath string, redirect *url.URL) {
 	t.Helper()
-	resp, err := b.PostForm(env.VerifierURL+"/demo/requests", url.Values{"scenario": {"signup"}})
+	resp, err := demotest.PostForm(b, env.VerifierURL+"/demo/requests", url.Values{"scenario": {"signup"}})
 	resultPath = mustRedirect(t, resp, err, "POST /requests").Path
 	resp, err = b.Get(env.VerifierURL + resultPath)
 	if err != nil || resp.StatusCode != http.StatusOK {

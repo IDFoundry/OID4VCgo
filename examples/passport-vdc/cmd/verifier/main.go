@@ -20,6 +20,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
 )
@@ -37,6 +38,7 @@ func main() {
 	readerOut := flag.String("mdoc-reader-ca-out", "mdoc-reader-ca.pem", "where to write the demo's mdoc reader CA certificate, for wallets recognizing the readers that sign its Digital Credentials API (org-iso-mdoc) requests")
 	trust := flag.String("trust", "issuer-tls.pem", "comma-separated PEM files of TLS certificates to trust when fetching the issuer's status list (from cmd/issuer)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the request page's \"Open in web wallet\" button (empty to hide it)")
+	access := demoaccess.RegisterFlags(flag.CommandLine)
 	flag.Parse()
 
 	caPEM, err := os.ReadFile(*issuerCA) // #nosec G304 -- operator-supplied path
@@ -65,7 +67,7 @@ func main() {
 	app, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: *verifierURL, IssuerVCT: *issuerURL + "/vct/passport/1",
 		IssuerCAs: issuerCAs, CSCAPool: cscaPool, WebWalletURL: *webWallet,
-		HTTP: httpClient,
+		HTTP: httpClient, Access: *access,
 	})
 	if err != nil {
 		log.Fatal(err)

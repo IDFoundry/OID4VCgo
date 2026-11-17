@@ -32,6 +32,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democert"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
@@ -56,6 +57,7 @@ const VCTPath = "/vct/passport/1"
 type App struct {
 	cfg               Config
 	issuerURL         fapi.URL
+	origin            string // IssuerURL's origin, which the pages' forms post from
 	vct               string
 	credentialURL     url.URL
 	deferredURL       url.URL
@@ -124,6 +126,7 @@ func New(cfg Config) (*App, error) {
 	if a.issuerURL, err = parseIssuerURL(cfg.IssuerURL); err != nil {
 		return nil, err
 	}
+	a.origin = demoaccess.OriginOfURL(cfg.IssuerURL)
 	a.vct = cfg.IssuerURL + VCTPath
 	a.transactions = newTransactions(a.now, cfg.transactionLifetime(), KeepForRefresh, cfg.maxTransactions())
 	a.statusListURI = cfg.IssuerURL + StatusListPath
@@ -150,7 +153,11 @@ func New(cfg Config) (*App, error) {
 	if err := a.buildIssuer(); err != nil {
 		return nil, err
 	}
-	a.handler = a.routes()
+	access, err := cfg.Access.Verifier()
+	if err != nil {
+		return nil, fmt.Errorf("issuerapp: Access: %w", err)
+	}
+	a.handler = demoaccess.Guard(a.routes(), a.origin, access)
 	return a, nil
 }
 
