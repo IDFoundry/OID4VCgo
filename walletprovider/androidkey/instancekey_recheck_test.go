@@ -31,6 +31,11 @@ type providerFixture struct {
 	client    *walletprovider.Client
 	instances *walletprovider.MemoryInstanceStore
 	keys      *walletprovider.MemoryInstanceKeyStore
+	indices   *statuslist.MemoryIndexStore
+
+	e      walletprovider.EvidenceVerifier
+	signer crypto.Signer
+	chain  []*x509.Certificate
 
 	mu      sync.Mutex
 	refused []error // OnRecheckRefused's errors
@@ -46,14 +51,26 @@ func newProviderFixture(t *testing.T, e walletprovider.EvidenceVerifier) *provid
 	leafCert, signer := testcert.Issue(t, &x509.Certificate{
 		Subject: pkix.Name{CommonName: "Wallet Provider"}, KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{id},
 	}, ca, caKey)
-	f := &providerFixture{instances: &walletprovider.MemoryInstanceStore{}, keys: &walletprovider.MemoryInstanceKeyStore{}}
+	f := &providerFixture{
+		instances: &walletprovider.MemoryInstanceStore{}, keys: &walletprovider.MemoryInstanceKeyStore{}, indices: &statuslist.MemoryIndexStore{},
+		e: e, signer: signer, chain: []*x509.Certificate{leafCert},
+	}
+	f.serve(t, 42)
+	return f
+}
+
+// serve points the fixture's client at a new provider over its stores,
+// its Policy's MinAppVersion minAppVersion, as a redeploy with another
+// Policy does.
+func (f *providerFixture) serve(t *testing.T, minAppVersion uint64) {
+	t.Helper()
 	p, err := walletprovider.New(walletprovider.Config{
 		Identifier: "https://provider.example", ClientIDs: []string{"wallet"}, StatusListBaseURI: "https://provider.example/v1/status",
 		StatusListSize: 1024,
 		Policy: walletprovider.Policy{
 			Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{walletprovider.PlatformAndroid: {
 				SecurityLevels: []walletprovider.SecurityLevel{walletprovider.SecurityLevelTEE, walletprovider.SecurityLevelStrongBox},
-				MinAppVersion:  42, RequireVerifiedBoot: true,
+				MinAppVersion:  minAppVersion, RequireVerifiedBoot: true,
 			}},
 		},
 		OnRecheckRefused: func(_ context.Context, _ walletprovider.Instance, err error) {
@@ -62,10 +79,10 @@ func newProviderFixture(t *testing.T, e walletprovider.EvidenceVerifier) *provid
 			f.refused = append(f.refused, err)
 		},
 	}, walletprovider.Dependencies{
-		Signer: signer, Chain: []*x509.Certificate{leafCert},
+		Signer: f.signer, Chain: f.chain,
 		Instances: f.instances, InstanceKeys: f.keys,
 		Challenges:    &walletprovider.MemoryChallengeStore{},
-		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: []walletprovider.EvidenceVerifier{e},
+		StatusIndices: f.indices, Evidence: []walletprovider.EvidenceVerifier{f.e},
 		Random: rand.Reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -76,7 +93,20 @@ func newProviderFixture(t *testing.T, e walletprovider.EvidenceVerifier) *provid
 	if f.client, err = walletprovider.NewClient(ts.URL, walletprovider.ClientOptions{HTTP: ts.Client()}); err != nil {
 		t.Fatal(err)
 	}
-	return f
+}
+
+// keyStatus is the status of the instance id's one instance key.
+func (f *providerFixture) keyStatus(t *testing.T, id string) statuslist.StatusType {
+	t.Helper()
+	keys, err := f.keys.List(context.Background(), id, "", 2)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("the instance's keys: %v, %v; want one", keys, err)
+	}
+	status, err := f.indices.Status(context.Background(), keys[0].Status.URI, keys[0].Status.Idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
 }
 
 // challenge is a fresh challenge for purpose, and the raw bytes a
@@ -297,4 +327,49 @@ func TestRecheckInstanceKeyChain(t *testing.T) {
 			t.Fatalf("the instance is %s, want revoked", got)
 		}
 	})
+}
+
+// TestInstanceRefusalKeepsInstanceKeyRevocation: when the instance
+// itself is refused for another reason than revocation — the provider's
+// Policy or the Verifier tightened — Google's REVOKED or SUSPENDED
+// verdict on the chain of the instance key the request names, which
+// the registration's chain doesn't share, still wins: the instance is
+// revoked or suspended, its key's status set, and the verdict reported
+// to OnRecheckRefused, not the instance's refusal.
+func TestInstanceRefusalKeepsInstanceKeyRevocation(t *testing.T) {
+	raisePolicy := func(w *rkpWallet, t *testing.T) { w.f.serve(t, 43) }
+	raiseVerifier := func(w *rkpWallet, _ *testing.T) { w.v.MinOSPatchLevel = 202601 }
+	for _, tc := range []struct {
+		name     string
+		tighten  func(*rkpWallet, *testing.T)
+		status   string
+		request  func(*rkpWallet, *testing.T) error
+		verdict  error
+		state    walletprovider.State
+		keyState statuslist.StatusType
+	}{
+		{"renewal, Policy raised, revoked", raisePolicy, androidkey.StatusRevoked, renewing, walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid},
+		{"renewal, Verifier raised, revoked", raiseVerifier, androidkey.StatusRevoked, renewing, walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid},
+		{"renewal, Policy raised, suspended", raisePolicy, androidkey.StatusSuspended, renewing, walletprovider.ErrEvidenceSuspended, walletprovider.StateSuspended, statuslist.StatusSuspended},
+		{"Key Attestation, Policy raised, revoked", raisePolicy, androidkey.StatusRevoked, (*rkpWallet).keyAttestation, walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRKPWallet(t, rkpOpts{})
+			w.v.Revocation = listingSerial(t, serialKey(w.instance.inter), tc.status)
+			tc.tighten(w, t)
+			var refused *walletprovider.RefusedError
+			if err := tc.request(w, t); !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
+				t.Fatalf("request = %v, want evidence_rejected", err)
+			}
+			if got := w.f.state(t, w.id); got != tc.state {
+				t.Fatalf("the instance is %s, want %s", got, tc.state)
+			}
+			if got := w.f.keyStatus(t, w.id); got != tc.keyState {
+				t.Fatalf("the instance key's status is %v, want %v", got, tc.keyState)
+			}
+			if r := w.f.refusals(); len(r) != 1 || !errors.Is(r[0], tc.verdict) {
+				t.Fatalf("OnRecheckRefused got %v, want one refusal wrapping %v", r, tc.verdict)
+			}
+		})
+	}
 }

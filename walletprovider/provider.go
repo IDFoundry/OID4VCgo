@@ -202,7 +202,13 @@ type Config struct {
 	// one of its recorded instance keys, before a Wallet or Key
 	// Attestation — or the Policy, as it is now, refuses either, or the
 	// instance's evidence Kind has no configured verifier (both
-	// ErrPolicy) — with the refusal and the instance as stored once the
+	// ErrPolicy). It's called once per request, with the refusal the
+	// request fails with: when both the Policy and the rechecker refuse,
+	// that's the rechecker's if it wraps ErrEvidenceRevoked or
+	// ErrEvidenceSuspended, and the Policy's otherwise, the rechecker's
+	// then going unreported. A revocation or suspension of the instance
+	// key the request names wins over the instance's other refusals
+	// too. It's called with the refusal and the instance as stored once the
 	// provider has acted on it: StateRevoked or StateSuspended when the
 	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
 	// provider revoked or suspended it, with a Reason naming the

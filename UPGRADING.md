@@ -334,7 +334,11 @@ or SUSPENDED certificate revokes or suspends the instance even when a
 root removed from `Roots` or a tightened `Verifier` would refuse it
 too; a list that can't be fetched no longer stops a root or policy
 refusal. The provider runs an instance's rechecker even when its own
-`Policy` refuses the instance or instance key, and
+`Policy` refuses the instance or instance key, and, when the instance
+is refused for another reason, still rechecks the instance key a Wallet
+or Key Attestation request names: a REVOKED or SUSPENDED certificate
+of that key's own chain revokes or suspends the instance, answered
+`evidence_rejected` where it was `policy_refused`. And
 `Config.OnRecheckRefused` is now called for a `Policy` refusal too
 (`ErrPolicy`, the instance left active): an alert keyed on that
 callback sees refusals it didn't before.

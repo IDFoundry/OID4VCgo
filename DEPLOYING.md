@@ -321,7 +321,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
   suspension). Google's verdict is consulted first, and wins even when
   a root removed from `Roots`, a tightened `Verifier` or a tightened
-  `Policy` would refuse the instance too. A root removed or a tightened
+  `Policy` would refuse the instance too — whether it names the
+  registration's chain, or the chain of the instance key the request
+  names, which under Remote Key Provisioning can have intermediates of
+  its own. A root removed or a tightened
   policy alone only refuses: to make such instances' attestations
   `INVALID` too, revoke them with `p.RevokeWhere(ctx, match, reason)`,
   `match` calling the adapter's `Recheck` or reading
