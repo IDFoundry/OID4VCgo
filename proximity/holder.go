@@ -30,9 +30,6 @@ type DeviceSession struct {
 	eReaderKey             *ecdsa.PublicKey
 	cipher                 *cipherState
 	closed                 bool
-	// rejected counts the first messages TrySessionEstablishment
-	// rejected.
-	rejected int
 }
 
 type deviceConfig struct {
@@ -222,12 +219,6 @@ func (s *DeviceSession) HandleSessionEstablishment(msg []byte) ([]byte, error) {
 	return deviceRequest, nil
 }
 
-// MaxRejectedEstablishments is how many first messages
-// TrySessionEstablishment rejects, leaving the session waiting, before
-// the next one that doesn't decode or decrypt closes the session as
-// HandleSessionEstablishment would.
-const MaxRejectedEstablishments = 16
-
 // TrySessionEstablishment is HandleSessionEstablishment for a message
 // whose sender isn't yet known to be the reader. Until a message has
 // decrypted, one that doesn't decode or decrypt — its sender doesn't
@@ -235,9 +226,13 @@ const MaxRejectedEstablishments = 16
 // wrapping ErrEstablishmentRejected and leaves the session waiting for
 // its reader: send nothing back, and drop the device that sent it if
 // the transport can tell. The message reveals nothing about the
-// session. After MaxRejectedEstablishments such messages, the next
-// closes the session with the error HandleSessionEstablishment would
-// give (status 10 or 11, §9.1.1.4). An error once the message has
+// session.
+//
+// There is no limit on rejections: any limit would let devices that
+// never saw the engagement end the session for its reader, by sending
+// that many. What bounds the wait is the caller's own timeout for the
+// reader's request, and what bounds the cost is the transport's own
+// limit on messages per device. An error once the message has
 // decrypted closes the session as HandleSessionEstablishment's does.
 //
 // For NFC data retrieval it is HandleSessionEstablishment: the reader
@@ -253,8 +248,7 @@ func (s *DeviceSession) TrySessionEstablishment(msg []byte) ([]byte, error) {
 	if err == nil {
 		return deviceRequest, nil
 	}
-	if rejectable && s.rejected < MaxRejectedEstablishments {
-		s.rejected++
+	if rejectable {
 		return nil, fmt.Errorf("%w: %w", ErrEstablishmentRejected, err)
 	}
 	s.close()

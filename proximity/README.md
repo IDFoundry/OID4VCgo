@@ -124,8 +124,8 @@ notifications.
    nearby device can be first to write, as a GATT server can be,
    `TrySessionEstablishment`: a first message that doesn't decode or
    decrypt is `ErrEstablishmentRejected`, gets no reply, and leaves the
-   session waiting for its reader, up to `MaxRejectedEstablishments`
-   times; §9.1.1.4's status 10 then applies), then
+   session waiting for its reader, however many arrive: the
+   transport's own timeout for the request bounds the wait), then
    `DecodeDeviceRequest`, then `VerifyDeviceRequest` with its trusted
    reader roots, and shows a consent prompt: who is asking, what, and
    whether the reader says it will keep each element. A reader that
