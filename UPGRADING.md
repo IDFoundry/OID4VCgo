@@ -169,7 +169,9 @@ a front end routing by the raw path and a server comparing the
 normalized `htu` would read it as different resources. This reaches
 pre-authorized code tokens, deferred credential polls and refreshes
 without client authentication. An issuer whose metadata names such an
-endpoint must name it in normal form.
+endpoint must name it in normal form. `Wallet.GenerateDPoPProof` applies
+the same rule to its `htu`, and refuses one that isn't a URL, for a
+caller building DPoP requests of its own.
 
 ### Presented certificate chains are checked in order
 

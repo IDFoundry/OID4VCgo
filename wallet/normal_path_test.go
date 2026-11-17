@@ -22,6 +22,8 @@ var nonNormalPaths = map[string]string{
 	"single encoded dot":      "https://issuer.example/a/%2e/credential",
 	"encoded unreserved char": "https://issuer.example/cred%65ntial",
 	"encoded tilde":           "https://issuer.example/%7Euser/credential",
+	"dot-dot segment":         "https://issuer.example/tenant-a/../tenant-b/credential",
+	"trailing dot segment":    "https://issuer.example/credential/.",
 }
 
 // The wallet's DPoP clients refuse, before sending anything, an endpoint
@@ -79,5 +81,24 @@ func TestDPoPClients_RefuseNonNormalPaths(t *testing.T) {
 	}
 	if sent != 2 {
 		t.Errorf("sent %d requests to the normal path, want 2", sent)
+	}
+}
+
+// GenerateDPoPProof, exported for a caller's own sender-constrained
+// requests, refuses an htu whose path isn't in normal form, as the
+// wallet's own DPoP clients refuse such an endpoint.
+func TestGenerateDPoPProof_RefusesNonNormalPaths(t *testing.T) {
+	w := newTestWalletWithHTTP(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("GenerateDPoPProof sent a request")
+		return nil, nil
+	})
+	key := testP256Key(t)
+	for name, raw := range nonNormalPaths {
+		if _, err := w.GenerateDPoPProof(key, http.MethodPost, raw, "", ""); err == nil || !strings.Contains(err.Error(), "dot segments") {
+			t.Errorf("%s: %v, want it refused", name, err)
+		}
+	}
+	if _, err := w.GenerateDPoPProof(key, http.MethodPost, "https://issuer.example/tenant%2fa/credential", "", ""); err != nil {
+		t.Errorf("normal path: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
@@ -33,7 +34,19 @@ const dpopJTIEntropyBytes = 16
 // presenting the token, with ath set to DPoPAccessTokenHash(token).
 // It's exported for a caller building sender-constrained requests of
 // its own.
+//
+// It refuses an htu that isn't a URL whose path is in normal form: one
+// with a "." or ".." segment or a percent-encoded unreserved character
+// (RFC 3986 §6.2.2), which a front end routing by the raw path and a
+// server comparing the normalized htu would read as different
+// resources. The request the proof is for must be sent to that same
+// normal path.
 func (w *Wallet) GenerateDPoPProof(signer crypto.Signer, htm, htu, nonce, ath string) (string, error) {
+	if target, err := url.Parse(htu); err != nil {
+		return "", fmt.Errorf("wallet: generate dpop proof: htu: %w", err)
+	} else if !hasNormalPath(target) {
+		return "", fmt.Errorf("wallet: generate dpop proof: htu: %w", errNonNormalPath)
+	}
 	pub, err := jwk.Marshal(signer.Public())
 	if err != nil {
 		return "", fmt.Errorf("wallet: generate dpop proof: marshal jwk: %w", err)
