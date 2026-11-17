@@ -49,6 +49,7 @@ func TestOpenIsDurable(t *testing.T) {
 	cfg := walletflow.Config{
 		ClientID: "wallet", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: roots, IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{},
+		CredentialIssuers: []string{"https://issuer.example"},
 	}
 	if _, err := walletflow.New(cfg, s.Dependencies(walletflow.Dependencies{})); err != nil {
 		t.Fatalf("walletflow at production assurance: %v", err)

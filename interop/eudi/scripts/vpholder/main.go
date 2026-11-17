@@ -79,6 +79,9 @@ type options struct {
 	issuerCA, iaca, verifierCA     string
 	crlPublisher, crlTrust         string
 	clientID                       string
+	// credentialIssuers are the issuers whose offers the wallet takes
+	// (walletflow.Config.CredentialIssuers).
+	credentialIssuers []string
 	// allowedPrivateHosts are the hosts production's client may reach
 	// at a private address (walletflow.Config.AllowedPrivateHosts).
 	allowedPrivateHosts []string
@@ -146,6 +149,10 @@ func main() {
 	fs.StringVar(&o.crlPublisher, "crl-publisher", "", "the CRLs to publish, a conformancecrl.Publisher's JSON (required)")
 	fs.StringVar(&o.crlTrust, "crl-trust", "", "the CRL distribution points to check against, a conformancecrl.Trust's JSON (required)")
 	fs.StringVar(&o.clientID, "client-id", "", "the client_id the Wallet Provider attests the wallet as (required)")
+	fs.Func("credential-issuer", "the Credential Issuer Identifier whose offers the wallet takes (repeatable; required)", func(issuer string) error {
+		o.credentialIssuers = append(o.credentialIssuers, issuer)
+		return nil
+	})
 	fs.Func("allowed-private-host", "production: a host the wallet may reach at a private address (repeatable)", func(host string) error {
 		o.allowedPrivateHosts = append(o.allowedPrivateHosts, host)
 		return nil
@@ -172,8 +179,8 @@ func main() {
 // check refuses flags that don't make a step.
 func (o options) check() error {
 	if o.store == "" || o.out == "" || o.issuerCA == "" || o.iaca == "" || o.verifierCA == "" ||
-		o.crlPublisher == "" || o.crlTrust == "" || o.clientID == "" {
-		return errors.New("-store, -out, -issuer-ca, -iaca, -verifier-ca, -crl-publisher, -crl-trust and -client-id are required")
+		o.crlPublisher == "" || o.crlTrust == "" || o.clientID == "" || len(o.credentialIssuers) == 0 {
+		return errors.New("-store, -out, -issuer-ca, -iaca, -verifier-ca, -crl-publisher, -crl-trust, -client-id and -credential-issuer are required")
 	}
 	switch o.assurance {
 	case assuranceDevelopment:
@@ -255,7 +262,7 @@ func newWallet(o options, stores *prodwallet.Stores, provider walletflow.WalletP
 	}
 	cfg := walletflow.Config{
 		ClientID:    o.clientID,
-		IssuerRoots: issuerRoots, MdocIssuerRoots: iaca,
+		IssuerRoots: issuerRoots, MdocIssuerRoots: iaca, CredentialIssuers: o.credentialIssuers,
 		IssuerRevocation: revocation, StatusRevocation: revocation,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 		Development:   o.assurance == assuranceDevelopment,

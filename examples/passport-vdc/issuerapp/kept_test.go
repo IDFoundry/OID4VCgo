@@ -25,7 +25,8 @@ func refreshingWallet(t *testing.T, env *demotest.Env) *walletflow.Wallet {
 	cfg := env.WalletConfig()
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, IssuerRoots: cfg.IssuerRoots, Development: true,
-		RequestRefresh: true,
+		CredentialIssuers: cfg.CredentialIssuers,
+		RequestRefresh:    true,
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),
 		Grants: walletflow.NewMemoryGrantStore(), Provider: cfg.Provider, HTTP: env.HTTP,

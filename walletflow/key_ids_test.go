@@ -42,7 +42,7 @@ func (s *oneIDKeys) Key(_ context.Context, id string) (walletflow.Key, error) {
 func TestRequestCredentials_KeyStoreReusingIDs(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{
 		Keys: &oneIDKeys{MemoryKeyStore: walletflow.NewMemoryKeyStore()}, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP,
 	})

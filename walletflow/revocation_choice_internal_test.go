@@ -13,8 +13,12 @@ import (
 // declined is c with certrevocation.NoCheck{} for each revocation
 // Checker it leaves nil, VerifierTrust's included: the explicit choice
 // New requires outside Development of a configuration testing something
-// else.
+// else. A c that receives credentials without deciding which issuers'
+// offers it takes, which New requires too, takes testIssuer's.
 func declined(c Config) Config {
+	if c.checkCredentialIssuerTrust() != nil && !c.AllowAnyCredentialIssuer {
+		c.CredentialIssuers = []string{testIssuer}
+	}
 	for _, field := range []*certrevocation.Checker{
 		&c.IssuerRevocation, &c.StatusRevocation, &c.IssuerMetadataRevocation, &c.RegistrarRevocation, &c.MdocReaderRevocation,
 	} {
@@ -42,6 +46,10 @@ func declined(c Config) Config {
 // Checker, certrevocation.NoCheck{} to decline: a nil one is refused,
 // naming the field, rather than silently checking nothing. A role not
 // in use needs none, and Development needs none at all.
+// testIssuer is the Credential Issuer whose offers declined has a
+// configuration take.
+const testIssuer = "https://issuer.example"
+
 func TestNew_RevocationChosen(t *testing.T) {
 	deps := redirectDeps()
 	pool := func(name string) *x509.CertPool {
@@ -91,7 +99,7 @@ func TestNew_RevocationChosen(t *testing.T) {
 	}
 	// Only the roles in use need one: an mdoc-only wallet's issuer roles
 	// and nothing else.
-	mdocOnly := Config{MdocIssuerRoots: pool("IACA")}
+	mdocOnly := Config{MdocIssuerRoots: pool("IACA"), CredentialIssuers: []string{testIssuer}}
 	if _, err := New(mdocOnly, deps); err == nil || !strings.Contains(err.Error(), "Config.IssuerRevocation") {
 		t.Errorf("mdoc-only wallet without IssuerRevocation: New = %v", err)
 	}

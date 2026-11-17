@@ -189,7 +189,7 @@ func TestCheckStatus_IdentifierListUnderIssuerCA(t *testing.T) {
 			c := mdocCredential(t, time.Now().Add(time.Hour), issueUnder(t, ds, dsKey, func(c *mdoc.Claims) {
 				c.IdentifierList = &mdoc.IdentifierListRef{ID: []byte{tc.id}, URI: uri}
 			}))
-			w := walletHoldingWith(t, walletflow.Config{Development: true, MdocIssuerRoots: roots}, client, c)
+			w := walletHoldingWith(t, walletflow.Config{Development: true, CredentialIssuers: []string{"https://issuer.example"}, MdocIssuerRoots: roots}, client, c)
 			checked, err := w.CheckStatus(context.Background(), c.ID)
 			switch {
 			case tc.want == "" && err == nil:

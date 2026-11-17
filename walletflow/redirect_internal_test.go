@@ -67,7 +67,7 @@ func TestNew_RedirectURIForm(t *testing.T) {
 		"https://wallet.example/cb#x",
 	} {
 		for _, dev := range []bool{false, true} {
-			_, err := New(Config{ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool(), Development: dev}, redirectDeps())
+			_, err := New(Config{ClientID: "wallet", RedirectURI: uri, CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool(), Development: dev}, redirectDeps())
 			if err == nil || !strings.Contains(err.Error(), "Config.RedirectURI") {
 				t.Errorf("New(RedirectURI %q, Development %v) = %v, want it refused", uri, dev, err)
 			}
@@ -84,7 +84,7 @@ func TestNew_RedirectURIForm(t *testing.T) {
 	for _, uri := range []string{"com.example.wallet:/callback", "com.example.wallet://callback", "eu.europa.ec.euidi://authorization"} {
 		for _, dev := range []bool{false, true} {
 			w, err := New(Config{
-				ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool(), Development: dev,
+				ClientID: "wallet", RedirectURI: uri, CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool(), Development: dev,
 				IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{},
 			}, redirectDeps())
 			if err != nil {
@@ -120,7 +120,7 @@ func FuzzNativeRedirect(f *testing.F) {
 		f.Add(s, true)
 	}
 	f.Fuzz(func(t *testing.T, uri string, dev bool) {
-		w, err := New(Config{ClientID: "wallet", RedirectURI: uri, IssuerRoots: x509.NewCertPool(), Development: dev}, redirectDeps())
+		w, err := New(Config{ClientID: "wallet", RedirectURI: uri, CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool(), Development: dev}, redirectDeps())
 		if err != nil || uri == "" {
 			return
 		}

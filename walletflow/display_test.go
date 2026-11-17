@@ -23,7 +23,7 @@ func TestDisplay(t *testing.T) {
 			prefs = []string{locales}
 		}
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 			Development: true, Locales: prefs,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {
@@ -147,7 +147,7 @@ func TestStartIssuance_RequireSignedIssuerMetadata(t *testing.T) {
 		roots := x509.NewCertPool()
 		roots.AddCert(other)
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 			IssuerMetadataRoots: roots, RequireSignedIssuerMetadata: require,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {

@@ -350,6 +350,50 @@ return `ErrConfig` (the provider's HTTP 500) for an instance of
 another Kind than `androidkey.EvidenceKind`, where they accepted it:
 don't serve the adapter under a Kind of your own.
 
+### A wallet decides which issuers' offers it takes (`walletflow`)
+
+A pre-authorized offer's transaction code goes to the issuer the offer
+names before `IssuerRoots` judge that issuer, so a phishing offer
+naming an attacker's issuer, beside a genuine service's PIN, hands the
+attacker the PIN (SECURITY.md, "Transaction code phishing").
+`walletflow.New` now refuses, at every assurance level, development
+included, a `Config` that receives credentials (`IssuerRoots`,
+`MdocIssuerRoots` or `MdocIssuerRootsByDocType` set) without deciding
+which issuers' offers it takes, in one of three ways:
+
+- `CredentialIssuers`, the Credential Issuer Identifiers it takes
+  offers from: `StartIssuance` refuses any other's offer with
+  `ErrUntrustedIssuer` before fetching its metadata;
+- `IssuerMetadataRoots` (holding a certificate) with
+  `RequireSignedIssuerMetadata` and `RequireIssuerMetadataName`, all
+  three: only issuers whose metadata a certificate under those roots
+  signs and names them in, also checked in `StartIssuance`. It may be
+  combined with `CredentialIssuers`, and both then apply;
+- the new `AllowAnyCredentialIssuer`, which takes any issuer's offer
+  and leaves the phishing to the application. It can't be set with
+  either of the others.
+
+An empty identifier in `CredentialIssuers` is refused too. A wallet
+that receives no credentials needs none of them.
+
+```go
+// Before
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots: issuerRoots, // ...
+}, deps)
+// After: the issuers you take offers from
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots:       issuerRoots,
+	CredentialIssuers: []string{"https://issuer.example.com"}, // ...
+}, deps)
+// Or, where issuers can't be listed: signed metadata naming its issuer
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots: issuerRoots, IssuerMetadataRoots: metadataRoots,
+	IssuerMetadataRevocation: metadataCRLs.Checker(),
+	RequireSignedIssuerMetadata: true, RequireIssuerMetadataName: true, // ...
+}, deps)
+```
+
 ### DCQL queries over the limits are refused before duplicates are dropped (`wallet`, `walletflow`, mobile)
 
 A presentation request whose DCQL query has more than 64 credential

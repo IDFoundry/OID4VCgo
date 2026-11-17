@@ -158,7 +158,7 @@ func TestProximityPresentationReaderTrust(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, err := walletflow.New(walletflow.Config{
-				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 				MdocReaderRoots: reader.roots, RequireTrustedMdocReader: tc.require, Development: true,
 			}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 			if err != nil {
@@ -370,7 +370,7 @@ func TestProximityPresentationDeviceAuth(t *testing.T) {
 			keys := &agreeingKeys{MemoryKeyStore: f.keys, signOnly: tc.signOnly}
 			reader := newMdocReader(t)
 			w, err := walletflow.New(walletflow.Config{
-				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 				MdocReaderRoots: reader.roots, Development: true, ProximityDeviceAuth: tc.auth,
 			}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 			if err != nil {
@@ -418,7 +418,7 @@ func TestDeviceMACPreferredOnlyInPerson(t *testing.T) {
 	reader := newMdocReader(t)
 	keys := &agreeingKeys{MemoryKeyStore: f.keys}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: v.Trust, MdocReaderRoots: reader.roots, Development: true,
 		ProximityDeviceAuth: walletflow.ProximityDeviceMACPreferred,
 	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})

@@ -36,7 +36,10 @@ func ExampleNew() {
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: issuerRoots, IssuerRevocation: issuerCRLs.Checker(), StatusRevocation: issuerCRLs.Checker(),
-		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: verifierCRLs.Checker()},
+		// The issuers whose offers the wallet takes, so a transaction
+		// code never goes to another.
+		CredentialIssuers: []string{"https://issuer.example.com"},
+		VerifierTrust:     wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: verifierCRLs.Checker()},
 	}, walletflow.Dependencies{Keys: keys, Credentials: credentials, Authorizations: authorizations, Provider: provider})
 	if err != nil {
 		panic(err)

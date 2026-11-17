@@ -43,6 +43,7 @@ func TestMdocIssuerTrust(t *testing.T) {
 	} {
 		cfg := tc.cfg
 		cfg.ClientID, cfg.RedirectURI, cfg.Development = walletflowtest.ClientID, walletflowtest.RedirectURI, true
+		cfg.CredentialIssuers = []string{f.env.IssuerURL}
 		w, err := walletflow.New(cfg, walletflow.Dependencies{
 			Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: f.env.Provider, HTTP: f.env.HTTP,
 		})

@@ -205,6 +205,10 @@ type Options struct {
 	// their status list entries, before they're signed: to issue copies
 	// that differ, which a wallet must refuse.
 	AlterBatch func(batch []*issuer.CredentialInstance)
+	// SignMetadata, if set, has the issuer sign its Credential Issuer
+	// Metadata (OpenID4VCI 1.0 §12.2.3) for a wallet that asks for it,
+	// with the signer it returns given the issuer's identifier.
+	SignMetadata func(issuerURL string) *issuer.MetadataSigner
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -524,7 +528,11 @@ func New(opts Options) (env *Env, err error) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(asMetadataJSON)
 	})
-	metadata, err := issuer.NewMetadataHandler(e.iss, nil)
+	var metadataSigner *issuer.MetadataSigner
+	if opts.SignMetadata != nil {
+		metadataSigner = opts.SignMetadata(e.IssuerURL)
+	}
+	metadata, err := issuer.NewMetadataHandler(e.iss, metadataSigner)
 	if err != nil {
 		return nil, err
 	}

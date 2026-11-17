@@ -31,7 +31,7 @@ func TestIssuance_SDJWTDefaultIssuerRole(t *testing.T) {
 		f := newFixture(t, tc.opts)
 		w, err := walletflow.New(walletflow.Config{
 			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-			IssuerRoots: f.env.IssuerRoots, IssuerLeafPolicy: tc.policy,
+			CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerLeafPolicy: tc.policy,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -61,7 +61,7 @@ func TestCheckStatus_SDJWTDefaultIssuerRole(t *testing.T) {
 	walletWith := func(policy func(*x509.Certificate, [][]*x509.Certificate) error) *walletflow.Wallet {
 		w, err := walletflow.New(walletflow.Config{
 			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-			IssuerRoots: f.env.IssuerRoots, IssuerLeafPolicy: policy,
+			CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerLeafPolicy: policy,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {
 			t.Fatal(err)

@@ -198,19 +198,39 @@ type Config struct {
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
 
-	// CredentialIssuers, if set, are the only Credential Issuer
-	// Identifiers the wallet takes offers from: StartIssuance refuses an
-	// offer naming another with ErrUntrustedIssuer, before fetching its
-	// metadata, so the holder is never asked for its PIN. Unset, any
-	// issuer's offer is shown, and IssuerRoots decide only when its
-	// credential arrives: a transaction code the holder enters reaches
-	// an issuer the wallet hasn't decided to trust (OpenID4VCI 1.0's
-	// Security Considerations, "Transaction Code Phishing"). Where it
-	// can't be a fixed
-	// list, set RequireSignedIssuerMetadata and
-	// RequireIssuerMetadataName, and show Offer.CredentialIssuer beside
-	// the PIN prompt.
+	// CredentialIssuers are the only Credential Issuer Identifiers the
+	// wallet takes offers from, each compared exactly with an offer's
+	// credential_issuer: StartIssuance refuses an offer naming another
+	// with ErrUntrustedIssuer, before fetching its metadata, so the
+	// holder is never asked for a transaction code it would send there
+	// (OpenID4VCI 1.0's Security Considerations, "Transaction Code
+	// Phishing"). An empty identifier is refused.
+	//
+	// A wallet that receives credentials (IssuerRoots, MdocIssuerRoots
+	// or MdocIssuerRootsByDocType set) must decide which issuers' offers
+	// it takes, in development too, in one of three ways, or New refuses
+	// it:
+	//   - CredentialIssuers;
+	//   - signed issuer metadata naming its issuer: IssuerMetadataRoots,
+	//     holding a certificate, with RequireSignedIssuerMetadata and
+	//     RequireIssuerMetadataName, all three; StartIssuance then
+	//     refuses an issuer without such metadata before the holder
+	//     enters a code. Both this and CredentialIssuers may be set, and
+	//     both then apply;
+	//   - AllowAnyCredentialIssuer, which can't be set with either.
 	CredentialIssuers []string
+
+	// AllowAnyCredentialIssuer takes offers from any Credential Issuer:
+	// the explicit choice, in place of CredentialIssuers or signed and
+	// named issuer metadata (see CredentialIssuers), for a wallet whose
+	// issuers can't be told apart in advance. IssuerRoots then decide
+	// only when a credential arrives, so a transaction code the holder
+	// enters reaches whichever issuer an offer names, and an attacker's
+	// offer sent beside a genuine service's PIN phishes it (SECURITY.md,
+	// "Transaction code phishing"). Guarding against that is then the
+	// application's: at least lead the PIN prompt with
+	// Offer.CredentialIssuer, not IssuerName.
+	AllowAnyCredentialIssuer bool
 
 	// IssuanceProfile is the profile issuance follows. The zero value,
 	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
@@ -581,6 +601,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	}
 	// The caller's slice stays theirs: changing it later changes nothing.
 	cfg.AllowedPrivateHosts = slices.Clone(cfg.AllowedPrivateHosts)
+	cfg.CredentialIssuers = slices.Clone(cfg.CredentialIssuers)
 	systemClock := deps.Clock == nil
 	deps, err := withDefaultDependencies(cfg, deps)
 	if err != nil {
@@ -738,8 +759,39 @@ func (c Config) validateChoices() error {
 		return fmt.Errorf("walletflow: Config.BatchSize %d is negative", c.BatchSize)
 	case c.ProofKeyByJWK && c.ProofKeyByIndex:
 		return errors.New("walletflow: Config.ProofKeyByJWK and ProofKeyByIndex name a proof's key in two ways; set one")
+	case slices.Contains(c.CredentialIssuers, ""):
+		return errors.New("walletflow: Config.CredentialIssuers names an empty issuer")
+	}
+	return c.checkCredentialIssuerTrust()
+}
+
+// checkCredentialIssuerTrust refuses a Config that receives credentials
+// without deciding which issuers' offers it takes, and one that decides
+// it twice over: CredentialIssuers, signed and named issuer metadata
+// (requiresNamedIssuerMetadata), or AllowAnyCredentialIssuer, which
+// can't be set with either of the others.
+func (c Config) checkCredentialIssuerTrust() error {
+	listed, named := len(c.CredentialIssuers) > 0, c.requiresNamedIssuerMetadata()
+	switch {
+	case c.AllowAnyCredentialIssuer && (listed || named):
+		return errors.New("walletflow: Config.AllowAnyCredentialIssuer takes any issuer's offer, " +
+			"but CredentialIssuers or RequireSignedIssuerMetadata with RequireIssuerMetadataName limit them; set one")
+	case c.receivesCredentials() && !listed && !named && !c.AllowAnyCredentialIssuer:
+		return errors.New("walletflow: a wallet receiving credentials must decide which issuers' offers it takes: " +
+			"Config.CredentialIssuers; or IssuerMetadataRoots with RequireSignedIssuerMetadata and RequireIssuerMetadataName; " +
+			"or AllowAnyCredentialIssuer to take any issuer's (see its doc on transaction code phishing)")
 	}
 	return nil
+}
+
+// requiresNamedIssuerMetadata reports whether only issuers whose
+// metadata is signed under IssuerMetadataRoots by a certificate naming
+// them are shown: RequireSignedIssuerMetadata and
+// RequireIssuerMetadataName, with IssuerMetadataRoots holding a
+// certificate.
+func (c Config) requiresNamedIssuerMetadata() bool {
+	return c.RequireSignedIssuerMetadata && c.RequireIssuerMetadataName &&
+		c.IssuerMetadataRoots != nil && !c.IssuerMetadataRoots.Equal(x509.NewCertPool())
 }
 
 // validateRevocation refuses a role's revocation Checker that reports

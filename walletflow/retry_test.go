@@ -64,7 +64,7 @@ func faultyWallet(t *testing.T, f fixture, verifiers testVerifier, credentials w
 		credentials = f.store
 	}
 	cfg := walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}
 	if verifiers.Verifier != nil {
 		cfg.VerifierTrust = verifiers.Trust

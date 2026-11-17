@@ -152,7 +152,7 @@ func newProximityWallet(t *testing.T) proximityWallet {
 	pw := proximityWallet{reader: reader, wallets: map[bool]*walletflow.Wallet{}}
 	for _, require := range []bool{false, true} {
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 			MdocReaderRoots: reader.roots, RequireTrustedMdocReader: require, Development: true,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {

@@ -340,7 +340,7 @@ func TestProductionRedirectURI(t *testing.T) {
 			t.Errorf("RedirectURI %q: a resumed issuance's client doesn't build: %v", uri, err)
 		}
 	}
-	dev, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), Development: true}, deps)
+	dev, err := New(Config{ClientID: "wallet", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), CredentialIssuers: []string{testIssuer}, Development: true}, deps)
 	if err != nil || dev == nil {
 		t.Fatalf("New(Development, https RedirectURI) = %v, want it taken", err)
 	}

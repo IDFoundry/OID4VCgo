@@ -191,6 +191,10 @@ func (p *peer) walletReceive(ctx context.Context, req request) (reply, error) {
 	client := &http.Client{Timeout: 30 * time.Second, Transport: rec}
 	w, err := walletflow.New(walletflow.Config{
 		Development: true, ClientID: goClientID, IssuerRoots: roots, IssuanceProfile: walletflow.ProfileHAIP,
+		// The driver hands each offer over from the Multipaz issuer it
+		// starts in process, on a port it picks per run: the issuer is
+		// open here, as a wallet app's must not be.
+		AllowAnyCredentialIssuer: true,
 	}, walletflow.Dependencies{Keys: p.keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client, Provider: prov})
 	if err != nil {
 		return reply{}, err

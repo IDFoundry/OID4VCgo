@@ -13,6 +13,7 @@ package main
 import (
 	"flag"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
@@ -27,6 +28,7 @@ func main() {
 	store := flag.String("store", "wallet-store", "directory the wallet keeps credentials in (shared with cmd/wallet)")
 	providerURL := flag.String("wallet-provider-url", "https://127.0.0.1:6443", "the demo Wallet Provider's service (cmd/wallet-provider)")
 	clientID := flag.String("client-id", "passport-vdc-wallet", "this wallet's client_id")
+	credentialIssuers := flag.String("trust-issuer", "https://127.0.0.1:8543", "comma-separated Credential Issuer Identifiers whose offers to take (cmd/issuer's -issuer)")
 	issuerCA := flag.String("trust-issuer-ca", "issuer-ca.pem", "comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := flag.String("trust-verifier-ca", "verifier-ca.pem", "comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	trust := flag.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider)")
@@ -49,8 +51,11 @@ func main() {
 		log.Fatalf("%v (start cmd/verifier first)", err)
 	}
 	app, err := webwallet.New(webwallet.Config{
-		WalletURL:     *walletURL,
-		Wallet:        walletapp.Config{ClientID: *clientID, Provider: provider, IssuerRoots: issuerRoots, HTTP: httpClient},
+		WalletURL: *walletURL,
+		Wallet: walletapp.Config{
+			ClientID: *clientID, Provider: provider, IssuerRoots: issuerRoots, HTTP: httpClient,
+			CredentialIssuers: strings.Split(*credentialIssuers, ","),
+		},
 		Store:         walletapp.Store{Dir: *store},
 		VerifierTrust: verifierTrust,
 	})
