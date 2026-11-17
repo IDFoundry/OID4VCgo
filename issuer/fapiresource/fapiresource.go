@@ -10,6 +10,20 @@
 // the store the server revokes into, so a token the server revokes
 // stops working at the Credential Endpoint too, and matches its
 // access-token format.
+//
+// Build one resource.Verifier per Credential Issuer, with
+// serverresource.Options.Resource set to that issuer's Config.Issuer,
+// so only a token issued for it (requested with it as its RFC 8707
+// resource) is accepted. Without Options.Resource, the verifier accepts
+// tokens addressed to the Authorization Server itself, which is safe
+// only when the Authorization Server serves this one Credential Issuer:
+// one serving several issues each one's tokens alike, and a token
+// issued for one would be taken for its own by another, which would
+// look its own holder up by the other issuer's subject. The Grant
+// carries the token's audience either way (issuer.AuthorizedRequest.Audience),
+// and the Issuer refuses one that doesn't name it unless
+// issuer.Config.AcceptedAccessTokenAudiences lists the Authorization
+// Server.
 package fapiresource
 
 import (
@@ -44,7 +58,8 @@ func New(v *resource.Verifier) (*Verifier, error) {
 // nothing is bound to a client for that request, and a deferred
 // transaction bound to a client refuses it. Its AuthorizationDetails
 // are the token's authorization_details claim; a malformed one fails
-// verification.
+// verification. Its Audience is the token's audience, never nil, so the
+// Issuer checks it names this Credential Issuer.
 //
 // Only an end user's token is accepted (resource.SubjectEndUser): a
 // client credentials token's subject is the client's own client_id,
@@ -75,9 +90,13 @@ func (v *Verifier) Verify(r *http.Request, endpoint *url.URL) (issuer.Grant, err
 		client = issuer.KnownClientID(authCtx.ClientID)
 	}
 	grant := issuer.Grant{
-		Subject:    authCtx.InternalSubject,
-		DPoPNonce:  authCtx.NextDPoPNonce,
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes},
+		Subject:   authCtx.InternalSubject,
+		DPoPNonce: authCtx.NextDPoPNonce,
+		Authorized: issuer.AuthorizedRequest{
+			ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes,
+			// Never nil, so the Issuer always checks it.
+			Audience: append([]string{}, authCtx.Audience...),
+		},
 	}
 	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 		if err := strictjson.Unmarshal(raw, &grant.Authorized.AuthorizationDetails); err != nil {

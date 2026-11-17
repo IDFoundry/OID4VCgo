@@ -411,6 +411,21 @@ type RedeemedPreAuthorizedCode struct {
 	// them (§6.2). Empty when the record names none.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
 
+	// Resource is this Credential Issuer's identifier (Config.Issuer):
+	// the RFC 8707 resource the access token must be restricted to, as
+	// ExchangePreAuthorizedCode restricts the tokens it issues. Pass it
+	// as fapigo/server's IssueAccessTokenRequest.Resources (the
+	// Authorization Server must accept it: list it in its
+	// Config.Resources), so the token's "aud" names this Credential
+	// Issuer rather than the Authorization Server. Otherwise every
+	// Credential Issuer the Authorization Server serves would take the
+	// token for its own, and issue its own holder's Credential for the
+	// token's Subject, which is meaningful to this issuer only; this
+	// issuer itself refuses it too (AuthorizedRequest.Audience) unless
+	// Config.AcceptedAccessTokenAudiences lists the Authorization
+	// Server.
+	Resource string
+
 	binding VerifiedTokenRequest
 	record  PreAuthorizedCodeRecord
 }
@@ -427,9 +442,9 @@ type RedeemedPreAuthorizedCode struct {
 // req.AuthorizationDetails, consumes it once all of them pass — a
 // refused request leaves it redeemable — and mints the
 // authorization_details. The caller then issues the access
-// token for the result's Subject, Scope and AuthorizationDetails, bound
-// to the request's DPoP key, and writes the Token Response with the
-// authorization_details in it. A failure to issue after this succeeded
+// token for the result's Subject, Scope and AuthorizationDetails,
+// restricted to its Resource and bound to the request's DPoP key, and
+// writes the Token Response with the authorization_details in it. A failure to issue after this succeeded
 // leaves the code spent.
 //
 // So the Authorization Server must accept the openid_credential
@@ -496,7 +511,7 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 	}
 	return RedeemedPreAuthorizedCode{
 		ClientID: binding.ClientID, Subject: record.Subject, Scope: record.Scopes, AuthorizationDetails: authDetails,
-		binding: binding, record: record,
+		Resource: iss.cfg.Issuer.String(), binding: binding, record: record,
 	}, nil
 }
 

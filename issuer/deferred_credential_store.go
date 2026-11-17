@@ -105,11 +105,22 @@ type DeferredTransactionRecord struct {
 	// token that still authorizes this identifier for
 	// CredentialConfigurationID (§9: "valid for the issuance of the
 	// Credential(s) previously requested"), not merely one granting the
-	// configuration through another of its identifiers. A record
-	// without it, one by credential_configuration_id or saved before
-	// this field existed, is checked against the configuration alone. A
-	// store must persist it like any other field.
+	// configuration through another of its identifiers. A store must
+	// persist it like any other field.
 	CredentialIdentifier string
+
+	// RequestedByConfigurationID marks a transaction whose deferred
+	// Credential Request named a credential_configuration_id.
+	// RequestCredential sets it when it defers one.
+	// RequestDeferredCredential then answers only an access token the
+	// Credential Endpoint would accept a credential_configuration_id
+	// request from for CredentialConfigurationID: not one whose
+	// authorization detail for it carries credential_identifiers, which
+	// §8.2 says must be used instead. A record with neither it nor
+	// CredentialIdentifier, saved before these fields existed or created
+	// by a deployment itself, is checked against the configuration
+	// alone. A store must persist it like any other field.
+	RequestedByConfigurationID bool
 
 	// KeyAttestations are the compact Key Attestation JWTs (Appendix D)
 	// that attested BindingKeys, each once, when the request's proofs

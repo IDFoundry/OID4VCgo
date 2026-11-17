@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 )
 
 // NonceSpender is a NonceStore that also records the c_nonces the
@@ -85,7 +86,7 @@ func statelessNonce(random io.Reader, key []byte, owner string, exp time.Time) (
 		return "", err
 	}
 	copy(raw[statelessNonceExpBytes+statelessNonceRandomBytes:], statelessNonceTag(key, owner, raw[:statelessNonceExpBytes+statelessNonceRandomBytes]))
-	return statelessNoncePrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+	return statelessNoncePrefix + b64url.Encoding{}.EncodeToString(raw), nil
 }
 
 func statelessNonceTag(key []byte, owner string, body []byte) []byte {
@@ -104,10 +105,11 @@ var errStatelessNonceForged = errors.New("the c_nonce's tag doesn't verify under
 // openStatelessNonce is the expiry of nonce, a stateless c_nonce, if
 // one of keys tagged it for owner.
 func openStatelessNonce(keys [][]byte, owner, nonce string) (time.Time, error) {
-	// Strict: a nonce is spent by its string, so no other string may
-	// decode to its bytes, as one differing in the last character's
-	// unused bits otherwise would.
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimPrefix(nonce, statelessNoncePrefix))
+	// A nonce is spent by its string, so no other string may decode to
+	// its bytes: b64url refuses one differing in the last character's
+	// unused bits, and one with a '\r' or '\n' inserted, which
+	// encoding/base64 skips even in Strict mode.
+	raw, err := b64url.Encoding{}.DecodeString(strings.TrimPrefix(nonce, statelessNoncePrefix))
 	if err != nil || len(raw) != statelessNonceBytes {
 		return time.Time{}, errors.New("the c_nonce is malformed")
 	}

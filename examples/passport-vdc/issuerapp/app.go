@@ -215,6 +215,10 @@ func (a *App) buildAuthorizationServer() error {
 	cfg.Endpoints = server.Endpoints{Authorization: authorize, Token: token, PushedAuthorizationRequest: par, JWKS: jwks, Revocation: revoke}
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
+	// The Credential Issuer is the one resource its tokens may be
+	// restricted to (RFC 8707): the pre-authorized code grant's always
+	// are (RedeemedPreAuthorizedCode.Resource).
+	cfg.Resources = []string{a.issuerURL.String()}
 	// A passport kept for refresh gives the wallet a refresh token
 	// lasting as long as the passport is kept (OfferOptions.KeepForRefresh).
 	cfg.Limits.RefreshTokenLifetime = KeepForRefresh
@@ -269,7 +273,11 @@ func (a *App) buildAuthorizationServer() error {
 	if a.resourceVerifier, err = serverresource.NewVerifier(cfg, deps, serverresource.Options{
 		// The Credential Endpoint and the rest are under the issuer.
 		ResourceURLs: []fapi.URL{cfg.Issuer},
-		Nonces:       a.stores.dpopNonces, NonceLifetime: 5 * time.Minute,
+		// Only tokens issued for this Credential Issuer: the AS's own
+		// identifier is the same, so tokens issued without a resource
+		// are too.
+		Resource: a.issuerURL.String(),
+		Nonces:   a.stores.dpopNonces, NonceLifetime: 5 * time.Minute,
 	}); err != nil {
 		return fmt.Errorf("issuerapp: resource verifier: %w", err)
 	}

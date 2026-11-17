@@ -99,7 +99,7 @@ func (iss *Issuer) checkDeferredCredentialRequest(auth AuthorizedRequest, req De
 	if iss.deps.DeferredTransactions == nil {
 		return fmt.Errorf("issuer: request deferred credential: deferred issuance is not configured")
 	}
-	if err := requireClientIdentityDecision(auth); err != nil {
+	if err := iss.checkAuthorized(auth); err != nil {
 		return err
 	}
 	if req.TransactionID == "" {

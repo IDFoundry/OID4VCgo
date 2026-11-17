@@ -122,7 +122,8 @@ func (iss *Issuer) startDeferral(ctx context.Context, auth AuthorizedRequest, co
 		Owner:    iss.storeOwner(),
 		ClientID: auth.ClientID(), Subject: auth.Subject, Status: DeferredTransactionPending,
 		CredentialConfigurationID: configID, CredentialIdentifier: identifier,
-		BindingKeys: bindingKeys, Reference: d.Reference,
+		RequestedByConfigurationID: identifier == "",
+		BindingKeys:                bindingKeys, Reference: d.Reference,
 		ExpiresAt:       iss.deps.Clock.Now().Add(iss.cfg.Limits.DeferredTransactionLifetime),
 		KeyAttestations: keyAttestations, ProofKeyHeaders: proofKeyHeaders,
 	}
@@ -521,25 +522,31 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 
 // deferredAuthorized reports whether auth may poll record: it's
 // record's owner (deferredOwner), and, §9, the access token is still
-// "valid for the issuance of the Credential(s) previously requested".
-// For a transaction requested by credential_identifier (§8.2), that is
-// the token still authorizing that identifier, for the transaction's
-// configuration, as RequestCredential resolves one: a token authorized
-// only for another identifier of the same configuration (another
-// dataset) may not collect it. For one requested by
-// credential_configuration_id, or saved before
-// DeferredTransactionRecord.CredentialIdentifier existed, it is the
-// token granting the transaction's configuration at all.
+// "valid for the issuance of the Credential(s) previously requested":
+// resolved as the Credential Endpoint resolves the request the
+// transaction was deferred for. For one by credential_identifier
+// (§8.2), the token still authorizes that identifier for the
+// transaction's configuration: a token authorized only for another
+// identifier of the same configuration (another dataset) may not
+// collect it. For one by credential_configuration_id, the token passes
+// authorizeCredentialConfigurationID: one whose authorization detail
+// for the configuration carries credential_identifiers may not collect
+// it. A record saved before either marker existed is checked against
+// the token granting the configuration at all.
 func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
 	if !deferredOwner(record, auth) {
 		return false
 	}
-	if record.CredentialIdentifier != "" {
+	id := record.CredentialConfigurationID
+	cc := iss.cfg.CredentialConfigurationsSupported[id]
+	switch {
+	case record.CredentialIdentifier != "":
 		configID, _, err := iss.resolveCredentialConfiguration(auth, CredentialRequest{CredentialIdentifier: record.CredentialIdentifier})
-		return err == nil && (record.CredentialConfigurationID == "" || configID == record.CredentialConfigurationID)
+		return err == nil && (id == "" || configID == id)
+	case record.RequestedByConfigurationID:
+		return iss.authorizeCredentialConfigurationID(auth, id, cc) == nil
 	}
-	return record.CredentialConfigurationID == "" ||
-		iss.grantsConfiguration(auth, record.CredentialConfigurationID, iss.cfg.CredentialConfigurationsSupported[record.CredentialConfigurationID])
+	return id == "" || iss.grantsConfiguration(auth, id, cc)
 }
 
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded

@@ -161,7 +161,8 @@ func verifyPreAuthorizedClient(ctx context.Context, srv *server.Server, req serv
 }
 
 // preAuthorizedGrant is a redeemed pre-authorized code's grant: what the
-// code granted, to the client and DPoP key the Token Request verified.
+// code granted, to the client and DPoP key the Token Request verified,
+// restricted to the Credential Issuer that redeemed it.
 func preAuthorizedGrant(attested server.AttestedClient, binding server.TokenBinding, redeemed issuer.RedeemedPreAuthorizedCode) (server.IssueAccessTokenRequest, error) {
 	subject, err := server.NewSubjectID(redeemed.Subject)
 	if err != nil {
@@ -177,7 +178,7 @@ func preAuthorizedGrant(attested server.AttestedClient, binding server.TokenBind
 	}
 	return server.IssueAccessTokenRequest{
 		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
-		Scope: redeemed.Scope, AuthorizationDetails: details,
+		Scope: redeemed.Scope, AuthorizationDetails: details, Resources: []string{redeemed.Resource},
 	}, nil
 }
 

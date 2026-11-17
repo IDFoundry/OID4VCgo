@@ -70,6 +70,12 @@ const (
 	// [RFC6750]", which is 403 insufficient_scope with a
 	// WWW-Authenticate challenge (RFC 6750 §3.1; RFC 9449 §7.1 for DPoP).
 	ErrorInsufficientScope ErrorCode = "insufficient_scope"
+
+	// ErrorInvalidToken refuses an access token issued for another
+	// resource server (AuthorizedRequest.Audience): 401 invalid_token
+	// with a WWW-Authenticate challenge (RFC 6750 §3.1; RFC 9449 §7.1
+	// for DPoP).
+	ErrorInvalidToken ErrorCode = "invalid_token"
 )
 
 // Error is the error type RequestCredential returns for a Credential
@@ -134,11 +140,15 @@ func (e *Error) Unwrap() error { return e.cause }
 // built from Code and PublicDescription — never Unwrap's cause. Must
 // be called before anything else writes to w.
 func (e *Error) WriteJSON(w http.ResponseWriter) {
-	if e.code == ErrorInsufficientScope {
-		// The token may be DPoP-bound or, outside HAIP, a Bearer token:
-		// the challenge names both schemes.
+	// The token may be DPoP-bound or, outside HAIP, a Bearer token: the
+	// challenge names both schemes.
+	switch e.code {
+	case ErrorInsufficientScope:
 		w.Header().Add("WWW-Authenticate", `DPoP error="insufficient_scope"`)
 		w.Header().Add("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+	case ErrorInvalidToken:
+		w.Header().Add("WWW-Authenticate", `DPoP error="invalid_token"`)
+		w.Header().Add("WWW-Authenticate", `Bearer error="invalid_token"`)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// RFC 6749 §5.2 has a Token Endpoint's error responses, which

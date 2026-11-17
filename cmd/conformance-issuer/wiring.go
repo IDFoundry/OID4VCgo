@@ -169,6 +169,10 @@ func newServers(cfg Config) (servers, error) {
 	}
 	srvCfg.Assurance = server.AssuranceDevelopment
 	srvCfg.Limits.MaxClientAttestationLifetime = clientAttestationLifetime
+	// The Credential Issuer is the one resource its tokens may be
+	// restricted to (RFC 8707): the pre-authorized code grant's always
+	// are (RedeemedPreAuthorizedCode.Resource).
+	srvCfg.Resources = []string{issuerURL.String()}
 	if cfg.Offers != nil {
 		// The Token Endpoint also serves the pre-authorized code grant,
 		// so its metadata lists it.
@@ -231,7 +235,11 @@ func newServers(cfg Config) (servers, error) {
 		// The Credential, Nonce, Notification and Deferred Credential
 		// Endpoints are all under the issuer.
 		ResourceURLs: []fapi.URL{srvCfg.Issuer},
-		Nonces:       resourceNonces, NonceLifetime: dpopNonceLifetime,
+		// Only tokens issued for this Credential Issuer: the AS's own
+		// identifier is the same, so tokens issued without a resource
+		// are too.
+		Resource: issuerURL.String(),
+		Nonces:   resourceNonces, NonceLifetime: dpopNonceLifetime,
 	})
 	if err != nil {
 		return servers{}, fmt.Errorf("serverresource.NewVerifier: %w", err)

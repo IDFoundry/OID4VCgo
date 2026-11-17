@@ -948,6 +948,16 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if err := store.Create(ctx, "txn2", want); err == nil {
 			t.Error("Create reused a transaction_id")
 		}
+		byConfigurationID := issuer.DeferredTransactionRecord{
+			Owner: contractOwner, Status: issuer.DeferredTransactionPending,
+			CredentialConfigurationID: "pid", RequestedByConfigurationID: true,
+		}
+		if err := store.Create(ctx, "txn3", byConfigurationID); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if got, err := store.Get(ctx, "txn3"); err != nil || !got.RequestedByConfigurationID {
+			t.Errorf("Get after Create = %+v, %v, want RequestedByConfigurationID kept", got, err)
+		}
 	})
 
 	t.Run("Update", func(t *testing.T) {

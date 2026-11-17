@@ -18,6 +18,7 @@ import (
 // differently.
 func cloneConfig(cfg Config) Config {
 	cfg.AuthorizationServers = slices.Clone(cfg.AuthorizationServers)
+	cfg.AcceptedAccessTokenAudiences = slices.Clone(cfg.AcceptedAccessTokenAudiences)
 	cfg.CredentialConfigurationsSupported = cloneConfigurations(cfg.CredentialConfigurationsSupported)
 	cfg.Display = cloneDisplays(cfg.Display)
 	if cfg.RequestEncryption != nil {

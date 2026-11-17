@@ -70,7 +70,7 @@ func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return "", fmt.Errorf("issuer: issue notification id: notifications are not configured")
 	}
-	if err := requireClientIdentityDecision(auth); err != nil {
+	if err := iss.checkAuthorized(auth); err != nil {
 		return "", err
 	}
 	raw := make([]byte, notificationIDEntropyBytes)
@@ -112,7 +112,7 @@ func (iss *Issuer) RequestNotification(ctx context.Context, auth AuthorizedReque
 	if iss.deps.Notifications == nil {
 		return fmt.Errorf("issuer: request notification: notifications are not configured")
 	}
-	if err := requireClientIdentityDecision(auth); err != nil {
+	if err := iss.checkAuthorized(auth); err != nil {
 		return err
 	}
 	if req.NotificationID == "" {

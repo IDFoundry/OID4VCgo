@@ -129,14 +129,33 @@ These are risks the library documents rather than closes: most because
 closing them is up to a party it doesn't control, the rest because
 they're not yet closed in the library.
 
-- **Bearer access tokens.** Under `walletflow.ProfileOpenID4VCI` a
-  wallet takes a Bearer access token where the Authorization Server
-  issues one (OpenID4VCI §13.2). It asks for the token for the offer's
-  Credential Issuer (RFC 8707 `resource`), but only the Authorization
-  Server can restrict the token to that issuer. If it doesn't, an
-  issuer sharing the Authorization Server with another can redeem the
-  token it receives at the other, for a credential about the End-User.
-  `walletflow.ProfileHAIP` takes only DPoP-bound tokens.
+- **Access tokens not restricted to one Credential Issuer.** A wallet
+  asks for its access token for the offer's Credential Issuer (RFC 8707
+  `resource`), but only the Authorization Server can restrict the token
+  to that issuer: one that doesn't addresses it to itself, and every
+  Credential Issuer it serves may take it for its own. Any offer's
+  metadata can name any Authorization Server (`authorization_servers`),
+  so the Credential Issuer a wallet sends its token to needn't be one
+  the Authorization Server knows of or trusts. Two cases:
+  - Under `walletflow.ProfileOpenID4VCI` a wallet takes a Bearer access
+    token where the Authorization Server issues one (OpenID4VCI §13.2).
+    The issuer the wallet presents it to can redeem it at another
+    Credential Issuer using the same Authorization Server, for a
+    credential about the End-User. `walletflow.ProfileHAIP` takes only
+    DPoP-bound tokens, which the issuer can't present without the
+    wallet's DPoP key.
+  - DPoP doesn't stop the token's own holder. A token's subject is
+    meaningful to the Credential Issuer it was issued for (a
+    pre-authorized code's `Subject`, say), and another Credential
+    Issuer on the same Authorization Server, taking the token for its
+    own, issues its own holder of that subject value's credential, to
+    the token's holder. An `issuer.Issuer` refuses a token whose
+    audience, as `issuer/fapiresource` reports it, doesn't name it
+    (`AuthorizedRequest.Audience`; `Config.AcceptedAccessTokenAudiences`
+    opts out for an Authorization Server serving it alone). Issue each
+    pre-authorized token with `RedeemedPreAuthorizedCode.Resource`, and
+    set `serverresource.Options.Resource` to each Credential Issuer's
+    identifier; a verifier of your own must check the audience itself.
 - **Relayed key attestations.** A key attestation names no audience,
   and the `c_nonce` it carries comes from an unauthenticated Nonce
   Endpoint (OpenID4VCI 1.0 Appendix D, §7). An issuer can hand a wallet

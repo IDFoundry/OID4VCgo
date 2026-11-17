@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"slices"
 
+	fapi "github.com/idfoundry/fapigo"
+
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
@@ -94,6 +96,21 @@ type AuthorizedRequest struct {
 	// "authorization_details" array directly into this field, rather
 	// than hand-rolling an equivalent wire type themselves.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
+
+	// Audience is the access token's audience ("aud", RFC 7519 §4.1.3;
+	// RFC 8707 §2), as its verifier read it. When it isn't nil,
+	// RequestCredential, RequestDeferredCredential, RequestNotification
+	// and IssueNotificationID refuse the token, 401 invalid_token,
+	// unless it names Config.Issuer or one of
+	// Config.AcceptedAccessTokenAudiences: an Authorization Server
+	// serving several Credential Issuers issues each one's tokens with
+	// the same "iss", and a Subject that's meaningful to one issuer
+	// only, so a token issued for one Credential Issuer must not be
+	// accepted by another. issuer/fapiresource always sets it. Nil
+	// leaves the audience to the caller's own token verification: a
+	// verifier of its own must then accept only tokens issued for this
+	// Credential Issuer itself.
+	Audience []string
 }
 
 // ClientIdentity is who AuthorizedRequest's caller resolved the access
@@ -150,6 +167,32 @@ func requireClientIdentityDecision(auth AuthorizedRequest) error {
 	default:
 		return fmt.Errorf("issuer: authorized_request.client_identity is required; set it to issuer.KnownClientID(...) or issuer.NoClientIdentity{} to acknowledge this deployment doesn't bind requests to a client")
 	}
+}
+
+// checkAuthorized is what every public method consuming an
+// AuthorizedRequest checks first: its ClientIdentity was decided
+// (requireClientIdentityDecision), and its Audience, when known, names
+// this Credential Issuer (AuthorizedRequest.Audience).
+func (iss *Issuer) checkAuthorized(auth AuthorizedRequest) error {
+	if err := requireClientIdentityDecision(auth); err != nil {
+		return err
+	}
+	if auth.Audience == nil || iss.acceptsAudience(auth.Audience) {
+		return nil
+	}
+	return newError(ErrorInvalidToken, 401,
+		"the access token wasn't issued for this Credential Issuer: its audience doesn't name it", nil)
+}
+
+// acceptsAudience reports whether audience names Config.Issuer or one
+// of Config.AcceptedAccessTokenAudiences.
+func (iss *Issuer) acceptsAudience(audience []string) bool {
+	if slices.Contains(audience, iss.cfg.Issuer.String()) {
+		return true
+	}
+	return slices.ContainsFunc(iss.cfg.AcceptedAccessTokenAudiences, func(u fapi.URL) bool {
+		return slices.Contains(audience, u.String())
+	})
 }
 
 // CredentialRequest is a Credential Request (§8.2).
@@ -422,10 +465,11 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 }
 
 // checkCredentialRequestTransport checks what comes before the request
-// itself: auth's client identity was decided, and req's request and
+// itself: auth's client identity was decided and its audience names
+// this issuer, and req's request and
 // response encryption meet this issuer's requirements.
 func (iss *Issuer) checkCredentialRequestTransport(auth AuthorizedRequest, req CredentialRequest) error {
-	if err := requireClientIdentityDecision(auth); err != nil {
+	if err := iss.checkAuthorized(auth); err != nil {
 		return err
 	}
 	if err := iss.requireRequestEncryption(req.RequestWasEncrypted, req.ResponseEncryption != nil); err != nil {

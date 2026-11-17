@@ -24,7 +24,18 @@ package issuer
 // serverDeps, serverresource.Options{...}), which checks revocation
 // against the store the server revokes into and matches its token
 // format. Its Options.ResourceURLs (required) are the URLs the
-// endpoints are reached under: the Credential Issuer's, say. Its
+// endpoints are reached under: the Credential Issuer's, say. Set its
+// Options.Resource to the Credential Issuer's Config.Issuer, one
+// verifier per Credential Issuer, so it accepts only tokens issued for
+// that issuer (requested with it as their RFC 8707 resource, or, for
+// the pre-authorized code, issued with RedeemedPreAuthorizedCode.Resource).
+// Without it, the verifier accepts tokens addressed to the
+// Authorization Server itself: safe only when the Authorization Server
+// serves this one Credential Issuer, or has the Credential Issuer's own
+// identifier. An Authorization Server serving several issues each
+// one's tokens with the same "iss", and a subject meaningful to one
+// issuer only, so another would take the token for its own and issue
+// its own holder's Credential for that subject. Its
 // Options.Nonces turns on DPoP nonce challenges at these
 // endpoints (RFC 9449 §9), so a DPoP proof must carry a nonce the
 // issuer handed out rather than relying on its iat window and jti
@@ -60,12 +71,18 @@ package issuer
 //	if authCtx.ClientID != "" {
 //		client = issuer.KnownClientID(authCtx.ClientID)
 //	}
-//	auth := issuer.AuthorizedRequest{ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes}
+//	auth := issuer.AuthorizedRequest{
+//		ClientIdentity: client, Subject: authCtx.InternalSubject, Scopes: authCtx.Scopes,
+//		Audience: append([]string{}, authCtx.Audience...),
+//	}
 //	if raw, ok := authCtx.Claims["authorization_details"]; ok {
 //		if err := json.Unmarshal(raw, &auth.AuthorizationDetails); err != nil {
 //			// malformed claim — treat the same as a verification failure.
 //		}
 //	}
+//
+// Audience lets the Issuer refuse a token that wasn't issued for it
+// (AuthorizedRequest.Audience), whatever the verifier accepted.
 //
 // credentialEndpointURL is the endpoint's absolute URL, under one of
 // the verifier's ResourceURLs: the URL the Wallet called, which a DPoP

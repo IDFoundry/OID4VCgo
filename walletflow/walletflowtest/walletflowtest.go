@@ -299,6 +299,9 @@ func New(opts Options) (env *Env, err error) {
 	// its credentials (OpenID4VCI 1.0 §13.5).
 	asCfg.Limits.RefreshTokenLifetime = time.Hour
 	asCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
+	// The Credential Issuer is the one resource its tokens may be
+	// restricted to (RFC 8707).
+	asCfg.Resources = []string{e.issuerURL().String()}
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(ClientID), ProviderIssuer)
 	// A wallet is a native app: its redirect URIs may be private-use
 	// schemes and loopback http too (RFC 8252), in production as well.
@@ -340,7 +343,11 @@ func New(opts Options) (env *Env, err error) {
 	resourceVerifier, err := serverresource.NewVerifier(asCfg, deps, serverresource.Options{
 		// The Credential Endpoint and the rest are under the issuer.
 		ResourceURLs: []fapi.URL{asCfg.Issuer},
-		Nonces:       memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
+		// Only tokens issued for this Credential Issuer: the AS's own
+		// identifier is the same, so tokens issued without a resource
+		// are too.
+		Resource: e.issuerURL().String(),
+		Nonces:   memstore.NewNonceStore(), NonceLifetime: 5 * time.Minute,
 	})
 	must(err)
 	dpopTokens, err := fapiresource.New(resourceVerifier)
@@ -1115,6 +1122,8 @@ func (e *Env) issuePreAuthorizedRefreshToken(ctx context.Context, attested serve
 		// token grants the configurations by scope, and the wallet then
 		// requests them by credential_configuration_id.
 		Scope: result.Scope, GrantID: grantID,
+		// As ExchangePreAuthorizedCode restricts the access token.
+		Resources: []string{e.issuerURL().String()},
 	})
 }
 
