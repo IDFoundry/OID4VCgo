@@ -593,6 +593,14 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         // quitting.
         closeIssuance()
         result.deferred.forEach(::track)
+        // Accepted: keep their logos now, so showing them fetches nothing.
+        keepLogos(result.credentials)
+    }
+
+    /** Fetches and keeps [credentials]' logos (LogoStore). */
+    private suspend fun keepLogos(credentials: List<CredentialSummary>) {
+        val config = config ?: return
+        LogoStore.fetch(getApplication(), credentials, DevelopmentTLS.socketFactory(getApplication(), config))
     }
 
     // Deferred credentials
@@ -657,6 +665,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                     // refresh below, and the new credential wouldn't show.
                     forget(id, cancel = false)
                     phase = Phase.Done("Received a deferred credential")
+                    keepLogos(listOf(status.credential))
                     refresh()
                 }
             }
