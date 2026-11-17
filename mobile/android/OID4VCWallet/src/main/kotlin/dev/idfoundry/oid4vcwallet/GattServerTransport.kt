@@ -37,7 +37,7 @@ import java.util.UUID
  * and [receive] returns each candidate's first message, while it keeps
  * advertising, until [commit] picks the device whose message Go
  * accepted; [reject] drops one Go rejected. Only then does it stop
- * advertising and disconnect the others.
+ * advertising and disconnect the others. [BleCandidates] keeps the list.
  */
 @SuppressLint("MissingPermission")
 internal class GattServerTransport(
@@ -59,24 +59,15 @@ internal class GattServerTransport(
     /** The committed peer's messages. */
     private val incoming = Channel<ByteArray>(INCOMING_MESSAGE_CAPACITY)
     /** Each candidate's first message, until one is committed to. */
-    private val firsts = Channel<Pair<BluetoothDevice, ByteArray>>(2 * MAX_CANDIDATES)
+    private val firsts = Channel<Pair<BluetoothDevice, ByteArray>>(2 * BleCandidates.MAX_CANDIDATES)
     private val notified = Channel<Int>(Channel.CONFLATED)
     private val sending = Mutex()
     private val reassembler = BleChunks.Reassembler()
 
-    /** A device that started a session, before one was committed to. */
-    private class Candidate {
-        val reassembler = BleChunks.Reassembler()
-        /** Whether its first message was queued: it sends no more before a reply. */
-        var delivered = false
-    }
-
-    /** Devices that started a session, oldest first; under this object's lock. */
-    private val candidates = LinkedHashMap<BluetoothDevice, Candidate>()
+    /** Devices that started a session, before one was committed to; under this object's lock. */
+    private val candidates = BleCandidates<BluetoothDevice>()
     /** The candidate whose first message [receive] returned last; under the lock. */
     private var pending: BluetoothDevice? = null
-    /** Devices dropped ([reject], or a malformed chunk): never again; under the lock. */
-    private val refused = HashSet<BluetoothDevice>()
 
     /** The device committed to ([commit]): the reader. */
     @Volatile private var peer: BluetoothDevice? = null
@@ -120,7 +111,7 @@ internal class GattServerTransport(
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mtus.remove(device)
-                    if (device == peer) fail(disconnectionFailure(manager)) else synchronized(this@GattServerTransport) { candidates.remove(device) }
+                    if (device == peer) fail(disconnectionFailure(manager)) else synchronized(this@GattServerTransport) { candidates.end(device) }
                 }
             }
         }
@@ -168,7 +159,7 @@ internal class GattServerTransport(
     /** Whether [device] is to be let go: another once one is committed to, or one refused. */
     private fun unwanted(device: BluetoothDevice): Boolean {
         val p = peer
-        return if (p != null) device != p else synchronized(this) { device in refused }
+        return if (p != null) device != p else synchronized(this) { candidates.isRefused(device) }
     }
 
     /** The committed peer wrote [value] to [uuid]. */
@@ -198,10 +189,10 @@ internal class GattServerTransport(
         val start = value.contentEquals(byteArrayOf(GattCharacteristics.STATE_START))
         val end = value.contentEquals(byteArrayOf(GattCharacteristics.STATE_END))
         synchronized(this) {
-            if (device in refused) return
+            if (candidates.isRefused(device)) return
             when {
-                uuid == characteristics.state && start -> addCandidate(device)
-                uuid == characteristics.state && end -> candidates.remove(device)
+                uuid == characteristics.state && start -> candidates.start(device)
+                uuid == characteristics.state && end -> candidates.end(device)
                 uuid == characteristics.client2Server -> candidateChunk(device, value)
             }
         }
@@ -209,37 +200,23 @@ internal class GattServerTransport(
     }
 
     /**
-     * Makes [device] a candidate, under the lock. With [MAX_CANDIDATES]
-     * already, the oldest that has sent no message yet makes way, so
-     * devices that start sessions and stay silent can't keep the reader
-     * out.
+     * Adds a candidate's chunk, queuing its first whole message, under the
+     * lock. With the queue full, that message is refused, not the ones
+     * before it.
      */
-    private fun addCandidate(device: BluetoothDevice) {
-        if (device in candidates) return
-        if (candidates.size >= MAX_CANDIDATES) {
-            val silent = candidates.entries.firstOrNull { !it.value.delivered }?.key ?: return
-            candidates.remove(silent)
-        }
-        candidates[device] = Candidate()
-    }
-
-    /** Adds a candidate's chunk, queuing its first whole message, under the lock. */
     private fun candidateChunk(device: BluetoothDevice, value: ByteArray) {
-        val c = candidates[device]?.takeIf { !it.delivered } ?: return
         val message = try {
-            c.reassembler.add(value) ?: return
+            candidates.chunk(device, value) ?: return
         } catch (e: IOException) {
             refuse(device)
             return
         }
-        c.delivered = true
         if (firsts.trySend(device to message).isFailure) refuse(device)
     }
 
     /** Forgets [device] for good, letting it go, under the lock. */
     private fun refuse(device: BluetoothDevice) {
-        candidates.remove(device)
-        refused += device
+        candidates.refuse(device)
         runCatching { server?.cancelConnection(device) }
     }
 
@@ -367,7 +344,7 @@ internal class GattServerTransport(
             if (peer != null) return
             // The device whose message Go accepted; before any (a reader
             // that speaks first), the first to start a session.
-            val chosen = pending?.takeIf { it in candidates } ?: candidates.keys.firstOrNull().takeIf { pending == null }
+            val chosen = candidates.chosen(pending)
             if (chosen == null) {
                 fail(ProximityTransportException("the other device disconnected", peerEnded = true))
                 return
@@ -376,7 +353,7 @@ internal class GattServerTransport(
             // others go.
             peer = chosen
             mtus[chosen]?.let { mtu = it }
-            val others = candidates.keys.filter { it != chosen }
+            val others = candidates.ids.filter { it != chosen }
             candidates.clear()
             pending = null
             others
@@ -459,8 +436,6 @@ internal class GattServerTransport(
 
     private companion object {
         const val TAG = "OID4VCProximity"
-        /** How many devices may start a session at once before one is committed to: a new one displaces the oldest still silent. */
-        const val MAX_CANDIDATES = 8
         const val NOTIFICATION_TIMEOUT_MS = 5_000L
     }
 }

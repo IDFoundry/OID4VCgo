@@ -162,9 +162,8 @@ type proximityEventJSON struct {
 //     for this engagement, so its sender never saw the engagement and
 //     isn't the reader. Nothing is sent: drop the device that sent it,
 //     and hand the next first message, from any device, to
-//     HandleMessage. The session waits on, up to
-//     proximity.MaxRejectedEstablishments times; the next such message
-//     ends it (added within ABI 15);
+//     HandleMessage. The session waits on, however many arrive: the
+//     request timeout bounds the wait (added within ABI 15);
 //   - "none": nothing to do.
 func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) string {
 	ev := p.p.HandleMessage(op.context(), message)

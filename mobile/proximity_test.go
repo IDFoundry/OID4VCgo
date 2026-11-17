@@ -204,26 +204,15 @@ func TestSessions_ProximityPresentationEnds(t *testing.T) {
 		p, _, msg := startProximity(t, h, &reader)
 		// Rejected, sending nothing: any device in range could have
 		// sent it. The reader's request is still taken after it.
-		for range proximity.MaxRejectedEstablishments {
+		// However many: a limit would let devices that never saw the
+		// QR code end the session for its reader.
+		for range 100 {
 			if ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), []byte{0x01})); ev.Event != "rejected" || ev.Send != "" {
 				t.Fatalf("HandleMessage = %+v", ev)
 			}
 		}
 		if ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), msg)); ev.Event != "request" {
 			t.Fatalf("the reader's request after rejected ones: %+v", ev)
-		}
-	})
-	t.Run("not CBOR, past the bound", func(t *testing.T) {
-		p, _, _ := startProximity(t, h, &reader)
-		var ev proximityEvent
-		for range proximity.MaxRejectedEstablishments + 1 {
-			ev = decode[proximityEvent](t, p.HandleMessage(NewOperation(0), []byte{0x01}))
-		}
-		if ev.Event != "ended" || ev.Reason != "error" || !strings.HasPrefix(ev.Error, "["+CodeProtocol+"]") {
-			t.Errorf("HandleMessage = %+v", ev)
-		}
-		if string(sent(t, ev.Send)) != string(proximity.StatusMessage(proximity.StatusCBORDecodingError)) {
-			t.Error("not status 11")
 		}
 	})
 	t.Run("untrusted reader refused", func(t *testing.T) {

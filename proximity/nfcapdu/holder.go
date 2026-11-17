@@ -112,7 +112,9 @@ func (h *Holder) Process(apdu []byte) Step {
 		return h.data.process(apdu)
 	}
 	resp, read := h.tag.process(apdu)
-	return Step{Response: resp, HandoverRead: read && (h.tnep == nil || h.tnep.handoverReady)}
+	// Under TNEP, only reading the Handover Select counts: not a status,
+	// select or deselect answer served after it.
+	return Step{Response: resp, HandoverRead: read && (h.tnep == nil || h.tnep.isHandoverSelect(h.tag.ndef))}
 }
 
 // Respond answers the pending session message with message, returning

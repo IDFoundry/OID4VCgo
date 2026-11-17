@@ -606,7 +606,9 @@ func TestHolderRejects(t *testing.T) {
 		}
 		se.Data[len(se.Data)-1] ^= 1
 		tampered, _ := encMode.Marshal(se)
-		for range MaxRejectedEstablishments {
+		// However many there are: a limit would let devices that never
+		// saw the engagement end the session for its reader.
+		for range 100 {
 			_, err := holder.TrySessionEstablishment(tampered)
 			if !errors.Is(err, ErrEstablishmentRejected) || !errors.Is(err, ErrSessionEncryption) {
 				t.Fatalf("tried: %v, want ErrEstablishmentRejected", err)
@@ -615,10 +617,8 @@ func TestHolderRejects(t *testing.T) {
 				t.Fatal("a rejected message has a status to send")
 			}
 		}
-		_, err := holder.TrySessionEstablishment(tampered)
-		wantStatus(t, err, StatusSessionEncryptionError)
-		if _, err := holder.TrySessionEstablishment(est); !errors.Is(err, ErrSessionClosed) {
-			t.Errorf("past the bound: %v, want ErrSessionClosed", err)
+		if _, err := holder.TrySessionEstablishment(est); err != nil {
+			t.Errorf("the reader's after 100 rejected: %v", err)
 		}
 
 		holder, est = newEstablishment(t)

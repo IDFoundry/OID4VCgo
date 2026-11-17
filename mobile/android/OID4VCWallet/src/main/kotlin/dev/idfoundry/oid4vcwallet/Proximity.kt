@@ -55,7 +55,12 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.ProximityReaderSession as Mobi
 public data class ProximityTimeouts(
     /** For the other device to connect, after the QR code is shown or scanned. */
     val connect: Duration = 60.seconds,
-    /** For the reader's request, once connected. */
+    /**
+     * For the reader's request, once connected. As the holder's GATT
+     * server, connected is when any device first starts a session (State
+     * 0x01), not necessarily the reader: the reader's whole window may be
+     * this, not [connect] and this.
+     */
     val request: Duration = 30.seconds,
     /** For the holder to decide, or the holder's answer to arrive. */
     val idle: Duration = 300.seconds,

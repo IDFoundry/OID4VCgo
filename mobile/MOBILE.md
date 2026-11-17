@@ -1644,31 +1644,46 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   engagement, repeated for every session and every holder in range,
   and in the default both-modes configuration took the central client
   path down with it. Now each device that writes 0x01 is a candidate
-  (up to eight; a new one displaces the oldest still silent), and each
+  (`BleCandidates`, the same rules on both platforms), and each
   candidate's first whole message goes to Go
   (`DeviceSession.TrySessionEstablishment`). One that doesn't decode
   or decrypt is the `rejected` event: its sender doesn't hold the
-  session's key, nothing is sent, the device is dropped
-  (`ProximityTransport.reject`) and the holder keeps advertising and
-  waiting, up to `proximity.MaxRejectedEstablishments` (16) such
-  messages, after which the next ends the session as ISO 18013-5
-  §9.1.1.4 has it. The first message Go accepts commits the transport
-  (`commit`): advertising stops, the other candidates are let go, and
-  `EitherTransport` closes the other mode. Once a message has
-  decrypted, a bad one ends the session with status 10 as before. What
-  remains: the bound means an attacker in range can still end a session
-  that its reader hasn't yet reached, but only with 17 junk messages,
-  each from a device that starts a session of its own (each is dropped
-  after its first), not with one; a reader that arrives in between is
-  answered. The reader in mdoc central
+  session's key, nothing is sent, the device is refused for the rest of
+  the session (`ProximityTransport.reject`) and the holder keeps
+  advertising and waiting. However many such messages arrive, none
+  ends the session: a limit would hand devices that never saw the QR
+  code a way to end it. The first message Go accepts commits the
+  transport (`commit`): advertising stops, the other candidates are let
+  go, and `EitherTransport` closes the other mode. Once a message has
+  decrypted, a bad one ends the session with status 10 as before.
+  The candidate list holds eight devices. A device that writes 0x01
+  when it is full displaces the oldest candidate that has gone 10
+  seconds since its 0x01 without a whole message, else the oldest that
+  hasn't sent a chunk; never one partway through its message within
+  those 10 seconds, nor one whose message is with Go. With none to
+  displace, the newcomer isn't listed. Each device can be listed three
+  times at most, and one whose message is queued or being judged isn't
+  listed again: State 0x02, unsubscribing or disconnecting doesn't
+  refuse a device, so without that one device could queue many
+  messages. A full first-message queue (16) refuses only the newest
+  message's device, never the messages already queued. What remains:
+  devices in range can still delay the reader, by filling the list
+  with devices partway through a message just before the reader
+  starts, or keep it out if the reader starts while eight such devices
+  hold their places; the request timeout then ends the session, as it
+  would for a reader that never came. The reader in mdoc central
   client mode (a GATT server too, speaking first) still commits to the
   first device that starts a session; and on Android a combined QR and
   NFC engagement still selects QR when the GATT server's first device
-  starts a session. Covered by unit tests with in-memory transports
-  (`testBlindPeersDoNotEndTheSession`, `EitherTransportTests`; Kotlin
-  `EitherTransportTest`, and `blindPeersDoNotEndTheSession` as an
-  instrumented test); not yet tried against a second device over the
-  radio.
+  starts a session. The request timeout (`ProximityTimeouts`'
+  `requestSeconds` or `request`, 30 seconds by default) starts when
+  any device first writes 0x01, not necessarily the reader: from then
+  on, the reader has that long, not the connect timeout as well. Covered by unit tests with in-memory
+  transports (`testBlindPeersDoNotEndTheSession`,
+  `EitherTransportTests`; Kotlin `EitherTransportTest`, and
+  `blindPeersDoNotEndTheSession` as an instrumented test) and of the
+  candidate list (`BleCandidatesTests`; Kotlin `BleCandidatesTest`);
+  not yet tried against a second device over the radio.
 - **A GATT client starts each connection attempt afresh:** a new message
   queue and chunk reassembler, so a device that disconnects mid-setup,
   or leaves half a message, costs one attempt rather than the session.
@@ -1677,10 +1692,13 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   without one. A device whose Ident differs, another session's reader
   advertising the same service, is disconnected and ignored, and the
   scan goes on, on both platforms; so, since the F-09 fixes, is one
-  that has no Ident characteristic or stops answering before its Ident
-  is read (on Android, one that fails in any way before then), rather
-  than costing a connection attempt. Callbacks about a device an
-  earlier attempt gave up on are ignored.
+  that has no mdoc service, characteristic or Ident, or doesn't answer
+  the Ident read (on iOS, also one that stops answering before then),
+  rather than costing a connection attempt. Any other failure, such as
+  a GATT error or a dropped link during the MTU exchange or discovery,
+  costs one attempt, so a reader with a transient failure is tried
+  again. Callbacks about a connection an attempt gave up on, including
+  those that arrive between attempts, are ignored.
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,

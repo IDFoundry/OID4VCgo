@@ -329,6 +329,19 @@ final class OID4VCWalletTests: XCTestCase {
         }
     }
 
+    /// The peer-point check on its own: checkAgreement can't tell it from
+    /// SecKeyCreateWithData, which refuses the off-curve point itself on
+    /// macOS.
+    func testPeerPointMustBeOnTheCurve() {
+        let point = P256.KeyAgreement.PrivateKey().publicKey.x963Representation
+        XCTAssertTrue(KeychainKeyStore.isUncompressedP256Point(point))
+        var offCurve = point
+        offCurve[64] ^= 1
+        XCTAssertFalse(KeychainKeyStore.isUncompressedP256Point(offCurve))
+        XCTAssertFalse(KeychainKeyStore.isUncompressedP256Point(P256.KeyAgreement.PrivateKey().publicKey.compressedRepresentation))
+        XCTAssertFalse(KeychainKeyStore.isUncompressedP256Point(Data([4]) + Data(repeating: 0, count: 64)))
+    }
+
     func testCheckKeyAgreement() async throws {
         let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false))
         let supported = try await OID4VC.checkKeyAgreement(store, store)

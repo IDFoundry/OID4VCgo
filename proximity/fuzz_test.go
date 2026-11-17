@@ -1,6 +1,7 @@
 package proximity
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -74,6 +75,36 @@ func FuzzHandleSessionEstablishment(f *testing.F) {
 			if _, _, err := s.HandleSessionData(msg); !errors.Is(err, ErrSessionClosed) {
 				t.Fatalf("session usable after a failed establishment: %v", err)
 			}
+		}
+	})
+}
+
+// FuzzTrySessionEstablishment: a rejected first message leaves the
+// session as it was, so the reader's own SessionEstablishment then
+// decrypts to the same DeviceRequest, and any other failure closes it.
+func FuzzTrySessionEstablishment(f *testing.F) {
+	f.Add(mustHex(f, annexDSessionEstablishment))
+	f.Add(mustHex(f, annexDSessionData))
+	f.Add([]byte{0xa0})
+	want, err := annexDDeviceSession(f).HandleSessionEstablishment(mustHex(f, annexDSessionEstablishment))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, msg []byte) {
+		s := annexDDeviceSession(t)
+		_, err := s.TrySessionEstablishment(msg)
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrEstablishmentRejected):
+			if s.closed || s.cipher != nil || s.eReaderKey != nil || s.sessionTranscriptBytes != nil {
+				t.Fatalf("a rejected message changed the session: %v", err)
+			}
+			got, err := s.TrySessionEstablishment(mustHex(t, annexDSessionEstablishment))
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("the reader's message after a rejected one: %v", err)
+			}
+		case !s.closed:
+			t.Fatalf("a failure that isn't a rejection left the session open: %v", err)
 		}
 	})
 }

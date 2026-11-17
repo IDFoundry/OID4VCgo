@@ -395,20 +395,30 @@ func CheckDataApplicationSelected(resp []byte) error {
 // as a chain of ENVELOPE commands, and reads its answer through GET
 // RESPONSE. Commands and responses fit both maxTransceive, the tag
 // connection's limit, and the limits p the mdoc's Handover Select
-// advertises, and stay short APDUs.
+// advertises, and stay short APDUs. The whole exchange must be over
+// within TransactTimeout: an mdoc that answers in slivers, each GET
+// RESPONSE a byte or two, could otherwise hold the reader for hours
+// before its answer reached MaxMessage.
 func Transact(maxTransceive int, p proximity.NFCDataParameters, message []byte) *Exchange {
 	message = bytes.Clone(message) // the sequence outlives the call
 	return newExchange(func(transceive func([]byte, time.Duration) ([]byte, error)) ([]byte, error) {
-		return transact(transceive, maxTransceive, p, message)
+		return transact(transceive, maxTransceive, p, message, time.Now)
 	})
 }
 
-func transact(transceive func([]byte, time.Duration) ([]byte, error), maxTransceive int, p proximity.NFCDataParameters, message []byte) ([]byte, error) {
+// TransactTimeout is how long a Transact exchange may take, from its
+// start to its last GET RESPONSE: a MaxMessage answer at the shortest
+// full-size responses, 256 bytes, is 8192 of them, under two minutes at
+// an NFC round trip of about 10 ms.
+const TransactTimeout = 3 * time.Minute
+
+func transact(transceive func([]byte, time.Duration) ([]byte, error), maxTransceive int, p proximity.NFCDataParameters, message []byte, now func() time.Time) ([]byte, error) {
 	commandLimit := min(255, maxTransceive-6, p.MaxCommand)
 	responseLimit := min(256, maxTransceive-2, p.MaxResponse)
 	if commandLimit < 1 || responseLimit < 1 {
 		return nil, errors.New("nfcapdu: NFC controller limits unusable")
 	}
+	deadline := now().Add(TransactTimeout)
 	encoded, err := WrapDO53(message)
 	if err != nil {
 		return nil, err
@@ -417,7 +427,7 @@ func transact(transceive func([]byte, time.Duration) ([]byte, error), maxTransce
 	if err != nil {
 		return nil, err
 	}
-	return readResponses(transceive, resp, responseLimit)
+	return readResponses(transceive, resp, responseLimit, deadline, now)
 }
 
 // sendEnvelopes sends encoded as a chain of ENVELOPE commands of at most
@@ -440,8 +450,8 @@ func sendEnvelopes(transceive func([]byte, time.Duration) ([]byte, error), encod
 }
 
 // readResponses assembles the answer from resp and the GET RESPONSE
-// commands its 61XX status words call for.
-func readResponses(transceive func([]byte, time.Duration) ([]byte, error), resp []byte, responseLimit int) ([]byte, error) {
+// commands its 61XX status words call for, until deadline.
+func readResponses(transceive func([]byte, time.Duration) ([]byte, error), resp []byte, responseLimit int, deadline time.Time, now func() time.Time) ([]byte, error) {
 	var assembled []byte
 	for polls := 0; ; polls++ {
 		if len(resp) < 2 || len(resp)-2 > responseLimit {
@@ -460,6 +470,9 @@ func readResponses(transceive func([]byte, time.Duration) ([]byte, error), resp 
 		}
 		if sw&0xff00 != swMoreData || polls >= maxEncoded {
 			return nil, errors.New("nfcapdu: NFC response chain failed")
+		}
+		if now().After(deadline) {
+			return nil, fmt.Errorf("nfcapdu: NFC response not complete within %v", TransactTimeout)
 		}
 		le := responseLimit
 		if indicated := sw & 0xff; indicated != 0 {

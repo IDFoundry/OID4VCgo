@@ -239,19 +239,13 @@ func TestProximityPresentationEnds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Rejected, the session left waiting, up to the bound: then the
-		// next one ends it with its status, as §9.1.1.4 has.
-		for i := range proximity.MaxRejectedEstablishments {
-			if ev := p.HandleMessage(ctx, []byte{0x01}); !ev.Rejected || ev.Ended || ev.Send != nil {
+		// Rejected, the session left waiting, however many there are:
+		// a limit would let a device that never saw the QR code end the
+		// session. The reader's request timeout bounds the wait.
+		for i := range 100 {
+			if ev := p.HandleMessage(ctx, []byte{0x01}); !ev.Rejected || ev.Ended || ev.Send != nil || !errors.Is(ev.Err, proximity.ErrCBORDecoding) {
 				t.Fatalf("message %d: event %+v", i, ev)
 			}
-		}
-		ev := p.HandleMessage(ctx, []byte{0x01})
-		if !ev.Ended || ev.Rejected || !errors.Is(ev.Err, proximity.ErrCBORDecoding) {
-			t.Fatalf("event %+v", ev)
-		}
-		if status, _ := proximity.StatusFor(proximity.ErrCBORDecoding); string(ev.Send) != string(proximity.StatusMessage(status)) {
-			t.Errorf("Send = %x", ev.Send)
 		}
 	})
 }
@@ -285,7 +279,13 @@ func TestProximityPresentationIgnoresABlindPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, msg := range [][]byte{blind, {0xa0}} {
+	// However many blind messages arrive, from one device or many: none
+	// ends the session for the reader that scanned the QR code.
+	var blinds [][]byte
+	for range 64 {
+		blinds = append(blinds, blind, []byte{0xa0})
+	}
+	for _, msg := range blinds {
 		ev := p.HandleMessage(ctx, msg)
 		if !ev.Rejected || ev.Ended || ev.Request || ev.Send != nil || !errors.Is(ev.Err, proximity.ErrEstablishmentRejected) {
 			t.Fatalf("blind peer's message: event %+v", ev)

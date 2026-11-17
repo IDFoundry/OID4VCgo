@@ -4,9 +4,52 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/testbounds"
+	"github.com/idfoundry/oid4vcgo/proximity"
 )
+
+// An mdoc answering in one-byte slivers can't hold the reader past
+// TransactTimeout: Transact gives up at its deadline, however much of
+// MaxMessage is still to come.
+func TestTransactDeadline(t *testing.T) {
+	p := proximity.NFCDataParameters{MaxCommand: 255, MaxResponse: 256}
+	for _, tc := range []struct {
+		name string
+		step time.Duration // the clock's advance per command
+		ok   bool
+	}{
+		{"within the deadline", time.Millisecond, true},
+		{"past the deadline", time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := time.Unix(0, 0)
+			now := func() time.Time { return clock }
+			answer, err := WrapDO53(bytes.Repeat([]byte{0xa5}, 1000))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent := 0
+			_, err = transact(func([]byte, time.Duration) ([]byte, error) {
+				clock = clock.Add(tc.step)
+				sent++
+				if len(answer) == 1 {
+					return response(swOK, answer), nil
+				}
+				b := answer[0]
+				answer = answer[1:]
+				return response(swMoreData|1, []byte{b}), nil
+			}, 261, p, []byte("request"), now)
+			if (err == nil) != tc.ok {
+				t.Fatalf("after %d commands: %v", sent, err)
+			}
+			if !tc.ok && sent > int(TransactTimeout/tc.step)+2 {
+				t.Errorf("%d commands sent past the deadline", sent)
+			}
+		})
+	}
+}
 
 // validCC is a capability container naming one writable NDEF file:
 // CCLEN 15, mapping version 2.0, MLe 255, MLc 255, and the NDEF File

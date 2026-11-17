@@ -12,24 +12,11 @@ import Foundation
 /// and `receive` returns each candidate's first message, while it keeps
 /// advertising, until `commit` picks the device whose message Go
 /// accepted; `reject` drops one Go rejected. Only then does it stop
-/// advertising and ignore the others.
+/// advertising and ignore the others. `BleCandidates` keeps the list.
 ///
 /// iOS doesn't tell a peripheral about disconnections: the central
 /// unsubscribing from Server2Client is taken as the other side ending.
 final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManagerDelegate, @unchecked Sendable {
-    /// How many devices may start a session at once before one is
-    /// committed to: a new one displaces the oldest still silent.
-    static let maxCandidates = 8
-
-    /// A device that started a session, before one was committed to.
-    private struct Candidate {
-        let central: CBCentral
-        var reassembler = BleChunks.Reassembler()
-        /// Whether its first message was queued: it sends no more before
-        /// a reply, so later ones are dropped.
-        var delivered = false
-    }
-
     /// A candidate's first message.
     private struct FirstMessage: Sendable {
         let central: UUID
@@ -49,12 +36,12 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     private var peer: CBCentral?
     private var reassembler = BleChunks.Reassembler()
     /// Devices that started a session (State 0x01) before one was
-    /// committed to, oldest first: any of them may be the reader.
-    private var candidates: [Candidate] = []
+    /// committed to: any of them may be the reader.
+    private var candidates = BleCandidates<UUID>()
+    /// The centrals listed in `candidates`, to commit to one.
+    private var centrals: [UUID: CBCentral] = [:]
     /// The candidate whose first message `receive` returned last.
     private var pending: UUID?
-    /// Devices dropped (`reject`, or a malformed chunk): never again.
-    private var refused = Set<UUID>()
     private var readyToUpdate: Pending<Void>?
     private var closed = false
     /// What ended the session, the first time: no chunk is sent after it.
@@ -67,7 +54,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     /// The committed peer's messages.
     private let incoming = MessageQueue()
     /// Each candidate's first message, until one is committed to.
-    private let firsts = BoundedQueue<FirstMessage>(capacity: 2 * maxCandidates)
+    private let firsts = BoundedQueue<FirstMessage>(capacity: 2 * BleCandidates<UUID>.maxCandidates)
     private let sending = AsyncMutex()
 
     init(serviceUUID: UUID, characteristics: GattCharacteristics, ident: Data? = nil) {
@@ -166,31 +153,25 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
             guard peer == nil else { return }
             // The device whose message Go accepted; before any (a reader
             // that speaks first), the first to start a session.
-            guard let chosen = chosenCandidate() else {
+            guard let chosen = candidates.chosen(pending: pending).flatMap({ centrals[$0] }) else {
                 fail(ProximityTransportError("the other device disconnected", peerEnded: true))
                 return
             }
             // One reader per session: stop being found, and ignore the
             // others from now on.
-            peer = chosen.central
-            candidates = []
+            peer = chosen
+            candidates.removeAll()
+            centrals = [:]
             pending = nil
             manager?.stopAdvertising()
         }
     }
 
-    /// The candidate whose message Go accepted, or before any, the first
-    /// to start a session: on `queue`.
-    private func chosenCandidate() -> Candidate? {
-        guard let id = pending else { return candidates.first }
-        return candidates.first { $0.central.identifier == id }
-    }
-
     /// Forgets candidate `id`, and with `refuse`, ignores it from now on:
     /// on `queue`.
     private func drop(_ id: UUID, refuse: Bool) {
-        candidates.removeAll { $0.central.identifier == id }
-        if refuse { refused.insert(id) }
+        if refuse { candidates.refuse(id) } else { candidates.end(id) }
+        if !candidates.contains(id) { centrals[id] = nil }
     }
 
     func close() {
@@ -318,10 +299,14 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     /// 0x02 drops it, ending nothing: it may not be the reader.
     private func candidateWrote(_ value: Data, to characteristic: CBUUID, from central: CBCentral) {
         let id = central.identifier
-        guard !refused.contains(id) else { return }
+        guard !candidates.isRefused(id) else { return }
         switch characteristic {
         case characteristics.state where value == GattCharacteristics.start:
-            addCandidate(central)
+            if candidates.start(id) {
+                // Keep only the listed ones: a newcomer may have displaced one.
+                centrals = centrals.filter { candidates.contains($0.key) }
+                centrals[id] = central
+            }
             started.signal()
         case characteristics.state where value == GattCharacteristics.end:
             drop(id, refuse: false)
@@ -332,27 +317,13 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         }
     }
 
-    /// Makes `central` a candidate: on `queue`. With `maxCandidates`
-    /// already, the oldest that has sent no message yet makes way, so
-    /// devices that start sessions and stay silent can't keep the reader
-    /// out.
-    private func addCandidate(_ central: CBCentral) {
-        guard !candidates.contains(where: { $0.central.identifier == central.identifier }) else { return }
-        if candidates.count >= Self.maxCandidates {
-            guard let silent = candidates.firstIndex(where: { !$0.delivered }) else { return }
-            candidates.remove(at: silent)
-        }
-        candidates.append(Candidate(central: central))
-    }
-
     /// Adds a candidate's chunk, queuing its first whole message: on
-    /// `queue`.
+    /// `queue`. With the queue full, that message is refused, not the
+    /// ones before it.
     private func candidateChunk(_ value: Data, from id: UUID) {
-        guard let i = candidates.firstIndex(where: { $0.central.identifier == id }), !candidates[i].delivered else { return }
         do {
-            guard let message = try candidates[i].reassembler.add(value) else { return }
-            candidates[i].delivered = true
-            if !firsts.push(FirstMessage(central: id, message: message)) { drop(id, refuse: true) }
+            guard let message = try candidates.chunk(value, from: id) else { return }
+            if !firsts.offer(FirstMessage(central: id, message: message)) { drop(id, refuse: true) }
         } catch {
             drop(id, refuse: true)
         }

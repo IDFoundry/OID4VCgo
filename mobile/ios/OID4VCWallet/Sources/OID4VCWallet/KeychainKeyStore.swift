@@ -202,10 +202,7 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
             kSecAttrKeySizeInBits as String: 256,
         ]
         var error: Unmanaged<CFError>?
-        // CryptoKit checks the point is on the curve; SecKeyCreateWithData
-        // isn't documented to.
-        guard peerPublicKey.count == 65, peerPublicKey.first == 0x04,
-              (try? P256.KeyAgreement.PublicKey(x963Representation: peerPublicKey)) != nil,
+        guard Self.isUncompressedP256Point(peerPublicKey),
               let peer = SecKeyCreateWithData(peerPublicKey as CFData, peerAttrs as CFDictionary, &error) else {
             throw StoreError("the peer's key isn't an uncompressed P-256 point")
         }
@@ -213,6 +210,14 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
             throw error!.takeRetainedValue() as Error
         }
         return z as Data
+    }
+
+    /// Whether `point` is an uncompressed P-256 point on the curve.
+    /// CryptoKit checks the point is on the curve; SecKeyCreateWithData
+    /// isn't documented to.
+    static func isUncompressedP256Point(_ point: Data) -> Bool {
+        point.count == 65 && point.first == 0x04
+            && (try? P256.KeyAgreement.PublicKey(x963Representation: point)) != nil
     }
 
     public func deleteKey(id: String) throws {

@@ -224,9 +224,9 @@ type ProximityEvent struct {
 	// engagement, so it isn't the reader. The session still waits for
 	// its reader, and Send is nil: drop the device that sent it, if the
 	// transport can tell, and pass on the next first message, from it
-	// or another device (proximity.TrySessionEstablishment). After
-	// proximity.MaxRejectedEstablishments, the next such message ends
-	// the session.
+	// or another device (proximity.TrySessionEstablishment). However
+	// many arrive, none ends the session: the transport's timeout for
+	// the reader's request bounds the wait.
 	Rejected bool
 	// Err is why an Ended session ended without an answer: an error
 	// wrapping ErrReaderEnded, ErrUntrustedVerifier (a reader

@@ -305,6 +305,24 @@ final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
         return true
     }
 
+    /// Queues value for `receive`, as `push` does, except that when its
+    /// limit of values are already unread, only value is refused: false,
+    /// with the others kept.
+    func offer(_ value: Element) -> Bool {
+        lock.lock()
+        if ended != nil { lock.unlock(); return true }
+        if !waiters.isEmpty {
+            let w = waiters.removeFirst().continuation
+            lock.unlock()
+            w.resume(returning: value)
+            return true
+        }
+        guard messages.count < limit else { lock.unlock(); return false }
+        messages.append(value)
+        lock.unlock()
+        return true
+    }
+
     /// Ends the queue: `receive` throws `error` once the messages run out.
     func end(_ error: any Error) {
         lock.lock()
