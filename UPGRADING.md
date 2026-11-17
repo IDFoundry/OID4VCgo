@@ -120,6 +120,14 @@ Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
 passes the presentation's hash: `Presentation.SDHash(alg)`.
 `sdjwtvc.Verify` and the verifier already did.
 
+### App Attest chains (`walletprovider/appattest`)
+
+`VerifyAttestation` takes only Apple's chain shape: an `x5c` of exactly
+two certificates (`MaxChainLength` is now 2), each with an ECDSA P-256
+or P-384 key, checked before any signature is. Apple's attestations
+already have this shape; a test chain of your own with RSA keys, or
+with more certificates, is now refused `ErrMalformed`.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
