@@ -74,7 +74,8 @@ func TestStatelessNonce_IssuedWithoutWritingAndSpentOnce(t *testing.T) {
 }
 
 // A nonce whose tag doesn't verify, that differs from one issued only
-// in its last character's unused bits, or that another Credential
+// in its last character's unused bits or by a line break inserted in
+// it (both decode to the same bytes), or that another Credential
 // Issuer sharing the keys issued, is refused without being recorded.
 func TestStatelessNonce_RefusesForgedAndAnotherIssuers(t *testing.T) {
 	store := &countingSpender{NonceStore: storage.NewNonceStore()}
@@ -87,7 +88,8 @@ func TestStatelessNonce_RefusesForgedAndAnotherIssuers(t *testing.T) {
 	unusedBits := nonce[:len(nonce)-1] + string(alphabet[strings.IndexByte(alphabet, nonce[len(nonce)-1])|1])
 	mid := len(nonce) / 2
 	tampered := nonce[:mid] + flipBase64(nonce[mid]) + nonce[mid+1:]
-	for _, bad := range []string{unusedBits, tampered, "s1.", "s1.!!!", nonce + "A"} {
+	lineBreaks := []string{nonce[:5] + "\n" + nonce[5:], nonce[:7] + "\r\n" + nonce[7:], nonce + "\n"}
+	for _, bad := range append([]string{unusedBits, tampered, "s1.", "s1.!!!", nonce + "A"}, lineBreaks...) {
 		_, err := requestSDJWTWithProof(f, oid4vci.ProofTypeJWT, buildJWTProof(t, testP256Key(t), testIssuer, bad))
 		assertIssuerError(t, err, issuer.ErrorInvalidNonce)
 	}
