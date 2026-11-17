@@ -308,12 +308,18 @@ per response when `IssuerKeys` is an `X5CIssuerKeyResolver` or
 `MdocIssuerKeys` an `X5ChainIssuerKeyResolver` itself. A resolver of
 your own, one dispatching to several built-in resolvers for instance,
 has each of its calls verified in full, under that call's resolver's
-`LeafPolicy` and `Revocation`. Through a built-in resolver, a response
-is refused as a whole, `malformed`, once
-`MaxFailedIssuerChainsPerResponse` (4) of its distinct issuer chains
-have failed to verify, with any further chain left unverified. Chains
-that verify aren't counted, so a response presenting credentials from
-many issuers isn't refused by it.
+`LeafPolicy` and `Revocation`. Through a built-in resolver, once
+`MaxFailedIssuerChainsPerResponse` (4) of a response's distinct issuer
+chains haven't verified (no configured root anchors them, a signature
+in them doesn't verify, or a certificate doesn't parse or is outside
+its validity), the response is refused as a whole, `malformed`, when
+it reaches another distinct chain, which is left unverified. Chains
+that verify aren't counted, even when the leaf policy or revocation
+then refuses them, so a response presenting credentials from many
+issuers, revoked ones among them, isn't refused by it. A response
+holding more than four credentials from issuers no root anchors is,
+even beside a valid one (an optional credential set of foreign loyalty
+cards before a required PID, say), when they come first.
 
 Through a built-in resolver, an SD-JWT VC's Issuer-signed JWT, or an
 mdoc's `IssuerAuth`, is now checked with the key of the `x5c` or

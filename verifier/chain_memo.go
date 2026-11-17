@@ -18,11 +18,20 @@ import (
 // response, through a VerifyResponseRequest.IssuerKeys that is an
 // X5CIssuerKeyResolver or an MdocIssuerKeys that is an
 // X5ChainIssuerKeyResolver. Once that many have failed, the response is
-// refused before any further chain is verified. Chains that verify
-// aren't counted, so an honest response presenting credentials from
-// many issuers is never refused by it; a crafted one, whose chains no
-// configured root anchors, is stopped after a few cheap failures. A
-// chain repeated across presentations counts once.
+// refused as a whole when the next distinct chain is reached, unverified.
+//
+// Only chains that don't verify count: those no configured root anchors,
+// with a signature that doesn't verify, or with a certificate that
+// doesn't parse or is outside its validity. A crafted response, whose
+// chains no configured root anchors, is stopped after a few cheap
+// failures. A chain that verifies isn't counted, even when its leaf
+// policy (LeafPolicy) or revocation check then refuses it: its
+// certificates come from a CA the Verifier trusts. So a response
+// presenting credentials from many issuers, revoked ones among them,
+// isn't refused by it, whatever their order; one with more than
+// MaxFailedIssuerChainsPerResponse credentials from issuers no root
+// anchors still is, even beside a valid one. A chain repeated across
+// presentations counts once.
 const MaxFailedIssuerChainsPerResponse = 4
 
 // chainMemo is the outcome of each distinct certificate chain the
@@ -40,7 +49,7 @@ const MaxFailedIssuerChainsPerResponse = 4
 type chainMemo struct {
 	mu      sync.Mutex
 	results map[chainMemoKey]chainResult
-	failed  int // distinct chains in results that failed to verify
+	failed  int // distinct chains in results that didn't verify
 }
 
 // chainMemoKey is one chain under one root pool, for one kind of
@@ -62,7 +71,8 @@ func newChainMemo() *chainMemo {
 }
 
 // errTooManyIssuerChains refuses a response once
-// MaxFailedIssuerChainsPerResponse of its distinct chains have failed:
+// MaxFailedIssuerChainsPerResponse of its distinct chains haven't
+// verified:
 // VerifyResponse refuses the whole response, not just the presentation
 // that went over.
 var errTooManyIssuerChains = fmt.Errorf("%d distinct issuer certificate chains in one response failed to verify", MaxFailedIssuerChainsPerResponse)
@@ -104,7 +114,7 @@ func checkLeafSignature(ders [][]byte, signed leafSignature) error {
 
 // verifyTrustedChains is certchain.VerifyTrustedChainsAt at
 // verificationTime(ctx), its outcome memoized in memo when it isn't
-// nil. A memo whose failed chains have reached
+// nil. A memo whose chains that didn't verify have reached
 // MaxFailedIssuerChainsPerResponse refuses another chain with
 // errTooManyIssuerChains, unverified. With signed set, the
 // credential's signature is first checked with the leaf's key
@@ -128,9 +138,23 @@ func verifyTrustedChains(ctx context.Context, memo *chainMemo, kind string, ders
 	if full {
 		return nil, nil, errTooManyIssuerChains
 	}
-	r.leaf, r.chains, r.err = certchain.VerifyTrustedChainsAt(ctx, ders, roots, policy, revocation, verificationTime(ctx))
+	// certchain.VerifyTrustedChainsAt, step by step: a chain counts
+	// toward MaxFailedIssuerChainsPerResponse only when it doesn't
+	// verify, not when a chain that does is then refused by the leaf
+	// policy or revocation.
+	now := verificationTime(ctx)
+	r.leaf, r.chains, r.err = certchain.VerifyChainsAt(ders, roots, now)
+	unverified := r.err != nil
+	if !unverified {
+		if r.chains, r.err = certchain.ApprovedChains(r.leaf, r.chains, policy); r.err == nil {
+			r.chains, r.err = certchain.NotRevokedChains(ctx, r.chains, revocation, now)
+		}
+		if r.err != nil {
+			r.leaf, r.chains = nil, nil
+		}
+	}
 	memo.mu.Lock()
-	if _, seen := memo.results[key]; !seen && r.err != nil {
+	if _, seen := memo.results[key]; !seen && unverified {
 		memo.failed++
 	}
 	memo.results[key] = r
