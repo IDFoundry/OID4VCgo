@@ -403,7 +403,12 @@ suspends the instance too, where it only refused the request (a holder
 key's is answered `evidence_rejected`, not `no_key_attested`):
 `androidkey.EvidenceVerifier.Verify` wraps
 `walletprovider.ErrEvidenceRevoked` or `ErrEvidenceSuspended`, as
-`Recheck` does, and a custom `EvidenceVerifier` can too. And
+`Recheck` does, and a custom `EvidenceVerifier` can too. That holds
+only for evidence the provider gets to verify: a request refused
+first, the instance not active, its registration evidence or (for a Key
+Attestation) its instance key refused, as on `registration_expired`
+or `policy_refused`, or its challenge not valid, revokes nothing on
+the evidence it carries. And
 `Config.OnRecheckRefused` is now called for a `Policy` refusal too
 (`ErrPolicy`, the instance left active): an alert keyed on that
 callback sees refusals it didn't before.
@@ -567,7 +572,12 @@ size can't publish a list in which a new one handed out an index past
 2^16 (HTTP 500 for that list), nor set that index's status, so roll
 out quickly, or set
 `StatusListSize: 1 << 16` for the upgrade and raise it in a later
-rollout. Never lower it below an index a served list holds. A list of
+rollout. Never lower it below an index a served list holds. The same
+goes for rolling back: v0.81.0 with `StatusListSize` left zero
+silently takes 2^16 again, and can't publish a list holding an index
+past it (HTTP 500 for that list), nor set that index's status, until
+the list retires. Set `StatusListSize: 1 << 20` before rolling back. A
+list of
 2^20 two-bit statuses packs to 256 KiB, within a Relying Party's
 default 1 MiB token limit whatever its statuses; an issuer's
 `statuslist.Cache` keeps 256 KiB for each of the provider's lists it
