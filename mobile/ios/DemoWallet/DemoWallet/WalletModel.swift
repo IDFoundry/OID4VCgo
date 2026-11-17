@@ -1,6 +1,7 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import ImageIO
 import LocalAuthentication
 import Observation
 import UIKit
@@ -489,7 +490,7 @@ final class WalletModel {
         await closeIssuance()
         for d in result.deferred { track(d) }
         // Accepted: keep their logos now, so showing them fetches nothing.
-        await LogoStore.fetch(for: result.credentials)
+        await LogoStore.fetch(for: result.credentials, development: developmentLogos)
     }
 
     // MARK: Deferred credentials
@@ -552,7 +553,7 @@ final class WalletModel {
             case .issued(let summary):
                 forget(id)
                 phase = .done("Received a deferred credential")
-                await LogoStore.fetch(for: [summary])
+                await LogoStore.fetch(for: [summary], development: developmentLogos)
                 await refresh()
             }
         } catch let e as WalletError where e.code == .credentialDenied {
@@ -828,6 +829,10 @@ final class WalletModel {
         offer = nil
         authorized = false
     }
+
+    /// Whether logos may be fetched from local addresses: only for a
+    /// development configuration, as the wallet's own requests.
+    private var developmentLogos: Bool { config?.wallet.development != nil }
 }
 
 /// Issuers' logos, kept on the device. Each https logo is fetched once,
@@ -836,10 +841,20 @@ final class WalletModel {
 /// screen's, would tell its issuer whenever the holder opens the wallet
 /// or is asked for the credential (`Logo`'s own guidance). A `data:`
 /// logo is decoded in place, with nothing fetched.
+///
+/// A logo is the issuer's choice of image, so it's handled as hostile:
+/// one larger than `maxBytes`, or than `maxDimension` pixels a side, is
+/// refused, and each is decoded off the main actor at the size it's
+/// shown (ImageIO's thumbnail), never at its own: a small file can
+/// decode to hundreds of megabytes.
 @MainActor
 enum LogoStore {
     /// The largest logo kept.
     static let maxBytes = 512 * 1024
+    /// The widest or tallest logo kept or shown, in pixels.
+    nonisolated static let maxDimension = 4096
+    /// The size a logo is checked at before it's kept, in pixels.
+    nonisolated static let checkPixels = 128
 
     private static var images: [String: UIImage] = [:]
 
@@ -848,37 +863,64 @@ enum LogoStore {
             .appendingPathComponent("Logos", isDirectory: true)
     }
 
-    /// The logo's image, if it's a `data:` image or was kept when its
-    /// credential was accepted; nothing is fetched.
-    static func image(for logo: Logo?) -> UIImage? {
-        guard let logo else { return nil }
+    /// The logo's image if it has been decoded already.
+    static func cached(_ logo: Logo?) -> UIImage? {
+        logo.flatMap { images[$0.uri] }
+    }
+
+    /// The logo's image, at most `pixels` a side, if it's a `data:`
+    /// image or was kept when its credential was accepted; nothing is
+    /// fetched. Decoded off the main actor.
+    static func image(for logo: Logo, pixels: Int) async -> UIImage? {
         if let image = images[logo.uri] { return image }
-        let data = logo.uri.hasPrefix("data:") ? decodeDataURL(logo.uri) : file(for: logo.uri).flatMap { try? Data(contentsOf: $0) }
-        guard let data, let image = UIImage(data: data) else { return nil }
-        images[logo.uri] = image
+        let uri = logo.uri
+        let path = uri.hasPrefix("data:") ? nil : file(for: uri)
+        let image = await Task.detached(priority: .utility) { () -> UIImage? in
+            let data = uri.hasPrefix("data:") ? decodeDataURL(uri) : path.flatMap { try? Data(contentsOf: $0) }
+            return data.flatMap { thumbnail($0, pixels: pixels) }
+        }.value
+        if let image { images[uri] = image }
         return image
     }
 
     /// Fetches and keeps the https logos of `credentials` not kept yet:
     /// once, as they're accepted. A logo that fails to load is left out.
-    static func fetch(for credentials: [CredentialSummary]) async {
+    /// Outside `development`, a logo whose host answers a loopback,
+    /// private or link-local address is refused, as is a redirect.
+    static func fetch(for credentials: [CredentialSummary], development: Bool) async {
         let logos = Set(credentials.flatMap { [$0.display?.logo?.uri, $0.display?.issuerLogo?.uri] }.compactMap { $0 })
         for uri in logos where uri.hasPrefix("https:") {
             guard let path = file(for: uri), !FileManager.default.fileExists(atPath: path.path) else { continue }
-            guard let url = URL(string: uri), let data = await download(url), UIImage(data: data) != nil else { continue }
+            guard let url = URL(string: uri), let host = url.host() else { continue }
+            if !development, await Task.detached(operation: { resolvesLocal(host) }).value { continue }
+            guard let data = await download(url),
+                  await Task.detached(priority: .utility, operation: { thumbnail(data, pixels: checkPixels) != nil }).value
+            else { continue }
             try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: path, options: [.atomic, .completeFileProtection])
         }
     }
 
-    /// `url`'s body, at most `maxBytes`, with no cookies or cache.
+    /// Refuses every redirect: the logo is the URL the issuer named, or
+    /// none.
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? {
+            nil
+        }
+    }
+
+    /// `url`'s body, at most `maxBytes`, with no cookies, cache or
+    /// redirect. The host's addresses are checked before (`fetch`), and
+    /// resolved again by the connection: a DNS answer changing in
+    /// between isn't caught.
     private static func download(_ url: URL) async -> Data? {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 15
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
-        guard let (bytes, response) = try? await session.bytes(from: url),
+        guard let (bytes, response) = try? await session.bytes(from: url, delegate: NoRedirects()),
               (response as? HTTPURLResponse)?.statusCode == 200,
               response.expectedContentLength <= Int64(maxBytes) else { return nil }
         var data = Data()
@@ -900,11 +942,72 @@ enum LogoStore {
     }
 
     /// A `data:` URL's bytes: base64 or percent-encoded.
-    private static func decodeDataURL(_ uri: String) -> Data? {
+    nonisolated private static func decodeDataURL(_ uri: String) -> Data? {
         guard let comma = uri.firstIndex(of: ",") else { return nil }
         let header = uri[..<comma]
         let payload = String(uri[uri.index(after: comma)...])
         if header.hasSuffix(";base64") { return Data(base64Encoded: payload) }
         return payload.removingPercentEncoding.map { Data($0.utf8) }
+    }
+
+    /// `data` decoded at most `pixels` a side: its size read first,
+    /// refused past `maxDimension`, then thumbnailed by ImageIO, which
+    /// never decodes the whole image at full size.
+    nonisolated private static func thumbnail(_ data: Data, pixels: Int) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...maxDimension).contains(width), (1...maxDimension).contains(height) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: pixels,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
+    }
+
+    /// Whether `host` answers an address only the device or its own
+    /// network reaches, or none.
+    nonisolated private static func resolvesLocal(_ host: String) -> Bool {
+        var hints = addrinfo()
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else { return true }
+        defer { freeaddrinfo(first) }
+        var next: UnsafeMutablePointer<addrinfo>? = first
+        while let info = next {
+            guard let address = info.pointee.ai_addr, !isLocal(address) else { return true }
+            next = info.pointee.ai_next
+        }
+        return false
+    }
+
+    /// Whether `address` is loopback, unspecified, link-local, private
+    /// (10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7), multicast or
+    /// reserved, or of another family.
+    nonisolated private static func isLocal(_ address: UnsafePointer<sockaddr>) -> Bool {
+        switch Int32(address.pointee.sa_family) {
+        case AF_INET:
+            let b = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin_addr) { Array($0) } }
+            return isLocalIPv4(b)
+        case AF_INET6:
+            let b = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin6_addr) { Array($0) } }
+            if b[0..<10].allSatisfy({ $0 == 0 }) && b[10] == 0xff && b[11] == 0xff { return isLocalIPv4(Array(b[12...])) }
+            return b[0..<15].allSatisfy({ $0 == 0 }) // :: and ::1
+                || b[0] & 0xfe == 0xfc // fc00::/7
+                || (b[0] == 0xfe && b[1] & 0xc0 == 0x80) // fe80::/10
+                || b[0] == 0xff // multicast
+        default:
+            return true
+        }
+    }
+
+    nonisolated private static func isLocalIPv4(_ b: [UInt8]) -> Bool {
+        b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224
+            || (b[0] == 169 && b[1] == 254) || (b[0] == 172 && b[1] & 0xf0 == 16)
+            || (b[0] == 192 && b[1] == 168) || (b[0] == 100 && b[1] & 0xc0 == 64)
     }
 }
