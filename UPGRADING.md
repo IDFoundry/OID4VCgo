@@ -31,9 +31,13 @@ the Token Endpoint behind a rate limit.
 An `issuer.Issuer` now refuses an access token whose audience doesn't
 name its `Config.Issuer`, as 401 `invalid_token`.
 `issuer/fapiresource` reports every token's audience
-(`AuthorizedRequest.Audience`); an `AuthorizedRequest` built by your
-own verifier with `Audience` nil isn't checked, so that verifier must
-accept only tokens issued for this Credential Issuer itself.
+(`AuthorizedRequest.Audience`). An `AuthorizedRequest` built by your
+own verifier must report it too: under `AssuranceProduction`, one with
+`Audience` nil is refused with a plain error (a 500) by
+`RequestCredential`, `RequestDeferredCredential`, `RequestNotification`
+and `IssueNotificationID`. Outside production a nil `Audience` still
+isn't checked, and that verifier must accept only tokens issued for
+this Credential Issuer itself.
 
 Nothing changes where the Authorization Server's identifier is the
 Credential Issuer's own, as when they share one (`cmd/conformance-issuer`
@@ -51,10 +55,11 @@ itself unless restricted to a resource, and are now refused. Either:
   or
 - when the Authorization Server issues tokens for this Credential
   Issuer alone, list its identifier in the new
-  `issuer.Config.AcceptedAccessTokenAudiences`. Never do so for one
-  serving several Credential Issuers: each would then take another's
-  token for its own, and issue its own holder's Credential for that
-  token's subject.
+  `issuer.Config.AcceptedAccessTokenAudiences`, and in
+  `Config.AuthorizationServers`: `New` refuses an accepted audience
+  that isn't one of them. Never do so for one serving several
+  Credential Issuers: each would then take another's token for its
+  own, and issue its own holder's Credential for that token's subject.
 
 With several Credential Issuers on one Authorization Server, the
 Wallet's `resource` chooses which of them a token is for, so also:

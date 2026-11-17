@@ -156,10 +156,12 @@ they're not yet closed in the library.
     all three of:
     - each `issuer.Issuer` refuses a token whose audience doesn't name
       it (`AuthorizedRequest.Audience`, which `issuer/fapiresource`
-      reports; `Config.AcceptedAccessTokenAudiences` opts out for an
-      Authorization Server serving it alone). Set
-      `serverresource.Options.Resource` to each Credential Issuer's
-      identifier; a verifier of your own must report the audience;
+      reports, and which `AssuranceProduction` requires;
+      `Config.AcceptedAccessTokenAudiences` opts out for an
+      Authorization Server serving it alone, one of its
+      `AuthorizationServers`). Set `serverresource.Options.Resource` to
+      each Credential Issuer's identifier; a verifier of your own must
+      report the audience;
     - each Credential Issuer's consent step grants only that issuer
       (`GrantedAuthorization.Resources` from
       `Issuer.AuthorizationResources`), and denies a request naming

@@ -218,7 +218,7 @@ func TestProductionRefusesStoreThatDropsOwner(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
-		_, err = iss.IssueNotificationID(ctx, issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")})
+		_, err = iss.IssueNotificationID(ctx, issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{cfg.Issuer.String()}})
 		if err == nil || !strings.Contains(err.Error(), "didn't keep the record's Owner") {
 			t.Fatalf("IssueNotificationID with a store that drops Owner = %v, want refused", err)
 		}
@@ -240,7 +240,7 @@ func TestOwnerlessRecordIsUnknownUnderProduction(t *testing.T) {
 	notes.put("notif-1", issuer.NotificationRecord{ClientID: "client-a"})
 	transactions.put("txn-1", issuer.DeferredTransactionRecord{ClientID: "client-a", Status: issuer.DeferredTransactionIssued})
 	ctx := context.Background()
-	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{cfg.Issuer.String()}}
 
 	err = iss.RequestNotification(ctx, auth, issuer.NotificationRequest{NotificationID: "notif-1", Event: oid4vci.NotificationEventCredentialAccepted})
 	assertIssuerError(t, err, issuer.ErrorInvalidNotificationID)
