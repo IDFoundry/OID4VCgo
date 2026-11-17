@@ -146,16 +146,36 @@ they're not yet closed in the library.
     wallet's DPoP key.
   - DPoP doesn't stop the token's own holder. A token's subject is
     meaningful to the Credential Issuer it was issued for (a
-    pre-authorized code's `Subject`, say), and another Credential
-    Issuer on the same Authorization Server, taking the token for its
-    own, issues its own holder of that subject value's credential, to
-    the token's holder. An `issuer.Issuer` refuses a token whose
-    audience, as `issuer/fapiresource` reports it, doesn't name it
-    (`AuthorizedRequest.Audience`; `Config.AcceptedAccessTokenAudiences`
-    opts out for an Authorization Server serving it alone). Issue each
-    pre-authorized token with `RedeemedPreAuthorizedCode.Resource`, and
-    set `serverresource.Options.Resource` to each Credential Issuer's
-    identifier; a verifier of your own must check the audience itself.
+    pre-authorized code's `Subject`, or the user its consent step
+    signed in), and another Credential Issuer on the same Authorization
+    Server, taking the token for its own, issues its own holder of that
+    subject value's credential, to the token's holder. The wallet
+    chooses the token's `resource`: a wallet that isn't honest asks,
+    for one Credential Issuer's offer, for a token addressed to
+    another. The library closes this only where the deployment wires
+    all three of:
+    - each `issuer.Issuer` refuses a token whose audience doesn't name
+      it (`AuthorizedRequest.Audience`, which `issuer/fapiresource`
+      reports; `Config.AcceptedAccessTokenAudiences` opts out for an
+      Authorization Server serving it alone). Set
+      `serverresource.Options.Resource` to each Credential Issuer's
+      identifier; a verifier of your own must report the audience;
+    - each Credential Issuer's consent step grants only that issuer
+      (`GrantedAuthorization.Resources` from
+      `Issuer.AuthorizationResources`), and denies a request naming
+      another resource. Left nil, the Authorization Server grants
+      every resource the wallet named;
+    - each pre-authorized token is issued with
+      `RedeemedPreAuthorizedCode.Resource` alone, and the Token
+      Request's own `resource` parameters go to
+      `ExchangePreAuthorizedCodeRequest.Resources`, which refuses any
+      other with `invalid_target`.
+
+    `cmd/conformance-issuer`, the passport-vdc demo and `walletflowtest`
+    wire all three. Where the Authorization Server signs in subjects
+    local to each Credential Issuer, a deployment missing any of them
+    lets the holder of one issuer's account collect another issuer's
+    holder's credentials.
 - **Transaction code phishing.** A pre-authorized offer's PIN goes to
   the issuer the offer names, at `RedeemPreAuthorizedCode`, before the
   wallet sees anything that issuer signs: by default, any issuer's

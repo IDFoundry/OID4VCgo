@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -656,6 +657,38 @@ func TestExchangePreAuthorizedCode_NextDPoPNonceEmptyWhenDisabled(t *testing.T) 
 	}
 	if result.NextDPoPNonce != "" {
 		t.Errorf("NextDPoPNonce = %q, want empty", result.NextDPoPNonce)
+	}
+}
+
+// A Token Request naming an RFC 8707 resource other than this
+// Credential Issuer is refused with 400 invalid_target, and the code
+// stays redeemable; one naming this Credential Issuer is redeemed.
+func TestExchangePreAuthorizedCode_Resources(t *testing.T) {
+	f := newPreAuthorizedCodeFixture(t)
+	f.issue(t, "code-1", issuer.PreAuthorizedCodeRecord{
+		Scopes: []string{"identity_credential"}, ExpiresAt: f.now.Add(time.Minute),
+	})
+	for name, resources := range map[string][]string{
+		"another":            {"https://other.example.com"},
+		"this one and other": {testIssuer, "https://other.example.com"},
+		"a near miss":        {testIssuer + "/"},
+	} {
+		_, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+			PreAuthorizedCode: "code-1", Resources: resources, Verified: anonymousTokenRequest(),
+		})
+		requireIssuerErrorCode(t, err, issuer.ErrorInvalidTarget)
+		var ierr *issuer.Error
+		if errors.As(err, &ierr) && ierr.HTTPStatus() != http.StatusBadRequest {
+			t.Errorf("%s: HTTPStatus = %d, want 400", name, ierr.HTTPStatus())
+		}
+	}
+	if _, err := f.iss.ExchangePreAuthorizedCode(context.Background(), issuer.ExchangePreAuthorizedCodeRequest{
+		PreAuthorizedCode: "code-1", Resources: []string{testIssuer}, Verified: anonymousTokenRequest(),
+	}); err != nil {
+		t.Fatalf("a Token Request naming this Credential Issuer: %v", err)
+	}
+	if f.tokens.lastParams.Audience != testIssuer {
+		t.Errorf("AccessTokenParams.Audience = %q, want %q", f.tokens.lastParams.Audience, testIssuer)
 	}
 }
 

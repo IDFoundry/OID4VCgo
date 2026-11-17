@@ -27,6 +27,9 @@ type pendingInteraction struct {
 	txID string
 	// scopes are the scopes the Wallet requested, granted from here.
 	scopes []string
+	// resources are the RFC 8707 resources it requested: the grant is
+	// restricted to this Credential Issuer (issuer.AuthorizationResources).
+	resources []string
 }
 
 // interactionFromCookie restores the interaction this browser began:
@@ -42,7 +45,7 @@ func (a *App) interactionFromCookie(r *http.Request) (pendingInteraction, error)
 	if !ok {
 		return pendingInteraction{}, interactioncookie.ErrNoInteraction
 	}
-	return pendingInteraction{handle: handle, tag: tag, txID: txID, scopes: in.Scope}, nil
+	return pendingInteraction{handle: handle, tag: tag, txID: txID, scopes: in.Scope, resources: in.Resources}, nil
 }
 
 // handlePAR is the Pushed Authorization Request endpoint.
@@ -151,7 +154,7 @@ func (a *App) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 			a.writeHTMLError(w, http.StatusInternalServerError, "failed to begin authorization")
 			return
 		}
-		pending := pendingInteraction{handle: action.Handle, tag: tag, txID: txID, scopes: action.Interaction.Scope}
+		pending := pendingInteraction{handle: action.Handle, tag: tag, txID: txID, scopes: action.Interaction.Scope, resources: action.Interaction.Resources}
 		a.renderApproval(w, pending, action.Interaction.ClientID.String(), "")
 	case server.RedirectResponse:
 		http.Redirect(w, r, action.Destination.String(), http.StatusFound)
@@ -187,6 +190,13 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 	var result server.InteractionResult
 	switch r.FormValue("decision") {
 	case "approve":
+		// A token for another resource would be taken there for this
+		// subject: refused before the transaction is claimed.
+		resources, err := a.iss().AuthorizationResources(pending.resources)
+		if err != nil {
+			result = server.Deny("the request names a resource other than this Credential Issuer")
+			break
+		}
 		if !a.claimTransaction(w, pending, r.FormValue("code")) {
 			return
 		}
@@ -209,7 +219,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 			a.writeHTMLError(w, http.StatusInternalServerError, "invalid authentication context")
 			return
 		}
-		result = server.Authorize(subject, authCtx, a.grantFor(pending))
+		result = server.Authorize(subject, authCtx, a.grantFor(pending, resources))
 	case "deny":
 		result = server.Deny("the holder declined")
 		a.progress.update(txID, func(p *offerProgress) { p.declined = true })
@@ -240,22 +250,26 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 // §11), which this issuer grants for a passport kept for refresh.
 const offlineAccessScope = "offline_access"
 
-// grantFor is what approving pending grants: the scopes it requested —
+// grantFor is what approving pending grants, restricted to resources: the
+// scopes it requested —
 // with offline_access, and so a refresh token, only for a passport kept
 // for refresh — under the transaction ID as the grant's ID, so the
 // wallet revoking the refresh token drops the passport too
 // (handleTokenRevocation). A kept passport whose wallet asked for no
 // refresh token isn't kept after all.
-func (a *App) grantFor(pending pendingInteraction) server.GrantedAuthorization {
+func (a *App) grantFor(pending pendingInteraction, resources []string) server.GrantedAuthorization {
 	keep := a.transactions.keeps(pending.txID)
 	refresh := slices.Contains(pending.scopes, offlineAccessScope)
 	if keep && !refresh {
 		a.transactions.dontKeep(pending.txID)
 	}
 	if !keep || !refresh {
-		return server.GrantedAuthorization{Scope: slices.DeleteFunc(slices.Clone(pending.scopes), func(s string) bool { return s == offlineAccessScope })}
+		return server.GrantedAuthorization{
+			Scope:     slices.DeleteFunc(slices.Clone(pending.scopes), func(s string) bool { return s == offlineAccessScope }),
+			Resources: resources,
+		}
 	}
-	return server.GrantedAuthorization{Scope: pending.scopes, GrantID: pending.txID}
+	return server.GrantedAuthorization{Scope: pending.scopes, GrantID: pending.txID, Resources: resources}
 }
 
 // claimTransaction redeems pending's transaction with code. On a wrong

@@ -63,6 +63,11 @@ const (
 	// authorization_details (RFC 9396 §5).
 	ErrorInvalidAuthorizationDetails ErrorCode = "invalid_authorization_details"
 
+	// ErrorInvalidTarget refuses a Token Request naming an RFC 8707
+	// resource other than this Credential Issuer (RFC 8707 §2;
+	// ExchangePreAuthorizedCodeRequest.Resources).
+	ErrorInvalidTarget ErrorCode = "invalid_target"
+
 	// ErrorInsufficientScope is the Credential Endpoint's answer to an
 	// access token that doesn't authorize the requested Credential
 	// Configuration: OpenID4VCI §8.3.1.1 has it return "an

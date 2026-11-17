@@ -56,6 +56,34 @@ itself unless restricted to a resource, and are now refused. Either:
   token for its own, and issue its own holder's Credential for that
   token's subject.
 
+With several Credential Issuers on one Authorization Server, the
+Wallet's `resource` chooses which of them a token is for, so also:
+
+- have each Credential Issuer's consent step grant only that issuer:
+  set `GrantedAuthorization.Resources` from the new
+  `Issuer.AuthorizationResources(InteractionRequest.Resources)`, and
+  `server.Deny` the request when it returns an error
+  (`issuer.ErrResourceNotThisIssuer`). Left nil, a request for one
+  Credential Issuer's offer that names another as its `resource` gets a
+  token for the other, under the subject this one's consent step signed
+  in. See the recipe in `issuer/authorization_server.go`;
+- at the pre-authorized Token Endpoint, pass the request's `resource`
+  parameters (`server.TokenEndpointRequest.Resources()`) as the new
+  `ExchangePreAuthorizedCodeRequest.Resources`, which refuses any but
+  `Config.Issuer` with 400 `invalid_target` (RFC 8707 §2) before the
+  code is consumed, and issue the token with
+  `RedeemedPreAuthorizedCode.Resource` alone. Never pass the request's
+  own resources as `IssueAccessTokenRequest.Resources`: the token would
+  then be good at the Credential Issuers they name too.
+
+`cmd/conformance-issuer`, the passport-vdc demo and `walletflowtest` now
+list their Credential Issuer in `server.Config.Resources`, which turns
+on resource indicators at their Authorization Server: a Wallet naming
+any other `resource`, at PAR or the Token Endpoint, gets
+`invalid_target` where the parameter used to be ignored. A deployment
+that copies their wiring does the same. Wallets built on `walletflow`
+name the offer's Credential Issuer, which is accepted.
+
 ### A custom DeferredTransactionStore persists RequestedByConfigurationID
 
 `DeferredTransactionRecord` has a new field,

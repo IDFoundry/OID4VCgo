@@ -858,8 +858,14 @@ changes whether *every* bullet below is `(done)`.
   The token's audience travels on `AuthorizedRequest.Audience`, and
   the Issuer refuses one that doesn't name it, so Credential Issuers
   sharing an Authorization Server each take only the tokens issued for
-  them; `RedeemedPreAuthorizedCode.Resource` restricts a pre-authorized
-  token to the issuer that redeemed the code.
+  them. Which one a token is issued for is the Wallet's `resource`
+  choice unless the Authorization Server is wired to keep it to the
+  Credential Issuer that authorized it: `Issuer.AuthorizationResources`
+  is the consent step's grant, denying a request that names another
+  issuer, and `RedeemedPreAuthorizedCode.Resource` restricts a
+  pre-authorized token to the issuer that redeemed the code, whose
+  `ExchangePreAuthorizedCodeRequest.Resources` refuses any other
+  `resource` the Token Request names.
   `DeferredCredentialHandler` and `NotificationEndpointHandler` do the
   same for the Deferred Credential (§9) and Notification (§11)
   Endpoints, over `ProtectedEndpointConfig{URL, Tokens}`: the first

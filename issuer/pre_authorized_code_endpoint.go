@@ -53,6 +53,17 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// so a request for more than the code grants is refused with
 	// invalid_authorization_details and leaves the code redeemable.
 	AuthorizationDetails []oid4vci.AuthorizationDetail
+
+	// Resources is the Token Request's RFC 8707 resource parameters
+	// (server.TokenEndpointRequest.Resources), OPTIONAL. Each must be
+	// Config.Issuer: the token is for this Credential Issuer alone
+	// (RedeemedPreAuthorizedCode.Resource), and a request naming another
+	// resource is refused with invalid_target (RFC 8707 §2) before the
+	// code is consumed. Pass them here, and never as
+	// server.IssueAccessTokenRequest.Resources: a token restricted to a
+	// resource the Wallet named would be taken there for this code's
+	// Subject, which is meaningful to this Credential Issuer only.
+	Resources []string
 }
 
 // ParseAuthorizationDetails reads a Token Request's
@@ -204,7 +215,8 @@ type PreAuthorizedCodeClientAuthentication interface {
 //	}
 //	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 //		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
-//		Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce},
+//		Resources: tr.Resources(),
+//		Verified:  &issuer.VerifiedTokenRequest{DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce},
 //	})
 //
 // and lists the grant in fapigo/server's Config.AdditionalGrantTypes.
@@ -253,6 +265,7 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 //	}
 //	res, err := iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 //		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
+//		Resources: tr.Resources(),
 //		Verified: &issuer.VerifiedTokenRequest{
 //			ClientID: c.Client.ID().String(), DPoPThumbprint: b.Thumbprint, NextDPoPNonce: b.NextDPoPNonce,
 //		},
@@ -424,6 +437,11 @@ type RedeemedPreAuthorizedCode struct {
 	// issuer itself refuses it too (AuthorizedRequest.Audience) unless
 	// Config.AcceptedAccessTokenAudiences lists the Authorization
 	// Server.
+	//
+	// Pass Resource alone, never with the Token Request's own resource
+	// parameters: a resource the Wallet named would make the token good
+	// there too. Give those to ExchangePreAuthorizedCodeRequest.Resources,
+	// which refuses any but this one.
 	Resource string
 
 	binding VerifiedTokenRequest
@@ -443,7 +461,7 @@ type RedeemedPreAuthorizedCode struct {
 // refused request leaves it redeemable — and mints the
 // authorization_details. The caller then issues the access
 // token for the result's Subject, Scope and AuthorizationDetails,
-// restricted to its Resource and bound to the request's DPoP key, and
+// restricted to its Resource alone and bound to the request's DPoP key, and
 // writes the Token Response with the authorization_details in it. A failure to issue after this succeeded
 // leaves the code spent.
 //
@@ -496,6 +514,9 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 	if err != nil {
 		return RedeemedPreAuthorizedCode{}, err
 	}
+	if err := iss.checkTokenResources(req.Resources); err != nil {
+		return RedeemedPreAuthorizedCode{}, err
+	}
 
 	// Everything that depends on the record is checked by the store's
 	// Consume, before it consumes the code: a request the code doesn't
@@ -513,6 +534,19 @@ func (iss *Issuer) redeemPreAuthorizedCode(ctx context.Context, req ExchangePreA
 		ClientID: binding.ClientID, Subject: record.Subject, Scope: record.Scopes, AuthorizationDetails: authDetails,
 		Resource: iss.cfg.Issuer.String(), binding: binding, record: record,
 	}, nil
+}
+
+// checkTokenResources refuses a pre-authorized Token Request naming an
+// RFC 8707 resource other than this Credential Issuer, with
+// invalid_target (RFC 8707 §2).
+func (iss *Issuer) checkTokenResources(resources []string) error {
+	own := iss.cfg.Issuer.String()
+	for _, r := range resources {
+		if r != own {
+			return newError(ErrorInvalidTarget, 400, "the resource isn't this Credential Issuer", nil)
+		}
+	}
+	return nil
 }
 
 // preAuthorizedBinding is a Token Request's client and DPoP key, for
