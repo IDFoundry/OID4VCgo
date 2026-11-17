@@ -803,11 +803,14 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if req.IssuerKeys == nil {
 		return nil, nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
 	}
-	pres, err := sdjwtvc.Parse(compact)
-	if err != nil {
-		return nil, nil, newError(ReasonMalformed, "parse presentation", err)
+	// Only the Issuer-signed JWT is read before its key is resolved;
+	// the Disclosures are parsed once, by sdjwtvc.VerifyPresentation,
+	// after the JWT's signature verifies (RFC 9901 §7.1).
+	issuerJWT, _, found := strings.Cut(compact, "~")
+	if !found {
+		return nil, nil, newError(ReasonMalformed, "parse presentation", errors.New("not an SD-JWT (no '~' separator)"))
 	}
-	header, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
+	header, rawPayload, err := jose.DecodeUnverified(issuerJWT)
 	if err != nil {
 		return nil, nil, newError(ReasonMalformed, "decode issuer jwt", err)
 	}
@@ -851,7 +854,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 	}
 
-	claims, _, err := sdjwtvc.Verify(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
+	verified, err := sdjwtvc.VerifyPresentation(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: keyBindingRequirement,
 		HolderPublicKey:   holderPub,
 		KeyBindingAlg:     holderAlg,
@@ -871,6 +874,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 		return nil, nil, newError(reason, "verify", err)
 	}
+	claims, pres := verified.Payload, verified.Presentation
 
 	if err := cq.SatisfiedBySDJWTVCPresentation(claims); err != nil {
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)
