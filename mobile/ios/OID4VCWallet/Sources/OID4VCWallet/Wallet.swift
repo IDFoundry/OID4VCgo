@@ -102,9 +102,11 @@ public struct WalletConfiguration: Codable, Sendable {
         /// The only Credential Issuer Identifiers the wallet takes offers
         /// from, each compared exactly with the offer's
         /// `credentialIssuer`: `startIssuance` refuses another's offer with
-        /// ``WalletError/Code/untrustedIssuer`` before anything is fetched
-        /// from that issuer, so the holder is never asked for a
-        /// transaction code it would send there.
+        /// ``WalletError/Code/untrustedIssuer`` before fetching its
+        /// metadata, so the holder is never asked for a transaction code
+        /// it would send there. Resuming, refreshing and polling a
+        /// deferred credential refuse an issuer the list no longer names
+        /// the same way, keeping what the wallet holds from it.
         ///
         /// A wallet with `roots` (or the mdoc ones) must decide which
         /// issuers' offers it takes, or `Wallet(configuration:)` throws

@@ -205,7 +205,7 @@ format or error code below changes incompatibly.
 | `no_matching_credential` | nothing held answers the Verifier's request |
 | `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
-| `untrusted_issuer` | the offer names a Credential Issuer outside `credential_issuers`: it's refused before anything is fetched from that issuer (ABI 16) |
+| `untrusted_issuer` | the offer names a Credential Issuer outside `credential_issuers`: it's refused before fetching its metadata (a `credential_offer_uri` is fetched first); or, under `require_signed_issuer_metadata` and `require_issuer_metadata_name`, the issuer's metadata isn't signed, or is signed naming another issuer. Resuming an authorization, refreshing a credential or polling a deferred one is refused the same way when `credential_issuers` no longer lists its issuer, before anything is sent there, and what the wallet holds from it is kept (ABI 16) |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `tls_pin` | a host in `tls_pins` presented a certificate matching none of its pins; nothing was sent to it |
@@ -701,7 +701,11 @@ it with `invalid_input`:
 - `credential_issuers`, the only Credential Issuer Identifiers it takes
   offers from, each compared exactly with an offer's
   `credential_issuer`: `StartIssuance` refuses another's offer with
-  `untrusted_issuer`, before fetching anything from that issuer. An
+  `untrusted_issuer`, before fetching its metadata (a
+  `credential_offer_uri` is fetched first, to learn the issuer). Resuming
+  an authorization, refreshing a credential and polling a deferred one
+  refuse an issuer the list no longer names the same way, before
+  sending it anything, and keep what the wallet holds from it. An
   empty identifier is `invalid_input`.
 - signed issuer metadata naming its issuer: `issuer_metadata_roots`
   with `require_signed_issuer_metadata` and

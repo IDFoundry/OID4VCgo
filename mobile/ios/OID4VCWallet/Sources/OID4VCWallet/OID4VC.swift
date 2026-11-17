@@ -60,8 +60,12 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// doesn't chain to `verifiers.roots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
         /// The offer names a Credential Issuer outside
-        /// `issuers.credentialIssuers`: it's refused before anything is
-        /// fetched from that issuer.
+        /// `issuers.credentialIssuers`: it's refused before fetching its
+        /// metadata. Also an issuer whose metadata isn't signed, or is
+        /// signed naming another issuer, under `issuerMetadata`'s
+        /// `requireSigned` and `requireName`; and resuming, refreshing
+        /// or polling a deferred credential from an issuer the list no
+        /// longer names, which keeps what the wallet holds from it.
         public static let untrustedIssuer = Code(rawValue: MobileCodeUntrustedIssuer)
         /// A pinned host's certificate matched none of its `network.tlsPins`: an
         /// interception, or a server whose keys changed beyond its pins.

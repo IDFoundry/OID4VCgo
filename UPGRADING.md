@@ -150,12 +150,12 @@ one with no policy is.
 
 ### An mdoc needs a `HolderKey` (`wallet`)
 
-`wallet.VerifyIssuedCredential` now refuses an mdoc when
-`VerifyIssuedCredentialParams.HolderKey` is nil, even if its
-`Configuration` declares no cryptographic binding: an mdoc's MSO always
-names a device key, and without a `HolderKey` it would be one the
-wallet never proved it holds. Pass the key proved in the Credential
-Request. walletflow always did.
+`wallet.VerifyIssuedCredential` now refuses an mdoc when neither
+`VerifyIssuedCredentialParams.HolderKey` nor `HolderKeys` is set, even
+if its `Configuration` declares no cryptographic binding: an mdoc's MSO
+always names a device key, and without one of them it would be one the
+wallet never proved it holds. Pass the key, or keys, proved in the
+Credential Request. walletflow always did.
 
 ### DPoP requests to non-normal endpoint paths (`wallet`, `walletflow`, mobile)
 

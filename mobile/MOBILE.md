@@ -2136,7 +2136,10 @@ too, or `NewWallet` refuses its configuration (`invalid_input`):
 - `credential_issuers` (Swift and Kotlin `issuers.credentialIssuers`)
   lists the Credential Issuer Identifiers it takes offers from:
   `StartIssuance` refuses any other with `untrusted_issuer`, before
-  fetching that issuer's metadata or asking for the PIN. The demo apps
+  fetching that issuer's metadata or asking for the PIN. Resuming an
+  authorization, refreshing a credential and polling a deferred one
+  refuse an issuer the list no longer names the same way, keeping what
+  the wallet holds from it. The demo apps
   take this way, listing the passport-vdc demo's issuer (the state
   directory's `credential-issuers`, which `cmd/demo` writes), since
   the demo's metadata signer certificate names no issuer.
