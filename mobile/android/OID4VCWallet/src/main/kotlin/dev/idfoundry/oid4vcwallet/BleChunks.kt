@@ -46,6 +46,9 @@ internal object BleChunks {
     class Reassembler {
         private val buffer = ByteArrayOutputStream()
 
+        /** The bytes of the message so far. */
+        val buffered: Int get() = buffer.size()
+
         /**
          * Adds [chunk] and returns the whole message when it was the last,
          * else null. A chunk with another prefix, or a message over

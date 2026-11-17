@@ -1306,7 +1306,11 @@ public class Wallet(
     /**
      * Offers QR/BLE and NFC with independent keys and one consent flow. A valid
      * NFC-to-BLE handover (full Hs read), NFC data application SELECT, or a
-     * completed QR BLE connection wins permanently. Type 4 discovery keeps QR available.
+     * QR BLE session started wins permanently. Type 4 discovery keeps QR available.
+     * A QR BLE session starts when any device in range first writes State 0x01 to
+     * the holder's GATT server (or, in central client mode, once the holder starts
+     * one with the reader), which needs no QR code: a device that never saw it can
+     * select QR, leaving NFC unavailable for the session.
      * NFC-only remains available without Bluetooth permission; then QR is omitted.
      * Closing a previous app-level NFC/combined owner finishes before replacement.
      */
