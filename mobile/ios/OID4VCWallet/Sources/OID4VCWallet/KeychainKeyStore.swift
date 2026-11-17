@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LocalAuthentication
 import Security
@@ -201,7 +202,10 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
             kSecAttrKeySizeInBits as String: 256,
         ]
         var error: Unmanaged<CFError>?
+        // CryptoKit checks the point is on the curve; SecKeyCreateWithData
+        // isn't documented to.
         guard peerPublicKey.count == 65, peerPublicKey.first == 0x04,
+              (try? P256.KeyAgreement.PublicKey(x963Representation: peerPublicKey)) != nil,
               let peer = SecKeyCreateWithData(peerPublicKey as CFData, peerAttrs as CFDictionary, &error) else {
             throw StoreError("the peer's key isn't an uncompressed P-256 point")
         }

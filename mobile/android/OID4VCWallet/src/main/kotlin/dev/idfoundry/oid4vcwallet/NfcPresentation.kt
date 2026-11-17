@@ -114,6 +114,8 @@ internal class NfcHandoverGate {
         }
         override suspend fun send(message: ByteArray) = connected().send(message)
         override suspend fun receive(): ByteArray = connected().receive()
+        override fun reject() = connected().reject()
+        override fun commit() = connected().commit()
         private fun connected(): ProximityTransport = synchronized(this) {
             delegate ?: throw ProximityTransportException("NFC handover incomplete")
         }

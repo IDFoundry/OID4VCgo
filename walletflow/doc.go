@@ -173,7 +173,8 @@
 //	p, err := w.StartProximityPresentation()  // mdoc peripheral server mode
 //	qr := p.QRCode()                           // show it; advertise p.ServiceUUID()
 //	ev := p.HandleMessage(ctx, msg)            // each message the transport receives:
-//	                                           // send ev.Send; ev.Ended: disconnect
+//	                                           // send ev.Send; ev.Ended: disconnect;
+//	                                           // ev.Rejected: drop that device, wait on
 //	reader, requests := p.Reader(), p.Requests() // once the request arrives: ask the holder
 //	presented, err := p.Respond(ctx, 0, credentialID, elements) // send presented.Send
 //	// or, to decline, send p.Terminate()

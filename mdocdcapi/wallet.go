@@ -305,6 +305,19 @@ func (in Incoming) VerifyReader(roots *x509.CertPool, now time.Time) (*x509.Cert
 // returns the reader's certificate, or an error wrapping
 // ErrUntrustedReader for an unsigned request or one no reader t
 // recognizes signed.
+//
+// Its rule for choosing the reader is looser than proximity's
+// (proximity.VerifyDeviceRequest), on purpose and unchanged: a
+// ReaderAuthAll that doesn't verify, or isn't trusted, is passed over
+// for the next, and then for a complete set of per-document
+// ReaderAuths by one trusted reader, where proximity takes any
+// signature that doesn't verify as an invalid reader and never lets a
+// per-document signer stand in for a whole-request one. Either way the
+// reader returned signed every ItemsRequest over this request's Annex
+// C SessionTranscript, which binds the origin and the encryption key,
+// so it can't have taken another reader's signature for its own; and
+// no DeviceRequestInfo is shown here, so no unsigned information
+// passes as signed.
 func (in Incoming) VerifyReaderTrust(t ReaderTrust) (*x509.Certificate, error) {
 	items := make([][]byte, len(in.Documents))
 	for i, d := range in.Documents {

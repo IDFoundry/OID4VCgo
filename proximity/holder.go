@@ -30,6 +30,9 @@ type DeviceSession struct {
 	eReaderKey             *ecdsa.PublicKey
 	cipher                 *cipherState
 	closed                 bool
+	// rejected counts the first messages TrySessionEstablishment
+	// rejected.
+	rejected int
 }
 
 type deviceConfig struct {
@@ -201,58 +204,124 @@ func (s *DeviceSession) SessionTranscriptBytes() []byte { return s.sessionTransc
 // derives the session keys (§9.1.5.2) and returns the decrypted
 // DeviceRequest. On an error the session is closed; reply with
 // StatusMessage(StatusFor(err)) where StatusFor reports one.
-func (s *DeviceSession) HandleSessionEstablishment(msg []byte) (deviceRequest []byte, err error) {
+//
+// Over a transport any nearby device can write to before the reader
+// does (BLE in mdoc peripheral server mode), use
+// TrySessionEstablishment instead: here one message that doesn't
+// decrypt, from a device that never saw the engagement, ends the
+// session.
+func (s *DeviceSession) HandleSessionEstablishment(msg []byte) ([]byte, error) {
+	if err := s.readyToEstablish(); err != nil {
+		return nil, err
+	}
+	deviceRequest, _, err := s.establish(msg)
+	if err != nil {
+		s.close()
+		return nil, err
+	}
+	return deviceRequest, nil
+}
+
+// MaxRejectedEstablishments is how many first messages
+// TrySessionEstablishment rejects, leaving the session waiting, before
+// the next one that doesn't decode or decrypt closes the session as
+// HandleSessionEstablishment would.
+const MaxRejectedEstablishments = 16
+
+// TrySessionEstablishment is HandleSessionEstablishment for a message
+// whose sender isn't yet known to be the reader. Until a message has
+// decrypted, one that doesn't decode or decrypt — its sender doesn't
+// hold the key this engagement's EDeviceKey agrees — returns an error
+// wrapping ErrEstablishmentRejected and leaves the session waiting for
+// its reader: send nothing back, and drop the device that sent it if
+// the transport can tell. The message reveals nothing about the
+// session. After MaxRejectedEstablishments such messages, the next
+// closes the session with the error HandleSessionEstablishment would
+// give (status 10 or 11, §9.1.1.4). An error once the message has
+// decrypted closes the session as HandleSessionEstablishment's does.
+//
+// For NFC data retrieval it is HandleSessionEstablishment: the reader
+// is the one device in the field, which waits for a status reply.
+func (s *DeviceSession) TrySessionEstablishment(msg []byte) ([]byte, error) {
+	if s.nfcDataParameters != nil {
+		return s.HandleSessionEstablishment(msg)
+	}
+	if err := s.readyToEstablish(); err != nil {
+		return nil, err
+	}
+	deviceRequest, rejectable, err := s.establish(msg)
+	if err == nil {
+		return deviceRequest, nil
+	}
+	if rejectable && s.rejected < MaxRejectedEstablishments {
+		s.rejected++
+		return nil, fmt.Errorf("%w: %w", ErrEstablishmentRejected, err)
+	}
+	s.close()
+	return nil, err
+}
+
+// readyToEstablish reports why the session can't take a
+// SessionEstablishment now, if it can't. Such an error closes nothing.
+func (s *DeviceSession) readyToEstablish() error {
 	if s.closed {
-		return nil, ErrSessionClosed
+		return ErrSessionClosed
 	}
 	if s.nfcNegotiated && s.handoverSelect == nil {
-		return nil, fmt.Errorf("proximity: NFC handover has not completed")
+		return fmt.Errorf("proximity: NFC handover has not completed")
 	}
 	if s.cipher != nil {
-		return nil, fmt.Errorf("proximity: session already established")
+		return fmt.Errorf("proximity: session already established")
 	}
-	defer func() {
-		if err != nil {
-			s.close()
-		}
-	}()
+	return nil
+}
 
+// establish decrypts a SessionEstablishment and establishes the session
+// with it. rejectable is true for an error before anything decrypted:
+// the message proves nothing about the session's reader. It closes
+// nothing; its callers decide.
+func (s *DeviceSession) establish(msg []byte) (deviceRequest []byte, rejectable bool, err error) {
+	transcript, eReaderKey, cs, deviceRequest, err := s.openEstablishment(msg)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(deviceRequest) > MaxMessageBytes {
+		return nil, false, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(deviceRequest), MaxMessageBytes, ErrCBORDecoding)
+	}
+	s.sessionTranscriptBytes, s.eReaderKey, s.cipher = transcript, eReaderKey, cs
+	return deviceRequest, false, nil
+}
+
+// openEstablishment decodes and decrypts a SessionEstablishment,
+// without changing the session.
+func (s *DeviceSession) openEstablishment(msg []byte) (transcript []byte, eReaderKey *ecdsa.PublicKey, cs *cipherState, deviceRequest []byte, err error) {
 	if len(msg) > MaxMessageBytes {
-		return nil, fmt.Errorf("proximity: SessionEstablishment is %d bytes, over %d: %w", len(msg), MaxMessageBytes, ErrCBORDecoding)
+		return nil, nil, nil, nil, fmt.Errorf("proximity: SessionEstablishment is %d bytes, over %d: %w", len(msg), MaxMessageBytes, ErrCBORDecoding)
 	}
 	var se sessionEstablishment
 	if err := decMode.Unmarshal(msg, &se); err != nil {
-		return nil, fmt.Errorf("proximity: decode SessionEstablishment: %w: %w", ErrCBORDecoding, err)
+		return nil, nil, nil, nil, fmt.Errorf("proximity: decode SessionEstablishment: %w: %w", ErrCBORDecoding, err)
 	}
 	if se.EReaderKey == nil || se.Data == nil {
-		return nil, fmt.Errorf("proximity: SessionEstablishment needs eReaderKey and data: %w", ErrCBORDecoding)
+		return nil, nil, nil, nil, fmt.Errorf("proximity: SessionEstablishment needs eReaderKey and data: %w", ErrCBORDecoding)
 	}
 	eReaderKeyBytes, err := unwrapTag24(se.EReaderKey)
 	if err != nil {
-		return nil, fmt.Errorf("proximity: decode EReaderKeyBytes: %w: %w", ErrCBORDecoding, err)
+		return nil, nil, nil, nil, fmt.Errorf("proximity: decode EReaderKeyBytes: %w: %w", ErrCBORDecoding, err)
 	}
-	eReaderKey, err := decodeCoseKey(eReaderKeyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("proximity: EReaderKey: %w", err)
+	if eReaderKey, err = decodeCoseKey(eReaderKeyBytes); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("proximity: EReaderKey: %w", err)
 	}
-
-	transcript, err := buildSessionTranscriptBytes(s.deviceEngagement, eReaderKeyBytes, s.handover)
-	if err != nil {
-		return nil, err
+	if transcript, err = buildSessionTranscriptBytes(s.deviceEngagement, eReaderKeyBytes, s.handover); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	cs, err := newSessionCipher(s.eDeviceKey, eReaderKey, transcript, false)
-	if err != nil {
-		return nil, err
+	if cs, err = newSessionCipher(s.eDeviceKey, eReaderKey, transcript, false); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	deviceRequest, err = cs.decrypt(se.Data)
-	if err != nil {
-		return nil, err
+	if deviceRequest, err = cs.decrypt(se.Data); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	if len(deviceRequest) > MaxMessageBytes {
-		return nil, fmt.Errorf("proximity: DeviceRequest is %d bytes, over %d: %w", len(deviceRequest), MaxMessageBytes, ErrCBORDecoding)
-	}
-	s.sessionTranscriptBytes, s.eReaderKey, s.cipher = transcript, eReaderKey, cs
-	return deviceRequest, nil
+	return transcript, eReaderKey, cs, deviceRequest, nil
 }
 
 // EReaderKey is the reader's ephemeral public key from its

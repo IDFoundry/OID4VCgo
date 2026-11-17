@@ -318,6 +318,12 @@ final class OID4VCWalletTests: XCTestCase {
             XCTAssertTrue($0 is KeyAgreementUnsupported, "\($0)")
         }
         XCTAssertThrowsError(try store.agree(id: id, peerPublicKey: Data([4, 1, 2])))
+        // A point off the curve: the peer's x with y + 1.
+        var offCurve = peer.publicKey.x963Representation
+        offCurve[64] ^= 1
+        XCTAssertThrowsError(try store.agree(id: id, peerPublicKey: offCurve)) {
+            XCTAssertTrue($0 is StoreError, "\($0)")
+        }
     }
 
     func testCheckKeyAgreement() async throws {

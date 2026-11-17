@@ -239,14 +239,65 @@ func TestProximityPresentationEnds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Rejected, the session left waiting, up to the bound: then the
+		// next one ends it with its status, as §9.1.1.4 has.
+		for i := range proximity.MaxRejectedEstablishments {
+			if ev := p.HandleMessage(ctx, []byte{0x01}); !ev.Rejected || ev.Ended || ev.Send != nil {
+				t.Fatalf("message %d: event %+v", i, ev)
+			}
+		}
 		ev := p.HandleMessage(ctx, []byte{0x01})
-		if !ev.Ended || !errors.Is(ev.Err, proximity.ErrCBORDecoding) {
+		if !ev.Ended || ev.Rejected || !errors.Is(ev.Err, proximity.ErrCBORDecoding) {
 			t.Fatalf("event %+v", ev)
 		}
 		if status, _ := proximity.StatusFor(proximity.ErrCBORDecoding); string(ev.Send) != string(proximity.StatusMessage(status)) {
 			t.Errorf("Send = %x", ev.Send)
 		}
 	})
+}
+
+// A device that never saw the holder's QR code — any device in BLE range
+// can be the first to write to the advertised GATT service — sends a
+// well-formed SessionEstablishment made for another engagement. It is
+// rejected without a reply, and the session waits on for the reader
+// that scanned the QR code.
+func TestProximityPresentationIgnoresABlindPeer(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	reader := newMdocReader(t)
+	w := mdocWallet(t, f, reader.roots, walletflow.CopyPerPresentation)
+	heldMdoc(t, receive(t, f, w, walletflowtest.MdocConfigurationID))
+	ctx := context.Background()
+
+	p, err := w.StartProximityPresentation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := proximity.NewDeviceSession(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attacker, err := proximity.NewReaderSession(other.QRCode(),
+		proximity.WithAssurance(verifier.AssuranceDevelopment), proximity.WithIssuerRevocation(certrevocation.NoCheck{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blind, err := attacker.Establishment(walletflowtest.DocType, map[string][]string{walletflowtest.NameSpace: {"family_name"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range [][]byte{blind, {0xa0}} {
+		ev := p.HandleMessage(ctx, msg)
+		if !ev.Rejected || ev.Ended || ev.Request || ev.Send != nil || !errors.Is(ev.Err, proximity.ErrEstablishmentRejected) {
+			t.Fatalf("blind peer's message: event %+v", ev)
+		}
+		if status, ok := proximity.StatusFor(ev.Err); ok {
+			t.Errorf("a rejected message has status %d to send", status)
+		}
+	}
+	_, msg := proximityRequest(t, p, &reader)
+	if ev := p.HandleMessage(ctx, msg); !ev.Request || ev.Ended || ev.Rejected {
+		t.Fatalf("the genuine reader after the blind peer: event %+v", ev)
+	}
 }
 
 // agreeingKeys is a KeyStore whose keys also agree keys

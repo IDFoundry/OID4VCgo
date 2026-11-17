@@ -1,10 +1,15 @@
 package dev.idfoundry.oid4vcwallet
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
@@ -38,6 +43,27 @@ internal interface ProximityTransport {
      * does nothing.
      */
     fun close()
+
+    /**
+     * The device whose message [receive] returned last isn't this
+     * session's reader (Go rejected it): drop it, and have [receive]
+     * return the next first message, from any other device. A transport
+     * with one peer keeps it.
+     */
+    fun reject() {
+        // One peer: nothing else to wait for.
+    }
+
+    /**
+     * The device whose message [receive] returned last is this session's
+     * reader (Go accepted it): stop looking for others, and from now on
+     * send to it and receive only from it. Before [send], a GATT server
+     * whose [receive] returned nothing yet commits to the first device
+     * that started the session. Calling it again does nothing.
+     */
+    fun commit() {
+        // One peer: already committed.
+    }
 }
 
 /**
@@ -52,46 +78,130 @@ internal const val TOO_MANY_MESSAGES = "too many unread messages from the other 
 
 /**
  * Several transports at once, for a holder offering both BLE modes: it
- * advertises and scans until a reader connects either way, keeps that
- * transport and closes the others. It fails only once every one has.
+ * advertises and scans until a reader connects either way, and keeps
+ * every way open until Go accepts a first message ([commit]): that
+ * transport is kept and the others closed. A device that only starts a
+ * session, or sends a first message Go rejects, closes nothing. It fails
+ * only once every transport has.
  */
 internal class EitherTransport(private val transports: List<ProximityTransport>) : ProximityTransport {
-    @Volatile private var chosen: ProximityTransport? = null
+    /** A transport's first message, before one is chosen. */
+    private class Arrival(val index: Int, val message: ByteArray)
 
-    /** The one that connected. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val lock = Any()
+    @Volatile private var chosen: ProximityTransport? = null
+    /** The transport whose message [receive] returned last; under [lock]. */
+    private var pending: Int? = null
+    /** Each transport's wait for Go's verdict on its message, true when chosen; under [lock]. */
+    private val verdicts = HashMap<Int, CompletableDeferred<Boolean>>()
+    /** Each transport's failure, by index; under [lock]. */
+    private val failures = arrayOfNulls<Throwable>(transports.size)
+    private var pumps: List<Job> = emptyList()
+    private val started = CompletableDeferred<Unit>()
+    /** At most one message per transport waits: each waits for its verdict. */
+    private val arrivals = Channel<Arrival>(Channel.UNLIMITED)
+
+    /** The one chosen. */
     val connected: ProximityTransport? get() = chosen
 
-    override suspend fun connect(): Unit = coroutineScope {
-        val results = Channel<Result<ProximityTransport>>(transports.size)
-        val jobs: List<Job> = transports.map { t -> launch { results.send(runCatching { t.connect(); t }) } }
-        var failure: Throwable? = null
-        repeat(transports.size) {
-            val result = results.receive()
-            val winner = result.getOrNull()
-            if (winner != null) {
-                chosen = winner
-                // Wait for the others to stop before closing them: one
-                // still connecting could otherwise open a GATT server or
-                // client after its close(), which is then never closed.
-                jobs.forEach { it.cancel() }
-                withTimeoutOrNull(LOSER_STOP_TIMEOUT) { jobs.joinAll() }
-                transports.filter { it !== winner }.forEach { it.close() }
-                return@coroutineScope
-            }
-            failure = failure ?: result.exceptionOrNull()
+    /** Starts every transport and returns once one has connected. */
+    override suspend fun connect() {
+        synchronized(lock) {
+            if (pumps.isEmpty()) pumps = transports.indices.map { i -> scope.launch { pump(i) } }
         }
-        throw failure ?: ProximityTransportException("couldn't connect")
+        started.await()
+    }
+
+    /**
+     * Connects transport [i], then hands each first message it receives
+     * to [receive], waiting for Go's verdict before the next: until it is
+     * chosen, when its messages go to [receive] directly.
+     */
+    private suspend fun pump(i: Int) {
+        val t = transports[i]
+        try {
+            t.connect()
+            started.complete(Unit)
+            while (true) {
+                val message = t.receive()
+                val verdict = CompletableDeferred<Boolean>()
+                synchronized(lock) { verdicts[i] = verdict }
+                arrivals.send(Arrival(i, message))
+                if (verdict.await()) return
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failed(i, e)
+        }
+    }
+
+    /** Transport [i] failed: the whole fails once every one has, unless one was chosen. */
+    private fun failed(i: Int, e: Exception) {
+        val all = synchronized(lock) {
+            failures[i] = e
+            if (chosen == null && failures.all { it != null }) failures.first() else null
+        } ?: return
+        started.completeExceptionally(all)
+        arrivals.close(all)
     }
 
     override suspend fun send(message: ByteArray) {
         (chosen ?: throw ProximityTransportException("the session hasn't started")).send(message)
     }
 
-    override suspend fun receive(): ByteArray =
-        (chosen ?: throw ProximityTransportException("the session hasn't started")).receive()
+    override suspend fun receive(): ByteArray {
+        chosen?.let { return it.receive() }
+        val arrival = try {
+            arrivals.receive()
+        } catch (e: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
+            throw ProximityTransportException("the session ended", peerEnded = true, cause = e)
+        }
+        synchronized(lock) { pending = arrival.index }
+        return arrival.message
+    }
+
+    override fun reject() {
+        val (i, verdict) = synchronized(lock) {
+            val i = pending ?: return
+            if (chosen != null) return
+            pending = null
+            i to verdicts.remove(i)
+        }
+        transports[i].reject()
+        verdict?.complete(false)
+    }
+
+    override fun commit() {
+        val (i, verdict) = synchronized(lock) {
+            val i = pending ?: return
+            if (chosen != null) return
+            chosen = transports[i]
+            pending = null
+            i to verdicts.remove(i)
+        }
+        transports[i].commit()
+        verdict?.complete(true)
+        val losers = transports.indices.filter { it != i }
+        losers.forEach { pumps[it].cancel() }
+        // Wait for the others to stop before closing them: one still
+        // connecting could otherwise open a GATT server or client after
+        // its close(), which is then never closed.
+        scope.launch {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(LOSER_STOP_TIMEOUT) { losers.forEach { pumps[it].join() } }
+                losers.forEach { transports[it].close() }
+            }
+        }
+    }
 
     override fun close() {
         transports.forEach { it.close() }
+        scope.cancel()
+        val ended = ProximityTransportException("the session ended", peerEnded = true)
+        started.completeExceptionally(ended)
+        arrivals.close(ended)
     }
 
     private companion object {

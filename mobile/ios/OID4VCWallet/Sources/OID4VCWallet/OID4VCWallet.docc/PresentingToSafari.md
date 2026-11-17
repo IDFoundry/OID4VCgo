@@ -162,7 +162,17 @@ struct ConsentView: View {
     }
 
     var body: some View {
-        VStack {
+        VStack(alignment: .leading) {
+            // Who asks, and exactly what `share()` answers: the
+            // response is bound to these elements, so the holder must
+            // see each one, and whether the website says it keeps it.
+            Text("\(context.requestingWebsiteOrigin?.absoluteString ?? "An unknown website") asks for:")
+            if let shown {
+                Text(shown.doctype)
+                ForEach(Array(shown.elements.enumerated()), id: \.offset) { _, element in
+                    Text(element.retain ? "\(element.identifier) (the website will keep it)" : element.identifier)
+                }
+            }
             if let problem { Text(problem) }
             if chosen?.linkableHere == true { Text("This website could link this to another.") }
             Button("Share") { Task { await share() } }.disabled(chosen == nil)

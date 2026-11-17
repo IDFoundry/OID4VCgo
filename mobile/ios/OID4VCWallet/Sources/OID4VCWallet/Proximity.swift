@@ -372,10 +372,9 @@ public final class ProximityPresentation: @unchecked Sendable {
         do {
             try await within(timeouts.connectSeconds, "no reader connected") { try await self.transport.connect() }
             broadcast.update(.connected) { if case .waitingForReader = $0 { true } else { false } }
-            let first = try await within(timeouts.requestSeconds, "the reader sent no request") { try await self.transport.receive() }
+            let event = try await within(timeouts.requestSeconds, "the reader sent no request") { try await self.firstEvent() }
             // An "ended" event has finished the session; any other ("none")
             // carried no request, so nothing would ever end it.
-            let event = try await handleMessage(first)
             guard event == "request" else {
                 if event != "ended" {
                     await sendTermination()
@@ -413,12 +412,27 @@ public final class ProximityPresentation: @unchecked Sendable {
         }
     }
 
+    /// The event for the first message Go accepts. Any device in range
+    /// can write to a GATT server first: one whose message Go rejects
+    /// (it never saw the QR code) is dropped, and the next first message,
+    /// from any device, is handed to Go.
+    private func firstEvent() async throws -> String {
+        while true {
+            let event = try await handleMessage(try await transport.receive())
+            guard event == "rejected" else { return event }
+            transport.reject()
+        }
+    }
+
     /// Hands `message` to Go, sends its reply, and ends the session on an
-    /// "ended" event; returns the event.
+    /// "ended" event; returns the event. Any event but "rejected" commits
+    /// the transport to the device that sent `message`.
     private func handleMessage(_ message: Data) async throws -> String {
         let p = handle
         let json = try await OID4VC.cancellable { op in p.handleMessage(op, message: message) }
         let event = try decode(EventJSON.self, json)
+        if event.event == "rejected" { return event.event }
+        transport.commit()
         if let send = event.send { try await transport.send(send) }
         if event.event == "ended" {
             finish(event.reason == "reader_ended" ? .readerEnded : .failed(WalletError(text: event.error ?? "[protocol] the session failed")))
@@ -1098,6 +1112,9 @@ public final class ProximityReaderSession: @unchecked Sendable {
             } catch is ProximityTimeout {
                 throw ProximityError(.timedOut, "the holder's device wasn't found")
             }
+            // The reader speaks first: as GATT server (central client
+            // mode), to the first device that started the session.
+            transport.commit()
             let s = handle
             let json: String
             if documentRequests.count == 1 {

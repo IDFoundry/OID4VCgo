@@ -138,7 +138,8 @@ func (p *ProximityPresentation) Engagement() string {
 // proximityEventJSON is HandleMessage's result.
 type proximityEventJSON struct {
 	result
-	// Event is "request" (Request describes it), "ended" or "none".
+	// Event is "request" (Request describes it), "ended", "rejected"
+	// or "none".
 	Event string `json:"event"`
 	// Send is the base64 message to send the reader, if any.
 	Send string `json:"send,omitempty"`
@@ -157,6 +158,13 @@ type proximityEventJSON struct {
 //     reason is "reader_ended" (the reader ended it first) or "error"
 //     (a bad message, or a reader require_trusted_mdoc_reader
 //     refuses), with error, a failing call's text;
+//   - "rejected": the session's first message didn't decode or decrypt
+//     for this engagement, so its sender never saw the engagement and
+//     isn't the reader. Nothing is sent: drop the device that sent it,
+//     and hand the next first message, from any device, to
+//     HandleMessage. The session waits on, up to
+//     proximity.MaxRejectedEstablishments times; the next such message
+//     ends it (added within ABI 15);
 //   - "none": nothing to do.
 func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) string {
 	ev := p.p.HandleMessage(op.context(), message)
@@ -167,6 +175,8 @@ func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) str
 	switch {
 	case ev.Request:
 		out.Event = "request"
+	case ev.Rejected:
+		out.Event = "rejected"
 	case ev.Ended:
 		out.Event = "ended"
 		if errors.Is(ev.Err, walletflow.ErrReaderEnded) {
@@ -209,16 +219,26 @@ type certificateJSON struct {
 	SHA256            string   `json:"sha256"`
 }
 
+// certificateOf is c's fields for certificateJSON. The names in it —
+// subject, issuer, subject alternative names — are
+// whatever the certificate's maker wrote, trusted or not: each is
+// cleaned as displayName cleans a name (certificateText), so none can
+// carry control, line separator or bidirectional characters to a
+// screen.
 func certificateOf(c *x509.Certificate) certificateJSON {
 	out := certificateJSON{
-		Subject: c.Subject.String(), Issuer: c.Issuer.String(),
+		Subject: certificateText(c.Subject.String()), Issuer: certificateText(c.Issuer.String()),
 		NotBefore: c.NotBefore.UTC().Format(time.RFC3339), NotAfter: c.NotAfter.UTC().Format(time.RFC3339),
 		Serial: c.SerialNumber.Text(16), IsCA: c.IsCA, SignatureAlg: c.SignatureAlgorithm.String(),
-		SubjectAltNames:   append(append(append([]string{}, c.DNSNames...), c.EmailAddresses...), ipStrings(c)...),
+		SubjectAltNames:   []string{},
 		ExtendedKeyUsages: []string{}, KeyUsages: []string{}, Extensions: []string{},
 	}
+	names := append(append(append([]string{}, c.DNSNames...), c.EmailAddresses...), ipStrings(c)...)
 	for _, u := range c.URIs {
-		out.SubjectAltNames = append(out.SubjectAltNames, u.String())
+		names = append(names, u.String())
+	}
+	for _, n := range names {
+		out.SubjectAltNames = append(out.SubjectAltNames, certificateText(n))
 	}
 	for _, eku := range c.ExtKeyUsage {
 		out.ExtendedKeyUsages = append(out.ExtendedKeyUsages, extKeyUsageNames[eku])
@@ -442,3 +462,8 @@ func (p *ProximityPresentation) Terminate() string {
 // control, line separator or invisible format characters, at most 200
 // runes.
 func displayName(s string) string { return displaytext.Clean(s, 200) }
+
+// certificateText is a certificate's distinguished name or alternative
+// name, cleaned as displayName is, but allowed a longer one: at most
+// 1,024 runes.
+func certificateText(s string) string { return displaytext.Clean(s, 1024) }

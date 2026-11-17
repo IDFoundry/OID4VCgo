@@ -120,7 +120,12 @@ notifications.
 4. **Subscribe and start.** The GATT client subscribes to State and
    Server2Client notifications, then writes `0x01` (start) to State.
 5. **Request.** The reader sends `Establishment(docType, elements)`. The
-   mdoc passes it to `HandleSessionEstablishment`, then
+   mdoc passes it to `HandleSessionEstablishment` (or, where any
+   nearby device can be first to write, as a GATT server can be,
+   `TrySessionEstablishment`: a first message that doesn't decode or
+   decrypt is `ErrEstablishmentRejected`, gets no reply, and leaves the
+   session waiting for its reader, up to `MaxRejectedEstablishments`
+   times; §9.1.1.4's status 10 then applies), then
    `DecodeDeviceRequest`, then `VerifyDeviceRequest` with its trusted
    reader roots, and shows a consent prompt: who is asking, what, and
    whether the reader says it will keep each element. A reader that
