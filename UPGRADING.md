@@ -141,6 +141,13 @@ refuses becomes `invalid` with reason `issuer_untrusted`. Set
 `IssuerLeafPolicy: verifier.AnyIssuerLeaf` to keep such credentials,
 for `IssuerRoots` that anchor issuers' certificates alone.
 
+For an SD-JWT VC without a policy, `wallet.IssuerLeafPolicyFor` returns
+`verifier.DefaultSDJWTIssuerLeafPolicy` itself, so `walletflow.New`
+counts it as the default it is: a production `Config` that sets it as
+`IssuerLeafPolicy`, on `IssuerRoots` that may share a trust anchor with
+another role's pool, is refused with "may share a trust anchor", as
+one with no policy is.
+
 ### An mdoc needs a `HolderKey` (`wallet`)
 
 `wallet.VerifyIssuedCredential` now refuses an mdoc when

@@ -16,6 +16,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/issuer"
 	"github.com/idfoundry/oid4vcgo/proximity"
@@ -245,6 +246,9 @@ func TestNew_RoleSeparationOptOuts(t *testing.T) {
 		"registration.DefaultRegistrarLeafPolicy": registration.DefaultRegistrarLeafPolicy,
 		"issuer.DefaultAttestationLeafPolicy":     issuer.DefaultAttestationLeafPolicy,
 		"mdoc.LenientDocumentSignerPolicy":        mdoc.LenientDocumentSignerPolicy,
+		// So does the SD-JWT VC default wallet.IssuerLeafPolicyFor
+		// returns, the policy receipt applies where none is set.
+		"wallet.IssuerLeafPolicyFor(dc+sd-jwt, nil)": wallet.IssuerLeafPolicyFor(sdjwtvc.CredentialFormat, nil),
 	}
 	for optOutName, optOut := range optOuts {
 		for name, tc := range map[string]struct {

@@ -21,15 +21,19 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/statuslist"
+	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
 // IssuerLeafPolicyFor is the leaf policy VerifyIssuedCredential
 // checks an issuer certificate of a credential of format with, given
 // VerifyIssuedCredentialParams.IssuerLeafPolicy policy: policy when it's
 // set, else mdoc.DefaultDocumentSignerPolicy for an mdoc, and for any
-// other format the check verifier.DefaultSDJWTIssuerLeafPolicy makes.
-// A wallet re-checking a held credential's issuer chain uses it too,
-// so the chain is held to what receipt held it to.
+// other format verifier.DefaultSDJWTIssuerLeafPolicy itself. A wallet
+// re-checking a held credential's issuer chain uses it too, so the
+// chain is held to what receipt held it to. Without policy, it returns
+// those exported functions themselves, so walletflow.New counts the
+// result as the default it is (not as a leaf policy separating
+// IssuerRoots from another role's trust pool) wherever it's set.
 func IssuerLeafPolicyFor(format string, policy func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
 	switch {
 	case policy != nil:
@@ -37,7 +41,7 @@ func IssuerLeafPolicyFor(format string, policy func(*x509.Certificate, [][]*x509
 	case format == mdoc.CredentialFormat:
 		return mdoc.DefaultDocumentSignerPolicy
 	default:
-		return certchain.SDJWTIssuerRole.Check
+		return verifier.DefaultSDJWTIssuerLeafPolicy
 	}
 }
 

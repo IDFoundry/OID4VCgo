@@ -81,10 +81,12 @@ type Config struct {
 	// mdoc's mdoc.DefaultDocumentSignerPolicy. A policy that's set
 	// replaces those; verifier.AnyIssuerLeaf opts out of them. Only a
 	// policy that's set, other than verifier.AnyIssuerLeaf or
-	// verifier.DefaultSDJWTIssuerLeafPolicy, tells IssuerRoots apart
-	// from another role's pool sharing an anchor with them (see New):
-	// neither the defaults nor the opt-out can tell an issuer's
-	// certificate from a Verifier's without an extended key usage.
+	// verifier.DefaultSDJWTIssuerLeafPolicy (which is also what
+	// wallet.IssuerLeafPolicyFor returns for an SD-JWT VC without a
+	// policy), tells IssuerRoots apart from another role's pool sharing
+	// an anchor with them (see New): neither the defaults nor the
+	// opt-out can tell an issuer's certificate from a Verifier's without
+	// an extended key usage.
 	IssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// MdocIssuerRoots, if set, are the trust anchors for mdoc document
