@@ -38,23 +38,31 @@ func TestBothPolicies(t *testing.T) {
 // A signer's chain through a CA key rollover — the new key's
 // certificate signed with the old key, then the old key's — verifies
 // link by link but names one subject twice, which verifiers of a
-// presented chain refuse: SignerChainDERs refuses it, so a Wallet
-// Provider or status list signer configured with it learns at startup.
-func TestSignerChainDERs_RepeatedSubject(t *testing.T) {
+// presented chain refuse: CheckPresentedChain, and so SignerChainDERs,
+// refuses it, so an issuer, verifier, Wallet Provider or status list
+// signer configured with it learns at startup.
+func TestCheckPresentedChain_RepeatedSubject(t *testing.T) {
 	rootKey, oldKey, newKey, leafKey := pkiKey(t, "P-256"), pkiKey(t, "P-256"), pkiKey(t, "P-256"), pkiKey(t, "P-256")
 	root := pkiCert(t, 1, "root", true, rootKey.Public(), nil, rootKey)
 	oldCA := pkiCert(t, 2, "CA", true, oldKey.Public(), root, rootKey)
 	newWithOld := pkiCert(t, 3, "CA", true, newKey.Public(), oldCA, oldKey)
 	leaf := pkiCert(t, 4, "signer", false, leafKey.Public(), newWithOld, newKey)
 
-	if err := CheckPresentedChain(leaf, []*x509.Certificate{newWithOld, oldCA}); err != nil {
+	if err := newWithOld.CheckSignatureFrom(oldCA); err != nil {
 		t.Fatalf("the rollover chain's links: %v", err)
 	}
-	_, err := SignerChainDERs(leafKey, []*x509.Certificate{leaf, newWithOld, oldCA})
+	err := CheckPresentedChain(leaf, []*x509.Certificate{newWithOld, oldCA})
 	if err == nil || !strings.Contains(err.Error(), "the same subject name") {
-		t.Errorf("err = %v, want refused for the repeated subject", err)
+		t.Errorf("CheckPresentedChain = %v, want refused for the repeated subject", err)
+	}
+	_, err = SignerChainDERs(leafKey, []*x509.Certificate{leaf, newWithOld, oldCA})
+	if err == nil || !strings.Contains(err.Error(), "the same subject name") {
+		t.Errorf("SignerChainDERs = %v, want refused for the repeated subject", err)
+	}
+	if err := CheckPresentedChain(leaf, []*x509.Certificate{newWithOld}); err != nil {
+		t.Errorf("the chain without the old CA: %v", err)
 	}
 	if _, err := SignerChainDERs(leafKey, []*x509.Certificate{leaf, newWithOld}); err != nil {
-		t.Errorf("the chain without the old CA: %v", err)
+		t.Errorf("the chain without the old CA, as DERs: %v", err)
 	}
 }

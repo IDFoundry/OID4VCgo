@@ -80,6 +80,14 @@ func TestClientCertificateChain(t *testing.T) {
 	if _, err := verifier.New(cfg, deps); err == nil {
 		t.Error("New accepted a chain with the trust anchor in it")
 	}
+	// A CA key rollover's chain repeats a subject, which a Wallet
+	// refuses in the Request Object's x5c.
+	newMid, newMidKey := testcert.Intermediate(t, "intermediate", root, rootKey)
+	rolled, rolledKey := testcert.Leaf(t, "verifier", newMid, newMidKey)
+	cfg.ClientCertificate, cfg.ClientCertificateChain, deps.Signer = rolled, []*x509.Certificate{testcert.CrossCertify(t, newMid, mid, midKey), mid}, rolledKey
+	if _, err := verifier.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "the same subject name") {
+		t.Errorf("a CA key rollover's chain: %v, want refused for its repeated subject", err)
+	}
 	selfSigned, selfSignedKey := testcert.SelfSignedLeaf(t, "self-signed verifier")
 	prod, prodDeps := validConfig(t)
 	prod.Assurance, prod.ClientCertificate, prodDeps.Signer = verifier.AssuranceProduction, selfSigned, selfSignedKey

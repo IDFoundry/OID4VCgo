@@ -360,7 +360,9 @@ type SDJWTSigner struct {
 	// IssuerCertificate and the trust anchor, in order, the anchor left
 	// out: they follow it in x5c (credential/sdjwtvc.IssueOptions.
 	// IssuerIntermediates), so a Verifier holding only the anchor can
-	// build the path. Requires IssuerCertificate.
+	// build the path. No two certificates of the chain may share a
+	// subject name or public key (as a CA key rollover's two would).
+	// Requires IssuerCertificate.
 	IssuerIntermediates []*x509.Certificate
 
 	// Decoys, if set, adds decoy digests to each issued credential's
@@ -454,7 +456,8 @@ func (s *SDJWTSigner) validate(assurance AssuranceLevel) error {
 
 // checkSignerCertificate checks a signer's certificate before any
 // credential is issued with it: its key is signer's, the chain after it
-// is in order without the trust anchor, and, under AssuranceProduction,
+// is in order without the trust anchor and repeats no subject name or
+// key (certchain.CheckPresentedChain), and, under AssuranceProduction,
 // it isn't self-signed (HAIP 1.0 §6.1.1, ISO/IEC 18013-5 §9.3.1: issued
 // by a CA). A mismatch would otherwise surface as a failed Credential
 // Request.

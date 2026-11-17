@@ -19,6 +19,11 @@ func TestNewChecksSDJWTSignerCertificate(t *testing.T) {
 	leaf, leafKey := testcert.Leaf(t, "issuer", mid, midKey)
 	selfSigned, selfSignedKey := testcert.SelfSignedLeaf(t, "self-signed issuer")
 	_, otherKey := testcert.Leaf(t, "other", mid, midKey)
+	// A CA key rollover's chain: the new CA signed with the old key,
+	// then the old CA, one subject twice.
+	newMid, newMidKey := testcert.Intermediate(t, "intermediate", root, rootKey)
+	newWithOld := testcert.CrossCertify(t, newMid, mid, midKey)
+	rolledLeaf, rolledLeafKey := testcert.Leaf(t, "issuer", newMid, newMidKey)
 	for name, tc := range map[string]struct {
 		signer     *issuer.SDJWTSigner
 		production bool
@@ -27,6 +32,7 @@ func TestNewChecksSDJWTSignerCertificate(t *testing.T) {
 		"chain":                        {signer: &issuer.SDJWTSigner{Signer: leafKey, Alg: jose.ES256, IssuerCertificate: leaf, IssuerIntermediates: []*x509.Certificate{mid}}},
 		"another key's certificate":    {signer: &issuer.SDJWTSigner{Signer: otherKey, Alg: jose.ES256, IssuerCertificate: leaf}, refused: "isn't the signer's"},
 		"anchor in the chain":          {signer: &issuer.SDJWTSigner{Signer: leafKey, Alg: jose.ES256, IssuerCertificate: leaf, IssuerIntermediates: []*x509.Certificate{mid, root}}, refused: "self-signed"},
+		"a CA key rollover's chain":    {signer: &issuer.SDJWTSigner{Signer: rolledLeafKey, Alg: jose.ES256, IssuerCertificate: rolledLeaf, IssuerIntermediates: []*x509.Certificate{newWithOld, mid}}, refused: "the same subject name"},
 		"intermediates without a leaf": {signer: &issuer.SDJWTSigner{Signer: leafKey, Alg: jose.ES256, IssuerIntermediates: []*x509.Certificate{mid}}, refused: "needs issuer_certificate"},
 		"self-signed, development":     {signer: &issuer.SDJWTSigner{Signer: selfSignedKey, Alg: jose.ES256, IssuerCertificate: selfSigned}},
 		"self-signed, production":      {signer: &issuer.SDJWTSigner{Signer: selfSignedKey, Alg: jose.ES256, IssuerCertificate: selfSigned}, production: true, refused: "self-signed"},
