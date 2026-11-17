@@ -182,6 +182,12 @@ type Config struct {
 
 	// crls is CRL's checker, once main has started it.
 	crls *certrevocation.CRLs
+
+	// extraResources are resources the Authorization Server accepts
+	// besides the Credential Issuer, as one serving other Credential
+	// Issuers too would: set by tests only, to check that the consent
+	// step grants the Credential Issuer alone.
+	extraResources []string
 }
 
 // startCRL starts c's CRL publisher, if any, then the Refresher CRL

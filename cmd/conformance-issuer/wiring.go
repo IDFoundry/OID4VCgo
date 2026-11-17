@@ -172,7 +172,7 @@ func newServers(cfg Config) (servers, error) {
 	// The Credential Issuer is the one resource its tokens may be
 	// restricted to (RFC 8707): the pre-authorized code grant's always
 	// are (RedeemedPreAuthorizedCode.Resource).
-	srvCfg.Resources = []string{issuerURL.String()}
+	srvCfg.Resources = append([]string{issuerURL.String()}, cfg.extraResources...)
 	if cfg.Offers != nil {
 		// The Token Endpoint also serves the pre-authorized code grant,
 		// so its metadata lists it.

@@ -123,7 +123,34 @@ import (
 // tokens at the Credential Endpoint for the same identifier
 // (fapigo/serverresource's Options.Resource), and restrict the
 // pre-authorized code grant's tokens to it too
-// (RedeemedPreAuthorizedCode.Resource).
+// (RedeemedPreAuthorizedCode.Resource), and their refresh tokens (see
+// "Refreshing credentials" below).
+//
+// A token issued without a resource is addressed to the Authorization
+// Server itself, and a Credential Issuer whose identifier is the
+// Authorization Server's own (Config.AuthorizationServers empty) takes
+// every such token as its own, whichever Credential Issuer's grant it
+// came from: one refreshed from a refresh token issued without
+// Resources, one from a consent step that grants a request naming no
+// resource without asking AuthorizationResources, or one from a grant
+// made before the tokens were restricted. So a Credential Issuer must
+// not share its identifier with an Authorization Server that serves
+// other Credential Issuers too. Give the Authorization Server an
+// identifier of its own, listed in each Credential Issuer's
+// Config.AuthorizationServers and in none's
+// Config.AcceptedAccessTokenAudiences: a token addressed to it is then
+// refused by every one. Where the identifier can't change, confine
+// every wallet client to the Credential Issuers it serves, listing each
+// (fapigo's storage.RegisteredClientConfig.AllowedResources, and
+// server.Config.AutomaticRegistration.AllowedResources for
+// automatically registered clients): the Authorization Server then
+// issues no token addressed to itself, and refuses with invalid_target
+// a request, refresh or embedder-issued token that names none of them,
+// including the refresh of a grant made without resources. The
+// co-hosted Credential Issuer's own Wallets must then name it as their
+// resource too, though its metadata lists no authorization_servers.
+// New can't tell whether its Authorization Server serves others, so it
+// checks neither.
 //
 // # Credential Endpoint access tokens
 //
@@ -159,7 +186,31 @@ import (
 //     status list indices, which are shared by every credential.
 //
 // For the pre-authorized code grant, server.Server.IssueRefreshToken
-// issues one for ExchangePreAuthorizedCodeResult.RefreshToken.
+// issues one for ExchangePreAuthorizedCodeResult.RefreshToken. Restrict
+// it to this Credential Issuer, as the access token is
+// (RedeemedPreAuthorizedCode.Resource, which is Config.Issuer):
+//
+//	refresh, err := srv.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
+//		GrantType: grantType, Client: attested, Binding: binding, Subject: subject,
+//		Scope: redeemed.Scope, GrantID: grantID,
+//		Resources: []string{redeemed.Resource},
+//	})
+//
+// Without Resources, each access token it refreshes into is addressed
+// to the Authorization Server: refused here unless this Credential
+// Issuer shares the Authorization Server's identifier or lists it in
+// Config.AcceptedAccessTokenAudiences, and taken by a Credential Issuer
+// sharing it for its own.
+//
+// Refresh tokens issued before the access tokens were restricted carry
+// no resources either. Where the Authorization Server has an identifier
+// of its own, their access tokens are now refused at the Credential
+// Endpoint with invalid_token, and the Wallet must authorize again;
+// revoke them to have it learn so at the Token Endpoint instead. Where
+// a Credential Issuer shares the Authorization Server's identifier
+// while it serves others, end them before the upgrade goes live:
+// confine the wallet clients as above, which refuses their refresh with
+// invalid_target, or revoke them.
 
 // ErrResourceNotThisIssuer is wrapped by AuthorizationResources' error:
 // the authorization request named RFC 8707 resources, none of them this

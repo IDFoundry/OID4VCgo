@@ -127,6 +127,12 @@ type Config struct {
 	// carry a token Access signed for it (demoaccess.Guard). Leave it
 	// zero for a local run.
 	Access demoaccess.Settings
+
+	// extraResources are resources the Authorization Server accepts
+	// besides the Credential Issuer, as one serving other Credential
+	// Issuers too would: set by this package's tests only, to check
+	// that the approval step grants the Credential Issuer alone.
+	extraResources []string
 }
 
 // WalletClient registers the demo Wallet: a client authenticated by

@@ -195,7 +195,9 @@ type Config struct {
 	// advertised as Metadata's authorization_servers (§12.2.4).
 	// OPTIONAL: leave empty when this Credential Issuer is its own
 	// Authorization Server (for example, paired with a fapigo/server at
-	// the same identifier — see authorization_server.go). With more
+	// the same identifier — see authorization_server.go), which must
+	// then serve no other Credential Issuer unless it confines its
+	// wallet clients to them (fapigo's AllowedResources). With more
 	// than one, a Credential Offer grant may name which to use via its
 	// authorization_server, which must then be one of these (§4.1.1);
 	// otherwise a grant must not set it.
@@ -206,7 +208,9 @@ type Config struct {
 	// By default only a token issued for Issuer itself is: one whose
 	// "aud" names it, as an Authorization Server sets it when the token
 	// was requested with Issuer as its RFC 8707 resource (or when the
-	// Authorization Server's own identifier is Issuer). List an
+	// Authorization Server's own identifier is Issuer: then every token
+	// it issues without a resource is accepted here, whoever's grant it
+	// came from). List an
 	// Authorization Server's issuer identifier here only when it issues
 	// access tokens for this Credential Issuer alone and doesn't
 	// restrict them to it: its tokens' audience is then the
@@ -216,7 +220,14 @@ type Config struct {
 	// the other issuer's subject.
 	//
 	// Each must be one of AuthorizationServers: New refuses any other
-	// (a co-tenant Credential Issuer's identifier, say).
+	// (a co-tenant Credential Issuer's identifier, say). New can't tell
+	// whether an Authorization Server serves others, though, nor
+	// whether a co-tenant shares its identifier, being its own
+	// Authorization Server: listing such an Authorization Server takes
+	// that co-tenant's tokens too. A Credential Issuer must not share
+	// its identifier with an Authorization Server serving others (see
+	// "Restricting access tokens to this Credential Issuer" in
+	// authorization_server.go).
 	AcceptedAccessTokenAudiences []fapi.URL
 
 	Endpoints Endpoints

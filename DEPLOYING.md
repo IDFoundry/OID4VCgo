@@ -93,11 +93,43 @@ each, not a deployment template" says what it does differently.
   `GrantedAuthorization.Resources` and deny the request when it fails;
   at the pre-authorized Token Endpoint, pass the request's resources as
   `ExchangePreAuthorizedCodeRequest.Resources` and issue the token with
-  `RedeemedPreAuthorizedCode.Resource` alone. List an Authorization
-  Server in `Config.AcceptedAccessTokenAudiences` only when it serves
-  this Credential Issuer alone. Without these, on an Authorization
-  Server shared with other Credential Issuers, one issuer's token can
-  be taken by another for its own holder of the same subject value.
+  `RedeemedPreAuthorizedCode.Resource` alone, and its refresh token
+  with it as `server.IssueRefreshTokenRequest.Resources`. List an
+  Authorization Server in `Config.AcceptedAccessTokenAudiences` only
+  when it serves this Credential Issuer alone. Without these, on an
+  Authorization Server shared with other Credential Issuers, one
+  issuer's token can be taken by another for its own holder of the
+  same subject value.
+- [ ] **A shared Authorization Server has an identifier of its own.**
+  A token issued without a resource is addressed to the Authorization
+  Server, and a Credential Issuer whose `Config.Issuer` is the
+  Authorization Server's identifier takes every such token for its
+  own, whichever Credential Issuer's grant it came from. On an
+  Authorization Server serving several Credential Issuers, give it an
+  identifier none of them has, listed in each one's
+  `Config.AuthorizationServers`. If one must keep sharing it, confine
+  every wallet client to the Credential Issuers with FAPIgo's
+  `storage.RegisteredClientConfig.AllowedResources` (and
+  `server.Config.AutomaticRegistration.AllowedResources`), listing
+  each: the Authorization Server then issues no token addressed to
+  itself, and every Wallet must name its Credential Issuer as its
+  `resource` (`invalid_target` otherwise), the co-hosted one's
+  included, though its metadata lists no `authorization_servers`.
+  `issuer.New` can't tell an Authorization Server serving others, so
+  it checks neither.
+- [ ] **Grants from before v0.82.0.** Their refresh tokens carry no
+  resource, so each refreshes into a token addressed to the
+  Authorization Server. That's still accepted by a Credential Issuer
+  that is the Authorization Server's only one, and shares its
+  identifier or lists it in `Config.AcceptedAccessTokenAudiences`.
+  Otherwise, where the Authorization Server has an identifier of its
+  own, the Credential Issuers refuse those tokens and the Wallet must
+  authorize again; revoke the grants to have it learn so at the Token
+  Endpoint.
+  Where a Credential Issuer shares the identifier of an Authorization
+  Server serving others, end them before the upgrade serves anyone:
+  `AllowedResources` refuses their refresh with `invalid_target`, or
+  revoke them.
 - [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording
   the outcome of every pre-authorized code exchange, Credential Request
   and deferred credential, to a log kept apart from the service.

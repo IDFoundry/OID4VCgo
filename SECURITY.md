@@ -153,7 +153,7 @@ they're not yet closed in the library.
     chooses the token's `resource`: a wallet that isn't honest asks,
     for one Credential Issuer's offer, for a token addressed to
     another. The library closes this only where the deployment wires
-    all three of:
+    all four of:
     - each `issuer.Issuer` refuses a token whose audience doesn't name
       it (`AuthorizedRequest.Audience`, which `issuer/fapiresource`
       reports, and which `AssuranceProduction` requires;
@@ -168,16 +168,33 @@ they're not yet closed in the library.
       another resource. Left nil, the Authorization Server grants
       every resource the wallet named;
     - each pre-authorized token is issued with
-      `RedeemedPreAuthorizedCode.Resource` alone, and the Token
-      Request's own `resource` parameters go to
+      `RedeemedPreAuthorizedCode.Resource` alone, and so is its refresh
+      token (`server.IssueRefreshTokenRequest.Resources`), and the
+      Token Request's own `resource` parameters go to
       `ExchangePreAuthorizedCodeRequest.Resources`, which refuses any
-      other with `invalid_target`.
+      other with `invalid_target`;
+    - no Credential Issuer shares its identifier with an Authorization
+      Server that serves others. Every token the Authorization Server
+      issues without a resource is addressed to itself, and a
+      Credential Issuer with that identifier takes it for its own,
+      whichever issuer's grant it came from: a refresh token issued
+      without `Resources`, or any grant from before the upgrade, then
+      gets the holder of one issuer's grant another's credential. Give
+      the Authorization Server an identifier of its own, or else
+      confine every wallet client to the Credential Issuers with
+      FAPIgo's `AllowedResources`, listing each: it then issues no
+      token addressed to itself, and refuses the refresh of a grant
+      made without resources with `invalid_target`. `issuer.New` can't
+      tell an Authorization Server that serves others, so it can't
+      refuse either setup, nor an `AcceptedAccessTokenAudiences` entry
+      naming such an Authorization Server.
 
     `cmd/conformance-issuer`, the passport-vdc demo and `walletflowtest`
-    wire all three. Where the Authorization Server signs in subjects
-    local to each Credential Issuer, a deployment missing any of them
-    lets the holder of one issuer's account collect another issuer's
-    holder's credentials.
+    wire all four: each is its own Authorization Server, serving no
+    other Credential Issuer. Where the Authorization Server signs in
+    subjects local to each Credential Issuer, a deployment missing any
+    of them lets the holder of one issuer's account collect another
+    issuer's holder's credentials.
 - **Transaction code phishing.** A pre-authorized offer's PIN goes to
   the issuer the offer names, at `RedeemPreAuthorizedCode`, before the
   wallet sees anything that issuer signs: `IssuerRoots` judge an issuer
