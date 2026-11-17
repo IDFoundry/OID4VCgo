@@ -208,7 +208,9 @@ func (s *sessionStore) Capabilities() storage.Capabilities {
 // Attestation — and completes it, returning the Issuance ready for
 // RequestCredentials. It returns ErrNoAuthorization when nothing is in
 // progress for the redirect, and an *AuthorizationDeniedError as
-// CompleteAuthorization does. Close the Issuance when done, as usual.
+// CompleteAuthorization does. An authorization whose issuer
+// Config.CredentialIssuers no longer lists is refused, wrapping
+// ErrUntrustedIssuer, and kept. Close the Issuance when done, as usual.
 // Outside Config.Development it needs a native app's redirect URI (see
 // AuthorizationStore).
 func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance, error) {
@@ -270,6 +272,11 @@ func (w *Wallet) ResumeIssuance(ctx context.Context, redirect string) (*Issuance
 // rebuild is the issuance a, at the authorization step: the offer's
 // metadata fetched again, its keys loaded, and its client built.
 func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance, error) {
+	// The Config may no longer list the issuer the authorization began
+	// with: nothing goes to it then, and the authorization is kept.
+	if err := w.checkCredentialIssuer(a.Offer.CredentialIssuer); err != nil {
+		return nil, err
+	}
 	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, a.Offer.CredentialIssuer)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: issuer metadata: %w", err)

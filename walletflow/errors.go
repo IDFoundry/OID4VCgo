@@ -95,7 +95,11 @@ var (
 	// signed.
 	ErrUntrustedVerifier = wallet.ErrUntrustedVerifier
 	// ErrUntrustedIssuer is wrapped by StartIssuance for an offer from a
-	// Credential Issuer outside Config.CredentialIssuers.
+	// Credential Issuer outside Config.CredentialIssuers, and by
+	// ResumeIssuance, RefreshCredential and a resumed Deferred's Poll
+	// when the Config no longer lists the issuer they began with: nothing
+	// is sent to it, and nothing is forgotten (see
+	// Config.CredentialIssuers).
 	ErrUntrustedIssuer = errors.New("walletflow: the wallet doesn't take offers from this credential issuer")
 )
 

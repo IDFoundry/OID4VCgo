@@ -269,6 +269,8 @@ func (w *Wallet) lockGrant(id string) func() {
 // Dataset again: its grant covers several of its configuration, and the
 // token no longer grants its credential_identifier, or which one it
 // holds wasn't kept. Receive it again from a new Credential Offer then.
+// A credential whose issuer Config.CredentialIssuers no longer lists is
+// refused, wrapping ErrUntrustedIssuer, and kept with its grant.
 //
 // If the issuer defers the new credential, the old one stays as it is
 // and the Deferred is returned to poll: once settled, its credential
@@ -280,6 +282,11 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	}
 	old, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
+	}
+	// Before its grant is claimed: an issuer the Config no longer lists
+	// leaves the credential and its grant as they are.
+	if err := w.checkCredentialIssuer(old.CredentialIssuer); err != nil {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
 	}
 	if old.GrantID == "" {
@@ -505,8 +512,12 @@ func (w *Wallet) releaseGrant(ctx context.Context, claimed RefreshGrant) {
 // planGrant fetches g's issuer's metadata, and checks the issuer still
 // lists g's Authorization Server, as at issuance, for configuration
 // configID: the refresh token goes nowhere else. A server no longer
-// listed is ErrReissueRequired.
+// listed is ErrReissueRequired; an issuer Config.CredentialIssuers no
+// longer lists, ErrUntrustedIssuer, before anything is fetched.
 func (w *Wallet) planGrant(ctx context.Context, g RefreshGrant, configID string) (oid4vci.Metadata, error) {
+	if err := w.checkCredentialIssuer(g.CredentialIssuer); err != nil {
+		return oid4vci.Metadata{}, err
+	}
 	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, g.CredentialIssuer)
 	if err != nil {
 		return oid4vci.Metadata{}, fmt.Errorf("walletflow: issuer metadata: %w", err)
@@ -884,8 +895,9 @@ func (w *Wallet) grantHeld(id string) bool {
 // (RFC 7009), authenticating with g's instance key, as a refresh does;
 // configID is a configuration the grant was for.
 // It's best effort: a server without a revocation endpoint, an
-// unreachable one, or an issuer no longer naming it leaves the token to
-// expire there, and it's forgotten here all the same.
+// unreachable one, an issuer no longer naming it, or one
+// Config.CredentialIssuers no longer lists leaves the token to expire
+// there, and it's forgotten here all the same.
 func (w *Wallet) revokeGrant(ctx context.Context, g RefreshGrant, configID string) {
 	if g.ClientAuth == GrantAuthNone {
 		w.revokePublicGrant(ctx, g, configID)

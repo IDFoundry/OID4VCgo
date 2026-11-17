@@ -405,6 +405,19 @@ which issuers' offers it takes, in one of three ways:
 An empty identifier in `CredentialIssuers` is refused too. A wallet
 that receives no credentials needs none of them.
 
+`CredentialIssuers` now applies on every path that talks to an issuer,
+not only to offers. Under a `Config` that no longer lists an issuer, as
+after an app update drops it, `ResumeIssuance`, `RefreshCredential` and
+a resumed `Deferred`'s `Poll` refuse with `ErrUntrustedIssuer` before
+sending it anything, where they used to complete the authorization,
+redeem the refresh token or poll there. Deleting a credential then
+forgets its refresh grant without revoking it at that issuer. Nothing
+held is forgotten: a pending authorization stays until it expires, a
+credential and its refresh grant stay until deleted, and a `Deferred`
+stays pending until `Abandon`. Listing the issuer again resumes them.
+Code that dropped an issuer on purpose deletes or abandons what it
+holds from it.
+
 ```go
 // Before
 w, err := walletflow.New(walletflow.Config{

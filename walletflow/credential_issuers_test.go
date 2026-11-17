@@ -194,3 +194,172 @@ func TestStartIssuance_SignedNamedIssuerMetadata(t *testing.T) {
 		}
 	}
 }
+
+// sentRequests counts the requests an http.Client sends.
+type sentRequests struct {
+	next http.RoundTripper
+	mu   sync.Mutex
+	n    int
+}
+
+func (r *sentRequests) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.n++
+	r.mu.Unlock()
+	return r.next.RoundTrip(req)
+}
+
+func (r *sentRequests) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.n
+}
+
+// listingWallets builds wallets over the same stores, as one app's
+// before and after an update changes its Config.CredentialIssuers.
+type listingWallets struct {
+	f        fixture
+	auth     walletflow.AuthorizationStore
+	grants   walletflow.GrantStore
+	deferred walletflow.DeferredStore
+}
+
+func newListingWallets(t *testing.T, opts walletflowtest.Options) listingWallets {
+	t.Helper()
+	return listingWallets{
+		f: newFixture(t, opts), auth: walletflow.NewMemoryAuthorizationStore(),
+		grants: walletflow.NewMemoryGrantStore(), deferred: walletflow.NewMemoryDeferredStore(),
+	}
+}
+
+// listing is a wallet over the stores taking offers from issuers alone,
+// and the requests it sends.
+func (l listingWallets) listing(t *testing.T, issuers ...string) (*walletflow.Wallet, *sentRequests) {
+	t.Helper()
+	requests := &sentRequests{next: l.f.env.HTTP.Transport}
+	client := *l.f.env.HTTP
+	client.Transport = requests
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
+		IssuerRoots: l.f.env.IssuerRoots, CredentialIssuers: issuers, RequestRefresh: true,
+	}, walletflow.Dependencies{
+		Keys: l.f.keys, Credentials: l.f.store, Provider: l.f.env.Provider, HTTP: &client,
+		Authorizations: l.auth, Grants: l.grants, Deferred: l.deferred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w, requests
+}
+
+// An authorization begun while its issuer was listed isn't completed
+// by a wallet whose Config no longer lists it: ResumeIssuance refuses it
+// with ErrUntrustedIssuer, sending nothing, and keeps the authorization,
+// which a wallet listing the issuer again still completes.
+func TestResumeIssuance_CredentialIssuers(t *testing.T) {
+	ctx := context.Background()
+	l := newListingWallets(t, walletflowtest.Options{})
+	listed, _ := l.listing(t, l.f.env.IssuerURL)
+	s, err := listed.StartIssuance(ctx, l.f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := s.BeginAuthorization(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirect, err := l.f.env.Approve(ctx, authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unlisted, requests := l.listing(t, "https://issuer.other.example")
+	if _, err := unlisted.ResumeIssuance(ctx, redirect); !errors.Is(err, walletflow.ErrUntrustedIssuer) {
+		t.Fatalf("ResumeIssuance, the issuer no longer listed: %v, want ErrUntrustedIssuer", err)
+	}
+	if n := requests.count(); n != 0 {
+		t.Errorf("%d requests sent for a refused resume", n)
+	}
+
+	relisted, _ := l.listing(t, l.f.env.IssuerURL)
+	resumed, err := relisted.ResumeIssuance(ctx, redirect)
+	if err != nil {
+		t.Fatalf("ResumeIssuance, the issuer listed again: %v", err)
+	}
+	defer func() { _ = resumed.Close(ctx) }()
+	if _, err := resumed.RequestCredentials(ctx); err != nil {
+		t.Fatalf("RequestCredentials: %v", err)
+	}
+}
+
+// A credential from an issuer the Config no longer lists isn't
+// refreshed: RefreshCredential refuses with ErrUntrustedIssuer, sending
+// nothing, so no refresh token or Wallet Attestation reaches the
+// issuer, and keeps the credential and its grant, which a wallet
+// listing the issuer again still refreshes.
+func TestRefreshCredential_CredentialIssuers(t *testing.T) {
+	ctx := context.Background()
+	l := newListingWallets(t, walletflowtest.Options{})
+	listed, _ := l.listing(t, l.f.env.IssuerURL)
+	s, err := listed.StartIssuance(ctx, l.f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorize(t, l.f, s)
+	res, err := s.RequestCredentials(ctx)
+	_ = s.Close(ctx)
+	if err != nil || len(res.Credentials) != 1 || res.Credentials[0].GrantID == "" {
+		t.Fatalf("RequestCredentials = %+v, %v; want a credential with a refresh grant", res, err)
+	}
+	id := res.Credentials[0].ID
+
+	unlisted, requests := l.listing(t, "https://issuer.other.example")
+	if _, _, err := unlisted.RefreshCredential(ctx, id); !errors.Is(err, walletflow.ErrUntrustedIssuer) {
+		t.Fatalf("RefreshCredential, the issuer no longer listed: %v, want ErrUntrustedIssuer", err)
+	}
+	if n := requests.count(); n != 0 {
+		t.Errorf("%d requests sent for a refused refresh", n)
+	}
+	if grants, err := l.grants.ListGrants(ctx); err != nil || len(grants) != 1 || grants[0].Redemption != "" {
+		t.Errorf("refresh grants after a refused refresh = %d, %v; want the grant, unclaimed", len(grants), err)
+	}
+
+	relisted, _ := l.listing(t, l.f.env.IssuerURL)
+	if _, deferred, err := relisted.RefreshCredential(ctx, id); err != nil || deferred != nil {
+		t.Fatalf("RefreshCredential, the issuer listed again: %v", err)
+	}
+}
+
+// A deferred credential from an issuer the Config no longer lists isn't
+// polled after a restart: Poll refuses with ErrUntrustedIssuer, sending
+// nothing, and leaves it pending, for a wallet listing the issuer again.
+func TestDeferred_CredentialIssuers(t *testing.T) {
+	ctx := context.Background()
+	l := newListingWallets(t, walletflowtest.Options{Defer: true})
+	id := deferUntilClosed(t, l.f, l.deferred, walletflow.GrantPreAuthorizedCode)
+	l.f.env.Decide(true)
+
+	unlisted, requests := l.listing(t, "https://issuer.other.example")
+	pending, err := unlisted.Deferred(ctx)
+	if err != nil || len(pending) != 1 || pending[0].ID() != id {
+		t.Fatalf("Deferred = %v, %v", pending, err)
+	}
+	if stored, err := pending[0].Poll(ctx); stored != nil || !errors.Is(err, walletflow.ErrUntrustedIssuer) {
+		t.Fatalf("Poll, the issuer no longer listed: stored %t, %v; want ErrUntrustedIssuer", stored != nil, err)
+	}
+	if n := requests.count(); n != 0 {
+		t.Errorf("%d requests sent for a refused poll", n)
+	}
+	if pending[0].Done() {
+		t.Error("a refused poll ended the deferred credential")
+	}
+
+	relisted, _ := l.listing(t, l.f.env.IssuerURL)
+	again, err := relisted.Deferred(ctx)
+	if err != nil || len(again) != 1 {
+		t.Fatalf("Deferred, the issuer listed again = %v, %v", again, err)
+	}
+	if stored, err := again[0].Poll(ctx); err != nil || stored == nil {
+		t.Fatalf("Poll, the issuer listed again: stored %t, %v", stored != nil, err)
+	}
+}
