@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -98,31 +99,103 @@ type VerifyOptions struct {
 // verifier.Verifier.VerifyResponse does all of these, status through
 // its Status policy.
 func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opts VerifyOptions) (payload map[string]any, header map[string]any, err error) {
-	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
-		return nil, nil, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")
-	}
-	pres, err := Parse(s)
+	v, err := VerifyPresentation(s, issuerPub, issuerAlg, opts)
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.RequireKeyBinding == KeyBindingRequired && !pres.HasKeyBinding() {
-		return nil, nil, fmt.Errorf("sdjwtvc: key binding is required but no Key Binding JWT was presented")
-	}
+	return v.Payload, v.Header, nil
+}
 
-	header, rawPayload, err := jose.Verify(issuerAlg, issuerPub, pres.IssuerJWT)
+// VerifiedPresentation is what VerifyPresentation returns: Verify's
+// Processed SD-JWT Payload and Issuer-signed JWT header, and the
+// presentation as parsed, for a caller that goes on to look at its
+// Disclosures without parsing it again.
+type VerifiedPresentation struct {
+	Payload      map[string]any
+	Header       map[string]any
+	Presentation Presentation
+}
+
+// VerifyPresentation is Verify, also returning the parsed presentation.
+// It follows RFC 9901 §7.1's order: the Issuer-signed JWT, cut at the
+// first '~', is verified before any Disclosure is decoded, and then
+// only Disclosures whose digest the verified payload, or a Disclosure
+// decoded before, references are decoded: one referenced by no digest
+// is refused unread. The work an unsigned, or merely padded,
+// presentation costs is then a hash per Disclosure, not a parse.
+func VerifyPresentation(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opts VerifyOptions) (VerifiedPresentation, error) {
+	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
+		return VerifiedPresentation{}, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")
+	}
+	issuerJWT, disclosureParts, kbJWT, err := split(s)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sdjwtvc: verify issuer JWT: %w", err)
+		return VerifiedPresentation{}, err
+	}
+	if opts.RequireKeyBinding == KeyBindingRequired && kbJWT == "" {
+		return VerifiedPresentation{}, fmt.Errorf("sdjwtvc: key binding is required but no Key Binding JWT was presented")
+	}
+	header, decoded, hashAlg, err := verifyIssuerJWT(issuerJWT, issuerPub, issuerAlg, opts)
+	if err != nil {
+		return VerifiedPresentation{}, err
+	}
+	disclosures, err := parseReferencedDisclosures(decoded, hashAlg, disclosureParts)
+	if err != nil {
+		return VerifiedPresentation{}, err
+	}
+	pres := Presentation{IssuerJWT: issuerJWT, Disclosures: disclosures, KeyBindingJWT: kbJWT}
+
+	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
+		return VerifiedPresentation{}, err
+	}
+	if err := checkNoRegisteredSubClaimDisclosable(decoded); err != nil {
+		return VerifiedPresentation{}, err
+	}
+	resolved, err := ResolveDisclosures(decoded, hashAlg, pres.Disclosures)
+	if err != nil {
+		return VerifiedPresentation{}, err
+	}
+	if err := verifyKeyBindingIfRequired(pres, opts, hashAlg); err != nil {
+		return VerifiedPresentation{}, err
+	}
+	return VerifiedPresentation{Payload: resolved, Header: header, Presentation: pres}, nil
+}
+
+// split cuts a compact SD-JWT or SD-JWT+KB (RFC 9901 §4), of at most
+// MaxBytes, into its Issuer-signed JWT, its Disclosures, still encoded,
+// and its Key Binding JWT ("" for none), decoding nothing.
+func split(s string) (issuerJWT string, disclosures []string, kbJWT string, err error) {
+	if len(s) > MaxBytes {
+		return "", nil, "", fmt.Errorf("sdjwtvc: presentation is %d bytes, exceeds the %d byte limit", len(s), MaxBytes)
+	}
+	issuerJWT, rest, found := strings.Cut(s, "~")
+	if !found {
+		return "", nil, "", fmt.Errorf("sdjwtvc: not a valid SD-JWT (missing '~' separator)")
+	}
+	last := strings.LastIndexByte(rest, '~')
+	if last < 0 {
+		return issuerJWT, nil, rest, nil
+	}
+	return issuerJWT, strings.Split(rest[:last], "~"), rest[last+1:], nil
+}
+
+// verifyIssuerJWT verifies the Issuer-signed JWT and checks its typ,
+// vct, validity window and aka_vcts, returning its header, payload and
+// the payload's digest algorithm.
+func verifyIssuerJWT(issuerJWT string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opts VerifyOptions) (map[string]any, map[string]any, HashAlg, error) {
+	header, rawPayload, err := jose.Verify(issuerAlg, issuerPub, issuerJWT)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("sdjwtvc: verify issuer JWT: %w", err)
 	}
 	if typ, _ := header["typ"].(string); !jose.TypeIs(typ, TypHeader) && (!opts.AcceptLegacyTyp || !jose.TypeIs(typ, LegacyTypHeader)) {
-		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT typ is %q, want %q", typ, TypHeader)
+		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT typ is %q, want %q", typ, TypHeader)
 	}
 
 	var decoded map[string]any
 	if err := strictjson.Unmarshal(rawPayload, &decoded); err != nil {
-		return nil, nil, fmt.Errorf("sdjwtvc: unmarshal issuer JWT payload: %w", err)
+		return nil, nil, "", fmt.Errorf("sdjwtvc: unmarshal issuer JWT payload: %w", err)
 	}
 	if _, ok := decoded["vct"].(string); !ok {
-		return nil, nil, fmt.Errorf("sdjwtvc: issuer JWT payload is missing the required vct claim")
+		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload is missing the required vct claim")
 	}
 
 	now := time.Now
@@ -140,10 +213,10 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	// Verify functions, already check their own equivalent validity
 	// window unconditionally; this one didn't).
 	if opts.MaxClockSkew < 0 {
-		return nil, nil, fmt.Errorf("sdjwtvc: MaxClockSkew must not be negative")
+		return nil, nil, "", fmt.Errorf("sdjwtvc: MaxClockSkew must not be negative")
 	}
 	if err := checkIssuerJWTValidityWindow(decoded, now, opts.MaxClockSkew); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	fallback := opts.HashAlg
@@ -152,30 +225,14 @@ func Verify(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.JOSEAlg, opt
 	}
 	hashAlg, err := PayloadHashAlg(decoded, fallback)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-
 	if raw, present := decoded["aka_vcts"]; present {
 		if err := checkAkaVCTsClaim(decoded["vct"], raw); err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 	}
-	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
-		return nil, nil, err
-	}
-	if err := checkNoRegisteredSubClaimDisclosable(decoded); err != nil {
-		return nil, nil, err
-	}
-	resolved, err := ResolveDisclosures(decoded, hashAlg, pres.Disclosures)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := verifyKeyBindingIfRequired(pres, opts, hashAlg); err != nil {
-		return nil, nil, err
-	}
-
-	return resolved, header, nil
+	return header, decoded, hashAlg, nil
 }
 
 // checkIssuerJWTValidityWindow checks decoded's own optional exp/nbf

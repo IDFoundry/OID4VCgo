@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,15 +17,21 @@ import (
 // its length.
 func TestMaxChainLength(t *testing.T) {
 	root, rootKey := testcert.CA(t, "root")
-	leaf, _ := testcert.Leaf(t, "leaf", root, rootKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
 
+	// leaf, then MaxChainLength-1 intermediates, the last issued by root.
 	atBound := make([][]byte, MaxChainLength)
+	parent, parentKey := root, rootKey
+	for i := MaxChainLength - 1; i > 0; i-- {
+		parent, parentKey = testcert.Intermediate(t, fmt.Sprintf("intermediate %d", i), parent, parentKey)
+		atBound[i] = parent.Raw
+	}
+	leaf, _ := testcert.Leaf(t, "leaf", parent, parentKey)
+	atBound[0] = leaf.Raw
 	entries := make([]any, MaxChainLength)
 	for i := range atBound {
-		atBound[i] = leaf.Raw
-		entries[i] = base64.StdEncoding.EncodeToString(leaf.Raw)
+		entries[i] = base64.StdEncoding.EncodeToString(atBound[i])
 	}
 	overBound := append(append([][]byte(nil), atBound...), []byte("not even a certificate"))
 

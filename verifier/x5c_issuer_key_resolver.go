@@ -168,7 +168,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header ma
 	if err != nil {
 		return nil, err
 	}
-	_, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
+	_, chains, err := verifyTrustedChains(ctx, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation)
 	return chains, err
 }
 
@@ -195,7 +195,7 @@ func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, hea
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, "", nil, err
 	}
-	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, ders, r.Roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
+	leaf, chains, err := verifyTrustedChains(ctx, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation)
 	if err != nil {
 		return nil, "", nil, err
 	}

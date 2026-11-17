@@ -167,11 +167,20 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   Credentials API posts (`HandleDCAPIResponse`,
   `HandleMdocDCAPIResponse`, by their request ID). An answer is
   unauthenticated — anyone holding the request's public key can
-  encrypt one — and each costs an ECDH and a decryption, then
-  verification of up to `MaxPresentationsPerQuery` presentations for
-  each Credential Query, each with its issuer's certificate chain and
-  revocation check, before it's refused; a refused answer leaves the
-  request open for the next. Bound each post's body too
+  encrypt one — and a refused answer leaves the request open for the
+  next. Each answer costs an ECDH, a decryption and parsing up to
+  1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
+  presentations per Credential Query: path building over the issuer's
+  presented certificate chain (linear in its length: a signature check
+  per certificate, at most eight, plus one per configured root of a
+  matching name, each distinct chain once per answer), the issuer
+  signature, and only then the SD-JWT disclosures the signed payload
+  references, and a revocation check per path. A crafted answer can
+  cost several milliseconds of CPU, tens with a large disclosure set,
+  so limit by concurrency as well as by rate: cap the response
+  handlers' in-flight requests per instance (a semaphore, or your
+  proxy's connection limit) so that a burst queues or is refused
+  rather than taking every core. Bound each post's body too
   (`MaxMdocDCAPIResponseBytes` for an org-iso-mdoc answer). A refusal
   that repeats the request's `LastError` isn't written again, but a
   different one is, and every one reaches `OnRefused`.

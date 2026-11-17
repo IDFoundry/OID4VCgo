@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -470,6 +471,8 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = WithVerificationTime(ctx, req.Now())
 	}
+	// Each distinct issuer chain in the answer is verified once.
+	ctx = withChainMemo(ctx)
 	if err := v.checkVerifyResponseRequest(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
@@ -642,7 +645,7 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 	var firstErr error
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
-	for _, presented := range presentations {
+	for i, presented := range presentations {
 		vc, signed, err := v.verifyPresented(ctx, cq, presented, req)
 		if errors.Is(err, errNotThisRequest) {
 			// A presentation made for another request, or replayed: the
@@ -655,12 +658,15 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		if errors.As(err, &failed) {
 			// The presentation failed, not the response or the
 			// configuration: discard it (§8.6).
-			discarded = append(discarded, DiscardedPresentation{
-				CredentialQueryID: cq.ID, Code: failed.Reason(), Reason: failed.Reason().description(), Err: err,
-			})
-			if firstErr == nil {
-				firstErr = err
+			firstErr = cmp.Or(firstErr, err)
+			if errors.Is(err, certchain.ErrChainBudget) {
+				// A chain built to the signature-check cap: the rest
+				// of the query's presentations, from the same sender,
+				// are discarded with it unverified.
+				discarded = append(discarded, discardedAs(cq.ID, failed, err, len(presentations)-i)...)
+				break
 			}
+			discarded = append(discarded, discardedAs(cq.ID, failed, err, 1)...)
 			continue
 		}
 		if err != nil {
@@ -709,6 +715,17 @@ func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery,
 		return VerifiedCredential{}, nil, err
 	}
 	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain}, signed, nil
+}
+
+// discardedAs is n presentations answering queryID discarded for
+// failed, err.
+func discardedAs(queryID string, failed *Error, err error, n int) []DiscardedPresentation {
+	d := DiscardedPresentation{CredentialQueryID: queryID, Code: failed.Reason(), Reason: failed.Reason().description(), Err: err}
+	out := make([]DiscardedPresentation, n)
+	for i := range out {
+		out[i] = d
+	}
+	return out
 }
 
 // checkNotPresentedBefore records signed, a credential's signed part,
@@ -786,11 +803,14 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if req.IssuerKeys == nil {
 		return nil, nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
 	}
-	pres, err := sdjwtvc.Parse(compact)
-	if err != nil {
-		return nil, nil, newError(ReasonMalformed, "parse presentation", err)
+	// Only the Issuer-signed JWT is read before its key is resolved;
+	// the Disclosures are parsed once, by sdjwtvc.VerifyPresentation,
+	// after the JWT's signature verifies (RFC 9901 §7.1).
+	issuerJWT, _, found := strings.Cut(compact, "~")
+	if !found {
+		return nil, nil, newError(ReasonMalformed, "parse presentation", errors.New("not an SD-JWT (no '~' separator)"))
 	}
-	header, rawPayload, err := jose.DecodeUnverified(pres.IssuerJWT)
+	header, rawPayload, err := jose.DecodeUnverified(issuerJWT)
 	if err != nil {
 		return nil, nil, newError(ReasonMalformed, "decode issuer jwt", err)
 	}
@@ -834,7 +854,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 	}
 
-	claims, _, err := sdjwtvc.Verify(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
+	verified, err := sdjwtvc.VerifyPresentation(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: keyBindingRequirement,
 		HolderPublicKey:   holderPub,
 		KeyBindingAlg:     holderAlg,
@@ -854,6 +874,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 		return nil, nil, newError(reason, "verify", err)
 	}
+	claims, pres := verified.Payload, verified.Presentation
 
 	if err := cq.SatisfiedBySDJWTVCPresentation(claims); err != nil {
 		return nil, nil, newError(ReasonNotAnswered, "satisfied by sdjwtvc claims", err)

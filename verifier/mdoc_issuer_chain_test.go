@@ -10,6 +10,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
+	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
 
@@ -34,8 +35,10 @@ func TestCheckMdocIssuer_ReturnsTheVerifiedPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A CA the holder would like a trusted_authorities check to see.
-	wanted, _, _, _, err := conformancecert.GenerateMdocIACA("the CA a query asks for", "US", "https://other.example")
+	// A CA the holder would like a trusted_authorities check to see,
+	// cross-certifying the IACA: the holder presents that certificate
+	// in its place.
+	wanted, wantedKey, _, _, err := conformancecert.GenerateMdocIACA("the CA a query asks for", "US", "https://other.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +46,7 @@ func TestCheckMdocIssuer_ReturnsTheVerifiedPath(t *testing.T) {
 	roots.AddCert(iaca)
 	resolver := verifier.X5ChainIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
 	verified := mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: time.Now()}}
-	edited := [][]byte{ds.Raw, wanted.Raw}
+	edited := [][]byte{ds.Raw, testcert.CrossCertify(t, iaca, wanted, wantedKey).Raw}
 
 	chain, err := verifier.CheckMdocIssuer(context.Background(), resolver, edited, "org.iso.18013.5.1.mDL", &dsKey.PublicKey, verified)
 	if err != nil {

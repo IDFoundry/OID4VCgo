@@ -85,15 +85,18 @@ func ParseMax(s string, maxBytes int) (Presentation, error) {
 // Binding JWT's sd_hash is computed over (§4.3.1), regardless of
 // whether p also carries a KeyBindingJWT.
 func (p Presentation) SDJWT() (string, error) {
-	s := p.IssuerJWT + "~"
+	var b strings.Builder
+	b.WriteString(p.IssuerJWT)
+	b.WriteByte('~')
 	for _, d := range p.Disclosures {
 		enc, err := d.Encode()
 		if err != nil {
 			return "", err
 		}
-		s += enc + "~"
+		b.WriteString(enc)
+		b.WriteByte('~')
 	}
-	return s, nil
+	return b.String(), nil
 }
 
 // SDHash computes the base64url digest of p's current SD-JWT form

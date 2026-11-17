@@ -57,7 +57,10 @@ func NewKeyBindingJWT(signer crypto.Signer, alg oid4vci.JOSEAlg, presentation Pr
 type KeyBindingCheck struct {
 	ExpectedAudience string
 	ExpectedNonce    string
-	ExpectedSDHash   string
+	// ExpectedSDHash is the presented SD-JWT's sd_hash
+	// (Presentation.SDHash). REQUIRED: the Key Binding JWT must carry
+	// a matching sd_hash (RFC 9901 §4.3), or it binds no presentation.
+	ExpectedSDHash string
 
 	// MaxClockSkew is how far Now may be from the holder's clock when
 	// checking the Key Binding JWT's own exp and nbf, if it has them.
@@ -100,6 +103,11 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	if check.ExpectedAudience == "" || check.ExpectedNonce == "" {
 		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.ExpectedAudience and ExpectedNonce are required")
 	}
+	// Likewise sd_hash: without it the Key Binding JWT could be paired
+	// with any SD-JWT, or any set of disclosures, of the same holder.
+	if check.ExpectedSDHash == "" {
+		return nil, fmt.Errorf("sdjwtvc: KeyBindingCheck.ExpectedSDHash is required")
+	}
 	header, raw, err := jose.Verify(alg, holderPub, kbJWT)
 	if err != nil {
 		return nil, fmt.Errorf("sdjwtvc: verify key binding JWT signature: %w", err)
@@ -119,7 +127,11 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	if nonce, _ := claims["nonce"].(string); nonce != check.ExpectedNonce {
 		return nil, fmt.Errorf("sdjwtvc: %w: its nonce does not match the expected value", ErrNotThisRequest)
 	}
-	if sdHash, _ := claims["sd_hash"].(string); sdHash != check.ExpectedSDHash {
+	sdHash, ok := claims["sd_hash"].(string)
+	if !ok || sdHash == "" {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT has no sd_hash")
+	}
+	if sdHash != check.ExpectedSDHash {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT sd_hash does not match the presented SD-JWT")
 	}
 

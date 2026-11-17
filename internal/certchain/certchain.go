@@ -32,7 +32,9 @@ import (
 // MaxChainLength is the most certificates a presented chain may hold,
 // leaf included. Real chains are two or three long; the bound keeps a
 // chain an attacker sends from costing a parse (and, in CheckNoAnchor
-// and path building, more) per entry without limit.
+// and path building, more) per entry without limit. VerifyPresented's
+// ordering makes path building linear in it, so it's kept above what
+// HAIP and ISO/IEC 18013-5 chains need, for deeper PKIs.
 const MaxChainLength = 8
 
 // MaxRSABits is the largest RSA modulus a presented certificate may
@@ -253,6 +255,10 @@ func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*
 // period at now instead of the current time — for a caller whose own
 // API takes an explicit verification time (proximity's reader). A zero
 // now means the current time.
+//
+// The chain is verified under VerifyPresented's policy: in its
+// presented order, without repeated subject names or keys, and with a
+// costly intermediate key only where an anchor has one.
 func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.Certificate, [][]*x509.Certificate, error) {
 	if roots == nil {
 		return nil, nil, fmt.Errorf("certchain: no trust anchors configured (a nil root pool would mean the system roots)")
@@ -295,18 +301,13 @@ func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.C
 		return nil, nil, fmt.Errorf("certchain: leaf certificate's Ed25519 key is of small order")
 	}
 
-	intermediates := x509.NewCertPool()
-	for _, c := range certs[1:] {
-		intermediates.AddCert(c)
-	}
-	chains, err := leaf.Verify(x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		CurrentTime:   now,
+	chains, err := VerifyPresented(certs, x509.VerifyOptions{
+		Roots:       roots,
+		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		CurrentTime: now,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
+		return nil, nil, err
 	}
 	return leaf, chains, nil
 }
