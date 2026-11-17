@@ -36,7 +36,11 @@ for p in $PORTS; do "$ADB" reverse "tcp:$p" "tcp:$p" >/dev/null; done
 FILES=/sdcard/Android/data/$PKG/files
 "$ADB" shell mkdir -p "$FILES"
 "$ADB" push -q "$WORK/config.json" "$FILES/demo-config.json"
-"$ADB" push -q "$WORK/services.pem" "$FILES/dev-ca.pem"
+# The CA goes to the app's internal files, through run-as (the debug
+# build allows it): the app reads it only from there.
+"$ADB" push -q "$WORK/services.pem" /data/local/tmp/dev-ca.pem
+"$ADB" shell "run-as $PKG sh -c 'mkdir -p files && cp /data/local/tmp/dev-ca.pem files/dev-ca.pem'"
+"$ADB" shell rm -f /data/local/tmp/dev-ca.pem
 "$ADB" shell am force-stop "$PKG"
 "$ADB" shell am start -n "$PKG/.MainActivity" --ez reset true >/dev/null
 echo "the demo wallet is running against the test services (ports $(echo $PORTS | tr '\n' ' ')); Ctrl-C to stop them"

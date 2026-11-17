@@ -88,7 +88,11 @@ PY
 FILES=/sdcard/Android/data/$PKG/files
 "$ADB" shell mkdir -p "$FILES"
 "$ADB" push -q "$WORK/config.json" "$FILES/demo-config.json"
-"$ADB" push -q "$STATE/tls-cert.pem" "$FILES/dev-ca.pem"
+# The CA goes to the app's internal files, through run-as (the debug
+# build allows it): the app reads it only from there.
+"$ADB" push -q "$STATE/tls-cert.pem" /data/local/tmp/dev-ca.pem
+"$ADB" shell "run-as $PKG sh -c 'mkdir -p files && cp /data/local/tmp/dev-ca.pem files/dev-ca.pem'"
+"$ADB" shell rm -f /data/local/tmp/dev-ca.pem
 "$ADB" shell am force-stop "$PKG"
 "$ADB" shell am start -n "$PKG/.MainActivity" >/dev/null
 echo "the demo wallet is running against the passport-vdc demo"

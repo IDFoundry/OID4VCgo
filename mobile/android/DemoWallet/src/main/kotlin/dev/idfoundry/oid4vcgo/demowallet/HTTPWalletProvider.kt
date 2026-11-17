@@ -15,9 +15,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.util.Base64
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLSocketFactory
 
 /**
  * The Wallet Provider's backend, over the passport-vdc demo Wallet
@@ -31,8 +36,17 @@ import java.util.Base64
  * key. A provider without the challenge endpoint (an older passport-vdc,
  * or mobile/cmd/testservices) gives no challenge, and the keys go
  * without chains, attested unverified.
+ *
+ * As the library's own HttpWalletProvider does, it follows no redirect
+ * (a 3xx is a refusal) and reads at most [MAX_ANSWER_BYTES] of an
+ * answer, so a provider can't send the attestation requests elsewhere
+ * or exhaust the app's memory. [socketFactory], if set, is its TLS
+ * trust: the system's plus a development CA ([DevelopmentTLS]).
  */
-class HTTPWalletProvider(private val baseURL: String) : WalletProvider {
+class HTTPWalletProvider(
+    private val baseURL: String,
+    private val socketFactory: SSLSocketFactory? = null,
+) : WalletProvider {
     override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? {
         // DPoP keys aren't attested to anyone.
         if (purpose == KeyPurpose.DPOP) return null
@@ -79,23 +93,43 @@ class HTTPWalletProvider(private val baseURL: String) : WalletProvider {
     private suspend fun post(path: String, body: JsonObject, allowMissing: Boolean = false): String? = withContext(Dispatchers.IO) {
         val connection = URI(baseURL.trimEnd('/') + "/" + path).toURL().openConnection() as HttpURLConnection
         try {
+            if (socketFactory != null && connection is HttpsURLConnection) connection.sslSocketFactory = socketFactory
             connection.requestMethod = "POST"
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
             connection.connectTimeout = 15_000
             connection.readTimeout = 15_000
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body.toString().toByteArray()) }
             when (connection.responseCode) {
-                200 -> connection.inputStream.use { it.readBytes().decodeToString() }
+                200 -> connection.inputStream.use { readBounded(it) }
                 404 -> if (allowMissing) null else throw StoreException("the Wallet Provider has no $path")
                 else -> {
                     // The provider says why: a key attestation it refused, say.
-                    val why = connection.errorStream?.use { it.readBytes().decodeToString() }?.let { field(it, "error") }
+                    val why = connection.errorStream?.use { readBounded(it) }?.let { field(it, "error") }
                     throw StoreException("the Wallet Provider refused $path" + (why?.let { ": $it" } ?: ""))
                 }
             }
         } finally {
             connection.disconnect()
         }
+    }
+
+    // The answer, as text, refusing one larger than MAX_ANSWER_BYTES.
+    private fun readBounded(input: InputStream): String {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > MAX_ANSWER_BYTES) throw IOException("the Wallet Provider's answer is larger than $MAX_ANSWER_BYTES bytes")
+        }
+        return out.toByteArray().decodeToString()
+    }
+
+    private companion object {
+        const val MAX_ANSWER_BYTES = 256 * 1024
     }
 }

@@ -194,7 +194,8 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             val make = { crls: String ->
                 Wallet(
                     config.wallet.let { it.copy(presentation = it.presentation.copy(copyPolicy = copyPolicy), revocation = it.revocation.copy(crls = crls)) }, keys!!,
-                    FileCredentialStore.standard(getApplication()), config.providerURL?.let(::HTTPWalletProvider),
+                    FileCredentialStore.standard(getApplication()),
+                    config.providerURL?.let { HTTPWalletProvider(it, DevelopmentTLS.socketFactory(getApplication(), config)) },
                 )
             }
             // With the revocation lists last fetched (DemoConfiguration.CRLS).
