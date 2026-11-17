@@ -87,7 +87,7 @@ func (r X5ChainIssuerKeyResolver) leafPolicy() func(*x509.Certificate, [][]*x509
 
 // ResolveMdocIssuerKey implements MdocIssuerKeyResolver.
 func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerKey(ctx context.Context, x5chain [][]byte, docType string) (crypto.PublicKey, oid4vci.COSEAlg, error) {
-	leaf, _, err := r.verify(ctx, nil, x5chain, docType)
+	leaf, _, err := r.verify(ctx, nil, x5chain, docType, nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -110,14 +110,14 @@ func (r X5ChainIssuerKeyResolver) Capabilities() KeySourceCapabilities {
 // approves each on its own (certchain.ApprovedChains) and Revocation
 // passes: the issuer chain CheckMdocIssuer picks is one of them.
 func (r X5ChainIssuerKeyResolver) ResolveMdocIssuerChains(ctx context.Context, x5chain [][]byte, docType string) ([][]*x509.Certificate, error) {
-	_, chains, err := r.verify(ctx, nil, x5chain, docType)
+	_, chains, err := r.verify(ctx, nil, x5chain, docType, nil)
 	return chains, err
 }
 
 // verify verifies x5chain under docType's roots: the leaf, and its
 // paths that LeafPolicy approves and Revocation passes, memoized in
 // memo when it isn't nil.
-func (r X5ChainIssuerKeyResolver) verify(ctx context.Context, memo *chainMemo, x5chain [][]byte, docType string) (*x509.Certificate, [][]*x509.Certificate, error) {
+func (r X5ChainIssuerKeyResolver) verify(ctx context.Context, memo *chainMemo, x5chain [][]byte, docType string, signed leafSignature) (*x509.Certificate, [][]*x509.Certificate, error) {
 	if err := r.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -125,7 +125,7 @@ func (r X5ChainIssuerKeyResolver) verify(ctx context.Context, memo *chainMemo, x
 	if err != nil {
 		return nil, nil, err
 	}
-	return verifyTrustedChains(ctx, memo, "x5chain", x5chain, roots, r.leafPolicy(), r.Revocation)
+	return verifyTrustedChains(ctx, memo, "x5chain", x5chain, roots, r.leafPolicy(), r.Revocation, signed)
 }
 
 // anchorPools is every trust anchor set r verifies against: Roots and

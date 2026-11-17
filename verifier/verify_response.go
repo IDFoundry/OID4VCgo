@@ -828,7 +828,10 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	}
 
 	// X5CIssuerKeyResolver verifies the x5c header once for both the
-	// key and the issuer chain; any other resolver is asked for each.
+	// key and the issuer chain, after checking the Issuer-signed JWT's
+	// signature with the x5c leaf's key, so a genuine chain replayed
+	// under another signature costs no chain check; any other resolver
+	// is asked for each.
 	var (
 		issuerPub    crypto.PublicKey
 		issuerAlg    oid4vci.JOSEAlg
@@ -836,9 +839,20 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	)
 	x5c, resolvesBoth := x5cResolver(req.IssuerKeys)
 	if resolvesBoth {
-		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, req.chains, header, payload)
+		signed := func(pub crypto.PublicKey) error {
+			alg, err := jose.AlgForKey(pub)
+			if err != nil {
+				return nil
+			}
+			_, _, err = jose.Verify(alg, pub, issuerJWT)
+			return err
+		}
+		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, req.chains, header, payload, signed)
 	} else {
 		issuerPub, issuerAlg, err = req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
+	}
+	if errors.As(err, new(*issuerSignatureError)) {
+		return nil, nil, newError(ReasonInvalidCredential, "verify issuer signature", err)
 	}
 	if err != nil {
 		return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
@@ -1055,7 +1069,22 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	// issuer's own CA: one bound to another chain fails closed.
 	// Accepting a chain only from the protected header would refuse
 	// conforming mdocs.
-	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
+	//
+	// An X5ChainIssuerKeyResolver's chain is verified after IssuerAuth's
+	// signature is checked with the x5chain leaf's key, so a genuine
+	// chain replayed under another signature costs no chain check.
+	signed := func(pub crypto.PublicKey) error {
+		alg, err := mdocAlgForKey(pub)
+		if err != nil {
+			return nil
+		}
+		_, _, _, err = cose.Verify(alg, pub, doc.IssuerSigned.IssuerAuth, []byte{})
+		return err
+	}
+	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, signed)
+	if errors.As(err, new(*issuerSignatureError)) {
+		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
+	}
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}

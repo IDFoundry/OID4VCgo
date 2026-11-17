@@ -168,7 +168,7 @@ func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header ma
 	if err != nil {
 		return nil, err
 	}
-	_, chains, err := verifyTrustedChains(ctx, nil, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation)
+	_, chains, err := verifyTrustedChains(ctx, nil, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation, nil)
 	return chains, err
 }
 
@@ -177,14 +177,14 @@ func (r X5CIssuerKeyResolver) BindsIssuerName() bool { return r.RequireIssuerNam
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
 func (r X5CIssuerKeyResolver) ResolveIssuerKey(ctx context.Context, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, error) {
-	pub, alg, _, err := r.resolveIssuerKeyAndChains(ctx, nil, header, payload)
+	pub, alg, _, err := r.resolveIssuerKeyAndChains(ctx, nil, header, payload, nil)
 	return pub, alg, err
 }
 
 // resolveIssuerKeyAndChains is ResolveIssuerKey, with the chains
 // ResolveIssuerChains would return for the same header and ctx, from
 // the one verification of them, memoized in memo when it isn't nil.
-func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, memo *chainMemo, header, payload map[string]any) (crypto.PublicKey, oid4vci.JOSEAlg, [][]*x509.Certificate, error) {
+func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, memo *chainMemo, header, payload map[string]any, signed leafSignature) (crypto.PublicKey, oid4vci.JOSEAlg, [][]*x509.Certificate, error) {
 	if err := r.Validate(); err != nil {
 		return nil, "", nil, err
 	}
@@ -195,7 +195,7 @@ func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, mem
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, "", nil, err
 	}
-	leaf, chains, err := verifyTrustedChains(ctx, memo, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation)
+	leaf, chains, err := verifyTrustedChains(ctx, memo, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation, signed)
 	if err != nil {
 		return nil, "", nil, err
 	}

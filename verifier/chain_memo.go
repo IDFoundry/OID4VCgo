@@ -2,6 +2,7 @@ package verifier
 
 import (
 	"context"
+	"crypto"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
@@ -66,12 +67,53 @@ func newChainMemo() *chainMemo {
 // that went over.
 var errTooManyIssuerChains = fmt.Errorf("%d distinct issuer certificate chains in one response failed to verify", MaxFailedIssuerChainsPerResponse)
 
+// leafSignature checks a credential's signature with pub, the key of
+// the leaf of the chain the credential presents, before that chain is
+// verified (see verifyTrustedChains). It returns nil for a key it has
+// no algorithm for, leaving that to the chain's own checks.
+type leafSignature func(pub crypto.PublicKey) error
+
+// issuerSignatureError is a credential whose signature doesn't verify
+// with the key of the leaf certificate it presents: refused whatever
+// the chain, which isn't verified.
+type issuerSignatureError struct{ err error }
+
+func (e *issuerSignatureError) Error() string {
+	return "the credential's signature doesn't verify with its issuer certificate's key: " + e.err.Error()
+}
+
+func (e *issuerSignatureError) Unwrap() error { return e.err }
+
+// checkLeafSignature runs signed, if set, with the key of ders' leaf,
+// not yet trusted: a credential whose signature doesn't verify with it
+// is refused before its chain costs a check. A leaf that doesn't parse,
+// or whose key the chain check would refuse, is left to that check.
+func checkLeafSignature(ders [][]byte, signed leafSignature) error {
+	if signed == nil || len(ders) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(ders[0])
+	if err != nil || certchain.CheckKeySize(leaf) != nil {
+		return nil
+	}
+	if err := signed(leaf.PublicKey); err != nil {
+		return &issuerSignatureError{err}
+	}
+	return nil
+}
+
 // verifyTrustedChains is certchain.VerifyTrustedChainsAt at
 // verificationTime(ctx), its outcome memoized in memo when it isn't
 // nil. A memo whose failed chains have reached
 // MaxFailedIssuerChainsPerResponse refuses another chain with
-// errTooManyIssuerChains, unverified.
-func verifyTrustedChains(ctx context.Context, memo *chainMemo, kind string, ders [][]byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, revocation certrevocation.Checker) (*x509.Certificate, [][]*x509.Certificate, error) {
+// errTooManyIssuerChains, unverified. With signed set, the
+// credential's signature is first checked with the leaf's key
+// (checkLeafSignature): a genuine chain replayed under a signature its
+// key didn't make costs no chain check, and isn't counted.
+func verifyTrustedChains(ctx context.Context, memo *chainMemo, kind string, ders [][]byte, roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, revocation certrevocation.Checker, signed leafSignature) (*x509.Certificate, [][]*x509.Certificate, error) {
+	if err := checkLeafSignature(ders, signed); err != nil {
+		return nil, nil, err
+	}
 	if memo == nil {
 		return certchain.VerifyTrustedChainsAt(ctx, ders, roots, policy, revocation, verificationTime(ctx))
 	}

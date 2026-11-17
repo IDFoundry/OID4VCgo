@@ -41,6 +41,22 @@ func unsignedPresentation(t *testing.T, header map[string]any) string {
 	return base64.RawURLEncoding.EncodeToString(h) + "." + base64.RawURLEncoding.EncodeToString([]byte(`{"vct":"`+testVCT+`"}`)) + ".AAAA~"
 }
 
+// leafSignedPresentation is an SD-JWT presentation whose Issuer-signed
+// JWT presents x5c and is signed by key, its leaf's: its signature
+// verifies with the leaf's key, so the chain is what decides it.
+func leafSignedPresentation(t *testing.T, key crypto.Signer, x5c ...*x509.Certificate) string {
+	t.Helper()
+	chain := make([]any, len(x5c))
+	for i, cert := range x5c {
+		chain[i] = base64.StdEncoding.EncodeToString(cert.Raw)
+	}
+	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dc+sd-jwt", "x5c": chain}, []byte(`{"vct":"`+testVCT+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jwt + "~"
+}
+
 func multipleQuery(t *testing.T) dcql.Query {
 	t.Helper()
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "pid", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT), Multiple: true}}}
@@ -51,19 +67,19 @@ func multipleQuery(t *testing.T) dcql.Query {
 // path, runs once for the three.
 func TestVerifyResponse_VerifiesEachDistinctChainOnce(t *testing.T) {
 	ca, caKey := testcert.CA(t, "issuer root")
-	leaf, _ := testcert.Leaf(t, "issuer", ca, caKey)
+	leaf, leafKey := testcert.Leaf(t, "issuer", ca, caKey)
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	var checks atomic.Int32
 	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: verifier.AnyIssuerLeaf, Revocation: countingRevocation{&checks}}
-	pres := unsignedPresentation(t, map[string]any{"alg": "ES256", "typ": "dc+sd-jwt", "x5c": []any{base64.StdEncoding.EncodeToString(leaf.Raw)}})
+	pres := leafSignedPresentation(t, leafKey, leaf)
 
 	_, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: multipleQuery(t), Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": {pres, pres, pres}}},
 		ExpectedNonce: "n", MaxKeyBindingAge: time.Hour, IssuerKeys: resolver,
 	})
 	if err == nil {
-		t.Fatal("unsigned presentations accepted")
+		t.Fatal("presentations without holder binding accepted")
 	}
 	if got := checks.Load(); got != 1 {
 		t.Errorf("revocation checked %d times for one chain presented three times, want 1", got)

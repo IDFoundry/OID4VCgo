@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -127,8 +126,8 @@ func TestVerifyResponse_RefusesAfterTooManyFailedIssuerChains(t *testing.T) {
 	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: verifier.AnyIssuerLeaf, Revocation: certrevocation.NoCheck{}}
 	var presentations []string
 	for i := range verifier.MaxFailedIssuerChainsPerResponse + 3 {
-		leaf, _ := testcert.Leaf(t, fmt.Sprintf("issuer %d", i), other, otherKey)
-		presentations = append(presentations, unsignedPresentation(t, map[string]any{"alg": "ES256", "typ": "dc+sd-jwt", "x5c": []any{base64.StdEncoding.EncodeToString(leaf.Raw)}}))
+		leaf, leafKey := testcert.Leaf(t, fmt.Sprintf("issuer %d", i), other, otherKey)
+		presentations = append(presentations, leafSignedPresentation(t, leafKey, leaf))
 	}
 
 	_, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
@@ -152,8 +151,8 @@ func TestVerifyResponse_ValidIssuerChainsArentCapped(t *testing.T) {
 	n := verifier.MaxFailedIssuerChainsPerResponse + 12
 	var presentations []string
 	for i := range n {
-		leaf, _ := testcert.Leaf(t, fmt.Sprintf("issuer %d", i), ca, caKey)
-		presentations = append(presentations, unsignedPresentation(t, map[string]any{"alg": "ES256", "typ": "dc+sd-jwt", "x5c": []any{base64.StdEncoding.EncodeToString(leaf.Raw)}}))
+		leaf, leafKey := testcert.Leaf(t, fmt.Sprintf("issuer %d", i), ca, caKey)
+		presentations = append(presentations, leafSignedPresentation(t, leafKey, leaf))
 	}
 
 	_, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{

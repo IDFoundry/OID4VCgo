@@ -315,6 +315,15 @@ have failed to verify, with any further chain left unverified. Chains
 that verify aren't counted, so a response presenting credentials from
 many issuers isn't refused by it.
 
+Through a built-in resolver, an SD-JWT VC's Issuer-signed JWT, or an
+mdoc's `IssuerAuth`, is now checked with the key of the `x5c` or
+`x5chain` leaf it presents before its chain is verified, so a genuine
+chain replayed under a signature its key didn't make costs no chain
+check. Such a presentation is refused `invalid_credential` even when
+its chain is untrusted, where it was `untrusted_issuer`; one whose
+leaf doesn't parse is still refused `untrusted_issuer`. A resolver of
+your own sees no change.
+
 ### The Request Object at a request_uri is sealed with its record (`verifier`)
 
 `verifier.TransactionCodec` writes version 3 records
