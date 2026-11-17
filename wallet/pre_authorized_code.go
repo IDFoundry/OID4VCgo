@@ -46,7 +46,12 @@ type PreAuthorizedCodeTokenRequest struct {
 	// Grants.PreAuthorizedCode.TxCode was present, even if empty
 	// (§4.1.1/§6.1's own MUST) — the End-User's own Transaction Code
 	// value itself, not the TxCode object. Left "" when the offer
-	// carried no TxCode object at all.
+	// carried no TxCode object at all. It goes to the offer's issuer
+	// before anything that issuer signs is checked: show the holder the
+	// offer's credential_issuer beside the prompt for it, and prefer
+	// issuers the wallet already trusts — Config.RequireSignedIssuerMetadata
+	// with RequireIssuerMetadataName, say (OpenID4VCI 1.0's Security
+	// Considerations, "Transaction Code Phishing").
 	TxCode string
 
 	// DPoPKey signs this request's own DPoP proof (RFC 9449 §4) —

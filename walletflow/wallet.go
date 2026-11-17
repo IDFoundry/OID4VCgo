@@ -196,6 +196,20 @@ type Config struct {
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
 
+	// CredentialIssuers, if set, are the only Credential Issuer
+	// Identifiers the wallet takes offers from: StartIssuance refuses an
+	// offer naming another with ErrUntrustedIssuer, before fetching its
+	// metadata, so the holder is never asked for its PIN. Unset, any
+	// issuer's offer is shown, and IssuerRoots decide only when its
+	// credential arrives: a transaction code the holder enters reaches
+	// an issuer the wallet hasn't decided to trust (OpenID4VCI 1.0's
+	// Security Considerations, "Transaction Code Phishing"). Where it
+	// can't be a fixed
+	// list, set RequireSignedIssuerMetadata and
+	// RequireIssuerMetadataName, and show Offer.CredentialIssuer beside
+	// the PIN prompt.
+	CredentialIssuers []string
+
 	// IssuanceProfile is the profile issuance follows. The zero value,
 	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
 	// metadata; ProfileHAIP also refuses issuers outside HAIP 1.0.

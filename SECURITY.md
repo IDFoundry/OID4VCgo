@@ -156,6 +156,20 @@ they're not yet closed in the library.
     pre-authorized token with `RedeemedPreAuthorizedCode.Resource`, and
     set `serverresource.Options.Resource` to each Credential Issuer's
     identifier; a verifier of your own must check the audience itself.
+- **Transaction code phishing.** A pre-authorized offer's PIN goes to
+  the issuer the offer names, at `RedeemPreAuthorizedCode`, before the
+  wallet sees anything that issuer signs: by default, any issuer's
+  offer is shown, and `IssuerRoots` judge it only when its credential
+  arrives. A phishing offer naming an attacker's issuer, beside a PIN
+  prompt the holder believes is for a genuine service, hands the
+  attacker the PIN, or a genuine offer's code and PIN once intercepted
+  (OpenID4VCI 1.0's Security Considerations, "Transaction Code
+  Phishing"). Credential trust is unaffected. Show
+  `Offer.CredentialIssuer` beside the PIN prompt, and limit the issuers
+  offers are taken from: `walletflow.Config.CredentialIssuers` lists
+  them, or `RequireSignedIssuerMetadata` with
+  `RequireIssuerMetadataName` takes only issuers whose metadata is
+  signed by a certificate under `IssuerMetadataRoots` that names them.
 - **Relayed key attestations.** A key attestation names no audience,
   and the `c_nonce` it carries comes from an unauthenticated Nonce
   Endpoint (OpenID4VCI 1.0 Appendix D, §7). An issuer can hand a wallet
