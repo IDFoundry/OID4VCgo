@@ -60,11 +60,13 @@ struct RequestView: View {
 
     private func chosenCredential(_ a: Asked) -> CredentialSummary? { held.first { $0.id == chosen[a.id] } }
 
-    /// The reader's name and certificate, when the request is signed by
-    /// a certificate under the configured mdoc reader roots: checked
-    /// again, with the request's own signature, before anything is
-    /// shared.
-    private var recognizedReader: (name: String, certificate: Data)? {
+    /// The name and certificate the request claims its reader by, when
+    /// its certificate chains to the configured mdoc reader roots. Only
+    /// the chain's path is checked here, not the request's signature,
+    /// key usage or revocation: Go checks those when the response is
+    /// built, and refuses a reader other than this one. Until then the
+    /// name is a claim, and shown as one.
+    private var claimedReader: (name: String, certificate: Data)? {
         guard let chain = context.request.requestAuthentications.first?.authenticationCertificateChain, let leaf = chain.first,
               let roots = DemoConfiguration.load()?.wallet.verifiers.mdocReaderRoots, !roots.isEmpty else { return nil }
         let anchors = roots.components(separatedBy: "-----BEGIN CERTIFICATE-----").dropFirst().compactMap { block -> SecCertificate? in
@@ -87,8 +89,12 @@ struct RequestView: View {
         NavigationStack {
             List {
                 Section("Asking") {
-                    if let reader = recognizedReader {
-                        Label(reader.name, systemImage: "checkmark.seal")
+                    if let reader = claimedReader {
+                        VStack(alignment: .leading) {
+                            Label("Says it's \(reader.name)", systemImage: "questionmark.circle")
+                            Text("Not verified yet: its signature is checked before anything is shared.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Text(origin ?? "an unknown website").font(.headline)
                 }
@@ -210,16 +216,18 @@ struct RequestView: View {
                                           toldLinkable: chosenCredential(a)?.linkableHere == true)
         }
         guard !agreed.isEmpty else { return }
-        let reader = recognizedReader
+        let reader = claimedReader
         sharing = true
         problem = nil
         Task {
             do {
                 // One confirmation for the whole response, however many
-                // documents it carries.
+                // documents it carries, naming the website iOS vouches
+                // for: the reader's name isn't verified until the
+                // response is built, after it.
                 try await SharedWallet.confirmHolder(reason: agreed.count > 1
-                    ? "Share \(agreed.count) IDs with \(reader?.name ?? origin)."
-                    : "Share your ID with \(reader?.name ?? origin).")
+                    ? "Share \(agreed.count) IDs with \(origin)."
+                    : "Share your ID with \(origin).")
                 let wallet = try wallet()
                 try await context.sendResponse { raw in
                     // Apple's guidance: check the raw request against the
