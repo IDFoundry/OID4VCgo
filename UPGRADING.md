@@ -181,6 +181,21 @@ Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
 passes the presentation's hash: `Presentation.SDHash(alg)`.
 `sdjwtvc.Verify` and the verifier already did.
 
+### SD-JWT VC disclosures are refused after the issuer (`verifier`, `credential/sdjwtvc`)
+
+`VerifyResponse` now reads only an SD-JWT VC presentation's
+Issuer-signed JWT before resolving the issuer's key and verifying its
+signature (RFC 9901 §7.1), and decodes only the Disclosures its
+digests reference. A presentation with an undecodable, repeated or
+unreferenced Disclosure, or with more parts than its digests could
+reference, used to be refused as `malformed`; it is now refused as
+`untrusted_issuer` when its issuer isn't trusted, and otherwise as
+`invalid_credential`. Code that matches on `Error.Reason`,
+`DiscardedPresentation.Code` or a transaction's `LastError` sees the
+new reasons. `sdjwtvc.VerifyPresentation` refuses such a presentation
+after verifying the Issuer-signed JWT, with that error instead of a
+parse error.
+
 ### Issuer chains per response (`verifier`)
 
 `VerifyResponse` verifies each distinct issuer certificate chain once
