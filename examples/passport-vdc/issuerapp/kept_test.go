@@ -211,6 +211,13 @@ func (r *tokenRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 // token came from the issuer under test.
 func grantID(t *testing.T, token string) string {
 	t.Helper()
+	id, _ := accessTokenClaim(t, token, "grant_id").(string)
+	return id
+}
+
+// accessTokenClaim is a JWT access token's claim name, unverified.
+func accessTokenClaim(t *testing.T, token, name string) any {
+	t.Helper()
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		t.Fatalf("not a JWT access token: %d parts", len(parts))
@@ -219,13 +226,11 @@ func grantID(t *testing.T, token string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var claims struct {
-		GrantID string `json:"grant_id"`
-	}
+	var claims map[string]any
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		t.Fatal(err)
 	}
-	return claims.GrantID
+	return claims[name]
 }
 
 // TestKeepForRefresh_PreAuthorizedTokenNamesItsGrant: the access token

@@ -225,7 +225,7 @@ func (a *App) buildAuthorizationServer() error {
 	// The Credential Issuer is the one resource its tokens may be
 	// restricted to (RFC 8707): the pre-authorized code grant's always
 	// are (RedeemedPreAuthorizedCode.Resource).
-	cfg.Resources = []string{a.issuerURL.String()}
+	cfg.Resources = append([]string{a.issuerURL.String()}, a.cfg.extraResources...)
 	// A passport kept for refresh gives the wallet a refresh token
 	// lasting as long as the passport is kept (OfferOptions.KeepForRefresh).
 	cfg.Limits.RefreshTokenLifetime = KeepForRefresh
