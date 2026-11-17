@@ -83,7 +83,8 @@ func TestRequestCredential_InsufficientScopeResponse(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 	issuer.WriteError(rec, err)
-	if rec.Code != http.StatusForbidden || !strings.Contains(strings.Join(rec.Header().Values("WWW-Authenticate"), ","), `error="insufficient_scope"`) {
+	if got := rec.Header().Values("WWW-Authenticate"); rec.Code != http.StatusForbidden || len(got) != 2 ||
+		got[0] != `DPoP error="insufficient_scope"` || got[1] != `Bearer error="insufficient_scope"` {
 		t.Errorf("status %d, WWW-Authenticate %v; want 403 with an insufficient_scope challenge", rec.Code, rec.Header().Values("WWW-Authenticate"))
 	}
 }

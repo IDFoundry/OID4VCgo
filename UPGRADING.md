@@ -89,6 +89,13 @@ any other `resource`, at PAR or the Token Endpoint, gets
 that copies their wiring does the same. Wallets built on `walletflow`
 name the offer's Credential Issuer, which is accepted.
 
+### `issuer.NewError` answers token errors with 401 and 403
+
+`issuer.NewError(issuer.ErrorInvalidToken, …)` now answers 401, and
+`NewError(issuer.ErrorInsufficientScope, …)` 403, as RFC 6750 §3.1 has
+them, each with its `WWW-Authenticate` challenges; both answered 400
+before. Every other code still answers 400.
+
 ### A custom DeferredTransactionStore persists RequestedByConfigurationID
 
 `DeferredTransactionRecord` has a new field,
