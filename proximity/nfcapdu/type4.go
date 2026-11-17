@@ -161,7 +161,9 @@ func (t *type4Tag) readBinary(c Command) ([]byte, bool) {
 		if to > from {
 			t.coverage.set(from, to)
 		}
-		if !t.notified && t.coverage.covers(len(t.ndef)-2) {
+		// Only a committed message counts as read: a staged write's
+		// NLEN 0 serves no message, and covering it reads nothing.
+		if !t.notified && len(t.ndef) > 2 && t.coverage.covers(len(t.ndef)-2) {
 			t.notified = true
 			read = true
 		}

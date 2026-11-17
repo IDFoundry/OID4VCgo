@@ -163,6 +163,35 @@ func TestPartialReadDoesNotCompleteHandover(t *testing.T) {
 	}
 }
 
+// A reader that answers a negotiated handover's Handover Select by
+// starting a staged write (NLEN 0) and reading the NLEN back hasn't read
+// the Handover Select: only the committed message counts.
+func TestStagedWriteDoesNotCompleteNegotiatedHandover(t *testing.T) {
+	hs := fixture(120)
+	h, err := NewHolder(HolderOptions{Negotiate: func([]byte) ([]byte, error) { return hs, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok(t, h.Process(selectNDEF).Response)
+	ok(t, h.Process(selectNDEFFile).Response)
+	for _, m := range [][]byte{tnepSelect, fixture(10)} {
+		ok(t, h.Process(writeAt(0, []byte{0, 0})).Response)
+		ok(t, h.Process(writeAt(2, m)).Response)
+		ok(t, h.Process(writeAt(0, []byte{0, byte(len(m))})).Response)
+	}
+	if !h.tnep.handoverReady {
+		t.Fatal("the holder didn't answer the Handover Request")
+	}
+	ok(t, h.Process(writeAt(0, []byte{0, 0})).Response)
+	step := h.Process([]byte{0, insReadBinary, 0, 0, 2})
+	if data := ok(t, step.Response); !bytes.Equal(data, []byte{0, 0}) {
+		t.Fatalf("read %X, want the staged NLEN 0000", data)
+	}
+	if step.HandoverRead {
+		t.Error("reading a staged write's NLEN reported the Handover Select read")
+	}
+}
+
 func TestMalformedCommandsAlwaysGetAStatus(t *testing.T) {
 	h, err := NewHolder(HolderOptions{HandoverSelect: []byte{1}})
 	if err != nil {
