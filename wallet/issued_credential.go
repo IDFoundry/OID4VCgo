@@ -59,7 +59,10 @@ type VerifyIssuedCredentialParams struct {
 	// declares cryptographic binding methods. Without it (a configuration
 	// declaring none, §12.2.4), an SD-JWT VC must be bound to no key: one
 	// with "cnf" is refused, since the Wallet proved no key, so a key it
-	// names would be someone else's.
+	// names would be someone else's. An mdoc is always bound to a key
+	// (its MSO's DeviceKey is required, ISO/IEC 18013-5 §9.1.2.4), so
+	// HolderKey is REQUIRED for one whatever Configuration declares:
+	// without it, an mdoc is refused.
 	HolderKey crypto.PublicKey
 
 	// IssuerRoots are the trust anchors for issuer certificates: the
@@ -317,6 +320,10 @@ func numericDate(v any) time.Time {
 }
 
 func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
+	if p.HolderKey == nil {
+		// Its DeviceKey would be a key the Wallet never proved it holds.
+		return VerifiedIssuedCredential{}, errors.New("HolderKey is required for an mdoc, which is always bound to a device key")
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(p.Credential)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode: %w", err)
@@ -355,7 +362,7 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 	if _, err := mdoc.CheckDocumentSigner(mso, chains); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	if p.HolderKey != nil && !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
+	if !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
 		return VerifiedIssuedCredential{}, errors.New("the MSO's DeviceKey isn't the holder key")
 	}
 	claims := make(map[string]any, len(mso.NameSpaces))

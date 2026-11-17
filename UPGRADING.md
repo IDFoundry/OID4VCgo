@@ -76,6 +76,15 @@ refuses becomes `invalid` with reason `issuer_untrusted`. Set
 `IssuerLeafPolicy: verifier.AnyIssuerLeaf` to keep such credentials,
 for `IssuerRoots` that anchor issuers' certificates alone.
 
+### An mdoc needs a `HolderKey` (`wallet`)
+
+`wallet.VerifyIssuedCredential` now refuses an mdoc when
+`VerifyIssuedCredentialParams.HolderKey` is nil, even if its
+`Configuration` declares no cryptographic binding: an mdoc's MSO always
+names a device key, and without a `HolderKey` it would be one the
+wallet never proved it holds. Pass the key proved in the Credential
+Request. walletflow always did.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
