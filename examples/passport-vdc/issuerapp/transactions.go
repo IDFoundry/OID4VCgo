@@ -54,7 +54,7 @@ type transaction struct {
 	keep      bool            // kept for refresh: re-issued until expiresAt
 	kept      bool            // keep, and expiresAt is now the keepFor deadline
 	uploaded  time.Time
-	issued    int // credentials issued
+	issued    int // credentials issued, or being issued (reserved)
 }
 
 // maxCodeFailures is how many wrong confirmation codes void a
@@ -217,6 +217,11 @@ func (t *transactions) claim(id, code string) error {
 // no other request can issue it again — unless it's kept for refresh.
 // Call release if issuing then fails, which undoes it, or done if it
 // succeeds.
+//
+// The issuance counts against maxIssuancesPerPassport here, not in
+// done: the library runs done only after the batch's status indices are
+// allocated and its credentials signed, so concurrent requests on one
+// kept passport would all pass a cap counted there.
 func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -234,6 +239,7 @@ func (t *transactions) reserve(id, configID string) (passport.Evidence, bool, er
 		return passport.Evidence{}, false, errIssuanceLimit
 	}
 	v.pending[configID] = false
+	v.issued++
 	return v.evidence, v.review, nil
 }
 
@@ -243,10 +249,11 @@ func (t *transactions) release(id, configID string) {
 	defer t.mu.Unlock()
 	if v, ok := t.items[id]; ok {
 		v.pending[configID] = true
+		v.issued--
 	}
 }
 
-// done records a credential issued, and drops the transaction — and its
+// done records a reserved credential issued, and drops the transaction — and its
 // passport data — once every offered credential has been, unless it's
 // kept for refresh, whose keepFor deadline the first credential issued
 // starts.
@@ -257,7 +264,7 @@ func (t *transactions) done(id string) {
 	if !ok {
 		return
 	}
-	if v.issued++; v.keep {
+	if v.keep {
 		if !v.kept {
 			v.kept, v.expiresAt = true, t.now().Add(t.keepFor+keepMargin)
 		}
