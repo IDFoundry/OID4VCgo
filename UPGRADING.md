@@ -7,7 +7,7 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
-## v0.81.0 → next
+## v0.81.0 → v0.82.0
 
 ### FAPIgo v0.76.0: an attester's `x5c` must be one path, in order
 
