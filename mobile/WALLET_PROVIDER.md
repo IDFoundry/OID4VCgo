@@ -78,10 +78,20 @@ so on.
 - **Challenges** are 32 random bytes, base64url without padding (43
   characters), issued for one purpose, used once, and valid for the
   provider's challenge TTL (by default 5 minutes, at most 15). A
-  challenge is used up by the request that names it, accepted or not,
+  `registration` challenge, and the `request` challenge of a signed
+  request, are used up by the request that names them, accepted or not,
   so a refused request is retried with a new one — except a signed
-  request that doesn't verify, which leaves the `request` challenge it
-  names unused.
+  request that doesn't verify, which leaves its `request` challenge
+  unused. The `instance` or `holder` challenge in a signed request's
+  body is used up only once the provider takes it to verify the
+  evidence bound to it, accepted or not, a 503 while verifying that
+  evidence included; a request refused before that (the instance
+  refused or suspended, a recheck that can't decide for now, an unknown
+  instance key) leaves it unused, so the same keys and challenge can be
+  sent again, and a Wallet Attestation for a recorded instance key
+  ignores it. Holder keys, or an instance key the provider hasn't
+  recorded, made over a challenge that's used up can't be attested:
+  make new ones.
 - **Instance IDs** are opaque strings (today 16 random bytes,
   base64url).
 - A client must not follow redirects: an answer other than the one

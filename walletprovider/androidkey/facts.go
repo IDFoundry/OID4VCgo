@@ -182,7 +182,10 @@ func (v *Verifier) recheck(ctx context.Context, f *Facts, allowUnrecordedValidit
 	// the chain's root is no longer trusted, the policy has since been
 	// tightened to refuse it, or it has expired, as may all follow the
 	// same compromise. A status list that can't be had doesn't stop a
-	// refusal the Facts alone decide.
+	// root or policy refusal the Facts alone decide; a chain past its
+	// validity is judged only once the list can be had, so until then
+	// it's answered as undecided (ErrStatusUnavailable), not expired:
+	// fresh evidence would be judged against the same missing list.
 	_, revErr := v.checkRevocation(ctx, serials)
 	if errors.Is(revErr, ErrRevoked) {
 		return revErr
