@@ -85,10 +85,6 @@ func (w *Wallet) checkIssuers(ctx context.Context, c StoredCredential, now time.
 	if roots == nil {
 		return nil, nil
 	}
-	if policy == nil && c.Format == mdoc.CredentialFormat {
-		// As wallet.VerifyIssuedCredential has it on receipt.
-		policy = mdoc.DefaultDocumentSignerPolicy
-	}
 	checks := issuerChecks{}
 	// A batch's copies usually carry one chain: each chain is verified
 	// once.

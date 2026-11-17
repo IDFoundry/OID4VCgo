@@ -22,6 +22,24 @@ import (
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
+// IssuerLeafPolicyFor is the leaf policy VerifyIssuedCredential
+// checks an issuer certificate of a credential of format with, given
+// VerifyIssuedCredentialParams.IssuerLeafPolicy policy: policy when it's
+// set, else mdoc.DefaultDocumentSignerPolicy for an mdoc, and for any
+// other format the check verifier.DefaultSDJWTIssuerLeafPolicy makes.
+// A wallet re-checking a held credential's issuer chain uses it too,
+// so the chain is held to what receipt held it to.
+func IssuerLeafPolicyFor(format string, policy func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
+	switch {
+	case policy != nil:
+		return policy
+	case format == mdoc.CredentialFormat:
+		return mdoc.DefaultDocumentSignerPolicy
+	default:
+		return certchain.SDJWTIssuerRole.Check
+	}
+}
+
 // VerifyIssuedCredentialParams is the input to VerifyIssuedCredential.
 type VerifyIssuedCredentialParams struct {
 	// Configuration is the Credential Configuration the Wallet
@@ -207,10 +225,7 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	policy := p.IssuerLeafPolicy
-	if policy == nil {
-		policy = certchain.SDJWTIssuerRole.Check
-	}
+	policy := IssuerLeafPolicyFor(sdjwtvc.CredentialFormat, p.IssuerLeafPolicy)
 	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
@@ -315,10 +330,7 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuerAuth: %w", err)
 	}
 	chain := cose.X5ChainOf(protected, unprotected)
-	policy := p.IssuerLeafPolicy
-	if policy == nil {
-		policy = mdoc.DefaultDocumentSignerPolicy
-	}
+	policy := IssuerLeafPolicyFor(mdoc.CredentialFormat, p.IssuerLeafPolicy)
 	// Only the paths the policy approves on their own, and revocation
 	// passes: the document signer checks below must pass on one of them.
 	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)

@@ -65,6 +65,17 @@ error: separate the pools, set `MdocIssuerRoots`, or require the
 document signer's extended key usage
 (`mdoc.DefaultDocumentSignerPolicy`).
 
+### Held SD-JWT VCs re-checked with the default issuer check (`walletflow`, mobile)
+
+`CheckStatus` now re-checks a held SD-JWT VC's issuer chain with the
+policy receipt applies (`wallet.IssuerLeafPolicyFor`): with no
+`IssuerLeafPolicy` (`issuer_require_eku` in the mobile configuration),
+v0.81.0's default issuer check. A credential received before v0.81.0,
+or under `verifier.AnyIssuerLeaf`, whose issuer certificate that check
+refuses becomes `invalid` with reason `issuer_untrusted`. Set
+`IssuerLeafPolicy: verifier.AnyIssuerLeaf` to keep such credentials,
+for `IssuerRoots` that anchor issuers' certificates alone.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

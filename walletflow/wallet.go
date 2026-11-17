@@ -1028,12 +1028,13 @@ func (c Config) receivesCredentials() bool {
 // for an mdoc, MdocIssuerRootsByDocType's for a type it names, else
 // MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
 // IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
-// wallet.VerifyIssuedCredential, as a nil policy means
-// mdoc.DefaultDocumentSignerPolicy there for an mdoc, and the
-// verifier's default issuer check for an SD-JWT VC.
+// wallet.VerifyIssuedCredential. With no policy set, the policy is the
+// format's default (wallet.IssuerLeafPolicyFor): never nil, so receipt
+// and every later re-check of a held credential's chain (checkIssuers)
+// apply the same one.
 func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
 	if format != mdoc.CredentialFormat {
-		return c.IssuerRoots, c.IssuerLeafPolicy
+		return c.IssuerRoots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
 	}
 	roots, policy := c.IssuerRoots, c.IssuerLeafPolicy
 	if byType, ok := c.MdocIssuerRootsByDocType[docType]; ok {
@@ -1044,7 +1045,7 @@ func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.
 	if c.MdocIssuerLeafPolicy != nil {
 		policy = c.MdocIssuerLeafPolicy
 	}
-	return roots, policy
+	return roots, wallet.IssuerLeafPolicyFor(format, policy)
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks, whatever
