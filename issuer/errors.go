@@ -140,11 +140,15 @@ func (e *Error) Unwrap() error { return e.cause }
 // built from Code and PublicDescription — never Unwrap's cause. Must
 // be called before anything else writes to w.
 func (e *Error) WriteJSON(w http.ResponseWriter) {
-	if e.code == ErrorInsufficientScope || e.code == ErrorInvalidToken {
-		// The token may be DPoP-bound or, outside HAIP, a Bearer token:
-		// the challenge names both schemes.
-		w.Header().Add("WWW-Authenticate", `DPoP error="`+string(e.code)+`"`)
-		w.Header().Add("WWW-Authenticate", `Bearer error="`+string(e.code)+`"`)
+	// The token may be DPoP-bound or, outside HAIP, a Bearer token: the
+	// challenge names both schemes.
+	switch e.code {
+	case ErrorInsufficientScope:
+		w.Header().Add("WWW-Authenticate", `DPoP error="insufficient_scope"`)
+		w.Header().Add("WWW-Authenticate", `Bearer error="insufficient_scope"`)
+	case ErrorInvalidToken:
+		w.Header().Add("WWW-Authenticate", `DPoP error="invalid_token"`)
+		w.Header().Add("WWW-Authenticate", `Bearer error="invalid_token"`)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// RFC 6749 §5.2 has a Token Endpoint's error responses, which
