@@ -1628,12 +1628,43 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   so both by default; scan, connect and advertise for a reader; location
   up to Android 11 wherever there's scanning, which it delivers results
   for only with it).
-- **The GATT server's peer is the device that starts the session** (a
-  State write of 0x01), on both platforms: not the first to connect or
-  subscribe, which any device nearby can do, since the service UUID is
-  in the clear in adverts. Until then it keeps advertising and ignores
-  other writes. A device that starts a session it can't complete still
-  holds it until the connect timeout.
+- **The holder's GATT server commits to a peer only once Go accepts its
+  first message**, on both platforms. The service UUID is in the clear
+  in adverts, so any device in range, without the QR code, can connect,
+  subscribe and write 0x01 to State. Until the 2026-11-17 audit
+  (F-09), the first device to write 0x01 became the peer: advertising
+  stopped, every other device was ignored, `EitherTransport` closed the
+  Ident-checked central client path, and one junk SessionEstablishment
+  from it then ended the session at once with status 10 (or its
+  silence held the session until the request timeout). That needed no
+  engagement, repeated for every session and every holder in range,
+  and in the default both-modes configuration took the central client
+  path down with it. Now each device that writes 0x01 is a candidate
+  (up to eight; a new one displaces the oldest still silent), and each
+  candidate's first whole message goes to Go
+  (`DeviceSession.TrySessionEstablishment`). One that doesn't decode
+  or decrypt is the `rejected` event: its sender doesn't hold the
+  session's key, nothing is sent, the device is dropped
+  (`ProximityTransport.reject`) and the holder keeps advertising and
+  waiting, up to `proximity.MaxRejectedEstablishments` (16) such
+  messages, after which the next ends the session as ISO 18013-5
+  §9.1.1.4 has it. The first message Go accepts commits the transport
+  (`commit`): advertising stops, the other candidates are let go, and
+  `EitherTransport` closes the other mode. Once a message has
+  decrypted, a bad one ends the session with status 10 as before. What
+  remains: the bound means an attacker in range can still end a session
+  that its reader hasn't yet reached, but only with 17 junk messages,
+  each from a device that starts a session of its own (each is dropped
+  after its first), not with one; a reader that arrives in between is
+  answered. The reader in mdoc central
+  client mode (a GATT server too, speaking first) still commits to the
+  first device that starts a session; and on Android a combined QR and
+  NFC engagement still selects QR when the GATT server's first device
+  starts a session. Covered by unit tests with in-memory transports
+  (`testBlindPeersDoNotEndTheSession`, `EitherTransportTests`; Kotlin
+  `EitherTransportTest`, and `blindPeersDoNotEndTheSession` as an
+  instrumented test); not yet tried against a second device over the
+  radio.
 - **A GATT client starts each connection attempt afresh:** a new message
   queue and chunk reassembler, so a device that disconnects mid-setup,
   or leaves half a message, costs one attempt rather than the session.
@@ -1641,7 +1672,11 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   (§8.3.3.1.1.4) before starting the session, and refuses to start
   without one. A device whose Ident differs, another session's reader
   advertising the same service, is disconnected and ignored, and the
-  scan goes on, on both platforms.
+  scan goes on, on both platforms; so, since the F-09 fixes, is one
+  that has no Ident characteristic or stops answering before its Ident
+  is read (on Android, one that fails in any way before then), rather
+  than costing a connection attempt. Callbacks about a device an
+  earlier attempt gave up on are ignored.
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,
