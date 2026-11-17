@@ -55,9 +55,12 @@
 // neither. The record's other fields stay readable; those saying who
 // may read the result, what was asked, and whether and how the request
 // may still be answered (its status, expiry, nonce, state and kid) are
-// bound into the sealing, so changing one leaves the record unreadable.
-// The Request Object served at a request_uri is signed from those
-// bound fields on each fetch, never served from the record. The store
+// bound into the sealing, so changing one leaves the record unreadable
+// while its sealed fields are there; Transactions refuses a record
+// stripped of them, and one whose ID isn't the transaction it asked
+// for. The Request Object served at a request_uri is signed from those
+// bound fields, once per request by each Transactions, never served
+// from the record. The store
 // is trusted only for the rest (the response_code hash, the last
 // error, retain_until, and the stored request_object, which only
 // replicas running OID4VCgo v0.81.0 or earlier serve) and for not

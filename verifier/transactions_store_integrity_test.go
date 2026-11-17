@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -142,6 +145,65 @@ func TestTransactions_RequestObjectSignedOncePerRequest(t *testing.T) {
 	}
 	if got := n.Load() - before; got != 2 {
 		t.Errorf("%d signatures for 12 fetches of 2 requests, want 2", got)
+	}
+}
+
+// A sealed record is bound through its sealed fields: one stripped of
+// them is refused, not opened with nothing checked, nor reported
+// completed without its result.
+func TestTransactions_RecordStrippedOfSealedFields(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
+	var err error
+	if f.txs, err = verifier.NewTransactions(f.v, store, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: f.verify}); err != nil {
+		t.Fatal(err)
+	}
+	const binding = "browser-binding-0123456789"
+	for name, fields := range map[string][]string{
+		"without its result":                   {"sealed_result"},
+		"without its result or decryption key": {"sealed_result", "response_decryption_key"},
+	} {
+		begun := f.begin(binding, false)
+		if _, err := f.txs.HandleResponse(ctx, f.answer(begun, nil)); err != nil {
+			t.Fatalf("%s: HandleResponse: %v", name, err)
+		}
+		setRow(t, store, begun.ID, func(row map[string]any) {
+			for _, field := range fields {
+				delete(row, field)
+			}
+		})
+		if view, err := f.txs.Lookup(ctx, begun.ID, binding); err == nil {
+			t.Errorf("a completed record %s: Lookup = %+v, want it refused", name, view)
+		}
+	}
+	pending := f.begin(binding, false)
+	setRow(t, store, pending.ID, func(row map[string]any) { delete(row, "response_decryption_key") })
+	if _, err := f.txs.RequestObject(ctx, pending.ID); err == nil {
+		t.Error("a pending record without its decryption key: its Request Object was served")
+	}
+}
+
+// unreadableStore is a TransactionStore whose reads fail.
+type unreadableStore struct{ verifier.TransactionStore }
+
+func (unreadableStore) Get(context.Context, string) (verifier.Transaction, error) {
+	return verifier.Transaction{}, errors.New("store unavailable")
+}
+
+// A request_uri whose store fails is answered 500, as the response
+// endpoint answers, not 404 as for an unknown request.
+func TestRequestObjectHandler_StoreFailureIsAServerError(t *testing.T) {
+	f := newTxFixture(t, nil)
+	begun := f.begin("browser-binding-0123456789", false)
+	txs, err := verifier.NewTransactions(f.v, unreadableStore{f.store}, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: f.verify})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	txs.RequestObjectHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, txBase+"/"+begun.ID, nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
 	}
 }
 

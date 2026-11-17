@@ -41,8 +41,10 @@ const requestObjectMediaType = "application/oauth-authz-req+jwt"
 // Wallet MUST terminate the process"), and §8.5's are the Wallet's, so
 // RFC 6749 §5.2's invalid_request is used. Either method answers 404
 // for a request that's unknown, expired or a Digital Credentials API
-// one; a POST the Verifier fails to sign a Request Object for, 500
-// server_error.
+// one, and 500 server_error when the Verifier fails: its store fails
+// or answers with another request's record, or a Request Object can't
+// be signed. A GET is signed once per request (RequestObject), a POST
+// for each fetch.
 func (t *Transactions) RequestObjectHandler() http.Handler {
 	return http.HandlerFunc(t.serveRequestObject)
 }

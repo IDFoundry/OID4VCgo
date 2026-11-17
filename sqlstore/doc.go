@@ -220,9 +220,11 @@
 // decryption key and verified claims, bound to its Owner, same-device
 // flag, browser binding hash, origin and query, and (TransactionCodec
 // version 2) its status, expiry, nonce, state and kid, which stay
-// readable: changing one leaves the record unreadable. The Request
-// Object served at a request_uri is signed from those fields on each
-// fetch, not read from the record. Its response_code hash, last error,
+// readable: changing one leaves the record unreadable while its sealed
+// fields are there, and the verifier refuses a record stripped of
+// them or holding another transaction's ID. The Request Object served
+// at a request_uri is signed from those fields, not read from the
+// record. Its response_code hash, last error,
 // retain_until and stored request_object (served only by replicas
 // running OID4VCgo v0.81.0 or earlier) are unprotected, and a whole
 // older copy of the record still opens, so the database must be

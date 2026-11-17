@@ -661,6 +661,16 @@ func (t *Transactions) readable(tx Transaction, id string) error {
 	if tx.ID != id {
 		return &serverFault{fmt.Errorf("verifier: transactions: store: asked for transaction %q, got %q", id, tx.ID)}
 	}
+	// Every request Transactions begins has a response decryption key,
+	// and every completed one its result. A sealing TransactionCodec
+	// binds a record through those sealed fields, so one stripped of
+	// them would open with nothing checked.
+	if tx.ResponseDecryptionKey == nil {
+		return &serverFault{fmt.Errorf("verifier: transactions: store: transaction %q has no response decryption key", id)}
+	}
+	if tx.Result == nil && (tx.Status == TransactionDone || tx.Status == TransactionAwaitingRedirect) {
+		return &serverFault{fmt.Errorf("verifier: transactions: store: completed transaction %q has no result", id)}
+	}
 	if !t.owns(tx) {
 		return ErrTransactionUnknown
 	}
@@ -888,7 +898,8 @@ func (t *Transactions) RequestObject(ctx context.Context, id string) (string, er
 func (t *Transactions) servable(ctx context.Context, id string) (Transaction, error) {
 	tx, err := t.get(ctx, id)
 	if err != nil {
-		return Transaction{}, err
+		// A store that fails isn't a request that's unknown.
+		return Transaction{}, storeFault(err)
 	}
 	if tx.Origin != "" {
 		// A Digital Credentials API request goes to the page, not to a request_uri.
