@@ -134,18 +134,19 @@ func VerifyTrust(ders [][]byte, t Trust) (*x509.Certificate, error) {
 
 // Verify verifies sig over detached by the certificate in its x5chain,
 // which must chain to t's roots and pass its LeafPolicy, and returns
-// that certificate.
+// that certificate. The signature is checked first, with the presented
+// leaf's key: one check, where path building costs more, so a reader
+// whose signature fails costs no chain verification.
 func Verify(sig, detached []byte, t Trust) (*x509.Certificate, error) {
-	ders, _, err := Chain(sig)
+	ders, certs, err := Chain(sig)
 	if err != nil {
 		return nil, err
 	}
-	leaf, err := VerifyTrust(ders, t)
-	if err != nil {
+	if err := certchain.CheckKeySize(certs[0]); err != nil {
+		return nil, fmt.Errorf("reader certificate: %w", err)
+	}
+	if err := VerifySignature(sig, detached, certs[0]); err != nil {
 		return nil, err
 	}
-	if err := VerifySignature(sig, detached, leaf); err != nil {
-		return nil, err
-	}
-	return leaf, nil
+	return VerifyTrust(ders, t)
 }

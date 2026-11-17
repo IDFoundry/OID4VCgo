@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -397,10 +398,14 @@ func ParseAuthorizationRequest(params ParseAuthorizationRequestParams) (Authoriz
 // wallet trusts, so its request is refused unread.
 var ErrUntrustedVerifier = errors.New("untrusted verifier")
 
-// verifyRequestObject checks a signed Request Object: its typ, its x5c
-// chain with trust (OID4VP §5.9.3), and its signature by the chain's
-// leaf. It returns the leaf, which the Client Identifier must then be
-// bound to (bindClientID), and the verified payload.
+// verifyRequestObject checks a signed Request Object: its typ, its
+// signature by its x5c chain's leaf, and that chain with trust (OID4VP
+// §5.9.3). The signature is checked first, with the presented leaf's
+// key: it costs one check, where the chain's path building costs more,
+// so a request signed by no one costs no chain verification (a
+// multi-signed one may carry MaxDCAPISignatures). It returns the leaf,
+// which the Client Identifier must then be bound to (bindClientID), and
+// the verified payload.
 func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certificate, []byte, error) {
 	header, _, err := jose.DecodeUnverified(requestObject)
 	if err != nil {
@@ -416,16 +421,40 @@ func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certi
 	if err != nil {
 		return nil, nil, err
 	}
+	algStr, _ := header["alg"].(string)
+	payload, err := verifyByPresentedLeaf(jose.Alg(algStr), chain[0], requestObject)
+	if err != nil {
+		return nil, nil, err
+	}
 	cert, err := trust.VerifyVerifierChain(chain)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrUntrustedVerifier, err)
 	}
-	algStr, _ := header["alg"].(string)
-	_, payload, err := jose.Verify(jose.Alg(algStr), cert.PublicKey, requestObject)
-	if err != nil {
-		return nil, nil, fmt.Errorf("signature verification failed: %w", err)
+	if !bytes.Equal(cert.Raw, chain[0]) {
+		// A VerifierTrust of the caller's answering with another
+		// certificate: the signature must be that one's.
+		if _, payload, err = jose.Verify(jose.Alg(algStr), cert.PublicKey, requestObject); err != nil {
+			return nil, nil, fmt.Errorf("signature verification failed: %w", err)
+		}
 	}
 	return cert, payload, nil
+}
+
+// verifyByPresentedLeaf verifies requestObject's signature by der, the
+// x5c leaf it presents, not yet trusted, and returns its payload.
+func verifyByPresentedLeaf(alg jose.Alg, der []byte, requestObject string) ([]byte, error) {
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, fmt.Errorf("parse verifier certificate: %w", err)
+	}
+	if err := certchain.CheckKeySize(leaf); err != nil {
+		return nil, fmt.Errorf("verifier certificate: %w", err)
+	}
+	_, payload, err := jose.Verify(alg, leaf.PublicKey, requestObject)
+	if err != nil {
+		return nil, fmt.Errorf("signature verification failed: %w", err)
+	}
+	return payload, nil
 }
 
 // responseEncryption picks the response encryption key and enc from a
