@@ -217,7 +217,7 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 // issuer the Config listed when they began but may no longer.
 func (w *Wallet) checkCredentialIssuer(credentialIssuer string) error {
 	if len(w.cfg.CredentialIssuers) > 0 && !slices.Contains(w.cfg.CredentialIssuers, credentialIssuer) {
-		return fmt.Errorf("%w: %q", ErrUntrustedIssuer, credentialIssuer)
+		return fmt.Errorf("walletflow: %w: %q", ErrUntrustedIssuer, credentialIssuer)
 	}
 	return nil
 }

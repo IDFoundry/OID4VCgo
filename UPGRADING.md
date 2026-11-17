@@ -418,6 +418,15 @@ stays pending until `Abandon`. Listing the issuer again resumes them.
 Code that dropped an issuer on purpose deletes or abandons what it
 holds from it.
 
+Issuer metadata refused under `RequireSignedIssuerMetadata` or
+`RequireIssuerMetadataName`, because it isn't signed or its
+certificate or `sub` names another issuer, now wraps
+`ErrUntrustedIssuer`, in `StartIssuance` and on each of those paths,
+where it used to be a plain error. `ErrUntrustedIssuer` is now the new
+`wallet.ErrUntrustedIssuer`, which `wallet.FetchCredentialIssuerMetadata`
+wraps for the same refusals, and its message changed. A signer whose
+chain doesn't reach `IssuerMetadataRoots` is reported as before.
+
 ```go
 // Before
 w, err := walletflow.New(walletflow.Config{
@@ -461,7 +470,12 @@ configuration with issuer roots and none of them, or with
 `invalid_input`. `startIssuance` refuses an unlisted issuer's offer
 with the new `untrusted_issuer` code (`WalletError.Code.untrustedIssuer`,
 `WalletException.Code.untrustedIssuer`), before asking for its PIN.
-`ABIVersion` is 16: the Swift and Kotlin libraries need a framework
+The same code refuses resuming an authorization, refreshing a
+credential or polling a deferred one from an issuer the configuration
+no longer lists, keeping what the wallet holds from it, and an issuer
+whose metadata isn't signed, or is signed naming another issuer, under
+`require_signed_issuer_metadata` and `require_issuer_metadata_name`
+(`protocol` before). `ABIVersion` is 16: the Swift and Kotlin libraries need a framework
 built from this release.
 
 ```swift

@@ -68,6 +68,20 @@ func TestClassify(t *testing.T) {
 			err:  fmt.Errorf("walletflow: nonce: %w", context.Canceled),
 			code: CodeCancelled,
 		},
+		"unlisted issuer": {
+			err:  fmt.Errorf("walletflow: refresh credential: walletflow: %w: %q", walletflow.ErrUntrustedIssuer, secretURL),
+			code: CodeUntrustedIssuer, mustNotSee: "SECRET123",
+		},
+		"unsigned issuer metadata": {
+			err: fmt.Errorf("walletflow: issuer metadata: wallet: fetch credential issuer metadata: %w: the issuer sent unsigned metadata, and require_signed_issuer_metadata is set",
+				wallet.ErrUntrustedIssuer),
+			code: CodeUntrustedIssuer,
+		},
+		"signed issuer metadata naming another issuer": {
+			err: fmt.Errorf("walletflow: issuer metadata: wallet: fetch credential issuer metadata: signed metadata: %w: sub %q doesn't name the issuer %q",
+				wallet.ErrUntrustedIssuer, "https://other.example", secretURL),
+			code: CodeUntrustedIssuer, mustNotSee: "SECRET123",
+		},
 		"other text with a URL": {
 			err:  errors.New("walletflow: the redirect " + secretURL + "\tisn't allowed\n" + strings.Repeat("x", 500)),
 			code: CodeProtocol, mustNotSee: "SECRET123",

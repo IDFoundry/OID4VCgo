@@ -132,9 +132,10 @@ func (r *tokenRequests) count() int {
 
 // A wallet trusting issuers by signed metadata naming them refuses, in
 // StartIssuance, a pre-authorized offer from an issuer whose metadata
-// isn't signed, or is signed by a certificate naming another issuer: the
-// holder is never asked for the PIN, and nothing reaches the issuer's
-// token endpoint. An issuer whose signed metadata names it is taken.
+// isn't signed, or is signed by a certificate naming another issuer,
+// with ErrUntrustedIssuer: the holder is never asked for the PIN, and
+// nothing reaches the issuer's token endpoint. An issuer whose signed
+// metadata names it is taken.
 func TestStartIssuance_SignedNamedIssuerMetadata(t *testing.T) {
 	ctx := context.Background()
 	ca, caKey := testcert.CA(t, "metadata CA")
@@ -176,6 +177,8 @@ func TestStartIssuance_SignedNamedIssuerMetadata(t *testing.T) {
 			if err == nil {
 				_ = s.Close(ctx)
 				t.Errorf("%s: StartIssuance took the offer", name)
+			} else if !errors.Is(err, walletflow.ErrUntrustedIssuer) {
+				t.Errorf("%s: StartIssuance = %v, want ErrUntrustedIssuer", name, err)
 			}
 			if n := requests.count(); n != 0 {
 				t.Errorf("%s: %d token requests sent", name, n)

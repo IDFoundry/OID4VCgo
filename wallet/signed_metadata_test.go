@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -259,6 +260,76 @@ func TestFetchCredentialIssuerMetadata_SignedNameAndAge(t *testing.T) {
 		}
 		if _, err := w.FetchCredentialIssuerMetadata(t.Context(), issuerURL); tc.ok != (err == nil) {
 			t.Errorf("%s: err = %v, want ok = %v", name, err, tc.ok)
+		}
+	}
+}
+
+// Metadata refused because the configuration doesn't take its issuer —
+// unsigned where it must be signed, or signed with a certificate or sub
+// naming another issuer — wraps ErrUntrustedIssuer. A signer the roots
+// don't anchor, or expired metadata, is refused without it.
+func TestFetchCredentialIssuerMetadata_UntrustedIssuer(t *testing.T) {
+	root, rootKey := testcert.CA(t, "metadata root")
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	otherRoot, otherRootKey := testcert.CA(t, "another root")
+	signer := func(uri string, ca *x509.Certificate, caKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+		u, err := url.Parse(uri)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return testcert.Issue(t, &x509.Certificate{KeyUsage: x509.KeyUsageDigitalSignature, URIs: []*url.URL{u}}, ca, caKey)
+	}
+	now := time.Now().Unix()
+	for name, tc := range map[string]struct {
+		respond   func(issuerURL string, claims map[string]any) string
+		untrusted bool
+	}{
+		"unsigned": {func(_ string, claims map[string]any) string {
+			body, _ := json.Marshal(claims)
+			return string(body)
+		}, true},
+		"certificate naming another issuer": {func(issuerURL string, claims map[string]any) string {
+			cert, key := signer("https://other.example", root, rootKey)
+			return signMetadataClaims(t, key, cert, claims)
+		}, true},
+		"sub naming another issuer": {func(issuerURL string, claims map[string]any) string {
+			cert, key := signer(issuerURL, root, rootKey)
+			claims["sub"] = "https://other.example"
+			return signMetadataClaims(t, key, cert, claims)
+		}, true},
+		"signer under another root": {func(issuerURL string, claims map[string]any) string {
+			cert, key := signer(issuerURL, otherRoot, otherRootKey)
+			return signMetadataClaims(t, key, cert, claims)
+		}, false},
+		"expired": {func(issuerURL string, claims map[string]any) string {
+			cert, key := signer(issuerURL, root, rootKey)
+			claims["iat"], claims["exp"] = now-7200, now-3600
+			return signMetadataClaims(t, key, cert, claims)
+		}, false},
+	} {
+		issuerURL := serveMetadata(t, func(issuerURL, _ string) (string, string) {
+			body, _ := json.Marshal(testMetadata(t, issuerURL))
+			claims := map[string]any{}
+			_ = json.Unmarshal(body, &claims)
+			claims["sub"], claims["iat"] = issuerURL, now
+			return "application/jwt", tc.respond(issuerURL, claims)
+		})
+		cfg := validConfig()
+		cfg.IssuerMetadataRoots, cfg.RequireSignedIssuerMetadata, cfg.RequireIssuerMetadataName = roots, true, true
+		deps := validDependencies()
+		deps.HTTP = http.DefaultClient
+		w, err := wallet.New(cfg, deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = w.FetchCredentialIssuerMetadata(t.Context(), issuerURL)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if errors.Is(err, wallet.ErrUntrustedIssuer) != tc.untrusted {
+			t.Errorf("%s: %v, want ErrUntrustedIssuer %t", name, err, tc.untrusted)
 		}
 	}
 }
