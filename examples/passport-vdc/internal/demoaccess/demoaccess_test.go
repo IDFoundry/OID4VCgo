@@ -69,6 +69,10 @@ func TestGuard_RefusesNonCanonicalDemoPaths(t *testing.T) {
 		{"//demo/status", http.StatusBadRequest},
 		{"/demo/./status", http.StatusBadRequest},
 		{"/demo//status", http.StatusBadRequest},
+		// ServeMux routes these to a /demo/ handler with "../../../x" as
+		// the wildcard, although the decoded path cleans to /x/dcapi.
+		{"/demo/requests/..%2F..%2F..%2Fx/dcapi", http.StatusBadRequest},
+		{"/%64emo/requests/..%2F..%2F..%2Fx/dcapi", http.StatusBadRequest},
 		{"/s/%61ge/response", http.StatusNoContent},
 		{"/credential", http.StatusNoContent},
 	} {

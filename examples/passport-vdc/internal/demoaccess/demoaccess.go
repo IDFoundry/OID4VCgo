@@ -6,18 +6,24 @@
 // rule on the path /demo/ (Cloudflare Access; see the iOS demo app's
 // README). Guard backs that rule at the origin:
 //
-//   - A request whose path, decoded and cleaned, is under /demo/ must
-//     have spelled it canonically: no percent-encoding (r.URL.RawPath
-//     set) and nothing path.Clean would change. Go's ServeMux routes
+//   - A request under /demo/, by its path decoded and cleaned or by its
+//     first path segment as ServeMux routes it, must have spelled its
+//     path canonically: no percent-encoding (r.URL.RawPath set) and
+//     nothing path.Clean would change. Go's ServeMux routes
 //     /%64emo/status to the /demo/status handler, so an edge that
-//     matches the raw path would otherwise let it through unguarded.
+//     matches the raw path would otherwise let it through unguarded;
+//     and it routes /demo/requests/..%2F..%2Fx/dcapi to a /demo/
+//     handler, never resolving a ".." that came from %2F, although the
+//     decoded path cleans to one outside /demo/.
 //   - With Access configured, each such request must carry a
 //     Cf-Access-Jwt-Assertion header holding a token Cloudflare Access
-//     signed for the application's audience (VerifyAccessToken).
+//     signed for the application's audience (AccessVerifier.Verify).
 //   - A state-changing request (anything but GET, HEAD or OPTIONS)
 //     must come from the app's own origin, by its Origin header or,
 //     without one, its Referer (SameOrigin): one with neither is
-//     refused, so a non-browser client can't skip the check.
+//     refused. This stops a cross-site form post from the operator's
+//     browser; a non-browser client can still send the expected Origin,
+//     so on a public host only the Access check keeps such a client out.
 //
 // Everything outside /demo/ is the protocol surface wallets and
 // verifiers call, and Guard passes it through unchanged.
@@ -42,7 +48,7 @@ const Prefix = "/demo/"
 // from the app's URL.
 func Guard(next http.Handler, origin string, access *AccessVerifier) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !underPrefix(r.URL.Path) {
+		if !underPrefix(r.URL.Path) && !routedUnderPrefix(r.URL.EscapedPath()) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -79,6 +85,15 @@ func refuse(w http.ResponseWriter, r *http.Request, status int, msg string, err 
 func underPrefix(p string) bool {
 	clean := path.Clean("/" + p)
 	return clean == strings.TrimSuffix(Prefix, "/") || strings.HasPrefix(clean, Prefix)
+}
+
+// routedUnderPrefix reports whether ServeMux, which matches the escaped
+// path p segment by segment, unescaping each, would route p under
+// Prefix: its first segment, unescaped, is Prefix's.
+func routedUnderPrefix(p string) bool {
+	seg, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	first, err := url.PathUnescape(seg)
+	return err == nil && first == strings.Trim(Prefix, "/")
 }
 
 // canonical reports whether u's path is spelled as it's routed: not
