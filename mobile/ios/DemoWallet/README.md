@@ -218,7 +218,10 @@ the credentials again.
 The phone can't reach services on this Mac's loopback address, so the
 passport-vdc demo's issuer, verifier and Wallet Provider go on public
 HTTPS URLs through a tunnel. The web wallet stays on this Mac: it has no
-login.
+login. Neither have the issuer's and verifier's pages under `/demo/`:
+guard them with Cloudflare Access before exposing them, as
+[Restricting the pages with Cloudflare Access](#restricting-the-pages-with-cloudflare-access)
+shows.
 
 1. Create a Cloudflare named tunnel, with a hostname for each of the
    three, as `cloudflared.yml.example` shows. Copy it to `cloudflared.yml`
@@ -231,8 +234,16 @@ login.
      -issuer-url https://issuer.example.com \
      -verifier-url https://verifier.example.com \
      -provider-url https://provider.example.com \
-     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet
+     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet \
+     -cf-access-team-domain <team>.cloudflareaccess.com \
+     -cf-access-aud <tag>
    ```
+
+   The `-cf-access-*` flags name the Access application guarding
+   `/demo/` (its team domain and Application Audience tag), so the demo
+   refuses a request for those pages without Access's token; see
+   [Restricting the pages with Cloudflare Access](#restricting-the-pages-with-cloudflare-access).
+   Without them the pages are open to anyone who finds the URLs.
 
    `-ios-app` is the app's App ID, your team ID and its bundle ID
    (`BUNDLE_ID` below, if you set one): the Wallet Provider then attests

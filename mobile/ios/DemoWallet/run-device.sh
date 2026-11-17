@@ -7,7 +7,12 @@
 #     -issuer-url https://issuer.example.com \
 #     -verifier-url https://verifier.example.com \
 #     -provider-url https://provider.example.com \
-#     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet
+#     -ios-app ABCDE12345.dev.idfoundry.oid4vcgo.demowallet \
+#     -cf-access-team-domain <team>.cloudflareaccess.com -cf-access-aud <tag>
+#
+# (the Cloudflare Access application guarding the demo's /demo/ pages,
+# which have no login of their own: README.md, "Restricting the pages
+# with Cloudflare Access"),
 #
 # then, with your Apple developer team ID and that Wallet Provider URL:
 #
