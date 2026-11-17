@@ -127,7 +127,7 @@ func VerifyPresentation(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.
 	if opts.RequireKeyBinding != KeyBindingRequired && opts.RequireKeyBinding != KeyBindingNotRequired {
 		return VerifiedPresentation{}, fmt.Errorf("sdjwtvc: VerifyOptions.RequireKeyBinding is required")
 	}
-	issuerJWT, disclosureParts, kbJWT, err := split(s)
+	issuerJWT, disclosures, hasDisclosures, kbJWT, err := split(s)
 	if err != nil {
 		return VerifiedPresentation{}, err
 	}
@@ -138,11 +138,11 @@ func VerifyPresentation(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.
 	if err != nil {
 		return VerifiedPresentation{}, err
 	}
-	disclosures, err := parseReferencedDisclosures(decoded, hashAlg, disclosureParts)
+	parsed, err := parseReferencedDisclosures(decoded, hashAlg, disclosures, hasDisclosures)
 	if err != nil {
 		return VerifiedPresentation{}, err
 	}
-	pres := Presentation{IssuerJWT: issuerJWT, Disclosures: disclosures, KeyBindingJWT: kbJWT}
+	pres := Presentation{IssuerJWT: issuerJWT, Disclosures: parsed, KeyBindingJWT: kbJWT}
 
 	if err := checkNoRegisteredClaimDisclosed(decoded, hashAlg, pres.Disclosures); err != nil {
 		return VerifiedPresentation{}, err
@@ -161,21 +161,24 @@ func VerifyPresentation(s string, issuerPub crypto.PublicKey, issuerAlg oid4vci.
 }
 
 // split cuts a compact SD-JWT or SD-JWT+KB (RFC 9901 §4), of at most
-// MaxBytes, into its Issuer-signed JWT, its Disclosures, still encoded,
-// and its Key Binding JWT ("" for none), decoding nothing.
-func split(s string) (issuerJWT string, disclosures []string, kbJWT string, err error) {
+// MaxBytes, into its Issuer-signed JWT, its Disclosures, still encoded
+// and joined by '~' (hasDisclosures false for none), and its Key
+// Binding JWT ("" for none), decoding nothing. The Disclosures are
+// split apart only once the Issuer-signed JWT verifies
+// (parseReferencedDisclosures).
+func split(s string) (issuerJWT, disclosures string, hasDisclosures bool, kbJWT string, err error) {
 	if len(s) > MaxBytes {
-		return "", nil, "", fmt.Errorf("sdjwtvc: presentation is %d bytes, exceeds the %d byte limit", len(s), MaxBytes)
+		return "", "", false, "", fmt.Errorf("sdjwtvc: presentation is %d bytes, exceeds the %d byte limit", len(s), MaxBytes)
 	}
 	issuerJWT, rest, found := strings.Cut(s, "~")
 	if !found {
-		return "", nil, "", fmt.Errorf("sdjwtvc: not a valid SD-JWT (missing '~' separator)")
+		return "", "", false, "", fmt.Errorf("sdjwtvc: not a valid SD-JWT (missing '~' separator)")
 	}
 	last := strings.LastIndexByte(rest, '~')
 	if last < 0 {
-		return issuerJWT, nil, rest, nil
+		return issuerJWT, "", false, rest, nil
 	}
-	return issuerJWT, strings.Split(rest[:last], "~"), rest[last+1:], nil
+	return issuerJWT, rest[:last], true, rest[last+1:], nil
 }
 
 // verifyIssuerJWT verifies the Issuer-signed JWT and checks its typ,
