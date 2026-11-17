@@ -261,32 +261,72 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   issuer's Publisher.
 - [ ] **Capacity: `Config.StatusListSize`.** A period's lists hold 64
   × `StatusListSize`/2 instance keys used in it, and every issuance
-  uses a new one: the default (2^16) holds about 2.1M a week. Size it
-  for your fleet's issuances and refreshes per period — 2^19 or more
-  for millions of wallets — and at most 2^22 unless the issuers
-  checking the lists raise their token limit. The
-  `walletprovider.Config.StatusListSize` doc has the formula. Size it
-  with a security margin too, several times your expected use: the
-  per-instance bound below doesn't bound someone holding many
-  instances, and recorded keys move to each new period's lists
-  without fresh evidence, so enough instances can fill a period's
-  lists between them. Watch `Provider.StatusListFill` from
-  monitoring: alert when its `Free` won't last until its `End` at the
-  current rate, and on a fast fill early in a period (the lists filling
-  far faster than the same hours of the last period did, a sign of
-  many instances renewing at once), and raise `StatusListSize` for the
-  next period. Once a period's lists are full, a recorded instance key
-  last used in the previous period keeps its index there, so
-  established wallets keep their Wallet Attestations, but every new
-  instance key, and so every new issuance, is refused until the period
-  ends.
+  uses a new one: the default (2^20) holds about 33.5M a week. Size it
+  for your fleet's issuances and refreshes per period, with a margin
+  of several times (5M wallets refreshing twice a week use about 10M),
+  and at most 2^22 unless the issuers checking the lists raise their
+  token limit. The `walletprovider.Config.StatusListSize` doc has the
+  formula. At 2^20, a list packs to 256 KiB, so its token stays under
+  a Relying Party's default 1 MiB limit whatever its statuses; an
+  issuer's `statuslist.Cache` keeps each decoded (256 KiB), so the
+  provider's 128 lists an attestation can name take half its default
+  64 MiB `MaxBytes`; and sqlstore keeps a row per index handed out,
+  not per index. Once a period's lists are full, a recorded instance
+  key last used in the previous period keeps its index there, without
+  counting against `MaxInstanceKeysPerPeriod`, so wallets that renewed
+  in the previous period keep their Wallet Attestations through that
+  one full period, but every new instance key, and so every new
+  issuance, is refused (HTTP 500) until the period ends. A key whose
+  index is older is refused too: lists filled again in the next period
+  refuse established wallets from then on, so treat a full period as
+  an incident, not a state to ride out.
+- [ ] **Recently registered instances: `Config.RecentInstanceStatusLists`**
+  (16 of the 64 lists, a quarter, by default). The keys of an instance
+  registered in the current or previous period take indices from these
+  lists alone; other instances' keys from any list, these chosen in
+  proportion to their share, so they hold established wallets' keys
+  as densely as the rest. Each instance costs only one piece of
+  registration evidence, and its recorded keys move to each new
+  period's lists without any, so this keeps instances registered in a
+  burst from filling the lists the wallets registered before need.
+  Once the share is full, a recent instance's new instance key is
+  refused (HTTP 500 `server_error`) until the next period, logged as
+  "the status lists of the current period that recently registered
+  instances take indices from are full"; nothing is revoked or
+  forgotten. Raise it for a launch that registers most of your fleet
+  in a week or two; `MaxStatusListsPerPeriod` turns it off. A key on
+  list 16 or later tells an issuer its instance wasn't registered in
+  the last period or two; one on lists 0 to 15 tells it little, as a
+  quarter of established wallets' keys are there too.
+- [ ] **Alert on the status lists filling.** Watch
+  `Provider.StatusListFill` from monitoring, every few minutes:
+  - when its `Free` won't last until its `End` at the current rate;
+  - when `Free`, or `RecentInstanceFree`, falls fast early in a period,
+    far faster than in the same hours of the last period: many
+    instances renewing, or registering, at once;
+  - on the log line above: recently registered instances refused.
+
+  The response: raise `StatusListSize`, which takes effect at once,
+  for the current period's lists too (roll it out to every replica
+  quickly, see UPGRADING.md), then look into the recent registrations
+  and revoke what you find (`Provider.RevokeWhere`).
+
+  These raise an attacker's cost and stop sudden bursts; they don't
+  make filling the lists impossible. At 2^20, filling a period's lists
+  takes about 33M instance keys, each recorded once with its own
+  hardware-backed key attestation, and at least three quarters of them
+  recorded by instances registered more than a period before. But
+  Android exposes no device identity, so the provider can't tell one
+  device registering many instances from many devices, and a patient,
+  well-funded attacker who registers instances over several periods
+  can still fill a period.
 - [ ] **Per-instance bounds: `Config.MaxInstanceKeysPerPeriod`** (128
   by default) caps the status list indices one instance's keys take
   in a period, so one instance can't fill the lists for every other:
   size it for one wallet's issuances and refreshes per period. It
   bounds one instance, not an attacker with many: each instance costs
   only one piece of registration evidence, so size `StatusListSize`
-  with a margin, as above. It
+  with a margin, as above, and keep `RecentInstanceStatusLists`. It
   doesn't limit request rates: also **rate-limit
   `WalletAttestationPath` and `KeyAttestationPath`** per client in
   front of the service, as the unauthenticated endpoints are. Each
@@ -317,7 +357,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
   suspension). Google's verdict is consulted first, and wins even when
   a root removed from `Roots`, a tightened `Verifier` or a tightened
-  `Policy` would refuse the instance too. A root removed or a tightened
+  `Policy` would refuse the instance too — whether it names the
+  registration's chain, or the chain of the instance key the request
+  names, which under Remote Key Provisioning can have intermediates of
+  its own. A root removed or a tightened
   policy alone only refuses: to make such instances' attestations
   `INVALID` too, revoke them with `p.RevokeWhere(ctx, match, reason)`,
   `match` calling the adapter's `Recheck` or reading
@@ -326,8 +369,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   instances registered with, under that Kind: an instance whose Kind
   no verifier has is refused by policy (`OnRecheckRefused` hears of
   it), and `androidkey.EvidenceVerifier` served under another Kind
-  than `androidkey.EvidenceKind` fails every recheck as a
-  misconfiguration (HTTP 500).
+  than `androidkey.EvidenceKind` refuses every registration and fails
+  every recheck as a misconfiguration (`ErrConfig`).
 - [ ] **Expect Android instances to re-attest.** The recheck also
   judges each kept certificate's validity period, as `Verify` judges a
   chain's, so an instance whose registration chain has a certificate

@@ -211,7 +211,7 @@ func baseDeps(t *testing.T, c *clock) walletprovider.Dependencies {
 		Instances: &walletprovider.MemoryInstanceStore{}, InstanceKeys: &walletprovider.MemoryInstanceKeyStore{},
 		Challenges:    &walletprovider.MemoryChallengeStore{},
 		StatusIndices: &statuslist.MemoryIndexStore{}, Evidence: verifiers(),
-		Clock: c.now, Random: rand.Reader,
+		Clock: c.now, Random: offRecentShare{},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
@@ -416,4 +416,22 @@ func (h *harness) toNextPeriod() {
 // listURI is the uri of list n of the period starting at start.
 func listURI(start int64, n int) string {
 	return statusBase + "/" + strconv.FormatInt(start, 10) + "/" + strconv.Itoa(n)
+}
+
+// establishedList is the first list an instance registered before the
+// previous period takes indices from, by default.
+const establishedList = walletprovider.DefaultRecentInstanceStatusLists
+
+// offRecentShare is crypto/rand.Reader, except that a two-byte read,
+// the provider's random choice of the lists an established instance's
+// key takes an index on, chooses the lists outside the recent
+// instances' share, so tests can expect a key on establishedList.
+type offRecentShare struct{}
+
+func (offRecentShare) Read(b []byte) (int, error) {
+	if len(b) == 2 {
+		b[0], b[1] = 0xff, 0xff
+		return 2, nil
+	}
+	return rand.Read(b)
 }

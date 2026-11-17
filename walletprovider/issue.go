@@ -73,7 +73,7 @@ func (p *Provider) WalletAttestation(ctx context.Context, req WalletAttestationR
 	if err != nil {
 		return "", err
 	}
-	in, err := p.activeInstance(ctx, req.InstanceID)
+	in, err := p.activeInstance(ctx, req.InstanceID, req.InstanceKey)
 	if err != nil {
 		return "", err
 	}
@@ -142,6 +142,11 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 		Evidence: req.Evidence, Challenge: challenge, Purpose: PurposeInstance,
 		Keys: []crypto.PublicKey{req.InstanceKey}, Instance: &in,
 	})
+	if issuerVerdict(err) {
+		// The device's attestation key is revoked or suspended: so is
+		// the instance, as when a recheck finds it.
+		return InstanceKey{}, p.recheckRefused(ctx, in, err)
+	}
 	if err == nil {
 		err = p.checkEvidenceFrom(in, req.Evidence.Kind, ev)
 	}
@@ -344,7 +349,7 @@ func (p *Provider) KeyAttestation(ctx context.Context, req KeyAttestationRequest
 	if len(req.Evidence) > len(req.Keys) {
 		return KeyAttestationResult{}, fmt.Errorf("%w: more evidence than keys", ErrInvalidRequest)
 	}
-	in, err := p.activeInstance(ctx, req.InstanceID)
+	in, err := p.activeInstance(ctx, req.InstanceID, req.InstanceKey)
 	if err != nil {
 		return KeyAttestationResult{}, err
 	}
@@ -437,17 +442,24 @@ func advancedCounter(counter, next *uint64, stored uint64) (*uint64, error) {
 // assertion advanced it. Evidence that fails, is of another Kind than
 // the instance registered with, or comes from another platform or app
 // than the instance's, vouches for nothing; a key its evidence places
-// at a security level the Policy refuses is left out.
+// at a security level the Policy refuses is left out. Evidence its
+// issuer has revoked or suspended fails the request, revoking or
+// suspending the instance (recheckRefused).
 func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge []byte, req KeyAttestationRequest) ([]AttestedKey, *uint64, error) {
 	var vouched []AttestedKey
 	var counter *uint64
 	var lastErr error
 	for _, e := range req.Evidence {
 		ev, err := p.verify(ctx, EvidenceInput{Evidence: e, Challenge: challenge, Purpose: PurposeHolder, Keys: req.Keys, Instance: &in})
-		if errors.Is(err, ErrUnavailable) {
+		switch {
+		case errors.Is(err, ErrUnavailable):
 			// Not a verdict on the key: the wallet asks again later,
 			// rather than get an attestation leaving the key out.
 			return nil, nil, err
+		case issuerVerdict(err):
+			// The device's attestation key is revoked or suspended: so
+			// is the instance, as when a recheck finds it.
+			return nil, nil, p.recheckRefused(ctx, in, err)
 		}
 		if err == nil {
 			err = p.checkEvidenceFrom(in, e.Kind, ev)
@@ -502,8 +514,18 @@ func (p *Provider) checkEvidenceFrom(in Instance, kind string, ev VerifiedEviden
 // activeInstance returns the instance with id, refusing one that isn't
 // active, whose evidence Kind has no configured verifier, whose
 // registration evidence the Policy no longer accepts, or whose
-// registration verifier, an EvidenceRechecker, refuses it now (judge).
-func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, error) {
+// registration verifier, an EvidenceRechecker, refuses it now
+// (verdict).
+//
+// When the Policy or the rechecker refuses the instance for another
+// reason than its evidence's issuer revoking or suspending it, the
+// request's instance key, if recorded for the instance, is rechecked
+// too (instanceKeyIssuerVerdict), and its issuer's revocation or
+// suspension wins: the key's evidence is a chain of its own, which can
+// have certificates the registration's doesn't (Remote Key
+// Provisioning's intermediates), so a refusal returning before the key
+// is reached would otherwise hide its revocation.
+func (p *Provider) activeInstance(ctx context.Context, id string, instanceKey crypto.PublicKey) (Instance, error) {
 	in, err := p.getInstance(ctx, id)
 	if err != nil {
 		return Instance{}, err
@@ -515,11 +537,17 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 	if err != nil {
 		return Instance{}, p.recheckRefused(ctx, in, err)
 	}
-	var recheck func() error
+	policyErr := p.cfg.Policy.checkInstance(in)
+	var recheckErr error
 	if r, ok := v.(EvidenceRechecker); ok {
-		recheck = func() error { return r.Recheck(ctx, in) }
+		recheckErr = r.Recheck(ctx, in)
 	}
-	if err := p.judge(ctx, in, p.cfg.Policy.checkInstance(in), recheck, "the instance's registration evidence", ErrRegistrationExpired); err != nil {
+	if (policyErr != nil || refusedEvidence(recheckErr)) && !issuerVerdict(recheckErr) {
+		if keyErr := p.instanceKeyIssuerVerdict(ctx, in, v, instanceKey); keyErr != nil {
+			return Instance{}, p.recheckRefused(ctx, in, recheckError("the instance key's evidence", ErrInstanceKeyExpired, keyErr))
+		}
+	}
+	if err := p.verdict(ctx, in, policyErr, recheckErr, "the instance's registration evidence", ErrRegistrationExpired); err != nil {
 		return Instance{}, err
 	}
 	return in, nil
@@ -553,13 +581,57 @@ func (p *Provider) judge(ctx context.Context, in Instance, policyErr error, rech
 	if recheck != nil {
 		recheckErr = recheck()
 	}
+	return p.verdict(ctx, in, policyErr, recheckErr, what, expired)
+}
+
+// verdict is judge's decision once the rechecker has run: recheckErr is
+// its outcome.
+func (p *Provider) verdict(ctx context.Context, in Instance, policyErr, recheckErr error, what string, expired error) error {
 	switch {
-	case recheckErr != nil && (policyErr == nil || errors.Is(recheckErr, ErrEvidenceRevoked) || errors.Is(recheckErr, ErrEvidenceSuspended)):
+	case recheckErr != nil && (policyErr == nil || issuerVerdict(recheckErr)):
 		return p.recheckRefused(ctx, in, recheckError(what, expired, recheckErr))
 	case policyErr != nil:
 		return p.recheckRefused(ctx, in, policyErr)
 	}
 	return nil
+}
+
+// instanceKeyIssuerVerdict rechecks pub, when it's an instance key
+// recorded for in and in's verifier v is an InstanceKeyRechecker, and
+// returns the rechecker's refusal when it's the key's evidence's issuer
+// revoking or suspending it (issuerVerdict), nil otherwise: any other
+// outcome, a key not recorded for in among them, leaves the request to
+// the instance's own verdict.
+func (p *Provider) instanceKeyIssuerVerdict(ctx context.Context, in Instance, v EvidenceVerifier, pub crypto.PublicKey) error {
+	r, ok := v.(InstanceKeyRechecker)
+	if !ok {
+		return nil
+	}
+	key, err := marshalKey(pub)
+	if err != nil {
+		return nil
+	}
+	ik, err := p.deps.InstanceKeys.Get(ctx, key.thumbprint)
+	if err != nil || ik.InstanceID != in.ID {
+		return nil
+	}
+	if err := r.RecheckInstanceKey(ctx, in, ik); issuerVerdict(err) {
+		return err
+	}
+	return nil
+}
+
+// issuerVerdict reports whether err refuses evidence its issuer has
+// revoked or suspended.
+func issuerVerdict(err error) bool {
+	return errors.Is(err, ErrEvidenceRevoked) || errors.Is(err, ErrEvidenceSuspended)
+}
+
+// refusedEvidence reports whether err, a rechecker's, refuses the
+// evidence, rather than failing to decide (ErrUnavailable) or being the
+// provider's own failure.
+func refusedEvidence(err error) bool {
+	return errors.Is(err, ErrEvidenceRejected) || errors.Is(err, ErrPolicy)
 }
 
 // recheckError is a rechecker's err for what, wrapping expired too when

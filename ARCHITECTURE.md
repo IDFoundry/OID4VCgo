@@ -513,7 +513,7 @@ changes whether *every* bullet below is `(done)`.
     (`Config.StatusListPeriod`, at least every attestation TTL, so a
     live attestation names the current period's list or the
     previous one's): a key used in a later period moves to a fresh
-    index there, keeping the previous period's as
+    index there, keeping the old one, while its list is served, as
     `InstanceKey.PreviousStatus`, through `InstanceKeyStore.Update`'s
     compare-and-swap. So capacity is per period, not for every key
     ever recorded. `Suspend`/`Resume`/`Revoke` and `RevokeWhere` act

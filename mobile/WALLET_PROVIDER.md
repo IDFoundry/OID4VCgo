@@ -78,10 +78,20 @@ so on.
 - **Challenges** are 32 random bytes, base64url without padding (43
   characters), issued for one purpose, used once, and valid for the
   provider's challenge TTL (by default 5 minutes, at most 15). A
-  challenge is used up by the request that names it, accepted or not,
+  `registration` challenge, and the `request` challenge of a signed
+  request, are used up by the request that names them, accepted or not,
   so a refused request is retried with a new one — except a signed
-  request that doesn't verify, which leaves the `request` challenge it
-  names unused.
+  request that doesn't verify, which leaves its `request` challenge
+  unused. The `instance` or `holder` challenge in a signed request's
+  body is used up only once the provider takes it to verify the
+  evidence bound to it, accepted or not, a 503 while verifying that
+  evidence included; a request refused before that (the instance
+  refused or suspended, a recheck that can't decide for now, an unknown
+  instance key) leaves it unused, so the same keys and challenge can be
+  sent again, and a Wallet Attestation for a recorded instance key
+  ignores it. Holder keys, or an instance key the provider hasn't
+  recorded, made over a challenge that's used up can't be attested:
+  make new ones.
 - **Instance IDs** are opaque strings (today 16 random bytes,
   base64url).
 - A client must not follow redirects: an answer other than the one
@@ -107,7 +117,7 @@ Clients decide on `error` and the status code, never the description.
 | 400 | `invalid_challenge` | The challenge is unknown, used, expired, or for another purpose. Get a new one. |
 | 400 | `evidence_required` | No evidence was sent: at registration, for a Key Attestation, or with a Wallet Attestation request for an instance key the provider hasn't recorded yet, or no longer has (see the provider's retention, below). |
 | 400 | `unsupported_evidence` | The provider takes no evidence of that `kind`. |
-| 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should — or, for a registered instance, the evidence the provider judges again at every attestation no longer passes for a reason fresh evidence doesn't fix (a root it no longer trusts, a certificate on Google's status list). |
+| 403 | `evidence_rejected` | The evidence didn't verify, or doesn't cover the keys or challenge it should — or, for a registered instance, the evidence the provider judges again at every attestation no longer passes for a reason fresh evidence doesn't fix (a root it no longer trusts, a certificate on Google's status list). A certificate Google lists as revoked or suspended, in that evidence or in fresh evidence a registered instance sends, also revokes or suspends the instance. |
 | 403 | `registration_expired` | The instance's registration evidence, which the provider judges again at every attestation, no longer passes for a reason fresh evidence fixes (Android: a certificate of its chain past its validity period, which Remote Key Provisioning's short-lived certificates soon are, or a record kept by an older provider that can't be judged). The instance isn't revoked, but gets nothing more: discard it, its registration key and its instance keys, and register again. |
 | 403 | `instance_key_expired` | The instance key's own evidence, recorded with its first Wallet Attestation and judged again each time the provider relies on it, no longer passes for a reason fresh evidence fixes (as for `registration_expired`), while the instance's registration still does. Make a new instance key and ask for its Wallet Attestation with fresh evidence; an issuance that needs the old key (a refresh bound to it) must start again. |
 | 403 | `policy_refused` | The evidence verified, but the provider's policy refuses it (platform, app version, boot state, security level) — or, for a registered instance, no longer accepts what its registration evidence proved, or the security level its instance key was recorded at, since the policy is applied again at every attestation. |
@@ -118,8 +128,8 @@ Clients decide on `error` and the status code, never the description.
 | 403 | `instance_not_active` | The instance is suspended. |
 | 403 | `instance_revoked` | The instance is revoked, for good: register a new one. |
 | 403 | `no_key_attested` | None of the holder keys could be attested. |
-| 429 | `too_many_instance_keys` | The instance's instance keys have used up this status list period's allowance: a Wallet Attestation for a new instance key, or for a recorded one not yet used this period, is refused until the next period. Instance keys already used this period are still attested. |
-| 500 | `server_error` | The provider couldn't answer. |
+| 429 | `too_many_instance_keys` | The instance's instance keys have used up this status list period's allowance: a Wallet Attestation for a new instance key, or for a recorded one not yet used this period, is refused until the next period. Instance keys already used this period are still attested, as is one that keeps its previous period's index while the period's status lists are full, which takes none of the allowance. |
+| 500 | `server_error` | The provider couldn't answer — among other reasons, because the current period's status lists are full, or, for an instance registered in the current or previous period, the share of them such instances may use: a Wallet Attestation for a new instance key then fails until the next period. Nothing is revoked or forgotten. |
 | 503 | `server_error` | The provider can't decide for now — it couldn't get something it needs to judge the evidence, such as Google's attestation status list for an Android chain — and neither accepts nor refuses it. It carries `Retry-After` (seconds): try again then, with a new challenge. Not a verdict on the evidence or the instance. |
 
 A path or method the protocol doesn't define gets the HTTP server's own

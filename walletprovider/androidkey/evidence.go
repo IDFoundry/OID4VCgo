@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"encoding/asn1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -29,8 +30,11 @@ func Evidence(chain [][]byte) walletprovider.Evidence {
 // for evidence of EvidenceKind: one key's attestation chain (Evidence),
 // over the provider's challenge. Verify runs Verifier.Verify, so every
 // check and policy setting of the Verifier applies; the chain's key
-// must be one of the keys the request names (ErrKeyNotRequested). It
-// reports:
+// must be one of the keys the request names (ErrKeyNotRequested). A
+// chain Google's status list names REVOKED or SUSPENDED is refused
+// with walletprovider.ErrEvidenceRevoked or ErrEvidenceSuspended
+// wrapped, as Recheck refuses it, so the provider revokes or suspends a
+// registered instance sending it. It reports:
 //
 //   - the platform, walletprovider.PlatformAndroid;
 //   - the app: its package name as AppID and its versionCode as
@@ -93,12 +97,23 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 	if e.Verifier == nil {
 		return walletprovider.VerifiedEvidence{}, fail(ErrConfig, "EvidenceVerifier has no Verifier")
 	}
+	if in.Evidence.Kind != EvidenceKind {
+		// Served under a Kind of the integrator's own: the instances it
+		// registered would fail every recheck (ownKind), so it registers
+		// none.
+		return walletprovider.VerifiedEvidence{}, fail(ErrConfig, "evidence of Kind %q, not %q: don't serve the adapter under a Kind of your own", in.Evidence.Kind, EvidenceKind)
+	}
 	chain, err := splitChain(in.Evidence.Data)
 	if err != nil {
 		return walletprovider.VerifiedEvidence{}, err
 	}
 	r, err := e.Verifier.Verify(ctx, chain, in.Challenge)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrRevoked):
+		// Google's verdict on the device's attestation key: the
+		// provider revokes or suspends a registered instance sending it.
+		return walletprovider.VerifiedEvidence{}, fmt.Errorf("%w: %w", revocationVerdict(err), err)
+	case err != nil:
 		return walletprovider.VerifiedEvidence{}, undecided(err)
 	}
 	i := slices.IndexFunc(in.Keys, func(k crypto.PublicKey) bool { return certchain.SameKey(k, r.PublicKey) })

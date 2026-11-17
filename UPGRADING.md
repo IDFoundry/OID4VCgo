@@ -312,13 +312,23 @@ Android's chains are unaffected.
 background ahead of `MaxAge`, and, while fetching fails, keeps using
 the last list for the new `Grace` past `MaxAge` (12 hours by
 default). Set `Grace` negative for the old behaviour, a list never
-used past `MaxAge`. A fetch is no longer cut short by the request
-that started it, and a caller waiting for one stops when its own
-context ends.
+used past `MaxAge`. During `Grace`, a certificate Google has listed
+REVOKED or SUSPENDED since the last successful fetch is still
+accepted, until a fetch succeeds: the list judged by can be up to
+`MaxAge` plus `Grace` old (36 hours by default). Keep `Grace` short of
+a day, or set it negative where that's too long. A fetch is no
+longer cut short by the request that started it, and a caller waiting
+for one stops when its own context ends.
 
-When no list can be had, Android registrations and rechecks are now
-answered HTTP 503 `server_error` with a `Retry-After`, not 403
-`evidence_rejected`: `androidkey.EvidenceVerifier` wraps
+When no list can be had, Android requests are now answered HTTP 503
+`server_error` with a `Retry-After` (the time until `StatusSource`
+fetches again: up to its `RetryAfter`, a minute by default; 30 seconds
+for an error that doesn't say). A registration was answered 403
+`evidence_rejected`, and a recheck before a Wallet or Key Attestation
+HTTP 500 `server_error`. A Key Attestation whose holder key evidence
+can't be judged now fails with 503 too, where the key was left out of
+the attestation, or the request refused `no_key_attested` if that left
+none. `androidkey.EvidenceVerifier` wraps
 `ErrStatusUnavailable` in the new `walletprovider.ErrUnavailable`,
 which `Provider.Register`, `WalletAttestation` and `KeyAttestation`
 return without `ErrEvidenceRejected`. A custom `EvidenceVerifier` or
@@ -334,7 +344,18 @@ or SUSPENDED certificate revokes or suspends the instance even when a
 root removed from `Roots` or a tightened `Verifier` would refuse it
 too; a list that can't be fetched no longer stops a root or policy
 refusal. The provider runs an instance's rechecker even when its own
-`Policy` refuses the instance or instance key, and
+`Policy` refuses the instance or instance key, and, when the instance
+is refused for another reason, still rechecks the instance key a Wallet
+or Key Attestation request names: a REVOKED or SUSPENDED certificate
+of that key's own chain revokes or suspends the instance, answered
+`evidence_rejected` where it was `policy_refused`. Fresh evidence a
+registered instance sends, a new instance key's chain or a holder
+key's, that Google's list names REVOKED or SUSPENDED now revokes or
+suspends the instance too, where it only refused the request (a holder
+key's is answered `evidence_rejected`, not `no_key_attested`):
+`androidkey.EvidenceVerifier.Verify` wraps
+`walletprovider.ErrEvidenceRevoked` or `ErrEvidenceSuspended`, as
+`Recheck` does, and a custom `EvidenceVerifier` can too. And
 `Config.OnRecheckRefused` is now called for a `Policy` refusal too
 (`ErrPolicy`, the instance left active): an alert keyed on that
 callback sees refusals it didn't before.
@@ -347,8 +368,10 @@ to `OnRecheckRefused`, where it used to be attested without rechecks.
 Keep a verifier for every Kind your instances registered with.
 `androidkey.EvidenceVerifier`'s `Recheck` and `RecheckInstanceKey`
 return `ErrConfig` (the provider's HTTP 500) for an instance of
-another Kind than `androidkey.EvidenceKind`, where they accepted it:
-don't serve the adapter under a Kind of your own.
+another Kind than `androidkey.EvidenceKind`, where they accepted it,
+and its `Verify` refuses evidence of another Kind with `ErrConfig`, so
+such an adapter registers no instance (`evidence_rejected`): don't
+serve the adapter under a Kind of your own.
 
 ### A wallet decides which issuers' offers it takes (`walletflow`)
 
@@ -441,6 +464,72 @@ WalletConfiguration(
 ```
 
 A JSON configuration adds `"credential_issuers": ["https://issuer.example.com"]`.
+
+### Full status lists (`walletprovider`)
+
+Once the current period's status lists are full, a recorded instance
+key last used in the previous period now keeps its index there, and
+its Wallet or Key Attestation names it, where the request used to fail
+with HTTP 500. Such a renewal takes none of the instance's
+`MaxInstanceKeysPerPeriod`. A key whose index is older, and every new
+instance key, are still refused until a period's lists have room. When
+a key moves to a later period's lists, its old index is kept as
+`InstanceKey.PreviousStatus` whenever that list is still served, not
+only when it's the previous period's, so `Suspend`, `Resume` and
+`Revoke` set an index two periods back too.
+
+### Status list capacity (`walletprovider`)
+
+`DefaultStatusListSize` is now 2^20, up from 2^16: a period's lists
+hold about 33.5M instance keys, not 2.1M. A provider that leaves
+`Config.StatusListSize` zero takes the new size as soon as it starts,
+for the lists of the current period too, which grow: their indices
+handed out stay where they are, and the lists are published at the
+new size. While a rolling upgrade runs, a replica still on the old
+size can't publish a list in which a new one handed out an index past
+2^16 (HTTP 500 for that list), nor set that index's status, so roll
+out quickly, or set
+`StatusListSize: 1 << 16` for the upgrade and raise it in a later
+rollout. Never lower it below an index a served list holds. A list of
+2^20 two-bit statuses packs to 256 KiB, within a Relying Party's
+default 1 MiB token limit whatever its statuses; an issuer's
+`statuslist.Cache` keeps 256 KiB for each of the provider's lists it
+reads, so 128 of them take half its default 64 MiB `MaxBytes`.
+
+### Recently registered instances take a share of the status lists (`walletprovider`)
+
+The keys of an instance registered in the current or previous status
+list period (`Instance.CreatedAt`) now take indices from the period's
+first `Config.RecentInstanceStatusLists` lists alone: 16 of the 64 by
+default (`DefaultRecentInstanceStatusLists`). Other instances' keys
+take indices from any list: from those 16 with a chance in proportion
+to their share, otherwise from list 16 onwards, each falling back to
+the other once full, so the 16 hold established wallets' keys as
+densely as the rest do. Many instances
+registered at once can then fill no more than that share of a period,
+where they used to be able to fill every list and have every other
+wallet's attestations refused until the period ended.
+
+- Once the share is full, a recent instance's new instance key is
+  refused until the next period as on full lists (HTTP 500
+  `server_error`, wrapping `statuslist.ErrListsFull`), logged at warn
+  as "the status lists of the current period that recently registered
+  instances take indices from are full". Its recorded key on the
+  previous period's lists keeps its index, as on full lists. Nothing
+  is revoked or forgotten.
+- `StatusListFill` has a new `RecentInstanceLists` field and a
+  `RecentInstanceFree` method; `Lists` are in list order. Alert on
+  `RecentInstanceFree` falling fast early in a period (DEPLOYING.md).
+- Attestations now name lists across the period, so an issuer fetches
+  more than one of the provider's lists. A key on list 16 or later
+  tells it its instance wasn't registered in the last period or two;
+  one on lists 0 to 15 tells it little, since a quarter of established
+  wallets' keys are there too.
+- `SweepStatusLists` now counts every list of a period, not up to the
+  first empty one.
+- Raise `RecentInstanceStatusLists` for a launch that registers most
+  of your fleet within a period or two; `MaxStatusListsPerPeriod` turns
+  the share off.
 
 ## OID4VCWallet 0.39.0 → 0.40.0
 

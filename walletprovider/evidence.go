@@ -210,6 +210,11 @@ type VerifiedEvidence struct {
 // (an instance key's or holder keys' evidence, against in.Instance) and
 // returns in.Keys with KeyBindingAppAssertion; see the package doc
 // comment.
+//
+// A Verify error wrapping ErrEvidenceRevoked or ErrEvidenceSuspended
+// for evidence from a registered instance (an instance key's or holder
+// keys') revokes or suspends the instance, as an EvidenceRechecker's
+// does.
 type EvidenceVerifier interface {
 	// Kind is the Evidence.Kind it reads ("android-key",
 	// "apple-app-attest", ...). Each configured verifier's is distinct.

@@ -28,9 +28,11 @@ var (
 	// verdict on the device's attestation key, such as Google's
 	// attestation status list naming a certificate of an Android
 	// instance's chain REVOKED or SUSPENDED, not a change of the
-	// provider's own configuration. A Recheck error wrapping one also
-	// wraps ErrEvidenceRejected. The provider then revokes, or
-	// suspends, the instance before refusing the request.
+	// provider's own configuration — or an InstanceKeyRechecker found
+	// that of an instance key's evidence, or an EvidenceVerifier that
+	// of fresh evidence a registered instance sent. A Recheck error
+	// wrapping one also wraps ErrEvidenceRejected. The provider then
+	// revokes, or suspends, the instance before refusing the request.
 	ErrEvidenceRevoked   = errors.New("walletprovider: evidence revoked by its issuer")
 	ErrEvidenceSuspended = errors.New("walletprovider: evidence suspended by its issuer")
 
@@ -110,7 +112,9 @@ var (
 	// provider fails the request, leaves the instance as it is, and
 	// Handler answers HTTP 503 server_error with a Retry-After, for the
 	// wallet to try again later rather than take the evidence as
-	// rejected.
+	// rejected: by default 30 seconds, or, when an error in the chain has
+	// a RetryAfter() time.Duration method returning a positive duration,
+	// as androidkey.StatusSource's failures do, that.
 	ErrUnavailable = errors.New("walletprovider: can't decide for now")
 )
 
