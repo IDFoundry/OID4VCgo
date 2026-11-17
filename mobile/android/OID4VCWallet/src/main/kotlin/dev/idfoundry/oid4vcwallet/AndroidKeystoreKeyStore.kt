@@ -28,6 +28,7 @@ import java.security.PublicKey
 import java.security.Signature
 import java.security.cert.X509Certificate
 import java.security.interfaces.ECPublicKey
+import java.security.spec.ECFieldFp
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
@@ -455,6 +456,7 @@ public class AndroidKeystoreKeyStore(
         val params = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
             .getParameterSpec(ECParameterSpec::class.java)
         val w = ECPoint(BigInteger(1, point.copyOfRange(1, 33)), BigInteger(1, point.copyOfRange(33, 65)))
+        if (!onCurve(w, params)) throw StoreException("the peer key isn't a point on P-256")
         return KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(w, params))
     }
 
@@ -678,4 +680,18 @@ private fun isTransient(e: Throwable): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
     val cause = generateSequence(e) { it.cause }.filterIsInstance<android.security.KeyStoreException>().firstOrNull() ?: return false
     return cause.isTransientFailure && !cause.isSystemError
+}
+
+/**
+ * Whether [w] is a point on the curve [params] gives, over a prime
+ * field: both coordinates reduced, and y² = x³ + ax + b. KeyFactory
+ * doesn't check it.
+ */
+internal fun onCurve(w: ECPoint, params: ECParameterSpec): Boolean {
+    val p = (params.curve.field as? ECFieldFp)?.p ?: return false
+    val x = w.affineX ?: return false
+    val y = w.affineY ?: return false
+    if (x.signum() < 0 || y.signum() < 0 || x >= p || y >= p) return false
+    val rhs = x.pow(3).add(params.curve.a.multiply(x)).add(params.curve.b).mod(p)
+    return y.pow(2).mod(p) == rhs
 }
