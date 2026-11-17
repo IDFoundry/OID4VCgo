@@ -61,9 +61,17 @@ func TestAccessTokenAudience_RequestCredential(t *testing.T) {
 		}
 	}
 	for name, audience := range map[string][]string{
-		"another":  {otherAudience},
-		"none":     {},
-		"a prefix": {testIssuer + "/tenant"},
+		"another":          {otherAudience},
+		"none":             {},
+		"a prefix":         {testIssuer + "/tenant"},
+		"trailing slash":   {testIssuer + "/"},
+		"upper-case host":  {"https://ISSUER.example.com"},
+		"default port":     {"https://issuer.example.com:443"},
+		"percent-encoded":  {"https://issuer%2Eexample.com"},
+		"http scheme":      {"http://issuer.example.com"},
+		"trailing space":   {testIssuer + " "},
+		"empty string":     {""},
+		"null-byte suffix": {testIssuer + "\x00"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertInvalidToken(t, requestWithAudience(t, newCredentialEndpointFixture(t), audience))

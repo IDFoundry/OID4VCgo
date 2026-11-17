@@ -97,8 +97,16 @@ a request by `credential_configuration_id`. `RequestDeferredCredential`
 then releases it only to a token the Credential Endpoint would accept
 that request from. A store that saves the whole record (the in-memory
 store, `sqlstore`) needs nothing. A store that maps fields one by one
-must persist it too: a record read back without it is checked as one
-saved before it existed, against the configuration alone.
+must persist it too, in `Update` as well as `Create`: a record read
+back without it is checked as one saved before it existed, against the
+configuration alone. `issuertest.TestDeferredTransactionStoreContract`
+now checks that `Update` keeps it, and `CredentialIdentifier`.
+
+During a rolling upgrade, the old check still applies to transactions
+deferred before the upgrade, until they expire, and to any transaction
+a v0.81.0 replica updates (its `Update` writes the record back without
+the marker). Finish the rollout before relying on it, or drain
+pending deferred transactions first.
 
 ### Role separation of mdocs under `IssuerRoots` (`walletflow`, `credential/mdoc`)
 
