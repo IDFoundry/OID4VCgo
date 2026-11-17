@@ -341,6 +341,18 @@ guard against a third party say so.
   every element of the request required, as each claim of an OpenID4VP
   request's Credential Query is. A Wallet whose holder left an element
   out gets no completed presentation.
+- **A presented certificate chain** (`x5c`, `x5chain`, a reader's
+  chain, an attestation's) must list its certificates in order, leaf
+  first, each named as the issuer of the one before, as RFC 7515
+  §4.1.6 and RFC 9360 §2 require, where many path builders accept any
+  order and extra certificates. Beyond the specifications, no two of
+  its certificates may share a subject name or a public key (so both
+  certificates of a cross-certified CA can't be sent together), and an
+  intermediate's P-521 key, or RSA key over 3072 bits, is refused
+  unless a trust anchor the chain reaches has one of that type. It
+  guards against a third party: crafted chains of CAs issuing each
+  other otherwise run path building to crypto/x509's cap of a hundred
+  signature checks per chain (`internal/certchain.VerifyPresented`).
 
 ## HAIP's deviations from plain FAPI 2.0
 

@@ -107,12 +107,15 @@ func TestX5CIssuerKeyResolver_IssNotBoundByDefault(t *testing.T) {
 // trusted_authorities checks never see it.
 func TestX5CIssuerKeyResolver_ResolveIssuerChainsIsTheVerifiedPath(t *testing.T) {
 	ca, caKey := testcert.CA(t, "issuer root")
-	unrelated, _ := testcert.CA(t, "another authority")
+	unrelated, unrelatedKey := testcert.CA(t, "another authority")
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	leaf := issuerLeaf(t, ca, caKey, nil, nil)
+	// The root cross-certified by the other authority, in order after
+	// the leaf: the path ends at the configured root instead.
+	cross := testcert.CrossCertify(t, ca, unrelated, unrelatedKey)
 	header := map[string]any{"x5c": []any{
-		base64.StdEncoding.EncodeToString(leaf.Raw), base64.StdEncoding.EncodeToString(unrelated.Raw),
+		base64.StdEncoding.EncodeToString(leaf.Raw), base64.StdEncoding.EncodeToString(cross.Raw),
 	}}
 	chains, err := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}.ResolveIssuerChains(context.Background(), header)
 	if err != nil {

@@ -99,6 +99,19 @@ pre-authorized code tokens, deferred credential polls and refreshes
 without client authentication. An issuer whose metadata names such an
 endpoint must name it in normal form.
 
+### Presented certificate chains are checked in order
+
+Every verifier of a chain another party presents — an SD-JWT VC's or
+proof's `x5c`, an mdoc's `x5chain`, a reader's chain, a status list's,
+a Request Object's — now refuses one whose certificates aren't listed
+in order, leaf first, each the issuer of the one before; one in which
+two certificates share a subject name or public key; and one with an
+intermediate's P-521 key, or RSA key over 3072 bits, unless a
+configured trust anchor the chain reaches has a key of that type. No
+API changes. A partner whose chains are now refused has to send them
+in order, leaving out certificates that aren't on the path; the
+SPECIFICATIONS.md "Known strictness" entry has the details.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

@@ -21,14 +21,15 @@ var (
 	otherRoleEKU  = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 2}
 )
 
-// crossCertifiedIssuer is an issuer whose CA's key is certified twice:
-// without restriction under open, and under restricting only for
-// another role. An EKUInPath policy passes on the path through open,
-// and refuses the one through restricting.
+// crossCertifiedIssuer is an issuer under a CA that open certifies,
+// while restricting cross-certifies open only for another role.
+// Presented in order as [leaf, CA, open's cross-certificate], the leaf
+// has two paths: to open, which an EKUInPath policy passes, and through
+// the cross-certificate to restricting, which it refuses.
 type crossCertifiedIssuer struct {
 	open, restricting *x509.Certificate
 	roots             *x509.CertPool
-	// x5chains are the leaf with both CA certificates, in either order.
+	// x5chains are the presented chains: leaf, CA, cross-certificate.
 	x5chains [][][]byte
 }
 
@@ -38,14 +39,14 @@ func newCrossCertifiedIssuer(t *testing.T) crossCertifiedIssuer {
 	open, openKey := testcert.CA(t, "open root")
 	ca, caKey := testcert.Intermediate(t, "shared CA", open, openKey)
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(9), Subject: ca.Subject, NotBefore: ca.NotBefore, NotAfter: ca.NotAfter,
+		SerialNumber: big.NewInt(9), Subject: open.Subject, NotBefore: open.NotBefore, NotAfter: open.NotAfter,
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-		UnknownExtKeyUsage: []asn1.ObjectIdentifier{otherRoleEKU}, SubjectKeyId: ca.SubjectKeyId,
-	}, restricting, caKey.Public(), restrictingKey)
+		UnknownExtKeyUsage: []asn1.ObjectIdentifier{otherRoleEKU}, SubjectKeyId: open.SubjectKeyId,
+	}, restricting, openKey.Public(), restrictingKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	caRestricted, err := x509.ParseCertificate(der)
+	openRestricted, err := x509.ParseCertificate(der)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func newCrossCertifiedIssuer(t *testing.T) crossCertifiedIssuer {
 	roots.AddCert(open)
 	return crossCertifiedIssuer{
 		open: open, restricting: restricting, roots: roots,
-		x5chains: [][][]byte{{leaf.Raw, caRestricted.Raw, ca.Raw}, {leaf.Raw, ca.Raw, caRestricted.Raw}},
+		x5chains: [][][]byte{{leaf.Raw, ca.Raw, openRestricted.Raw}},
 	}
 }
 
@@ -83,7 +84,7 @@ func (f crossCertifiedIssuer) assertOnlyOpenPaths(t *testing.T, chains [][]*x509
 // The issuer chains an SD-JWT VC's resolver gives — the one
 // VerifyResponse reports, and IssuerAuthorized, trusted_authorities and
 // status binding decide on — are only paths the LeafPolicy approves on
-// their own, whatever order the x5c lists the CA's certificates in.
+// their own.
 func TestX5CIssuerKeyResolver_ChainsAreThePolicyApprovedPaths(t *testing.T) {
 	f := newCrossCertifiedIssuer(t)
 	r := verifier.X5CIssuerKeyResolver{Roots: f.roots, LeafPolicy: f.policy, Revocation: certrevocation.NoCheck{}}
