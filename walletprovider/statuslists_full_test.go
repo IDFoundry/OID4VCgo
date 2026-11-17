@@ -118,3 +118,25 @@ func TestStatusListsFullKeptIndexRevokedAfterMove(t *testing.T) {
 		t.Fatalf("the late attestation's status after the revocation = %v, want INVALID", got)
 	}
 }
+
+// TestStatusListsFullRenewalsKeepQuota: a recorded key's renewal while
+// the period's lists are full takes no index, so it doesn't count
+// against MaxInstanceKeysPerPeriod: the key renews more often than
+// that, and the instance's count stays as it was.
+func TestStatusListsFullRenewalsKeepQuota(t *testing.T) {
+	h := newHarness(t, smallStatusLists)
+	victim, _ := h.register(kindTEE)
+	victimKey := h.newInstanceKey(victim.ID, kindTEE)
+
+	h.toNextPeriod()
+	fillStatusLists(t, h)
+	for i := range 2 * fullListsPerInstance {
+		if _, err := h.walletAttestation(victim.ID, &victimKey.PublicKey, ""); err != nil {
+			t.Fatalf("renewal %d with the lists full = %v", i+1, err)
+		}
+	}
+	in, err := h.deps.Instances.Get(context.Background(), victim.ID)
+	if err != nil || in.IndicesInPeriod != 0 {
+		t.Fatalf("the instance counts %d indices (%v) after the renewals, want 0", in.IndicesInPeriod, err)
+	}
+}

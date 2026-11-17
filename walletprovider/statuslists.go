@@ -123,6 +123,7 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 	ref, err := p.allocator(start, p.lists.firstWithRoom(start)).Allocate(ctx)
 	switch {
 	case errors.Is(err, statuslist.ErrListsFull):
+		p.uncountIndex(ctx, id, start)
 		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: the status lists of the current period are full: raise Config.StatusListSize or shorten Config.StatusListPeriod: %w", err)
 	case err != nil:
 		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
@@ -139,8 +140,9 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 // ErrTooManyInstanceKeys once they've taken
 // Config.MaxInstanceKeysPerPeriod, and refusing an instance that isn't
 // active. It's counted before the index is reserved, so concurrent
-// requests can't take more between them; an index then not reserved,
-// or not recorded, stays counted. A period earlier than the one the
+// requests can't take more between them; an index then not recorded,
+// or not reserved for another reason than the lists being full
+// (uncountIndex), stays counted. A period earlier than the one the
 // instance counts in, from a process whose clock is behind, counts in
 // the later one.
 func (p *Provider) countIndex(ctx context.Context, id string, start int64) error {
@@ -157,6 +159,25 @@ func (p *Provider) countIndex(ctx context.Context, id string, start int64) error
 		cur.IndicesInPeriod++
 		return nil
 	})
+}
+
+// uncountIndex gives back the count countIndex took in the period
+// starting at start for an index the period's full lists didn't hand
+// out, so neither a renewal that keeps its previous period's index nor
+// a refused new key uses up the instance's quota. Should that fail,
+// the instance is one count short this period, which is logged.
+func (p *Provider) uncountIndex(ctx context.Context, id string, start int64) {
+	ctx = context.WithoutCancel(ctx)
+	err := p.update(ctx, id, func(cur *Instance) error {
+		if cur.IndexPeriodStart == start && cur.IndicesInPeriod > 0 {
+			cur.IndicesInPeriod--
+		}
+		return nil
+	})
+	if err != nil {
+		p.logger().LogAttrs(ctx, slog.LevelWarn, "walletprovider: giving back a status list index the full lists didn't hand out",
+			slog.String("instance", id), slog.Any("error", err))
+	}
 }
 
 // StatusListFill is how full the status lists of a period are.

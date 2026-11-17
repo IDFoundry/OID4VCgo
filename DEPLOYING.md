@@ -276,10 +276,14 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   far faster than the same hours of the last period did, a sign of
   many instances renewing at once), and raise `StatusListSize` for the
   next period. Once a period's lists are full, a recorded instance key
-  last used in the previous period keeps its index there, so
-  established wallets keep their Wallet Attestations, but every new
-  instance key, and so every new issuance, is refused until the period
-  ends.
+  last used in the previous period keeps its index there, without
+  counting against `MaxInstanceKeysPerPeriod`, so wallets that renewed
+  in the previous period keep their Wallet Attestations through that
+  one full period, but every new instance key, and so every new
+  issuance, is refused until the period ends. A key whose index is
+  older is refused too: lists filled again in the next period refuse
+  established wallets from then on, so treat a full period as an
+  incident, not a state to ride out.
 - [ ] **Per-instance bounds: `Config.MaxInstanceKeysPerPeriod`** (128
   by default) caps the status list indices one instance's keys take
   in a period, so one instance can't fill the lists for every other:

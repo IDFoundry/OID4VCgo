@@ -442,6 +442,19 @@ WalletConfiguration(
 
 A JSON configuration adds `"credential_issuers": ["https://issuer.example.com"]`.
 
+### Full status lists (`walletprovider`)
+
+Once the current period's status lists are full, a recorded instance
+key last used in the previous period now keeps its index there, and
+its Wallet or Key Attestation names it, where the request used to fail
+with HTTP 500. Such a renewal takes none of the instance's
+`MaxInstanceKeysPerPeriod`. A key whose index is older, and every new
+instance key, are still refused until a period's lists have room. When
+a key moves to a later period's lists, its old index is kept as
+`InstanceKey.PreviousStatus` whenever that list is still served, not
+only when it's the previous period's, so `Suspend`, `Resume` and
+`Revoke` set an index two periods back too.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
