@@ -23,7 +23,10 @@ func TestService_LimitsLegacyAttestations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := p.newService(ServiceConfig{ClientID: "wallet-1", Logf: func(string, ...any) {}})
+	// A stopped clock: the limiter refills nothing however slowly the
+	// requests run.
+	now := time.Now()
+	s, err := p.newService(ServiceConfig{ClientID: "wallet-1", Logf: func(string, ...any) {}, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +112,59 @@ func TestService_PrunesLegacyInstances(t *testing.T) {
 		t.Errorf("%d instances left, want only the shared one", n)
 	}
 	attestNewKey(t, s) // a Wallet Attestation after pruning registers anew
+}
+
+// A new instance key's first Wallet Attestation makes room for its
+// instance: past the bound, the least recently seen instance goes.
+func TestService_RegisteringPrunesLegacyInstances(t *testing.T) {
+	ctx := context.Background()
+	p, err := New(testIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s, err := p.newService(ServiceConfig{ClientID: "wallet-1", Logf: func(string, ...any) {}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.maxDemo = 2
+	var thumbprints []string
+	for range 3 {
+		now = now.Add(time.Minute)
+		thumbprints = append(thumbprints, attestNewKey(t, s))
+	}
+	if n := countInstances(t, s); n != 2 {
+		t.Errorf("%d instances, want the bound, 2", n)
+	}
+	if _, err := s.instanceOf(ctx, thumbprints[0]); !errors.Is(err, wp.ErrNotFound) {
+		t.Errorf("the least recently seen instance key: lookup %v, want it gone", err)
+	}
+}
+
+// Sweep deletes the older protocol's instances idle for
+// demoInstanceIdle.
+func TestService_SweepPrunesIdleLegacyInstances(t *testing.T) {
+	ctx := context.Background()
+	p, err := New(testIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s, err := p.newService(ServiceConfig{ClientID: "wallet-1", Logf: func(string, ...any) {}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle := attestNewKey(t, s)
+	now = now.Add(demoInstanceIdle - time.Hour)
+	recent := attestNewKey(t, s)
+	now = now.Add(2 * time.Hour)
+	(&Service{s: s}).Sweep(ctx)
+	if _, err := s.instanceOf(ctx, idle); !errors.Is(err, wp.ErrNotFound) {
+		t.Errorf("the idle instance key: lookup %v, want it gone", err)
+	}
+	if _, err := s.instanceOf(ctx, recent); err != nil {
+		t.Errorf("the recent instance key: lookup %v, want it kept", err)
+	}
 }
 
 // attestNewKey has s issue a Wallet Attestation for a new instance key,

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"slices"
@@ -28,6 +29,10 @@ const (
 	// token naming an unknown key may fetch them again.
 	keysLifetime     = time.Hour
 	keysRefetchAfter = time.Minute
+	// keysFetchTimeout bounds one fetch of the keys. A fetch runs
+	// detached from the request that started it, so a client hanging
+	// up can't cut it short.
+	keysFetchTimeout = 10 * time.Second
 	// maxKeysBytes bounds the certs document read.
 	maxKeysBytes = 64 << 10
 	// clockSkew is the leeway on exp and nbf.
@@ -49,7 +54,16 @@ type AccessVerifier struct {
 
 	mu      sync.Mutex
 	keys    map[string]*rsa.PublicKey
-	fetched time.Time
+	fetched time.Time  // the last fetch that succeeded
+	failed  time.Time  // the last fetch that failed, zero once one succeeds
+	fetch   *keysFetch // the fetch in flight, if any
+}
+
+// keysFetch is one fetch of the keys, shared by every request waiting
+// on it: err is set before done is closed.
+type keysFetch struct {
+	done chan struct{}
+	err  error
 }
 
 // NewAccessVerifier returns a verifier for teamDomain's tokens
@@ -89,12 +103,26 @@ func RegisterFlags(fs *flag.FlagSet) *Settings {
 }
 
 // Verifier is the AccessVerifier for s, nil for the zero Settings; an
-// error if only one is set.
+// error if only one is set. It starts fetching the team's keys at once
+// (Prefetch), so the first request needn't wait for them.
 func (s Settings) Verifier() (*AccessVerifier, error) {
 	if s == (Settings{}) {
 		return nil, nil
 	}
-	return NewAccessVerifier(s.TeamDomain, s.Audience, nil)
+	v, err := NewAccessVerifier(s.TeamDomain, s.Audience, nil)
+	if err != nil {
+		return nil, err
+	}
+	v.Prefetch()
+	return v, nil
+}
+
+// Prefetch starts fetching the team's keys in the background, unless a
+// fetch is already in flight; a failure is logged.
+func (v *AccessVerifier) Prefetch() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.startFetch(context.Background())
 }
 
 // accessClaims are the claims Verify checks.
@@ -185,32 +213,75 @@ func decodeSegment(seg string, into any) error {
 	return json.Unmarshal(b, into)
 }
 
-// key is the team's signing key kid, fetching the keys if they're
-// stale, or if kid is unknown and they weren't fetched (or tried) in
-// the last keysRefetchAfter. Should a fetch fail, the keys fetched
-// before stay in use.
+// key is the team's signing key kid. The keys are fetched when they're
+// stale, or when kid is unknown and they weren't fetched in the last
+// keysRefetchAfter; after a failed fetch, none is tried again for
+// keysRefetchAfter, and the keys fetched before stay in use. One fetch
+// runs at a time, detached from ctx (with a timeout of its own) and
+// without holding v.mu: a request that gives up waiting, its client
+// gone, leaves it to finish for the requests after it.
 func (v *AccessVerifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	now := v.now()
-	since := now.Sub(v.fetched)
-	if k, ok := v.keys[kid]; ok && since < keysLifetime {
+	k, held := v.keys[kid]
+	fresh := !v.fetched.IsZero() && now.Sub(v.fetched) < keysLifetime
+	if held && fresh {
+		v.mu.Unlock()
 		return k, nil
 	}
-	if since >= keysRefetchAfter || v.fetched.IsZero() {
-		v.fetched = now
-		keys, err := v.fetchKeys(ctx)
-		if _, held := v.keys[kid]; err != nil && !held {
-			return nil, err
-		} else if err == nil {
-			v.keys = keys
-		}
+	backingOff := !v.failed.IsZero() && now.Sub(v.failed) < keysRefetchAfter
+	if backingOff || (fresh && now.Sub(v.fetched) < keysRefetchAfter) {
+		v.mu.Unlock()
+		return knownKey(k, held)
 	}
-	k, ok := v.keys[kid]
-	if !ok {
+	f := v.startFetch(ctx)
+	v.mu.Unlock()
+
+	select {
+	case <-f.done:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("demoaccess: waiting for the Access signing keys: %w", ctx.Err())
+	}
+	v.mu.Lock()
+	k, held = v.keys[kid]
+	v.mu.Unlock()
+	if !held && f.err != nil {
+		return nil, f.err
+	}
+	return knownKey(k, held)
+}
+
+func knownKey(k *rsa.PublicKey, held bool) (*rsa.PublicKey, error) {
+	if !held {
 		return nil, errors.New("demoaccess: token signed with an unknown key")
 	}
 	return k, nil
+}
+
+// startFetch is the fetch of the keys in flight, starting one if there
+// is none. v.mu must be held.
+func (v *AccessVerifier) startFetch(ctx context.Context) *keysFetch {
+	if v.fetch != nil {
+		return v.fetch
+	}
+	f := &keysFetch{done: make(chan struct{})}
+	v.fetch = f
+	go func() {
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keysFetchTimeout)
+		keys, err := v.fetchKeys(fctx)
+		cancel()
+		v.mu.Lock()
+		if err != nil {
+			v.failed = v.now()
+			log.Printf("demoaccess: %v (not retried for %v)", err, keysRefetchAfter)
+		} else {
+			v.keys, v.fetched, v.failed = keys, v.now(), time.Time{}
+		}
+		v.fetch, f.err = nil, err
+		v.mu.Unlock()
+		close(f.done)
+	}()
+	return f
 }
 
 // fetchKeys fetches the team's RSA signing keys, by kid.

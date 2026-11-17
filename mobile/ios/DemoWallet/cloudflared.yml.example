@@ -15,7 +15,11 @@
 # tls-cert.pem, issued for localhost and 127.0.0.1).
 #
 # The demo's pages have no login, and the issuer takes passport uploads:
-# run the tunnel only while you test, and stop it after.
+# guard /demo/ on the issuer and verifier hostnames with a Cloudflare
+# Access application, and start the demo with -cf-access-team-domain and
+# -cf-access-aud so it checks Access's token too (README.md, "Restricting
+# the pages with Cloudflare Access"). Run the tunnel only while you test,
+# and stop it after.
 tunnel: <tunnel-id>
 credentials-file: /Users/<you>/.cloudflared/<tunnel-id>.json
 

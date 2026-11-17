@@ -495,10 +495,16 @@ The servers back that rule themselves (`internal/demoaccess`):
   percent-encoded or uncleaned alias such as `/%64emo/status` or
   `/x/../demo/status`, which Go would otherwise route to the same page
   but an edge rule on the raw path might not match, is refused (400).
+  So is a path Go routes to a `/demo/` page by its first segment
+  although it decodes to one outside it, such as
+  `/demo/requests/..%2F..%2Fx/dcapi`.
 - A form post or other state-changing request under `/demo/` needs an
   `Origin` header naming the server's own origin or, without one, a
   `Referer` on it; one with neither is refused (403), as is another
-  site's. Browsers send `Origin` on every form post and `fetch`.
+  site's. Browsers send `Origin` on every form post and `fetch`. This
+  stops another site's page from posting through the operator's
+  browser; a client that isn't a browser can send any `Origin`, so it
+  doesn't stop that client: only Access does.
 - With `-cf-access-team-domain` (`example.cloudflareaccess.com`) and
   `-cf-access-aud` (the Access application's Application Audience tag)
   on `cmd/demo`, `cmd/issuer` or `cmd/verifier`, every request under
@@ -506,8 +512,12 @@ The servers back that rule themselves (`internal/demoaccess`):
   token Cloudflare Access signed for that application (checked against
   the team's keys at `https://<team domain>/cdn-cgi/access/certs`), so
   a request reaching the origin some other way than through Access is
-  refused (403). Leave both flags unset for a local run, which has no
-  Access in front of it.
+  refused (403). The team's keys are fetched at startup, and again an
+  hour later or when a token names a key not seen yet; a client that
+  hangs up mid-fetch doesn't stop it, and only a fetch that fails holds
+  off the next for a minute. Each refusal is logged with its reason.
+  Leave both flags unset for a local run, which has no Access in front
+  of it.
 
 ### Running the servers separately
 
@@ -909,7 +919,11 @@ longer verify.
   `cmd/issuer` (where a restart invalidates issued credentials). Offers,
   sessions and tokens are in memory either way.
 - **Anyone who can reach the issuer can revoke.** The `/demo/status` page has
-  no login; it refuses only cross-origin form posts. It records no
+  no login of its own. Without `-cf-access-team-domain` and
+  `-cf-access-aud`, the origin refuses only non-canonical paths and form
+  posts without the issuer's own `Origin` or `Referer`, which a client
+  other than a browser can send; with them, it also needs a Cloudflare
+  Access token (see [Running the demo](#running-the-demo)). It records no
   passport data, and names credentials by a random handle rather than
   their status list index, so it can't be used to match a presented
   credential to when it was issued. Under `cmd/demo` it's kept across

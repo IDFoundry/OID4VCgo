@@ -275,7 +275,7 @@ func (s *Service) Sweep(ctx context.Context) {
 	case n > 0:
 		s.s.cfg.Logf("wallet provider: deleted %d status lists of past periods", n)
 	}
-	n, err = s.s.store.pruneDemoInstances(s.s.cfg.Now().Add(-demoInstanceIdle), maxDemoInstances)
+	n, err = s.s.store.pruneDemoInstances(s.s.cfg.Now().Add(-demoInstanceIdle), s.s.maxDemo)
 	switch {
 	case err != nil:
 		s.s.cfg.Logf("wallet provider: deleting idle demo-protocol instances: %v", err)
@@ -373,7 +373,7 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	s := &service{
 		p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst),
 		attestations: newClientLimiter(attestationRate, attestationBurst),
-		demo:         newDemoVerifier(), store: store,
+		demo:         newDemoVerifier(), store: store, maxDemo: maxDemoInstances,
 	}
 	if s.lib, err = p.library(cfg, s.demo, store, indices); err != nil {
 		return nil, err
@@ -391,6 +391,8 @@ type service struct {
 	lib          *wp.Provider
 	demo         *demoVerifier
 	store        *fileInstanceStore
+	// maxDemo is maxDemoInstances, but in tests.
+	maxDemo int
 
 	// mu serializes recording instance keys, so an instance key is
 	// recorded for one instance.
@@ -548,7 +550,7 @@ func (s *service) newInstanceWalletAttestation(ctx context.Context, key *ecdsa.P
 		return id, jwt, err
 	}
 	// Make room for it among the older protocol's instances.
-	if _, err := s.store.pruneDemoInstances(s.cfg.Now().Add(-demoInstanceIdle), maxDemoInstances-1); err != nil {
+	if _, err := s.store.pruneDemoInstances(s.cfg.Now().Add(-demoInstanceIdle), s.maxDemo-1); err != nil {
 		return "", "", err
 	}
 	in, err := s.register(ctx)

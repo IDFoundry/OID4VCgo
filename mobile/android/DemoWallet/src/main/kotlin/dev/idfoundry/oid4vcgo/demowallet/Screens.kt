@@ -78,7 +78,6 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import dev.idfoundry.oid4vcwallet.ProximityBLEMode
 import dev.idfoundry.oid4vcwallet.CRLRefreshResult
 import dev.idfoundry.oid4vcwallet.CredentialDetail
@@ -475,11 +474,13 @@ fun CredentialRow(summary: CredentialSummary, modifier: Modifier = Modifier) {
     }
 }
 
-/** An issuer's logo, loaded from its https or data: URL. */
+/** An issuer's logo, as kept on the device when its credential was accepted (LogoStore): showing it fetches nothing. */
 @Composable
 fun LogoImage(logo: Logo?) {
     logo ?: return
-    AsyncImage(logo.uri, logo.altText, Modifier.size(32.dp), contentScale = ContentScale.Fit)
+    val context = LocalContext.current
+    val image = LogoStore.image(context, logo) ?: return
+    Image(image.asImageBitmap(), logo.altText, Modifier.size(32.dp), contentScale = ContentScale.Fit)
 }
 
 /** A deferred credential: what it's waiting for, and a way to ask now. */

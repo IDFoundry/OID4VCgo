@@ -378,8 +378,21 @@ kept in %s, so you won't be asked again.`, state)
 The issuer, verifier and Wallet Provider are known by public URLs: a
 tunnel must forward each to its address here (issuer ` + issuerAddr + `,
 verifier ` + verifierAddr + `, provider ` + providerAddr + `), trusting
-` + state + `/tls-cert.pem. They have no login: run the tunnel only while
-you test, and stop it after.`
+` + state + `/tls-cert.pem. Run the tunnel only while you test, and stop it
+after.`
+		if opts.access == (demoaccess.Settings{}) {
+			browser += `
+
+The issuer's and verifier's pages under /demo/ have no login: guard them
+with a Cloudflare Access application, and pass -cf-access-team-domain and
+-cf-access-aud so these servers check its token too (see
+mobile/ios/DemoWallet/README.md, "Restricting the pages with Cloudflare
+Access").`
+		} else {
+			browser += `
+
+The pages under /demo/ need a Cloudflare Access token for ` + opts.access.TeamDomain + `.`
+		}
 	}
 	if open {
 		browser = `Opening them in Chrome, in a separate demo profile that trusts the
