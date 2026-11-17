@@ -322,8 +322,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   (16 of the 64 lists, a quarter, by default). The keys of an instance
   registered in the current or previous period take indices from these
   lists alone; other instances' keys from any list, these chosen in
-  proportion to their share, so they hold established wallets' keys
-  as densely as the rest. Each instance costs only one piece of
+  proportion to their share while they're no fuller than the rest, so
+  they hold established wallets' keys about as densely as the rest,
+  without taking the room recent instances need while the rest have
+  it. Each instance costs only one piece of
   registration evidence, and its recorded keys move to each new
   period's lists without any, so this keeps instances registered in a
   burst from filling the lists the wallets registered before need.
@@ -331,11 +333,31 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   refused (HTTP 500 `server_error`) until the next period, logged as
   "the status lists of the current period that recently registered
   instances take indices from are full"; nothing is revoked or
-  forgotten. Raise it for a launch that registers most of your fleet
-  in a week or two; `MaxStatusListsPerPeriod` turns it off. A key on
-  list 16 or later tells an issuer its instance wasn't registered in
-  the last period or two; one on lists 0 to 15 tells it little, as a
-  quarter of established wallets' keys are there too.
+  forgotten. A burst that fills it refuses new wallets' first keys for
+  two periods, not one: its instances are still recent in the next
+  period, and their recorded keys move there without evidence, filling
+  the share again.
+  - **Size for the share too.** Recent instances' keys have about a
+    quarter of the capacity (8.4M at 2^20). When established keys are
+    used early in a period and recent ones late, the established ones
+    take part of the share first, so where r of a period's keys are
+    recent instances', they all fit only while the period uses no more
+    than 1/(1+3r) of the capacity.
+  - **Count Android re-registrations as recent.** An Android wallet
+    registers again, as a new instance, when its Remote Key
+    Provisioning certificates expire (`registration_expired`), every
+    few weeks, so a third or more of its keys may be a recent
+    instance's: at r = 1/3, the share binds at about half the capacity
+    (16.7M at 2^20).
+  - Raise it for a launch that registers most of your fleet in a week
+    or two; `MaxStatusListsPerPeriod` turns it off.
+  - **What a key's list tells an issuer.** A key on list 16 or later
+    tells it its instance was registered before the previous period.
+    One on lists 0 to 15 is a recent or an established instance's:
+    about four times as likely a recent one's as a key across all
+    lists is (where 5 % of a period's keys are recent instances', 20 %
+    of those on lists 0 to 15 are), and certainly one once recent
+    instances' keys alone fill the share.
 - [ ] **Alert on the status lists filling.** Watch
   `Provider.StatusListFill` from monitoring, every few minutes:
   - when its `Free` won't last until its `End` at the current rate;
@@ -353,7 +375,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   make filling the lists impossible. At 2^20, filling a period's lists
   takes about 33M instance keys, each recorded once with its own
   hardware-backed key attestation, and at least three quarters of them
-  recorded by instances registered more than a period before. But
+  used by instances registered before the previous period, whether
+  recorded then or moved without evidence, as recorded keys move to
+  each new period's lists. But
   Android exposes no device identity, so the provider can't tell one
   device registering many instances from many devices, and a patient,
   well-funded attacker who registers instances over several periods

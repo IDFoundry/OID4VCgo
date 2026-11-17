@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/bits"
 	"net/http"
 	"strconv"
 	"strings"
@@ -118,8 +119,8 @@ func (p *Provider) served(start int64, now time.Time) bool {
 // for an instance key of the instance id, first counting it against the
 // instance's Config.MaxInstanceKeysPerPeriod (countIndex): on the
 // period's first Config.RecentInstanceStatusLists lists for an
-// instance registered in the period or the one before, and on the
-// others first for any other (allocate).
+// instance registered in the period or the one before, and on any
+// list for any other (allocate).
 func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time) (statuslist.StatusListRef, error) {
 	start := p.periodStart(now)
 	recent, err := p.countIndex(ctx, id, start)
@@ -148,20 +149,27 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 // start. A recent instance's key takes one on the period's first
 // Config.RecentInstanceStatusLists lists only, so recent instances
 // can't take the room the others need. Another's takes one on any
-// list, the recent instances' share chosen at random in proportion to
-// its size, and the other lists once the chosen ones are full: the
-// recent instances' lists then hold the others' keys as densely as the
-// rest do, so a list's number tells little about whether an instance
-// registered recently, and a burst of recent instances filling their
-// share leaves the others the rest.
+// list: on the recent instances' share, chosen at random in proportion
+// to its size, while that share is no fuller than the other lists
+// (shareNoFuller), and otherwise on the other lists, the share only
+// once they're full. The recent instances' lists then hold the others'
+// keys about as densely as the rest do while recent instances are few, so a
+// list's number tells little about whether an instance registered
+// recently; established instances' keys don't take room on the share
+// the recent instances' own keys need while the other lists have it;
+// and a burst of recent instances filling their share leaves the
+// others the rest.
 func (p *Provider) allocate(ctx context.Context, start int64, recent bool) (statuslist.StatusListRef, error) {
 	split := p.cfg.RecentInstanceStatusLists
 	if recent || split >= MaxStatusListsPerPeriod {
 		return p.allocateIn(ctx, start, 0, split)
 	}
-	inShare, err := p.pickRecentShare(split)
-	if err != nil {
-		return statuslist.StatusListRef{}, err
+	inShare := false
+	if p.lists.shareNoFuller(start, split) {
+		var err error
+		if inShare, err = p.pickRecentShare(split); err != nil {
+			return statuslist.StatusListRef{}, err
+		}
 	}
 	first, second := [2]int{split, MaxStatusListsPerPeriod}, [2]int{0, split}
 	if inShare {
@@ -268,8 +276,9 @@ type StatusListFill struct {
 	// Lists are its MaxStatusListsPerPeriod lists, in order. The keys of
 	// instances registered in the period or the one before take indices
 	// from the first RecentInstanceLists of them, one after another;
-	// other instances' keys from the rest, one after another, then from
-	// those first ones once the rest are full.
+	// other instances' keys from the rest, one after another, and from
+	// those first ones too, at random, while they're no fuller than the
+	// rest, or once the rest are full.
 	Lists []statuslist.ListFill
 
 	// RecentInstanceLists is Config.RecentInstanceStatusLists.
@@ -335,6 +344,28 @@ func (l *statusLists) firstWithRoom(start int64, from, to int) int {
 		}
 	}
 	return n
+}
+
+// shareNoFuller reports whether the recent instances' share, the first
+// split lists of the period starting at start, is no fuller than the
+// other lists: no larger a part of it is known to be full. It's
+// judged by the lists this process has found full, so with several
+// processes it's approximate: a list another process filled counts
+// here once this one finds it full, the next time it takes an index on
+// those lists. A process that last took one on the share before others
+// filled more of it may put one established instance's key there that
+// the share's fill wouldn't have let it, and then knows better. It
+// never refuses a recent instance's key: Allocate counts the share's
+// room for that.
+func (l *statusLists) shareNoFuller(start int64, split int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if start != l.fillStart {
+		return true
+	}
+	share := uint64(1)<<split - 1
+	inShare, rest := bits.OnesCount64(l.full&share), bits.OnesCount64(l.full&^share)
+	return inShare*(MaxStatusListsPerPeriod-split) <= rest*split
 }
 
 // filledBefore records that an index was reserved on list n of the

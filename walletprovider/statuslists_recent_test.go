@@ -268,3 +268,125 @@ func TestEstablishedSpreadOverEveryList(t *testing.T) {
 		t.Fatalf("%d of %d established keys took the recent instances' share, want about a quarter", inShare, keys)
 	}
 }
+
+// onRecentShare is crypto/rand.Reader, except that a two-byte read, the
+// provider's random choice of the lists an established instance's key
+// takes an index on, chooses the recent instances' share.
+type onRecentShare struct{}
+
+func (onRecentShare) Read(b []byte) (int, error) {
+	if len(b) == 2 {
+		b[0], b[1] = 0, 0
+		return 2, nil
+	}
+	return rand.Read(b)
+}
+
+// TestEstablishedLeaveRecentShareRoom: established and recently
+// registered instances using keys side by side, a third of them recent
+// ones' (Android's re-registrations, say), fill two thirds of a
+// period's lists between them, and no key is refused: established
+// instances' keys stop taking indices on the recent instances' share
+// once it's fuller than the other lists, rather than taking a quarter
+// of it whatever the recent instances need.
+func TestEstablishedLeaveRecentShareRoom(t *testing.T) {
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		recentShareLists(c, d)
+		d.Random = rand.Reader
+	})
+	var established []string
+	for range 28 {
+		in, _ := h.register(kindTEE)
+		established = append(established, in.ID)
+	}
+	h.toNextPeriod()
+	h.toNextPeriod()
+	recent, refused := 0, 0
+	for i := range 3 * 56 {
+		var id string
+		if i%3 == 2 {
+			in, _ := h.register(kindTEE)
+			id = in.ID
+			recent++
+		} else {
+			id = established[(i/3)%len(established)]
+		}
+		if _, err := h.walletAttestation(id, &newKey(t).PublicKey, kindTEE); err != nil {
+			if !errors.Is(err, statuslist.ErrListsFull) {
+				t.Fatalf("key %d: %v", i, err)
+			}
+			refused++
+		}
+	}
+	if refused != 0 {
+		fill, _ := h.p.StatusListFill(context.Background())
+		t.Fatalf("%d of %d keys refused (%d recent), with %d indices free", refused, 3*56, recent, fill.Free())
+	}
+}
+
+// TestEstablishedAvoidFullerRecentShare: an established instance's key
+// the random choice puts on the recent instances' share takes an index
+// on the other lists while the share is fuller than they are, and on
+// the share again once they've caught up.
+func TestEstablishedAvoidFullerRecentShare(t *testing.T) {
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		recentShareLists(c, d)
+		c.MaxInstanceKeysPerPeriod = 1000
+		d.Random = onRecentShare{}
+	})
+	old, _ := h.register(kindTEE)
+	h.toNextPeriod()
+	h.toNextPeriod()
+	// Recent instances fill two of the share's 16 lists, and start a
+	// third: an eighth of it, the other lists still empty.
+	if _, refused := burst(t, h, 2); refused != 0 {
+		t.Fatalf("%d of the burst's keys refused", refused)
+	}
+	in, _ := h.register(kindTEE)
+	h.newInstanceKey(in.ID, kindTEE)
+
+	// The other lists take 6 lists' worth of keys before they're as
+	// full; a key or two more, while this process finds the last of
+	// them full.
+	for i := range 6 * 4 {
+		key := h.newInstanceKey(old.ID, kindTEE)
+		if n := h.listNumber(h.instanceKey(&key.PublicKey).Status); n < establishedList {
+			t.Fatalf("established key %d took list %d, of the recent instances' share, fuller than the rest", i, n)
+		}
+	}
+	for range 2 {
+		key := h.newInstanceKey(old.ID, kindTEE)
+		if h.listNumber(h.instanceKey(&key.PublicKey).Status) < establishedList {
+			return
+		}
+	}
+	t.Fatal("established keys never took the recent instances' share again once the other lists caught up")
+}
+
+// TestEstablishedSpreadWhileListsFill: with no recent instances, an
+// established instance's keys take about a quarter of their indices on
+// the recent instances' share as the lists fill, so the share fills
+// about as fast as the rest.
+func TestEstablishedSpreadWhileListsFill(t *testing.T) {
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		c.StatusListSize = 64 // 64 lists × 32: 2048 indices a period
+		c.MaxInstanceKeysPerPeriod = 10000
+		d.Random = rand.Reader
+	})
+	in, _ := h.register(kindTEE)
+	h.toNextPeriod()
+	h.toNextPeriod()
+	const keys = 1536 // three quarters of the period's lists
+	inShare := 0
+	for range keys {
+		key := h.newInstanceKey(in.ID, kindTEE)
+		if h.listNumber(h.instanceKey(&key.PublicKey).Status) < establishedList {
+			inShare++
+		}
+	}
+	// Expected keys/4 = 384, a little less as the share waits for the
+	// rest to catch up; far outside 300-430 is a broken choice.
+	if inShare < 300 || inShare > 430 {
+		t.Fatalf("%d of %d established keys took the recent instances' share, want about a quarter", inShare, keys)
+	}
+}
