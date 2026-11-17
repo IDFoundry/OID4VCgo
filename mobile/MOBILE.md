@@ -312,7 +312,11 @@ of a batch share one `holder` challenge, handed out again until a Key
 Attestation uses it or it's within a minute of expiring. Refusals reach
 the app as `platform` errors naming the protocol's code; a provider
 that can't answer (HTTP 5xx or 429), or a challenge that expired before
-it was used (`invalid_challenge`), as `network`. A refresh whose
+it was used (`invalid_challenge`), as `network`. The Kotlin library
+then never sends a challenge keys were made over again: holder keys
+made over it are refused as `platform` without a request, and an
+instance key goes alone, attested if the provider recorded it, refused
+(`evidence_required`) if not, so a retry makes new keys. A refresh whose
 instance key the provider no longer attests — its own evidence expired
 (`instance_key_expired`), or recorded for an instance that expired
 (`registration_expired`), was revoked, or that the app lost the

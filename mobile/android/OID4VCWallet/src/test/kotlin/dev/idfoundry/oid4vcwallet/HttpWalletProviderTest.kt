@@ -411,6 +411,30 @@ class HttpWalletProviderTest {
         assertTrue("$e", e is WalletProviderUnavailableException && e.error == "invalid_challenge")
         // Its challenge was the one b was made over.
         assertEquals(encodeBase64URL(s.keys.challenges.getValue(b)!!), s.provider.last(KEY_ATTESTATION)["challenge"]!!.jsonPrimitive.content)
+
+        // Asked again for b, it's refused without a request: its challenge
+        // is used up, and no other is spent on it.
+        val sent = s.provider.requests.count { it.first == KEY_ATTESTATION }
+        val again = runCatching { s.keyAttestation(instance, listOf(b), "n") }.exceptionOrNull()
+        assertTrue("$again", again is StoreException && again !is WalletProviderUnavailableException && again.message!!.contains("used up"))
+        assertEquals(sent, s.provider.requests.count { it.first == KEY_ATTESTATION })
+        // New keys get a new challenge, and are attested.
+        assertTrue(s.keyAttestation(instance, listOf(s.newHolderKey()), "n").isNotEmpty())
+    }
+
+    @Test
+    fun usedUpInstanceChallengeIsntSentAgain() = runBlocking {
+        val s = Setup()
+        s.walletAttestation(s.newInstanceKey())
+        val key = s.newInstanceKey()
+        // A request the provider refused after taking the challenge the key was made over.
+        s.provider.challenges.remove(encodeBase64URL(s.keys.challenges.getValue(key)!!))
+        val first = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+        assertTrue("$first", first is WalletProviderUnavailableException && first.error == "invalid_challenge")
+        // Asked again, the key goes alone, and the provider's refusal is reported as one.
+        val again = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+        assertTrue("$again", again is WalletProviderRefusedException && again.error == "evidence_required")
+        assertFalse(s.provider.last(WALLET_ATTESTATION).containsKey("challenge"))
     }
 
     @Test

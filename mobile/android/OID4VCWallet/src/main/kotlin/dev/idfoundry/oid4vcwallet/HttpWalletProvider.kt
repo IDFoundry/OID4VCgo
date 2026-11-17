@@ -87,7 +87,13 @@ import java.util.Base64
  * while no Key Attestation has used the current holder challenge share
  * it, so of two issuances making holder keys at once only the first
  * Key Attestation can use it: the other fails as
- * [WalletException.Code.network], and succeeds when tried again.
+ * [WalletException.Code.network], and succeeds when tried again with
+ * new keys. A challenge the provider answers `invalid_challenge` for —
+ * used up by an earlier request it refused after taking it, or expired —
+ * is never sent again: asked again for holder keys made over it, the
+ * provider fails as [WalletException.Code.platform] without a request,
+ * and an instance key made over it is sent alone, attested if the
+ * provider has recorded it and refused (`evidence_required`) if not.
  *
  * The installation registers once, and the challenges handed out are
  * remembered, for every `HttpWalletProvider` over the same
@@ -194,11 +200,12 @@ public class HttpWalletProvider internal constructor(
         val key = request.instanceKey
         val point = jwkPoint(key.jwk) ?: throw StoreException(INSTANCE_KEY_NOT_P256)
         val body = linkedMapOf<String, JsonElement>("client_id" to JsonPrimitive(request.clientID), "instance_key" to jwkOf(point))
-        instanceChallengeOf(key)?.let {
+        val challenge = instanceChallengeOf(key)
+        challenge?.let {
             body["challenge"] = JsonPrimitive(it.value)
             body["evidence"] = androidKeyEvidence(key.certificateChain)
         }
-        val jwt = signedRegistered(WALLET_ATTESTATION_PATH, JsonObject(body)).string("wallet_attestation")
+        val jwt = signedRegistered(WALLET_ATTESTATION_PATH, JsonObject(body), challenge).string("wallet_attestation")
         val claims = unverifiedClaims(jwt) ?: throw StoreException("the Wallet Attestation isn't a JWT")
         val cnf = ((claims["cnf"] as? JsonObject)?.get("jwk") as? JsonObject)?.let { jwkPoint(it.toString().toByteArray()) }
         if (claims.stringOrNull("sub") != request.clientID || cnf == null || !cnf.contentEquals(point)) {
@@ -230,7 +237,7 @@ public class HttpWalletProvider internal constructor(
                 "nonce" to JsonPrimitive(request.nonce),
             ),
         )
-        val jwt = signed(instance, KEY_ATTESTATION_PATH, body).string("key_attestation")
+        val jwt = signed(instance, KEY_ATTESTATION_PATH, body, challenge).string("key_attestation")
         checkKeyAttestation(jwt, points, request.nonce)
         return jwt
     }
@@ -249,10 +256,12 @@ public class HttpWalletProvider internal constructor(
             ?.takeIf { c -> leaves.any { contains(it, c.bytes) } }
             ?: holderChallenge
             ?: throw StoreException("no holder challenge was given for these keys")
+        if (chosen.usedUp) throw StoreException("the holder keys were made over a challenge the Wallet Provider has used up: make new keys")
         // A challenge is used by the request naming it, accepted or
         // not: no new key is made over it. It's still remembered, so
         // keys made over it that another request used are sent with
-        // it, and refused as invalid_challenge, a network failure.
+        // it, and refused as invalid_challenge, a network failure,
+        // which marks it used up (signed).
         if (holderChallenge === chosen) holderChallenge = null
         chosen
     }
@@ -364,27 +373,50 @@ public class HttpWalletProvider internal constructor(
      * which [signed] forgets the registration on, it registers again and
      * posts once more, and no more: a second refusal is thrown.
      */
-    private suspend fun signedRegistered(path: String, body: JsonObject): JsonObject =
+    private suspend fun signedRegistered(path: String, body: JsonObject, bodyChallenge: IssuedChallenge?): JsonObject =
         try {
-            signed(registered(), path, body)
+            signed(registered(), path, body, bodyChallenge)
         } catch (e: WalletProviderRefusedException) {
             if (e.error != REGISTRATION_EXPIRED) throw e
-            signed(registered(), path, body)
+            signed(registered(), path, body, bodyChallenge)
         }
 
     /**
      * Posts [body] to [path], signed with [instance]'s registration key
      * over a fresh `request` challenge. On `instance_revoked` or
-     * `registration_expired`, forgets the instance.
+     * `registration_expired`, forgets the instance. On
+     * `invalid_challenge`, marks [bodyChallenge], the challenge [body]
+     * names, if any, used up ([forgetChallenge]): the request's own
+     * challenge is fresh, so it's the body's the provider has used up —
+     * as when it refused an earlier request naming it after taking it —
+     * or found expired. It's then never sent again, rather than fail as a
+     * network failure at every try.
      */
-    private suspend fun signed(instance: RegisteredInstance, path: String, body: JsonObject): JsonObject {
+    private suspend fun signed(instance: RegisteredInstance, path: String, body: JsonObject, bodyChallenge: IssuedChallenge?): JsonObject {
         val challenge = challenge(PURPOSE_REQUEST)
         return try {
             post(path, body, { target, bytes -> signRequest(instance, challenge.value, target, bytes) }, HttpURLConnection.HTTP_OK)
         } catch (e: WalletProviderRefusedException) {
             if (e.error in FORGETS_REGISTRATION) forget(instance)
             throw e
+        } catch (e: WalletProviderUnavailableException) {
+            if (bodyChallenge != null && e.error == INVALID_CHALLENGE) forgetChallenge(bodyChallenge)
+            throw e
         }
+    }
+
+    /**
+     * Marks [c] used up: no key is made over it, and no request names it,
+     * again. An instance key made over it is then sent alone, which the
+     * provider attests if a concurrent request recorded it, and refuses
+     * (`evidence_required`) otherwise; holder keys made over it are
+     * refused here, rather than sent with another challenge, which the
+     * provider would use up too.
+     */
+    private suspend fun forgetChallenge(c: IssuedChallenge): Unit = lock.withLock {
+        c.usedUp = true
+        instanceChallenges.remove(c)
+        if (holderChallenge === c) holderChallenge = null
     }
 
     /** The `Wallet-Provider-Request` JWT for a POST of [body] to [path]. */
@@ -436,7 +468,7 @@ public class HttpWalletProvider internal constructor(
         val code = o?.stringOrNull("error")?.takeIf { it.isNotEmpty() }
         val description = o?.stringOrNull("error_description")
         return when {
-            answer.status >= 500 || answer.status == 429 || code == "invalid_challenge" ->
+            answer.status >= 500 || answer.status == 429 || code == INVALID_CHALLENGE ->
                 WalletProviderUnavailableException(answer.status, code, "the Wallet Provider couldn't answer $path: HTTP ${answer.status}" + (code?.let { " $it" } ?: ""))
             else -> WalletProviderRefusedException(answer.status, code, description, path)
         }
@@ -482,6 +514,7 @@ public class HttpWalletProvider internal constructor(
 
         internal const val INSTANCE_REVOKED = "instance_revoked"
         internal const val REGISTRATION_EXPIRED = "registration_expired"
+        internal const val INVALID_CHALLENGE = "invalid_challenge"
 
         /** The refusals of a signed request that end the registration: it's forgotten, and the next one registers again. */
         internal val FORGETS_REGISTRATION = setOf(INSTANCE_REVOKED, REGISTRATION_EXPIRED)
@@ -560,7 +593,10 @@ public class WalletProviderRefusedException(
  * The Wallet Provider couldn't answer — HTTP 5xx or 429 — or the
  * challenge a request named expired or was used before it arrived
  * (`invalid_challenge`). An [IOException], so it reaches the wallet as
- * [WalletException.Code.network]: try again, which gets new challenges.
+ * [WalletException.Code.network]: try again. A request challenge is
+ * fresh at each try; a challenge keys were made over isn't, and isn't
+ * sent again (see [HttpWalletProvider]), so new keys succeed where the
+ * old ones are refused.
  */
 public class WalletProviderUnavailableException(
     /** The HTTP status code. */
@@ -585,7 +621,10 @@ internal class WalletProviderState {
 }
 
 /** A challenge the provider issued. */
-internal class IssuedChallenge(val value: String, val bytes: ByteArray, val expiresAt: Long)
+internal class IssuedChallenge(val value: String, val bytes: ByteArray, val expiresAt: Long) {
+    /** Whether the provider has used it up (`invalid_challenge`); guarded by the provider's lock. */
+    var usedUp: Boolean = false
+}
 
 /** An HTTP answer: status, content type and body, read to at most [HttpWalletProvider.MAX_RESPONSE_BYTES]. */
 internal class WalletProviderAnswer(val status: Int, val contentType: String?, val body: ByteArray)
