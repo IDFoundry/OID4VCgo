@@ -12,7 +12,9 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URI
+import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.security.MessageDigest
 import java.util.Base64
@@ -24,54 +26,79 @@ import javax.net.ssl.SSLSocketFactory
  * Credential logos, kept on the device when their credential is
  * accepted: showing one fetches nothing, so the issuer doesn't learn
  * when, or how often, the holder looks at the credential.
+ *
+ * A logo is the issuer's choice of image, so it's handled as hostile:
+ * one larger than [MAX_BYTES], or than [MAX_DIMENSION] pixels a side,
+ * is refused, and each is decoded off the main thread at the size it's
+ * shown, never at its own: a small file can decode to a bitmap of
+ * hundreds of megabytes.
  */
 object LogoStore {
     /** The largest logo kept. */
     private const val MAX_BYTES = 512 * 1024
 
+    /** The widest or tallest logo kept or shown, in pixels. */
+    private const val MAX_DIMENSION = 4096
+
+    /** The size a logo is checked at before it's kept, in pixels. */
+    private const val CHECK_SIZE = 128
+
     private val images = ConcurrentHashMap<String, Bitmap>()
 
     private fun directory(context: Context) = File(context.filesDir, "logos")
 
+    /** The logo's image if it has been decoded already. */
+    fun cached(logo: Logo?): Bitmap? = logo?.let { images[it.uri] }
+
     /**
-     * The logo's image, if it's a `data:` image or was kept when its
-     * credential was accepted; nothing is fetched.
+     * The logo's image, at most about [sizePx] pixels a side, if it's a
+     * `data:` image or was kept when its credential was accepted;
+     * nothing is fetched. Decoded off the main thread.
      */
-    fun image(context: Context, logo: Logo?): Bitmap? {
+    suspend fun image(context: Context, logo: Logo?, sizePx: Int): Bitmap? {
         logo ?: return null
         images[logo.uri]?.let { return it }
-        val data = if (logo.uri.startsWith("data:")) {
-            decodeDataURL(logo.uri)
-        } else {
-            file(context, logo.uri).takeIf { it.isFile }?.let { runCatching { it.readBytes() }.getOrNull() }
+        return withContext(Dispatchers.IO) {
+            val data = if (logo.uri.startsWith("data:")) {
+                decodeDataURL(logo.uri)
+            } else {
+                file(context, logo.uri).takeIf { it.isFile }?.let { runCatching { it.readBytes() }.getOrNull() }
+            }
+            data?.let { decode(it, sizePx) }?.also { images[logo.uri] = it }
         }
-        val image = data?.let { BitmapFactory.decodeByteArray(it, 0, it.size) } ?: return null
-        images[logo.uri] = image
-        return image
     }
 
     /**
      * Fetches and keeps the https logos of [credentials] not kept yet:
      * once, as they're accepted. A logo that fails to load is left out.
      * [socketFactory], if set, is the TLS trust ([DevelopmentTLS]).
+     * Outside [development], a logo whose host answers a loopback,
+     * private or link-local address is refused, as is a redirect.
      */
-    suspend fun fetch(context: Context, credentials: List<CredentialSummary>, socketFactory: SSLSocketFactory?) = withContext(Dispatchers.IO) {
-        val uris = credentials.flatMap { listOf(it.display?.logo?.uri, it.display?.issuerLogo?.uri) }.filterNotNull().toSet()
-        for (uri in uris) {
-            if (uri.startsWith("https:")) keep(file(context, uri), uri, socketFactory)
+    suspend fun fetch(context: Context, credentials: List<CredentialSummary>, socketFactory: SSLSocketFactory?, development: Boolean) =
+        withContext(Dispatchers.IO) {
+            val uris = credentials.flatMap { listOf(it.display?.logo?.uri, it.display?.issuerLogo?.uri) }.filterNotNull().toSet()
+            for (uri in uris) {
+                if (uri.startsWith("https:")) keep(file(context, uri), uri, socketFactory, development)
+            }
         }
-    }
 
     /** Fetches the logo at [uri] into [file] unless it's kept already. */
-    private fun keep(file: File, uri: String, socketFactory: SSLSocketFactory?) {
+    private fun keep(file: File, uri: String, socketFactory: SSLSocketFactory?, development: Boolean) {
         if (file.exists()) return
         val data = try {
-            download(uri, socketFactory)
+            download(uri, socketFactory, development)
         } catch (e: IOException) {
             Log.w("DemoWallet", "fetching a credential logo: $e")
             null
+        } catch (e: URISyntaxException) {
+            Log.w("DemoWallet", "fetching a credential logo: $e")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.w("DemoWallet", "fetching a credential logo: $e")
+            null
         }
-        if (data == null || BitmapFactory.decodeByteArray(data, 0, data.size) == null) return
+        if (data == null || decode(data, CHECK_SIZE) == null) return
         file.parentFile?.mkdirs()
         val partial = File(file.parentFile, file.name + ".tmp")
         runCatching {
@@ -82,11 +109,22 @@ object LogoStore {
         }
     }
 
-    /** [uri]'s body, at most [MAX_BYTES], with no cache. */
-    private fun download(uri: String, socketFactory: SSLSocketFactory?): ByteArray? {
-        val connection = URI(uri).toURL().openConnection() as HttpURLConnection
+    /**
+     * [uri]'s body, at most [MAX_BYTES], with no cache; null for a
+     * redirect, or outside [development] for a host answering a local
+     * address. The host is checked before the connection, which
+     * resolves it again: a DNS answer changing in between isn't caught.
+     */
+    private fun download(uri: String, socketFactory: SSLSocketFactory?, development: Boolean): ByteArray? {
+        val url = URI(uri).toURL()
+        if (!development && InetAddress.getAllByName(url.host).any(::isLocal)) {
+            Log.w("DemoWallet", "refused a credential logo on a local address")
+            return null
+        }
+        val connection = url.openConnection() as HttpURLConnection
         try {
             if (socketFactory != null && connection is HttpsURLConnection) connection.sslSocketFactory = socketFactory
+            connection.instanceFollowRedirects = false
             connection.useCaches = false
             connection.connectTimeout = 15_000
             connection.readTimeout = 15_000
@@ -106,6 +144,38 @@ object LogoStore {
         } finally {
             connection.disconnect()
         }
+    }
+
+    /**
+     * Whether [address] is one only the device or its own network
+     * reaches: loopback, unspecified, link-local, private (10/8,
+     * 172.16/12, 192.168/16, 100.64/10, fc00::/7) or multicast.
+     */
+    private fun isLocal(address: InetAddress): Boolean {
+        if (address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress
+        ) return true
+        val b = address.address
+        return when (b.size) {
+            4 -> b[0].toInt() == 100 && (b[1].toInt() and 0xC0) == 64
+            16 -> (b[0].toInt() and 0xFE) == 0xFC
+            else -> false
+        }
+    }
+
+    /**
+     * [data] decoded at most about [sizePx] pixels a side: its bounds
+     * read first, refused past [MAX_DIMENSION], then sampled down as
+     * it's decoded.
+     */
+    private fun decode(data: ByteArray, sizePx: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        val (w, h) = bounds.outWidth to bounds.outHeight
+        if (w <= 0 || h <= 0 || w > MAX_DIMENSION || h > MAX_DIMENSION) return null
+        var sample = 1
+        while (maxOf(w, h) / (sample * 2) >= sizePx) sample *= 2
+        return BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     /** Where the logo at [uri] is kept: named by its SHA-256. */

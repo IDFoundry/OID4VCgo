@@ -61,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -72,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -474,13 +476,21 @@ fun CredentialRow(summary: CredentialSummary, modifier: Modifier = Modifier) {
     }
 }
 
-/** An issuer's logo, as kept on the device when its credential was accepted (LogoStore): showing it fetches nothing. */
+/**
+ * An issuer's logo, as kept on the device when its credential was
+ * accepted (LogoStore): showing it fetches nothing. It's decoded off
+ * the main thread, at the size shown.
+ */
 @Composable
 fun LogoImage(logo: Logo?) {
     logo ?: return
     val context = LocalContext.current
-    val image = LogoStore.image(context, logo) ?: return
-    Image(image.asImageBitmap(), logo.altText, Modifier.size(32.dp), contentScale = ContentScale.Fit)
+    val size = 32.dp
+    val sizePx = with(LocalDensity.current) { size.roundToPx() }
+    val image by produceState(LogoStore.cached(logo), logo.uri, sizePx) {
+        value = LogoStore.image(context, logo, sizePx)
+    }
+    image?.let { Image(it.asImageBitmap(), logo.altText, Modifier.size(size), contentScale = ContentScale.Fit) }
 }
 
 /** A deferred credential: what it's waiting for, and a way to ask now. */
