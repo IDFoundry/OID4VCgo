@@ -82,14 +82,16 @@ type PreAuthorizedCodeTokenRequest struct {
 
 	// Resource, OPTIONAL, names the resource servers the access token is
 	// for (RFC 8707 §2): the Credential Issuer that offered the code, as
-	// in the authorization code flow (OpenID4VCI §5.1.2). The code
-	// itself decides which Credential Issuer the token is for: the
-	// Token Endpoint restricts it to the one that redeems the code, and
-	// refuses another resource with invalid_target (issuer's
-	// ExchangePreAuthorizedCodeRequest.Resources), rather than
-	// restricting the token to what's named here. Each must be an
-	// absolute URI without a fragment. A server that doesn't support
-	// resource indicators ignores it.
+	// in the authorization code flow (OpenID4VCI §5.1.2). What the
+	// server does with it is up to the server. One wired as the issuer
+	// package documents lets the code decide which Credential Issuer
+	// the token is for: it restricts the token to the one that redeems
+	// the code, and refuses any other resource with invalid_target
+	// (issuer's ExchangePreAuthorizedCodeRequest.Resources), comparing
+	// exactly, rather than restricting the token to what's named here.
+	// Another may restrict the token to what's named, and one that
+	// doesn't support resource indicators ignores it. Each must be an
+	// absolute URI without a fragment.
 	Resource []string
 }
 

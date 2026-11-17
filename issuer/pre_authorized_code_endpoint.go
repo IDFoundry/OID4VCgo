@@ -118,14 +118,21 @@ type ExchangePreAuthorizedCodeResult struct {
 	// Subject and Scopes: what the access token was issued for, and what
 	// a refresh token for this grant should grant (with
 	// AuthorizationDetails), for an Authorization Server that issues one
-	// (fapigo/server.Server.IssueRefreshToken).
+	// (fapigo/server.Server.IssueRefreshToken), restricted to
+	// Config.Issuer as the access token is (its
+	// IssueRefreshTokenRequest.Resources).
 	Subject string
 	Scope   []string
 
 	// RefreshToken, set by the caller before WriteJSON, is the Token
 	// Response's refresh_token: one the Authorization Server issued for
 	// this grant, so the Wallet can refresh its credentials (OpenID4VCI
-	// 1.0 §13.5). Empty: none. It's optional: if issuing one fails,
+	// 1.0 §13.5). Issue it with server.IssueRefreshTokenRequest.Resources
+	// set to Config.Issuer alone: without them, the access tokens it
+	// refreshes into are addressed to the Authorization Server, and a
+	// Credential Issuer sharing that identifier takes them for its own
+	// (see "Refreshing credentials" in authorization_server.go).
+	// Empty: none. It's optional: if issuing one fails,
 	// write the response without it — the pre-authorized code is
 	// redeemed already, so failing the response would leave the Wallet
 	// with nothing.

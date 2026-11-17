@@ -68,7 +68,8 @@ func sharedASURL(t *testing.T, raw string) fapi.URL {
 // sharedASServer is the shared Authorization Server, wired as haip's own
 // tests and walletflowtest wire one: HAIP config, the pre-authorized
 // code grant as an additional grant type, attestation-based client
-// authentication, serving resources (RFC 8707).
+// authentication, serving resources (RFC 8707), with refresh tokens.
+// Its wallet client isn't confined by AllowedResources.
 func sharedASServer(t *testing.T, wpRoots *x509.CertPool, resources ...string) (*server.Server, server.Config, server.Dependencies) {
 	t.Helper()
 	cfg, err := haip.RecommendedAuthorizationServerConfig()
@@ -84,17 +85,10 @@ func sharedASServer(t *testing.T, wpRoots *x509.CertPool, resources ...string) (
 	}
 	cfg.Assurance = server.AssuranceDevelopment
 	cfg.Limits.MaxClientAttestationLifetime = 24 * time.Hour
+	cfg.Limits.RefreshTokenLifetime = time.Hour
 	cfg.AdditionalGrantTypes = []string{sharedASPreAuthGrant}
 	cfg.Resources = resources
 	keyManager, err := ephemeral.NewKeyManager(map[keys.SigningPurpose]fapi.SignatureAlgorithm{keys.AccessTokenSigning: fapi.ES256})
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientCfg := haip.RecommendedWalletClient(sharedASClientID, sharedASWalletProvider)
-	clientCfg.ApplicationType = storage.ApplicationTypeNative
-	clientCfg.RedirectURIs = []fapi.RegisteredRedirectURI{"com.example.wallet:/callback"}
-	clientCfg.AllowedScopes = []string{"diploma"}
-	client, err := storage.NewRegisteredClient(clientCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +97,7 @@ func sharedASServer(t *testing.T, wpRoots *x509.CertPool, resources ...string) (
 		t.Fatal(err)
 	}
 	deps := server.Dependencies{
-		Clients: memstore.NewClientRepository([]storage.RegisteredClient{client}), Transactions: memstore.NewTransactionStore(),
+		Clients: sharedASClients(t), Transactions: memstore.NewTransactionStore(),
 		Grants: memstore.NewGrantStore(), Replay: memstore.NewReplayStore(), ClientKeys: clientKeys, Keys: keyManager,
 		AccessTokens: server.JWTAccessTokens{Keys: keyManager, Algorithm: fapi.ES256}, Revocation: memstore.NewRevocationStore(),
 		Clock: server.SystemClock{}, Random: rand.Reader, ClientCertificateTrust: server.NoPKIClientAuthentication{},
@@ -120,6 +114,23 @@ func sharedASServer(t *testing.T, wpRoots *x509.CertPool, resources ...string) (
 	return srv, cfg, deps
 }
 
+// sharedASClients registers the wallet client, confined by
+// storage.RegisteredClientConfig.AllowedResources to allowed (none:
+// unconfined).
+func sharedASClients(t *testing.T, allowed ...string) storage.ClientRepository {
+	t.Helper()
+	clientCfg := haip.RecommendedWalletClient(sharedASClientID, sharedASWalletProvider)
+	clientCfg.ApplicationType = storage.ApplicationTypeNative
+	clientCfg.RedirectURIs = []fapi.RegisteredRedirectURI{"com.example.wallet:/callback"}
+	clientCfg.AllowedScopes = []string{"diploma"}
+	clientCfg.AllowedResources = allowed
+	client, err := storage.NewRegisteredClient(clientCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return memstore.NewClientRepository([]storage.RegisteredClient{client})
+}
+
 type sharedASTenant struct {
 	iss     *issuer.Issuer
 	handler http.Handler
@@ -132,9 +143,15 @@ type sharedASTenant struct {
 // issue by grant.Subject in its own user database (issuer's documented
 // recipe). resource is serverresource.Options.Resource ("" accepts
 // tokens addressed to the Authorization Server), accepted
-// Config.AcceptedAccessTokenAudiences.
+// Config.AcceptedAccessTokenAudiences. A tenant whose base is the
+// Authorization Server's own identifier is co-hosted with it: its
+// Config.AuthorizationServers is empty.
 func sharedASNewTenant(t *testing.T, base string, asCfg server.Config, asDeps server.Dependencies, resource string, accepted []fapi.URL, db map[string]string) sharedASTenant {
 	t.Helper()
+	var servers []fapi.URL
+	if base != sharedASAS {
+		servers = []fapi.URL{sharedASURL(t, sharedASAS)}
+	}
 	ca, caKey := testcert.CA(t, base+" CA")
 	u, _ := url.Parse(base)
 	signerCert, signerKey := testcert.Issue(t, &x509.Certificate{Subject: pkix.Name{CommonName: base}, URIs: []*url.URL{u}}, ca, caKey)
@@ -147,7 +164,7 @@ func sharedASNewTenant(t *testing.T, base string, asCfg server.Config, asDeps se
 			MaxTxCodeAttempts: 3, MaxProofAge: time.Minute,
 		},
 		PreAuthorizedCodeClientAuthentication: issuer.VerifiedPreAuthorizedCode{},
-		AuthorizationServers:                  []fapi.URL{sharedASURL(t, sharedASAS)},
+		AuthorizationServers:                  servers,
 		AcceptedAccessTokenAudiences:          accepted,
 		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
 			"diploma": {
@@ -297,6 +314,67 @@ func sharedASRedeem(t *testing.T, provider sharedASProvider, srv *server.Server,
 // it returns RedeemPreAuthorizedCode's error.
 func sharedASRedeemNaming(t *testing.T, provider sharedASProvider, srv *server.Server, tenant sharedASTenant, subject string, restrict bool, resources ...string) (string, *ecdsa.PrivateKey, issuer.RedeemedPreAuthorizedCode, error) {
 	t.Helper()
+	w := newSharedASWallet(t, provider)
+	token, redeemed, _, err := w.redeem(t, srv, tenant, subject, restrict, resources...)
+	return token, w.dpopKey, redeemed, err
+}
+
+// sharedASWallet is one installation of the Wallet Provider's wallet:
+// the instance key its Wallet Attestations bind, which its refresh
+// tokens are bound to, and its DPoP key.
+type sharedASWallet struct {
+	provider    sharedASProvider
+	instanceKey *ecdsa.PrivateKey
+	dpopKey     *ecdsa.PrivateKey
+}
+
+func newSharedASWallet(t *testing.T, provider sharedASProvider) sharedASWallet {
+	t.Helper()
+	instanceKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dpopKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sharedASWallet{provider: provider, instanceKey: instanceKey, dpopKey: dpopKey}
+}
+
+// tokenRequest is a Token Request with form, authenticated by a fresh
+// Wallet Attestation and its PoP, with a DPoP proof.
+func (w sharedASWallet) tokenRequest(t *testing.T, form url.Values) server.TokenEndpointRequest {
+	t.Helper()
+	now := time.Now()
+	wa, err := attestation.IssueWalletAttestation(w.provider.key, oid4vci.ES256, attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(w.provider.attester.Raw)}}, attestation.WalletAttestationClaims{
+		Issuer: sharedASWalletProvider, Subject: sharedASClientID, InstanceKey: &w.instanceKey.PublicKey,
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pop := sharedASSign(t, w.instanceKey, map[string]any{"typ": "oauth-client-attestation-pop+jwt"},
+		map[string]any{"iss": sharedASClientID, "aud": sharedASAS, "jti": rand.Text(), "iat": now.Unix()})
+	hr := httptest.NewRequest(http.MethodPost, sharedASAS+"/token", strings.NewReader(form.Encode()))
+	hr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	hr.Header.Set("OAuth-Client-Attestation", wa)
+	hr.Header.Set("OAuth-Client-Attestation-PoP", pop)
+	hr.Header.Set("DPoP", sharedASDPoP(t, w.dpopKey, http.MethodPost, sharedASAS+"/token", ""))
+	treq, err := server.TokenEndpointRequestFromHTTP(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return treq
+}
+
+// redeem has tenant redeem a pre-authorized code it offered to subject,
+// at a Token Request naming resources, and the Authorization Server
+// issue its access token, restricted to the redemption's Resource when
+// restrict is set. It returns the token, the redemption and the access
+// token's request, to issue the grant's refresh token from; and
+// RedeemPreAuthorizedCode's error.
+func (w sharedASWallet) redeem(t *testing.T, srv *server.Server, tenant sharedASTenant, subject string, restrict bool, resources ...string) (string, issuer.RedeemedPreAuthorizedCode, server.IssueAccessTokenRequest, error) {
+	t.Helper()
 	ctx := context.Background()
 	code := rand.Text()
 	if err := tenant.iss.IssuePreAuthorizedCode(ctx, code, "", issuer.PreAuthorizedCodeRecord{
@@ -304,28 +382,7 @@ func sharedASRedeemNaming(t *testing.T, provider sharedASProvider, srv *server.S
 	}); err != nil {
 		t.Fatal(err)
 	}
-	instanceKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	dpopKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	now := time.Now()
-	wa, err := attestation.IssueWalletAttestation(provider.key, oid4vci.ES256, attestation.Header{X5C: []string{base64.StdEncoding.EncodeToString(provider.attester.Raw)}}, attestation.WalletAttestationClaims{
-		Issuer: sharedASWalletProvider, Subject: sharedASClientID, InstanceKey: &instanceKey.PublicKey,
-		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pop := sharedASSign(t, instanceKey, map[string]any{"typ": "oauth-client-attestation-pop+jwt"},
-		map[string]any{"iss": sharedASClientID, "aud": sharedASAS, "jti": rand.Text(), "iat": now.Unix()})
-	form := url.Values{"grant_type": {sharedASPreAuthGrant}, "pre-authorized_code": {code}, "resource": resources}
-	hr := httptest.NewRequest(http.MethodPost, sharedASAS+"/token", strings.NewReader(form.Encode()))
-	hr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	hr.Header.Set("OAuth-Client-Attestation", wa)
-	hr.Header.Set("OAuth-Client-Attestation-PoP", pop)
-	hr.Header.Set("DPoP", sharedASDPoP(t, dpopKey, http.MethodPost, sharedASAS+"/token", ""))
-	treq, err := server.TokenEndpointRequestFromHTTP(hr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	treq := w.tokenRequest(t, url.Values{"grant_type": {sharedASPreAuthGrant}, "pre-authorized_code": {code}, "resource": resources})
 	attested, err := srv.AuthenticateAttestedClient(ctx, treq.AttestedClientAuthentication())
 	if err != nil {
 		t.Fatalf("AuthenticateAttestedClient: %v", err)
@@ -339,7 +396,7 @@ func sharedASRedeemNaming(t *testing.T, provider sharedASProvider, srv *server.S
 		Verified: &issuer.VerifiedTokenRequest{ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint},
 	})
 	if err != nil {
-		return "", nil, redeemed, err
+		return "", redeemed, server.IssueAccessTokenRequest{}, err
 	}
 	subjectID, err := server.NewSubjectID(redeemed.Subject)
 	if err != nil {
@@ -355,7 +412,19 @@ func sharedASRedeemNaming(t *testing.T, provider sharedASProvider, srv *server.S
 	if err != nil {
 		t.Fatalf("IssueAccessToken: %v", err)
 	}
-	return result.AccessToken.Reveal(), dpopKey, redeemed, nil
+	return result.AccessToken.Reveal(), redeemed, req, nil
+}
+
+// refresh redeems refreshToken at srv as this wallet installation,
+// naming no resource.
+func (w sharedASWallet) refresh(t *testing.T, srv *server.Server, refreshToken fapi.Secret) (string, error) {
+	t.Helper()
+	treq := w.tokenRequest(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken.Reveal()}})
+	result, err := srv.RefreshAccessToken(context.Background(), treq.RefreshToken())
+	if err != nil {
+		return "", err
+	}
+	return result.AccessToken.Reveal(), nil
 }
 
 // sharedASAudience is the access token's "aud".
@@ -490,4 +559,133 @@ func TestSharedAuthorizationServer_PreAuthorizedRequestNamingAnotherIssuer(t *te
 	if aud := sharedASAudience(t, accessToken); aud != sharedASTenantA {
 		t.Errorf("access token aud = %v, want %s", aud, sharedASTenantA)
 	}
+}
+
+// TestSharedAuthorizationServer_CoHostedIssuer: tenant A shares the
+// Authorization Server's identifier, so it takes every token the
+// Authorization Server issues without a resource, from any tenant's
+// grant, for its own. With the wallet client confined by
+// AllowedResources to both Credential Issuers, the Authorization
+// Server issues no such token: tenant B's refresh token, issued with
+// the redemption's Resource, refreshes into a token tenant B alone
+// takes; one issued without Resources is refused, and so is the refresh
+// of one issued without Resources before the client was confined, whose
+// wallet must authorize again.
+func TestSharedAuthorizationServer_CoHostedIssuer(t *testing.T) {
+	ctx := context.Background()
+	provider := newSharedASProvider(t)
+	unconfined, asCfg, asDeps := sharedASServer(t, provider.roots, sharedASAS, sharedASTenantB)
+	confinedDeps := asDeps
+	confinedDeps.Clients = sharedASClients(t, sharedASAS, sharedASTenantB)
+	srv, err := server.New(asCfg, confinedDeps)
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	tenantA := sharedASNewTenant(t, sharedASAS, asCfg, asDeps, sharedASAS, nil, sharedASUsersA)
+	tenantB := sharedASNewTenant(t, sharedASTenantB, asCfg, asDeps, sharedASTenantB, nil, sharedASUsersB)
+	holderKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	w := newSharedASWallet(t, provider)
+	_, redeemed, grant, err := w.redeem(t, srv, tenantB, "user-42", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshReq := server.IssueRefreshTokenRequest(grant)
+	refreshReq.Resources = []string{redeemed.Resource}
+	refreshToken, err := srv.IssueRefreshToken(ctx, refreshReq)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken with the redemption's Resource: %v", err)
+	}
+	refreshed, err := w.refresh(t, srv, refreshToken)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if aud := sharedASAudience(t, refreshed); aud != sharedASTenantB {
+		t.Errorf("refreshed access token aud = %v, want %s", aud, sharedASTenantB)
+	}
+	if status, resp := sharedASCredentialRequest(t, tenantB, refreshed, w.dpopKey, holderKey); status != http.StatusOK {
+		t.Errorf("tenant B refused its refreshed token: %d %v", status, resp)
+	}
+	if status, resp := sharedASCredentialRequest(t, tenantA, refreshed, w.dpopKey, holderKey); status != http.StatusUnauthorized || resp["error"] != "invalid_token" {
+		t.Errorf("tenant A answered tenant B's refreshed token: %d %v, want 401 invalid_token", status, resp)
+	}
+
+	// Without a resource, the Authorization Server issues neither.
+	refreshReq.Resources = nil
+	if _, err := srv.IssueRefreshToken(ctx, refreshReq); !sharedASInvalidTarget(err) {
+		t.Errorf("IssueRefreshToken without Resources: %v, want invalid_target", err)
+	}
+	grant.Resources = nil
+	if _, err := srv.IssueAccessToken(ctx, grant); !sharedASInvalidTarget(err) {
+		t.Errorf("IssueAccessToken without Resources: %v, want invalid_target", err)
+	}
+
+	// A refresh token issued without Resources before the client was
+	// confined: refreshing it is refused.
+	old := newSharedASWallet(t, provider)
+	_, _, oldGrant, err := old.redeem(t, unconfined, tenantB, "user-42", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRefreshReq := server.IssueRefreshTokenRequest(oldGrant)
+	oldRefreshReq.Resources = nil
+	oldRefreshToken, err := unconfined.IssueRefreshToken(ctx, oldRefreshReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.refresh(t, srv, oldRefreshToken); !sharedASInvalidTarget(err) {
+		t.Errorf("refreshing a grant made without resources before the client was confined: %v, want invalid_target", err)
+	}
+}
+
+// TestSharedAuthorizationServer_RefreshWithoutResource: on an
+// Authorization Server with its own identifier, a refresh token issued
+// without Resources, as one issued before the Credential Issuers
+// restricted their tokens was, refreshes into a token addressed to the
+// Authorization Server, which neither Credential Issuer takes; one
+// issued with the redemption's Resource refreshes into a token for that
+// Credential Issuer.
+func TestSharedAuthorizationServer_RefreshWithoutResource(t *testing.T) {
+	ctx := context.Background()
+	provider := newSharedASProvider(t)
+	srv, asCfg, asDeps := sharedASServer(t, provider.roots, sharedASTenantA, sharedASTenantB)
+	tenantA := sharedASNewTenant(t, sharedASTenantA, asCfg, asDeps, sharedASTenantA, nil, sharedASUsersA)
+	tenantB := sharedASNewTenant(t, sharedASTenantB, asCfg, asDeps, sharedASTenantB, nil, sharedASUsersB)
+	holderKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	for name, restrict := range map[string]bool{"without Resources": false, "with the redemption's Resource": true} {
+		w := newSharedASWallet(t, provider)
+		_, redeemed, grant, err := w.redeem(t, srv, tenantB, "user-42", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refreshReq := server.IssueRefreshTokenRequest(grant)
+		refreshReq.Resources = nil
+		if restrict {
+			refreshReq.Resources = []string{redeemed.Resource}
+		}
+		refreshToken, err := srv.IssueRefreshToken(ctx, refreshReq)
+		if err != nil {
+			t.Fatalf("%s: IssueRefreshToken: %v", name, err)
+		}
+		refreshed, err := w.refresh(t, srv, refreshToken)
+		if err != nil {
+			t.Fatalf("%s: refresh: %v", name, err)
+		}
+		statusA, _ := sharedASCredentialRequest(t, tenantA, refreshed, w.dpopKey, holderKey)
+		statusB, _ := sharedASCredentialRequest(t, tenantB, refreshed, w.dpopKey, holderKey)
+		if statusA != http.StatusUnauthorized {
+			t.Errorf("%s: tenant A answered tenant B's refreshed token with %d, want 401", name, statusA)
+		}
+		if want := map[bool]int{false: http.StatusUnauthorized, true: http.StatusOK}[restrict]; statusB != want {
+			t.Errorf("%s: tenant B answered its refreshed token (aud %v) with %d, want %d", name, sharedASAudience(t, refreshed), statusB, want)
+		}
+	}
+}
+
+// sharedASInvalidTarget reports whether err is fapigo/server's
+// invalid_target.
+func sharedASInvalidTarget(err error) bool {
+	var serr *server.Error
+	return errors.As(err, &serr) && serr.Code() == server.ErrorInvalidTarget
 }

@@ -39,10 +39,14 @@ and `IssueNotificationID`. Outside production a nil `Audience` still
 isn't checked, and that verifier must accept only tokens issued for
 this Credential Issuer itself.
 
-Nothing changes where the Authorization Server's identifier is the
-Credential Issuer's own, as when they share one (`cmd/conformance-issuer`
-and the passport-vdc demo). Otherwise its tokens are addressed to
-itself unless restricted to a resource, and are now refused. Either:
+Nothing changes where the Credential Issuer shares its Authorization
+Server's identifier and is that Authorization Server's only Credential
+Issuer (`cmd/conformance-issuer` and the passport-vdc demo). One that
+shares the identifier of an Authorization Server serving others still
+takes every token that Authorization Server issues without a resource,
+from any of their grants: see below. Otherwise the Authorization
+Server's tokens are addressed to itself unless restricted to a
+resource, and are now refused. Either:
 
 - restrict them to the Credential Issuer: list `Config.Issuer` in the
   Authorization Server's `server.Config.Resources`, and pass
@@ -77,9 +81,24 @@ Wallet's `resource` chooses which of them a token is for, so also:
   `ExchangePreAuthorizedCodeRequest.Resources`, which refuses any but
   `Config.Issuer` with 400 `invalid_target` (RFC 8707 §2) before the
   code is consumed, and issue the token with
-  `RedeemedPreAuthorizedCode.Resource` alone. Never pass the request's
+  `RedeemedPreAuthorizedCode.Resource` alone, and its refresh token
+  too (`IssueRefreshTokenRequest.Resources`). Never pass the request's
   own resources as `IssueAccessTokenRequest.Resources`: the token would
-  then be good at the Credential Issuers they name too.
+  then be good at the Credential Issuers they name too;
+- give the Authorization Server an identifier none of them has,
+  listed in each one's `Config.AuthorizationServers`. A Credential
+  Issuer sharing it takes every token the Authorization Server issues
+  without a resource for its own: one refreshed from a refresh token
+  issued without `Resources`, say, from another Credential Issuer's
+  grant. If one must keep sharing it, confine every wallet client to
+  the Credential Issuers with FAPIgo's `AllowedResources`
+  (`storage.RegisteredClientConfig`, and
+  `server.Config.AutomaticRegistration`), listing each: the
+  Authorization Server then issues no token addressed to itself, and
+  refuses with `invalid_target` a request naming no resource, so that
+  Credential Issuer's Wallets must name it too. `issuer.New` can't
+  tell an Authorization Server serving others, so it refuses neither
+  setup.
 
 `cmd/conformance-issuer`, the passport-vdc demo and `walletflowtest` now
 list their Credential Issuer in `server.Config.Resources`, which turns
@@ -88,6 +107,29 @@ any other `resource`, at PAR or the Token Endpoint, gets
 `invalid_target` where the parameter used to be ignored. A deployment
 that copies their wiring does the same. Wallets built on `walletflow`
 name the offer's Credential Issuer, which is accepted.
+
+What Wallets and existing grants see:
+
+- a Wallet that names no `resource` in its authorization request (the
+  Multipaz 0.102.0 client, for one) is denied, with `access_denied`,
+  by the consent step of a Credential Issuer whose Authorization
+  Server has an identifier of its own and isn't listed in its
+  `AcceptedAccessTokenAudiences`. OpenID4VCI 1.0 §5.1.2 has it name
+  the Credential Issuer;
+- a pre-authorized Token Request naming the Credential Issuer's
+  identifier spelled another way (a trailing slash, an upper-case host,
+  an explicit default port) is refused with `invalid_target`:
+  resources are compared exactly;
+- grants made before the upgrade carry no resource, so their refresh
+  tokens refresh into tokens addressed to the Authorization Server.
+  Where it has an identifier of its own, a Credential Issuer not
+  listing it in `AcceptedAccessTokenAudiences` now refuses those with
+  `invalid_token`, and the Wallet must authorize again; revoke such grants to have it learn so at the Token Endpoint.
+  Where a Credential Issuer shares the identifier of an Authorization
+  Server serving others, end them before the upgrade serves anyone:
+  `AllowedResources` refuses their refresh with `invalid_target`, or
+  revoke them. See `issuer/authorization_server.go`'s "Refreshing
+  credentials".
 
 ### `issuer.NewError` answers token errors with 401 and 403
 
