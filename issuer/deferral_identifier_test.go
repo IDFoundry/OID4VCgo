@@ -92,23 +92,57 @@ func TestDeferral_BindsCredentialIdentifier(t *testing.T) {
 	}
 }
 
-// TestDeferral_ByConfigurationIDNeedsTheConfiguration: a transaction
-// requested by credential_configuration_id records no identifier, and
-// any token granting the configuration collects it, as before.
-func TestDeferral_ByConfigurationIDNeedsTheConfiguration(t *testing.T) {
+// TestDeferral_ByConfigurationIDAuthorizedAsTheCredentialEndpoint: a
+// transaction requested by credential_configuration_id is marked so,
+// and collected only with a token the Credential Endpoint would accept
+// that request from: not one whose authorization detail for the
+// configuration carries credential_identifiers (another dataset),
+// which §8.2 says must then be used instead. The refused poll leaves
+// the transaction for a token granting the configuration.
+func TestDeferral_ByConfigurationIDAuthorizedAsTheCredentialEndpoint(t *testing.T) {
 	ctx := context.Background()
 	f := newDeferralFixture(t)
-	auth := identifierAuth(identifierDetail(testSDJWTConfigID))
-	txID := f.deferIssued(t, auth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
-	record, err := f.store.Get(ctx, txID)
+	txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
+	before, err := f.store.Get(ctx, txID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.CredentialIdentifier != "" {
-		t.Fatalf("record.CredentialIdentifier = %q, want none", record.CredentialIdentifier)
+	if before.CredentialIdentifier != "" || !before.RequestedByConfigurationID {
+		t.Fatalf("record = %+v, want no credential_identifier, requested by configuration ID", before)
 	}
+
+	_, err = f.iss.RequestDeferredCredential(ctx, identifierAuth(identifierDetail(testSDJWTConfigID, "dataset-B")), issuer.DeferredCredentialRequest{TransactionID: txID})
+	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+	after, err := f.store.Get(ctx, txID)
+	if err != nil {
+		t.Fatalf("the refused poll consumed the transaction: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("the refused poll changed the record:\n%+v\nwant\n%+v", after, before)
+	}
+
 	res, err := f.iss.RequestDeferredCredential(ctx, identifierAuth(identifierDetail(testSDJWTConfigID)), issuer.DeferredCredentialRequest{TransactionID: txID})
 	if err != nil || len(res.Credentials) != 1 {
 		t.Fatalf("poll with a configuration grant = %+v, %v", res, err)
+	}
+}
+
+// TestDeferral_LegacyRecordNeedsTheConfiguration: a record saved
+// before RequestedByConfigurationID existed, with neither it nor a
+// credential_identifier, is collected by any token granting its
+// configuration, as before.
+func TestDeferral_LegacyRecordNeedsTheConfiguration(t *testing.T) {
+	ctx := context.Background()
+	f := newDeferralFixture(t)
+	txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
+	if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
+		r.RequestedByConfigurationID = false
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.iss.RequestDeferredCredential(ctx, identifierAuth(identifierDetail(testSDJWTConfigID, "dataset-B")), issuer.DeferredCredentialRequest{TransactionID: txID})
+	if err != nil || len(res.Credentials) != 1 {
+		t.Fatalf("poll of a legacy record with a configuration grant = %+v, %v", res, err)
 	}
 }
