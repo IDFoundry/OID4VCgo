@@ -513,9 +513,14 @@ The servers back that rule themselves (`internal/demoaccess`):
   the team's keys at `https://<team domain>/cdn-cgi/access/certs`), so
   a request reaching the origin some other way than through Access is
   refused (403). The team's keys are fetched at startup, and again an
-  hour later or when a token names a key not seen yet; a client that
-  hangs up mid-fetch doesn't stop it, and only a fetch that fails holds
-  off the next for a minute. Each refusal is logged with its reason.
+  hour later or when a token names a key not seen yet, though not
+  within a minute of the last fetch: for a minute after a fetch that
+  succeeded, or one a request started that failed, a token naming a
+  key not held is refused without a fetch, and the keys held stay in
+  use. A failed fetch at startup holds nothing off: the first request
+  fetches the keys again. Requests share the fetch in flight, and a
+  client that hangs up mid-fetch doesn't stop it. Each refusal is
+  logged with its reason.
   Leave both flags unset for a local run, which has no Access in front
   of it.
 
@@ -693,7 +698,15 @@ the instance keys' status list indices and statuses in
 `-status-indices` on `cmd/wallet-provider`; in `.demo-state/` under
 `cmd/demo`), so a restart keeps each instance key, its status index and
 any revocation, and hands no index out twice; the files above are read
-as before. An instance key unused for about 90 days is dropped from the
+as before. A status indices file (this one, and the issuer's
+`status-indices.json`) keeps each list as the indices it reserves or,
+once that's shorter, as a bitmap of a bit an index: a list of 2^20
+indices takes tens of bytes while a few are reserved, and at most
+about 175 KiB. Each change rewrites the whole file, flushed to disk
+before it replaces the old one. A demo from an earlier release can't
+read the file once this one has written it, and refuses to start: to
+run one, give it a state directory of its own, or delete the status
+indices file and the instances file with it. An instance key unused for about 90 days is dropped from the
 instances file, and is recorded again, under a new instance, if a
 wallet uses it after that; the status lists of weeks no longer served
 are deleted from the status indices file at startup and hourly. An instances file from before instance keys is refused:

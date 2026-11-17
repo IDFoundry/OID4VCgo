@@ -706,15 +706,24 @@ struct CredentialRow: View {
 }
 
 /// An issuer's logo, as kept on the device when its credential was
-/// accepted (LogoStore): showing it fetches nothing.
+/// accepted (LogoStore): showing it fetches nothing. It's decoded off
+/// the main actor, at the size shown.
 struct LogoView: View {
     let logo: Logo?
+    @Environment(\.displayScale) private var scale
+    @State private var loaded: (uri: String, image: UIImage?)?
 
     var body: some View {
-        if let image = LogoStore.image(for: logo) {
+        if let image = loaded.flatMap({ $0.uri == logo?.uri ? $0.image : nil }) ?? LogoStore.cached(logo) {
             Image(uiImage: image).resizable().scaledToFit()
                 .frame(width: 32, height: 32)
                 .accessibilityLabel(logo?.altText ?? "")
+        } else if let logo, loaded?.uri != logo.uri {
+            // Nothing to show until it's decoded.
+            Color.clear.frame(width: 0, height: 0)
+                .task(id: logo.uri) {
+                    loaded = (logo.uri, await LogoStore.image(for: logo, pixels: Int(32 * scale)))
+                }
         }
     }
 }

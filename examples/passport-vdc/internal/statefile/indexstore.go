@@ -27,11 +27,13 @@ const MaxIndex = 1<<24 - 1
 // uses the file; a deployment uses a database (sqlstore's
 // StatusIndices), whose Reserve is atomic across processes.
 //
-// Each list is kept compactly, in memory and in the file: a bitmap of
-// its reserved indices, one bit each, and the status of only those not
-// VALID. A list's size so stays near an eighth of its indices in bytes
-// however many are reserved, and a list deleted (as a Wallet Provider
-// deletes its past periods' lists) takes its indices with it.
+// Each list is kept compactly: in memory, a bitmap of its reserved
+// indices, one bit each, and the status of only those not VALID. In
+// the file, a list is that bitmap or, when it's shorter, the reserved
+// indices listed, so a list of 2^20 indices with a few reserved costs
+// tens of bytes, not the bitmap's 128 KiB, and none costs more than
+// its bitmap. A list deleted (as a Wallet Provider deletes its past
+// periods' lists) takes its indices with it.
 type IndexStore struct {
 	mu    sync.Mutex
 	path  string
@@ -65,6 +67,22 @@ func (l *indexList) reserve(idx uint64) {
 	l.count++
 }
 
+// indices is the reserved indices, in order.
+func (l *indexList) indices() []uint64 {
+	out := make([]uint64, 0, l.count)
+	for i, b := range l.reserved {
+		if b == 0 {
+			continue
+		}
+		for bit := range uint64(8) {
+			if b>>bit&1 != 0 {
+				out = append(out, uint64(i)*8+bit)
+			}
+		}
+	}
+	return out
+}
+
 func (l *indexList) release(idx uint64) {
 	l.reserved[idx/8] &^= 1 << (idx % 8)
 	l.count--
@@ -91,19 +109,23 @@ type fileFormat struct {
 	Lists   map[string]fileList `json:"lists"`
 }
 
-const fileVersion = 2
+// fileVersion is the format written. Version 2, each list's bitmap
+// alone, is read too.
+const fileVersion = 3
 
-// fileList is a list in the file: its bitmap (base64), and the
-// statuses not VALID by index.
+// fileList is a list in the file: its reserved indices, as a bitmap
+// (base64) or listed, whichever is shorter; and the statuses not VALID
+// by index.
 type fileList struct {
-	Reserved []byte                           `json:"reserved"`
+	Reserved []byte                           `json:"reserved,omitempty"`
+	Indices  []uint64                         `json:"indices,omitempty"`
 	Statuses map[string]statuslist.StatusType `json:"statuses,omitempty"`
 }
 
 // OpenIndexStore reads the store saved at path, empty when there is
-// none, saving it back there on every change. A file of the earlier
-// format, every reserved index with its status, is read too, and
-// rewritten in this one on the first change.
+// none, saving it back there on every change. A file of an earlier
+// format (version 2, or every reserved index with its status) is read
+// too, and rewritten in this one on the first change.
 func OpenIndexStore(path string) (*IndexStore, error) {
 	s := &IndexStore{path: path, lists: map[string]*indexList{}}
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied state directory
@@ -131,17 +153,29 @@ func (s *IndexStore) load(data []byte) error {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return err
 	}
-	if f.Version != fileVersion {
+	if f.Version != fileVersion && f.Version != 2 {
 		return fmt.Errorf("status list indices of format %d, not %d", f.Version, fileVersion)
 	}
 	for uri, fl := range f.Lists {
 		if len(fl.Reserved) > MaxIndex/8+1 {
 			return fmt.Errorf("list %s reserves an index past %d", uri, MaxIndex)
 		}
+		if len(fl.Indices) > 0 && len(fl.Reserved) > 0 {
+			return fmt.Errorf("list %s has both a bitmap and indices", uri)
+		}
 		l := newIndexList()
 		l.reserved = fl.Reserved
 		for _, b := range fl.Reserved {
 			l.count += bits.OnesCount8(b)
+		}
+		for _, idx := range fl.Indices {
+			if idx > MaxIndex {
+				return fmt.Errorf("list %s reserves index %d, past %d", uri, idx, MaxIndex)
+			}
+			if l.has(idx) {
+				return fmt.Errorf("list %s reserves index %d twice", uri, idx)
+			}
+			l.reserve(idx)
 		}
 		for k, status := range fl.Statuses {
 			idx, err := strconv.ParseUint(k, 10, 64)
@@ -180,7 +214,14 @@ func (s *IndexStore) loadEarlier(data []byte) error {
 func (s *IndexStore) save() error {
 	f := fileFormat{Version: fileVersion, Lists: make(map[string]fileList, len(s.lists))}
 	for uri, l := range s.lists {
-		fl := fileList{Reserved: l.reserved}
+		var fl fileList
+		// Listed, an index costs at most 9 bytes ("16777215,"); the
+		// bitmap, base64, 4 for each 3 bytes.
+		if l.count*9 < len(l.reserved)*4/3 {
+			fl.Indices = l.indices()
+		} else {
+			fl.Reserved = l.reserved
+		}
 		if len(l.statuses) > 0 {
 			fl.Statuses = make(map[string]statuslist.StatusType, len(l.statuses))
 			for idx, status := range l.statuses {

@@ -597,10 +597,16 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
         keepLogos(result.credentials)
     }
 
-    /** Fetches and keeps [credentials]' logos (LogoStore). */
+    /**
+     * Fetches and keeps [credentials]' logos (LogoStore): from local
+     * addresses too only for a development configuration in a
+     * debuggable build, as the wallet's own requests.
+     */
     private suspend fun keepLogos(credentials: List<CredentialSummary>) {
         val config = config ?: return
-        LogoStore.fetch(getApplication(), credentials, DevelopmentTLS.socketFactory(getApplication(), config))
+        val app = getApplication<Application>()
+        val development = config.wallet.development != null && app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        LogoStore.fetch(app, credentials, DevelopmentTLS.socketFactory(app, config), development)
     }
 
     // Deferred credentials

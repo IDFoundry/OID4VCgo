@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/wallet"
+	"github.com/idfoundry/oid4vcgo/walletflow"
 )
 
 // received issues both formats from a fresh demo issuer and returns
@@ -106,5 +108,36 @@ func TestReceive_RefusesCredentialsFromAnUntrustedIssuer(t *testing.T) {
 	got, err := walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
 	if err == nil || !strings.Contains(err.Error(), "is invalid") || len(got) != 0 {
 		t.Fatalf("Receive = %d credentials, %v; want none and an invalid-credential error", len(got), err)
+	}
+}
+
+// countingApprover counts the authorizations it's asked for.
+type countingApprover struct {
+	walletapp.Approver
+	calls int
+}
+
+func (a *countingApprover) Approve(ctx context.Context, authorizeURL string) (walletapp.Callback, error) {
+	a.calls++
+	return a.Approver.Approve(ctx, authorizeURL)
+}
+
+// TestReceive_RefusesAnUnlistedIssuer checks the wallet takes offers
+// only from the issuers in Config.CredentialIssuers: an offer from
+// another, its credentials signed under a trusted root, is refused
+// before the holder is asked to authorize anything.
+func TestReceive_RefusesAnUnlistedIssuer(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreateTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatalf("CreateTransaction: %v", err)
+	}
+	cfg := env.WalletConfig()
+	cfg.CredentialIssuers = []string{"https://other-issuer.example"}
+	approver := &countingApprover{Approver: walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}}
+	got, err := walletapp.Receive(ctx, cfg, offer.URI, approver)
+	if !errors.Is(err, walletflow.ErrUntrustedIssuer) || len(got) != 0 || approver.calls != 0 {
+		t.Fatalf("Receive = %d credentials, %v, %d authorizations; want none and ErrUntrustedIssuer", len(got), err, approver.calls)
 	}
 }

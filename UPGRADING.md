@@ -537,6 +537,19 @@ wallet's attestations refused until the period ended.
   of your fleet within a period or two; `MaxStatusListsPerPeriod` turns
   the share off.
 
+### The passport-vdc demo's status indices files
+
+The demo's Wallet Provider and issuer keep their status list indices
+(`wallet-provider-status-indices.json`, `status-indices.json`) in a
+new format, each list its reserved indices or a bitmap, whichever is
+shorter, and rewrite a file of the earlier format in it on the first
+change. A demo from v0.81.0 or before refuses to start on a file
+written in the new format: to roll back, give the older demo a state
+directory of its own, or delete the status indices file and the Wallet
+Provider's instances file with it. The files, and the demo's other
+state files, are now flushed to disk before and after they're
+replaced.
+
 ### A first message that doesn't decrypt no longer ends a BLE session (`proximity`, `walletflow`, mobile)
 
 Any device in BLE range can write to a holder's GATT server before its
