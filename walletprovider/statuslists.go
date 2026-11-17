@@ -16,15 +16,15 @@ import (
 
 // statusLists is a Provider's state for its status lists: the handler
 // serving them, the Publishers of the lists served lately, and where
-// the current period's lists have filled up to.
+// which of the current period's lists are known to be full.
 type statusLists struct {
 	handler *http.ServeMux
 
 	mu         sync.Mutex
 	publishers map[string]servedList // by list URI
 	empty      map[string]time.Time  // lists found with no index reserved, by URI, until when that's believed
-	fillStart  int64                 // the period fillFrom is for
-	fillFrom   int                   // the first of its lists not known to be full
+	fillStart  int64                 // the period full is for
+	full       uint64                // its lists known to be full: bit n for list n
 }
 
 // emptyListTTL is how long the handler answers 404 for a list it found
@@ -64,11 +64,11 @@ func (p *Provider) listURI(start int64, n int) string {
 }
 
 // allocator is a statuslist.Allocator over the lists of the period
-// starting at start, from list from on, in order: the default fill
-// limit fills each before the next.
-func (p *Provider) allocator(start int64, from int) *statuslist.Allocator {
-	lists := make([]statuslist.AllocatorList, 0, MaxStatusListsPerPeriod-from)
-	for n := from; n < MaxStatusListsPerPeriod; n++ {
+// starting at start, from list from up to list to, in order: the
+// default fill limit fills each before the next.
+func (p *Provider) allocator(start int64, from, to int) *statuslist.Allocator {
+	lists := make([]statuslist.AllocatorList, 0, to-from)
+	for n := from; n < to; n++ {
 		lists = append(lists, statuslist.AllocatorList{URI: p.listURI(start, n), Size: p.cfg.StatusListSize})
 	}
 	return &statuslist.Allocator{Lists: lists, Store: p.deps.StatusIndices, Bits: statuslist.Bits2}
@@ -114,25 +114,72 @@ func (p *Provider) served(start int64, now time.Time) bool {
 
 // allocateStatus reserves an index on a list of the period now is in
 // for an instance key of the instance id, first counting it against the
-// instance's Config.MaxInstanceKeysPerPeriod (countIndex).
+// instance's Config.MaxInstanceKeysPerPeriod (countIndex): on the
+// period's first Config.RecentInstanceStatusLists lists for an
+// instance registered in the period or the one before, and on the
+// others first for any other (allocate).
 func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time) (statuslist.StatusListRef, error) {
 	start := p.periodStart(now)
-	if err := p.countIndex(ctx, id, start); err != nil {
+	recent, err := p.countIndex(ctx, id, start)
+	if err != nil {
 		return statuslist.StatusListRef{}, err
 	}
-	ref, err := p.allocator(start, p.lists.firstWithRoom(start)).Allocate(ctx)
+	ref, err := p.allocate(ctx, start, recent)
 	switch {
+	case errors.Is(err, statuslist.ErrListsFull) && recent && p.cfg.RecentInstanceStatusLists < MaxStatusListsPerPeriod:
+		p.uncountIndex(ctx, id, start)
+		p.logger().LogAttrs(context.WithoutCancel(ctx), slog.LevelWarn,
+			"walletprovider: the status lists of the current period that recently registered instances take indices from are full",
+			slog.String("instance", id))
+		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: the status lists of the current period that instances registered in it or the one before take indices from are full (Config.RecentInstanceStatusLists): raise Config.StatusListSize, and look into the recent registrations: %w", err)
 	case errors.Is(err, statuslist.ErrListsFull):
 		p.uncountIndex(ctx, id, start)
 		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: the status lists of the current period are full: raise Config.StatusListSize or shorten Config.StatusListPeriod: %w", err)
 	case err != nil:
 		return statuslist.StatusListRef{}, fmt.Errorf("walletprovider: allocating a status index: %w", err)
 	}
-	if _, n, ok := p.parseList(ref.URI); ok {
-		p.lists.filledBefore(start, n)
-	}
 	p.lists.reserved(ref.URI)
 	return ref, nil
+}
+
+// allocate reserves an index on a list of the period starting at
+// start: for a recent instance's key, on the period's first
+// Config.RecentInstanceStatusLists lists; for another's, on the rest
+// first, and on those only once the rest are full, so recent instances
+// can't take the room the others need, nor the others the recent
+// instances' while the rest have room.
+func (p *Provider) allocate(ctx context.Context, start int64, recent bool) (statuslist.StatusListRef, error) {
+	split := p.cfg.RecentInstanceStatusLists
+	if !recent && split < MaxStatusListsPerPeriod {
+		ref, err := p.allocateIn(ctx, start, split, MaxStatusListsPerPeriod)
+		if !errors.Is(err, statuslist.ErrListsFull) {
+			return ref, err
+		}
+	}
+	return p.allocateIn(ctx, start, 0, split)
+}
+
+// allocateIn reserves an index on the first list with room of lists
+// from up to to of the period starting at start.
+func (p *Provider) allocateIn(ctx context.Context, start int64, from, to int) (statuslist.StatusListRef, error) {
+	first := p.lists.firstWithRoom(start, from, to)
+	if first >= to {
+		return statuslist.StatusListRef{}, statuslist.ErrListsFull
+	}
+	ref, err := p.allocator(start, first, to).Allocate(ctx)
+	if err != nil {
+		return statuslist.StatusListRef{}, err
+	}
+	if _, n, ok := p.parseList(ref.URI); ok {
+		p.lists.filledBefore(start, from, n)
+	}
+	return ref, nil
+}
+
+// recent reports whether in was registered in the period starting at
+// start or the one before (Config.RecentInstanceStatusLists).
+func (p *Provider) recent(in Instance, start int64) bool {
+	return !in.CreatedAt.IsZero() && p.periodStart(in.CreatedAt) >= start-p.period()
 }
 
 // countIndex counts one more status list index taken by the instance
@@ -144,9 +191,11 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 // or not reserved for another reason than the lists being full
 // (uncountIndex), stays counted. A period earlier than the one the
 // instance counts in, from a process whose clock is behind, counts in
-// the later one.
-func (p *Provider) countIndex(ctx context.Context, id string, start int64) error {
-	return p.update(ctx, id, func(cur *Instance) error {
+// the later one. It reports whether the instance is recent (recent).
+func (p *Provider) countIndex(ctx context.Context, id string, start int64) (bool, error) {
+	recent := false
+	err := p.update(ctx, id, func(cur *Instance) error {
+		recent = p.recent(*cur, start)
 		if err := stateError(cur.State); err != nil {
 			return err
 		}
@@ -159,6 +208,7 @@ func (p *Provider) countIndex(ctx context.Context, id string, start int64) error
 		cur.IndicesInPeriod++
 		return nil
 	})
+	return recent, err
 }
 
 // uncountIndex gives back the count countIndex took in the period
@@ -185,9 +235,15 @@ type StatusListFill struct {
 	// Start and End are when the period starts and ends.
 	Start, End time.Time
 
-	// Lists are its MaxStatusListsPerPeriod lists, in the order they
-	// fill.
+	// Lists are its MaxStatusListsPerPeriod lists, in order. The keys of
+	// instances registered in the period or the one before take indices
+	// from the first RecentInstanceLists of them, one after another;
+	// other instances' keys from the rest, one after another, then from
+	// those first ones once the rest are full.
 	Lists []statuslist.ListFill
+
+	// RecentInstanceLists is Config.RecentInstanceStatusLists.
+	RecentInstanceLists int
 }
 
 // Free is how many more instance keys the period's lists take: an
@@ -200,50 +256,71 @@ func (f StatusListFill) Free() int {
 	return free
 }
 
+// RecentInstanceFree is how many more instance keys of instances
+// registered in the period or the one before the period's lists take:
+// an attestation for one more such key fails until End. Once it's zero
+// with Free well above it, recently registered instances, many of them,
+// have filled their share.
+func (f StatusListFill) RecentInstanceFree() int {
+	free := 0
+	for _, list := range f.Lists[:min(f.RecentInstanceLists, len(f.Lists))] {
+		free += list.Free()
+	}
+	return free
+}
+
 // StatusListFill reports how full the current period's status lists
 // are: they take every instance key first used, or used again, in the
 // period, and once they're full, a Wallet or Key Attestation for one
 // more fails until the next period, unless it's for a recorded key last
-// used in the previous period, which keeps that period's index. Compare Free with the instance keys
-// the rest of the period will use; if they won't fit, raise
-// Config.StatusListSize, which the next period's lists take. It counts
+// used in the previous period, which keeps that period's index; for a
+// recently registered instance's key, once the lists of its share are
+// full (RecentInstanceFree). Compare Free with the instance keys the
+// rest of the period will use; if they won't fit, raise
+// Config.StatusListSize, which the current period's lists take too. It counts
 // the reserved indices of every list of the period, so call it from
 // monitoring, not on each request.
 func (p *Provider) StatusListFill(ctx context.Context) (StatusListFill, error) {
 	start := p.periodStart(p.now())
-	lists, err := p.allocator(start, 0).Fill(ctx)
+	lists, err := p.allocator(start, 0, MaxStatusListsPerPeriod).Fill(ctx)
 	if err != nil {
 		return StatusListFill{}, fmt.Errorf("walletprovider: reading how full the status lists are: %w", err)
 	}
 	return StatusListFill{
 		Start: time.Unix(start, 0), End: time.Unix(start+p.period(), 0),
-		Lists: lists,
+		Lists: lists, RecentInstanceLists: p.cfg.RecentInstanceStatusLists,
 	}, nil
 }
 
-// firstWithRoom is the first list of the period starting at start that
-// isn't known to be full, so Allocate needn't count the reserved
-// indices of every list before it.
-func (l *statusLists) firstWithRoom(start int64) int {
+// firstWithRoom is the first of lists from up to to of the period
+// starting at start that isn't known to be full, or to if none is, so
+// Allocate needn't count the reserved indices of every list before it.
+func (l *statusLists) firstWithRoom(start int64, from, to int) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if start != l.fillStart {
-		return 0
+	n := from
+	if start == l.fillStart {
+		for n < to && l.full&(1<<n) != 0 {
+			n++
+		}
 	}
-	return l.fillFrom
+	return n
 }
 
 // filledBefore records that an index was reserved on list n of the
-// period starting at start: Allocate moves to a list only once those
-// before it are full, and a full list stays full.
-func (l *statusLists) filledBefore(start int64, n int) {
+// period starting at start by an Allocate over lists from on: it moves
+// to a list only once those before it are full, and a full list stays
+// full.
+func (l *statusLists) filledBefore(start int64, from, n int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if start > l.fillStart {
-		l.fillStart, l.fillFrom = start, 0
+		l.fillStart, l.full = start, 0
 	}
 	if start == l.fillStart {
-		l.fillFrom = max(l.fillFrom, n)
+		for i := from; i < n; i++ {
+			l.full |= 1 << i
+		}
 	}
 }
 
@@ -335,7 +412,7 @@ func (p *Provider) setStatus(ctx context.Context, ref statuslist.StatusListRef, 
 	if !ok || !p.served(start, now) {
 		return nil
 	}
-	if err := p.allocator(start, 0).SetStatus(ctx, ref, status); err != nil {
+	if err := p.allocator(start, 0, MaxStatusListsPerPeriod).SetStatus(ctx, ref, status); err != nil {
 		return fmt.Errorf("walletprovider: setting an instance key's status to %v: %w", status, err)
 	}
 	p.lists.invalidate(ref.URI)
@@ -356,9 +433,8 @@ const maxEmptyPeriods = 8
 // period stays in the IndexStore for good.
 //
 // It walks back from the period before the oldest one served, and
-// stops after maxEmptyPeriods periods in a row with no list: a
-// period's lists fill one after another, so one whose first list has
-// no index reserved has none. Run it periodically — daily, say — from
+// stops after maxEmptyPeriods periods in a row with no list, counting
+// the reserved indices of each of a period's lists. Run it periodically — daily, say — from
 // any instance; it's safe to run from several at once, or again after
 // a failure, which leaves what it didn't delete for the next run.
 //
@@ -427,28 +503,28 @@ func (p *Provider) retainUnretained(ctx context.Context) error {
 }
 
 // deleteLists deletes the lists of the period starting at start that
-// have an index reserved, and returns how many it deleted. It deletes
-// the last first, so should one fail, those before it, list 0 among
-// them, are still found next time.
+// have an index reserved, and returns how many it deleted. Each of
+// them is checked: a period's lists fill one after another within
+// each of Config.RecentInstanceStatusLists's two shares, which an
+// earlier configuration may have divided elsewhere. Should a Delete
+// fail, the lists not deleted still count their indices next time.
 func (p *Provider) deleteLists(ctx context.Context, start int64) (int, error) {
-	n := 0
-	for ; n < MaxStatusListsPerPeriod; n++ {
+	deleted := 0
+	for n := range MaxStatusListsPerPeriod {
 		uri := p.listURI(start, n)
 		reserved, err := p.deps.StatusIndices.Reserved(ctx, uri)
 		if err != nil {
-			return 0, fmt.Errorf("walletprovider: counting the reserved indices of %s: %w", uri, err)
+			return deleted, fmt.Errorf("walletprovider: counting the reserved indices of %s: %w", uri, err)
 		}
 		if reserved == 0 {
-			break
+			continue
 		}
-	}
-	for i := n - 1; i >= 0; i-- {
-		uri := p.listURI(start, i)
 		if err := p.deps.StatusIndices.Delete(ctx, uri); err != nil {
-			return n - 1 - i, fmt.Errorf("walletprovider: deleting the status list %s: %w", uri, err)
+			return deleted, fmt.Errorf("walletprovider: deleting the status list %s: %w", uri, err)
 		}
+		deleted++
 	}
-	return n, nil
+	return deleted, nil
 }
 
 // StatusLists serves the provider's status lists: an http.Handler to
@@ -507,7 +583,7 @@ func (p *Provider) publisher(ctx context.Context, startText, nText string) (*sta
 	}
 	return p.lists.add(uri, servedList{start: start, pub: &statuslist.Publisher{
 		URI: uri, Signer: p.deps.Signer, Chain: p.deps.Chain,
-		Statuses: p.allocator(start, 0).Statuses(uri), Bits: statuslist.Bits2,
+		Statuses: p.allocator(start, 0, MaxStatusListsPerPeriod).Statuses(uri), Bits: statuslist.Bits2,
 		Lifetime: p.cfg.StatusListLifetime, TTL: p.cfg.StatusListTTL, Now: p.now,
 		Tokens: p.deps.StatusListTokens,
 	}}, func(start int64) bool { return p.served(start, now) }), true, nil

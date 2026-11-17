@@ -478,6 +478,56 @@ a key moves to a later period's lists, its old index is kept as
 only when it's the previous period's, so `Suspend`, `Resume` and
 `Revoke` set an index two periods back too.
 
+### Status list capacity (`walletprovider`)
+
+`DefaultStatusListSize` is now 2^20, up from 2^16: a period's lists
+hold about 33.5M instance keys, not 2.1M. A provider that leaves
+`Config.StatusListSize` zero takes the new size as soon as it starts,
+for the lists of the current period too, which grow: their indices
+handed out stay where they are, and the lists are published at the
+new size. While a rolling upgrade runs, a replica still on the old
+size can't publish a list in which a new one handed out an index past
+2^16 (HTTP 500 for that list), nor set that index's status, so roll
+out quickly, or set
+`StatusListSize: 1 << 16` for the upgrade and raise it in a later
+rollout. Never lower it below an index a served list holds. A list of
+2^20 two-bit statuses packs to 256 KiB, within a Relying Party's
+default 1 MiB token limit whatever its statuses; an issuer's
+`statuslist.Cache` keeps 256 KiB for each of the provider's lists it
+reads, so 128 of them take half its default 64 MiB `MaxBytes`.
+
+### Recently registered instances take a share of the status lists (`walletprovider`)
+
+The keys of an instance registered in the current or previous status
+list period (`Instance.CreatedAt`) now take indices from the period's
+first `Config.RecentInstanceStatusLists` lists alone: 16 of the 64 by
+default (`DefaultRecentInstanceStatusLists`). Other instances' keys
+take indices from the other lists first, list 16 onwards by default,
+and from those 16 only once the others are full. Many instances
+registered at once can then fill no more than that share of a period,
+where they used to be able to fill every list and have every other
+wallet's attestations refused until the period ended.
+
+- Once the share is full, a recent instance's new instance key is
+  refused until the next period as on full lists (HTTP 500
+  `server_error`, wrapping `statuslist.ErrListsFull`), logged at warn
+  as "the status lists of the current period that recently registered
+  instances take indices from are full". Its recorded key on the
+  previous period's lists keeps its index, as on full lists. Nothing
+  is revoked or forgotten.
+- `StatusListFill` has a new `RecentInstanceLists` field and a
+  `RecentInstanceFree` method; `Lists` are in list order. Alert on
+  `RecentInstanceFree` falling fast early in a period (DEPLOYING.md).
+- Established wallets' attestations now name list 16 or later, so an
+  issuer fetches at least two of the provider's lists, and the list's
+  number tells it whether the instance was registered in the last
+  period or two.
+- `SweepStatusLists` now counts every list of a period, not up to the
+  first empty one.
+- Raise `RecentInstanceStatusLists` for a launch that registers most
+  of your fleet within a period or two; `MaxStatusListsPerPeriod` turns
+  the share off.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

@@ -32,7 +32,7 @@ const (
 	// attested keys expire too).
 	DefaultKeyAttestationTTL  = 2 * time.Hour
 	DefaultChallengeTTL       = 5 * time.Minute
-	DefaultStatusListSize     = 1 << 16
+	DefaultStatusListSize     = 1 << 20
 	DefaultStatusListPeriod   = 7 * 24 * time.Hour
 	DefaultStatusListLifetime = time.Hour
 	DefaultStatusListTTL      = 5 * time.Minute
@@ -43,6 +43,10 @@ const (
 	// default: room for a wallet issuing or refreshing a credential
 	// every hour or two through a week-long period.
 	DefaultMaxInstanceKeysPerPeriod = 128
+	// DefaultRecentInstanceStatusLists is
+	// Config.RecentInstanceStatusLists's default: a quarter of a
+	// period's lists.
+	DefaultRecentInstanceStatusLists = MaxStatusListsPerPeriod / 4
 )
 
 // Upper bounds New enforces on Config's durations.
@@ -73,7 +77,8 @@ const (
 )
 
 // MaxStatusListsPerPeriod is how many status lists a period has, each
-// of Config.StatusListSize indices, filled one after another.
+// of Config.StatusListSize indices, filled one after another within
+// the two shares Config.RecentInstanceStatusLists divides them into.
 const MaxStatusListsPerPeriod = 64
 
 // Config is a Provider's configuration.
@@ -124,12 +129,17 @@ type Config struct {
 	// size it for the instance keys used in a period. Every issuance
 	// uses a new instance key, and a key used again in a later period
 	// takes an index there too, so a period needs about the fleet's
-	// issuances and refreshes in that period. The default holds 64 ×
-	// 2^16/2 ≈ 2.1M a period (a week); 5M wallets each issuing or
-	// refreshing twice a week use about 10M, so need StatusListSize
-	// 2^19 or more (64 × 2^19/2 ≈ 16.8M). It may be raised
-	// at any time, but not lowered while a served list holds an index
-	// past the new size: that list can't be published until it retires.
+	// issuances and refreshes in that period. The default, 2^20, holds
+	// 64 × 2^20/2 ≈ 33.5M a period (a week): 5M wallets each issuing or
+	// refreshing twice a week use about 10M, which leaves a margin of
+	// about three times against many instances filling the lists
+	// (MaxInstanceKeysPerPeriod). A list of 2^20 two-bit statuses packs
+	// to 256 KiB, so its token stays within a Relying Party's default
+	// limit (statuslist.DefaultMaxTokenBytes) whatever its statuses; its
+	// store holds a row per index handed out, not per index. It may be
+	// raised at any time, the lists of the current period growing with
+	// it, but not lowered while a served list holds an index past the
+	// new size: that list can't be published until it retires.
 	StatusListSize int
 
 	// MaxInstanceKeysPerPeriod bounds the status list indices one
@@ -147,8 +157,10 @@ type Config struct {
 	// fill. It bounds one instance, not someone holding many: each
 	// instance costs one piece of registration evidence, and its
 	// recorded keys move to each new period's lists without any, so
-	// enough instances can fill a period's lists between them. Size
-	// StatusListSize with that margin, and watch StatusListFill. A
+	// enough instances can fill a period's lists between them.
+	// RecentInstanceStatusLists keeps instances registered lately to a
+	// share of the lists; size StatusListSize with a margin against
+	// older ones, and watch StatusListFill. A
 	// recorded key last used in the previous period keeps its index
 	// there once the current period's lists are full, taking none of
 	// this bound, so a wallet that moved its keys in the previous period
@@ -158,6 +170,28 @@ type Config struct {
 	// refuse established wallets too from the second full period on.
 	// Zero means DefaultMaxInstanceKeysPerPeriod.
 	MaxInstanceKeysPerPeriod int
+
+	// RecentInstanceStatusLists is how many of a period's
+	// MaxStatusListsPerPeriod lists, from the first, the instance keys
+	// of an instance registered in the current or previous period
+	// (Instance.CreatedAt) take indices from: a quarter of the period's
+	// capacity by default. Other instances' keys take indices from the
+	// rest first, and from these only once the rest are full. So
+	// instances registered in a burst, each costing a piece of
+	// registration evidence, can fill no more than this share of a
+	// period's lists between them, and leave the rest to the wallets
+	// registered before. Once the share is full, a Wallet Attestation
+	// for a recent instance's new instance key fails until the next
+	// period, as one does when every list is full: answered HTTP 500
+	// server_error, and logged as the recent instances' share being
+	// full; a recorded key on the previous period's lists keeps its
+	// index there, as on full lists. Nothing is revoked or forgotten.
+	// A list's number tells a Relying Party whether the instance was
+	// registered in the last period or two, no more. Zero means
+	// DefaultRecentInstanceStatusLists; MaxStatusListsPerPeriod turns
+	// the share off, every instance taking indices from every list in
+	// turn.
+	RecentInstanceStatusLists int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
 	// Token's lifetime (exp) and the time a Relying Party may cache it
@@ -359,6 +393,9 @@ func (c Config) withDefaults() Config {
 	if c.MaxInstanceKeysPerPeriod == 0 {
 		c.MaxInstanceKeysPerPeriod = DefaultMaxInstanceKeysPerPeriod
 	}
+	if c.RecentInstanceStatusLists == 0 {
+		c.RecentInstanceStatusLists = DefaultRecentInstanceStatusLists
+	}
 	return c
 }
 
@@ -400,8 +437,8 @@ func (c Config) validateIdentifiers() error {
 }
 
 // validateLimits refuses c's attestation and challenge TTLs, status
-// list size and MaxInstanceKeysPerPeriod unless each is within its
-// bounds.
+// list size, MaxInstanceKeysPerPeriod and RecentInstanceStatusLists
+// unless each is within its bounds.
 func (c Config) validateLimits() error {
 	for name, d := range map[string]time.Duration{"WalletAttestationTTL": c.WalletAttestationTTL, "KeyAttestationTTL": c.KeyAttestationTTL} {
 		if d < time.Minute || d > MaxAttestationTTL {
@@ -416,6 +453,9 @@ func (c Config) validateLimits() error {
 	}
 	if c.MaxInstanceKeysPerPeriod < 0 {
 		return fmt.Errorf("MaxInstanceKeysPerPeriod is %d, not positive", c.MaxInstanceKeysPerPeriod)
+	}
+	if c.RecentInstanceStatusLists < 0 || c.RecentInstanceStatusLists > MaxStatusListsPerPeriod {
+		return fmt.Errorf("RecentInstanceStatusLists is %d, not between 1 and MaxStatusListsPerPeriod (%d)", c.RecentInstanceStatusLists, MaxStatusListsPerPeriod)
 	}
 	return nil
 }

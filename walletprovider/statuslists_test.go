@@ -59,13 +59,14 @@ func TestStatusListRotation(t *testing.T) {
 
 	// Two periods on: the old index's list is still served, and an
 	// attestation may name it (a key that kept it while the lists were
-	// full), so it's kept too.
+	// full), so it's kept too. The instance, registered three periods
+	// back, takes indices from the established instances' lists.
 	h.toNextPeriod()
 	h.toNextPeriod()
 	ref = walletAttestation()
 	twice := h.instanceKey(&key.PublicKey)
-	if ref != twice.Status || twice.Status.URI != listURI(h.periodStart(), 0) || twice.PreviousStatus != moved.Status {
-		t.Fatalf("two periods on, status %+v, record %+v; want on %s, previous %+v", ref, twice, listURI(h.periodStart(), 0), moved.Status)
+	if ref != twice.Status || twice.Status.URI != listURI(h.periodStart(), establishedList) || twice.PreviousStatus != moved.Status {
+		t.Fatalf("two periods on, status %+v, record %+v; want on %s, previous %+v", ref, twice, listURI(h.periodStart(), establishedList), moved.Status)
 	}
 
 	// Three periods on: nothing names the old indices any more.
@@ -74,8 +75,8 @@ func TestStatusListRotation(t *testing.T) {
 	h.toNextPeriod()
 	ref = walletAttestation()
 	again := h.instanceKey(&key.PublicKey)
-	if ref != again.Status || again.Status.URI != listURI(h.periodStart(), 0) || again.PreviousStatus != (statuslist.StatusListRef{}) {
-		t.Fatalf("three periods on, status %+v, record %+v; want on %s, no previous", ref, again, listURI(h.periodStart(), 0))
+	if ref != again.Status || again.Status.URI != listURI(h.periodStart(), establishedList) || again.PreviousStatus != (statuslist.StatusListRef{}) {
+		t.Fatalf("three periods on, status %+v, record %+v; want on %s, no previous", ref, again, listURI(h.periodStart(), establishedList))
 	}
 
 	// A Key Attestation moves the key too.
@@ -86,7 +87,7 @@ func TestStatusListRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ka := h.instanceKey(&key.PublicKey)
-	if ka.Status.URI != listURI(h.periodStart(), 0) || ka.PreviousStatus != again.Status {
+	if ka.Status.URI != listURI(h.periodStart(), establishedList) || ka.PreviousStatus != again.Status {
 		t.Fatalf("after a Key Attestation in a new period, record %+v", ka)
 	}
 	h.verifyKeyAttestation(res, ka.Status, &holder.PublicKey)

@@ -35,8 +35,8 @@ func ExampleNew() {
 	p, err := walletprovider.New(walletprovider.Config{
 		Identifier: "https://wallet-provider.example.com", ClientIDs: []string{"https://wallet.example.com"},
 		StatusListBaseURI: "https://wallet-provider.example.com/statuslists",
-		// 64 lists × 2^19/2 ≈ 16.8M instance keys used a week.
-		StatusListSize: 1 << 19,
+		// StatusListSize's default, 2^20, holds 64 × 2^20/2 ≈ 33.5M
+		// instance keys used a week.
 		Policy: walletprovider.Policy{Platforms: map[walletprovider.Platform]walletprovider.PlatformPolicy{
 			walletprovider.PlatformAndroid: {
 				SecurityLevels:      []walletprovider.SecurityLevel{walletprovider.SecurityLevelStrongBox, walletprovider.SecurityLevelTEE},
@@ -60,12 +60,14 @@ func ExampleNew() {
 	// Daily, from any instance: p.SweepStatusLists, then sqlstore's
 	// DB.Sweep deletes instance keys past their retention.
 
-	// From monitoring, every few minutes: raise StatusListSize for the
-	// next period before Free runs out, as an attestation for one more
-	// instance key fails until End.
+	// From monitoring, every few minutes: raise StatusListSize before
+	// Free runs out, as an attestation for one more instance key fails
+	// until End, and alert on RecentInstanceFree falling fast early in
+	// a period: many instances registered at once.
 	fill, err := p.StatusListFill(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("room for %d more instance keys until %s", fill.Free(), fill.End)
+	log.Printf("room for %d more instance keys until %s, %d of them for recently registered instances",
+		fill.Free(), fill.End, fill.RecentInstanceFree())
 }

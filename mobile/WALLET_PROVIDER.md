@@ -129,7 +129,7 @@ Clients decide on `error` and the status code, never the description.
 | 403 | `instance_revoked` | The instance is revoked, for good: register a new one. |
 | 403 | `no_key_attested` | None of the holder keys could be attested. |
 | 429 | `too_many_instance_keys` | The instance's instance keys have used up this status list period's allowance: a Wallet Attestation for a new instance key, or for a recorded one not yet used this period, is refused until the next period. Instance keys already used this period are still attested, as is one that keeps its previous period's index while the period's status lists are full, which takes none of the allowance. |
-| 500 | `server_error` | The provider couldn't answer. |
+| 500 | `server_error` | The provider couldn't answer — among other reasons, because the current period's status lists are full, or, for an instance registered in the current or previous period, the share of them such instances may use: a Wallet Attestation for a new instance key then fails until the next period. Nothing is revoked or forgotten. |
 | 503 | `server_error` | The provider can't decide for now — it couldn't get something it needs to judge the evidence, such as Google's attestation status list for an Android chain — and neither accepts nor refuses it. It carries `Retry-After` (seconds): try again then, with a new challenge. Not a verdict on the evidence or the instance. |
 
 A path or method the protocol doesn't define gets the HTTP server's own

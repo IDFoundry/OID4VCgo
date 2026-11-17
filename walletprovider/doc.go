@@ -115,7 +115,11 @@
 // default): each period has up to MaxStatusListsPerPeriod lists of
 // Config.StatusListSize indices, at Config.StatusListBaseURI/{start}/{n},
 // filled one after another, and every attestation names an index on a
-// list of the current period. An instance key used in a later period
+// list of the current period. The keys of instances registered in the
+// current or previous period take indices from the first
+// Config.RecentInstanceStatusLists lists alone, a quarter by default,
+// so that instances registered in a burst can't fill the lists the
+// wallets registered before need. An instance key used in a later period
 // than its index's gets a fresh index there first, keeping its old one,
 // while that list is served, as InstanceKey.PreviousStatus, since an
 // attestation naming it may still be live; an attestation outlives its
@@ -134,7 +138,8 @@
 // them. Size Config.StatusListSize for the instance keys used in a
 // period, and watch Provider.StatusListFill, how many more the current
 // period's lists take; Config.MaxInstanceKeysPerPeriod bounds how many
-// of them one instance's keys take. With Dependencies.StatusListTokens, the replicas serving the
+// of them one instance's keys take, and Config.RecentInstanceStatusLists
+// how many recently registered instances' keys take between them. With Dependencies.StatusListTokens, the replicas serving the
 // lists share their tokens: one signs a list's token at a time, and a
 // status change is served by every replica from its next check.
 //

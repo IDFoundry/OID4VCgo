@@ -143,7 +143,7 @@ func TestDeletedInstanceKeyIsNew(t *testing.T) {
 		t.Fatalf("a Wallet Attestation for a deleted key with evidence: %v", err)
 	}
 	again := h.instanceKey(&key.PublicKey)
-	if again.Revision != 1 || again.Status.URI != listURI(h.periodStart(), 0) || again.Status == old.Status ||
+	if again.Revision != 1 || again.Status.URI != listURI(h.periodStart(), establishedList) || again.Status == old.Status ||
 		again.PreviousStatus != (statuslist.StatusListRef{}) || !again.RetainUntil.Equal(time.Unix(h.periodStart(), 0).Add(3*h.period())) {
 		t.Fatalf("recorded again as %+v; was %+v", again, old)
 	}
@@ -196,6 +196,9 @@ func TestSweepStatusLists(t *testing.T) {
 	cur, p := h.periodStart(), int64(h.period()/time.Second)
 	// The key's list is list 0 of the oldest period not served.
 	h.reserveOn(cur-3*p, 1, 2)
+	// Only an established instance's list: a period's lists aren't all
+	// filled from list 0.
+	h.reserveOn(cur-4*p, establishedList)
 	h.reserveOn(cur-5*p, 0)
 	h.reserveOn(cur-13*p, 0) // after seven empty periods
 	h.reserveOn(cur-22*p, 0) // after eight: not reached
@@ -203,11 +206,12 @@ func TestSweepStatusLists(t *testing.T) {
 	h.reserveOn(cur, 0)
 	h.reserveOn(cur+p, 0)
 
-	h.sweep(5)
+	h.sweep(6)
 	for _, start := range []int64{cur - 3*p, cur - 5*p, cur - 13*p} {
 		h.expectReserved(start, 0, 0)
 	}
 	h.expectReserved(cur-3*p, 2, 0)
+	h.expectReserved(cur-4*p, establishedList, 0)
 	for _, start := range []int64{cur - 22*p, cur - 2*p, cur, cur + p} {
 		h.expectReserved(start, 0, 1)
 	}
@@ -216,7 +220,7 @@ func TestSweepStatusLists(t *testing.T) {
 	if _, err := h.walletAttestation(in.ID, &key.PublicKey, ""); err != nil {
 		t.Fatalf("a Wallet Attestation for a key on a deleted list: %v", err)
 	}
-	if ik := h.instanceKey(&key.PublicKey); ik.Status.URI != listURI(cur, 0) || ik.PreviousStatus != (statuslist.StatusListRef{}) {
+	if ik := h.instanceKey(&key.PublicKey); ik.Status.URI != listURI(cur, establishedList) || ik.PreviousStatus != (statuslist.StatusListRef{}) {
 		t.Fatalf("a key on a deleted list moved to %+v", ik)
 	}
 	if err := h.p.Revoke(ctx, in.ID, "lost"); err != nil {
@@ -241,7 +245,7 @@ func (s *failingDelete) Delete(ctx context.Context, uri string) error {
 }
 
 // TestSweepStatusListsResumes: a sweep that fails part-way through a
-// period's lists leaves the rest, list 0 among them, for the next one.
+// period's lists leaves the rest for the next one.
 func TestSweepStatusListsResumes(t *testing.T) {
 	store := &failingDelete{}
 	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
@@ -254,12 +258,12 @@ func TestSweepStatusListsResumes(t *testing.T) {
 	if n, err := h.p.SweepStatusLists(context.Background()); err == nil || n != 1 {
 		t.Fatalf("SweepStatusLists with a failing Delete = %d, %v; want 1 and an error", n, err)
 	}
-	h.expectReserved(start, 0, 1)
-	h.expectReserved(start, 1, 1)
-	h.expectReserved(start, 2, 0)
-	h.sweep(2)
 	h.expectReserved(start, 0, 0)
+	h.expectReserved(start, 1, 1)
+	h.expectReserved(start, 2, 1)
+	h.sweep(2)
 	h.expectReserved(start, 1, 0)
+	h.expectReserved(start, 2, 0)
 }
 
 // sweptOnUpdate is an InstanceKeyStore whose records are swept once

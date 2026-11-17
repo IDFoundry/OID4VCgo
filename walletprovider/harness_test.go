@@ -417,3 +417,7 @@ func (h *harness) toNextPeriod() {
 func listURI(start int64, n int) string {
 	return statusBase + "/" + strconv.FormatInt(start, 10) + "/" + strconv.Itoa(n)
 }
+
+// establishedList is the first list an instance registered before the
+// previous period takes indices from, by default.
+const establishedList = walletprovider.DefaultRecentInstanceStatusLists

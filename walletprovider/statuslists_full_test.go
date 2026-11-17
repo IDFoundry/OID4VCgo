@@ -14,10 +14,12 @@ import (
 const fullListsPerInstance = 4
 
 // smallStatusLists gives a period's lists 256 indices between them, and
-// each instance fullListsPerInstance of them.
+// each instance fullListsPerInstance of them. Recent instances take
+// indices from every list, so new ones can fill them.
 func smallStatusLists(cfg *walletprovider.Config, _ *walletprovider.Dependencies) {
 	cfg.StatusListSize = 8 // 64 lists × 8/2: 256 indices a period
 	cfg.MaxInstanceKeysPerPeriod = fullListsPerInstance
+	cfg.RecentInstanceStatusLists = walletprovider.MaxStatusListsPerPeriod
 }
 
 // fillStatusLists fills the current period's lists of a

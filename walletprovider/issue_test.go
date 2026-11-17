@@ -246,9 +246,10 @@ func withEvidence(t *testing.T, h *harness, kind string, purpose walletprovider.
 // until every one of them is full.
 func TestStatusIndexPerInstanceKey(t *testing.T) {
 	// Four entries a list, of which half are handed out, all to one
-	// instance.
+	// instance, which every list takes indices for.
 	h := newHarness(t, func(c *walletprovider.Config, _ *walletprovider.Dependencies) {
 		c.StatusListSize, c.MaxInstanceKeysPerPeriod = 4, 1000
+		c.RecentInstanceStatusLists = walletprovider.MaxStatusListsPerPeriod
 	})
 	in, _ := h.register(kindStrongBox)
 	if n, err := h.deps.StatusIndices.Reserved(context.Background(), listURI(h.periodStart(), 0)); err != nil || n != 0 {
