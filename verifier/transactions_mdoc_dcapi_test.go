@@ -743,6 +743,23 @@ func TestTransactions_MdocDCAPIQueryChangedInTheStore(t *testing.T) {
 	}
 }
 
+// A sealed org-iso-mdoc record stripped of its sealed response
+// decryption key, which a store writer without the sealing key can do,
+// opens with nothing checked: its answer is refused as the Verifier's
+// own fault, before the missing key is used to decrypt it.
+func TestTransactions_MdocDCAPIRecordWithoutItsKey(t *testing.T) {
+	ctx := context.Background()
+	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
+	f := newMdocTxFixture(t, mdocTxOptions{store: store})
+	begun := f.begin(testBinding)
+	setRow(t, store, begun.ID, func(row map[string]any) { delete(row, "response_decryption_key") })
+	_, err := f.txs.HandleMdocDCAPIResponse(ctx, begun.ID, testBinding, f.answer(begun, dcapiOrigin))
+	var verr *verifier.Error
+	if err == nil || errors.As(err, &verr) || !strings.Contains(err.Error(), "no response decryption key") {
+		t.Errorf("an answer to a record without its key: %v, want the record refused as the Verifier's own fault", err)
+	}
+}
+
 // A refusal repeated — a flood of unauthenticated answers — is written
 // to the store once, while each different one is still recorded, and
 // OnRefused still sees every one.
