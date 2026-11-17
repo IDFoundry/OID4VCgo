@@ -67,10 +67,17 @@ const transactionCodecV1 = 1
 // fields — to have the Verifier hand the result to someone else,
 // reopen a completed request, or keep one answerable past its expiry:
 // the record no longer opens. Each write seals the fields again, bound
-// to the status the transaction then has. They can still change its
-// response_code hash or last error, delete it, or put back an older
-// copy whole (the pending one in place of the completed one, say), so
-// the store must still be trusted for those. Version 1 records, which
+// to the status the transaction then has. The Request Object served at
+// the request's request_uri is signed from those bound fields for each
+// fetch (Transactions.RequestObject), never served from the record.
+//
+// What the seal leaves unbound, the store must still be trusted for.
+// Someone who can write to it can change the record's response_code
+// hash, last error, retain_until (so have it deleted sooner, or kept
+// longer) and request_object (which Transactions no longer serves, and
+// writes only for replicas running OID4VCgo v0.81.0 or earlier, which
+// do); delete the record; or put back an older copy whole (the pending
+// one in place of the completed one, say). Version 1 records, which
 // OID4VCgo v0.75.3 and earlier wrote, bound neither kid, nonce, state,
 // status nor expiry; they still open, and are written back as version 2.
 //
@@ -293,17 +300,10 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // store can't reopen a completed request, extend one's expiry, or swap
 // its nonce, state or kid. A version 1 record's is the array alone.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(query))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, fmt.Errorf("query: %w", err)
-	}
-	canonical, err := json.Marshal(v)
+	queryHash, err := canonicalQueryHash(query, true)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
-	queryHash := sha256.Sum256(canonical)
 	bound := []any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]}
 	if w.MdocEncryptionInfo != "" {
 		bound = append(bound, w.MdocEncryptionInfo)
@@ -322,6 +322,28 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 		Status    TransactionStatus `json:"status"`
 		ExpiresAt string            `json:"expires_at"`
 	}{bound, w.KeyID, w.State, w.Nonce, w.Status, w.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+}
+
+// canonicalQueryHash is SHA-256 of query, a DCQL query's JSON, in a
+// canonical form: decoded and encoded again with its object members
+// sorted, so JSON a store reformats hashes alike. With exactNumbers,
+// numbers are kept as written; without, they're decoded as float64, as
+// dcql.Query decodes a values filter's, so a query and its copy read
+// back through JSON hash alike.
+func canonicalQueryHash(query []byte, exactNumbers bool) ([32]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(query))
+	if exactNumbers {
+		dec.UseNumber()
+	}
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return [32]byte{}, err
+	}
+	canonical, err := json.Marshal(v)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(canonical), nil
 }
 
 // sealAD binds a sealed field to its name and to bound (sealBinding).

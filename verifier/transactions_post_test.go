@@ -145,8 +145,11 @@ func TestTransactions_RequestURIPost(t *testing.T) {
 		f.parse(begun, body, nonce) // the wallet's §5.10.1 check
 		answered = body
 	}
-	if status, _, body := f.fetch(http.MethodGet, begun.ID, "", ""); status != http.StatusOK || body != getObject {
-		t.Errorf("GET of a POST-enabled request: %d, the GET object %v", status, body == getObject)
+	// Each GET is signed afresh, so it's the same claims, not the same bytes.
+	if status, _, body := f.fetch(http.MethodGet, begun.ID, "", ""); status != http.StatusOK {
+		t.Errorf("GET of a POST-enabled request: %d", status)
+	} else if !reflect.DeepEqual(requestObjectClaims(t, body), get) {
+		t.Error("GET of a POST-enabled request: not the GET object's claims")
 	}
 	if status, _, body := f.fetch(http.MethodPost, begun.ID, "", ""); status != http.StatusOK || requestObjectClaims(t, body)["wallet_nonce"] != nil {
 		t.Errorf("POST without wallet_nonce: %d, wallet_nonce %v", status, requestObjectClaims(t, body)["wallet_nonce"])
