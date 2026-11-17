@@ -123,13 +123,12 @@ func TestParseDCAPIRequestData_HonoursContext(t *testing.T) {
 		"unsigned":     {Protocol: wallet.DCAPIProtocolUnsigned, Data: f.unsigned(t, nil)},
 		"multi-signed": {Protocol: wallet.DCAPIProtocolMultiSigned, Data: f.multiSigned(t, nil, signer{key: f.key, cert: f.cert}), VerifierTrust: f.trust},
 	} {
-		params.Origin, params.Context = testDCAPIOrigin, ctx
-		_, err := wallet.ParseDCAPIRequestData(params)
+		params.Origin = testDCAPIOrigin
+		_, err := wallet.ParseDCAPIRequestDataContext(ctx, params)
 		var rejected *wallet.RequestRejectedError
 		if !errors.Is(err, context.Canceled) || errors.As(err, &rejected) {
 			t.Errorf("%s: err = %v, want context.Canceled", name, err)
 		}
-		params.Context = nil
 		if _, err := wallet.ParseDCAPIRequestData(params); err != nil {
 			t.Errorf("%s, no context: %v", name, err)
 		}

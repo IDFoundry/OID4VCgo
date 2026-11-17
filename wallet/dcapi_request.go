@@ -45,10 +45,6 @@ type ParseDCAPIRequestParams struct {
 	// Now is the time a signed request's exp and nbf are checked at;
 	// nil means time.Now.
 	Now func() time.Time
-
-	// Context, when set, ends the parse early once it's done: the
-	// parse refuses with its error. nil means context.Background().
-	Context context.Context
 }
 
 // ParseDCAPIRequest verifies a signed OpenID4VP request delivered
@@ -84,10 +80,15 @@ type ParseDCAPIRequestParams struct {
 // Prefer (*Wallet).ParseDCAPIRequest, which uses Config.VerifierTrust,
 // so AssuranceProduction's refusal of NoVerifierTrust applies.
 func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, error) {
+	return ParseDCAPIRequestContext(context.Background(), params)
+}
+
+// ParseDCAPIRequestContext is ParseDCAPIRequest ended early, with ctx's
+// error, once ctx is done.
+func ParseDCAPIRequestContext(ctx context.Context, params ParseDCAPIRequestParams) (AuthorizationRequest, error) {
 	if params.Origin == "" {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Origin is required")
 	}
-	ctx := contextOrBackground(params.Context)
 	if err := ctx.Err(); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
@@ -106,14 +107,6 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
 	return finishDCAPIRequest(ctx, wire, params.Origin, cert, wire.ClientID, true)
-}
-
-// contextOrBackground is ctx, or context.Background() when it's nil.
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }
 
 // finishDCAPIRequest checks what every DC API request must carry and
@@ -264,12 +257,6 @@ type ParseDCAPIRequestDataParams struct {
 	// Now is the time a signed request's exp and nbf are checked at;
 	// nil means time.Now.
 	Now func() time.Time
-
-	// Context, when set, ends the parse early once it's done: the
-	// parse refuses with its error, checked between a multi-signed
-	// request's signatures and before its query is prepared. nil means
-	// context.Background().
-	Context context.Context
 }
 
 // ParseDCAPIRequestData parses an OpenID4VP request delivered through
@@ -301,13 +288,19 @@ type ParseDCAPIRequestDataParams struct {
 // way; the presentations are bound to "origin:" + Origin in every form
 // (Appendix A.4).
 func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
+	return ParseDCAPIRequestDataContext(context.Background(), params)
+}
+
+// ParseDCAPIRequestDataContext is ParseDCAPIRequestData ended early, with
+// ctx's error, once ctx is done: it's checked between a multi-signed
+// request's signatures and before the request's query is prepared.
+func ParseDCAPIRequestDataContext(ctx context.Context, params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
 	if params.Origin == "" {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Origin is required")
 	}
 	if len(params.Data) > MaxDCAPIRequestBytes {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data is %d bytes, more than %d", len(params.Data), MaxDCAPIRequestBytes)
 	}
-	ctx := contextOrBackground(params.Context)
 	if err := ctx.Err(); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
@@ -322,9 +315,8 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 		if data.Request == "" {
 			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
 		}
-		return ParseDCAPIRequest(ParseDCAPIRequestParams{
+		return ParseDCAPIRequestContext(ctx, ParseDCAPIRequestParams{
 			Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, AcceptX509SANDNS: params.AcceptX509SANDNS, Now: params.Now,
-			Context: ctx,
 		})
 	case DCAPIProtocolMultiSigned:
 		return parseMultiSignedDCAPIRequest(ctx, params)
@@ -420,7 +412,7 @@ func (w *Wallet) ParseDCAPIRequestData(protocol string, data []byte, origin stri
 }
 
 // ParseDCAPIRequestDataContext is ParseDCAPIRequestData ended early, with
-// ctx's error, once ctx is done (ParseDCAPIRequestDataParams.Context).
+// ctx's error, once ctx is done.
 func (w *Wallet) ParseDCAPIRequestDataContext(ctx context.Context, protocol string, data []byte, origin string) (AuthorizationRequest, error) {
 	if protocol == DCAPIProtocolUnsigned && w.cfg.RequireSignedDCAPIRequests {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w: unsigned requests are refused (Config.RequireSignedDCAPIRequests)", ErrUntrustedVerifier)
@@ -428,8 +420,7 @@ func (w *Wallet) ParseDCAPIRequestDataContext(ctx context.Context, protocol stri
 	if protocol != DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Config.VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
-	return ParseDCAPIRequestData(ParseDCAPIRequestDataParams{
+	return ParseDCAPIRequestDataContext(ctx, ParseDCAPIRequestDataParams{
 		Protocol: protocol, Data: data, Origin: origin, VerifierTrust: w.cfg.VerifierTrust, AcceptX509SANDNS: w.cfg.AcceptX509SANDNS, Now: w.deps.Clock.Now,
-		Context: ctx,
 	})
 }
