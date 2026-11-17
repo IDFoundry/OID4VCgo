@@ -813,9 +813,11 @@ func (c Config) checkRevocationChosen() error {
 // every leaf, for pools that anchor only their own role's certificates
 // (verifier.AnyIssuerLeaf, registration.AnyRegistrarLeaf,
 // proximity.AnyDocumentSigner, issuer.AnyAttestationLeaf,
-// statuslist.AnyListSigner, identifierlist.AnyListSigner).
-// mdoc.DefaultDocumentSignerPolicy, which requires the mDL document
-// signer's extended key usage, does count. They're recognised as those
+// statuslist.AnyListSigner, identifierlist.AnyListSigner), and
+// mdoc.LenientDocumentSignerPolicy, which accepts any certificate
+// without an extended key usage. mdoc.DefaultDocumentSignerPolicy,
+// which requires the mDL document signer's extended key usage, does
+// count. They're recognised as those
 // functions themselves: a closure or function wrapping one, or an
 // application's own policy that accepts as much, counts as one that
 // separates roles, so don't set one on a pool that shares an anchor
@@ -824,7 +826,10 @@ func (c Config) checkRevocationChosen() error {
 // The credential issuers' pools, IssuerRoots and the mdoc ones, are
 // one role: an ecosystem's CA may certify both its SD-JWT VC issuers
 // and its document signers, and what tells those apart is their leaf
-// policies, not their anchors.
+// policies, not their anchors. With MdocIssuerRoots unset and
+// MdocIssuerLeafPolicy set, mdocs are received under IssuerRoots with
+// MdocIssuerLeafPolicy, so that pair is checked against the other
+// roles as well as IssuerRoots with IssuerLeafPolicy.
 func checkRoleSeparation(c Config) error {
 	roles := []trustRole{
 		{"IssuerRoots", c.IssuerRoots, certchain.SeparatesRoles(c.IssuerLeafPolicy), roleIssuer},
@@ -832,6 +837,12 @@ func checkRoleSeparation(c Config) error {
 		{"IssuerMetadataRoots", c.IssuerMetadataRoots, certchain.SeparatesRoles(c.IssuerMetadataLeafPolicy), ""},
 		{"RegistrarRoots", c.RegistrarRoots, certchain.SeparatesRoles(c.RegistrarLeafPolicy), ""},
 		{"MdocReaderRoots", c.MdocReaderRoots, certchain.SeparatesRoles(c.MdocReaderLeafPolicy), ""},
+	}
+	if c.MdocIssuerRoots == nil && c.MdocIssuerLeafPolicy != nil {
+		// Then mdocs are received under IssuerRoots, checked with
+		// MdocIssuerLeafPolicy (issuerTrust): that pair must be told
+		// apart from the other roles too, beside IssuerRoots' own.
+		roles = append(roles, trustRole{"IssuerRoots for mdocs (MdocIssuerLeafPolicy)", c.IssuerRoots, certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
 	}
 	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
 		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})

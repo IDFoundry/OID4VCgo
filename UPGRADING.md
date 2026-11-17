@@ -50,6 +50,21 @@ store, `sqlstore`) needs nothing. A store that maps fields one by one
 must persist it too: a record read back without it is checked as one
 saved before it existed, against the configuration alone.
 
+### Role separation of mdocs under `IssuerRoots` (`walletflow`, `credential/mdoc`)
+
+With `MdocIssuerRoots` unset, mdocs are received under `IssuerRoots`
+and checked with `MdocIssuerLeafPolicy`. Outside development,
+`walletflow.New` now holds that pair to role separation too, beside
+`IssuerRoots` with `IssuerLeafPolicy`, and
+`mdoc.LenientDocumentSignerPolicy` no longer counts as a policy that
+tells roles apart. A `Config` whose `IssuerRoots` (for mdocs) or
+`MdocIssuerRoots` may share a trust anchor with another role's pool,
+with an opt-out or `mdoc.LenientDocumentSignerPolicy` as its mdoc
+policy, is refused with the existing "may share a trust anchor"
+error: separate the pools, set `MdocIssuerRoots`, or require the
+document signer's extended key usage
+(`mdoc.DefaultDocumentSignerPolicy`).
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

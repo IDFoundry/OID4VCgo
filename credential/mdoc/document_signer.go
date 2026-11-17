@@ -87,6 +87,11 @@ func LenientDocumentSignerPolicy(leaf *x509.Certificate, chains [][]*x509.Certif
 	return DefaultDocumentSignerPolicy(leaf, chains)
 }
 
+// LenientDocumentSignerPolicy accepts another role's certificate that
+// carries no extended key usage, so it can't tell roles apart under a
+// shared trust anchor (certchain.SeparatesRoles).
+func init() { certchain.RegisterNonSeparating(LenientDocumentSignerPolicy) }
+
 // CheckDocumentSigner applies ISO/IEC 18013-5's checks of a verified
 // mdoc against its document signer (DS) certificate, on top of
 // certificate path validation and Verify's signature check. chains are
