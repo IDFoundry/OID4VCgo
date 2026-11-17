@@ -306,18 +306,7 @@ func ParseDCAPIRequestDataContext(ctx context.Context, params ParseDCAPIRequestD
 	}
 	switch params.Protocol {
 	case DCAPIProtocolSigned:
-		var data struct {
-			Request string `json:"request"`
-		}
-		if err := strictjson.Unmarshal(params.Data, &data); err != nil {
-			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data.request must be a signed Request Object: %w", err)
-		}
-		if data.Request == "" {
-			return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
-		}
-		return ParseDCAPIRequestContext(ctx, ParseDCAPIRequestParams{
-			Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, AcceptX509SANDNS: params.AcceptX509SANDNS, Now: params.Now,
-		})
+		return parseSignedDCAPIRequest(ctx, params)
 	case DCAPIProtocolMultiSigned:
 		return parseMultiSignedDCAPIRequest(ctx, params)
 	case DCAPIProtocolUnsigned:
@@ -329,6 +318,23 @@ func ParseDCAPIRequestDataContext(ctx context.Context, params ParseDCAPIRequestD
 	default:
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: unsupported protocol %q", params.Protocol)
 	}
+}
+
+// parseSignedDCAPIRequest is ParseDCAPIRequestData for
+// DCAPIProtocolSigned.
+func parseSignedDCAPIRequest(ctx context.Context, params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
+	var data struct {
+		Request string `json:"request"`
+	}
+	if err := strictjson.Unmarshal(params.Data, &data); err != nil {
+		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data.request must be a signed Request Object: %w", err)
+	}
+	if data.Request == "" {
+		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: data.request must be a signed Request Object")
+	}
+	return ParseDCAPIRequestContext(ctx, ParseDCAPIRequestParams{
+		Request: data.Request, Origin: params.Origin, VerifierTrust: params.VerifierTrust, AcceptX509SANDNS: params.AcceptX509SANDNS, Now: params.Now,
+	})
 }
 
 // wireJWSJSON is a JWS in General JWS JSON Serialization (RFC 7515
