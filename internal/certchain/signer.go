@@ -12,9 +12,11 @@ import (
 
 // SignerChainDERs checks chain starts with signer's certificate and is
 // the chain HAIP 1.0 §6.1 has a status list signer present
-// (CheckPresentedChain), and returns its DER encodings. Its errors carry
-// no package prefix but CheckPresentedChain's, for the caller to add
-// its own.
+// (CheckPresentedChain) and that verifiers of a presented chain, this
+// module's and FAPIgo's, accept (CheckPresentedOrder: no subject name
+// or key repeated, as both certificates of a CA key rollover would),
+// and returns its DER encodings. Its errors carry no package prefix
+// but those two's, for the caller to add its own.
 func SignerChainDERs(signer crypto.Signer, chain []*x509.Certificate) ([][]byte, error) {
 	if len(chain) == 0 {
 		return nil, errors.New("a certificate chain is required")
@@ -22,6 +24,9 @@ func SignerChainDERs(signer crypto.Signer, chain []*x509.Certificate) ([][]byte,
 	pub, ok := chain[0].PublicKey.(interface{ Equal(crypto.PublicKey) bool })
 	if !ok || !pub.Equal(signer.Public()) {
 		return nil, errors.New("the chain's first certificate isn't the signer's")
+	}
+	if err := CheckPresentedOrder(chain); err != nil {
+		return nil, err
 	}
 	if err := CheckPresentedChain(chain[0], chain[1:]); err != nil {
 		return nil, err
