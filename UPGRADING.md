@@ -21,7 +21,10 @@ certificate followed by the one that certifies it, as RFC 7515 §4.1.6
 and HAIP 1.0 require; a CA cross-certified to two anchors may be sent as
 the last two. Before, an unauthenticated caller could send CA
 certificates that certify each other and cost the Authorization Server
-about 60 ms of CPU per request.
+about 60 ms of CPU per request. FAPIgo still checks an ordered chain
+from the leaf up before its anchor, with keys on any curve, so one of
+10 P-521 certificates still costs about 20 ms per request: keep PAR and
+the Token Endpoint behind a rate limit.
 
 ### A Credential Issuer refuses an access token issued for another
 
@@ -121,10 +124,54 @@ a Request Object's — now refuses one whose certificates aren't listed
 in order, leaf first, each the issuer of the one before; one in which
 two certificates share a subject name or public key; and one with an
 intermediate's P-521 key, or RSA key over 3072 bits, unless a
-configured trust anchor the chain reaches has a key of that type. No
-API changes. A partner whose chains are now refused has to send them
-in order, leaving out certificates that aren't on the path; the
-SPECIFICATIONS.md "Known strictness" entry has the details.
+configured trust anchor the chain reaches has a key of that type. The
+chain must also be anchored at its top: its last certificate is a
+trust anchor, is issued by one, or carries an anchor's subject and key
+(a re-issue or cross-certificate of it), or the one before it is an
+anchor. A chain carrying two or more certificates past its anchor is
+refused, such as a cross-certificate followed by the CA that issued it
+when only the cross-certified anchor is trusted. No API changes. A
+partner whose chains are now refused has to send them in order,
+leaving out certificates that aren't on the path; the SPECIFICATIONS.md
+"Known strictness" entry has the details.
+
+These rules differ from FAPIgo's for a Wallet Attestation's `x5c`
+(see above): FAPIgo accepts both certificates of a CA cross-certified
+to two anchors as the last two, which these refuse as a repeated
+subject, and chains of up to 10 certificates, where these allow 8.
+
+### A signer's chain repeating a subject or key (`walletprovider`, `statuslist`, `identifierlist`)
+
+`walletprovider.New`, `statuslist.IssueTokenX5C`,
+`statuslist.IssueTokenCWTX5Chain` and `identifierlist.IssueToken` refuse a
+signer chain in which two certificates share a subject name or a
+public key, such as a CA key rollover's new-with-old certificate
+followed by the old CA's. Every verifier here, and FAPIgo v0.76.0's
+Wallet Attestation check, already refuses such a chain, so a Wallet
+Provider configured with one now fails at startup rather than at every
+Authorization Server. Configure the chain without the rollover
+certificate.
+
+### A Status List Token's `x5c` without its trust anchor (`statuslist`, `wallet`, `walletflow`, `verifier`)
+
+`statuslist.CheckX5C`, and every status check of a JWT Status List
+Token, refuses a token whose `x5c` includes the trust anchor (a
+self-issued certificate after the leaf), as HAIP 1.0 §6.1 has the
+sender leave it out and every other JOSE `x5c` check here already did.
+A Status List Provider whose tokens include their root has to issue
+them without it; a chain passed to `statuslist.IssueTokenX5C` never
+could include it. A CWT token's `x5chain`
+may still include the anchor.
+
+### A Request Object with a bad signature (`wallet`, `walletflow`, mobile)
+
+A signed Request Object's signature is now checked, with its `x5c`
+leaf's key, before its chain. One whose signature doesn't verify, or
+whose leaf doesn't parse or has an oversized RSA key, is refused as
+such even when its chain is untrusted: its error no longer wraps
+`wallet.ErrUntrustedVerifier`. Over the Digital Credentials API,
+`walletflow` reports it as `ErrMalformedRequest`, and the mobile
+libraries as `invalid_input` rather than `untrusted_verifier`.
 
 ### `sdjwtvc.KeyBindingCheck.ExpectedSDHash` is required
 
@@ -148,8 +195,14 @@ with more certificates, is now refused `ErrMalformed`.
 and a leaf whose key is a root's (`ErrUntrustedRoot`). A chain's last
 certificate anchors it when it is one of `Verifier.Roots` byte for
 byte or is signed by one (a self-signed re-issue of a root is);
-carrying a root's public key no longer suffices. Android's chains
-are unaffected.
+carrying a root's public key no longer suffices. The chain's top is
+checked against the roots, and each certificate's validity, before
+any signature below the top, and those signatures are then checked
+from the top down, so a chain of any keys no root anchors costs no
+check with them. A chain that is both unanchored and has a broken
+link is now refused `ErrUntrustedRoot` (was `ErrChainSignature`), and
+a certificate outside its validity is reported before a broken link.
+Android's chains are unaffected.
 
 ### Android status list outages (`walletprovider`, `walletprovider/androidkey`)
 

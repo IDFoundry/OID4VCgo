@@ -44,8 +44,11 @@ func IssueTokenCWTX5Chain(signer crypto.Signer, alg oid4vci.COSEAlg, claims Toke
 
 // CheckX5C is Check for a Status List Token that carries its signer's
 // certificate chain in its x5c header (IssueTokenX5C, HAIP 1.0): the
-// chain must verify to one of roots, and its leaf must not be
-// self-signed; the leaf's key then validates the token.
+// chain must verify to one of roots, its leaf must not be self-signed,
+// and, as HAIP 1.0 §6.1 has it, it must not include the trust anchor
+// (no certificate after the leaf may be self-issued); the leaf's key
+// then validates the token. A CWT token's x5chain (CheckCWTX5Chain) may
+// include the anchor.
 func CheckX5C(token string, roots *x509.CertPool, ref StatusListRef, opts VerifyOptions) (StatusType, TokenClaims, error) {
 	status, parsed, err := checkX5C(context.Background(), token, roots, ref, opts)
 	return failClosed(status, parsed.claims, err)
