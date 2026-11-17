@@ -291,8 +291,9 @@ func TestVerifyPresented_FromTheTop(t *testing.T) {
 // Where a chain may be anchored: at the anchor included at its top, at
 // an anchor that issued its top, at its top re-issued or
 // cross-certified (its subject and key an anchor's), or at the
-// certificate below its top when that is an anchor itself. Further
-// down is refused.
+// certificate below its top when that is an anchor itself, including
+// when the top is anchored too but didn't sign it (the top a rolled-over
+// root of the anchor's issuer's name). Further down is refused.
 func TestVerifyPresented_AnchorPositions(t *testing.T) {
 	rootKey, otherKey, caKey := pkiKey(t, "P-256"), pkiKey(t, "P-256"), pkiKey(t, "P-256")
 	root := pkiCert(t, 1, "root", true, rootKey.Public(), nil, rootKey)
@@ -301,6 +302,10 @@ func TestVerifyPresented_AnchorPositions(t *testing.T) {
 	ca := pkiCert(t, 4, "CA", true, caKey.Public(), root, rootKey)
 	leaf := pkiCert(t, 5, "leaf", false, pkiKey(t, "P-256").Public(), ca, caKey)
 	direct := pkiCert(t, 6, "direct leaf", false, pkiKey(t, "P-256").Public(), root, rootKey)
+	// The root rolled over to a new key under its name: ca, issued by
+	// the old one, is presented under the new one, which didn't sign it.
+	newRootKey := pkiKey(t, "P-256")
+	newRoot := pkiCert(t, 7, "root", true, newRootKey.Public(), nil, newRootKey)
 
 	tests := map[string]struct {
 		chain []*x509.Certificate
@@ -313,6 +318,9 @@ func TestVerifyPresented_AnchorPositions(t *testing.T) {
 		"an anchor below the top":         {[]*x509.Certificate{leaf, ca, root}, poolOf(ca), true},
 		"the leaf under the cross-cert":   {[]*x509.Certificate{direct, cross}, poolOf(root), true},
 		"the cross-cert's issuer anchors": {[]*x509.Certificate{direct, cross, other}, poolOf(other), true},
+		"an anchor below an anchored top": {[]*x509.Certificate{leaf, ca, newRoot}, poolOf(ca, newRoot), true},
+		"under the old root, the new one": {[]*x509.Certificate{leaf, ca, newRoot}, poolOf(root, newRoot), false},
+		"only the top that didn't sign":   {[]*x509.Certificate{leaf, ca, newRoot}, poolOf(newRoot), false},
 		"an anchor two below the top":     {[]*x509.Certificate{leaf, ca, cross, other}, poolOf(ca), false},
 		"the cross-cert below the top":    {[]*x509.Certificate{direct, cross, other}, poolOf(root), false},
 	}

@@ -39,11 +39,14 @@ const signatureLimitText = "signature check attempts limit reached"
 //   - the certificates are in their presented order (RFC 7515 §4.1.6,
 //     RFC 9360 §2): each one's issuer name is the next one's subject;
 //   - no two of them share a subject name or a SubjectPublicKeyInfo;
-//   - the chain is anchored at its top: the last presented certificate
-//     is a trust anchor or is issued by one, or the one before it is
-//     issued by an anchor with the last one's subject and key (the last
-//     one is that anchor, re-issued or cross-certified) or is an anchor
-//     itself;
+//   - the chain is anchored at one of its top two certificates: at the
+//     last presented one when it is a trust anchor or is issued by one
+//     and signed the one below it, if any; failing that, at the one
+//     below it when that one is itself a trust anchor, whatever the
+//     last one is (say, a root re-keyed under the name of the root that
+//     issued that anchor), or is issued by an anchor with the last one's
+//     subject and key (the last one is that anchor, re-issued or
+//     cross-certified);
 //   - an intermediate (any entry after the leaf) has a P-521 key, or an
 //     RSA key over MaxPresentedRSABits, only when that anchor has a key
 //     of that type and size;
@@ -53,11 +56,15 @@ const signatureLimitText = "signature check attempts limit reached"
 // The first two are checked before any signature. The anchor is then
 // found from the top with signature checks of configured anchors' keys
 // alone, and each certificate below it is checked against the one above
-// it, top down, stopping at the first that doesn't verify: an untrusted
-// chain costs a check or two of an anchor's key and at most one of a
-// certificate an anchor vouched for, whatever its length and keys.
+// it, top down, stopping at the first that doesn't verify. A chain that
+// doesn't verify costs at most one check of each configured anchor
+// named as the top's issuer and one of each named as the top itself
+// (two per anchor sharing a name with the top), at most one with each
+// of the top two certificates' keys, and one per genuine link it
+// replays below its anchor, whatever its length and keys.
 // crypto/x509's path building then checks the rest (validity, name
-// constraints, key usage) over certificates whose signatures verify.
+// constraints, key usage) over certificates whose links verified, but
+// for the top's, when the chain is anchored below it.
 // The last presented certificate may be the anchor itself (an mdoc
 // x5chain may include it). opts.Intermediates is replaced; opts.Roots
 // must be set.
@@ -119,7 +126,8 @@ func verifyFromTop(certs []*x509.Certificate, opts x509.VerifyOptions) ([]any, e
 	n := len(certs)
 	top := certs[n-1]
 	// The top against the anchors alone: no signature check when it's
-	// one of them, otherwise one per anchor named as its issuer.
+	// one of them, otherwise one per anchor named as its issuer. It
+	// anchors the chain only if it signed the one below it.
 	anchored := -1
 	var anchors []any
 	chains, topErr := top.Verify(opts)
@@ -127,10 +135,17 @@ func verifyFromTop(certs []*x509.Certificate, opts x509.VerifyOptions) ([]any, e
 		anchored = n - 1
 		anchors = append(anchors, chain[len(chain)-1].PublicKey)
 	}
+	var linkErr error
+	if anchored == n-1 {
+		if err := certs[n-2].CheckSignatureFrom(top); err != nil {
+			anchored, anchors, linkErr = -1, nil, notSignedBy(n-2, err)
+		}
+	}
 	if anchored < 0 {
-		// The one below it against the anchors alone: one check per
-		// anchor with the top's name. It's anchored when it's an anchor
-		// itself, or when one with the top's key issued it.
+		// The one below it against the anchors alone: no signature
+		// check when it's one of them, otherwise one per anchor with the
+		// top's name. It's anchored when it's an anchor itself, or when
+		// one with the top's key issued it.
 		below, _ := certs[n-2].Verify(opts)
 		for _, chain := range below {
 			anchor := chain[len(chain)-1]
@@ -140,15 +155,26 @@ func verifyFromTop(certs []*x509.Certificate, opts x509.VerifyOptions) ([]any, e
 			}
 		}
 	}
-	if anchored < 0 {
+	switch {
+	case anchored < 0 && linkErr != nil:
+		return nil, linkErr
+	case anchored < 0:
 		return nil, untrusted(topErr)
 	}
-	for i := anchored - 1; i >= 0; i-- {
+	// Below the top, the link to it already checked, or below the
+	// anchored certificate under it.
+	for i := n - 3; i >= 0; i-- {
 		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
-			return nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: entry %d isn't signed by entry %d: %w", i, i+1, err)
+			return nil, notSignedBy(i, err)
 		}
 	}
 	return anchors, nil
+}
+
+// notSignedBy is the error for a presented chain whose entry i isn't
+// signed by entry i+1, err.
+func notSignedBy(i int, err error) error {
+	return fmt.Errorf("certchain: certificate chain does not verify against a trusted root: entry %d isn't signed by entry %d: %w", i, i+1, err)
 }
 
 // CheckPresentedOrder checks, without any signature check, that certs,
