@@ -63,7 +63,7 @@ func TestIssuerRevocation_CheckedOncePerCopy(t *testing.T) {
 	var checks atomic.Int32
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: revokingChecker{&checks},
+		CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerRevocation: revokingChecker{&checks},
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: f.env.Provider, HTTP: f.env.HTTP,
 	})
