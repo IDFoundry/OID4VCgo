@@ -110,7 +110,8 @@
 //	}
 //	tokens, err := serverresource.NewVerifier(asCfg, asDeps, serverresource.Options{
 //		ResourceURLs: resourceURLs,
-//		Nonces:       rsDB.Nonces(), // the Credential Endpoint's DPoP nonces, never the server's
+//		Resource:     issuerCfg.Issuer.String(), // only tokens issued for this Credential Issuer
+//		Nonces:       rsDB.Nonces(),             // the Credential Endpoint's DPoP nonces, never the server's
 //	})
 //	issuerDeps := issuer.Dependencies{
 //		Nonces: issuerDB.Nonces(), PreAuthorizedCodes: issuerDB.PreAuthorizedCodes(),

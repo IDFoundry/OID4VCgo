@@ -361,7 +361,7 @@ func newServers(cfg Config) (servers, error) {
 		return servers{}, fmt.Errorf("issuer.New: %w", err)
 	}
 
-	consent := newConsentHandler(srv, srvDeps.Clients, server.SystemClock{}, cfg.DefaultSubject)
+	consent := newConsentHandler(srv, iss, srvDeps.Clients, server.SystemClock{}, cfg.DefaultSubject)
 	credentialURLValue := credentialURL.URL()
 	public, err := newRouter(srv, iss, resourceVerifier, consent, &credentialURLValue, cfg, metadataSigningIdentity{Signer: issuerSigningKey, Cert: issuerCertificate})
 	if err != nil {

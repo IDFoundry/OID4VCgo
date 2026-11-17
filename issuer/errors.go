@@ -63,6 +63,11 @@ const (
 	// authorization_details (RFC 9396 §5).
 	ErrorInvalidAuthorizationDetails ErrorCode = "invalid_authorization_details"
 
+	// ErrorInvalidTarget refuses a Token Request naming an RFC 8707
+	// resource other than this Credential Issuer (RFC 8707 §2;
+	// ExchangePreAuthorizedCodeRequest.Resources).
+	ErrorInvalidTarget ErrorCode = "invalid_target"
+
 	// ErrorInsufficientScope is the Credential Endpoint's answer to an
 	// access token that doesn't authorize the requested Credential
 	// Configuration: OpenID4VCI §8.3.1.1 has it return "an
@@ -79,7 +84,9 @@ const (
 )
 
 // Error is the error type RequestCredential returns for a Credential
-// Request/Response error (§8.3.1.2 — every code above uses HTTP 400).
+// Request/Response error (§8.3.1.2): HTTP 400 for every code above but
+// ErrorInvalidToken (401) and ErrorInsufficientScope (403), the access
+// token errors of RFC 6750 §3.1.
 // Code and PublicDescription are safe to put directly into a Credential
 // Error Response body; the underlying cause (Unwrap) is for logs only
 // and must never be copied into a public response. A failure
@@ -97,13 +104,21 @@ type Error struct {
 // most often ErrorCredentialRequestDenied, when the issuer's own
 // business rules refuse a request that is otherwise valid (§8.3.1.2:
 // "the Credential Request has not been accepted by the Credential
-// Issuer"). Every Credential, Deferred Credential and Notification
-// Endpoint error uses HTTP 400. description goes into the response's
-// error_description as it is, so it must be safe to show the Wallet:
-// never put passport data, internal errors or secrets in it. Write it
-// with WriteJSON, or return it through WriteError.
+// Issuer"). Its HTTP status is 400, but 401 for ErrorInvalidToken and
+// 403 for ErrorInsufficientScope (RFC 6750 §3.1). description goes
+// into the response's error_description as it is, so it must be safe
+// to show the Wallet: never put passport data, internal errors or
+// secrets in it. Write it with WriteJSON, or return it through
+// WriteError.
 func NewError(code ErrorCode, description string) *Error {
-	return newError(code, http.StatusBadRequest, description, nil)
+	status := http.StatusBadRequest
+	switch code {
+	case ErrorInvalidToken:
+		status = http.StatusUnauthorized
+	case ErrorInsufficientScope:
+		status = http.StatusForbidden
+	}
+	return newError(code, status, description, nil)
 }
 
 func newError(code ErrorCode, httpStatus int, description string, cause error) *Error {

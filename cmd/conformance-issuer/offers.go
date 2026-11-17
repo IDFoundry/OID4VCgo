@@ -122,7 +122,8 @@ func preAuthorizedTokenHandler(srv *server.Server, iss *issuer.Issuer) func(http
 		}
 		redeemed, err := iss.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
-			Verified: &issuer.VerifiedTokenRequest{ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint},
+			Resources: req.Resources(),
+			Verified:  &issuer.VerifiedTokenRequest{ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint},
 		})
 		if err != nil {
 			writeIssuerTokenError(w, err)

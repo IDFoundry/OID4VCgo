@@ -982,6 +982,28 @@ func TestDeferredTransactionStoreContract(t *testing.T, seed func(t *testing.T, 
 		if err := store.Update(ctx, "never-seeded", func(*issuer.DeferredTransactionRecord) error { return nil }); !errors.Is(err, issuer.ErrDeferredTransactionUnknown) {
 			t.Errorf("Update of an unknown transaction = %v, want issuer.ErrDeferredTransactionUnknown", err)
 		}
+
+		// An Update keeps what decides who may collect the transaction:
+		// a store that drops RequestedByConfigurationID or
+		// CredentialIdentifier releases it to a token it wasn't deferred for.
+		for id, kept := range map[string]issuer.DeferredTransactionRecord{
+			"by-configuration": {Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid", RequestedByConfigurationID: true},
+			"by-identifier":    {Status: issuer.DeferredTransactionPending, CredentialConfigurationID: "pid", CredentialIdentifier: "pid-dataset-1"}, //nolint:gosec // a credential_identifier, not a secret
+		} {
+			store := seed(t, id, kept)
+			if err := store.Update(ctx, id, func(r *issuer.DeferredTransactionRecord) error {
+				r.Status = issuer.DeferredTransactionIssued
+				return nil
+			}); err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			got, err := store.Get(ctx, id)
+			if err != nil || got.Status != issuer.DeferredTransactionIssued ||
+				got.RequestedByConfigurationID != kept.RequestedByConfigurationID || got.CredentialIdentifier != kept.CredentialIdentifier {
+				t.Errorf("after Update: %+v, %v; want RequestedByConfigurationID %v and CredentialIdentifier %q kept",
+					got, err, kept.RequestedByConfigurationID, kept.CredentialIdentifier)
+			}
+		}
 	})
 
 	t.Run("UpdateIsAtomic", func(t *testing.T) {

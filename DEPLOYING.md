@@ -84,6 +84,20 @@ each, not a deployment template" says what it does differently.
   (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Access tokens for this Credential Issuer alone.** List
+  `Config.Issuer` in the Authorization Server's `server.Config.Resources`,
+  and set `serverresource.Options.Resource` to it, so the Credential
+  Endpoint takes only tokens whose `aud` names it
+  (`AuthorizedRequest.Audience`, required under `AssuranceProduction`).
+  At the consent step, grant `Issuer.AuthorizationResources` as
+  `GrantedAuthorization.Resources` and deny the request when it fails;
+  at the pre-authorized Token Endpoint, pass the request's resources as
+  `ExchangePreAuthorizedCodeRequest.Resources` and issue the token with
+  `RedeemedPreAuthorizedCode.Resource` alone. List an Authorization
+  Server in `Config.AcceptedAccessTokenAudiences` only when it serves
+  this Credential Issuer alone. Without these, on an Authorization
+  Server shared with other Credential Issuers, one issuer's token can
+  be taken by another for its own holder of the same subject value.
 - [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording
   the outcome of every pre-authorized code exchange, Credential Request
   and deferred credential, to a log kept apart from the service.

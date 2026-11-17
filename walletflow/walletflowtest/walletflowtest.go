@@ -947,12 +947,15 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid authorization_details", http.StatusBadRequest)
 		return
 	}
-	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{
-		Handle: interaction.Handle,
-		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{
-			Scope: interaction.Interaction.Scope, GrantID: grantID, AuthorizationDetails: details,
-		}),
-	})
+	// The token is for this Credential Issuer alone: a request naming
+	// another resource is denied.
+	result := server.Deny("the request names a resource other than this Credential Issuer")
+	if resources, err := e.iss.AuthorizationResources(interaction.Interaction.Resources); err == nil {
+		result = server.Authorize(subject, authCtx, server.GrantedAuthorization{
+			Scope: interaction.Interaction.Scope, GrantID: grantID, AuthorizationDetails: details, Resources: resources,
+		})
+	}
+	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: interaction.Handle, Result: result})
 	if err != nil {
 		http.Error(w, "failed to complete authorization", http.StatusInternalServerError)
 		return
@@ -1026,6 +1029,7 @@ func (e *Env) handleToken(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := e.iss.ExchangePreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
 			PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
+			Resources: req.Resources(),
 			Verified: &issuer.VerifiedTokenRequest{
 				ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce,
 			},
@@ -1070,7 +1074,8 @@ func (e *Env) redeemAnonymously(w http.ResponseWriter, r *http.Request, req serv
 	}
 	result, err := e.iss.ExchangePreAuthorizedCode(r.Context(), issuer.ExchangePreAuthorizedCodeRequest{
 		PreAuthorizedCode: params["pre-authorized_code"], TxCode: params["tx_code"], AuthorizationDetails: details,
-		Verified: &issuer.VerifiedTokenRequest{DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce},
+		Resources: req.Resources(),
+		Verified:  &issuer.VerifiedTokenRequest{DPoPThumbprint: binding.Thumbprint, NextDPoPNonce: binding.NextDPoPNonce},
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {

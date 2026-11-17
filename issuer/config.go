@@ -214,6 +214,9 @@ type Config struct {
 	// Server that serves other Credential Issuers too: each would then
 	// accept a token issued for another, and look up its own holder by
 	// the other issuer's subject.
+	//
+	// Each must be one of AuthorizationServers: New refuses any other
+	// (a co-tenant Credential Issuer's identifier, say).
 	AcceptedAccessTokenAudiences []fapi.URL
 
 	Endpoints Endpoints
@@ -908,7 +911,7 @@ func validateConfig(cfg Config) []error {
 			errs = append(errs, fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err))
 		}
 	}
-	errs = append(errs, validateAuthorizationServers(cfg.AuthorizationServers), validateAcceptedAudiences(cfg.AcceptedAccessTokenAudiences),
+	errs = append(errs, validateAuthorizationServers(cfg.AuthorizationServers), validateAcceptedAudiences(cfg.AcceptedAccessTokenAudiences, cfg.AuthorizationServers),
 		prefixError("issuer: config: ", oid4vci.ValidateDisplays(cfg.Display)))
 	if cfg.BatchCredentialIssuance != nil {
 		errs = append(errs, prefixError("issuer: config: batch_credential_issuance: ", cfg.BatchCredentialIssuance.Validate()))
@@ -1061,11 +1064,16 @@ func validateAuthorizationServers(servers []fapi.URL) error {
 }
 
 // validateAcceptedAudiences rejects an unset
-// accepted_access_token_audiences entry.
-func validateAcceptedAudiences(audiences []fapi.URL) error {
+// accepted_access_token_audiences entry, and one that isn't among
+// servers (authorization_servers): only an Authorization Server this
+// Credential Issuer relies on can be the audience of its tokens.
+func validateAcceptedAudiences(audiences, servers []fapi.URL) error {
 	for i, u := range audiences {
 		if u.IsZero() {
 			return fmt.Errorf("issuer: config: accepted_access_token_audiences[%d] is unset", i)
+		}
+		if !slices.ContainsFunc(servers, func(s fapi.URL) bool { return s.String() == u.String() }) {
+			return fmt.Errorf("issuer: config: accepted_access_token_audiences[%d] (%s) isn't one of authorization_servers", i, u)
 		}
 	}
 	return nil

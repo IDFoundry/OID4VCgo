@@ -106,9 +106,11 @@ type AuthorizedRequest struct {
 	// serving several Credential Issuers issues each one's tokens with
 	// the same "iss", and a Subject that's meaningful to one issuer
 	// only, so a token issued for one Credential Issuer must not be
-	// accepted by another. issuer/fapiresource always sets it. Nil
-	// leaves the audience to the caller's own token verification: a
-	// verifier of its own must then accept only tokens issued for this
+	// accepted by another. issuer/fapiresource always sets it. Under
+	// AssuranceProduction a nil Audience is refused, as a plain error
+	// (500): the check can't be skipped by a verifier that forgot it.
+	// Otherwise nil leaves the audience to the caller's own token
+	// verification, which must then accept only tokens issued for this
 	// Credential Issuer itself.
 	Audience []string
 }
@@ -172,12 +174,19 @@ func requireClientIdentityDecision(auth AuthorizedRequest) error {
 // checkAuthorized is what every public method consuming an
 // AuthorizedRequest checks first: its ClientIdentity was decided
 // (requireClientIdentityDecision), and its Audience, when known, names
-// this Credential Issuer (AuthorizedRequest.Audience).
+// this Credential Issuer (AuthorizedRequest.Audience), and is known
+// under AssuranceProduction.
 func (iss *Issuer) checkAuthorized(auth AuthorizedRequest) error {
 	if err := requireClientIdentityDecision(auth); err != nil {
 		return err
 	}
-	if auth.Audience == nil || iss.acceptsAudience(auth.Audience) {
+	if auth.Audience == nil {
+		if iss.cfg.Assurance == AssuranceProduction {
+			return fmt.Errorf("issuer: authorized_request.audience is required under AssuranceProduction: set it to the access token's audience, as issuer/fapiresource does")
+		}
+		return nil
+	}
+	if iss.acceptsAudience(auth.Audience) {
 		return nil
 	}
 	return newError(ErrorInvalidToken, 401,

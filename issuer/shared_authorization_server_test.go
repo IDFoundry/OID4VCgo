@@ -18,6 +18,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -284,6 +285,18 @@ func sharedASClaims(t *testing.T, resp map[string]any) map[string]any {
 // its DPoP key and the redemption.
 func sharedASRedeem(t *testing.T, provider sharedASProvider, srv *server.Server, tenant sharedASTenant, subject string, restrict bool) (string, *ecdsa.PrivateKey, issuer.RedeemedPreAuthorizedCode) {
 	t.Helper()
+	token, dpopKey, redeemed, err := sharedASRedeemNaming(t, provider, srv, tenant, subject, restrict)
+	if err != nil {
+		t.Fatalf("RedeemPreAuthorizedCode: %v", err)
+	}
+	return token, dpopKey, redeemed
+}
+
+// sharedASRedeemNaming is sharedASRedeem with the Token Request naming
+// resources, which the Token Endpoint passes to RedeemPreAuthorizedCode;
+// it returns RedeemPreAuthorizedCode's error.
+func sharedASRedeemNaming(t *testing.T, provider sharedASProvider, srv *server.Server, tenant sharedASTenant, subject string, restrict bool, resources ...string) (string, *ecdsa.PrivateKey, issuer.RedeemedPreAuthorizedCode, error) {
+	t.Helper()
 	ctx := context.Background()
 	code := rand.Text()
 	if err := tenant.iss.IssuePreAuthorizedCode(ctx, code, "", issuer.PreAuthorizedCodeRecord{
@@ -303,7 +316,7 @@ func sharedASRedeem(t *testing.T, provider sharedASProvider, srv *server.Server,
 	}
 	pop := sharedASSign(t, instanceKey, map[string]any{"typ": "oauth-client-attestation-pop+jwt"},
 		map[string]any{"iss": sharedASClientID, "aud": sharedASAS, "jti": rand.Text(), "iat": now.Unix()})
-	form := url.Values{"grant_type": {sharedASPreAuthGrant}, "pre-authorized_code": {code}}
+	form := url.Values{"grant_type": {sharedASPreAuthGrant}, "pre-authorized_code": {code}, "resource": resources}
 	hr := httptest.NewRequest(http.MethodPost, sharedASAS+"/token", strings.NewReader(form.Encode()))
 	hr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	hr.Header.Set("OAuth-Client-Attestation", wa)
@@ -322,11 +335,11 @@ func sharedASRedeem(t *testing.T, provider sharedASProvider, srv *server.Server,
 		t.Fatalf("VerifyTokenRequestBinding: %v", err)
 	}
 	redeemed, err := tenant.iss.RedeemPreAuthorizedCode(ctx, issuer.ExchangePreAuthorizedCodeRequest{
-		PreAuthorizedCode: code,
-		Verified:          &issuer.VerifiedTokenRequest{ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint},
+		PreAuthorizedCode: code, Resources: treq.Resources(),
+		Verified: &issuer.VerifiedTokenRequest{ClientID: attested.Client.ID().String(), DPoPThumbprint: binding.Thumbprint},
 	})
 	if err != nil {
-		t.Fatalf("RedeemPreAuthorizedCode: %v", err)
+		return "", nil, redeemed, err
 	}
 	subjectID, err := server.NewSubjectID(redeemed.Subject)
 	if err != nil {
@@ -342,7 +355,7 @@ func sharedASRedeem(t *testing.T, provider sharedASProvider, srv *server.Server,
 	if err != nil {
 		t.Fatalf("IssueAccessToken: %v", err)
 	}
-	return result.AccessToken.Reveal(), dpopKey, redeemed
+	return result.AccessToken.Reveal(), dpopKey, redeemed, nil
 }
 
 // sharedASAudience is the access token's "aud".
@@ -445,5 +458,36 @@ func TestSharedAuthorizationServer_AuthorizationServerAudience(t *testing.T) {
 	status, resp := sharedASCredentialRequest(t, soleTenantA, accessToken, dpopKey, holderKey)
 	if status != http.StatusOK {
 		t.Fatalf("tenant A accepting the Authorization Server's audience refused: %d %v", status, resp)
+	}
+}
+
+// TestSharedAuthorizationServer_PreAuthorizedRequestNamingAnotherIssuer:
+// a pre-authorized Token Request naming another Credential Issuer as
+// its resource is refused with invalid_target, rather than getting a
+// token tenant B takes for its own user-42; one naming the redeeming
+// Credential Issuer gets its token.
+func TestSharedAuthorizationServer_PreAuthorizedRequestNamingAnotherIssuer(t *testing.T) {
+	provider := newSharedASProvider(t)
+	srv, asCfg, asDeps := sharedASServer(t, provider.roots, sharedASTenantA, sharedASTenantB)
+	tenantA := sharedASNewTenant(t, sharedASTenantA, asCfg, asDeps, sharedASTenantA, nil, sharedASUsersA)
+
+	for name, resources := range map[string][]string{
+		"tenant B":             {sharedASTenantB},
+		"tenant A, then B":     {sharedASTenantA, sharedASTenantB},
+		"tenant A's near miss": {sharedASTenantA + "/"},
+	} {
+		_, _, _, err := sharedASRedeemNaming(t, provider, srv, tenantA, "user-42", true, resources...)
+		var ierr *issuer.Error
+		if !errors.As(err, &ierr) || ierr.Code() != issuer.ErrorInvalidTarget || ierr.HTTPStatus() != http.StatusBadRequest {
+			t.Errorf("a Token Request naming %s: %v, want 400 invalid_target", name, err)
+		}
+	}
+
+	accessToken, _, _, err := sharedASRedeemNaming(t, provider, srv, tenantA, "user-42", true, sharedASTenantA)
+	if err != nil {
+		t.Fatalf("a Token Request naming tenant A: %v", err)
+	}
+	if aud := sharedASAudience(t, accessToken); aud != sharedASTenantA {
+		t.Errorf("access token aud = %v, want %s", aud, sharedASTenantA)
 	}
 }

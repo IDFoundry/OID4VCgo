@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo"
@@ -121,5 +122,49 @@ func TestNewError_WritesCredentialErrorResponse(t *testing.T) {
 	}
 	if body["error"] != "credential_request_denied" || body["error_description"] != "this passport was already issued" {
 		t.Errorf("body = %v", body)
+	}
+}
+
+// NewError answers the access token errors as RFC 6750 §3.1 does, 401
+// invalid_token and 403 insufficient_scope, each with exactly one DPoP
+// and one Bearer challenge, and every other code 400 without one; a
+// code that only resembles a token error gets no challenge.
+func TestNewError_StatusAndChallenges(t *testing.T) {
+	for code, want := range map[issuer.ErrorCode]struct {
+		status     int
+		challenges []string
+	}{
+		issuer.ErrorInvalidToken:               {http.StatusUnauthorized, []string{`DPoP error="invalid_token"`, `Bearer error="invalid_token"`}},
+		issuer.ErrorInsufficientScope:          {http.StatusForbidden, []string{`DPoP error="insufficient_scope"`, `Bearer error="insufficient_scope"`}},
+		issuer.ErrorCredentialRequestDenied:    {http.StatusBadRequest, nil},
+		issuer.ErrorInvalidTarget:              {http.StatusBadRequest, nil},
+		issuer.ErrorInvalidNotificationID:      {http.StatusBadRequest, nil},
+		issuer.ErrorCode("INSUFFICIENT_SCOPE"): {http.StatusBadRequest, nil},
+		issuer.ErrorCode("invalid_token "):     {http.StatusBadRequest, nil},
+	} {
+		err := issuer.NewError(code, "refused")
+		w := httptest.NewRecorder()
+		err.WriteJSON(w)
+		if err.HTTPStatus() != want.status || w.Code != want.status {
+			t.Errorf("%q: HTTPStatus %d, written %d; want %d", code, err.HTTPStatus(), w.Code, want.status)
+		}
+		if got := w.Header().Values("WWW-Authenticate"); !slices.Equal(got, want.challenges) {
+			t.Errorf("%q: WWW-Authenticate = %q, want %q", code, got, want.challenges)
+		}
+	}
+}
+
+// IssueNotificationID refuses a token issued for another audience, as
+// 401 invalid_token, before issuing a notification_id.
+func TestIssueNotificationID_RefusesAnotherAudience(t *testing.T) {
+	f := newCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) {
+		deps.Notifications = newFakeNotificationStore()
+	})
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{otherAudience}}
+	_, err := f.iss.IssueNotificationID(context.Background(), auth)
+	assertInvalidToken(t, err)
+	auth.Audience = []string{testIssuer}
+	if _, err := f.iss.IssueNotificationID(context.Background(), auth); err != nil {
+		t.Errorf("IssueNotificationID with this issuer's audience: %v", err)
 	}
 }

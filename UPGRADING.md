@@ -31,9 +31,13 @@ the Token Endpoint behind a rate limit.
 An `issuer.Issuer` now refuses an access token whose audience doesn't
 name its `Config.Issuer`, as 401 `invalid_token`.
 `issuer/fapiresource` reports every token's audience
-(`AuthorizedRequest.Audience`); an `AuthorizedRequest` built by your
-own verifier with `Audience` nil isn't checked, so that verifier must
-accept only tokens issued for this Credential Issuer itself.
+(`AuthorizedRequest.Audience`). An `AuthorizedRequest` built by your
+own verifier must report it too: under `AssuranceProduction`, one with
+`Audience` nil is refused with a plain error (a 500) by
+`RequestCredential`, `RequestDeferredCredential`, `RequestNotification`
+and `IssueNotificationID`. Outside production a nil `Audience` still
+isn't checked, and that verifier must accept only tokens issued for
+this Credential Issuer itself.
 
 Nothing changes where the Authorization Server's identifier is the
 Credential Issuer's own, as when they share one (`cmd/conformance-issuer`
@@ -51,10 +55,46 @@ itself unless restricted to a resource, and are now refused. Either:
   or
 - when the Authorization Server issues tokens for this Credential
   Issuer alone, list its identifier in the new
-  `issuer.Config.AcceptedAccessTokenAudiences`. Never do so for one
-  serving several Credential Issuers: each would then take another's
-  token for its own, and issue its own holder's Credential for that
-  token's subject.
+  `issuer.Config.AcceptedAccessTokenAudiences`, and in
+  `Config.AuthorizationServers`: `New` refuses an accepted audience
+  that isn't one of them. Never do so for one serving several
+  Credential Issuers: each would then take another's token for its
+  own, and issue its own holder's Credential for that token's subject.
+
+With several Credential Issuers on one Authorization Server, the
+Wallet's `resource` chooses which of them a token is for, so also:
+
+- have each Credential Issuer's consent step grant only that issuer:
+  set `GrantedAuthorization.Resources` from the new
+  `Issuer.AuthorizationResources(InteractionRequest.Resources)`, and
+  `server.Deny` the request when it returns an error
+  (`issuer.ErrResourceNotThisIssuer`). Left nil, a request for one
+  Credential Issuer's offer that names another as its `resource` gets a
+  token for the other, under the subject this one's consent step signed
+  in. See the recipe in `issuer/authorization_server.go`;
+- at the pre-authorized Token Endpoint, pass the request's `resource`
+  parameters (`server.TokenEndpointRequest.Resources()`) as the new
+  `ExchangePreAuthorizedCodeRequest.Resources`, which refuses any but
+  `Config.Issuer` with 400 `invalid_target` (RFC 8707 §2) before the
+  code is consumed, and issue the token with
+  `RedeemedPreAuthorizedCode.Resource` alone. Never pass the request's
+  own resources as `IssueAccessTokenRequest.Resources`: the token would
+  then be good at the Credential Issuers they name too.
+
+`cmd/conformance-issuer`, the passport-vdc demo and `walletflowtest` now
+list their Credential Issuer in `server.Config.Resources`, which turns
+on resource indicators at their Authorization Server: a Wallet naming
+any other `resource`, at PAR or the Token Endpoint, gets
+`invalid_target` where the parameter used to be ignored. A deployment
+that copies their wiring does the same. Wallets built on `walletflow`
+name the offer's Credential Issuer, which is accepted.
+
+### `issuer.NewError` answers token errors with 401 and 403
+
+`issuer.NewError(issuer.ErrorInvalidToken, …)` now answers 401, and
+`NewError(issuer.ErrorInsufficientScope, …)` 403, as RFC 6750 §3.1 has
+them, each with its `WWW-Authenticate` challenges; both answered 400
+before. Every other code still answers 400.
 
 ### A custom DeferredTransactionStore persists RequestedByConfigurationID
 
@@ -64,8 +104,16 @@ a request by `credential_configuration_id`. `RequestDeferredCredential`
 then releases it only to a token the Credential Endpoint would accept
 that request from. A store that saves the whole record (the in-memory
 store, `sqlstore`) needs nothing. A store that maps fields one by one
-must persist it too: a record read back without it is checked as one
-saved before it existed, against the configuration alone.
+must persist it too, in `Update` as well as `Create`: a record read
+back without it is checked as one saved before it existed, against the
+configuration alone. `issuertest.TestDeferredTransactionStoreContract`
+now checks that `Update` keeps it, and `CredentialIdentifier`.
+
+During a rolling upgrade, the old check still applies to transactions
+deferred before the upgrade, until they expire, and to any transaction
+a v0.81.0 replica updates (its `Update` writes the record back without
+the marker). Finish the rollout before relying on it, or drain
+pending deferred transactions first.
 
 ### Role separation of mdocs under `IssuerRoots` (`walletflow`, `credential/mdoc`)
 
