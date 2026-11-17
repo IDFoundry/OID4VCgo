@@ -111,7 +111,7 @@ var polarisExpectedRefusals = map[string]polarisRefusal{
 	"kb-alg-hs256":             {ReasonHolderBinding, `verify key binding JWT signature: jose: header alg "HS256" does not match expected`},
 	"kb-iat-nan":               {ReasonHolderBinding, "unmarshal key binding claims: invalid character 'N'"},
 	"kb-exp-string":            {ReasonHolderBinding, "key binding JWT exp claim is not a number"},
-	"issuer-sig-der":           {ReasonInvalidCredential, "verify issuer JWT: ecdsafixed: signature has length 70, want 64"},
+	"issuer-sig-der":           {ReasonInvalidCredential, "verify issuer signature: the credential's signature doesn't verify with its issuer certificate's key: ecdsafixed: signature has length 70, want 64"},
 	"x5c-self-signed":          {ReasonUntrustedIssuer, "leaf certificate must not be self-signed"},
 	"x5c-includes-anchor":      {ReasonUntrustedIssuer, "is self-issued: the trust anchor must not be included"},
 	"x5c-unknown-root":         {ReasonUntrustedIssuer, "does not verify against a trusted root: x509: certificate signed by unknown authority"},
