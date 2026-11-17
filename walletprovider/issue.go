@@ -417,6 +417,21 @@ func (p *Provider) checkKeys(keys []crypto.PublicKey) error {
 	return nil
 }
 
+// advancedCounter is the instance's new counter once next, one piece
+// of evidence's counter, is taken: next must exceed the instance's
+// stored counter, and only one piece of evidence may advance it.
+func advancedCounter(counter, next *uint64, stored uint64) (*uint64, error) {
+	switch {
+	case next == nil:
+		return counter, nil
+	case counter != nil:
+		return nil, fmt.Errorf("%w: more than one piece of evidence advances the instance's counter", ErrInvalidRequest)
+	case *next <= stored:
+		return nil, fmt.Errorf("%w: the counter %d doesn't exceed the instance's %d", ErrEvidenceRejected, *next, stored)
+	}
+	return next, nil
+}
+
 // verifyHolderKeys verifies req's evidence for in and returns the keys
 // to attest, in req.Keys' order, and the instance's new counter if an
 // assertion advanced it. Evidence that fails, is of another Kind than
@@ -441,14 +456,8 @@ func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge 
 			lastErr = err
 			continue
 		}
-		if ev.Counter != nil {
-			if counter != nil {
-				return nil, nil, fmt.Errorf("%w: more than one piece of evidence advances the instance's counter", ErrInvalidRequest)
-			}
-			if *ev.Counter <= in.Counter {
-				return nil, nil, fmt.Errorf("%w: the counter %d doesn't exceed the instance's %d", ErrEvidenceRejected, *ev.Counter, in.Counter)
-			}
-			counter = ev.Counter
+		if counter, err = advancedCounter(counter, ev.Counter, in.Counter); err != nil {
+			return nil, nil, err
 		}
 		vouched = append(vouched, ev.Keys...)
 	}
