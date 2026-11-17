@@ -166,8 +166,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
             guard peer == nil else { return }
             // The device whose message Go accepted; before any (a reader
             // that speaks first), the first to start a session.
-            let chosen = pending.map { id in candidates.first { $0.central.identifier == id } } ?? candidates.first
-            guard let chosen else {
+            guard let chosen = chosenCandidate() else {
                 fail(ProximityTransportError("the other device disconnected", peerEnded: true))
                 return
             }
@@ -178,6 +177,13 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
             pending = nil
             manager?.stopAdvertising()
         }
+    }
+
+    /// The candidate whose message Go accepted, or before any, the first
+    /// to start a session: on `queue`.
+    private func chosenCandidate() -> Candidate? {
+        guard let id = pending else { return candidates.first }
+        return candidates.first { $0.central.identifier == id }
     }
 
     /// Forgets candidate `id`, and with `refuse`, ignores it from now on:

@@ -132,9 +132,14 @@ final class EitherTransport: ProximityTransport, @unchecked Sendable {
     func connect() async throws {
         lock.withLock {
             guard pumps.isEmpty else { return }
-            pumps = transports.indices.map { i in Task { [self] in await pump(i) } }
+            pumps = startPumps()
         }
         try await started.wait()
+    }
+
+    /// One pump per transport, each started.
+    private func startPumps() -> [Task<Void, Never>] {
+        transports.indices.map { i in Task { [self] in await pump(i) } }
     }
 
     /// Connects transport `i`, then hands each first message it receives
