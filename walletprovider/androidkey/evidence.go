@@ -97,6 +97,12 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 	if e.Verifier == nil {
 		return walletprovider.VerifiedEvidence{}, fail(ErrConfig, "EvidenceVerifier has no Verifier")
 	}
+	if in.Evidence.Kind != EvidenceKind {
+		// Served under a Kind of the integrator's own: the instances it
+		// registered would fail every recheck (ownKind), so it registers
+		// none.
+		return walletprovider.VerifiedEvidence{}, fail(ErrConfig, "evidence of Kind %q, not %q: don't serve the adapter under a Kind of your own", in.Evidence.Kind, EvidenceKind)
+	}
 	chain, err := splitChain(in.Evidence.Data)
 	if err != nil {
 		return walletprovider.VerifiedEvidence{}, err

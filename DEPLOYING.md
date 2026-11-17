@@ -333,8 +333,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   instances registered with, under that Kind: an instance whose Kind
   no verifier has is refused by policy (`OnRecheckRefused` hears of
   it), and `androidkey.EvidenceVerifier` served under another Kind
-  than `androidkey.EvidenceKind` fails every recheck as a
-  misconfiguration (HTTP 500).
+  than `androidkey.EvidenceKind` refuses every registration and fails
+  every recheck as a misconfiguration (`ErrConfig`).
 - [ ] **Expect Android instances to re-attest.** The recheck also
   judges each kept certificate's validity period, as `Verify` judges a
   chain's, so an instance whose registration chain has a certificate

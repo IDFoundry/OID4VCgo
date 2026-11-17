@@ -358,8 +358,10 @@ to `OnRecheckRefused`, where it used to be attested without rechecks.
 Keep a verifier for every Kind your instances registered with.
 `androidkey.EvidenceVerifier`'s `Recheck` and `RecheckInstanceKey`
 return `ErrConfig` (the provider's HTTP 500) for an instance of
-another Kind than `androidkey.EvidenceKind`, where they accepted it:
-don't serve the adapter under a Kind of your own.
+another Kind than `androidkey.EvidenceKind`, where they accepted it,
+and its `Verify` refuses evidence of another Kind with `ErrConfig`, so
+such an adapter registers no instance (`evidence_rejected`): don't
+serve the adapter under a Kind of your own.
 
 ### A wallet decides which issuers' offers it takes (`walletflow`)
 
