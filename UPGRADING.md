@@ -604,6 +604,30 @@ where it used to end the session with status 10 or 11:
   `subject_alt_names`, are now cleaned as the reader's `name` is, up to
   1,024 characters each: an app that matched them against raw
   certificate text may see them differ.
+- OID4VCWallet's GATT server lists every device that writes State
+  0x01, up to 64, displacing the one heard from least recently, and
+  hands each one's first message to Go: devices that never saw the QR
+  code can't keep the reader out by holding places. The request
+  timeout starts at the first device's State 0x01, which may not be
+  the reader's. A holder in central client mode passes over a device
+  whose Ident was read and differs, or that has none, for 10 seconds,
+  not the session; an Ident read that fails, a dropped link or a stall
+  costs a connection attempt instead (3 on iOS, 10 on Android), and no
+  longer passes the device over. Nothing changes in the API.
+
+### NFC: a bounded Transact, and HandoverRead for the Handover Select only (`proximity/nfcapdu`)
+
+- `nfcapdu.Transact` now gives up once the new `nfcapdu.TransactTimeout`
+  (3 minutes) has passed since the exchange started, with an error,
+  however much of the answer has arrived: an mdoc answering a byte at a
+  time could otherwise hold the reader for hours. A MaxMessage answer in
+  full-size responses takes under two minutes at a usual NFC round trip.
+- Under TNEP negotiated handover, `Holder.Process` reports `Step.HandoverRead`
+  only when the reader has read the Handover Select the negotiation
+  returned in full. Reading a staged write's NLEN 0, or a status, service
+  select or deselect answer served after the Handover Request, no longer
+  reports it, so the native app no longer commits the NFC engagement on
+  those. Static handover is unchanged.
 
 ## OID4VCWallet 0.39.0 → 0.40.0
 

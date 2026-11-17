@@ -148,7 +148,11 @@ nothing is sent and the request stands.
 ``ProximityPresentation/cancel()`` ends a session at any point, as the
 holder leaves the screen, say. ``ProximityTimeouts`` sets how long it
 waits: by default 60 seconds for a reader to connect, 30 for its
-request, and 300 for the holder to decide. Give them as `TimeInterval`
+request, and 300 for the holder to decide. Any device in Bluetooth
+range can start a session with the holder, without the QR code, and
+the 30 seconds run from the first that does, not necessarily the
+reader: from then on the reader has that long to send its request.
+Give them as `TimeInterval`
 seconds, on iOS 15 and later
 (``ProximityTimeouts/init(connectSeconds:requestSeconds:idleSeconds:)``),
 or as `Duration`s, on iOS 16 and later

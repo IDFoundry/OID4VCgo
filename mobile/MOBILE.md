@@ -1663,29 +1663,44 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   transport (`commit`): advertising stops, the other candidates are let
   go, and `EitherTransport` closes the other mode. Once a message has
   decrypted, a bad one ends the session with status 10 as before.
-  The candidate list holds eight devices. A device that writes 0x01
-  when it is full displaces the oldest candidate that has gone 10
-  seconds since its 0x01 without a whole message, else the oldest that
-  hasn't sent a chunk; never one partway through its message within
-  those 10 seconds, nor one whose message is with Go. With none to
-  displace, the newcomer isn't listed. Each device can be listed three
-  times at most, and one whose message is queued or being judged isn't
-  listed again: State 0x02, unsubscribing or disconnecting doesn't
-  refuse a device, so without that one device could queue many
-  messages. A full first-message queue (16) refuses only the newest
-  message's device, never the messages already queued. What remains:
-  devices in range can still delay the reader, by filling the list
-  with devices partway through a message just before the reader
-  starts, or keep it out if the reader starts while eight such devices
-  hold their places; the request timeout then ends the session, as it
-  would for a reader that never came. The reader in mdoc central
-  client mode (a GATT server too, speaking first) still commits to the
-  first device that starts a session; and on Android a combined QR and
-  NFC engagement still selects QR when the GATT server's first device
-  starts a session. The request timeout (`ProximityTimeouts`'
-  `requestSeconds` or `request`, 30 seconds by default) starts when
-  any device first writes 0x01, not necessarily the reader: from then
-  on, the reader has that long, not the connect timeout as well. Covered by unit tests with in-memory
+  A device that writes 0x01 is always listed, whenever it comes,
+  unless it was refused, its message is with Go, or it has been listed
+  three times already. The list holds 64 devices: when it is full, the
+  newcomer displaces the candidate heard from least recently (its 0x01
+  or its last chunk), never one whose message is with Go; and a chunk
+  that takes the candidates' partial messages past 4 MiB in all (twice
+  the largest message) displaces others the same way, so memory stays
+  bounded. Until the final audit of the 2026-11-17 fixes, the list
+  held eight and refused a newcomer while all eight were partway
+  through a message within 10 seconds of their 0x01: eight devices
+  that each sent a first chunk, with one more taking each place that
+  came free, kept the reader out for the whole request window, and on
+  iOS one radio connecting in turn was enough, since a central that
+  never subscribes can disconnect without the holder hearing of it, so
+  identities cost nothing. A device whose message is queued or being
+  judged isn't listed again: State 0x02, unsubscribing or
+  disconnecting doesn't refuse a device, so without that one device
+  could queue many messages. A full first-message queue (16) refuses
+  only the newest message's device, never the messages already queued.
+  What remains: displacing the reader partway through its message
+  takes writes from about 64 other devices, each listed or listing
+  itself, between two of the reader's own writes (tens of
+  milliseconds apart at usual connection intervals), so a reader whose
+  writes are far apart, or devices that can open dozens of BLE
+  connections in that time, can still be pushed out, and the reader
+  doesn't start again; nothing in the list can tell the reader from
+  devices that never saw the QR code before its message decrypts. Its
+  BLE controller's own connection limit, which devices in range can
+  fill, is outside the list, as is radio jamming. The request timeout
+  (`ProximityTimeouts`' `requestSeconds` or `request`, 30 seconds by
+  default) starts when any device first writes 0x01, not necessarily
+  the reader: from then on, the reader has that long, not the connect
+  timeout as well, and a device that writes 0x01 as soon as the holder
+  advertises shortens the reader's time to that. The reader in mdoc
+  central client mode (a GATT server too, speaking first) still
+  commits to the first device that starts a session; and on Android a
+  combined QR and NFC engagement still selects QR when any device
+  first writes 0x01 to the QR GATT server. Covered by unit tests with in-memory
   transports (`testBlindPeersDoNotEndTheSession`,
   `EitherTransportTests`; Kotlin `EitherTransportTest`, and
   `blindPeersDoNotEndTheSession` as an instrumented test) and of the
@@ -1696,16 +1711,25 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   or leaves half a message, costs one attempt rather than the session.
 - **A holder in central client mode checks the reader's Ident**
   (§8.3.3.1.1.4) before starting the session, and refuses to start
-  without one. A device whose Ident differs, another session's reader
-  advertising the same service, is disconnected and ignored, and the
-  scan goes on, on both platforms; so, since the F-09 fixes, is one
-  that has no mdoc service, characteristic or Ident, or doesn't answer
-  the Ident read (on iOS, also one that stops answering before then),
-  rather than costing a connection attempt. Any other failure, such as
-  a GATT error or a dropped link during the MTU exchange or discovery,
-  costs one attempt, so a reader with a transient failure is tried
-  again. Callbacks about a connection an attempt gave up on, including
-  those that arrive between attempts, are ignored.
+  without one. A device whose Ident was read and differs, another
+  session's reader advertising the same service, or that has no mdoc
+  service, characteristic or Ident, is disconnected and passed over for
+  10 seconds (`IgnoredDevices`), and the scan goes on, without costing
+  a connection attempt; the same on both platforms. Any other failure
+  costs one attempt (10 on Android, 3 on iOS), so a reader with a
+  transient failure is tried again: a GATT error, a dropped link or a
+  stall at any step, the Ident read included. Until the final audit of
+  the 2026-11-17 fixes, an Ident read that failed, a link dropped
+  during it, or (on iOS) any stall before it, passed a device over for
+  the rest of the session; devices are known by address (on iOS, an
+  identifier derived from it), which another device can claim, so a
+  device claiming the reader's address could have the reader ignored
+  for good. One showing another Ident under the reader's address still
+  has it passed over, for 10 seconds at a time, and must win the race
+  to it again each time. Callbacks about a connection an attempt gave
+  up on, including those that arrive between attempts, are ignored.
+  The rule is unit-tested on both platforms (`IgnoredDevicesTests`;
+  Kotlin `IgnoredDevicesTest`); the transports around it aren't.
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,
