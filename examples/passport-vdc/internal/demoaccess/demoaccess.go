@@ -24,6 +24,7 @@
 package demoaccess
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -46,21 +47,32 @@ func Guard(next http.Handler, origin string, access *AccessVerifier) http.Handle
 			return
 		}
 		if !canonical(r.URL) {
-			http.Error(w, "non-canonical path refused: request "+Prefix+" pages by their plain path", http.StatusBadRequest)
+			refuse(w, r, http.StatusBadRequest, "non-canonical path refused: request "+Prefix+" pages by their plain path", nil)
 			return
 		}
 		if access != nil {
 			if err := access.Verify(r.Context(), r.Header.Get(AccessTokenHeader)); err != nil {
-				http.Error(w, "this page needs a Cloudflare Access login", http.StatusForbidden)
+				refuse(w, r, http.StatusForbidden, "this page needs a Cloudflare Access login", err)
 				return
 			}
 		}
 		if !safeMethod(r.Method) && !SameOrigin(r, origin) {
-			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			refuse(w, r, http.StatusForbidden, "cross-origin request refused", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// refuse answers r with status and msg, and logs the refusal (and
+// err, its cause, if any).
+func refuse(w http.ResponseWriter, r *http.Request, status int, msg string, err error) {
+	reason := msg
+	if err != nil {
+		reason = err.Error()
+	}
+	log.Printf("demoaccess: %d for %q %q: %q", status, r.Method, r.URL.EscapedPath(), reason) // #nosec G706 -- quoted: a request can't forge a log line
+	http.Error(w, msg, status)
 }
 
 // underPrefix reports whether p, cleaned, is Prefix or under it.
