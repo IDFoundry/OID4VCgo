@@ -283,8 +283,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
 - [ ] **Recently registered instances: `Config.RecentInstanceStatusLists`**
   (16 of the 64 lists, a quarter, by default). The keys of an instance
   registered in the current or previous period take indices from these
-  lists alone; other instances' keys from the rest, and from these only
-  once the rest are full. Each instance costs only one piece of
+  lists alone; other instances' keys from any list, these chosen in
+  proportion to their share, so they hold established wallets' keys
+  as densely as the rest. Each instance costs only one piece of
   registration evidence, and its recorded keys move to each new
   period's lists without any, so this keeps instances registered in a
   burst from filling the lists the wallets registered before need.
@@ -293,9 +294,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   "the status lists of the current period that recently registered
   instances take indices from are full"; nothing is revoked or
   forgotten. Raise it for a launch that registers most of your fleet
-  in a week or two; `MaxStatusListsPerPeriod` turns it off. A list's
-  number tells an issuer whether the instance was registered in the
-  last period or two.
+  in a week or two; `MaxStatusListsPerPeriod` turns it off. A key on
+  list 16 or later tells an issuer its instance wasn't registered in
+  the last period or two; one on lists 0 to 15 tells it little, as a
+  quarter of established wallets' keys are there too.
 - [ ] **Alert on the status lists filling.** Watch
   `Provider.StatusListFill` from monitoring, every few minutes:
   - when its `Free` won't last until its `End` at the current rate;

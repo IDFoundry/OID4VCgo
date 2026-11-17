@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"strings"
@@ -239,5 +240,31 @@ func TestRecentInstanceShareOff(t *testing.T) {
 	_, err = h.walletAttestation(in.ID, &newKey(t).PublicKey, kindTEE)
 	if !errors.Is(err, statuslist.ErrListsFull) || strings.Contains(err.Error(), "RecentInstanceStatusLists") {
 		t.Fatalf("a key past every list with the share off = %v, want the lists full", err)
+	}
+}
+
+// TestEstablishedSpreadOverEveryList: an established instance's keys
+// take indices on the recent instances' share in proportion to its
+// size, so those lists don't hold recent instances' keys alone; and
+// when the share chosen is full, the other lists take the key.
+func TestEstablishedSpreadOverEveryList(t *testing.T) {
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		c.MaxInstanceKeysPerPeriod = 1000
+		d.Random = rand.Reader
+	})
+	in, _ := h.register(kindTEE)
+	h.toNextPeriod()
+	h.toNextPeriod()
+	inShare := 0
+	const keys = 400
+	for range keys {
+		key := h.newInstanceKey(in.ID, kindTEE)
+		if h.listNumber(h.instanceKey(&key.PublicKey).Status) < establishedList {
+			inShare++
+		}
+	}
+	// Expected keys/4 = 100; far outside 40-160 is a broken choice.
+	if inShare < 40 || inShare > 160 {
+		t.Fatalf("%d of %d established keys took the recent instances' share, want about a quarter", inShare, keys)
 	}
 }

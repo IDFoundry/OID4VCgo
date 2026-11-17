@@ -175,8 +175,11 @@ type Config struct {
 	// MaxStatusListsPerPeriod lists, from the first, the instance keys
 	// of an instance registered in the current or previous period
 	// (Instance.CreatedAt) take indices from: a quarter of the period's
-	// capacity by default. Other instances' keys take indices from the
-	// rest first, and from these only once the rest are full. So
+	// capacity by default. Other instances' keys take indices from any
+	// list: from this share with a chance in proportion to its size,
+	// otherwise from the rest, each falling back to the other once full.
+	// So these lists hold established instances' keys as densely as
+	// the rest do, and
 	// instances registered in a burst, each costing a piece of
 	// registration evidence, can fill no more than this share of a
 	// period's lists between them, and leave the rest to the wallets
@@ -186,8 +189,9 @@ type Config struct {
 	// server_error, and logged as the recent instances' share being
 	// full; a recorded key on the previous period's lists keeps its
 	// index there, as on full lists. Nothing is revoked or forgotten.
-	// A list's number tells a Relying Party whether the instance was
-	// registered in the last period or two, no more. Zero means
+	// A key on one of the other lists was registered more than a
+	// period or two ago; one on this share may have been, as much as
+	// any. Zero means
 	// DefaultRecentInstanceStatusLists; MaxStatusListsPerPeriod turns
 	// the share off, every instance taking indices from every list in
 	// turn.

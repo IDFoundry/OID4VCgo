@@ -502,8 +502,10 @@ The keys of an instance registered in the current or previous status
 list period (`Instance.CreatedAt`) now take indices from the period's
 first `Config.RecentInstanceStatusLists` lists alone: 16 of the 64 by
 default (`DefaultRecentInstanceStatusLists`). Other instances' keys
-take indices from the other lists first, list 16 onwards by default,
-and from those 16 only once the others are full. Many instances
+take indices from any list: from those 16 with a chance in proportion
+to their share, otherwise from list 16 onwards, each falling back to
+the other once full, so the 16 hold established wallets' keys as
+densely as the rest do. Many instances
 registered at once can then fill no more than that share of a period,
 where they used to be able to fill every list and have every other
 wallet's attestations refused until the period ended.
@@ -518,10 +520,11 @@ wallet's attestations refused until the period ended.
 - `StatusListFill` has a new `RecentInstanceLists` field and a
   `RecentInstanceFree` method; `Lists` are in list order. Alert on
   `RecentInstanceFree` falling fast early in a period (DEPLOYING.md).
-- Established wallets' attestations now name list 16 or later, so an
-  issuer fetches at least two of the provider's lists, and the list's
-  number tells it whether the instance was registered in the last
-  period or two.
+- Attestations now name lists across the period, so an issuer fetches
+  more than one of the provider's lists. A key on list 16 or later
+  tells it its instance wasn't registered in the last period or two;
+  one on lists 0 to 15 tells it little, since a quarter of established
+  wallets' keys are there too.
 - `SweepStatusLists` now counts every list of a period, not up to the
   first empty one.
 - Raise `RecentInstanceStatusLists` for a launch that registers most

@@ -2,8 +2,10 @@ package walletprovider
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -143,20 +145,48 @@ func (p *Provider) allocateStatus(ctx context.Context, id string, now time.Time)
 }
 
 // allocate reserves an index on a list of the period starting at
-// start: for a recent instance's key, on the period's first
-// Config.RecentInstanceStatusLists lists; for another's, on the rest
-// first, and on those only once the rest are full, so recent instances
-// can't take the room the others need, nor the others the recent
-// instances' while the rest have room.
+// start. A recent instance's key takes one on the period's first
+// Config.RecentInstanceStatusLists lists only, so recent instances
+// can't take the room the others need. Another's takes one on any
+// list, the recent instances' share chosen at random in proportion to
+// its size, and the other lists once the chosen ones are full: the
+// recent instances' lists then hold the others' keys as densely as the
+// rest do, so a list's number tells little about whether an instance
+// registered recently, and a burst of recent instances filling their
+// share leaves the others the rest.
 func (p *Provider) allocate(ctx context.Context, start int64, recent bool) (statuslist.StatusListRef, error) {
 	split := p.cfg.RecentInstanceStatusLists
-	if !recent && split < MaxStatusListsPerPeriod {
-		ref, err := p.allocateIn(ctx, start, split, MaxStatusListsPerPeriod)
-		if !errors.Is(err, statuslist.ErrListsFull) {
-			return ref, err
-		}
+	if recent || split >= MaxStatusListsPerPeriod {
+		return p.allocateIn(ctx, start, 0, split)
 	}
-	return p.allocateIn(ctx, start, 0, split)
+	inShare, err := p.pickRecentShare(split)
+	if err != nil {
+		return statuslist.StatusListRef{}, err
+	}
+	first, second := [2]int{split, MaxStatusListsPerPeriod}, [2]int{0, split}
+	if inShare {
+		first, second = second, first
+	}
+	ref, err := p.allocateIn(ctx, start, first[0], first[1])
+	if !errors.Is(err, statuslist.ErrListsFull) {
+		return ref, err
+	}
+	return p.allocateIn(ctx, start, second[0], second[1])
+}
+
+// pickRecentShare reports, at random with probability
+// split/MaxStatusListsPerPeriod, whether an established instance's key
+// is to take its index on the recent instances' share of the lists.
+func (p *Provider) pickRecentShare(split int) (bool, error) {
+	if split <= 0 {
+		return false, nil
+	}
+	var b [2]byte
+	if _, err := io.ReadFull(p.deps.Random, b[:]); err != nil {
+		return false, fmt.Errorf("walletprovider: choosing a status list: %w", err)
+	}
+	// 2^16 is a multiple of MaxStatusListsPerPeriod: no bias.
+	return int(binary.BigEndian.Uint16(b[:]))%MaxStatusListsPerPeriod < split, nil
 }
 
 // allocateIn reserves an index on the first list with room of lists
