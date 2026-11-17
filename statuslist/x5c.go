@@ -176,6 +176,9 @@ func trustedSigner(ctx context.Context, trust cose.X5ChainTrust, chain [][]byte,
 		if leaf, alg, err = trust.Signer(ctx, chain); err != nil {
 			return nil, 0, fmt.Errorf("statuslist: %w", err)
 		}
+	} else if err = certchain.CheckNoAnchor(chain); err != nil {
+		// A JOSE x5c leaves the trust anchor out (HAIP 1.0 §6.1).
+		return nil, 0, fmt.Errorf("statuslist: token signer: %w", err)
 	} else if leaf, _, err = certchain.VerifyTrustedChainsAt(ctx, chain, trust.Roots, trust.Policy, trust.Revocation, trust.Now); err != nil {
 		return nil, 0, fmt.Errorf("statuslist: token signer: %w", err)
 	}
