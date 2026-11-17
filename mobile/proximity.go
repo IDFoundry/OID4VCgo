@@ -138,7 +138,8 @@ func (p *ProximityPresentation) Engagement() string {
 // proximityEventJSON is HandleMessage's result.
 type proximityEventJSON struct {
 	result
-	// Event is "request" (Request describes it), "ended" or "none".
+	// Event is "request" (Request describes it), "ended", "rejected"
+	// or "none".
 	Event string `json:"event"`
 	// Send is the base64 message to send the reader, if any.
 	Send string `json:"send,omitempty"`
@@ -157,6 +158,13 @@ type proximityEventJSON struct {
 //     reason is "reader_ended" (the reader ended it first) or "error"
 //     (a bad message, or a reader require_trusted_mdoc_reader
 //     refuses), with error, a failing call's text;
+//   - "rejected": the session's first message didn't decode or decrypt
+//     for this engagement, so its sender never saw the engagement and
+//     isn't the reader. Nothing is sent: drop the device that sent it,
+//     and hand the next first message, from any device, to
+//     HandleMessage. The session waits on, up to
+//     proximity.MaxRejectedEstablishments times; the next such message
+//     ends it (added within ABI 15);
 //   - "none": nothing to do.
 func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) string {
 	ev := p.p.HandleMessage(op.context(), message)
@@ -167,6 +175,8 @@ func (p *ProximityPresentation) HandleMessage(op *Operation, message []byte) str
 	switch {
 	case ev.Request:
 		out.Event = "request"
+	case ev.Rejected:
+		out.Event = "rejected"
 	case ev.Ended:
 		out.Event = "ended"
 		if errors.Is(ev.Err, walletflow.ErrReaderEnded) {

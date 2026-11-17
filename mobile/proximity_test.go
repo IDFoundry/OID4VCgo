@@ -201,8 +201,24 @@ func TestSessions_ProximityPresentationEnds(t *testing.T) {
 		}
 	})
 	t.Run("not CBOR", func(t *testing.T) {
+		p, _, msg := startProximity(t, h, &reader)
+		// Rejected, sending nothing: any device in range could have
+		// sent it. The reader's request is still taken after it.
+		for range proximity.MaxRejectedEstablishments {
+			if ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), []byte{0x01})); ev.Event != "rejected" || ev.Send != "" {
+				t.Fatalf("HandleMessage = %+v", ev)
+			}
+		}
+		if ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), msg)); ev.Event != "request" {
+			t.Fatalf("the reader's request after rejected ones: %+v", ev)
+		}
+	})
+	t.Run("not CBOR, past the bound", func(t *testing.T) {
 		p, _, _ := startProximity(t, h, &reader)
-		ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), []byte{0x01}))
+		var ev proximityEvent
+		for range proximity.MaxRejectedEstablishments + 1 {
+			ev = decode[proximityEvent](t, p.HandleMessage(NewOperation(0), []byte{0x01}))
+		}
 		if ev.Event != "ended" || ev.Reason != "error" || !strings.HasPrefix(ev.Error, "["+CodeProtocol+"]") {
 			t.Errorf("HandleMessage = %+v", ev)
 		}

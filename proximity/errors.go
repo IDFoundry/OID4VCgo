@@ -57,14 +57,25 @@ var (
 	// the caller can answer with a signature instead
 	// (BuildDeviceResponse). BuildDeviceResponseMAC's error wraps it.
 	ErrNoKeyAgreement = errors.New("proximity: the device key can't agree keys")
+
+	// ErrEstablishmentRejected is DeviceSession.TrySessionEstablishment's
+	// error for a first message that doesn't decode or decrypt before
+	// any has: its sender doesn't hold this session's keys, so it isn't
+	// this session's reader. The session is still waiting for its
+	// reader; send nothing back, and drop the device that sent it if the
+	// transport can tell. The error also wraps why (ErrSessionEncryption
+	// or ErrCBORDecoding), but StatusFor gives it no reply.
+	ErrEstablishmentRejected = errors.New("proximity: SessionEstablishment not for this session")
 )
 
 // StatusFor maps an error from this package to the status code the
 // caller sends back with StatusMessage before closing the transport;
 // ok is false for an error with no status reply, such as one from
-// ErrSessionClosed or a verification failure.
+// ErrSessionClosed, ErrEstablishmentRejected or a verification failure.
 func StatusFor(err error) (status uint64, ok bool) {
 	switch {
+	case errors.Is(err, ErrEstablishmentRejected):
+		return 0, false
 	case errors.Is(err, ErrSessionEncryption):
 		return StatusSessionEncryptionError, true
 	case errors.Is(err, ErrCBORDecoding), errors.Is(err, ErrCBORValidation):

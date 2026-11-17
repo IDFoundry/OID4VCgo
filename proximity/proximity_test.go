@@ -598,6 +598,40 @@ func TestHolderRejects(t *testing.T) {
 			t.Errorf("after a failure: %v, want ErrSessionClosed", err)
 		}
 	})
+	t.Run("tampered SessionEstablishment, tried", func(t *testing.T) {
+		holder, est := newEstablishment(t)
+		var se sessionEstablishment
+		if err := decMode.Unmarshal(est, &se); err != nil {
+			t.Fatal(err)
+		}
+		se.Data[len(se.Data)-1] ^= 1
+		tampered, _ := encMode.Marshal(se)
+		for range MaxRejectedEstablishments {
+			_, err := holder.TrySessionEstablishment(tampered)
+			if !errors.Is(err, ErrEstablishmentRejected) || !errors.Is(err, ErrSessionEncryption) {
+				t.Fatalf("tried: %v, want ErrEstablishmentRejected", err)
+			}
+			if _, ok := StatusFor(err); ok {
+				t.Fatal("a rejected message has a status to send")
+			}
+		}
+		_, err := holder.TrySessionEstablishment(tampered)
+		wantStatus(t, err, StatusSessionEncryptionError)
+		if _, err := holder.TrySessionEstablishment(est); !errors.Is(err, ErrSessionClosed) {
+			t.Errorf("past the bound: %v, want ErrSessionClosed", err)
+		}
+
+		holder, est = newEstablishment(t)
+		if _, err := holder.TrySessionEstablishment([]byte{0x01}); !errors.Is(err, ErrEstablishmentRejected) {
+			t.Fatalf("not CBOR: %v, want ErrEstablishmentRejected", err)
+		}
+		if _, err := holder.TrySessionEstablishment(est); err != nil {
+			t.Fatalf("the reader's after a rejected one: %v", err)
+		}
+		if _, err := holder.TrySessionEstablishment(est); errors.Is(err, ErrEstablishmentRejected) || err == nil {
+			t.Errorf("once established: %v", err)
+		}
+	})
 	t.Run("replayed request", func(t *testing.T) {
 		holder, est := newEstablishment(t)
 		if _, err := holder.HandleSessionEstablishment(est); err != nil {

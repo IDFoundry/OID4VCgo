@@ -219,10 +219,21 @@ type ProximityEvent struct {
 	// Ended is true when the session is over: after Send, if any, the
 	// app disconnects.
 	Ended bool
+	// Rejected is true when the message, the session's first, didn't
+	// decode or decrypt for this engagement: its sender never saw the
+	// engagement, so it isn't the reader. The session still waits for
+	// its reader, and Send is nil: drop the device that sent it, if the
+	// transport can tell, and pass on the next first message, from it
+	// or another device (proximity.TrySessionEstablishment). After
+	// proximity.MaxRejectedEstablishments, the next such message ends
+	// the session.
+	Rejected bool
 	// Err is why an Ended session ended without an answer: an error
 	// wrapping ErrReaderEnded, ErrUntrustedVerifier (a reader
 	// Config.RequireTrustedMdocReader refuses), or the bad message's
-	// error from package proximity. nil while the session goes on.
+	// error from package proximity. For a Rejected message it wraps
+	// proximity.ErrEstablishmentRejected. Otherwise nil while the session
+	// goes on.
 	Err error
 }
 
@@ -251,9 +262,9 @@ func (p *ProximityPresentation) HandleMessage(ctx context.Context, msg []byte) P
 
 // establish handles the SessionEstablishment.
 func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) ProximityEvent {
-	reqBytes, err := p.s.HandleSessionEstablishment(msg)
+	reqBytes, err := p.s.TrySessionEstablishment(msg)
 	if err != nil {
-		return p.fail(err)
+		return p.failEstablishment(err)
 	}
 	req, err := proximity.DecodeDeviceRequest(reqBytes)
 	if err != nil {
@@ -306,6 +317,18 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 	}
 	p.state = proximityRequested
 	return ProximityEvent{Request: true}
+}
+
+// failEstablishment answers a first message TrySessionEstablishment
+// refused. Any nearby device can be the first to write (BLE peripheral
+// server mode): one whose message doesn't decode or decrypt is
+// rejected, the session left waiting, rather than allowed to end it
+// for the reader that scanned the QR code.
+func (p *ProximityPresentation) failEstablishment(err error) ProximityEvent {
+	if errors.Is(err, proximity.ErrEstablishmentRejected) {
+		return ProximityEvent{Rejected: true, Err: fmt.Errorf("walletflow: %w", err)}
+	}
+	return p.fail(err)
 }
 
 // fail ends the session after a message the holder couldn't process,

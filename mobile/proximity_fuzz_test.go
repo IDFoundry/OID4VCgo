@@ -33,7 +33,7 @@ func FuzzProximityHolder(f *testing.F) {
 		if out := p.HandleMessage(nil, msg); json.Unmarshal([]byte(out), &ev) != nil {
 			t.Fatalf("HandleMessage = %q, not JSON", out)
 		}
-		if !slices.Contains([]string{"request", "ended", "none"}, ev.Event) {
+		if !slices.Contains([]string{"request", "ended", "rejected", "none"}, ev.Event) {
 			t.Fatalf("HandleMessage event %q", ev.Event)
 		}
 		if out := p.Request(); !json.Valid([]byte(out)) {
