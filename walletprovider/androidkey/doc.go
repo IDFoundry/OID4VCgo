@@ -7,11 +7,12 @@
 // Verifier.Verify checks, and refuses with an error wrapping one of
 // this package's Err values when one fails:
 //
-//   - the chain: at most MaxChainLength certificates of at most
+//   - the chain: two to MaxChainLength certificates of at most
 //     MaxCertificateBytes, each signed by the next, ending at one of
 //     Verifier.Roots (Google's hardware attestation roots by default,
-//     GoogleRoots), every certificate valid at Verifier.Now, and the
-//     attestation extension on the leaf alone;
+//     GoogleRoots) or a certificate one of them signed, every
+//     certificate valid at Verifier.Now, a leaf whose key isn't a
+//     root's, and the attestation extension on the leaf alone;
 //   - the key description, parsed for attestation versions 1 to 4
 //     (Keymaster) and 100 to 500 (KeyMint), and later ones, whose added
 //     fields it skips;

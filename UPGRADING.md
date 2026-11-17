@@ -128,6 +128,15 @@ or P-384 key, checked before any signature is. Apple's attestations
 already have this shape; a test chain of your own with RSA keys, or
 with more certificates, is now refused `ErrMalformed`.
 
+### Android Key Attestation chains (`walletprovider/androidkey`)
+
+`Verifier.Verify` refuses a chain of one certificate (`ErrMalformed`)
+and a leaf whose key is a root's (`ErrUntrustedRoot`). A chain's last
+certificate anchors it when it is one of `Verifier.Roots` byte for
+byte or is signed by one (a self-signed re-issue of a root is);
+carrying a root's public key no longer suffices. Android's chains
+are unaffected.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

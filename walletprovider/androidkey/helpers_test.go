@@ -242,6 +242,7 @@ type testChain struct {
 	der      [][]byte
 	root     *x509.Certificate
 	inter    *x509.Certificate
+	rootKey  *ecdsa.PrivateKey
 	interKey *ecdsa.PrivateKey
 	leafKey  *ecdsa.PrivateKey
 }
@@ -274,7 +275,7 @@ func newChain(t testing.TB, s spec, o chainOpts) testChain {
 	leaf := issue(t, withValidity(leafTemplate(s.encode(t), serial(0)), o.leafValidity), inter, interKey, &leafKey.PublicKey)
 	return testChain{
 		der: [][]byte{leaf.Raw, inter.Raw, root.Raw}, root: root, inter: inter,
-		interKey: interKey, leafKey: leafKey,
+		rootKey: rootKey, interKey: interKey, leafKey: leafKey,
 	}
 }
 
