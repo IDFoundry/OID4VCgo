@@ -330,6 +330,18 @@ its chain is untrusted, where it was `untrusted_issuer`; one whose
 leaf doesn't parse is still refused `untrusted_issuer`. A resolver of
 your own sees no change.
 
+The Digital Credentials API's org-iso-mdoc answers (ISO/IEC TS 18013-7
+Annex C) get the same, with an `X5ChainIssuerKeyResolver`:
+`mdocdcapi.VerifyResponse` and `VerifyResponseDocuments`, and so
+`Transactions.HandleMdocDCAPIResponse`, check each document's
+`IssuerAuth` with its `x5chain` leaf's key before its chain, verify a
+chain the answer's documents share once, and apply
+`MaxFailedIssuerChainsPerResponse`. No API changes. A verifier of mdocs
+of its own can do the same through the new
+`verifier.ResponseIssuerChains`, one per response, whose
+`ResolveMdocIssuer` takes the document's `IssuerAuth`;
+`verifier.ResolveMdocIssuer` is unchanged.
+
 ### The Request Object at a request_uri is sealed with its record (`verifier`)
 
 `verifier.TransactionCodec` writes version 3 records

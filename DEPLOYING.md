@@ -241,7 +241,15 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   anchors is refused after its fourth failed chain, at a few
   milliseconds of CPU (the more configured roots of matching names,
   the more); one padding a genuine issuer JWT with a mebibyte of
-  disclosure parts, about 35 ms. So limit by concurrency as
+  disclosure parts, about 35 ms. An org-iso-mdoc answer over the
+  Digital Credentials API (ISO/IEC TS 18013-7 Annex C:
+  `HandleMdocDCAPIResponse`, or `mdocdcapi.VerifyResponse` and
+  `VerifyResponseDocuments` directly) is covered the same way, through
+  `verifier.ResponseIssuerChains`: each document's `IssuerAuth` checked
+  with its `x5chain` leaf's key first, each distinct chain verified once
+  per answer, under the same cap; and the first document that fails
+  refuses the whole answer, so at most one chain that doesn't verify is
+  checked per answer. So limit by concurrency as
   well as by rate: cap the response
   handlers' in-flight requests per instance (a semaphore, or your
   proxy's connection limit) so that a burst queues or is refused

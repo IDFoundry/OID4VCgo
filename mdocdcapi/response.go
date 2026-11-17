@@ -165,7 +165,7 @@ func VerifyResponse(ctx context.Context, p VerifyParams) (Verified, error) {
 	if doc.DocType != req.DocType {
 		return Verified{}, fmt.Errorf("mdocdcapi: the document is a %q, not the requested %q", doc.DocType, req.DocType)
 	}
-	verified, err := verifyDocument(ctx, p, doc, req, transcript)
+	verified, err := verifyDocument(ctx, p, verifier.NewResponseIssuerChains(), doc, req, transcript)
 	if err != nil {
 		return Verified{}, err
 	}
@@ -210,12 +210,13 @@ func VerifyResponseDocuments(ctx context.Context, p VerifyParams) ([]Verified, e
 		verified Verified
 	}
 	got := make([]answered, 0, len(docs))
+	chains := verifier.NewResponseIssuerChains()
 	for _, doc := range docs {
 		i := slices.IndexFunc(reqs, func(r DocumentRequest) bool { return r.DocType == doc.DocType })
 		if i < 0 {
 			return nil, fmt.Errorf("mdocdcapi: the response has a %q document, which wasn't requested", doc.DocType)
 		}
-		verified, err := verifyDocument(ctx, p, doc, reqs[i], transcript)
+		verified, err := verifyDocument(ctx, p, chains, doc, reqs[i], transcript)
 		if err != nil {
 			return nil, err
 		}
@@ -468,17 +469,16 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 
 // verifyDocument checks doc's issuer signature and digests, its device
 // signature over transcript, and that it disclosed only requested
-// elements.
-func verifyDocument(ctx context.Context, p VerifyParams, doc oid4vpmdoc.Document, req DocumentRequest, transcript []byte) (Verified, error) {
-	protected, unprotected, _, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
-	if err != nil {
-		return Verified{}, fmt.Errorf("mdocdcapi: decode IssuerAuth: %w", err)
-	}
+// elements. chains is the response's (verifier.ResponseIssuerChains):
+// IssuerAuth's signature is checked with its x5chain leaf's key before
+// the chain is verified, and each distinct chain is verified once per
+// response.
+func verifyDocument(ctx context.Context, p VerifyParams, chains *verifier.ResponseIssuerChains, doc oid4vpmdoc.Document, req DocumentRequest, transcript []byte) (Verified, error) {
 	if p.Now != nil {
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = verifier.WithVerificationTime(ctx, p.Now())
 	}
-	issuer, err := verifier.ResolveMdocIssuer(ctx, p.IssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
+	issuer, err := chains.ResolveMdocIssuer(ctx, p.IssuerKeys, doc.IssuerSigned.IssuerAuth, doc.DocType)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: resolve the issuer key: %w", err)
 	}

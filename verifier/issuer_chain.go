@@ -6,9 +6,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"sync"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/cose"
 )
 
 // MdocIssuerChainResolver is an MdocIssuerKeyResolver that can also
@@ -131,13 +133,73 @@ type MdocIssuer struct {
 // for the key and for the document signer checks, with the same
 // verification time, roots, LeafPolicy and Revocation as the two calls
 // it replaces; any other resolver is asked twice, as
-// ResolveMdocIssuerKey and then CheckMdocIssuer would ask it.
+// ResolveMdocIssuerKey and then CheckMdocIssuer would ask it. To check
+// the document's signature before its chain, and verify each distinct
+// chain of a response once, use ResponseIssuerChains.ResolveMdocIssuer,
+// as mdocdcapi does.
 func ResolveMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string) (MdocIssuer, error) {
 	return resolveMdocIssuer(ctx, nil, resolver, x5chain, docType, nil)
 }
 
+// ResponseIssuerChains verifies the issuer chains of one response's
+// documents, for a verifier of its own documents (mdocdcapi's), as
+// VerifyResponse verifies its own: through an X5ChainIssuerKeyResolver
+// (or a pointer to one), its ResolveMdocIssuer checks a document's
+// IssuerAuth signature with the key of the x5chain leaf it presents
+// before the chain is verified, verifies each distinct chain once, and,
+// once MaxFailedIssuerChainsPerResponse distinct chains haven't
+// verified, refuses each further one unverified: refuse the whole
+// response then. Use one per response, never across responses, and
+// with one resolver, whose LeafPolicy, Revocation and verification time
+// (WithVerificationTime) stay the same throughout. Any other resolver
+// is asked as ResolveMdocIssuer asks it.
+//
+// The zero value is ready to use, and a nil *ResponseIssuerChains
+// checks the signature first but verifies each chain afresh.
+type ResponseIssuerChains struct {
+	once sync.Once
+	memo *chainMemo
+}
+
+// NewResponseIssuerChains is a ResponseIssuerChains for one response.
+func NewResponseIssuerChains() *ResponseIssuerChains {
+	return new(ResponseIssuerChains)
+}
+
+// ResolveMdocIssuer is the package's ResolveMdocIssuer for a document
+// of the response whose IssuerAuth is issuerAuth, presenting its
+// x5chain, with c's checks (see ResponseIssuerChains). A document whose
+// IssuerAuth doesn't verify with its x5chain leaf's key is refused, and
+// its chain isn't verified.
+func (c *ResponseIssuerChains) ResolveMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, issuerAuth []byte, docType string) (MdocIssuer, error) {
+	protected, unprotected, _, err := cose.DecodeUnverified(issuerAuth)
+	if err != nil {
+		return MdocIssuer{}, fmt.Errorf("decode IssuerAuth: %w", err)
+	}
+	var memo *chainMemo
+	if c != nil {
+		c.once.Do(func() { c.memo = newChainMemo() })
+		memo = c.memo
+	}
+	return resolveMdocIssuer(ctx, memo, resolver, cose.X5ChainOf(protected, unprotected), docType, issuerAuthSigned(issuerAuth))
+}
+
+// issuerAuthSigned checks issuerAuth, an mdoc's IssuerAuth, with a
+// presented x5chain leaf's key (see leafSignature).
+func issuerAuthSigned(issuerAuth []byte) leafSignature {
+	return func(pub crypto.PublicKey) error {
+		alg, err := mdocAlgForKey(pub)
+		if err != nil {
+			return nil
+		}
+		_, _, _, err = cose.Verify(alg, pub, issuerAuth, []byte{})
+		return err
+	}
+}
+
 // resolveMdocIssuer is ResolveMdocIssuer, an X5ChainIssuerKeyResolver's
-// chain verification memoized in memo when it isn't nil.
+// chain verification memoized in memo when it isn't nil, and preceded
+// by signed when it isn't nil.
 func resolveMdocIssuer(ctx context.Context, memo *chainMemo, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string, signed leafSignature) (MdocIssuer, error) {
 	issuer := MdocIssuer{resolver: resolver, x5chain: x5chain, docType: docType}
 	if r, ok := x5chainResolver(resolver); ok {

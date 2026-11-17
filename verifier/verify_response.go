@@ -1073,15 +1073,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	// An X5ChainIssuerKeyResolver's chain is verified after IssuerAuth's
 	// signature is checked with the x5chain leaf's key, so a genuine
 	// chain replayed under another signature costs no chain check.
-	signed := func(pub crypto.PublicKey) error {
-		alg, err := mdocAlgForKey(pub)
-		if err != nil {
-			return nil
-		}
-		_, _, _, err = cose.Verify(alg, pub, doc.IssuerSigned.IssuerAuth, []byte{})
-		return err
-	}
-	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, signed)
+	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerAuthSigned(doc.IssuerSigned.IssuerAuth))
 	if errors.As(err, new(*issuerSignatureError)) {
 		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
