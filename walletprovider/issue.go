@@ -212,21 +212,20 @@ func (p *Provider) checkInstanceKey(in Instance, ik InstanceKey) error {
 // the provider is about to rely on without fresh evidence: one at a
 // security level the Policy no longer accepts, or whose own evidence
 // the instance's verifier, an InstanceKeyRechecker, refuses now. Its
-// refusal is acted on as the instance's own recheck's is
-// (recheckRefused). A record without EvidenceFacts, from before the
-// provider kept them, is rechecked too: the rechecker decides what to
-// make of it (androidkey's refuses it, unless
-// AllowUncheckedLegacyEvidence).
+// refusal is acted on as the instance's own recheck's is (judge). A
+// record without EvidenceFacts, from before the provider kept them, is
+// rechecked too: the rechecker decides what to make of it
+// (androidkey's refuses it, unless AllowUncheckedLegacyEvidence).
 func (p *Provider) checkRecordedInstanceKey(ctx context.Context, in Instance, ik InstanceKey) error {
-	if err := p.checkInstanceKey(in, ik); err != nil {
-		return err
+	v, err := p.verifierOf(in)
+	if err != nil {
+		return p.recheckRefused(ctx, in, err)
 	}
-	if r, ok := p.verifiers[in.Evidence.Kind].(InstanceKeyRechecker); ok {
-		if err := r.RecheckInstanceKey(ctx, in, ik); err != nil {
-			return p.recheckRefused(ctx, in, recheckError("the instance key's evidence", ErrInstanceKeyExpired, err))
-		}
+	var recheck func() error
+	if r, ok := v.(InstanceKeyRechecker); ok {
+		recheck = func() error { return r.RecheckInstanceKey(ctx, in, ik) }
 	}
-	return nil
+	return p.judge(ctx, in, p.checkInstanceKey(in, ik), recheck, "the instance key's evidence", ErrInstanceKeyExpired)
 }
 
 // recordedInstanceKey returns the instance key pub of in, refusing a
@@ -487,8 +486,9 @@ func (p *Provider) checkEvidenceFrom(in Instance, kind string, ev VerifiedEviden
 }
 
 // activeInstance returns the instance with id, refusing one that isn't
-// active, whose registration evidence the Policy no longer accepts, or
-// whose registration verifier, an EvidenceRechecker, refuses it now.
+// active, whose evidence Kind has no configured verifier, whose
+// registration evidence the Policy no longer accepts, or whose
+// registration verifier, an EvidenceRechecker, refuses it now (judge).
 func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, error) {
 	in, err := p.getInstance(ctx, id)
 	if err != nil {
@@ -497,15 +497,55 @@ func (p *Provider) activeInstance(ctx context.Context, id string) (Instance, err
 	if err := stateError(in.State); err != nil {
 		return Instance{}, err
 	}
-	if err := p.cfg.Policy.checkInstance(in); err != nil {
+	v, err := p.verifierOf(in)
+	if err != nil {
+		return Instance{}, p.recheckRefused(ctx, in, err)
+	}
+	var recheck func() error
+	if r, ok := v.(EvidenceRechecker); ok {
+		recheck = func() error { return r.Recheck(ctx, in) }
+	}
+	if err := p.judge(ctx, in, p.cfg.Policy.checkInstance(in), recheck, "the instance's registration evidence", ErrRegistrationExpired); err != nil {
 		return Instance{}, err
 	}
-	if r, ok := p.verifiers[in.Evidence.Kind].(EvidenceRechecker); ok {
-		if err := r.Recheck(ctx, in); err != nil {
-			return Instance{}, p.recheckRefused(ctx, in, recheckError("the instance's registration evidence", ErrRegistrationExpired, err))
-		}
-	}
 	return in, nil
+}
+
+// verifierOf returns the verifier of in's evidence Kind, refusing, by
+// policy, an instance whose Kind no configured verifier checks: its
+// evidence can't be rechecked, and attesting it unjudged would skip
+// whatever its rechecks would have refused.
+func (p *Provider) verifierOf(in Instance) (EvidenceVerifier, error) {
+	v, ok := p.verifiers[in.Evidence.Kind]
+	if !ok {
+		return nil, fmt.Errorf("%w: the instance was registered with %q evidence, which no configured verifier checks", ErrPolicy, in.Evidence.Kind)
+	}
+	return v, nil
+}
+
+// judge acts on what the provider's own Policy (policyErr) and the
+// instance's rechecker (recheck, nil when there's none) make of
+// evidence the provider is about to rely on, what, and returns the
+// error the request fails with. The rechecker runs whatever the
+// Policy decided, and its verdict that the evidence's issuer revoked or
+// suspended it wins, so the instance is revoked or suspended even when
+// the Policy refuses it too; otherwise a Policy refusal is the one
+// answered. Either refusal is acted on by recheckRefused, so
+// Config.OnRecheckRefused hears of a Policy refusal as well; expired
+// is the refusal a rechecker's fresh-evidence verdict becomes
+// (recheckError).
+func (p *Provider) judge(ctx context.Context, in Instance, policyErr error, recheck func() error, what string, expired error) error {
+	var recheckErr error
+	if recheck != nil {
+		recheckErr = recheck()
+	}
+	switch {
+	case recheckErr != nil && (policyErr == nil || errors.Is(recheckErr, ErrEvidenceRevoked) || errors.Is(recheckErr, ErrEvidenceSuspended)):
+		return p.recheckRefused(ctx, in, recheckError(what, expired, recheckErr))
+	case policyErr != nil:
+		return p.recheckRefused(ctx, in, policyErr)
+	}
+	return nil
 }
 
 // recheckError is a rechecker's err for what, wrapping expired too when

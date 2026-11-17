@@ -137,6 +137,29 @@ byte or is signed by one (a self-signed re-issue of a root is);
 carrying a root's public key no longer suffices. Android's chains
 are unaffected.
 
+### Revocation outranks policy in rechecks (`walletprovider`, `walletprovider/androidkey`)
+
+An Android recheck consults Google's status list first, so a REVOKED
+or SUSPENDED certificate revokes or suspends the instance even when a
+root removed from `Roots` or a tightened `Verifier` would refuse it
+too; a list that can't be fetched no longer stops a root or policy
+refusal. The provider runs an instance's rechecker even when its own
+`Policy` refuses the instance or instance key, and
+`Config.OnRecheckRefused` is now called for a `Policy` refusal too
+(`ErrPolicy`, the instance left active): an alert keyed on that
+callback sees refusals it didn't before.
+
+### Instances of an unconfigured evidence Kind (`walletprovider`, `walletprovider/androidkey`)
+
+An instance whose evidence `Kind` has no verifier in
+`Dependencies.Evidence` is now refused, `policy_refused`, and reported
+to `OnRecheckRefused`, where it used to be attested without rechecks.
+Keep a verifier for every Kind your instances registered with.
+`androidkey.EvidenceVerifier`'s `Recheck` and `RecheckInstanceKey`
+return `ErrConfig` (the provider's HTTP 500) for an instance of
+another Kind than `androidkey.EvidenceKind`, where they accepted it:
+don't serve the adapter under a Kind of your own.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

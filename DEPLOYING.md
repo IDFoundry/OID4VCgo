@@ -268,11 +268,19 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   a certificate of an instance's chain `REVOKED`, the provider revokes
   the instance itself, so the attestations it already holds read
   `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
-  suspension). A root removed from `Roots` or a tightened policy only
-  refuses: to make such instances' attestations `INVALID` too, revoke
-  them with `p.RevokeWhere(ctx, match, reason)`, `match` calling the
-  adapter's `Recheck` or reading `androidkey.InstanceFacts` (a
-  certificate serial, a patch level).
+  suspension). Google's verdict is consulted first, and wins even when
+  a root removed from `Roots`, a tightened `Verifier` or a tightened
+  `Policy` would refuse the instance too. A root removed or a tightened
+  policy alone only refuses: to make such instances' attestations
+  `INVALID` too, revoke them with `p.RevokeWhere(ctx, match, reason)`,
+  `match` calling the adapter's `Recheck` or reading
+  `androidkey.InstanceFacts` (a certificate serial, a patch level).
+  Keep a verifier in `Dependencies.Evidence` for every `Kind` your
+  instances registered with, under that Kind: an instance whose Kind
+  no verifier has is refused by policy (`OnRecheckRefused` hears of
+  it), and `androidkey.EvidenceVerifier` served under another Kind
+  than `androidkey.EvidenceKind` fails every recheck as a
+  misconfiguration (HTTP 500).
 - [ ] **Expect Android instances to re-attest.** The recheck also
   judges each kept certificate's validity period, as `Verify` judges a
   chain's, so an instance whose registration chain has a certificate
@@ -320,8 +328,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   where a provider's stores may outlive its upgrades.
 - [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
   called with each refusal and the instance as stored afterwards
-  (revoked, suspended or still active): alert on it, and revoke from
-  your own logic the instances a policy refusal leaves active. It runs
+  (revoked, suspended or still active), the provider's own `Policy`
+  refusals among them: alert on it, and revoke from your own logic the
+  instances a policy refusal leaves active. It runs
   on the request's path, so hand slow work to another goroutine.
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes

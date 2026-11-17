@@ -36,7 +36,7 @@ type providerFixture struct {
 	refused []error // OnRecheckRefused's errors
 }
 
-func newProviderFixture(t *testing.T, e androidkey.EvidenceVerifier) *providerFixture {
+func newProviderFixture(t *testing.T, e walletprovider.EvidenceVerifier) *providerFixture {
 	t.Helper()
 	ca, caKey := testcert.CA(t, "Wallet Provider CA")
 	id, err := url.Parse("https://provider.example")

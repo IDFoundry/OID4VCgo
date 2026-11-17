@@ -109,6 +109,50 @@ func TestRecheck(t *testing.T) {
 			},
 			want: []error{walletprovider.ErrPolicy, androidkey.ErrAppNotAllowed},
 		},
+		// Google's verdict wins over every other refusal: the provider
+		// revokes the instance though its root, or its policy, would
+		// refuse it as well.
+		"revoked, and root no longer trusted": {
+			policy: func(v *androidkey.Verifier) {
+				v.Revocation = revokingSerial(t, "2")
+				v.Roots = []*x509.Certificate{newChain(t, goodSpec(t), chainOpts{}).root}
+			},
+			want:    []error{walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked, androidkey.ErrRevoked},
+			notWant: []error{androidkey.ErrUntrustedRoot},
+		},
+		"revoked, and patch level now too old": {
+			policy: func(v *androidkey.Verifier) {
+				v.Revocation = revokingSerial(t, "2")
+				v.MinOSPatchLevel = 202601
+			},
+			want:    []error{walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceRevoked, androidkey.ErrRevoked},
+			notWant: []error{walletprovider.ErrPolicy},
+		},
+		"suspended, and StrongBox now required": {
+			policy: func(v *androidkey.Verifier) {
+				v.Revocation = listingSerial(t, "1", androidkey.StatusSuspended)
+				v.RequireStrongBox = true
+			},
+			want:    []error{walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceSuspended},
+			notWant: []error{walletprovider.ErrPolicy},
+		},
+		// A status list that can't be had doesn't stop a refusal the
+		// facts alone decide.
+		"status list unavailable, and root no longer trusted": {
+			policy: func(v *androidkey.Verifier) {
+				v.Revocation = failingStatus{}
+				v.Roots = []*x509.Certificate{newChain(t, goodSpec(t), chainOpts{}).root}
+			},
+			want:    []error{walletprovider.ErrEvidenceRejected, androidkey.ErrUntrustedRoot},
+			notWant: []error{androidkey.ErrStatusUnavailable},
+		},
+		"status list unavailable, and patch level now too old": {
+			policy: func(v *androidkey.Verifier) {
+				v.Revocation = failingStatus{}
+				v.MinOSPatchLevel = 202601
+			},
+			want: []error{walletprovider.ErrPolicy, androidkey.ErrPatchLevel},
+		},
 		// Not a refusal: the provider fails the request as its own
 		// failure, and the wallet tries again.
 		"status list unavailable": {
@@ -144,12 +188,14 @@ func TestRecheck(t *testing.T) {
 		})
 	}
 
-	// An instance of another Kind isn't this verifier's to judge.
+	// An instance of another Kind isn't this verifier's to judge: it
+	// fails closed, as a misconfiguration, not a refusal, even with
+	// Facts this verifier would refuse under its own Kind.
 	strict := androidkey.EvidenceVerifier{Verifier: verifierFor(t, c)}
 	strict.Verifier.Revocation = revokingSerial(t, "2")
 	ios := walletprovider.Instance{ID: "ios", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}, EvidenceFacts: ev.Facts}
-	if err := strict.Recheck(ctx, ios); err != nil {
-		t.Fatalf("Recheck(ios) = %v", err)
+	if err := strict.Recheck(ctx, ios); !errors.Is(err, androidkey.ErrConfig) || errors.Is(err, walletprovider.ErrPolicy) || errors.Is(err, walletprovider.ErrEvidenceRejected) {
+		t.Fatalf("Recheck(ios) = %v, want ErrConfig", err)
 	}
 	// Facts that don't decode are the provider's failure, not a refusal.
 	in.EvidenceFacts = []byte("{")
@@ -160,8 +206,8 @@ func TestRecheck(t *testing.T) {
 
 // TestRecheckInstanceKey: RecheckInstanceKey judges an instance key's
 // own Facts, not the instance's, refuses a key with none (recorded
-// before they were kept) unless AllowUncheckedLegacyEvidence, accepts
-// one of an instance registered with another Kind, and returns
+// before they were kept) unless AllowUncheckedLegacyEvidence, fails
+// closed for one of an instance registered with another Kind, and returns
 // undecodable Facts as its own failure, not a refusal.
 func TestRecheckInstanceKey(t *testing.T) {
 	ctx := context.Background()
@@ -198,8 +244,8 @@ func TestRecheckInstanceKey(t *testing.T) {
 		}
 	}
 	ios := walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}}
-	if err := e.RecheckInstanceKey(ctx, ios, k); err != nil {
-		t.Fatalf("RecheckInstanceKey of another Kind's instance = %v, want it accepted", err)
+	if err := e.RecheckInstanceKey(ctx, ios, k); !errors.Is(err, androidkey.ErrConfig) {
+		t.Fatalf("RecheckInstanceKey of another Kind's instance = %v, want ErrConfig", err)
 	}
 	k.EvidenceFacts = []byte("{")
 	err = e.RecheckInstanceKey(ctx, in, k)
