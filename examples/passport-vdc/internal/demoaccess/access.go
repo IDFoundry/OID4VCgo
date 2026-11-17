@@ -2,9 +2,8 @@ package demoaccess
 
 import (
 	"context"
-	"crypto"
 	"crypto/rsa"
-	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -148,8 +147,10 @@ func (v *AccessVerifier) Verify(ctx context.Context, token string) error {
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig); err != nil {
+	// RS256 is the algorithm Access signs with; x509 checks it with the
+	// key alone.
+	signer := &x509.Certificate{PublicKey: key}
+	if err := signer.CheckSignature(x509.SHA256WithRSA, []byte(parts[0]+"."+parts[1]), sig); err != nil {
 		return errors.New("demoaccess: token signature doesn't verify")
 	}
 	var claims accessClaims

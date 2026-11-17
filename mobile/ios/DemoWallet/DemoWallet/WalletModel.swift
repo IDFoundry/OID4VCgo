@@ -902,7 +902,8 @@ enum LogoStore {
     /// A `data:` URL's bytes: base64 or percent-encoded.
     private static func decodeDataURL(_ uri: String) -> Data? {
         guard let comma = uri.firstIndex(of: ",") else { return nil }
-        let header = uri[..<comma], payload = String(uri[uri.index(after: comma)...])
+        let header = uri[..<comma]
+        let payload = String(uri[uri.index(after: comma)...])
         if header.hasSuffix(";base64") { return Data(base64Encoded: payload) }
         return payload.removingPercentEncoding.map { Data($0.utf8) }
     }

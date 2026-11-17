@@ -93,7 +93,7 @@ func TestService_PrunesLegacyInstances(t *testing.T) {
 	}
 	for i, tp := range thumbprints {
 		_, err := s.instanceOf(ctx, tp)
-		if gone := errors.Is(err, wp.ErrNotFound); gone != (i < 2) {
+		if errors.Is(err, wp.ErrNotFound) != (i < 2) {
 			t.Errorf("instance key %d: lookup %v; want only the two least recently seen gone", i, err)
 		}
 	}
