@@ -498,10 +498,14 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 // trust, is checked: an offer naming an attacker's issuer, beside a PIN
 // the holder believes is for a genuine service, hands the attacker the
 // PIN (OpenID4VCI 1.0's Security Considerations, "Transaction Code
-// Phishing"). Show Offer.CredentialIssuer, and IssuerName, beside the
-// PIN prompt, and limit the issuers the wallet takes offers from with
-// Config.CredentialIssuers, or with RequireSignedIssuerMetadata and
-// RequireIssuerMetadataName.
+// Phishing"). Config.CredentialIssuers, or signed issuer metadata
+// naming its issuer (RequireSignedIssuerMetadata with
+// RequireIssuerMetadataName), prevents it: StartIssuance refuses any
+// other issuer's offer. Under AllowAnyCredentialIssuer it's the
+// application's to prevent. Either way, lead the PIN prompt with Offer.CredentialIssuer, the issuer's
+// identifier: IssuerName is the issuer's own display metadata, in which
+// an attacker's issuer can claim any name unless its metadata must be
+// signed by a trusted certificate (RequireSignedIssuerMetadata).
 func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

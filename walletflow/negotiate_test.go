@@ -19,7 +19,7 @@ import (
 func (f fixture) anonymousWallet(t *testing.T, profile walletflow.IssuanceProfile, grants walletflow.GrantStore) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		IssuerRoots: f.env.IssuerRoots, Development: true, IssuanceProfile: profile, RequestRefresh: grants != nil,
+		CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true, IssuanceProfile: profile, RequestRefresh: grants != nil,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: f.env.HTTP, Grants: grants})
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestIssuance_AnonymousKeyAttestation(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{Anonymous: true, JWTKeyAttestation: true})
 	keys := &instanceKeys{MemoryKeyStore: f.keys}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, IssuerRoots: f.env.IssuerRoots, Development: true, IssuanceProfile: walletflow.ProfileOpenID4VCI,
+		ClientID: walletflowtest.ClientID, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true, IssuanceProfile: walletflow.ProfileOpenID4VCI,
 	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, HTTP: f.env.HTTP, Provider: f.env.Provider})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestIssuance_AnonymousKeyAttestation(t *testing.T) {
 		t.Error("the Key Attestation's instance key outlived the issuance")
 	}
 
-	noClientID, err := walletflow.New(walletflow.Config{IssuerRoots: f.env.IssuerRoots, Development: true},
+	noClientID, err := walletflow.New(walletflow.Config{CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true},
 		walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: f.env.HTTP, Provider: f.env.Provider})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestIssuance_ClientAuthChoice(t *testing.T) {
 	ctx := context.Background()
 	anon := newFixture(t, walletflowtest.Options{Anonymous: true})
 	haip := walletflow.Config{
-		ClientID: walletflowtest.ClientID, IssuerRoots: anon.env.IssuerRoots, Development: true, IssuanceProfile: walletflow.ProfileHAIP,
+		ClientID: walletflowtest.ClientID, CredentialIssuers: []string{anon.env.IssuerURL}, IssuerRoots: anon.env.IssuerRoots, Development: true, IssuanceProfile: walletflow.ProfileHAIP,
 	}
 	w, err := walletflow.New(haip, walletflow.Dependencies{Keys: anon.keys, Credentials: anon.store, HTTP: anon.env.HTTP, Provider: anon.env.Provider})
 	if err != nil {
@@ -242,7 +242,7 @@ func TestRefreshCredential_AnonymousGrant(t *testing.T) {
 		// refreshed, even by a wallet that could attest itself.
 		c = receivePreAuthorized(t, f, w, walletflowtest.MdocConfigurationID)[0]
 		haip, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, IssuerRoots: f.env.IssuerRoots, Development: true,
+			ClientID: walletflowtest.ClientID, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 			IssuanceProfile: walletflow.ProfileHAIP, RequestRefresh: true,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: f.env.HTTP, Grants: grants, Provider: f.env.Provider})
 		if err != nil {
@@ -307,7 +307,7 @@ func TestIssuance_InvalidNonceRetried(t *testing.T) {
 			}
 			return f.env.HTTP.Transport.RoundTrip(r)
 		})
-		w, err := walletflow.New(walletflow.Config{IssuerRoots: f.env.IssuerRoots, Development: true},
+		w, err := walletflow.New(walletflow.Config{CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true},
 			walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: &hc})
 		if err != nil {
 			t.Fatal(err)

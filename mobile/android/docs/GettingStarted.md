@@ -171,7 +171,12 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
         WalletConfiguration(
             clientID = "https://wallet.example.com",
             redirectURI = "com.example.wallet:/callback",
-            issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots),
+            // The issuers whose offers the wallet takes: another's is
+            // refused before the holder is asked for a PIN.
+            issuers = WalletConfiguration.IssuerTrust(
+                roots = issuerRoots,
+                credentialIssuers = listOf("https://issuer.example.com"),
+            ),
             verifiers = WalletConfiguration.VerifierTrust(roots = verifierRoots),
             revocation = WalletConfiguration.Revocation(
                 roles = listOf(

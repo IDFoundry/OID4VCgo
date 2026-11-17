@@ -206,7 +206,8 @@ func (e *Env) WalletConfig() walletapp.Config {
 	issuerRoots.AddCert(e.Issuer.IssuerCACertificate())
 	return walletapp.Config{
 		ClientID: WalletClientID, RedirectURI: RedirectURI, IssuerRoots: issuerRoots, HTTP: e.HTTP,
-		Provider: walletprovider.Client{URL: e.ProviderURL, HTTP: e.HTTP},
+		CredentialIssuers: []string{e.IssuerURL},
+		Provider:          walletprovider.Client{URL: e.ProviderURL, HTTP: e.HTTP},
 	}
 }
 

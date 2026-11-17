@@ -33,7 +33,7 @@ func TestIssuerRevocation(t *testing.T) {
 	} {
 		w, err := walletflow.New(walletflow.Config{
 			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-			IssuerRoots: f.env.IssuerRoots, IssuerRevocation: c.Checker,
+			CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerRevocation: c.Checker,
 		}, walletflow.Dependencies{
 			Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: f.env.Provider, HTTP: f.env.HTTP,
 		})
@@ -63,7 +63,7 @@ func TestIssuerRevocation_CheckedOncePerCopy(t *testing.T) {
 	var checks atomic.Int32
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: revokingChecker{&checks},
+		CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerRevocation: revokingChecker{&checks},
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: f.env.Provider, HTTP: f.env.HTTP,
 	})
@@ -87,7 +87,7 @@ func TestNew_RefusesIncompleteRevocation(t *testing.T) {
 		"RegistrarRevocation":      func(c *walletflow.Config) { c.RegistrarRevocation = certrevocation.CRLs{} },
 		"MdocReaderRevocation":     func(c *walletflow.Config) { c.MdocReaderRevocation = certrevocation.CRLs{} },
 	} {
-		cfg := walletflow.Config{Development: true, IssuerRoots: x509.NewCertPool()}
+		cfg := walletflow.Config{Development: true, CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool()}
 		set(&cfg)
 		_, err := walletflow.New(cfg, walletflow.Dependencies{Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore()})
 		if err == nil || !strings.Contains(err.Error(), name) {

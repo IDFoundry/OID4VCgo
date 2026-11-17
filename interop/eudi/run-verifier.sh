@@ -486,7 +486,7 @@ holder() {  # $1 name, $2 receive or present, $3 the store; then the step's flag
   shift 3
   local common=(-store "$store" -out "result-issued-$name.json" -issuer-ca issued-issuer-ca.pem -iaca issued-iaca.pem
     -verifier-ca verifier-ca.pem -crl-publisher holder-crl-publisher.json -crl-trust holder-crl-trust.json
-    -client-id "$ISSUED_CLIENT_ID")
+    -client-id "$ISSUED_CLIENT_ID" -credential-issuer "$ISSUER_URL")
   rm -f "result-issued-$name.json"
   if [[ "$WALLET_ASSURANCE" = production ]]; then
     prodnet_run "$PRODNET" "$WORK" holder-tls-roots.pem "$CONTAINER-holder" vpholder-linux "$step" "${common[@]}" \

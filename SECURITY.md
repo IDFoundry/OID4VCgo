@@ -180,18 +180,33 @@ they're not yet closed in the library.
     holder's credentials.
 - **Transaction code phishing.** A pre-authorized offer's PIN goes to
   the issuer the offer names, at `RedeemPreAuthorizedCode`, before the
-  wallet sees anything that issuer signs: by default, any issuer's
-  offer is shown, and `IssuerRoots` judge it only when its credential
-  arrives. A phishing offer naming an attacker's issuer, beside a PIN
-  prompt the holder believes is for a genuine service, hands the
-  attacker the PIN, or a genuine offer's code and PIN once intercepted
-  (OpenID4VCI 1.0's Security Considerations, "Transaction Code
-  Phishing"). Credential trust is unaffected. Show
-  `Offer.CredentialIssuer` beside the PIN prompt, and limit the issuers
-  offers are taken from: `walletflow.Config.CredentialIssuers` lists
-  them, or `RequireSignedIssuerMetadata` with
-  `RequireIssuerMetadataName` takes only issuers whose metadata is
-  signed by a certificate under `IssuerMetadataRoots` that names them.
+  wallet sees anything that issuer signs: `IssuerRoots` judge an issuer
+  only when its credential arrives. A phishing offer naming an
+  attacker's issuer, beside a PIN prompt the holder believes is for a
+  genuine service, hands the attacker the PIN, or a genuine offer's
+  code and PIN once intercepted (OpenID4VCI 1.0's Security
+  Considerations, "Transaction Code Phishing"). Credential trust is
+  unaffected. So `walletflow.New` refuses a wallet that receives
+  credentials without deciding which issuers' offers it takes, in one
+  of three ways:
+  - `Config.CredentialIssuers` lists them: `StartIssuance` refuses any
+    other issuer's offer with `ErrUntrustedIssuer`, before fetching its
+    metadata or asking for the PIN;
+  - `IssuerMetadataRoots` with `RequireSignedIssuerMetadata` and
+    `RequireIssuerMetadataName` takes only issuers whose metadata is
+    signed by a certificate under those roots that names them, checked
+    in `StartIssuance` too; it may be combined with the list;
+  - `AllowAnyCredentialIssuer` takes any issuer's offer, and leaves
+    this attack to the application.
+
+  The mobile libraries take the same three, as `credential_issuers`,
+  `issuer_metadata_roots` with `require_signed_issuer_metadata` and
+  `require_issuer_metadata_name`, and `allow_any_credential_issuer`
+  (Swift and Kotlin: `issuers.credentialIssuers`, `issuerMetadata`,
+  `issuers.allowAnyCredentialIssuer`), and refuse an unlisted issuer's
+  offer with `untrusted_issuer` (mobile/ABI.md). Either way, lead the
+  PIN prompt with `Offer.CredentialIssuer`: the issuer's display name
+  is its own metadata's, which unsigned metadata lets it choose.
 - **Relayed key attestations.** A key attestation names no audience,
   and the `c_nonce` it carries comes from an unauthenticated Nonce
   Endpoint (OpenID4VCI 1.0 Appendix D, §7). An issuer can hand a wallet

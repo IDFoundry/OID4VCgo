@@ -14,8 +14,11 @@ import (
 // Strings and booleans compare exactly. Integers compare by value
 // across Go's numeric types, since a query decoded from JSON holds
 // float64 while an mdoc element decoded from CBOR holds int64/uint64.
+// Each selected value is converted to JSON (jsonValue) once, not once
+// per wanted value: a byte string's conversion costs its length.
 func anyValueMatches(selected, want []any) bool {
 	for _, got := range selected {
+		got = jsonValue(got)
 		for _, w := range want {
 			if valueEquals(got, w) {
 				return true
@@ -25,8 +28,9 @@ func anyValueMatches(selected, want []any) bool {
 	return false
 }
 
+// valueEquals reports whether got, already converted by jsonValue,
+// equals want.
 func valueEquals(got, want any) bool {
-	got = jsonValue(got)
 	switch w := want.(type) {
 	case string:
 		g, ok := got.(string)

@@ -109,6 +109,12 @@ public class WalletException internal constructor(
              */
             public val untrustedVerifier: Code = Code(Mobile.CodeUntrustedVerifier)
             /**
+             * The offer names a Credential Issuer outside
+             * `issuers.credentialIssuers`: it's refused before anything is
+             * fetched from that issuer.
+             */
+            public val untrustedIssuer: Code = Code(Mobile.CodeUntrustedIssuer)
+            /**
              * A pinned host's certificate matched none of its `tlsPins`: an
              * interception, or a server whose keys changed beyond its pins.
              * Nothing was sent to it.
@@ -215,6 +221,7 @@ public class WalletException internal constructor(
             code == Code.documentNotValid && protocolError == "suspended" -> "This document is suspended."
             code == Code.documentNotValid -> "This document has been revoked or can't be confirmed as valid."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
+            code == Code.untrustedIssuer -> "This issuer isn't one your wallet takes credentials from, so its offer wasn't opened."
             code == Code.requestRefused -> "This verifier's request asks for something this wallet doesn't support, so it was refused."
             code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
                 "This wallet can't receive credentials from this issuer."
@@ -283,7 +290,7 @@ public object OID4VC {
      * side changed without these sources — rather than misreading its
      * JSON. The Go tests keep it equal to the mobile package's.
      */
-    public const val expectedABIVersion: Int = 15
+    public const val expectedABIVersion: Int = 16
 
     /**
      * Whether the linked Go library is the test build, carrying an

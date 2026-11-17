@@ -137,6 +137,8 @@ func classifyCode(err error) error {
 		return &Error{Code: CodeUnavailable, Detail: DetailRefreshInProgress, Message: "another process is refreshing with this refresh grant"}
 	case errors.Is(err, wallet.ErrUntrustedVerifier):
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
+	case errors.Is(err, walletflow.ErrUntrustedIssuer):
+		return newError(CodeUntrustedIssuer, walletflow.ErrUntrustedIssuer)
 	case errors.As(err, &refusedRequest):
 		// Not the description: the message never carries a remote
 		// party's text.

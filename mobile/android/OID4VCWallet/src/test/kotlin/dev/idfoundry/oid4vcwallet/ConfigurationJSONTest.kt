@@ -26,7 +26,8 @@ class ConfigurationJSONTest {
         """"status_issuers":{"https://issuer.example":["https://status.example"]},"require_issuer_name":true,""" +
         """"issuer_metadata_roots":"IMR","require_signed_issuer_metadata":true,"require_issuer_metadata_name":true,""" +
         """"max_issuer_metadata_age_seconds":3600,"issuer_require_eku":"1.2.5","issuer_metadata_require_eku":"1.2.6",""" +
-        """"allow_foreign_iss":true,"mdoc_issuer_roots":"MIR","mdoc_issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":"MDL"},""" +
+        """"allow_foreign_iss":true,"credential_issuers":["https://issuer.example"],"allow_any_credential_issuer":true,""" +
+        """"mdoc_issuer_roots":"MIR","mdoc_issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":"MDL"},""" +
         """"mdoc_issuer_require_eku":"1.0.18013.5.1.2","crls":"CRLS","revocation":["issuer","verifier"],""" +
         """"crl_issuers":"CI","no_revocation_check":["registrar","status"],"accept_mdl_signer_without_eku":true,""" +
         """"crl_distribution_points":[{"url":"https://ca.example/ca.crl","issuer":"CA"}],""" +
@@ -54,6 +55,7 @@ class ConfigurationJSONTest {
                     mdocRootsByDocType = mapOf("org.iso.18013.5.1.mDL" to "MDL"), mdocRequireEKU = "1.0.18013.5.1.2",
                     acceptMDLSignerWithoutEKU = true, requireIssuerName = true, allowForeignIss = true,
                     statusIssuers = mapOf("https://issuer.example" to listOf("https://status.example")),
+                    credentialIssuers = listOf("https://issuer.example"), allowAnyCredentialIssuer = true,
                 ),
                 issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
                     roots = "IMR", requireEKU = "1.2.6", requireSigned = true, requireName = true, maxAgeSeconds = 3600,

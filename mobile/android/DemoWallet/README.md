@@ -82,6 +82,7 @@ trust roots, wipe it, or skip a link's confirmation.
 
 ```json
 {"wallet": {"client_id": "…", "redirect_uri": "…", "issuer_roots": "<PEM>",
+            "credential_issuers": ["https://…"],
             "verifier_roots": "<PEM>", "mdoc_reader_roots": "<PEM>", "development": true},
  "provider_url": "https://…",
  "reader": {"issuer_roots": "<PEM>", "reader_chain": "<PEM>", "reader_key": "<PKCS #8 PEM>"}}
@@ -92,6 +93,19 @@ accepts, and its certificate chain and key. The key comes in the
 configuration as a demo shortcut; a real reader's key is made in Android
 Keystore and never leaves the device. `mdoc_reader_roots` is the CA the
 wallet recognizes readers by.
+
+`credential_issuers` is the issuers whose offers the wallet takes:
+an offer naming another is refused (`untrusted_issuer`) before the
+holder is asked for a PIN, which would otherwise reach whichever issuer
+an offer names (mobile/MOBILE.md, "Issuers whose offers a wallet
+takes"). Copy this into your own app: list your issuers, or, where they
+can't be listed, require signed issuer metadata naming its issuer
+(`issuer_metadata_roots`, `require_signed_issuer_metadata`,
+`require_issuer_metadata_name`). The scripts here list the
+passport-vdc demo's issuer, from its state directory's
+`credential-issuers` (`cmd/demo` writes it, with the tunnel's URL when
+it has one): its metadata signer's certificate names no issuer, so
+signed metadata can't name it.
 
 With `development`, in a debuggable build, a `dev-ca.pem` in the app's
 internal files directory (the run scripts copy it there with `run-as`)

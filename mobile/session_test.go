@@ -302,6 +302,57 @@ func TestSessions_PreAuthorizedCode(t *testing.T) {
 	}
 }
 
+// With credential_issuers set, an offer from another issuer is refused
+// with untrusted_issuer before the holder is asked for its PIN, and an
+// offer from a listed one is shown.
+func TestSessions_CredentialIssuers(t *testing.T) {
+	h := newHarness(t, false)
+	offer, err := h.env.PreAuthorizedOffer("123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := h.w.StartIssuance(NewOperation(0), offer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := decode[struct {
+		CredentialIssuer string `json:"credential_issuer"`
+	}](t, s.Offer()).CredentialIssuer
+	_ = s.Close()
+
+	var cfg config
+	if err := json.Unmarshal([]byte(h.env.ConfigJSON()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		issuers []string
+		want    string
+	}{
+		{[]string{"https://other-issuer.example"}, CodeUntrustedIssuer},
+		{[]string{"https://other-issuer.example", issuer}, ""},
+	} {
+		cfg.CredentialIssuers = tc.issuers
+		configJSON, _ := marshal(cfg)
+		w, err := NewWallet(configJSON, newGoKeyStore(), newGoCredentialStore(), h.env.Provider())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := w.StartIssuance(NewOperation(0), offer)
+		if code(err) != tc.want && (tc.want != "" || err != nil) {
+			t.Errorf("credential_issuers %q: %v, want %q", tc.issuers, err, tc.want)
+		}
+		if err == nil {
+			_ = s.Close()
+		}
+	}
+
+	cfg.CredentialIssuers = []string{issuer, ""}
+	configJSON, _ := marshal(cfg)
+	if _, err := NewWallet(configJSON, newGoKeyStore(), newGoCredentialStore(), nil); code(err) != CodeInvalidInput {
+		t.Errorf("an empty credential issuer: %v", err)
+	}
+}
+
 // deferTwo receives the test issuer's two credentials, both deferred,
 // closes the issuance, and returns the wallet's pending ones' IDs.
 func (h harness) deferTwo(t *testing.T) []string {

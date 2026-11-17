@@ -40,6 +40,13 @@ type Config struct {
 	// one of them, or it's refused.
 	IssuerRoots *x509.CertPool
 
+	// CredentialIssuers are the Credential Issuer Identifiers whose
+	// offers the wallet takes (walletflow.Config.CredentialIssuers):
+	// another issuer's offer is refused before the holder is asked for
+	// a PIN, which would otherwise reach whichever issuer an offer
+	// names. The demo's is its issuer's URL.
+	CredentialIssuers []string
+
 	// HTTP makes every request; nil means a client with a 10 s timeout.
 	HTTP *http.Client
 
@@ -126,12 +133,13 @@ func Receive(ctx context.Context, cfg Config, offerURI string, approver Approver
 // defers comes back as a Pending to poll later, in the same process (it
 // holds the access token).
 func ReceiveDeferrable(ctx context.Context, cfg Config, offerURI string, approver Approver) ([]Received, []*Pending, error) {
-	if cfg.Provider == nil || cfg.IssuerRoots == nil || cfg.ClientID == "" || cfg.RedirectURI == "" || approver == nil {
-		return nil, nil, errors.New("walletapp: ClientID, RedirectURI, Provider, IssuerRoots and an Approver are required")
+	if cfg.Provider == nil || cfg.IssuerRoots == nil || len(cfg.CredentialIssuers) == 0 || cfg.ClientID == "" || cfg.RedirectURI == "" || approver == nil {
+		return nil, nil, errors.New("walletapp: ClientID, RedirectURI, Provider, IssuerRoots, CredentialIssuers and an Approver are required")
 	}
 	keys := newSoftwareKeys()
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, IssuerRoots: cfg.IssuerRoots, Development: true,
+		CredentialIssuers: cfg.CredentialIssuers,
 		// The demo's issuer follows HAIP, and the wallet holds it to it.
 		IssuanceProfile: walletflow.ProfileHAIP,
 		// One copy: this wallet's store keeps one credential per file,

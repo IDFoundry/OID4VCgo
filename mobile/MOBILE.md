@@ -2091,3 +2091,36 @@ construction, but don't establish that key reuse is permitted. The
 additive method keeps the JVM descriptors and default-argument bridges
 of the existing QR and NFC APIs unchanged; `CombinedPresentation`
 delegates the existing state and consent flow.
+
+## Issuers whose offers a wallet takes (ABI 16)
+
+A pre-authorized offer's transaction code goes to the issuer the offer
+names, at `RedeemPreAuthorizedCode`, before the wallet has seen
+anything that issuer signs: `issuer_roots` judge it only when its
+credential arrives. An attacker can therefore send a holder an offer
+naming its own issuer beside a genuine service's PIN prompt, and
+collect the PIN (OpenID4VCI 1.0's Security Considerations,
+"Transaction Code Phishing"). From ABI 16, a Wallet that receives
+credentials decides which issuers' offers it takes, in development
+too, or `NewWallet` refuses its configuration (`invalid_input`):
+
+- `credential_issuers` (Swift and Kotlin `issuers.credentialIssuers`)
+  lists the Credential Issuer Identifiers it takes offers from:
+  `StartIssuance` refuses any other with `untrusted_issuer`, before
+  fetching that issuer's metadata or asking for the PIN. The demo apps
+  take this way, listing the passport-vdc demo's issuer (the state
+  directory's `credential-issuers`, which `cmd/demo` writes), since
+  the demo's metadata signer certificate names no issuer.
+- `issuer_metadata_roots` with `require_signed_issuer_metadata` and
+  `require_issuer_metadata_name` (`issuerMetadata.roots`,
+  `requireSigned` and `requireName`) takes only issuers whose metadata
+  is signed under those roots by a certificate naming them, also
+  checked in `StartIssuance`: the way that scales to an ecosystem whose
+  issuers aren't known in advance. It may be combined with the list.
+- `allow_any_credential_issuer` (`issuers.allowAnyCredentialIssuer`)
+  takes any issuer's offer, alone, and leaves the phishing above to
+  the app.
+
+Either way, the PIN prompt leads with the offer's `credential_issuer`:
+`issuer_name` is the issuer's own metadata, which unsigned metadata
+lets it choose. See SECURITY.md, "Transaction code phishing".

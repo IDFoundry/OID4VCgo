@@ -58,7 +58,7 @@ func (f fixture) newWalletWith(t *testing.T, deferred walletflow.DeferredStore) 
 func (f fixture) newWalletOver(t *testing.T, roots *x509.CertPool, verifiers wallet.VerifierTrust, deferred walletflow.DeferredStore) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: roots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: roots,
 		VerifierTrust: verifiers, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Deferred: deferred})
 	if err != nil {
@@ -161,7 +161,7 @@ func TestIssuance_LoopbackRedirectPort(t *testing.T) {
 	const loopback = "http://127.0.0.1/callback"
 	f := newFixture(t, walletflowtest.Options{RedirectURIs: []string{loopback}})
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: loopback, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: loopback, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
 		t.Fatal(err)
@@ -402,7 +402,7 @@ func TestDeferred_RefusesAnotherTypeAfterARestart(t *testing.T) {
 func (f fixture) newWalletAuthorizing(t *testing.T, auth walletflow.AuthorizationStore, clock func() time.Time) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Authorizations: auth, Clock: clock})
 	if err != nil {
 		t.Fatal(err)
@@ -627,7 +627,7 @@ func TestNew_RequiresConfiguration(t *testing.T) {
 	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: &walletflowtest.Provider{},
 	}
-	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", IssuerRoots: x509.NewCertPool(), Development: true}
+	good := walletflow.Config{ClientID: "c", RedirectURI: "https://wallet.example/cb", CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool(), Development: true}
 	if _, err := walletflow.New(good, deps); err != nil {
 		t.Fatalf("New(development config) = %v", err)
 	}
@@ -699,7 +699,7 @@ func TestIssuance_PlatformFailures(t *testing.T) {
 		"not a P-256 key":  {Keys: p384Keys{walletflow.NewMemoryKeyStore()}, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP},
 	} {
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 		}, deps)
 		if err != nil {
 			t.Fatal(err)
@@ -791,7 +791,7 @@ func TestIssuance_RequestCredentialsRetries(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{})
 	provider := &flakyProvider{WalletProvider: f.env.Provider, failAt: 2}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: provider, HTTP: f.env.HTTP})
 	if err != nil {
 		t.Fatal(err)
@@ -849,7 +849,7 @@ func TestIssuance_FetchesASMetadataOnce(t *testing.T) {
 	httpClient := *f.env.HTTP
 	httpClient.Transport = counter
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
 	if err != nil {
 		t.Fatal(err)

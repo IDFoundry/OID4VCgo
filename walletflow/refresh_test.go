@@ -18,7 +18,7 @@ import (
 func (f fixture) newRefreshingWallet(t *testing.T, verifiers wallet.VerifierTrust, grants walletflow.GrantStore) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: verifiers, Development: true, RequestRefresh: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Grants: grants})
 	if err != nil {
@@ -176,7 +176,7 @@ func TestRefreshCredential_DeletedMeanwhile(t *testing.T) {
 	grants := walletflow.NewMemoryGrantStore()
 	store := &deletingStore{MemoryCredentialStore: walletflow.NewMemoryCredentialStore()}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		Development: true, RequestRefresh: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: store, Provider: f.env.Provider, HTTP: f.env.HTTP, Grants: grants})
 	if err != nil {

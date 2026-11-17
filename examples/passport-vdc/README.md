@@ -526,8 +526,16 @@ go run ./cmd/verifier            # terminal 3: https://127.0.0.1:9443 — writes
 go run ./cmd/webwallet           # terminal 4: https://127.0.0.1:7443 — writes webwallet-tls.pem; trusts issuer-ca.pem, verifier-ca.pem and the other TLS certificates
 ```
 
-The wallets keep only credentials whose issuer certificate chains to a
-trusted issuer CA (`-trust-issuer-ca`, default `issuer-ca.pem`), and
+The wallets take offers only from the issuers they list
+(`-trust-issuer`, default `https://127.0.0.1:8543`, cmd/issuer's;
+`cmd/demo` writes its issuer's URL to its state directory's
+`credential-issuers`, which `cmd/wallet -state` and the demo apps
+read), so a phishing offer naming another issuer is refused before the
+holder is asked for a PIN (`walletflow.Config.CredentialIssuers`,
+SECURITY.md's "Transaction code phishing"): the pattern to copy into a
+wallet whose issuers are known. They keep only credentials whose issuer
+certificate chains to a trusted issuer CA (`-trust-issuer-ca`, default
+`issuer-ca.pem`), and
 answer only verifiers whose request-signing certificate chains to a
 trusted verifier CA (`-trust-verifier-ca`, default `verifier-ca.pem`).
 The verifier trusts the issuer's CA (`-issuer-ca`) for credentials and

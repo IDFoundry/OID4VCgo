@@ -281,6 +281,8 @@ func run(ctx context.Context, opts options) error {
 			ClientID: walletClientID, HTTP: httpClient,
 			Provider:    providerClient,
 			IssuerRoots: pool(issuer.IssuerCACertificate()),
+			// The demo's own issuer, the only one whose offers it takes.
+			CredentialIssuers: []string{issuerURL},
 		},
 		Store:         walletapp.Store{Dir: filepath.Join(state, "wallet-store")},
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: pool(verifier.VerifierCACertificate())},
@@ -295,6 +297,11 @@ func run(ctx context.Context, opts options) error {
 		"issuer-ca.pem": issuer.IssuerCACertificate(), "verifier-ca.pem": verifier.VerifierCACertificate(),
 		"registrar-ca.pem": verifier.RegistrarCACertificate(), "mdoc-reader-ca.pem": verifier.ReaderCACertificate(),
 	}); err != nil {
+		return err
+	}
+	// For the CLI wallet and the demo apps: the issuer whose offers they
+	// take (their credential_issuers), as this run names it.
+	if err := writeCredentialIssuers(state, issuerURL); err != nil {
 		return err
 	}
 	// For the demo apps' reader mode: the verifier's in-person reader,
@@ -403,6 +410,20 @@ func writeCertificates(dir string, certs map[string]*x509.Certificate) error {
 		if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
 			return fmt.Errorf("write %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// credentialIssuersFile is the state directory's list of the Credential
+// Issuer Identifiers whose offers the demo's wallets take, one per line:
+// the demo issuer's, local or behind a tunnel.
+const credentialIssuersFile = "credential-issuers" // #nosec G101 -- a file name, not a credential
+
+// writeCredentialIssuers writes issuers to dir's credentialIssuersFile.
+func writeCredentialIssuers(dir string, issuers ...string) error {
+	path := filepath.Join(dir, credentialIssuersFile)
+	if err := os.WriteFile(path, []byte(strings.Join(issuers, "\n")+"\n"), 0o600); err != nil { // #nosec G703 -- operator-supplied state directory
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }

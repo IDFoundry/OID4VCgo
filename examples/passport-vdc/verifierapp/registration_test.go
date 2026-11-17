@@ -27,7 +27,8 @@ func TestRegistrations(t *testing.T) {
 	registrars.AddCert(env.Verifier.RegistrarCACertificate())
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: cfg.ClientID, RedirectURI: cfg.RedirectURI, IssuerRoots: cfg.IssuerRoots, Development: true,
-		VerifierTrust: env.VerifierTrust(), RegistrarRoots: registrars,
+		CredentialIssuers: cfg.CredentialIssuers,
+		VerifierTrust:     env.VerifierTrust(), RegistrarRoots: registrars,
 	}, walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: cfg.Provider, HTTP: env.HTTP,
 	})

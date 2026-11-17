@@ -166,3 +166,30 @@ func TestSatisfiedByMdocClaims_EnforcesValues(t *testing.T) {
 		}
 	}
 }
+
+// A values filter converts a held CBOR value to JSON (a byte string's
+// base64url form) once, not once per requested value: a portrait's
+// encoding would otherwise be redone for each of a claim's values, on
+// each credential query and held mdoc a request is matched against.
+func TestSatisfiedByMdocClaims_ConvertsHeldValueOnce(t *testing.T) {
+	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.test"})
+	if err != nil {
+		t.Fatalf("NewMdocMeta: %v", err)
+	}
+	portrait := make([]byte, 64<<10)
+	nameSpaces := map[string]map[string]any{"ns": {"portrait": portrait}}
+	values := make([]any, dcql.MaxValuesPerClaim)
+	for i := range values {
+		values[i] = fmt.Sprint(i)
+	}
+	q := dcql.CredentialQuery{ID: "q", Format: "mso_mdoc", Meta: meta, Claims: []dcql.ClaimsQuery{
+		{Path: key("ns", "portrait"), Values: values},
+	}}
+	if err := q.SatisfiedByMdocClaims("org.test", nameSpaces); err == nil {
+		t.Fatal("no requested value matches, yet the claim was satisfied")
+	}
+	allocs := testing.AllocsPerRun(10, func() { _ = q.SatisfiedByMdocClaims("org.test", nameSpaces) })
+	if allocs >= dcql.MaxValuesPerClaim {
+		t.Errorf("%v allocations matching %d values against one byte string: it's converted per value", allocs, dcql.MaxValuesPerClaim)
+	}
+}

@@ -318,7 +318,12 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 	}
 	cfg := walletflow.Config{
 		IssuerRoots: issuerRoots, IssuerRevocation: revocation, Development: true,
-		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
+		// The run hands this harness each -offer itself, from walt.id's
+		// Issuer2 or OID4VCgo's issuer, under identifiers that depend
+		// on the run's ports and hosts: the issuer is open here, as a
+		// wallet app's must not be.
+		AllowAnyCredentialIssuer: true,
+		VerifierTrust:            wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 	}
 	deps := walletflow.Dependencies{Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), HTTP: client}
 	if err := configure(ctx, opts, &cfg, &deps); err != nil {

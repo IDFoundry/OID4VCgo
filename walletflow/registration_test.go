@@ -25,7 +25,7 @@ func TestRegistration(t *testing.T) {
 	plain := f.env.StartVerifier(t)
 	wallet := func(roots bool) *walletflow.Wallet {
 		cfg := walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 			VerifierTrust: registered.Trust, Development: true,
 		}
 		if roots {
@@ -69,7 +69,7 @@ func TestRegistration(t *testing.T) {
 
 	// A Verifier with no registration, for a wallet that checks.
 	other := walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: plain.Trust, Development: true, RegistrarRoots: f.env.RegistrarRoots,
 	}
 	w, err := walletflow.New(other, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
@@ -103,7 +103,7 @@ func TestRegistration_JudgesWhatIsDisclosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: registered.Trust, Development: true, RegistrarRoots: f.env.RegistrarRoots,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {

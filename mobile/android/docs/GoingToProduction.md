@@ -347,6 +347,33 @@ returned has run out (keep the `Instant` it pointed to), and schedule
 the worker with its result. A list that does pass its nextUpdate unrefreshed fails its
 role's checks closed until a fresh one arrives.
 
+### Issuers whose offers you take
+
+A pre-authorized offer's PIN goes to the issuer the offer names, before
+the wallet has seen anything that issuer signs: `issuers.roots` judge
+it only when its credential arrives. A phishing offer naming an
+attacker's issuer, sent beside a genuine service's PIN, would hand the
+attacker that PIN (OpenID4VCI 1.0's Security Considerations,
+"Transaction Code Phishing"). So a wallet that receives credentials
+decides which issuers' offers it takes, or the `Wallet` constructor
+throws `invalidInput`:
+
+- `issuers.credentialIssuers` lists them: `Wallet.startIssuance`
+  refuses any other issuer's offer with `untrustedIssuer` before asking
+  for the PIN. Use it where your issuers are known.
+- Signed issuer metadata naming its issuer: `issuerMetadata.roots`
+  with `issuerMetadata.requireSigned` and `issuerMetadata.requireName`,
+  all three, takes only issuers whose metadata a certificate under
+  those roots signs and names them in: the way that scales to an
+  ecosystem whose issuers aren't known in advance. It may be combined
+  with the list.
+- `issuers.allowAnyCredentialIssuer` takes any issuer's offer, and
+  leaves this phishing to your app.
+
+Either way, lead the PIN prompt with the offer's `credentialIssuer`,
+not its issuer name alone: unsigned metadata lets an issuer choose its
+name.
+
 ### Settings to decide
 
 Each of these is off or open by default. Decide each for your

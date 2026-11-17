@@ -11,7 +11,7 @@ import (
 // ABIVersion is the version of this package's API across the gomobile
 // boundary: its functions, objects, JSON results and error codes. It
 // changes whenever any of them changes incompatibly.
-const ABIVersion = 15
+const ABIVersion = 16
 
 // Error codes, at the start of every error's text in brackets.
 const (
@@ -59,6 +59,11 @@ const (
 	// certificate that doesn't chain to the wallet's verifier_roots, so
 	// it's refused unread.
 	CodeUntrustedVerifier = "untrusted_verifier"
+	// CodeUntrustedIssuer: the offer names a Credential Issuer outside
+	// the wallet's credential_issuers, so it's refused before anything
+	// is fetched from it or the holder is asked for a code
+	// (walletflow.ErrUntrustedIssuer).
+	CodeUntrustedIssuer = "untrusted_issuer"
 	// CodeDeliveryUnknown: sending a presentation failed in a way that
 	// leaves it unknown whether the Verifier received it. It isn't sent
 	// again: that could present twice.

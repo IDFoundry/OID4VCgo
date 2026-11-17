@@ -59,6 +59,10 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// The Verifier's request is signed with a certificate that
         /// doesn't chain to `verifiers.roots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
+        /// The offer names a Credential Issuer outside
+        /// `issuers.credentialIssuers`: it's refused before anything is
+        /// fetched from that issuer.
+        public static let untrustedIssuer = Code(rawValue: MobileCodeUntrustedIssuer)
         /// A pinned host's certificate matched none of its `network.tlsPins`: an
         /// interception, or a server whose keys changed beyond its pins.
         /// Nothing was sent to it.
@@ -172,6 +176,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
+        case .untrustedIssuer: "This issuer isn't one your wallet takes credentials from, so its offer wasn't opened."
         case .requestRefused: "This verifier's request asks for something this wallet doesn't support, so it was refused."
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
@@ -240,7 +245,7 @@ public enum OID4VC {
     /// isn't made on a framework of another — a stale build, or the Go
     /// side changed without these sources — rather than misreading its
     /// JSON. The Go tests keep it equal to the mobile package's.
-    public static let expectedABIVersion = 15
+    public static let expectedABIVersion = 16
 
     /// Whether the linked framework is the test build, carrying an
     /// in-process test issuer and Verifier (`-tags mobiletest`): an app

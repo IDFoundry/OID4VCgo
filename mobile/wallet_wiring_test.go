@@ -42,7 +42,7 @@ func TestWalletConfig_RoleEKUsReachWalletflow(t *testing.T) {
 			},
 		},
 		"issuer_require_eku": {
-			config{Development: true, IssuerRoots: roots, IssuerRequireEKU: oid},
+			config{Development: true, IssuerRoots: roots, IssuerRequireEKU: oid, CredentialIssuers: []string{"https://issuer.example"}},
 			func(c walletflow.Config) func(*x509.Certificate, [][]*x509.Certificate) error {
 				return c.IssuerLeafPolicy
 			},
@@ -160,6 +160,7 @@ func TestNewWallet_ProductionNeedsEachStoreDurable(t *testing.T) {
 		cfg, _ := json.Marshal(map[string]any{
 			"client_id": "wallet", "redirect_uri": "com.example.wallet:/callback", "issuer_roots": pemOf("CERTIFICATE", ca.Raw),
 			"no_revocation_check": []string{"issuer", "status"}, "request_refresh": tc.refresh,
+			"credential_issuers": []string{"https://issuer.example"},
 		})
 		_, err := NewWallet(string(cfg), tc.keys, tc.creds, nil)
 		switch {
@@ -264,7 +265,10 @@ func TestSetCRLs_RootsOfCheckedRolesAreKnown(t *testing.T) {
 		{"issuer_metadata_roots", "issuer_metadata"},
 	} {
 		ca, caKey := testcert.CA(t, tc.role+" root")
-		cfg, _ := json.Marshal(map[string]any{"development": true, tc.key: pemOf("CERTIFICATE", ca.Raw), "revocation": []string{tc.role}})
+		cfg, _ := json.Marshal(map[string]any{
+			"development": true, tc.key: pemOf("CERTIFICATE", ca.Raw), "revocation": []string{tc.role},
+			"credential_issuers": []string{"https://issuer.example"},
+		})
 		w, err := NewWallet(string(cfg), newGoKeyStore(), newGoCredentialStore(), nil)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.key, err)

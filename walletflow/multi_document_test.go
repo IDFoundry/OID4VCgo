@@ -104,7 +104,7 @@ func (k holderKey) Agree(peer *ecdsa.PublicKey) ([]byte, error) {
 func multiWallet(t *testing.T, f fixture, keys walletflow.KeyStore, auth walletflow.ProximityDeviceAuth, readerRoots ...*mdocReader) *walletflow.Wallet {
 	t.Helper()
 	cfg := walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		Development: true, ProximityDeviceAuth: auth,
 	}
 	if len(readerRoots) > 0 {

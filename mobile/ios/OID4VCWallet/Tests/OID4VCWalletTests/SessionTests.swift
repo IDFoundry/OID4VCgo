@@ -187,6 +187,35 @@ final class SessionTests: XCTestCase {
         try await s.close()
     }
 
+    /// `issuers.credentialIssuers` refuses another issuer's offer with
+    /// `untrustedIssuer` before the holder is asked for its PIN; a
+    /// configuration with issuer roots and no decision about which
+    /// issuers' offers it takes, or two, is refused.
+    func testCredentialIssuers() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        var config = try env.configuration
+        config.issuers.credentialIssuers = ["https://issuer.other.example"]
+        let w = try Wallet(configuration: config, keys: KeyStoreAdapter(keyStore()),
+                           credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: env.env.provider())
+        let offer = try OID4VC.call { env.env.preAuthorizedOffer("493536", error: $0) }
+        do {
+            _ = try await w.startIssuance(offer: offer)
+            XCTFail("an unlisted issuer's offer was taken")
+        } catch let e as WalletError {
+            XCTAssertEqual(e.code, .untrustedIssuer)
+        }
+
+        for undecided in [false, true] {
+            config.issuers.credentialIssuers = undecided ? [] : ["https://issuer.other.example"]
+            config.issuers.allowAnyCredentialIssuer = !undecided
+            XCTAssertThrowsError(try Wallet(configuration: config, keys: KeyStoreAdapter(keyStore()),
+                                            credentials: CredentialStoreAdapter(InMemoryCredentialStore()), provider: nil)) { error in
+                XCTAssertEqual((error as? WalletError)?.code, .invalidInput)
+            }
+        }
+    }
+
     /// Deferred credentials survive the issuance closing and the app
     /// relaunching: a new Wallet over the same stores lists and polls
     /// them.

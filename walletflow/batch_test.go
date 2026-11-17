@@ -113,7 +113,7 @@ func presentedCopy(stored walletflow.StoredCredential, seen map[string]bool) str
 func TestBatch_Size(t *testing.T) {
 	f := newFixture(t, walletflowtest.Options{BatchSize: 5})
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		Development: true, BatchSize: 1,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
@@ -213,7 +213,7 @@ func twoVerifiersWallet(t *testing.T, f fixture, policy walletflow.CopyPolicy) (
 	roots.AddCert(v1.CA)
 	roots.AddCert(v2.CA)
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: roots}, Development: true, CopyPolicy: policy,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
@@ -293,7 +293,7 @@ func TestCopyPolicy_ReusesTheLeastShownCopy(t *testing.T) {
 		roots.AddCert(vs[i].CA)
 	}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: roots}, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
@@ -403,7 +403,7 @@ func TestBatch_JWTProofsWithKeyAttestation(t *testing.T) {
 	before := f.env.Provider.KeyAttestations()
 	keys := &countingKeyStore{MemoryKeyStore: f.keys}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
 		t.Fatal(err)
@@ -519,7 +519,7 @@ func TestBatch_JWTProofsWithKeyAttestation_KeyNaming(t *testing.T) {
 			httpClient := *f.env.HTTP
 			httpClient.Transport = headers
 			w, err := walletflow.New(walletflow.Config{
-				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots, Development: true,
+				ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 				ProofKeyByJWK: tc.byJWK, ProofKeyByIndex: tc.index,
 			}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: &httpClient})
 			if err != nil {

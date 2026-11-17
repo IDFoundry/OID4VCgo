@@ -58,7 +58,7 @@ func (r mdocReader) ask(t *testing.T, origin string) ([]byte, mdocdcapi.Pending)
 func mdocWallet(t *testing.T, f fixture, readerRoots *x509.CertPool, policy walletflow.CopyPolicy) *walletflow.Wallet {
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		MdocReaderRoots: readerRoots, Development: true, CopyPolicy: policy,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
@@ -282,7 +282,7 @@ func TestStartMdocPresentation_ReaderTrust(t *testing.T) {
 	data, _ := reader.ask(t, shopOrigin)
 	newWallet := func(roots *x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, require bool) *walletflow.Wallet {
 		w, err := walletflow.New(walletflow.Config{
-			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+			ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 			MdocReaderRoots: roots, MdocReaderLeafPolicy: policy, RequireTrustedMdocReader: require, Development: true,
 		}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 		if err != nil {

@@ -142,6 +142,31 @@ public data class WalletConfiguration(
          * only a status list the issuer signed itself.
          */
         val statusIssuers: Map<String, List<String>> = emptyMap(),
+        /**
+         * The only Credential Issuer Identifiers the wallet takes offers
+         * from, each compared exactly with the offer's `credentialIssuer`:
+         * [Wallet.startIssuance] refuses another's offer with
+         * [WalletException.Code.untrustedIssuer] before anything is fetched
+         * from that issuer, so the holder is never asked for a transaction
+         * code it would send there.
+         *
+         * A wallet with [roots] (or the mdoc ones) must decide which
+         * issuers' offers it takes, or the [Wallet] constructor throws
+         * `invalidInput`: this list; signed issuer metadata naming its
+         * issuer ([IssuerMetadataTrust] with `roots`, `requireSigned` and
+         * `requireName`), which may be combined with it; or
+         * [allowAnyCredentialIssuer], alone.
+         */
+        val credentialIssuers: List<String> = emptyList(),
+        /**
+         * Takes offers from any issuer, in place of [credentialIssuers] or
+         * signed and named issuer metadata. A transaction code the holder
+         * enters then reaches whichever issuer an offer names, so an
+         * attacker's offer sent beside a genuine service's PIN phishes it:
+         * guarding against that is the app's. Set it only for a wallet
+         * whose issuers can't be told apart in advance.
+         */
+        val allowAnyCredentialIssuer: Boolean = false,
     )
 
     /** Which signed Credential Issuer Metadata the wallet trusts. */
@@ -512,6 +537,8 @@ internal data class WalletConfigurationJSON(
     @SerialName("issuer_require_eku") val issuerRequireEKU: String = "",
     @SerialName("issuer_metadata_require_eku") val issuerMetadataRequireEKU: String = "",
     @SerialName("allow_foreign_iss") val allowForeignIss: Boolean = false,
+    @SerialName("credential_issuers") val credentialIssuers: List<String> = emptyList(),
+    @SerialName("allow_any_credential_issuer") val allowAnyCredentialIssuer: Boolean = false,
     @SerialName("mdoc_issuer_roots") val mdocIssuerRoots: String = "",
     @SerialName("mdoc_issuer_roots_by_doctype") val mdocIssuerRootsByDocType: Map<String, String> = emptyMap(),
     @SerialName("mdoc_issuer_require_eku") val mdocIssuerRequireEKU: String = "",
@@ -575,6 +602,8 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         issuerRequireEKU = c.issuers.requireEKU,
         issuerMetadataRequireEKU = c.issuerMetadata.requireEKU,
         allowForeignIss = c.issuers.allowForeignIss,
+        credentialIssuers = c.issuers.credentialIssuers,
+        allowAnyCredentialIssuer = c.issuers.allowAnyCredentialIssuer,
         mdocIssuerRoots = c.issuers.mdocRoots,
         mdocIssuerRootsByDocType = c.issuers.mdocRootsByDocType,
         mdocIssuerRequireEKU = c.issuers.mdocRequireEKU,
@@ -605,6 +634,8 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             requireIssuerName = j.requireIssuerName,
             allowForeignIss = j.allowForeignIss,
             statusIssuers = j.statusIssuers,
+            credentialIssuers = j.credentialIssuers,
+            allowAnyCredentialIssuer = j.allowAnyCredentialIssuer,
         ),
         issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
             roots = j.issuerMetadataRoots,

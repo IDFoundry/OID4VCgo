@@ -38,7 +38,7 @@ func revocationWallet(t *testing.T, f fixture, crls *swappableCRLs, clock func()
 	t.Helper()
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: crls.checker(),
+		CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerRevocation: crls.checker(),
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Clock: clock})
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestCheckStatus_IssuerCertificateWithoutStatusList(t *testing.T) {
 		"no CRL":              {testcert.ListsOf(), walletflow.StatusUnknown, walletflow.ReasonNoCurrentCRL},
 		"no revocation check": {nil, walletflow.StatusValid, ""},
 	} {
-		w := walletHoldingWith(t, walletflow.Config{Development: true, MdocIssuerRoots: roots, IssuerRevocation: tc.revocation}, nil, c)
+		w := walletHoldingWith(t, walletflow.Config{Development: true, CredentialIssuers: []string{"https://issuer.example"}, MdocIssuerRoots: roots, IssuerRevocation: tc.revocation}, nil, c)
 		checked, err := w.CheckStatus(ctx, c.ID)
 		if err != nil || checked.Status.Value != tc.value || checked.Status.Reason != tc.reason || checked.Status.CheckedAt.IsZero() {
 			t.Errorf("%s: CheckStatus = %+v, %v; want %s (%q)", name, checked.Status, err, tc.value, tc.reason)
@@ -165,7 +165,7 @@ func TestCheckStatus_IssuerCertificateWithoutStatusList(t *testing.T) {
 	other, _ := testcert.CA(t, "Other IACA")
 	otherRoots := x509.NewCertPool()
 	otherRoots.AddCert(other)
-	w := walletHoldingWith(t, walletflow.Config{Development: true, MdocIssuerRoots: otherRoots}, nil, c)
+	w := walletHoldingWith(t, walletflow.Config{Development: true, CredentialIssuers: []string{"https://issuer.example"}, MdocIssuerRoots: otherRoots}, nil, c)
 	if checked, err := w.CheckStatus(ctx, c.ID); err != nil || checked.Status.Value != walletflow.StatusInvalid || checked.Status.Reason != walletflow.ReasonIssuerUntrusted {
 		t.Errorf("issuer no longer trusted: CheckStatus = %+v, %v", checked.Status, err)
 	}
@@ -191,7 +191,7 @@ func TestCheckStatus_IssuerChainVerifiedOnce(t *testing.T) {
 	}}
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
-		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: counting,
+		CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, IssuerRevocation: counting,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
 		t.Fatal(err)

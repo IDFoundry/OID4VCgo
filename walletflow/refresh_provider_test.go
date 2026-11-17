@@ -56,7 +56,7 @@ func newRefusingWallet(t *testing.T, f fixture, grants walletflow.GrantStore) (*
 	t.Helper()
 	provider := &refusingProvider{WalletProvider: f.env.Provider}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		Development: true, RequestRefresh: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: provider, HTTP: f.env.HTTP, Grants: grants})
 	if err != nil {
@@ -219,7 +219,7 @@ func TestRefreshCredential_AnonymousKeyAttestationRefusalKeepsTheGrant(t *testin
 	grants := walletflow.NewMemoryGrantStore()
 	provider := &refusingProvider{WalletProvider: f.env.Provider}
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, IssuerRoots: f.env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots, Development: true,
 		IssuanceProfile: walletflow.ProfileOpenID4VCI, RequestRefresh: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, HTTP: f.env.HTTP, Provider: provider, Grants: grants})
 	if err != nil {

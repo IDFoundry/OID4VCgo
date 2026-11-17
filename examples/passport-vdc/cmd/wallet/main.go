@@ -38,6 +38,7 @@ import (
 
 // Flags useState fills from a cmd/demo state directory, among others.
 const (
+	flagTrustIssuer     = "trust-issuer"
 	flagTrustIssuerCA   = "trust-issuer-ca"
 	flagTrustVerifierCA = "trust-verifier-ca"
 )
@@ -51,6 +52,7 @@ func main() {
 	trust := fs.String("trust", "issuer-tls.pem,verifier-tls.pem,wallet-provider-tls.pem", "comma-separated PEM files of TLS certificates to trust (from cmd/issuer, cmd/verifier and cmd/wallet-provider); missing files are skipped")
 	headless := fs.Bool("headless", false, "receive: approve automatically instead of in a browser (needs -code)")
 	code := fs.String("code", "", "receive -headless: the confirmation code shown with the offer")
+	credentialIssuers := fs.String(flagTrustIssuer, "https://127.0.0.1:8543", "receive: comma-separated Credential Issuer Identifiers whose offers to take (cmd/issuer's -issuer)")
 	issuerCA := fs.String(flagTrustIssuerCA, "issuer-ca.pem", "receive: comma-separated PEM files of issuer CAs whose credentials to accept (from cmd/issuer)")
 	verifierCA := fs.String(flagTrustVerifierCA, "verifier-ca.pem", "present: comma-separated PEM files of verifier CAs whose requests to answer (from cmd/verifier)")
 	yes := fs.Bool("yes", false, "present: share without asking")
@@ -69,6 +71,9 @@ func main() {
 			"store": store, "trust": trust,
 			flagTrustIssuerCA: issuerCA, flagTrustVerifierCA: verifierCA,
 		})
+		if err := useStateIssuers(fs, *state, credentialIssuers); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	switch cmd {
@@ -97,6 +102,7 @@ func main() {
 		}
 		if err := receive(fs.Arg(0), *store, walletapp.Config{
 			ClientID: *clientID, RedirectURI: *redirectURI, Provider: provider, IssuerRoots: issuerRoots, HTTP: httpClient,
+			CredentialIssuers: strings.Split(*credentialIssuers, ","),
 		}, approver); err != nil {
 			log.Fatal(err)
 		}
@@ -251,6 +257,23 @@ func useState(fs *flag.FlagSet, dir string, flags map[string]*string) {
 			*v = filepath.Join(dir, files[name])
 		}
 	}
+}
+
+// useStateIssuers sets issuers, unless set explicitly, to the
+// Credential Issuer Identifiers listed in dir's credential-issuers
+// (cmd/demo writes it), comma-separated.
+func useStateIssuers(fs *flag.FlagSet, dir string, issuers *string) error {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == flagTrustIssuer })
+	if set {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "credential-issuers")) // #nosec G304 -- operator-supplied state directory
+	if err != nil {
+		return fmt.Errorf("the demo's issuers: %w", err)
+	}
+	*issuers = strings.Join(strings.Fields(string(data)), ",")
+	return nil
 }
 
 // promptPIN asks for a pre-authorized offer's PIN on the terminal.

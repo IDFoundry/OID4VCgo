@@ -99,12 +99,34 @@ public struct WalletConfiguration: Codable, Sendable {
         /// `roots` naming it. Without it, `checkStatus` accepts only a
         /// status list the issuer signed itself.
         public var statusIssuers: [String: [String]]
+        /// The only Credential Issuer Identifiers the wallet takes offers
+        /// from, each compared exactly with the offer's
+        /// `credentialIssuer`: `startIssuance` refuses another's offer with
+        /// ``WalletError/Code/untrustedIssuer`` before anything is fetched
+        /// from that issuer, so the holder is never asked for a
+        /// transaction code it would send there.
+        ///
+        /// A wallet with `roots` (or the mdoc ones) must decide which
+        /// issuers' offers it takes, or `Wallet(configuration:)` throws
+        /// `invalidInput`: this list; signed issuer metadata naming its
+        /// issuer (``IssuerMetadataTrust`` with `roots`, `requireSigned`
+        /// and `requireName`), which may be combined with it; or
+        /// `allowAnyCredentialIssuer`, alone.
+        public var credentialIssuers: [String]
+        /// Takes offers from any issuer, in place of `credentialIssuers` or
+        /// signed and named issuer metadata. A transaction code the holder
+        /// enters then reaches whichever issuer an offer names, so an
+        /// attacker's offer sent beside a genuine service's PIN phishes
+        /// it: guarding against that is the app's. Set it only for a
+        /// wallet whose issuers can't be told apart in advance.
+        public var allowAnyCredentialIssuer: Bool
 
         /// Issuer trust: every field has a default.
         public init(roots: String = "", requireEKU: String = "", mdocRoots: String = "",
                     mdocRootsByDocType: [String: String] = [:], mdocRequireEKU: String = "",
                     acceptMDLSignerWithoutEKU: Bool = false, requireIssuerName: Bool = false,
-                    allowForeignIss: Bool = false, statusIssuers: [String: [String]] = [:]) {
+                    allowForeignIss: Bool = false, statusIssuers: [String: [String]] = [:],
+                    credentialIssuers: [String] = [], allowAnyCredentialIssuer: Bool = false) {
             self.roots = roots
             self.requireEKU = requireEKU
             self.mdocRoots = mdocRoots
@@ -114,6 +136,8 @@ public struct WalletConfiguration: Codable, Sendable {
             self.requireIssuerName = requireIssuerName
             self.allowForeignIss = allowForeignIss
             self.statusIssuers = statusIssuers
+            self.credentialIssuers = credentialIssuers
+            self.allowAnyCredentialIssuer = allowAnyCredentialIssuer
         }
     }
 
@@ -390,7 +414,8 @@ public struct WalletConfiguration: Codable, Sendable {
         case statusIssuers = "status_issuers", requireIssuerName = "require_issuer_name"
         case issuerMetadataRoots = "issuer_metadata_roots", requireSignedIssuerMetadata = "require_signed_issuer_metadata"
         case requireIssuerMetadataName = "require_issuer_metadata_name", maxIssuerMetadataAgeSeconds = "max_issuer_metadata_age_seconds"
-        case allowForeignIss = "allow_foreign_iss"
+        case allowForeignIss = "allow_foreign_iss", credentialIssuers = "credential_issuers"
+        case allowAnyCredentialIssuer = "allow_any_credential_issuer"
         case mdocIssuerRoots = "mdoc_issuer_roots", mdocIssuerRootsByDocType = "mdoc_issuer_roots_by_doctype"
         case mdocIssuerRequireEKU = "mdoc_issuer_require_eku", acceptMDLSignerWithoutEKU = "accept_mdl_signer_without_eku"
         case crls, revocation, crlIssuers = "crl_issuers", noRevocationCheck = "no_revocation_check"
@@ -425,7 +450,9 @@ public struct WalletConfiguration: Codable, Sendable {
                 acceptMDLSignerWithoutEKU: try value(.acceptMDLSignerWithoutEKU, false),
                 requireIssuerName: try value(.requireIssuerName, false),
                 allowForeignIss: try value(.allowForeignIss, false),
-                statusIssuers: try value(.statusIssuers, [:])),
+                statusIssuers: try value(.statusIssuers, [:]),
+                credentialIssuers: try value(.credentialIssuers, []),
+                allowAnyCredentialIssuer: try value(.allowAnyCredentialIssuer, false)),
             issuerMetadata: IssuerMetadataTrust(
                 roots: try value(.issuerMetadataRoots, ""),
                 requireEKU: try value(.issuerMetadataRequireEKU, ""),
@@ -474,6 +501,8 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(issuers.requireIssuerName, forKey: .requireIssuerName)
         try c.encode(issuers.allowForeignIss, forKey: .allowForeignIss)
         try c.encode(issuers.statusIssuers, forKey: .statusIssuers)
+        try c.encode(issuers.credentialIssuers, forKey: .credentialIssuers)
+        try c.encode(issuers.allowAnyCredentialIssuer, forKey: .allowAnyCredentialIssuer)
         try c.encode(issuerMetadata.roots, forKey: .issuerMetadataRoots)
         try c.encode(issuerMetadata.requireEKU, forKey: .issuerMetadataRequireEKU)
         try c.encode(issuerMetadata.requireSigned, forKey: .requireSignedIssuerMetadata)

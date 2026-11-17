@@ -8,7 +8,7 @@ import XCTest
 
 final class OID4VCWalletTests: XCTestCase {
     func testABIVersion() {
-        XCTAssertEqual(OID4VC.abiVersion, 15)
+        XCTAssertEqual(OID4VC.abiVersion, 16)
         XCTAssertTrue(OID4VC.isTestBuild, "the tests run on the mobiletest build")
     }
 
@@ -41,7 +41,8 @@ final class OID4VCWalletTests: XCTestCase {
          "issuer_require_eku":"1.3","issuer_metadata_require_eku":"1.4",
          "status_issuers":{"https://i.example":["https://s.example"]},"require_issuer_name":true,
          "issuer_metadata_roots":"IMR","require_signed_issuer_metadata":true,"require_issuer_metadata_name":true,
-         "max_issuer_metadata_age_seconds":60,"allow_foreign_iss":true,"mdoc_issuer_roots":"MIR",
+         "max_issuer_metadata_age_seconds":60,"allow_foreign_iss":true,"credential_issuers":["https://i.example"],
+         "allow_any_credential_issuer":true,"mdoc_issuer_roots":"MIR",
          "mdoc_issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":"X"},"mdoc_issuer_require_eku":"1.5",
          "accept_mdl_signer_without_eku":true,"crls":"C","revocation":["issuer","verifier"],"crl_issuers":"CI",
          "no_revocation_check":["status"],"crl_distribution_points":[{"url":"http://ca.example/ca.crl","issuer":"P"}],
@@ -52,6 +53,8 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.issuers.roots, "IR")
         XCTAssertEqual(config.issuers.mdocRoots, "MIR")
         XCTAssertEqual(config.issuers.statusIssuers, ["https://i.example": ["https://s.example"]])
+        XCTAssertEqual(config.issuers.credentialIssuers, ["https://i.example"])
+        XCTAssertTrue(config.issuers.allowAnyCredentialIssuer)
         XCTAssertEqual(config.issuerMetadata.maxAgeSeconds, 60)
         XCTAssertTrue(config.issuerMetadata.requireSigned)
         XCTAssertEqual(config.verifiers.registrarRequireEKU, "1.2")

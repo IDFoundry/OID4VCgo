@@ -141,6 +141,13 @@ refuses becomes `invalid` with reason `issuer_untrusted`. Set
 `IssuerLeafPolicy: verifier.AnyIssuerLeaf` to keep such credentials,
 for `IssuerRoots` that anchor issuers' certificates alone.
 
+For an SD-JWT VC without a policy, `wallet.IssuerLeafPolicyFor` returns
+`verifier.DefaultSDJWTIssuerLeafPolicy` itself, so `walletflow.New`
+counts it as the default it is: a production `Config` that sets it as
+`IssuerLeafPolicy`, on `IssuerRoots` that may share a trust anchor with
+another role's pool, is refused with "may share a trust anchor", as
+one with no policy is.
+
 ### An mdoc needs a `HolderKey` (`wallet`)
 
 `wallet.VerifyIssuedCredential` now refuses an mdoc when
@@ -162,7 +169,9 @@ a front end routing by the raw path and a server comparing the
 normalized `htu` would read it as different resources. This reaches
 pre-authorized code tokens, deferred credential polls and refreshes
 without client authentication. An issuer whose metadata names such an
-endpoint must name it in normal form.
+endpoint must name it in normal form. `Wallet.GenerateDPoPProof` applies
+the same rule to its `htu`, and refuses one that isn't a URL, for a
+caller building DPoP requests of its own.
 
 ### Presented certificate chains are checked in order
 
@@ -340,6 +349,98 @@ Keep a verifier for every Kind your instances registered with.
 return `ErrConfig` (the provider's HTTP 500) for an instance of
 another Kind than `androidkey.EvidenceKind`, where they accepted it:
 don't serve the adapter under a Kind of your own.
+
+### A wallet decides which issuers' offers it takes (`walletflow`)
+
+A pre-authorized offer's transaction code goes to the issuer the offer
+names before `IssuerRoots` judge that issuer, so a phishing offer
+naming an attacker's issuer, beside a genuine service's PIN, hands the
+attacker the PIN (SECURITY.md, "Transaction code phishing").
+`walletflow.New` now refuses, at every assurance level, development
+included, a `Config` that receives credentials (`IssuerRoots`,
+`MdocIssuerRoots` or `MdocIssuerRootsByDocType` set) without deciding
+which issuers' offers it takes, in one of three ways:
+
+- `CredentialIssuers`, the Credential Issuer Identifiers it takes
+  offers from: `StartIssuance` refuses any other's offer with
+  `ErrUntrustedIssuer` before fetching its metadata;
+- `IssuerMetadataRoots` (holding a certificate) with
+  `RequireSignedIssuerMetadata` and `RequireIssuerMetadataName`, all
+  three: only issuers whose metadata a certificate under those roots
+  signs and names them in, also checked in `StartIssuance`. It may be
+  combined with `CredentialIssuers`, and both then apply;
+- the new `AllowAnyCredentialIssuer`, which takes any issuer's offer
+  and leaves the phishing to the application. It can't be set with
+  either of the others.
+
+An empty identifier in `CredentialIssuers` is refused too. A wallet
+that receives no credentials needs none of them.
+
+```go
+// Before
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots: issuerRoots, // ...
+}, deps)
+// After: the issuers you take offers from
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots:       issuerRoots,
+	CredentialIssuers: []string{"https://issuer.example.com"}, // ...
+}, deps)
+// Or, where issuers can't be listed: signed metadata naming its issuer
+w, err := walletflow.New(walletflow.Config{
+	IssuerRoots: issuerRoots, IssuerMetadataRoots: metadataRoots,
+	IssuerMetadataRevocation: metadataCRLs.Checker(),
+	RequireSignedIssuerMetadata: true, RequireIssuerMetadataName: true, // ...
+}, deps)
+```
+
+### DCQL queries over the limits are refused before duplicates are dropped (`wallet`, `walletflow`, mobile)
+
+A presentation request whose DCQL query has more than 64 credential
+queries (`dcql.MaxCredentialQueries`), or a credential query with more
+than 256 claims queries (`dcql.MaxClaimsPerCredential`), is now
+refused as malformed, duplicates counted. v0.81.0 dropped duplicate
+claims queries first, so a credential query repeating the same claims
+over the limit used to be answered. Also, a claims query value of `-0`
+is no longer a duplicate of one of `0`. A Verifier keeps its query
+within the limits, without repeats.
+
+### Mobile: a wallet decides which issuers' offers it takes (gomobile ABI 16, Swift, Kotlin)
+
+The mobile configuration takes the same three ways: `credential_issuers`
+(Swift and Kotlin `issuers.credentialIssuers`);
+`issuer_metadata_roots` with `require_signed_issuer_metadata` and
+`require_issuer_metadata_name` (`issuerMetadata.roots`,
+`requireSigned`, `requireName`); or `allow_any_credential_issuer`
+(`issuers.allowAnyCredentialIssuer`). `NewWallet`, Swift's
+`Wallet(configuration:)` and Kotlin's `Wallet` constructor refuse a
+configuration with issuer roots and none of them, or with
+`allow_any_credential_issuer` beside either of the others, as
+`invalid_input`. `startIssuance` refuses an unlisted issuer's offer
+with the new `untrusted_issuer` code (`WalletError.Code.untrustedIssuer`,
+`WalletException.Code.untrustedIssuer`), before asking for its PIN.
+`ABIVersion` is 16: the Swift and Kotlin libraries need a framework
+built from this release.
+
+```swift
+// Before
+WalletConfiguration(clientID: id, redirectURI: uri, issuers: .init(roots: issuerRoots), ...)
+// After
+WalletConfiguration(clientID: id, redirectURI: uri,
+                    issuers: .init(roots: issuerRoots, credentialIssuers: ["https://issuer.example.com"]), ...)
+```
+
+```kotlin
+// Before
+WalletConfiguration(clientID = id, redirectURI = uri, issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots), ...)
+// After
+WalletConfiguration(
+    clientID = id, redirectURI = uri,
+    issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots, credentialIssuers = listOf("https://issuer.example.com")), ...
+)
+```
+
+A JSON configuration adds `"credential_issuers": ["https://issuer.example.com"]`.
 
 ## OID4VCWallet 0.39.0 → 0.40.0
 

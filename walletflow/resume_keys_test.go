@@ -48,7 +48,7 @@ func newStrictWallet(t *testing.T, env testEnv) (*walletflow.Wallet, *walletflow
 	t.Helper()
 	mem := walletflow.NewMemoryKeyStore()
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: env.IssuerRoots, Development: true,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{env.IssuerURL}, IssuerRoots: env.IssuerRoots, Development: true,
 	}, walletflow.Dependencies{Keys: strictKeys{mem}, Credentials: walletflow.NewMemoryCredentialStore(), Provider: env.Provider, HTTP: env.HTTP, Authorizations: walletflow.NewMemoryAuthorizationStore()})
 	if err != nil {
 		t.Fatal(err)

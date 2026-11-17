@@ -232,7 +232,7 @@ func TestDCAPIPresentation_Unsigned(t *testing.T) {
 func TestDCAPIPresentation_RequireSigned(t *testing.T) {
 	f, v, _ := presentationFixture(t)
 	w, err := walletflow.New(walletflow.Config{
-		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, IssuerRoots: f.env.IssuerRoots,
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
 		VerifierTrust: v.Trust, RequireSignedDCAPIRequests: true, Development: true,
 	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP})
 	if err != nil {
