@@ -185,7 +185,8 @@ func (a *App) handlePreAuthorizedToken(w http.ResponseWriter, r *http.Request, r
 
 // preAuthorizedGrant is a redeemed pre-authorized code's grant: what the
 // code granted, to the client and DPoP key the token request verified,
-// named by the transaction ID.
+// restricted to the Credential Issuer that redeemed it and named by the
+// transaction ID.
 func preAuthorizedGrant(attested server.AttestedClient, binding server.TokenBinding, redeemed issuer.RedeemedPreAuthorizedCode) (server.IssueAccessTokenRequest, error) {
 	subject, err := server.NewSubjectID(redeemed.Subject)
 	if err != nil {
@@ -201,7 +202,7 @@ func preAuthorizedGrant(attested server.AttestedClient, binding server.TokenBind
 	}
 	return server.IssueAccessTokenRequest{
 		GrantType: preAuthorizedCodeGrantType, Client: attested, Binding: binding, Subject: subject,
-		Scope: redeemed.Scope, AuthorizationDetails: details, GrantID: redeemed.Subject,
+		Scope: redeemed.Scope, AuthorizationDetails: details, Resources: []string{redeemed.Resource}, GrantID: redeemed.Subject,
 	}, nil
 }
 

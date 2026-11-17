@@ -201,6 +201,21 @@ type Config struct {
 	// otherwise a grant must not set it.
 	AuthorizationServers []fapi.URL
 
+	// AcceptedAccessTokenAudiences are audiences, besides Issuer, an
+	// access token may name to be accepted here (AuthorizedRequest.Audience).
+	// By default only a token issued for Issuer itself is: one whose
+	// "aud" names it, as an Authorization Server sets it when the token
+	// was requested with Issuer as its RFC 8707 resource (or when the
+	// Authorization Server's own identifier is Issuer). List an
+	// Authorization Server's issuer identifier here only when it issues
+	// access tokens for this Credential Issuer alone and doesn't
+	// restrict them to it: its tokens' audience is then the
+	// Authorization Server itself. Never list it for an Authorization
+	// Server that serves other Credential Issuers too: each would then
+	// accept a token issued for another, and look up its own holder by
+	// the other issuer's subject.
+	AcceptedAccessTokenAudiences []fapi.URL
+
 	Endpoints Endpoints
 	Limits    Limits
 
@@ -893,7 +908,8 @@ func validateConfig(cfg Config) []error {
 			errs = append(errs, fmt.Errorf("issuer: config: credential_configurations_supported[%q]: %w", id, err))
 		}
 	}
-	errs = append(errs, validateAuthorizationServers(cfg.AuthorizationServers), prefixError("issuer: config: ", oid4vci.ValidateDisplays(cfg.Display)))
+	errs = append(errs, validateAuthorizationServers(cfg.AuthorizationServers), validateAcceptedAudiences(cfg.AcceptedAccessTokenAudiences),
+		prefixError("issuer: config: ", oid4vci.ValidateDisplays(cfg.Display)))
 	if cfg.BatchCredentialIssuance != nil {
 		errs = append(errs, prefixError("issuer: config: batch_credential_issuance: ", cfg.BatchCredentialIssuance.Validate()))
 	}
@@ -1040,6 +1056,17 @@ func validateAuthorizationServers(servers []fapi.URL) error {
 			return fmt.Errorf("issuer: config: authorization_servers lists %s more than once", u)
 		}
 		seen[u.String()] = true
+	}
+	return nil
+}
+
+// validateAcceptedAudiences rejects an unset
+// accepted_access_token_audiences entry.
+func validateAcceptedAudiences(audiences []fapi.URL) error {
+	for i, u := range audiences {
+		if u.IsZero() {
+			return fmt.Errorf("issuer: config: accepted_access_token_audiences[%d] is unset", i)
+		}
 	}
 	return nil
 }

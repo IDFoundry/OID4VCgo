@@ -854,7 +854,12 @@ changes whether *every* bullet below is `(done)`.
   Authorization Server in the same process, that verifier comes from
   `fapigo/serverresource.NewVerifier`, built from the server's own
   config and stores, as `cmd/conformance-issuer` and the passport-vdc
-  issuer do.
+  issuer do, with `Options.Resource` set to the Credential Issuer.
+  The token's audience travels on `AuthorizedRequest.Audience`, and
+  the Issuer refuses one that doesn't name it, so Credential Issuers
+  sharing an Authorization Server each take only the tokens issued for
+  them; `RedeemedPreAuthorizedCode.Resource` restricts a pre-authorized
+  token to the issuer that redeemed the code.
   `DeferredCredentialHandler` and `NotificationEndpointHandler` do the
   same for the Deferred Credential (§9) and Notification (§11)
   Endpoints, over `ProtectedEndpointConfig{URL, Tokens}`: the first

@@ -7,6 +7,38 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.81.0 → next
+
+### A Credential Issuer refuses an access token issued for another
+
+An `issuer.Issuer` now refuses an access token whose audience doesn't
+name its `Config.Issuer`, as 401 `invalid_token`.
+`issuer/fapiresource` reports every token's audience
+(`AuthorizedRequest.Audience`); an `AuthorizedRequest` built by your
+own verifier with `Audience` nil isn't checked, so that verifier must
+accept only tokens issued for this Credential Issuer itself.
+
+Nothing changes where the Authorization Server's identifier is the
+Credential Issuer's own, as when they share one (`cmd/conformance-issuer`
+and the passport-vdc demo). Otherwise its tokens are addressed to
+itself unless restricted to a resource, and are now refused. Either:
+
+- restrict them to the Credential Issuer: list `Config.Issuer` in the
+  Authorization Server's `server.Config.Resources`, and pass
+  `RedeemedPreAuthorizedCode`'s new `Resource` as
+  `server.IssueAccessTokenRequest.Resources` (and the
+  `IssueRefreshTokenRequest`'s) when you issue a pre-authorized
+  code's token; wallets ask for the authorization code flow's tokens
+  with it as their `resource`. Set `serverresource.Options.Resource`
+  to `Config.Issuer` too, one resource verifier per Credential Issuer;
+  or
+- when the Authorization Server issues tokens for this Credential
+  Issuer alone, list its identifier in the new
+  `issuer.Config.AcceptedAccessTokenAudiences`. Never do so for one
+  serving several Credential Issuers: each would then take another's
+  token for its own, and issue its own holder's Credential for that
+  token's subject.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

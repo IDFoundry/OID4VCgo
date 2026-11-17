@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,24 +72,26 @@ func TestVerifyRefusesMissingToken(t *testing.T) {
 }
 
 // certBoundTokens resolves any token to one bound to cert (RFC 8705),
-// naming clientID and carrying claims.
+// naming clientID, addressed to audience and carrying claims.
 type certBoundTokens struct {
 	cert     *x509.Certificate
 	clientID string
+	audience []string
 	claims   map[string]json.RawMessage
 }
 
 func (c certBoundTokens) ResolveAccessToken(context.Context, resource.ResolveAccessTokenRequest) (resource.ResolvedAccessToken, error) {
 	sum := sha256.Sum256(c.cert.Raw)
 	return resource.ResolvedAccessToken{
-		Subject: "holder-1", ClientID: c.clientID, Scopes: []string{"pid"}, Claims: c.claims,
+		Subject: "holder-1", ClientID: c.clientID, Scopes: []string{"pid"}, Claims: c.claims, Audience: c.audience,
 		ExpiresAt: time.Now().Add(time.Hour), Key: "token-1",
 		Thumbprint: base64.RawURLEncoding.EncodeToString(sum[:]), SenderConstrain: storage.SenderConstrainMTLS,
 	}, nil
 }
 
 // TestVerifyMapsTheToken covers a verified token's mapping onto a
-// Grant: its client_id (or NoClientIdentity without one), scopes and
+// Grant: its client_id (or NoClientIdentity without one), scopes,
+// audience (never nil, so the Issuer checks it) and
 // authorization_details — and a malformed authorization_details.
 func TestVerifyMapsTheToken(t *testing.T) {
 	ca, caKey := testcert.CA(t, "client CA")
@@ -117,13 +120,14 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	}
 
 	details := `[{"type":"openid_credential","credential_configuration_id":"pid"}]`
-	grant, err := verify(certBoundTokens{cert: cert, clientID: "wallet-1", claims: map[string]json.RawMessage{"authorization_details": json.RawMessage(details)}})
+	grant, err := verify(certBoundTokens{cert: cert, clientID: "wallet-1", audience: []string{"https://issuer.example.com"}, claims: map[string]json.RawMessage{"authorization_details": json.RawMessage(details)}})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 	if grant.Subject != "holder-1" || grant.Authorized.Subject != "holder-1" || grant.Authorized.ClientIdentity != issuer.KnownClientID("wallet-1") ||
 		len(grant.Authorized.Scopes) != 1 || len(grant.Authorized.AuthorizationDetails) != 1 ||
-		grant.Authorized.AuthorizationDetails[0].CredentialConfigurationID != "pid" {
+		grant.Authorized.AuthorizationDetails[0].CredentialConfigurationID != "pid" ||
+		!slices.Equal(grant.Authorized.Audience, []string{"https://issuer.example.com"}) {
 		t.Errorf("grant = %+v", grant)
 	}
 
@@ -133,6 +137,9 @@ func TestVerifyMapsTheToken(t *testing.T) {
 	}
 	if _, ok := grant.Authorized.ClientIdentity.(issuer.NoClientIdentity); !ok {
 		t.Errorf("ClientIdentity without a client_id = %#v, want NoClientIdentity", grant.Authorized.ClientIdentity)
+	}
+	if grant.Authorized.Audience == nil || len(grant.Authorized.Audience) != 0 {
+		t.Errorf("Audience without an aud = %#v, want empty, not nil", grant.Authorized.Audience)
 	}
 
 	if _, err := verify(certBoundTokens{cert: cert, clientID: "wallet-1", claims: map[string]json.RawMessage{"authorization_details": json.RawMessage(`{"not":"a list"}`)}}); err == nil {
