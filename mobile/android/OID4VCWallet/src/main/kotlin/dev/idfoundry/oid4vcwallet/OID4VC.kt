@@ -225,7 +225,7 @@ public class WalletException internal constructor(
             code == Code.documentNotValid && protocolError == "suspended" -> "This document is suspended."
             code == Code.documentNotValid -> "This document has been revoked or can't be confirmed as valid."
             code == Code.untrustedVerifier -> "This verifier isn't one your wallet trusts, so its request wasn't opened."
-            code == Code.untrustedIssuer -> "This issuer isn't one your wallet takes credentials from, so its offer wasn't opened."
+            code == Code.untrustedIssuer -> "This issuer isn't one your wallet takes credentials from."
             code == Code.requestRefused -> "This verifier's request asks for something this wallet doesn't support, so it was refused."
             code == Code.profileViolation || code == Code.clientAuthUnsupported || code == Code.proofUnsupported ->
                 "This wallet can't receive credentials from this issuer."

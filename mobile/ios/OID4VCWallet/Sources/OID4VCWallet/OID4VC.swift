@@ -180,7 +180,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
-        case .untrustedIssuer: "This issuer isn't one your wallet takes credentials from, so its offer wasn't opened."
+        case .untrustedIssuer: "This issuer isn't one your wallet takes credentials from."
         case .requestRefused: "This verifier's request asks for something this wallet doesn't support, so it was refused."
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."
