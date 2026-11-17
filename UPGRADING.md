@@ -120,6 +120,67 @@ Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
 passes the presentation's hash: `Presentation.SDHash(alg)`.
 `sdjwtvc.Verify` and the verifier already did.
 
+### App Attest chains (`walletprovider/appattest`)
+
+`VerifyAttestation` takes only Apple's chain shape: an `x5c` of exactly
+two certificates (`MaxChainLength` is now 2), each with an ECDSA P-256
+or P-384 key, checked before any signature is. Apple's attestations
+already have this shape; a test chain of your own with RSA keys, or
+with more certificates, is now refused `ErrMalformed`.
+
+### Android Key Attestation chains (`walletprovider/androidkey`)
+
+`Verifier.Verify` refuses a chain of one certificate (`ErrMalformed`)
+and a leaf whose key is a root's (`ErrUntrustedRoot`). A chain's last
+certificate anchors it when it is one of `Verifier.Roots` byte for
+byte or is signed by one (a self-signed re-issue of a root is);
+carrying a root's public key no longer suffices. Android's chains
+are unaffected.
+
+### Android status list outages (`walletprovider`, `walletprovider/androidkey`)
+
+`androidkey.StatusSource` now refreshes Google's list in the
+background ahead of `MaxAge`, and, while fetching fails, keeps using
+the last list for the new `Grace` past `MaxAge` (12 hours by
+default). Set `Grace` negative for the old behaviour, a list never
+used past `MaxAge`. A fetch is no longer cut short by the request
+that started it, and a caller waiting for one stops when its own
+context ends.
+
+When no list can be had, Android registrations and rechecks are now
+answered HTTP 503 `server_error` with a `Retry-After`, not 403
+`evidence_rejected`: `androidkey.EvidenceVerifier` wraps
+`ErrStatusUnavailable` in the new `walletprovider.ErrUnavailable`,
+which `Provider.Register`, `WalletAttestation` and `KeyAttestation`
+return without `ErrEvidenceRejected`. A custom `EvidenceVerifier` or
+rechecker that can't decide for now can wrap `ErrUnavailable` too.
+The Swift and Kotlin `HttpWalletProvider` already treat a 5xx as
+retryable; with the Go `Client`, a `RefusedError` with `Status` 503 is
+one to retry.
+
+### Revocation outranks policy in rechecks (`walletprovider`, `walletprovider/androidkey`)
+
+An Android recheck consults Google's status list first, so a REVOKED
+or SUSPENDED certificate revokes or suspends the instance even when a
+root removed from `Roots` or a tightened `Verifier` would refuse it
+too; a list that can't be fetched no longer stops a root or policy
+refusal. The provider runs an instance's rechecker even when its own
+`Policy` refuses the instance or instance key, and
+`Config.OnRecheckRefused` is now called for a `Policy` refusal too
+(`ErrPolicy`, the instance left active): an alert keyed on that
+callback sees refusals it didn't before.
+
+### Instances of an unconfigured evidence Kind (`walletprovider`, `walletprovider/androidkey`)
+
+An instance whose evidence `Kind` has no verifier in
+`Dependencies.Evidence` is now refused, `policy_refused`, and reported
+to `OnRecheckRefused`, where it used to be attested without rechecks.
+Keep a verifier for every Kind your instances registered with.
+`androidkey.EvidenceVerifier`'s `Recheck` and `RecheckInstanceKey`
+return `ErrConfig` (the provider's HTTP 500) for an instance of
+another Kind than `androidkey.EvidenceKind`, where they accepted it:
+don't serve the adapter under a Kind of your own.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

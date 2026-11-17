@@ -182,7 +182,8 @@ func (f StatusListFill) Free() int {
 // StatusListFill reports how full the current period's status lists
 // are: they take every instance key first used, or used again, in the
 // period, and once they're full, a Wallet or Key Attestation for one
-// more fails until the next period. Compare Free with the instance keys
+// more fails until the next period, unless it's for a recorded key last
+// used in the previous period, which keeps that period's index. Compare Free with the instance keys
 // the rest of the period will use; if they won't fit, raise
 // Config.StatusListSize, which the next period's lists take. It counts
 // the reserved indices of every list of the period, so call it from
@@ -230,7 +231,11 @@ func (l *statusLists) filledBefore(start int64, n int) {
 // period's (a record from before lists had periods): a fresh index, the
 // old Status kept as PreviousStatus while an attestation naming it may
 // be live, that is, if it's the previous period's, and a RetainUntil
-// from the current period's start. The record changes
+// from the current period's start. Should the current period's lists
+// be full, a key on the previous period's list keeps its index there,
+// unmoved: that list is served, and its statuses set, until every
+// attestation naming it has expired, so the key's renewal doesn't fail
+// with the lists, as a new key's attestation does. The record changes
 // with a compare-and-swap (InstanceKeyStore.Update); should another
 // request have moved it meanwhile, its move stands, and the index
 // reserved here stays reserved, as every allocated index does.
@@ -251,13 +256,19 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 		return ik, nil
 	}
 	ref, err := p.allocateStatus(ctx, ik.InstanceID, now)
-	if err != nil {
+	switch {
+	case errors.Is(err, statuslist.ErrListsFull) && p.onPreviousPeriod(ik.Status, cur):
+		p.logger().LogAttrs(context.WithoutCancel(ctx), slog.LevelWarn,
+			"walletprovider: the current period's status lists are full: a recorded instance key keeps its previous period's index",
+			slog.String("instance", ik.InstanceID), slog.String("list", ik.Status.URI))
+		return ik, nil
+	case err != nil:
 		return InstanceKey{}, err
 	}
 	for range maxUpdateAttempts {
 		moved := ik
 		moved.Status, moved.PreviousStatus, moved.RetainUntil = ref, statuslist.StatusListRef{}, p.retainUntil(cur)
-		if start, _, ok := p.parseList(ik.Status.URI); ok && start == cur-p.period() {
+		if p.onPreviousPeriod(ik.Status, cur) {
 			moved.PreviousStatus = ik.Status
 		}
 		// A record swept meanwhile (InstanceKeyRetention) is refused as
@@ -282,6 +293,13 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 		}
 	}
 	return InstanceKey{}, fmt.Errorf("walletprovider: moving an instance key to the current status lists: %w after %d attempts", ErrConflict, maxUpdateAttempts)
+}
+
+// onPreviousPeriod reports whether ref is on a list of the period
+// before the one starting at cur.
+func (p *Provider) onPreviousPeriod(ref statuslist.StatusListRef, cur int64) bool {
+	start, _, ok := p.parseList(ref.URI)
+	return ok && start == cur-p.period()
 }
 
 // setStatus sets the status at ref, if its list is served: no live

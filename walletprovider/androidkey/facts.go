@@ -156,9 +156,13 @@ func InstanceFacts(in walletprovider.Instance) (Facts, bool, error) {
 // instance must then register again, or its instance key be attested
 // anew, with fresh evidence. Facts saved without the validity periods
 // (by OID4VCgo v0.80.0 and before: Facts.ValidityRecorded) are refused
-// with ErrLegacyFacts. What only the chain itself can show — signatures,
-// the challenge, the key's properties — was judged by Verify and isn't
-// again. Errors wrap the Err values Verify's do.
+// with ErrLegacyFacts. The status list is consulted first: a
+// certificate it names refuses the Facts with ErrRevoked whatever else
+// would refuse them too, so Google's verdict is never masked by a root
+// since removed or a policy since tightened. What only the chain itself
+// can show — signatures, the challenge, the key's properties — was
+// judged by Verify and isn't again. Errors wrap the Err values Verify's
+// do.
 func (v *Verifier) Recheck(ctx context.Context, f *Facts) error {
 	return v.recheck(ctx, f, false)
 }
@@ -169,26 +173,46 @@ func (v *Verifier) recheck(ctx context.Context, f *Facts, allowUnrecordedValidit
 	if err := v.checkPolicyConfig(); err != nil {
 		return err
 	}
-	i := slices.IndexFunc(v.roots(), func(r *x509.Certificate) bool {
-		digest := sha256.Sum256(r.RawSubjectPublicKeyInfo)
-		return bytes.Equal(digest[:], f.RootKeyDigest)
-	})
-	if i < 0 {
-		return fail(ErrUntrustedRoot, "the chain's root isn't among the configured roots")
-	}
-	if err := v.recheckPolicy(f); err != nil {
-		return err
-	}
 	serials, err := f.serials()
 	if err != nil {
 		return err
 	}
-	// Revocation before validity: Google's verdict on a chain that has
-	// also expired is the one the provider acts on.
-	if _, err := v.checkRevocation(ctx, serials); err != nil {
+	// Revocation first: Google's verdict on a chain is the one the
+	// provider acts on, revoking or suspending the instance, even when
+	// the chain's root is no longer trusted, the policy has since been
+	// tightened to refuse it, or it has expired, as may all follow the
+	// same compromise. A status list that can't be had doesn't stop a
+	// refusal the Facts alone decide.
+	_, revErr := v.checkRevocation(ctx, serials)
+	if errors.Is(revErr, ErrRevoked) {
+		return revErr
+	}
+	root, err := v.recheckRootAndPolicy(f)
+	if err != nil {
 		return err
 	}
-	return v.recheckValidity(f, v.roots()[i], allowUnrecordedValidity)
+	if revErr != nil {
+		return revErr
+	}
+	return v.recheckValidity(f, root, allowUnrecordedValidity)
+}
+
+// recheckRootAndPolicy returns the configured root f's chain is
+// anchored at, refusing Facts whose root is no longer configured or
+// that v's policy refuses.
+func (v *Verifier) recheckRootAndPolicy(f *Facts) (*x509.Certificate, error) {
+	roots := v.roots()
+	i := slices.IndexFunc(roots, func(r *x509.Certificate) bool {
+		digest := sha256.Sum256(r.RawSubjectPublicKeyInfo)
+		return bytes.Equal(digest[:], f.RootKeyDigest)
+	})
+	if i < 0 {
+		return nil, fail(ErrUntrustedRoot, "the chain's root isn't among the configured roots")
+	}
+	if err := v.recheckPolicy(f); err != nil {
+		return nil, err
+	}
+	return roots[i], nil
 }
 
 // recheckPolicy judges f's attestation version, security levels, root
@@ -266,11 +290,16 @@ const (
 // as well, which the provider answers as registration_expired, or, from
 // RecheckInstanceKey, instance_key_expired, so the wallet knows to send
 // fresh evidence — and walletprovider.ErrPolicy otherwise; a status
-// list it couldn't get, or a misconfigured Verifier, is returned as it
-// is, for the provider to fail the request as its own failure.
+// list it couldn't get wraps walletprovider.ErrUnavailable, for the
+// provider to answer 503 and the wallet to try again, and a
+// misconfigured Verifier is returned as it is, for the provider to
+// fail the request as its own failure.
 //
-// An instance with no Facts kept (InstanceFacts: one registered with
-// OID4VCgo v0.75.3 and before) can't be judged, and Facts saved by
+// An instance registered with evidence of another Kind than
+// EvidenceKind is refused with ErrConfig, which the provider fails the
+// request for as its own failure: the adapter is serving a Kind it
+// doesn't judge. An instance with no Facts kept (InstanceFacts: one
+// registered with OID4VCgo v0.75.3 and before) can't be judged, and Facts saved by
 // OID4VCgo v0.80.0 and before hold no validity periods
 // (Facts.ValidityRecorded), so whether its chain has expired can't be:
 // both are refused, with ErrLegacyFacts, unless
@@ -294,9 +323,12 @@ const (
 // RecheckInstanceKey judges its own Facts. A holder key's chain is
 // used once, for the Key Attestation it's sent with, and isn't kept.
 func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instance) error {
+	if err := ownKind(in); err != nil {
+		return err
+	}
 	f, ok, err := InstanceFacts(in)
 	switch {
-	case err != nil || in.Evidence.Kind != EvidenceKind:
+	case err != nil:
 		return err
 	case !ok:
 		return e.unchecked("the instance has no evidence facts (registered with OID4VCgo v0.75.3 or before)", remedyRegister)
@@ -317,14 +349,29 @@ func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instanc
 // validity periods, is refused as Recheck refuses such an instance,
 // unless AllowUncheckedLegacyEvidence.
 func (e EvidenceVerifier) RecheckInstanceKey(ctx context.Context, in walletprovider.Instance, k walletprovider.InstanceKey) error {
+	if err := ownKind(in); err != nil {
+		return err
+	}
 	f, ok, err := InstanceKeyFacts(in, k)
 	switch {
-	case err != nil || in.Evidence.Kind != EvidenceKind:
+	case err != nil:
 		return err
 	case !ok:
 		return e.unchecked("the instance key has no evidence facts (recorded with OID4VCgo v0.80.0 or before)", remedyInstanceKey)
 	}
 	return e.recheck(ctx, &f, remedyInstanceKey)
+}
+
+// ownKind refuses, as a configuration error, to recheck an instance
+// registered with evidence of another Kind than EvidenceKind: its
+// Facts, if any, aren't this package's, and accepting it unjudged would
+// skip every recheck, as serving the adapter under a Kind of the
+// integrator's own otherwise would.
+func ownKind(in walletprovider.Instance) error {
+	if in.Evidence.Kind != EvidenceKind {
+		return fail(ErrConfig, "instance %q was registered with %q evidence, not %q", in.ID, in.Evidence.Kind, EvidenceKind)
+	}
+	return nil
 }
 
 // InstanceKeyFacts decodes the Facts kept for k, an instance key of the
@@ -363,7 +410,9 @@ func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) 
 	switch err := e.Verifier.recheck(ctx, f, e.AllowUncheckedLegacyEvidence); {
 	case err == nil:
 		return nil
-	case errors.Is(err, ErrStatusUnavailable), errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
+	case errors.Is(err, ErrStatusUnavailable):
+		return undecided(err)
+	case errors.Is(err, ErrConfig), errors.Is(err, ErrMalformed):
 		return err
 	case errors.Is(err, ErrRevoked):
 		return fmt.Errorf("%w: %w", revocationVerdict(err), err)
@@ -374,6 +423,17 @@ func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) 
 	default:
 		return fmt.Errorf("%w: %w", walletprovider.ErrPolicy, err)
 	}
+}
+
+// undecided wraps err with walletprovider.ErrUnavailable when it's
+// ErrStatusUnavailable: no status list could be had, which is no
+// verdict on the evidence, so the provider answers 503, for the wallet
+// to try again, not a refusal.
+func undecided(err error) error {
+	if errors.Is(err, ErrStatusUnavailable) {
+		return fmt.Errorf("%w: %w", walletprovider.ErrUnavailable, err)
+	}
+	return err
 }
 
 // revocationVerdict is what a recheck refused for ErrRevoked wraps:

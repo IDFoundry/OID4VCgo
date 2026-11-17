@@ -103,7 +103,12 @@ var (
 	errNoKeyAttested = apiError{http.StatusForbidden, "no_key_attested", "No key could be attested."}
 	errTooManyKeys   = apiError{http.StatusTooManyRequests, "too_many_instance_keys", "The instance has used too many instance keys this period."}
 	errServer        = apiError{http.StatusInternalServerError, "server_error", "The provider couldn't answer."}
+	errUnavailable   = apiError{http.StatusServiceUnavailable, "server_error", "The provider can't answer now: try again later."}
 )
+
+// unavailableRetryAfter is the Retry-After, in seconds, of a 503
+// answer (ErrUnavailable).
+const unavailableRetryAfter = "30"
 
 // errDecoding wraps why a request body was refused, for the log.
 var errDecoding = errors.New("walletprovider: decoding the request")
@@ -118,6 +123,7 @@ func refusal(err error) apiError {
 		err error
 		api apiError
 	}{
+		{ErrUnavailable, errUnavailable},
 		{ErrNoKeyAttested, errNoKeyAttested},
 		{ErrTooManyInstanceKeys, errTooManyKeys},
 		{ErrInstanceKeyRegistered, errKeyRegistered},
@@ -345,8 +351,11 @@ func (p *Provider) fail(r *http.Request, w http.ResponseWriter, a apiError, err 
 	}
 	p.logger().LogAttrs(context.WithoutCancel(r.Context()), level, "walletprovider: request refused",
 		slog.String("path", r.URL.Path), slog.Int("status", a.status), slog.String("error_code", a.code), slog.Any("error", err))
-	if a.status == http.StatusUnauthorized {
+	switch a.status {
+	case http.StatusUnauthorized:
 		w.Header().Set("WWW-Authenticate", RequestHeader)
+	case http.StatusServiceUnavailable:
+		w.Header().Set("Retry-After", unavailableRetryAfter)
 	}
 	writeJSON(w, a.status, errorBody{Error: a.code, Description: a.description})
 }

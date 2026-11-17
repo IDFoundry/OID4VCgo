@@ -240,14 +240,28 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   for your fleet's issuances and refreshes per period — 2^19 or more
   for millions of wallets — and at most 2^22 unless the issuers
   checking the lists raise their token limit. The
-  `walletprovider.Config.StatusListSize` doc has the formula. Watch
-  `Provider.StatusListFill` from monitoring: alert when its `Free`
-  won't last until its `End` at the current rate, and raise
-  `StatusListSize` for the next period.
+  `walletprovider.Config.StatusListSize` doc has the formula. Size it
+  with a security margin too, several times your expected use: the
+  per-instance bound below doesn't bound someone holding many
+  instances, and recorded keys move to each new period's lists
+  without fresh evidence, so enough instances can fill a period's
+  lists between them. Watch `Provider.StatusListFill` from
+  monitoring: alert when its `Free` won't last until its `End` at the
+  current rate, and on a fast fill early in a period (the lists filling
+  far faster than the same hours of the last period did, a sign of
+  many instances renewing at once), and raise `StatusListSize` for the
+  next period. Once a period's lists are full, a recorded instance key
+  last used in the previous period keeps its index there, so
+  established wallets keep their Wallet Attestations, but every new
+  instance key, and so every new issuance, is refused until the period
+  ends.
 - [ ] **Per-instance bounds: `Config.MaxInstanceKeysPerPeriod`** (128
   by default) caps the status list indices one instance's keys take
   in a period, so one instance can't fill the lists for every other:
   size it for one wallet's issuances and refreshes per period. It
+  bounds one instance, not an attacker with many: each instance costs
+  only one piece of registration evidence, so size `StatusListSize`
+  with a margin, as above. It
   doesn't limit request rates: also **rate-limit
   `WalletAttestationPath` and `KeyAttestationPath`** per client in
   front of the service, as the unauthenticated endpoints are. Each
@@ -260,7 +274,15 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   refuses to start when they don't (a missing Sealer), rather than
   keep instances unsealed.
 - [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
-  `StatusSource` (Google's list, refreshed daily). Android instances
+  `StatusSource` (Google's list, refreshed daily, ahead of its
+  `MaxAge`, in the background). While Google can't be reached, the
+  last list is used for `StatusSource.Grace` past `MaxAge` (12 hours by
+  default; a certificate Google lists meanwhile is found only once a
+  fetch succeeds); after that, Android registrations and attestations
+  are answered HTTP 503 `server_error` with a `Retry-After`
+  (`walletprovider.ErrUnavailable`), which wallets retry, not
+  `evidence_rejected`. Alert on 503s and on `ErrStatusUnavailable` in
+  the provider's log. Android instances
   are judged again before each attestation from the facts kept at
   registration (`androidkey.EvidenceVerifier` is an
   `EvidenceRechecker`), so a revoked attestation key or a tightened
@@ -268,11 +290,19 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   a certificate of an instance's chain `REVOKED`, the provider revokes
   the instance itself, so the attestations it already holds read
   `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
-  suspension). A root removed from `Roots` or a tightened policy only
-  refuses: to make such instances' attestations `INVALID` too, revoke
-  them with `p.RevokeWhere(ctx, match, reason)`, `match` calling the
-  adapter's `Recheck` or reading `androidkey.InstanceFacts` (a
-  certificate serial, a patch level).
+  suspension). Google's verdict is consulted first, and wins even when
+  a root removed from `Roots`, a tightened `Verifier` or a tightened
+  `Policy` would refuse the instance too. A root removed or a tightened
+  policy alone only refuses: to make such instances' attestations
+  `INVALID` too, revoke them with `p.RevokeWhere(ctx, match, reason)`,
+  `match` calling the adapter's `Recheck` or reading
+  `androidkey.InstanceFacts` (a certificate serial, a patch level).
+  Keep a verifier in `Dependencies.Evidence` for every `Kind` your
+  instances registered with, under that Kind: an instance whose Kind
+  no verifier has is refused by policy (`OnRecheckRefused` hears of
+  it), and `androidkey.EvidenceVerifier` served under another Kind
+  than `androidkey.EvidenceKind` fails every recheck as a
+  misconfiguration (HTTP 500).
 - [ ] **Expect Android instances to re-attest.** The recheck also
   judges each kept certificate's validity period, as `Verify` judges a
   chain's, so an instance whose registration chain has a certificate
@@ -320,8 +350,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   where a provider's stores may outlive its upgrades.
 - [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
   called with each refusal and the instance as stored afterwards
-  (revoked, suspended or still active): alert on it, and revoke from
-  your own logic the instances a policy refusal leaves active. It runs
+  (revoked, suspended or still active), the provider's own `Policy`
+  refusals among them: alert on it, and revoke from your own logic the
+  instances a policy refusal leaves active. It runs
   on the request's path, so hand slow work to another goroutine.
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes

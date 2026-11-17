@@ -144,7 +144,16 @@ type Config struct {
 	// wallet's issuances and refreshes in a period, with room to spare;
 	// a period's lists then take StatusListSize × MaxStatusListsPerPeriod
 	// / 2 / MaxInstanceKeysPerPeriod instances at that bound before they
-	// fill. Zero means DefaultMaxInstanceKeysPerPeriod.
+	// fill. It bounds one instance, not someone holding many: each
+	// instance costs one piece of registration evidence, and its
+	// recorded keys move to each new period's lists without any, so
+	// enough instances can fill a period's lists between them. Size
+	// StatusListSize with that margin, and watch StatusListFill. A
+	// recorded key last used in the previous period keeps its index
+	// there once the current period's lists are full, so established
+	// wallets keep their Wallet Attestations; new instance keys are
+	// refused until the next period. Zero means
+	// DefaultMaxInstanceKeysPerPeriod.
 	MaxInstanceKeysPerPeriod int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
@@ -188,7 +197,9 @@ type Config struct {
 	// OnRecheckRefused, if set, is called each time an
 	// EvidenceRechecker refuses an instance, or an InstanceKeyRechecker
 	// one of its recorded instance keys, before a Wallet or Key
-	// Attestation, with the refusal and the instance as stored once the
+	// Attestation — or the Policy, as it is now, refuses either, or the
+	// instance's evidence Kind has no configured verifier (both
+	// ErrPolicy) — with the refusal and the instance as stored once the
 	// provider has acted on it: StateRevoked or StateSuspended when the
 	// refusal wraps ErrEvidenceRevoked or ErrEvidenceSuspended (the
 	// provider revoked or suspended it, with a Reason naming the
@@ -199,10 +210,10 @@ type Config struct {
 	// your own logic. It's called on the request's path, before the
 	// refusal is answered: keep it quick, and hand anything slow to
 	// another goroutine. A recheck that couldn't check (a status list
-	// that can't be fetched), or a refusal the provider couldn't revoke
-	// or suspend the instance for (a store failure), fails the request
-	// as the provider's own failure without calling it; the next
-	// request rechecks.
+	// that can't be fetched: ErrUnavailable, answered 503), or a
+	// refusal the provider couldn't revoke or suspend the instance for
+	// (a store failure), fails the request as the provider's own
+	// failure without calling it; the next request rechecks.
 	OnRecheckRefused func(ctx context.Context, in Instance, err error)
 
 	// RequireSealedStore makes New refuse Instances, InstanceKeys and

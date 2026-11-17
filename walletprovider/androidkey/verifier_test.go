@@ -426,7 +426,7 @@ func TestVerify_MalformedChains(t *testing.T) {
 		"intermediate out of order": {[][]byte{good.der[0], good.der[2], good.der[1]}, androidkey.ErrChainSignature},
 		"no extension":              {[][]byte{noExt.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},
 		"extension below the leaf":  {[][]byte{forged.Raw, good.der[0], good.der[1], good.der[2]}, androidkey.ErrMalformed},
-		"leaf alone":                {[][]byte{good.der[0]}, androidkey.ErrUntrustedRoot},
+		"leaf alone":                {[][]byte{good.der[0]}, androidkey.ErrMalformed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := verifierFor(t, good).Verify(context.Background(), tc.chain, testChallenge); !errors.Is(err, tc.want) {

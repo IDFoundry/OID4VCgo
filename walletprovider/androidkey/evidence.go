@@ -99,7 +99,7 @@ func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.Evidence
 	}
 	r, err := e.Verifier.Verify(ctx, chain, in.Challenge)
 	if err != nil {
-		return walletprovider.VerifiedEvidence{}, err
+		return walletprovider.VerifiedEvidence{}, undecided(err)
 	}
 	i := slices.IndexFunc(in.Keys, func(k crypto.PublicKey) bool { return certchain.SameKey(k, r.PublicKey) })
 	if i < 0 {

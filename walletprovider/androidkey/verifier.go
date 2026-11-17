@@ -149,6 +149,9 @@ func (v *Verifier) Verify(ctx context.Context, chain [][]byte, challenge []byte)
 	if err != nil {
 		return nil, err
 	}
+	if rootWithKey(certs[0], v.roots()) != nil {
+		return nil, fail(ErrUntrustedRoot, "the leaf has a root's public key")
+	}
 	kd, err := keyDescriptionOf(certs)
 	if err != nil {
 		return nil, err
@@ -212,10 +215,11 @@ func (v *Verifier) now() time.Time {
 }
 
 // parseChain parses and bounds the chain and checks each certificate
-// is signed by the next.
+// is signed by the next. A chain is at least a leaf and the certificate
+// that signs it: a leaf alone has no signature anything checks.
 func parseChain(chain [][]byte) ([]*x509.Certificate, error) {
-	if len(chain) == 0 || len(chain) > MaxChainLength {
-		return nil, fail(ErrMalformed, "a chain of %d certificates, want 1 to %d", len(chain), MaxChainLength)
+	if len(chain) < 2 || len(chain) > MaxChainLength {
+		return nil, fail(ErrMalformed, "a chain of %d certificates, want 2 to %d", len(chain), MaxChainLength)
 	}
 	certs := make([]*x509.Certificate, len(chain))
 	for i, der := range chain {
@@ -255,13 +259,18 @@ func boundedKey(pub any) error {
 }
 
 // anchor finds the root the chain ends at and checks every certificate
-// is valid now. A certificate with a root's key is judged by the
-// configured root's validity, not its own: Google's 2016 root
-// certificate has expired, while its key lives on in the 2022 one.
+// is valid now. The chain's last certificate is the root when it is a
+// configured root, byte for byte, or is signed by one: a re-issue of a
+// root, self-signed by the root's key, is signed by that root. Merely
+// carrying a root's public key anchors nothing, since anyone can put
+// one in a certificate they sign themselves. A certificate with a
+// root's key is judged by the configured root's validity, not its own:
+// Google's 2016 root certificate has expired, while its key lives on in
+// the 2022 one.
 func (v *Verifier) anchor(certs []*x509.Certificate) (*x509.Certificate, error) {
 	roots := v.roots()
 	top := certs[len(certs)-1]
-	root := rootWithKey(top, roots)
+	root := configuredRoot(top, roots)
 	if root == nil {
 		root = rootSigning(top, roots)
 	}
@@ -302,6 +311,16 @@ func within(c *x509.Certificate, t time.Time) bool {
 func rootWithKey(c *x509.Certificate, roots []*x509.Certificate) *x509.Certificate {
 	for _, r := range roots {
 		if bytes.Equal(c.RawSubjectPublicKeyInfo, r.RawSubjectPublicKeyInfo) {
+			return r
+		}
+	}
+	return nil
+}
+
+// configuredRoot returns the root that c is, byte for byte.
+func configuredRoot(c *x509.Certificate, roots []*x509.Certificate) *x509.Certificate {
+	for _, r := range roots {
+		if bytes.Equal(c.Raw, r.Raw) {
 			return r
 		}
 	}

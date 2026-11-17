@@ -26,10 +26,12 @@ const (
 	// MaxAssertionBytes bounds an assertion. Apple's are about 120
 	// bytes.
 	MaxAssertionBytes = 1 << 10
-	// MaxChainLength is the most certificates an attestation's x5c may
-	// hold. Apple's hold two: the credential certificate and its
-	// intermediate.
-	MaxChainLength = 4
+	// MaxChainLength is the number of certificates an attestation's x5c
+	// holds: Apple's hold exactly two, the credential certificate (a
+	// P-256 key) and Apple App Attestation CA 1 (a P-384 key), which
+	// Apple App Attestation Root CA (P-384) issues. VerifyAttestation
+	// refuses any other count.
+	MaxChainLength = 2
 )
 
 // NonceExtensionOID is the credential certificate's extension carrying
@@ -176,8 +178,9 @@ var decMode = func() strictcbor.DecMode {
 // this package's Err values:
 //
 //   - the format, "apple-appattest", and the shape: at most
-//     MaxAttestationBytes, and x5c of two to MaxChainLength
-//     certificates;
+//     MaxAttestationBytes, and x5c of exactly MaxChainLength
+//     certificates, each with an ECDSA P-256 or P-384 key, checked
+//     before any signature is;
 //   - the certificates: the credential certificate chains through the
 //     rest to one of Roots, every certificate valid at Now;
 //   - the nonce: the credential certificate's NonceExtensionOID
@@ -319,20 +322,27 @@ func decodeAttestation(raw []byte) (attestationObject, error) {
 	switch {
 	case obj.Fmt != "apple-appattest":
 		return obj, fail(ErrMalformed, "format %q, want apple-appattest", obj.Fmt)
-	case len(obj.AttStmt.X5C) < 2 || len(obj.AttStmt.X5C) > MaxChainLength:
-		return obj, fail(ErrMalformed, "x5c holds %d certificates, want 2 to %d", len(obj.AttStmt.X5C), MaxChainLength)
+	case len(obj.AttStmt.X5C) != MaxChainLength:
+		return obj, fail(ErrMalformed, "x5c holds %d certificates, want %d", len(obj.AttStmt.X5C), MaxChainLength)
 	}
 	return obj, nil
 }
 
 // verifyChain parses der, the credential certificate first, and checks
-// it chains through the rest to a root, valid now.
+// it chains through the rest to a root, valid now. Before any signature
+// is checked, it refuses a certificate whose key isn't ECDSA P-256 or
+// P-384, the only keys Apple's chain uses: crypto/x509 would otherwise
+// check a signature by an RSA key of any size and exponent the
+// anonymous sender chose.
 func (v *Verifier) verifyChain(der [][]byte) ([]*x509.Certificate, error) {
 	chain := make([]*x509.Certificate, len(der))
 	for i, d := range der {
 		c, err := x509.ParseCertificate(d)
 		if err != nil {
 			return nil, fail(ErrMalformed, "certificate %d: %v", i, err)
+		}
+		if !appleChainKey(c.PublicKey) {
+			return nil, fail(ErrMalformed, "certificate %d has a %T key, want ECDSA P-256 or P-384", i, c.PublicKey)
 		}
 		chain[i] = c
 	}
@@ -351,6 +361,13 @@ func (v *Verifier) verifyChain(der [][]byte) ([]*x509.Certificate, error) {
 		return nil, fail(ErrUntrustedRoot, "%v", err)
 	}
 	return chain, nil
+}
+
+// appleChainKey reports whether pub is a key Apple's App Attest chain
+// may carry: ECDSA on P-256 or P-384.
+func appleChainKey(pub any) bool {
+	k, ok := pub.(*ecdsa.PublicKey)
+	return ok && (k.Curve == elliptic.P256() || k.Curve == elliptic.P384())
 }
 
 // checkNonce checks the credential certificate's nonce extension, a
