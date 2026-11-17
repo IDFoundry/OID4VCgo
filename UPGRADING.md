@@ -50,6 +50,55 @@ store, `sqlstore`) needs nothing. A store that maps fields one by one
 must persist it too: a record read back without it is checked as one
 saved before it existed, against the configuration alone.
 
+### Role separation of mdocs under `IssuerRoots` (`walletflow`, `credential/mdoc`)
+
+With `MdocIssuerRoots` unset, mdocs are received under `IssuerRoots`
+and checked with `MdocIssuerLeafPolicy`. Outside development,
+`walletflow.New` now holds that pair to role separation too, beside
+`IssuerRoots` with `IssuerLeafPolicy`, and
+`mdoc.LenientDocumentSignerPolicy` no longer counts as a policy that
+tells roles apart. A `Config` whose `IssuerRoots` (for mdocs) or
+`MdocIssuerRoots` may share a trust anchor with another role's pool,
+with an opt-out or `mdoc.LenientDocumentSignerPolicy` as its mdoc
+policy, is refused with the existing "may share a trust anchor"
+error: separate the pools, set `MdocIssuerRoots`, or require the
+document signer's extended key usage
+(`mdoc.DefaultDocumentSignerPolicy`).
+
+### Held SD-JWT VCs re-checked with the default issuer check (`walletflow`, mobile)
+
+`CheckStatus` now re-checks a held SD-JWT VC's issuer chain with the
+policy receipt applies (`wallet.IssuerLeafPolicyFor`): with no
+`IssuerLeafPolicy` (`issuer_require_eku` in the mobile configuration),
+v0.81.0's default issuer check. A credential received before v0.81.0,
+or under `verifier.AnyIssuerLeaf`, whose issuer certificate that check
+refuses becomes `invalid` with reason `issuer_untrusted`. Set
+`IssuerLeafPolicy: verifier.AnyIssuerLeaf` to keep such credentials,
+for `IssuerRoots` that anchor issuers' certificates alone.
+
+### An mdoc needs a `HolderKey` (`wallet`)
+
+`wallet.VerifyIssuedCredential` now refuses an mdoc when
+`VerifyIssuedCredentialParams.HolderKey` is nil, even if its
+`Configuration` declares no cryptographic binding: an mdoc's MSO always
+names a device key, and without a `HolderKey` it would be one the
+wallet never proved it holds. Pass the key proved in the Credential
+Request. walletflow always did.
+
+### DPoP requests to non-normal endpoint paths (`wallet`, `walletflow`, mobile)
+
+`Wallet.DPoPResourceClient`'s `Do` and the DPoP-bound token requests
+(`RequestPreAuthorizedCodeToken`, and `RequestRefreshToken` with a
+`DPoPKey`)
+now refuse, before sending anything, an endpoint whose path has a `.`
+or `..` segment or a percent-encoded unreserved character (`%2e`,
+`%7E`, …), as fapigo/client's protected resource client already does:
+a front end routing by the raw path and a server comparing the
+normalized `htu` would read it as different resources. This reaches
+pre-authorized code tokens, deferred credential polls and refreshes
+without client authentication. An issuer whose metadata names such an
+endpoint must name it in normal form.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

@@ -22,6 +22,24 @@ import (
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
 
+// IssuerLeafPolicyFor is the leaf policy VerifyIssuedCredential
+// checks an issuer certificate of a credential of format with, given
+// VerifyIssuedCredentialParams.IssuerLeafPolicy policy: policy when it's
+// set, else mdoc.DefaultDocumentSignerPolicy for an mdoc, and for any
+// other format the check verifier.DefaultSDJWTIssuerLeafPolicy makes.
+// A wallet re-checking a held credential's issuer chain uses it too,
+// so the chain is held to what receipt held it to.
+func IssuerLeafPolicyFor(format string, policy func(*x509.Certificate, [][]*x509.Certificate) error) func(*x509.Certificate, [][]*x509.Certificate) error {
+	switch {
+	case policy != nil:
+		return policy
+	case format == mdoc.CredentialFormat:
+		return mdoc.DefaultDocumentSignerPolicy
+	default:
+		return certchain.SDJWTIssuerRole.Check
+	}
+}
+
 // VerifyIssuedCredentialParams is the input to VerifyIssuedCredential.
 type VerifyIssuedCredentialParams struct {
 	// Configuration is the Credential Configuration the Wallet
@@ -41,7 +59,10 @@ type VerifyIssuedCredentialParams struct {
 	// declares cryptographic binding methods. Without it (a configuration
 	// declaring none, §12.2.4), an SD-JWT VC must be bound to no key: one
 	// with "cnf" is refused, since the Wallet proved no key, so a key it
-	// names would be someone else's.
+	// names would be someone else's. An mdoc is always bound to a key
+	// (its MSO's DeviceKey is required, ISO/IEC 18013-5 §9.1.2.4), so
+	// HolderKey is REQUIRED for one whatever Configuration declares:
+	// without it, an mdoc is refused.
 	HolderKey crypto.PublicKey
 
 	// IssuerRoots are the trust anchors for issuer certificates: the
@@ -207,10 +228,7 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 	if err := certchain.CheckNoAnchor(chain); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	policy := p.IssuerLeafPolicy
-	if policy == nil {
-		policy = certchain.SDJWTIssuerRole.Check
-	}
+	policy := IssuerLeafPolicyFor(sdjwtvc.CredentialFormat, p.IssuerLeafPolicy)
 	leaf, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
@@ -302,6 +320,10 @@ func numericDate(v any) time.Time {
 }
 
 func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
+	if p.HolderKey == nil {
+		// Its DeviceKey would be a key the Wallet never proved it holds.
+		return VerifiedIssuedCredential{}, errors.New("HolderKey is required for an mdoc, which is always bound to a device key")
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(p.Credential)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode: %w", err)
@@ -315,10 +337,7 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuerAuth: %w", err)
 	}
 	chain := cose.X5ChainOf(protected, unprotected)
-	policy := p.IssuerLeafPolicy
-	if policy == nil {
-		policy = mdoc.DefaultDocumentSignerPolicy
-	}
+	policy := IssuerLeafPolicyFor(mdoc.CredentialFormat, p.IssuerLeafPolicy)
 	// Only the paths the policy approves on their own, and revocation
 	// passes: the document signer checks below must pass on one of them.
 	leaf, chains, err := certchain.VerifyTrustedChainsAt(ctx, chain, p.IssuerRoots, policy, p.IssuerRevocation, now)
@@ -343,7 +362,7 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 	if _, err := mdoc.CheckDocumentSigner(mso, chains); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	if p.HolderKey != nil && !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
+	if !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
 		return VerifiedIssuedCredential{}, errors.New("the MSO's DeviceKey isn't the holder key")
 	}
 	claims := make(map[string]any, len(mso.NameSpaces))

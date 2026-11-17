@@ -244,23 +244,29 @@ func TestNew_RoleSeparationOptOuts(t *testing.T) {
 		"verifier.DefaultSDJWTIssuerLeafPolicy":   verifier.DefaultSDJWTIssuerLeafPolicy,
 		"registration.DefaultRegistrarLeafPolicy": registration.DefaultRegistrarLeafPolicy,
 		"issuer.DefaultAttestationLeafPolicy":     issuer.DefaultAttestationLeafPolicy,
+		"mdoc.LenientDocumentSignerPolicy":        mdoc.LenientDocumentSignerPolicy,
 	}
 	for optOutName, optOut := range optOuts {
 		for name, tc := range map[string]struct {
 			cfg Config
 			ok  bool
 		}{
-			"issuers' opt-out, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}, false},
-			"mdoc issuers' opt-out, one pool":   {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: optOut, MdocReaderRoots: shared, MdocReaderLeafPolicy: narrowing}, false},
-			"registrars' opt-out, one pool":     {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
-			"metadata's opt-out, one pool":      {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, IssuerMetadataRoots: shared, IssuerMetadataLeafPolicy: optOut}, false},
-			"readers' opt-out, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, MdocReaderRoots: shared, MdocReaderLeafPolicy: optOut}, false},
-			"Verifiers' opt-out, one pool":      {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, VerifierTrust: &wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: optOut}}, false},
-			"opt-outs on both, one pool":        {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
-			"issuers' opt-out, separate pools":  {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: other}}, true},
-			"registrars' opt-out, separate":     {Config{IssuerRoots: other, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, true},
-			"both narrowed, one pool":           {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing}, true},
-			"issuers' opt-out, one pool in dev": {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing, Development: true}, true},
+			"issuers' opt-out, one pool":      {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}, false},
+			"mdoc issuers' opt-out, one pool": {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: optOut, MdocReaderRoots: shared, MdocReaderLeafPolicy: narrowing}, false},
+			// With MdocIssuerRoots unset, mdocs are received under
+			// IssuerRoots with MdocIssuerLeafPolicy, however narrowly
+			// IssuerLeafPolicy recognises SD-JWT VC issuers.
+			"mdoc issuers' opt-out under IssuerRoots":          {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, MdocIssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}, false},
+			"mdoc issuers' opt-out under separate IssuerRoots": {Config{IssuerRoots: other, IssuerLeafPolicy: narrowing, MdocIssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}, true},
+			"registrars' opt-out, one pool":                    {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
+			"metadata's opt-out, one pool":                     {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, IssuerMetadataRoots: shared, IssuerMetadataLeafPolicy: optOut}, false},
+			"readers' opt-out, one pool":                       {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, MdocReaderRoots: shared, MdocReaderLeafPolicy: optOut}, false},
+			"Verifiers' opt-out, one pool":                     {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, VerifierTrust: &wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: optOut}}, false},
+			"opt-outs on both, one pool":                       {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, false},
+			"issuers' opt-out, separate pools":                 {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, VerifierTrust: wallet.X5CVerifierRoots{Roots: other}}, true},
+			"registrars' opt-out, separate":                    {Config{IssuerRoots: other, RegistrarRoots: shared, RegistrarLeafPolicy: optOut}, true},
+			"both narrowed, one pool":                          {Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing}, true},
+			"issuers' opt-out, one pool in dev":                {Config{IssuerRoots: shared, IssuerLeafPolicy: optOut, RegistrarRoots: shared, RegistrarLeafPolicy: narrowing, Development: true}, true},
 		} {
 			_, err := New(declined(tc.cfg), deps)
 			refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")
@@ -274,6 +280,10 @@ func TestNew_RoleSeparationOptOuts(t *testing.T) {
 	cfg := Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: mdoc.DefaultDocumentSignerPolicy, MdocReaderRoots: shared, MdocReaderLeafPolicy: narrowing}
 	if _, err := New(declined(cfg), deps); err != nil {
 		t.Errorf("mdoc.DefaultDocumentSignerPolicy, one pool: %v", err)
+	}
+	cfg = Config{IssuerRoots: shared, IssuerLeafPolicy: narrowing, MdocIssuerLeafPolicy: mdoc.DefaultDocumentSignerPolicy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: narrowing}}
+	if _, err := New(declined(cfg), deps); err != nil {
+		t.Errorf("mdoc.DefaultDocumentSignerPolicy under IssuerRoots, one pool: %v", err)
 	}
 }
 

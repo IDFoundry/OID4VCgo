@@ -56,7 +56,9 @@ type Offer struct {
 	// Grant is how the wallet will redeem the offer.
 	Grant Grant
 	// TxCode, for GrantPreAuthorizedCode, describes the PIN the holder
-	// must enter (sent separately by the issuer); nil means none.
+	// must enter (sent separately by the issuer); nil means none. Show
+	// CredentialIssuer beside the PIN prompt: the PIN goes to that
+	// issuer, trusted or not (RedeemPreAuthorizedCode).
 	TxCode *oid4vci.TxCode
 }
 
@@ -185,6 +187,9 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	offer, err := w.core.ResolveCredentialOffer(ctx, offerURI)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: credential offer: %w", err)
+	}
+	if len(w.cfg.CredentialIssuers) > 0 && !slices.Contains(w.cfg.CredentialIssuers, offer.CredentialIssuer) {
+		return nil, fmt.Errorf("%w: %q", ErrUntrustedIssuer, offer.CredentialIssuer)
 	}
 	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, offer.CredentialIssuer)
 	if err != nil {
@@ -488,6 +493,15 @@ func (s *Issuance) CompleteAuthorization(ctx context.Context, redirect string) e
 // §12.3). The access token is bound to this issuance's DPoP key, unless
 // the server issues a Bearer one. A refused PIN fails with
 // ErrTxCodeRefused and can be retried, up to the issuer's limit.
+//
+// The PIN goes to the offer's issuer before its credential, and so its
+// trust, is checked: an offer naming an attacker's issuer, beside a PIN
+// the holder believes is for a genuine service, hands the attacker the
+// PIN (OpenID4VCI 1.0's Security Considerations, "Transaction Code
+// Phishing"). Show Offer.CredentialIssuer, and IssuerName, beside the
+// PIN prompt, and limit the issuers the wallet takes offers from with
+// Config.CredentialIssuers, or with RequireSignedIssuerMetadata and
+// RequireIssuerMetadataName.
 func (s *Issuance) RedeemPreAuthorizedCode(ctx context.Context, txCode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

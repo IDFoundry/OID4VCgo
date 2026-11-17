@@ -94,6 +94,9 @@ var (
 	// Config.RequireTrustedMdocReader, for one no recognized reader
 	// signed.
 	ErrUntrustedVerifier = wallet.ErrUntrustedVerifier
+	// ErrUntrustedIssuer is wrapped by StartIssuance for an offer from a
+	// Credential Issuer outside Config.CredentialIssuers.
+	ErrUntrustedIssuer = errors.New("walletflow: the wallet doesn't take offers from this credential issuer")
 )
 
 // deliveryUnknown reports whether err, from sending a direct_post

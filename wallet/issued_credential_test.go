@@ -168,6 +168,22 @@ func TestVerifyIssuedCredential_Unbound(t *testing.T) {
 	}
 }
 
+// An mdoc is always bound to a device key, so one is refused without a
+// HolderKey, even when its configuration declares no binding: its
+// DeviceKey would be a key the wallet never proved it holds.
+func TestVerifyIssuedCredential_MdocRequiresHolderKey(t *testing.T) {
+	f := caIssuedFixture(t)
+	unboundConf := f.mdocConf
+	unboundConf.CryptographicBindingMethodsSupported = nil
+	for name, conf := range map[string]oid4vci.CredentialConfigurationMetadata{"bound": f.mdocConf, "unbound": unboundConf} {
+		if _, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+			Configuration: conf, Credential: f.mdocB, IssuerRoots: f.roots,
+		}); err == nil || !strings.Contains(err.Error(), "HolderKey is required") {
+			t.Errorf("%s configuration, no HolderKey: %v, want it refused", name, err)
+		}
+	}
+}
+
 // A credential valid from the moment the issuer signed it is accepted by
 // a wallet whose clock is a little behind the issuer's — within a
 // minute, not beyond.

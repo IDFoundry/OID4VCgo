@@ -196,6 +196,20 @@ type Config struct {
 	RequireIssuerMetadataName   bool
 	MaxIssuerMetadataAge        time.Duration
 
+	// CredentialIssuers, if set, are the only Credential Issuer
+	// Identifiers the wallet takes offers from: StartIssuance refuses an
+	// offer naming another with ErrUntrustedIssuer, before fetching its
+	// metadata, so the holder is never asked for its PIN. Unset, any
+	// issuer's offer is shown, and IssuerRoots decide only when its
+	// credential arrives: a transaction code the holder enters reaches
+	// an issuer the wallet hasn't decided to trust (OpenID4VCI 1.0's
+	// Security Considerations, "Transaction Code Phishing"). Where it
+	// can't be a fixed
+	// list, set RequireSignedIssuerMetadata and
+	// RequireIssuerMetadataName, and show Offer.CredentialIssuer beside
+	// the PIN prompt.
+	CredentialIssuers []string
+
 	// IssuanceProfile is the profile issuance follows. The zero value,
 	// ProfileOpenID4VCI, follows the issuer's and Authorization Server's
 	// metadata; ProfileHAIP also refuses issuers outside HAIP 1.0.
@@ -813,9 +827,11 @@ func (c Config) checkRevocationChosen() error {
 // every leaf, for pools that anchor only their own role's certificates
 // (verifier.AnyIssuerLeaf, registration.AnyRegistrarLeaf,
 // proximity.AnyDocumentSigner, issuer.AnyAttestationLeaf,
-// statuslist.AnyListSigner, identifierlist.AnyListSigner).
-// mdoc.DefaultDocumentSignerPolicy, which requires the mDL document
-// signer's extended key usage, does count. They're recognised as those
+// statuslist.AnyListSigner, identifierlist.AnyListSigner), and
+// mdoc.LenientDocumentSignerPolicy, which accepts any certificate
+// without an extended key usage. mdoc.DefaultDocumentSignerPolicy,
+// which requires the mDL document signer's extended key usage, does
+// count. They're recognised as those
 // functions themselves: a closure or function wrapping one, or an
 // application's own policy that accepts as much, counts as one that
 // separates roles, so don't set one on a pool that shares an anchor
@@ -824,7 +840,10 @@ func (c Config) checkRevocationChosen() error {
 // The credential issuers' pools, IssuerRoots and the mdoc ones, are
 // one role: an ecosystem's CA may certify both its SD-JWT VC issuers
 // and its document signers, and what tells those apart is their leaf
-// policies, not their anchors.
+// policies, not their anchors. With MdocIssuerRoots unset and
+// MdocIssuerLeafPolicy set, mdocs are received under IssuerRoots with
+// MdocIssuerLeafPolicy, so that pair is checked against the other
+// roles as well as IssuerRoots with IssuerLeafPolicy.
 func checkRoleSeparation(c Config) error {
 	roles := []trustRole{
 		{"IssuerRoots", c.IssuerRoots, certchain.SeparatesRoles(c.IssuerLeafPolicy), roleIssuer},
@@ -832,6 +851,12 @@ func checkRoleSeparation(c Config) error {
 		{"IssuerMetadataRoots", c.IssuerMetadataRoots, certchain.SeparatesRoles(c.IssuerMetadataLeafPolicy), ""},
 		{"RegistrarRoots", c.RegistrarRoots, certchain.SeparatesRoles(c.RegistrarLeafPolicy), ""},
 		{"MdocReaderRoots", c.MdocReaderRoots, certchain.SeparatesRoles(c.MdocReaderLeafPolicy), ""},
+	}
+	if c.MdocIssuerRoots == nil && c.MdocIssuerLeafPolicy != nil {
+		// Then mdocs are received under IssuerRoots, checked with
+		// MdocIssuerLeafPolicy (issuerTrust): that pair must be told
+		// apart from the other roles too, beside IssuerRoots' own.
+		roles = append(roles, trustRole{"IssuerRoots for mdocs (MdocIssuerLeafPolicy)", c.IssuerRoots, certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
 	}
 	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
 		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
@@ -1017,12 +1042,13 @@ func (c Config) receivesCredentials() bool {
 // for an mdoc, MdocIssuerRootsByDocType's for a type it names, else
 // MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
 // IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
-// wallet.VerifyIssuedCredential, as a nil policy means
-// mdoc.DefaultDocumentSignerPolicy there for an mdoc, and the
-// verifier's default issuer check for an SD-JWT VC.
+// wallet.VerifyIssuedCredential. With no policy set, the policy is the
+// format's default (wallet.IssuerLeafPolicyFor): never nil, so receipt
+// and every later re-check of a held credential's chain (checkIssuers)
+// apply the same one.
 func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
 	if format != mdoc.CredentialFormat {
-		return c.IssuerRoots, c.IssuerLeafPolicy
+		return c.IssuerRoots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
 	}
 	roots, policy := c.IssuerRoots, c.IssuerLeafPolicy
 	if byType, ok := c.MdocIssuerRootsByDocType[docType]; ok {
@@ -1033,7 +1059,7 @@ func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.
 	if c.MdocIssuerLeafPolicy != nil {
 		policy = c.MdocIssuerLeafPolicy
 	}
-	return roots, policy
+	return roots, wallet.IssuerLeafPolicyFor(format, policy)
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks, whatever
