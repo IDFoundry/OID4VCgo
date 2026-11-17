@@ -26,6 +26,14 @@ const maxSignedMetadataClockSkew = time.Minute
 // (OpenID4VCI §12.2.2).
 const acceptSignedMetadata = "application/jwt, application/json;q=0.5"
 
+// ErrUntrustedIssuer is wrapped by FetchCredentialIssuerMetadata for
+// metadata refused because the configuration doesn't take its issuer:
+// plain metadata under Config.RequireSignedIssuerMetadata, or signed
+// metadata whose certificate (Config.RequireIssuerMetadataName) or sub
+// names another issuer. Other refusals, such as a signer whose chain
+// doesn't reach Config.IssuerMetadataRoots, don't wrap it.
+var ErrUntrustedIssuer = errors.New("untrusted credential issuer")
+
 // metadataJSON returns a fetched metadata body as JSON: a signed
 // response's verified claims, or a plain JSON body, refused when
 // Config.RequireSignedIssuerMetadata is set. The body's shape decides,
@@ -34,7 +42,7 @@ const acceptSignedMetadata = "application/jwt, application/json;q=0.5"
 func (w *Wallet) metadataJSON(ctx context.Context, body []byte, issuerURL string) ([]byte, error) {
 	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) {
 		if w.cfg.RequireSignedIssuerMetadata {
-			return nil, errors.New("the issuer sent unsigned metadata, and require_signed_issuer_metadata is set")
+			return nil, fmt.Errorf("%w: the issuer sent unsigned metadata, and require_signed_issuer_metadata is set", ErrUntrustedIssuer)
 		}
 		return body, nil
 	}
@@ -76,7 +84,7 @@ func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL stri
 	}
 	if w.cfg.RequireIssuerMetadataName {
 		if err := certchain.CheckIssuerName(leaf, issuerURL); err != nil {
-			return nil, fmt.Errorf("signed metadata: signer certificate doesn't name the issuer: %w", err)
+			return nil, fmt.Errorf("%w: signed metadata: signer certificate doesn't name the issuer: %w", ErrUntrustedIssuer, err)
 		}
 	}
 	if certchain.IsSelfSigned(leaf) {
@@ -110,7 +118,7 @@ func (w *Wallet) verifySignedMetadata(ctx context.Context, token, issuerURL stri
 func (w *Wallet) checkSignedMetadataClaims(claims map[string]json.RawMessage, issuerURL string) error {
 	var sub string
 	if err := strictjson.Unmarshal(claims["sub"], &sub); err != nil || sub != issuerURL {
-		return fmt.Errorf("sub %s doesn't name the issuer %q", claims["sub"], issuerURL)
+		return fmt.Errorf("%w: sub %s doesn't name the issuer %q", ErrUntrustedIssuer, claims["sub"], issuerURL)
 	}
 	now := w.deps.Clock.Now()
 	var iatValue float64

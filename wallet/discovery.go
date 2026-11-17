@@ -37,7 +37,9 @@ const (
 //
 // With Config.IssuerMetadataRoots set, it asks for signed metadata
 // (§12.2.3) and verifies a signed response before using it; see
-// IssuerMetadataRoots and RequireSignedIssuerMetadata.
+// IssuerMetadataRoots and RequireSignedIssuerMetadata. Unsigned
+// metadata it requires signed, and signed metadata naming another
+// issuer, are refused wrapping ErrUntrustedIssuer.
 func (w *Wallet) FetchCredentialIssuerMetadata(ctx context.Context, issuerURL string) (oid4vci.Metadata, error) {
 	target, err := wellKnownURL(issuerURL, "openid-credential-issuer", false)
 	if err != nil {

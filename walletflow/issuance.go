@@ -188,8 +188,8 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: credential offer: %w", err)
 	}
-	if len(w.cfg.CredentialIssuers) > 0 && !slices.Contains(w.cfg.CredentialIssuers, offer.CredentialIssuer) {
-		return nil, fmt.Errorf("%w: %q", ErrUntrustedIssuer, offer.CredentialIssuer)
+	if err := w.checkCredentialIssuer(offer.CredentialIssuer); err != nil {
+		return nil, err
 	}
 	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, offer.CredentialIssuer)
 	if err != nil {
@@ -207,6 +207,19 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 	}
 	s.details = describeOffer(offer, metadata, s.grant, w.cfg.Locales)
 	return s, nil
+}
+
+// checkCredentialIssuer refuses, wrapping ErrUntrustedIssuer, a
+// Credential Issuer outside Config.CredentialIssuers, when it's set.
+// Each path that talks to an issuer applies it before fetching its
+// metadata: StartIssuance, and ResumeIssuance, RefreshCredential, a
+// refresh grant's revocation and a resumed Deferred's Poll, whose
+// issuer the Config listed when they began but may no longer.
+func (w *Wallet) checkCredentialIssuer(credentialIssuer string) error {
+	if len(w.cfg.CredentialIssuers) > 0 && !slices.Contains(w.cfg.CredentialIssuers, credentialIssuer) {
+		return fmt.Errorf("walletflow: %w: %q", ErrUntrustedIssuer, credentialIssuer)
+	}
+	return nil
 }
 
 // chooseGrant settles which grant redeems the offer, at which

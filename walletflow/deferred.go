@@ -219,7 +219,9 @@ func (d *Deferred) holderKeys(ctx context.Context) ([]Key, error) {
 // ErrCredentialDenied, or an issued credential failing the wallet's
 // checks, the Deferred is done (Done), and Poll returns ErrWrongStep;
 // after any other error — a request that failed — it can be polled
-// again.
+// again. That includes ErrUntrustedIssuer, for one resumed after a
+// restart whose issuer Config.CredentialIssuers no longer lists: it
+// isn't asked, and the Deferred stays pending.
 func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -273,6 +275,11 @@ func (d *Deferred) Poll(ctx context.Context) (*StoredCredential, error) {
 func (d *Deferred) prepare(ctx context.Context) error {
 	if d.metadata != nil {
 		return nil
+	}
+	// The Config may no longer list the issuer: it isn't asked, and the
+	// Deferred stays pending.
+	if err := d.w.checkCredentialIssuer(d.p.CredentialIssuer); err != nil {
+		return err
 	}
 	metadata, err := d.w.core.FetchCredentialIssuerMetadata(ctx, d.p.CredentialIssuer)
 	if err != nil {

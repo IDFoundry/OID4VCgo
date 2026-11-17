@@ -60,8 +60,12 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         /// doesn't chain to `verifiers.roots`: it's refused unread.
         public static let untrustedVerifier = Code(rawValue: MobileCodeUntrustedVerifier)
         /// The offer names a Credential Issuer outside
-        /// `issuers.credentialIssuers`: it's refused before anything is
-        /// fetched from that issuer.
+        /// `issuers.credentialIssuers`: it's refused before fetching its
+        /// metadata. Also an issuer whose metadata isn't signed, or is
+        /// signed naming another issuer, under `issuerMetadata`'s
+        /// `requireSigned` and `requireName`; and resuming, refreshing
+        /// or polling a deferred credential from an issuer the list no
+        /// longer names, which keeps what the wallet holds from it.
         public static let untrustedIssuer = Code(rawValue: MobileCodeUntrustedIssuer)
         /// A pinned host's certificate matched none of its `network.tlsPins`: an
         /// interception, or a server whose keys changed beyond its pins.
@@ -176,7 +180,7 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
         case .reissueRequired: "This credential can't be refreshed. Receive it again from the issuer."
         case .deliveryUnknown: "Your response may not have reached the verifier. Check with them before sharing again."
         case .untrustedVerifier: "This verifier isn't one your wallet trusts, so its request wasn't opened."
-        case .untrustedIssuer: "This issuer isn't one your wallet takes credentials from, so its offer wasn't opened."
+        case .untrustedIssuer: "This issuer isn't one your wallet takes credentials from."
         case .requestRefused: "This verifier's request asks for something this wallet doesn't support, so it was refused."
         case .profileViolation, .clientAuthUnsupported, .proofUnsupported: "This wallet can't receive credentials from this issuer."
         case .protocolError where protocolError == "invalid_grant": "That code or PIN wasn't accepted."

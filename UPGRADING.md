@@ -150,12 +150,12 @@ one with no policy is.
 
 ### An mdoc needs a `HolderKey` (`wallet`)
 
-`wallet.VerifyIssuedCredential` now refuses an mdoc when
-`VerifyIssuedCredentialParams.HolderKey` is nil, even if its
-`Configuration` declares no cryptographic binding: an mdoc's MSO always
-names a device key, and without a `HolderKey` it would be one the
-wallet never proved it holds. Pass the key proved in the Credential
-Request. walletflow always did.
+`wallet.VerifyIssuedCredential` now refuses an mdoc when neither
+`VerifyIssuedCredentialParams.HolderKey` nor `HolderKeys` is set, even
+if its `Configuration` declares no cryptographic binding: an mdoc's MSO
+always names a device key, and without one of them it would be one the
+wallet never proved it holds. Pass the key, or keys, proved in the
+Credential Request. walletflow always did.
 
 ### DPoP requests to non-normal endpoint paths (`wallet`, `walletflow`, mobile)
 
@@ -405,6 +405,28 @@ which issuers' offers it takes, in one of three ways:
 An empty identifier in `CredentialIssuers` is refused too. A wallet
 that receives no credentials needs none of them.
 
+`CredentialIssuers` now applies on every path that talks to an issuer,
+not only to offers. Under a `Config` that no longer lists an issuer, as
+after an app update drops it, `ResumeIssuance`, `RefreshCredential` and
+a resumed `Deferred`'s `Poll` refuse with `ErrUntrustedIssuer` before
+sending it anything, where they used to complete the authorization,
+redeem the refresh token or poll there. Deleting a credential then
+forgets its refresh grant without revoking it at that issuer. Nothing
+held is forgotten: a pending authorization stays until it expires, a
+credential and its refresh grant stay until deleted, and a `Deferred`
+stays pending until `Abandon`. Listing the issuer again resumes them.
+Code that dropped an issuer on purpose deletes or abandons what it
+holds from it.
+
+Issuer metadata refused under `RequireSignedIssuerMetadata` or
+`RequireIssuerMetadataName`, because it isn't signed or its
+certificate or `sub` names another issuer, now wraps
+`ErrUntrustedIssuer`, in `StartIssuance` and on each of those paths,
+where it used to be a plain error. `ErrUntrustedIssuer` is now the new
+`wallet.ErrUntrustedIssuer`, which `wallet.FetchCredentialIssuerMetadata`
+wraps for the same refusals, and its message changed. A signer whose
+chain doesn't reach `IssuerMetadataRoots` is reported as before.
+
 ```go
 // Before
 w, err := walletflow.New(walletflow.Config{
@@ -448,7 +470,12 @@ configuration with issuer roots and none of them, or with
 `invalid_input`. `startIssuance` refuses an unlisted issuer's offer
 with the new `untrusted_issuer` code (`WalletError.Code.untrustedIssuer`,
 `WalletException.Code.untrustedIssuer`), before asking for its PIN.
-`ABIVersion` is 16: the Swift and Kotlin libraries need a framework
+The same code refuses resuming an authorization, refreshing a
+credential or polling a deferred one from an issuer the configuration
+no longer lists, keeping what the wallet holds from it, and an issuer
+whose metadata isn't signed, or is signed naming another issuer, under
+`require_signed_issuer_metadata` and `require_issuer_metadata_name`
+(`protocol` before). `ABIVersion` is 16: the Swift and Kotlin libraries need a framework
 built from this release.
 
 ```swift

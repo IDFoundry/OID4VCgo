@@ -60,8 +60,12 @@ const (
 	// it's refused unread.
 	CodeUntrustedVerifier = "untrusted_verifier"
 	// CodeUntrustedIssuer: the offer names a Credential Issuer outside
-	// the wallet's credential_issuers, so it's refused before anything
-	// is fetched from it or the holder is asked for a code
+	// the wallet's credential_issuers, so it's refused before fetching
+	// its metadata or asking the holder for a code; or its metadata isn't
+	// signed, or is signed naming another issuer, under
+	// require_signed_issuer_metadata and require_issuer_metadata_name.
+	// Resuming, refreshing and polling a deferred credential are refused
+	// the same way for an issuer credential_issuers no longer lists
 	// (walletflow.ErrUntrustedIssuer).
 	CodeUntrustedIssuer = "untrusted_issuer"
 	// CodeDeliveryUnknown: sending a presentation failed in a way that
