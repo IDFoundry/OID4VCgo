@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
@@ -64,6 +65,14 @@ type VerifyIssuedCredentialParams struct {
 	// HolderKey is REQUIRED for one whatever Configuration declares:
 	// without it, an mdoc is refused.
 	HolderKey crypto.PublicKey
+
+	// HolderKeys, instead of HolderKey, are the keys the Wallet proved
+	// possession of when the credential may be bound to any of them (one
+	// copy of a batch): the credential must be bound to one, which
+	// VerifiedIssuedCredential.HolderKey reports, and its issuer is
+	// verified once for all of them. Set HolderKey or HolderKeys, not
+	// both; HolderKeys is as REQUIRED as HolderKey is.
+	HolderKeys []crypto.PublicKey
 
 	// IssuerRoots are the trust anchors for issuer certificates: the
 	// credential's signing certificate (SD-JWT "x5c", mdoc "x5chain")
@@ -132,6 +141,11 @@ type VerifiedIssuedCredential struct {
 	// chains to IssuerRoots.
 	IssuerCertificate *x509.Certificate
 
+	// HolderKey is the key the credential is bound to: HolderKey, or
+	// the one of HolderKeys it names. Nil for a credential bound to no
+	// key.
+	HolderKey crypto.PublicKey
+
 	// Claims are the credential's claims: for "dc+sd-jwt" the Processed
 	// SD-JWT Payload with every disclosure resolved; for "mso_mdoc"
 	// namespace → element identifier → value.
@@ -179,7 +193,13 @@ func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams)
 	if p.IssuerRoots == nil {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: IssuerRoots is required")
 	}
-	if p.HolderKey == nil && len(p.Configuration.CryptographicBindingMethodsSupported) > 0 {
+	if p.HolderKey != nil && len(p.HolderKeys) > 0 {
+		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: set HolderKey or HolderKeys, not both")
+	}
+	if p.HolderKey != nil {
+		p.HolderKeys = []crypto.PublicKey{p.HolderKey}
+	}
+	if len(p.HolderKeys) == 0 && len(p.Configuration.CryptographicBindingMethodsSupported) > 0 {
 		return VerifiedIssuedCredential{}, errors.New("wallet: verify issued credential: HolderKey is required for a credential with cryptographic binding")
 	}
 	if err := certchain.ValidateRevocation(p.IssuerRevocation); err != nil {
@@ -205,19 +225,26 @@ func VerifyIssuedCredential(ctx context.Context, p VerifyIssuedCredentialParams)
 	return verified, nil
 }
 
+// verifyIssuedSDJWTVC verifies an issued SD-JWT VC, p.HolderKeys
+// holding the keys it may be bound to. Only the Issuer-signed JWT is
+// read before the issuer's chain and signature are verified: the
+// Disclosures are decoded by sdjwtvc.Verify, after them.
 func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
-	pres, err := sdjwtvc.Parse(p.Credential)
-	if err != nil {
-		return VerifiedIssuedCredential{}, fmt.Errorf("parse: %w", err)
+	if len(p.Credential) > sdjwtvc.MaxBytes {
+		return VerifiedIssuedCredential{}, fmt.Errorf("parse: credential is %d bytes, exceeds the %d byte limit", len(p.Credential), sdjwtvc.MaxBytes)
 	}
-	if pres.HasKeyBinding() {
+	issuerJWT, _, found := strings.Cut(p.Credential, "~")
+	if !found {
+		return VerifiedIssuedCredential{}, errors.New("parse: not an SD-JWT (no '~' separator)")
+	}
+	if !strings.HasSuffix(p.Credential, "~") {
 		// An issued SD-JWT ends with "~" (RFC 9901 §4). What follows the
 		// last one would be taken for a Key Binding JWT, which Verify
 		// doesn't check here: a final Disclosure without its "~" would be
 		// dropped unseen, and anything else kept beside the credential.
 		return VerifiedIssuedCredential{}, errors.New("parse: an issued SD-JWT must end with '~', not a Key Binding JWT or an unterminated Disclosure")
 	}
-	header, _, err := jose.DecodeUnverified(pres.IssuerJWT)
+	header, _, err := jose.DecodeUnverified(issuerJWT)
 	if err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("decode issuer JWT: %w", err)
 	}
@@ -263,8 +290,16 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 	if vct, _ := payload["vct"].(string); vct != p.Configuration.VCT {
 		return VerifiedIssuedCredential{}, fmt.Errorf("vct is %q, want %q", vct, p.Configuration.VCT)
 	}
-	if p.HolderKey != nil {
-		if err := cnfIsKey(payload["cnf"], p.HolderKey); err != nil {
+	var holderKey crypto.PublicKey
+	if len(p.HolderKeys) > 0 {
+		var err error
+		for _, k := range p.HolderKeys {
+			if err = cnfIsKey(payload["cnf"], k); err == nil {
+				holderKey = k
+				break
+			}
+		}
+		if err != nil {
 			return VerifiedIssuedCredential{}, err
 		}
 	} else if _, ok := payload["cnf"]; ok {
@@ -273,7 +308,7 @@ func verifyIssuedSDJWTVC(ctx context.Context, p VerifyIssuedCredentialParams, no
 		// someone else's.
 		return VerifiedIssuedCredential{}, errors.New("the credential is bound to a key (cnf), but the Wallet proved none")
 	}
-	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: payload, ValidUntil: numericDate(payload["exp"])}
+	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, HolderKey: holderKey, Claims: payload, ValidUntil: numericDate(payload["exp"])}
 	if raw, present := payload["status"]; present {
 		// Another status mechanism may sit beside, or instead of, a
 		// status list (draft-ietf-oauth-status-list §6.1: "Other members
@@ -320,7 +355,7 @@ func numericDate(v any) time.Time {
 }
 
 func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now time.Time) (VerifiedIssuedCredential, error) {
-	if p.HolderKey == nil {
+	if len(p.HolderKeys) == 0 {
 		// Its DeviceKey would be a key the Wallet never proved it holds.
 		return VerifiedIssuedCredential{}, errors.New("HolderKey is required for an mdoc, which is always bound to a device key")
 	}
@@ -362,14 +397,21 @@ func verifyIssuedMdoc(ctx context.Context, p VerifyIssuedCredentialParams, now t
 	if _, err := mdoc.CheckDocumentSigner(mso, chains); err != nil {
 		return VerifiedIssuedCredential{}, fmt.Errorf("issuer certificate: %w", err)
 	}
-	if !publicKeysEqual(mso.DeviceKey, p.HolderKey) {
+	var holderKey crypto.PublicKey
+	for _, k := range p.HolderKeys {
+		if publicKeysEqual(mso.DeviceKey, k) {
+			holderKey = k
+			break
+		}
+	}
+	if holderKey == nil {
 		return VerifiedIssuedCredential{}, errors.New("the MSO's DeviceKey isn't the holder key")
 	}
 	claims := make(map[string]any, len(mso.NameSpaces))
 	for ns, elements := range mso.NameSpaces {
 		claims[ns] = elements
 	}
-	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, Claims: claims, ValidUntil: mso.ValidityInfo.ValidUntil.UTC()}
+	verified := VerifiedIssuedCredential{IssuerCertificate: leaf, HolderKey: holderKey, Claims: claims, ValidUntil: mso.ValidityInfo.ValidUntil.UTC()}
 	if mso.Status != nil && mso.Status.StatusList == nil && mso.Status.IdentifierList == nil {
 		verified.UnrecognizedStatus = true
 	}

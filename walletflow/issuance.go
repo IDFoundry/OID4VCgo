@@ -1421,19 +1421,27 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 		return wallet.VerifiedIssuedCredential{}, nil, errors.New("no holder key is left to bind this copy to")
 	}
 	roots, policy := w.cfg.issuerTrust(conf.Format, conf.DocType)
-	var lastErr error
-	for _, k := range keys {
-		verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
-			Configuration: conf, Credential: credential, HolderKey: k.Public(),
-			IssuerRoots: roots, IssuerLeafPolicy: policy, IssuerRevocation: w.cfg.IssuerRevocation, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
-			CredentialIssuer: issuer,
-		})
-		if err == nil {
+	// The issuer's chain and signature are verified once, for every
+	// candidate key.
+	pubs := make([]crypto.PublicKey, len(keys))
+	for i, k := range keys {
+		pubs[i] = k.Public()
+	}
+	verified, err := wallet.VerifyIssuedCredential(ctx, wallet.VerifyIssuedCredentialParams{
+		Configuration: conf, Credential: credential, HolderKeys: pubs,
+		IssuerRoots: roots, IssuerLeafPolicy: policy, IssuerRevocation: w.cfg.IssuerRevocation, Now: now, RequireIssuerName: w.cfg.RequireIssuerName,
+		CredentialIssuer: issuer,
+	})
+	if err != nil {
+		return wallet.VerifiedIssuedCredential{}, nil, err
+	}
+	bound, _ := verified.HolderKey.(interface{ Equal(crypto.PublicKey) bool })
+	for i, k := range keys {
+		if bound != nil && bound.Equal(pubs[i]) {
 			return verified, k, nil
 		}
-		lastErr = err
 	}
-	return wallet.VerifiedIssuedCredential{}, nil, lastErr
+	return wallet.VerifiedIssuedCredential{}, nil, errors.New("the copy is bound to none of the holder keys")
 }
 
 // notify sends a Notification Request when the issuer gave the

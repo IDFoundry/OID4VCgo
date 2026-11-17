@@ -2,6 +2,7 @@ package wallet_test
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +10,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/json"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -267,6 +271,66 @@ func TestVerifyIssuedCredential_RejectsAFinalSegment(t *testing.T) {
 		})
 		if err == nil {
 			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// An issued SD-JWT VC's Disclosures aren't decoded before its issuer is
+// verified: one from an untrusted issuer, padded with a mebibyte of
+// well-formed Disclosures, is refused for its issuer, with little
+// allocated.
+func TestVerifyIssuedCredential_IssuerBeforeDisclosures(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("eyJhbGciOiJFUzI1NiIsInR5cCI6ImRjK3NkLWp3dCJ9.e30.AA~")
+	for i := 0; b.Len() < sdjwtvc.MaxBytes-64; i++ {
+		raw, err := json.Marshal([]any{strconv.Itoa(i), 0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.WriteString(base64.RawURLEncoding.EncodeToString(raw))
+		b.WriteByte('~')
+	}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := wallet.VerifyIssuedCredential(context.Background(), wallet.VerifyIssuedCredentialParams{
+		Configuration: oid4vci.CredentialConfigurationMetadata{Format: sdjwtvc.CredentialFormat, VCT: issuedVCT}, Credential: b.String(), IssuerRoots: x509.NewCertPool(),
+	})
+	runtime.ReadMemStats(&after)
+	if err == nil || !strings.Contains(err.Error(), "issuer certificate") {
+		t.Fatalf("err = %v, want the issuer refused", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 1<<20 {
+		t.Errorf("%d KiB allocated refusing an untrusted issuer, want its Disclosures left undecoded", allocated>>10)
+	}
+}
+
+// HolderKeys takes the keys a copy may be bound to: the credential is
+// accepted bound to any of them, reporting which, and refused bound to
+// none. HolderKey and HolderKeys together are refused.
+func TestVerifyIssuedCredential_HolderKeys(t *testing.T) {
+	f := caIssuedFixture(t)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for format, c := range f.byFormat() {
+		params := wallet.VerifyIssuedCredentialParams{Configuration: c.conf, Credential: c.credential, IssuerRoots: f.roots}
+		params.HolderKeys = []crypto.PublicKey{&other.PublicKey, &f.holder.PublicKey}
+		got, err := wallet.VerifyIssuedCredential(context.Background(), params)
+		if err != nil {
+			t.Fatalf("%s: %v", format, err)
+		}
+		if got.HolderKey != params.HolderKeys[1] {
+			t.Errorf("%s: HolderKey = %v, want the key it's bound to", format, got.HolderKey)
+		}
+		params.HolderKeys = []crypto.PublicKey{&other.PublicKey}
+		if _, err := wallet.VerifyIssuedCredential(context.Background(), params); err == nil {
+			t.Errorf("%s: accepted bound to none of HolderKeys", format)
+		}
+		params.HolderKey = &f.holder.PublicKey
+		if _, err := wallet.VerifyIssuedCredential(context.Background(), params); err == nil {
+			t.Errorf("%s: HolderKey and HolderKeys both accepted", format)
 		}
 	}
 }
