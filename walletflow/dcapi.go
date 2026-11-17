@@ -32,7 +32,7 @@ func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, da
 	if protocol != wallet.DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return nil, fmt.Errorf("walletflow: Config.VerifierTrust is required to answer a signed request: %w", ErrNotConfigured)
 	}
-	req, err := w.core.ParseDCAPIRequestData(protocol, data, origin)
+	req, err := w.core.ParseDCAPIRequestDataContext(ctx, protocol, data, origin)
 	var rejected *wallet.RequestRejectedError
 	if errors.As(err, &rejected) {
 		// Returned to the page through the platform, in Appendix A.4's
@@ -45,7 +45,7 @@ func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, da
 		return nil, &RequestRefusedError{Code: rejected.Code, Description: rejected.Description, DCAPIResponse: response}
 	}
 	if err != nil {
-		if errors.Is(err, wallet.ErrUntrustedVerifier) {
+		if errors.Is(err, wallet.ErrUntrustedVerifier) || ctx.Err() != nil {
 			return nil, fmt.Errorf("walletflow: dc api request: %w", err)
 		}
 		return nil, fmt.Errorf("walletflow: dc api request: %w: %w", ErrMalformedRequest, err)

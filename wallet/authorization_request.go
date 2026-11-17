@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"reflect"
 	"slices"
 	"time"
 
@@ -706,18 +705,59 @@ func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time
 // every held credential), and otherwise valid. A claims query repeating
 // an earlier one exactly is dropped first: "Wallets SHOULD ignore such
 // duplicate claim queries" (OpenID4VP 1.0 §6.1).
+//
+// The counts are bounded before anything is de-duplicated, duplicates
+// included, and the de-duplication is a single pass, so the work done
+// on a request is linear in its size: an unsigned DC API request is
+// anyone's to send.
 func prepareQuery(q dcql.Query) (dcql.Query, error) {
+	if err := checkRawQueryCounts(q); err != nil {
+		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
+	}
 	for i, cq := range q.Credentials {
-		var kept []dcql.ClaimsQuery
-		for _, cl := range cq.Claims {
-			if !slices.ContainsFunc(kept, func(k dcql.ClaimsQuery) bool { return reflect.DeepEqual(k, cl) }) {
-				kept = append(kept, cl)
-			}
-		}
-		q.Credentials[i].Claims = kept
+		q.Credentials[i].Claims = dedupClaims(cq.Claims)
 	}
 	if err := q.Validate(); err != nil {
 		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
 	}
 	return q, nil
+}
+
+// checkRawQueryCounts refuses a query with more credential queries, or
+// a credential query with more claims queries, than dcql.Query.Validate
+// allows, counting duplicates: a Verifier has no reason to send more
+// claims queries than it may ask for.
+func checkRawQueryCounts(q dcql.Query) error {
+	if len(q.Credentials) > dcql.MaxCredentialQueries {
+		return fmt.Errorf("%d credential queries, more than %d", len(q.Credentials), dcql.MaxCredentialQueries)
+	}
+	for i, cq := range q.Credentials {
+		if len(cq.Claims) > dcql.MaxClaimsPerCredential {
+			return fmt.Errorf("credentials[%d]: %d claims, more than %d", i, len(cq.Claims), dcql.MaxClaimsPerCredential)
+		}
+	}
+	return nil
+}
+
+// dedupClaims is claims without the claims queries equal to an earlier
+// one, in one pass keyed by each query's JSON encoding, which is
+// canonical for a query decoded from JSON: a Path element encodes by
+// its kind, and Values holds only strings, float64s and booleans. A
+// query that doesn't encode is kept, for Validate to refuse.
+func dedupClaims(claims []dcql.ClaimsQuery) []dcql.ClaimsQuery {
+	if len(claims) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(claims))
+	kept := make([]dcql.ClaimsQuery, 0, len(claims))
+	for _, cl := range claims {
+		if key, err := json.Marshal(cl); err == nil {
+			if _, dup := seen[string(key)]; dup {
+				continue
+			}
+			seen[string(key)] = struct{}{}
+		}
+		kept = append(kept, cl)
+	}
+	return kept
 }
