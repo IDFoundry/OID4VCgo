@@ -240,14 +240,28 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   for your fleet's issuances and refreshes per period — 2^19 or more
   for millions of wallets — and at most 2^22 unless the issuers
   checking the lists raise their token limit. The
-  `walletprovider.Config.StatusListSize` doc has the formula. Watch
-  `Provider.StatusListFill` from monitoring: alert when its `Free`
-  won't last until its `End` at the current rate, and raise
-  `StatusListSize` for the next period.
+  `walletprovider.Config.StatusListSize` doc has the formula. Size it
+  with a security margin too, several times your expected use: the
+  per-instance bound below doesn't bound someone holding many
+  instances, and recorded keys move to each new period's lists
+  without fresh evidence, so enough instances can fill a period's
+  lists between them. Watch `Provider.StatusListFill` from
+  monitoring: alert when its `Free` won't last until its `End` at the
+  current rate, and on a fast fill early in a period (the lists filling
+  far faster than the same hours of the last period did, a sign of
+  many instances renewing at once), and raise `StatusListSize` for the
+  next period. Once a period's lists are full, a recorded instance key
+  last used in the previous period keeps its index there, so
+  established wallets keep their Wallet Attestations, but every new
+  instance key, and so every new issuance, is refused until the period
+  ends.
 - [ ] **Per-instance bounds: `Config.MaxInstanceKeysPerPeriod`** (128
   by default) caps the status list indices one instance's keys take
   in a period, so one instance can't fill the lists for every other:
   size it for one wallet's issuances and refreshes per period. It
+  bounds one instance, not an attacker with many: each instance costs
+  only one piece of registration evidence, so size `StatusListSize`
+  with a margin, as above. It
   doesn't limit request rates: also **rate-limit
   `WalletAttestationPath` and `KeyAttestationPath`** per client in
   front of the service, as the unauthenticated endpoints are. Each

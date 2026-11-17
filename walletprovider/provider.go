@@ -144,7 +144,16 @@ type Config struct {
 	// wallet's issuances and refreshes in a period, with room to spare;
 	// a period's lists then take StatusListSize × MaxStatusListsPerPeriod
 	// / 2 / MaxInstanceKeysPerPeriod instances at that bound before they
-	// fill. Zero means DefaultMaxInstanceKeysPerPeriod.
+	// fill. It bounds one instance, not someone holding many: each
+	// instance costs one piece of registration evidence, and its
+	// recorded keys move to each new period's lists without any, so
+	// enough instances can fill a period's lists between them. Size
+	// StatusListSize with that margin, and watch StatusListFill. A
+	// recorded key last used in the previous period keeps its index
+	// there once the current period's lists are full, so established
+	// wallets keep their Wallet Attestations; new instance keys are
+	// refused until the next period. Zero means
+	// DefaultMaxInstanceKeysPerPeriod.
 	MaxInstanceKeysPerPeriod int
 
 	// StatusListLifetime and StatusListTTL are the served Status List
