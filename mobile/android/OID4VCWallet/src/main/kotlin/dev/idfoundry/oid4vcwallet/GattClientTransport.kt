@@ -33,12 +33,12 @@ import java.util.UUID
  * connects, subscribes and starts the session. The reader in mdoc
  * peripheral server mode, and the holder in mdoc central client mode,
  * where it first reads the reader's Ident characteristic and
- * disconnects unless it's [ident] (§8.3.3.1.1.4), ignoring that device
- * from then on, as it does one that has no Ident (or no mdoc service to
- * hold one) or doesn't answer its read. Any other failure, such as a
- * GATT error or a dropped link before the Ident read, is one failed
- * attempt, retried. Bluetooth
- * permissions are the caller's to have checked.
+ * disconnects unless it's [ident] (§8.3.3.1.1.4), passing over that
+ * device for a while ([IgnoredDevices]), as it does one that has no
+ * Ident (or no mdoc service to hold one). Any other failure, such as a
+ * GATT error, a dropped link, or an Ident read that fails or isn't
+ * answered, is one failed attempt, retried. Bluetooth permissions are
+ * the caller's to have checked.
  *
  * Android's own failures are worked around as Multipaz does: a scan
  * that reports nothing for [SCAN_RESTART_MS] is restarted (Android
@@ -86,8 +86,8 @@ internal class GattClientTransport(
     /** The running scan's result, until it has one. */
     private var scanning: CompletableDeferred<BluetoothDevice>? = null
     private var activeScan: Pair<BluetoothLeScanner, ScanCallback>? = null
-    /** Devices whose Ident wasn't this session's reader's: never again. */
-    private val ignored: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** Devices, by address, whose Ident wasn't this session's reader's, or that had none: passed over for a while. */
+    private val ignored = IgnoredDevices<String>()
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -210,12 +210,13 @@ internal class GattClientTransport(
 
     /**
      * Connects to [device] and starts the session: GATT_SUCCESS once it's
-     * started, [WRONG_READER] for a device whose Ident isn't this
-     * session's reader's, or that has none (now ignored), else the
-     * failure's GATT status. A device that disconnects, or stops
-     * answering anything but its Ident read, mid-setup is one failed
-     * attempt, as any other: a transient failure mustn't lose the reader
-     * for good. A closed session throws.
+     * started, [WRONG_READER] for a device whose Ident was read and isn't
+     * this session's reader's, or that has none (now passed over for a
+     * while), else the failure's GATT status. A device that disconnects
+     * or stops answering mid-setup, its Ident read included, is one
+     * failed attempt, as any other: a transient failure, or a device
+     * claiming the reader's address, mustn't lose the reader. A closed
+     * session throws.
      */
     private suspend fun tryDevice(device: BluetoothDevice): Int {
         val status = attemptConnection(device)
@@ -231,8 +232,8 @@ internal class GattClientTransport(
                 Log.i(TAG, "starting the session failed: ${e.message}")
                 return BluetoothGatt.GATT_FAILURE
             }
-            Log.i(TAG, "ignoring a device that isn't this session's reader")
-            ignored.add(device.address)
+            Log.i(TAG, "passing over a device that isn't this session's reader")
+            ignored.ignore(device.address)
             gatt?.close()
             gatt = null
             return WRONG_READER
@@ -308,7 +309,7 @@ internal class GattClientTransport(
         val c2s = service.getCharacteristic(characteristics.client2Server)
         val s2c = service.getCharacteristic(characteristics.server2Client)
         if (st == null || c2s == null || s2c == null) throw ProximityTransportException("the mdoc service lacks a characteristic", wrongReader = ident != null)
-        if (ident != null) checkIdent(g, service.getCharacteristic(characteristics.ident ?: error("no Ident in this mode")))
+        if (ident != null) checkIdent(g, service.getCharacteristic(characteristics.ident ?: error("no Ident in this mode")), ident)
         state = st
         client2Server = c2s
         subscribe(g, s2c)
@@ -319,19 +320,16 @@ internal class GattClientTransport(
 
     /**
      * Reads the reader's Ident: a device advertising the service UUID
-     * that isn't this session's reader, or that has no Ident to read, is
-     * refused, [ProximityTransportException.wrongReader].
+     * whose Ident differs, or that has no Ident to read, is refused,
+     * [ProximityTransportException.wrongReader]; a read that fails, or
+     * isn't answered, is a failed attempt ([checkReaderIdent]).
      */
-    private suspend fun checkIdent(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic?) {
+    private suspend fun checkIdent(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic?, want: ByteArray) {
         characteristic ?: throw ProximityTransportException("the reader's service lacks Ident", wrongReader = true)
         while (reads.tryReceive().isSuccess) Unit
         @Suppress("DEPRECATION")
-        if (!g.readCharacteristic(characteristic)) throw ProximityTransportException("couldn't read the reader's Ident", wrongReader = true)
-        val value = withTimeoutOrNull(OPERATION_TIMEOUT_MS) { reads.receive() }
-            ?: throw ProximityTransportException("couldn't read the reader's Ident", wrongReader = true)
-        if (!value.contentEquals(ident)) {
-            throw ProximityTransportException("the device found isn't this session's reader (its Ident differs)", wrongReader = true)
-        }
+        if (!g.readCharacteristic(characteristic)) throw ProximityTransportException("couldn't read the reader's Ident")
+        checkReaderIdent(withTimeoutOrNull(OPERATION_TIMEOUT_MS) { reads.receive() }, want)
     }
 
     private suspend fun subscribe(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
