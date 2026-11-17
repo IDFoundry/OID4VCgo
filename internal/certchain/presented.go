@@ -17,10 +17,11 @@ import (
 // signature check costs several times a P-256, P-384 or RSA-3072 one.
 const MaxPresentedRSABits = 3072
 
-// ErrChainBudget is wrapped by VerifyPresented's error when path
-// building gave up at crypto/x509's cap on signature checks rather than
+// ErrChainBudget is wrapped by VerifyPresented's error when
+// crypto/x509 gave up at its cap on signature checks rather than
 // finding no path: a caller verifying more chains from the same sender
-// can stop there.
+// can stop there. Over an ordered chain checked from its top down, it
+// takes more configured anchors sharing one name than that cap.
 var ErrChainBudget = errors.New("certchain: path building ran out of signature checks")
 
 // signatureLimitText is how crypto/x509 reports its cap on signature
@@ -29,27 +30,37 @@ const signatureLimitText = "signature check attempts limit reached"
 
 // VerifyPresented verifies certs, a certificate chain an untrusted
 // party presented leaf first (a JOSE x5c, a COSE x5chain, a reader's
-// chain), against opts.Roots, under the one policy every verifier of a
-// presented chain applies before and around crypto/x509's path
-// building:
+// chain), against opts.Roots, under the policy this module applies to
+// every presented chain it verifies with crypto/x509 (VerifyChainsAt
+// adds MaxChainLength, CheckKeySize and its leaf checks; the Wallet
+// Provider's androidkey and appattest verifiers, and FAPIgo's Wallet
+// Attestation check, have policies of their own):
 //
 //   - the certificates are in their presented order (RFC 7515 §4.1.6,
 //     RFC 9360 §2): each one's issuer name is the next one's subject;
 //   - no two of them share a subject name or a SubjectPublicKeyInfo;
+//   - the chain is anchored at its top: the last presented certificate
+//     is a trust anchor or is issued by one, or the one before it is
+//     issued by an anchor with the last one's subject and key (the last
+//     one is that anchor, re-issued or cross-certified) or is an anchor
+//     itself;
 //   - an intermediate (any entry after the leaf) has a P-521 key, or an
-//     RSA key over MaxPresentedRSABits, only when a trust anchor the
-//     last presented certificate chains to has a key of that type and
-//     size;
+//     RSA key over MaxPresentedRSABits, only when that anchor has a key
+//     of that type and size;
 //   - every path returned runs through the presented certificates in
 //     order, up to the anchor it ends at.
 //
-// The first three are checked before any signature: with unique, linked
-// names, each certificate has at most one presented candidate issuer,
-// so path building is linear in the chain's length, rather than running
-// to crypto/x509's cap of a hundred signature checks over intermediates
-// that issue each other. The last presented certificate may be the
-// anchor itself (an mdoc x5chain may include it). opts.Intermediates is
-// replaced; opts.Roots must be set.
+// The first two are checked before any signature. The anchor is then
+// found from the top with signature checks of configured anchors' keys
+// alone, and each certificate below it is checked against the one above
+// it, top down, stopping at the first that doesn't verify: an untrusted
+// chain costs a check or two of an anchor's key and at most one of a
+// certificate an anchor vouched for, whatever its length and keys.
+// crypto/x509's path building then checks the rest (validity, name
+// constraints, key usage) over certificates whose signatures verify.
+// The last presented certificate may be the anchor itself (an mdoc
+// x5chain may include it). opts.Intermediates is replaced; opts.Roots
+// must be set.
 func VerifyPresented(certs []*x509.Certificate, opts x509.VerifyOptions) ([][]*x509.Certificate, error) {
 	if opts.Roots == nil {
 		return nil, errors.New("certchain: no trust anchors configured (a nil root pool would mean the system roots)")
@@ -60,8 +71,14 @@ func VerifyPresented(certs []*x509.Certificate, opts x509.VerifyOptions) ([][]*x
 	if err := CheckPresentedOrder(certs); err != nil {
 		return nil, err
 	}
-	if err := checkPresentedKeys(certs, opts); err != nil {
-		return nil, err
+	if len(certs) > 1 {
+		anchors, err := verifyFromTop(certs, opts)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkPresentedKeys(certs, anchors); err != nil {
+			return nil, err
+		}
 	}
 	opts.Intermediates = x509.NewCertPool()
 	for _, c := range certs[1:] {
@@ -69,10 +86,7 @@ func VerifyPresented(certs []*x509.Certificate, opts x509.VerifyOptions) ([][]*x
 	}
 	chains, err := certs[0].Verify(opts)
 	if err != nil {
-		if strings.Contains(err.Error(), signatureLimitText) {
-			err = fmt.Errorf("%w: %w", ErrChainBudget, err)
-		}
-		return nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
+		return nil, untrusted(err)
 	}
 	ordered := chains[:0]
 	for _, chain := range chains {
@@ -86,6 +100,57 @@ func VerifyPresented(certs []*x509.Certificate, opts x509.VerifyOptions) ([][]*x
 	return ordered, nil
 }
 
+// untrusted is the error for a chain crypto/x509 didn't verify, err,
+// wrapping ErrChainBudget when it gave up at its cap on signature
+// checks.
+func untrusted(err error) error {
+	if strings.Contains(err.Error(), signatureLimitText) {
+		err = fmt.Errorf("%w: %w", ErrChainBudget, err)
+	}
+	return fmt.Errorf("certchain: certificate chain does not verify against a trusted root: %w", err)
+}
+
+// verifyFromTop finds the trust anchor certs, an ordered chain of two
+// or more, is anchored at, from its top (see VerifyPresented), then
+// checks each certificate below the anchored one against the one above
+// it, top down. It returns the anchors' public keys.
+func verifyFromTop(certs []*x509.Certificate, opts x509.VerifyOptions) ([]any, error) {
+	opts.Intermediates = nil
+	n := len(certs)
+	top := certs[n-1]
+	// The top against the anchors alone: no signature check when it's
+	// one of them, otherwise one per anchor named as its issuer.
+	anchored := -1
+	var anchors []any
+	chains, topErr := top.Verify(opts)
+	for _, chain := range chains {
+		anchored = n - 1
+		anchors = append(anchors, chain[len(chain)-1].PublicKey)
+	}
+	if anchored < 0 {
+		// The one below it against the anchors alone: one check per
+		// anchor with the top's name. It's anchored when it's an anchor
+		// itself, or when one with the top's key issued it.
+		below, _ := certs[n-2].Verify(opts)
+		for _, chain := range below {
+			anchor := chain[len(chain)-1]
+			if len(chain) == 1 || bytes.Equal(anchor.RawSubjectPublicKeyInfo, top.RawSubjectPublicKeyInfo) {
+				anchored = n - 2
+				anchors = append(anchors, anchor.PublicKey)
+			}
+		}
+	}
+	if anchored < 0 {
+		return nil, untrusted(topErr)
+	}
+	for i := anchored - 1; i >= 0; i-- {
+		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
+			return nil, fmt.Errorf("certchain: certificate chain does not verify against a trusted root: entry %d isn't signed by entry %d: %w", i, i+1, err)
+		}
+	}
+	return anchors, nil
+}
+
 // CheckPresentedOrder checks, without any signature check, that certs,
 // a presented chain leaf first, is listed in order — each entry's
 // issuer name the next one's subject — and that no two entries share a
@@ -94,6 +159,7 @@ func VerifyPresented(certs []*x509.Certificate, opts x509.VerifyOptions) ([][]*x
 func CheckPresentedOrder(certs []*x509.Certificate) error {
 	subjects := make(map[string]int, len(certs))
 	keys := make(map[string]int, len(certs))
+	var prev *x509.Certificate
 	for i, c := range certs {
 		if c == nil {
 			return fmt.Errorf("certchain: certificate chain entry %d is nil", i)
@@ -106,9 +172,10 @@ func CheckPresentedOrder(certs []*x509.Certificate) error {
 		}
 		subjects[string(c.RawSubject)] = i
 		keys[string(c.RawSubjectPublicKeyInfo)] = i
-		if i > 0 && !bytes.Equal(certs[i-1].RawIssuer, c.RawSubject) {
+		if prev != nil && !bytes.Equal(prev.RawIssuer, c.RawSubject) {
 			return fmt.Errorf("certchain: certificate chain entry %d doesn't name entry %d as its issuer: list the chain in order, leaf first", i-1, i)
 		}
+		prev = c
 	}
 	return nil
 }
@@ -116,40 +183,15 @@ func CheckPresentedOrder(certs []*x509.Certificate) error {
 // checkPresentedKeys refuses an intermediate whose key is costlier to
 // check signatures with than the usual ones (P-256, P-384, Ed25519,
 // RSA up to MaxPresentedRSABits) unless an anchor the chain reaches
-// has a key at least as costly of the same type. The anchors are found
-// only when such a key is presented, from the last presented
-// certificate alone, so building that path costs a signature check per
-// configured root of the right name at most.
-func checkPresentedKeys(certs []*x509.Certificate, opts x509.VerifyOptions) error {
-	var anchors []any
-	found := false
+// has a key at least as costly of the same type: one of anchors, the
+// keys of the anchors verifyFromTop found.
+func checkPresentedKeys(certs []*x509.Certificate, anchors []any) error {
 	for i, c := range certs[1:] {
-		if !costlyKey(c.PublicKey) {
-			continue
-		}
-		if !found {
-			anchors, found = anchorKeys(certs[len(certs)-1], opts), true
-		}
-		if !coveredBy(c.PublicKey, anchors) {
+		if costlyKey(c.PublicKey) && !coveredBy(c.PublicKey, anchors) {
 			return fmt.Errorf("certchain: certificate chain entry %d has %s, and no trust anchor the chain reaches has one", i+1, describeKey(c.PublicKey))
 		}
 	}
 	return nil
-}
-
-// anchorKeys is the public keys of the trust anchors last chains to
-// with no intermediates (last's own key when it's an anchor itself).
-func anchorKeys(last *x509.Certificate, opts x509.VerifyOptions) []any {
-	opts.Intermediates = nil
-	chains, err := last.Verify(opts)
-	if err != nil {
-		return nil
-	}
-	keys := make([]any, 0, len(chains))
-	for _, chain := range chains {
-		keys = append(keys, chain[len(chain)-1].PublicKey)
-	}
-	return keys
 }
 
 func costlyKey(pub any) bool {

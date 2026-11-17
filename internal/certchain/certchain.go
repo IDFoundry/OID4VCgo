@@ -31,18 +31,18 @@ import (
 
 // MaxChainLength is the most certificates a presented chain may hold,
 // leaf included. Real chains are two or three long; the bound keeps a
-// chain an attacker sends from costing a parse (and, in CheckNoAnchor
-// and path building, more) per entry without limit. VerifyPresented's
-// ordering makes path building linear in it, so it's kept above what
-// HAIP and ISO/IEC 18013-5 chains need, for deeper PKIs.
+// chain an attacker sends from costing a parse per entry without
+// limit. VerifyPresented anchors a chain at its top and checks it from
+// there down, so an untrusted chain costs no more signature checks for
+// being longer; it's kept above what HAIP and ISO/IEC 18013-5 chains
+// need, for deeper PKIs. FAPIgo's Wallet Attestation check allows 10.
 const MaxChainLength = 8
 
 // MaxRSABits is the largest RSA modulus a presented certificate may
 // carry. Checking a signature costs about the square of the modulus
-// size, so an unbounded one lets a chain an attacker sends cost
-// milliseconds per check (a 65536-bit key, about 25 ms), and path
-// building tries up to a hundred: real certificates use 2048 to 4096
-// bits, as FAPIgo's attestation chains are bounded.
+// size, so an unbounded one would let a single check cost tens of
+// milliseconds (a 65536-bit key, about 25 ms): real certificates use
+// 2048 to 4096 bits, as FAPIgo's attestation chains are bounded.
 const MaxRSABits = 4096
 
 // CheckKeySize refuses a presented certificate whose RSA key is over
@@ -257,8 +257,9 @@ func VerifyChains(ders [][]byte, roots *x509.CertPool) (*x509.Certificate, [][]*
 // now means the current time.
 //
 // The chain is verified under VerifyPresented's policy: in its
-// presented order, without repeated subject names or keys, and with a
-// costly intermediate key only where an anchor has one.
+// presented order, without repeated subject names or keys, anchored at
+// its top and checked from there down, and with a costly intermediate
+// key only where its anchor has one.
 func VerifyChainsAt(ders [][]byte, roots *x509.CertPool, now time.Time) (*x509.Certificate, [][]*x509.Certificate, error) {
 	if roots == nil {
 		return nil, nil, fmt.Errorf("certchain: no trust anchors configured (a nil root pool would mean the system roots)")

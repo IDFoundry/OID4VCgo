@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"strings"
 	"sync"
@@ -171,9 +172,10 @@ func TestVerifyPresented_Order(t *testing.T) {
 	}
 }
 
-// A path crypto/x509 finds only by leaving the presented intermediate
-// for an anchor of the same name and another key is refused: the
-// presented chain isn't the one that verifies.
+// A path crypto/x509 would find only by leaving the presented
+// intermediate for an anchor of the same name and another key is
+// refused: the presented chain, checked from its top down, isn't the
+// one that verifies.
 func TestVerifyPresented_OnlyThroughThePresentedChain(t *testing.T) {
 	realKey, fakeKey, rootKey := pkiKey(t, "P-256"), pkiKey(t, "P-256"), pkiKey(t, "P-256")
 	anchor := pkiCert(t, 1, "issuing CA", true, realKey.Public(), nil, realKey)
@@ -181,8 +183,8 @@ func TestVerifyPresented_OnlyThroughThePresentedChain(t *testing.T) {
 	impostor := pkiCert(t, 3, "issuing CA", true, fakeKey.Public(), root, rootKey)
 	leaf := pkiCert(t, 4, "leaf", false, pkiKey(t, "P-256").Public(), anchor, realKey)
 
-	if _, _, err := VerifyChainsAt(ders(leaf, impostor), poolOf(anchor, root), time.Time{}); err == nil || !strings.Contains(err.Error(), "other than the one presented") {
-		t.Errorf("err = %v, want refused as verifying only off the presented chain", err)
+	if _, _, err := VerifyChainsAt(ders(leaf, impostor), poolOf(anchor, root), time.Time{}); err == nil || !strings.Contains(err.Error(), "entry 0 isn't signed by entry 1") {
+		t.Errorf("err = %v, want refused as the presented chain not verifying", err)
 	}
 	if _, _, err := VerifyChainsAt(ders(leaf), poolOf(anchor, root), time.Time{}); err != nil {
 		t.Errorf("the leaf alone under its anchor: %v", err)
@@ -213,6 +215,112 @@ func TestVerifyPresented_CostlyIntermediateKeys(t *testing.T) {
 			}
 			if _, _, err := VerifyChainsAt(ders(leaf2, mid, costlyRoot), poolOf(costlyRoot), time.Time{}); err != nil {
 				t.Errorf("under an included anchor of that type: %v", err)
+			}
+		})
+	}
+}
+
+// Two presented certificates with different names and one key are
+// refused before any signature check, as two with one name are.
+func TestCheckPresentedOrder_RepeatedKey(t *testing.T) {
+	rootKey, caKey := pkiKey(t, "P-256"), pkiKey(t, "P-256")
+	root := pkiCert(t, 1, "root", true, rootKey.Public(), nil, rootKey)
+	b := pkiCert(t, 2, "B", true, caKey.Public(), root, rootKey)
+	a := pkiCert(t, 3, "A", true, caKey.Public(), b, caKey)
+	leaf := pkiCert(t, 4, "leaf", false, pkiKey(t, "P-256").Public(), a, caKey)
+	err := CheckPresentedOrder([]*x509.Certificate{leaf, a, b})
+	if err == nil || !strings.Contains(err.Error(), "entries 1 and 2 have the same public key") {
+		t.Errorf("CheckPresentedOrder = %v, want refused for the repeated key", err)
+	}
+}
+
+// When crypto/x509 stops at its cap on signature checks — here over
+// more anchors of one name than it tries — VerifyPresented's error
+// wraps ErrChainBudget.
+func TestVerifyPresented_ChainBudget(t *testing.T) {
+	pool := x509.NewCertPool()
+	for i := range 101 {
+		k := pkiKey(t, "P-256")
+		pool.AddCert(pkiCert(t, int64(10+i), "busy root", true, k.Public(), nil, k))
+	}
+	topKey := pkiKey(t, "P-256")
+	top := pkiCert(t, 1, "CA", true, topKey.Public(), &x509.Certificate{Subject: pkix.Name{CommonName: "busy root"}}, pkiKey(t, "P-256"))
+	leaf := pkiCert(t, 2, "leaf", false, pkiKey(t, "P-256").Public(), top, topKey)
+	_, err := VerifyPresented([]*x509.Certificate{leaf, top}, x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+	if !errors.Is(err, ErrChainBudget) {
+		t.Errorf("err = %v, want one wrapping ErrChainBudget", err)
+	}
+}
+
+// A chain is anchored from its top: one whose top no anchor issued is
+// refused there, for the top, whatever is below it, and one anchored at
+// its top is checked from the top down, so the error names the highest
+// certificate that isn't signed by the one above it.
+func TestVerifyPresented_FromTheTop(t *testing.T) {
+	rootKey := pkiKey(t, "P-256")
+	root := pkiCert(t, 1, "root", true, rootKey.Public(), nil, rootKey)
+	keys := make([]crypto.Signer, 4)
+	for i := range keys {
+		keys[i] = pkiKey(t, "P-256")
+	}
+	// leaf, CA 1, CA 2, CA 3: each named as issued by the next, and each
+	// below the top signed by a key other than the next's, so no link
+	// below the top verifies.
+	chain := func(topParent *x509.Certificate, topSigner crypto.Signer) []*x509.Certificate {
+		top := pkiCert(t, 13, "CA 3", true, keys[3].Public(), topParent, topSigner)
+		ca2 := pkiCert(t, 12, "CA 2", true, keys[2].Public(), &x509.Certificate{Subject: top.Subject}, pkiKey(t, "P-256"))
+		ca1 := pkiCert(t, 11, "CA 1", true, keys[1].Public(), &x509.Certificate{Subject: ca2.Subject}, pkiKey(t, "P-256"))
+		leaf := pkiCert(t, 10, "leaf", false, keys[0].Public(), &x509.Certificate{Subject: ca1.Subject}, pkiKey(t, "P-256"))
+		return []*x509.Certificate{leaf, ca1, ca2, top}
+	}
+	opts := x509.VerifyOptions{Roots: poolOf(root), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+
+	untrusted := chain(&x509.Certificate{Subject: pkix.Name{CommonName: "elsewhere"}}, pkiKey(t, "P-256"))
+	_, err := VerifyPresented(untrusted, opts)
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) || unknown.Cert == nil || !unknown.Cert.Equal(untrusted[3]) {
+		t.Errorf("untrusted top: err = %v, want the top refused as of an unknown authority", err)
+	}
+
+	anchored := chain(root, rootKey)
+	if _, err := VerifyPresented(anchored, opts); err == nil || !strings.Contains(err.Error(), "entry 2 isn't signed by entry 3") {
+		t.Errorf("anchored top: err = %v, want entry 2 refused first", err)
+	}
+}
+
+// Where a chain may be anchored: at the anchor included at its top, at
+// an anchor that issued its top, at its top re-issued or
+// cross-certified (its subject and key an anchor's), or at the
+// certificate below its top when that is an anchor itself. Further
+// down is refused.
+func TestVerifyPresented_AnchorPositions(t *testing.T) {
+	rootKey, otherKey, caKey := pkiKey(t, "P-256"), pkiKey(t, "P-256"), pkiKey(t, "P-256")
+	root := pkiCert(t, 1, "root", true, rootKey.Public(), nil, rootKey)
+	other := pkiCert(t, 2, "other root", true, otherKey.Public(), nil, otherKey)
+	cross := pkiCert(t, 3, "root", true, rootKey.Public(), other, otherKey)
+	ca := pkiCert(t, 4, "CA", true, caKey.Public(), root, rootKey)
+	leaf := pkiCert(t, 5, "leaf", false, pkiKey(t, "P-256").Public(), ca, caKey)
+	direct := pkiCert(t, 6, "direct leaf", false, pkiKey(t, "P-256").Public(), root, rootKey)
+
+	tests := map[string]struct {
+		chain []*x509.Certificate
+		roots *x509.CertPool
+		ok    bool
+	}{
+		"issued by the anchor":            {[]*x509.Certificate{leaf, ca}, poolOf(root), true},
+		"the anchor included":             {[]*x509.Certificate{leaf, ca, root}, poolOf(root), true},
+		"the anchor cross-certified":      {[]*x509.Certificate{leaf, ca, cross}, poolOf(root), true},
+		"an anchor below the top":         {[]*x509.Certificate{leaf, ca, root}, poolOf(ca), true},
+		"the leaf under the cross-cert":   {[]*x509.Certificate{direct, cross}, poolOf(root), true},
+		"the cross-cert's issuer anchors": {[]*x509.Certificate{direct, cross, other}, poolOf(other), true},
+		"an anchor two below the top":     {[]*x509.Certificate{leaf, ca, cross, other}, poolOf(ca), false},
+		"the cross-cert below the top":    {[]*x509.Certificate{direct, cross, other}, poolOf(root), false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := VerifyChainsAt(ders(tc.chain...), tc.roots, time.Time{})
+			if (err == nil) != tc.ok {
+				t.Errorf("err = %v, want accepted %v", err, tc.ok)
 			}
 		})
 	}
