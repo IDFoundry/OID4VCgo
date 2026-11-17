@@ -149,6 +149,9 @@ func (v *Verifier) Verify(ctx context.Context, chain [][]byte, challenge []byte)
 	if err != nil {
 		return nil, err
 	}
+	if err := checkLinks(certs); err != nil {
+		return nil, err
+	}
 	if rootWithKey(certs[0], v.roots()) != nil {
 		return nil, fail(ErrUntrustedRoot, "the leaf has a root's public key")
 	}
@@ -214,9 +217,9 @@ func (v *Verifier) now() time.Time {
 	return time.Now()
 }
 
-// parseChain parses and bounds the chain and checks each certificate
-// is signed by the next. A chain is at least a leaf and the certificate
-// that signs it: a leaf alone has no signature anything checks.
+// parseChain parses and bounds the chain, checking no signature. A
+// chain is at least a leaf and the certificate that signs it: a leaf
+// alone has no signature anything checks.
 func parseChain(chain [][]byte) ([]*x509.Certificate, error) {
 	if len(chain) < 2 || len(chain) > MaxChainLength {
 		return nil, fail(ErrMalformed, "a chain of %d certificates, want 2 to %d", len(chain), MaxChainLength)
@@ -235,14 +238,23 @@ func parseChain(chain [][]byte) ([]*x509.Certificate, error) {
 		}
 		certs[i] = c
 	}
-	for i := 1; i < len(certs); i++ {
+	return certs, nil
+}
+
+// checkLinks checks each certificate below certs' anchored top is
+// signed by the one above it, from the top down: once anchor has
+// checked the top against the roots, each check is with a key a root
+// vouched for, and a chain that isn't one costs a single check past
+// the anchor, whatever its length and keys.
+func checkLinks(certs []*x509.Certificate) error {
+	for i := len(certs) - 1; i >= 1; i-- {
 		// CheckSignature, not CheckSignatureFrom: Android's attestation
 		// keys aren't always marked as CAs.
 		if err := signedBy(certs[i-1], certs[i]); err != nil {
-			return nil, fail(ErrChainSignature, "certificate %d isn't signed by certificate %d: %v", i-1, i, err)
+			return fail(ErrChainSignature, "certificate %d isn't signed by certificate %d: %v", i-1, i, err)
 		}
 	}
-	return certs, nil
+	return nil
 }
 
 func signedBy(c, parent *x509.Certificate) error {

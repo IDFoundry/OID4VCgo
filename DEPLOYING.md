@@ -171,9 +171,11 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   next. Each answer costs an ECDH, a decryption and parsing up to
   1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
   presentations per Credential Query: path building over the issuer's
-  presented certificate chain (linear in its length: a signature check
-  per certificate, at most eight, plus one per configured root of a
-  matching name, each distinct chain once per answer), the issuer
+  presented certificate chain (anchored at its top and checked from
+  there down: one that no configured root anchors costs a signature
+  check per configured root of a matching name, at most two names,
+  and one that a root anchors a check per certificate, at most eight;
+  each distinct chain once per answer), the issuer
   signature, and only then the SD-JWT disclosures the signed payload
   references, and a revocation check per path. A crafted answer can
   cost several milliseconds of CPU, tens with a large disclosure set,

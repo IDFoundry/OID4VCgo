@@ -421,7 +421,7 @@ func TestVerify_MalformedChains(t *testing.T) {
 		"oversized RSA key":         {[][]byte{bigRSA.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},
 		"RSA exponent 3":            {[][]byte{smallExponent.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},
 		"oversized, well-formed":    {[][]byte{paddedLeaf(t, good, androidkey.MaxCertificateBytes+1), good.der[1], good.der[2]}, androidkey.ErrMalformed},
-		"another chain's root":      {[][]byte{good.der[0], good.der[1], other.der[2]}, androidkey.ErrChainSignature},
+		"another chain's root":      {[][]byte{good.der[0], good.der[1], other.der[2]}, androidkey.ErrUntrustedRoot},
 		"tampered signature":        {[][]byte{tampered, good.der[1], good.der[2]}, androidkey.ErrChainSignature},
 		"intermediate out of order": {[][]byte{good.der[0], good.der[2], good.der[1]}, androidkey.ErrChainSignature},
 		"no extension":              {[][]byte{noExt.Raw, good.der[1], good.der[2]}, androidkey.ErrMalformed},

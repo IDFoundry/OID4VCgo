@@ -342,17 +342,26 @@ guard against a third party say so.
   request's Credential Query is. A Wallet whose holder left an element
   out gets no completed presentation.
 - **A presented certificate chain** (`x5c`, `x5chain`, a reader's
-  chain, an attestation's) must list its certificates in order, leaf
-  first, each named as the issuer of the one before, as RFC 7515
-  §4.1.6 and RFC 9360 §2 require, where many path builders accept any
-  order and extra certificates. Beyond the specifications, no two of
-  its certificates may share a subject name or a public key (so both
-  certificates of a cross-certified CA can't be sent together), and an
-  intermediate's P-521 key, or RSA key over 3072 bits, is refused
-  unless a trust anchor the chain reaches has one of that type. It
-  guards against a third party: crafted chains of CAs issuing each
-  other otherwise run path building to crypto/x509's cap of a hundred
-  signature checks per chain (`internal/certchain.VerifyPresented`).
+  chain, a status list's, a Request Object's, a proof's or Key
+  Attestation's) must list its certificates in order, leaf first, each
+  named as the issuer of the one before, as RFC 7515 §4.1.6 and RFC
+  9360 §2 require, where many path builders accept any order and extra
+  certificates. Beyond the specifications, no two of its certificates
+  may share a subject name or a public key (so both certificates of a
+  cross-certified CA can't be sent together), and it must be anchored
+  at its top: its last certificate is a trust anchor or is issued by
+  one, or is an anchor's certificate re-issued or cross-certified (the
+  anchor's subject and key), or the one before it is an anchor (so at
+  most one certificate past the anchor). An intermediate's P-521 key,
+  or RSA key over 3072 bits, is refused unless that anchor has one of
+  that type. The chain is checked from the anchor down, so a third
+  party's crafted chain costs a signature check or two of a trusted
+  key, however long it is (`internal/certchain.VerifyPresented`). The
+  Wallet Provider's Android Key Attestation and App Attest chains are
+  checked to their own, fixed shapes, and a Wallet Attestation's `x5c`
+  by FAPIgo, whose rules differ: it accepts both certificates of a CA
+  cross-certified to two anchors as the last two, and chains of up to
+  10 certificates (8 here).
 
 ## HAIP's deviations from plain FAPI 2.0
 
