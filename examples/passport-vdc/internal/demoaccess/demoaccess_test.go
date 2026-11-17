@@ -199,6 +199,15 @@ func TestGuard_ChecksAccessToken(t *testing.T) {
 		return c
 	}
 	valid := team.token(t, header, claims(nil))
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Valid claims under a signature that is well-formed but wrong: by
+	// another key, or the team's over other claims.
+	signedByOther := signToken(t, other, header, claims(nil))
+	otherClaims := team.token(t, header, claims(func(c map[string]any) { c["aud"] = "aud-1" }))
+	swapped := valid[:strings.LastIndex(valid, ".")] + otherClaims[strings.LastIndex(otherClaims, "."):]
 	for _, tc := range []struct {
 		name  string
 		token string
@@ -215,6 +224,8 @@ func TestGuard_ChecksAccessToken(t *testing.T) {
 		{"unknown key", team.token(t, map[string]any{"alg": "RS256", "kid": "k2"}, claims(nil)), http.StatusForbidden},
 		{"another alg", team.token(t, map[string]any{"alg": "HS256", "kid": team.kid}, claims(nil)), http.StatusForbidden},
 		{"tampered", valid[:strings.LastIndex(valid, ".")] + "x" + valid[strings.LastIndex(valid, "."):], http.StatusForbidden},
+		{"signed with another key", signedByOther, http.StatusForbidden},
+		{"another token's signature", swapped, http.StatusForbidden},
 	} {
 		r := request(t, http.MethodGet, "/demo/status", map[string]string{AccessTokenHeader: tc.token})
 		if got := serve(h, r); got != tc.want {
