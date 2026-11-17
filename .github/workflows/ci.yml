@@ -131,9 +131,14 @@ jobs:
       # plus golangci-lint's own "standard" set (errcheck, staticcheck,
       # govet, ineffassign, unused, gosimple). gofmt is enforced
       # separately above, not duplicated here.
+      # Without its cache: a run that restores the root module's
+      # analysis cache intermittently loses staticcheck's knowledge that
+      # t.Fatal doesn't return (SA5011 in tests nobody changed), and a
+      # cold run takes about a minute.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
+          skip-cache: true
 
       # fuzz.yml never runs on a PR, so a fuzz target added without a
       # matrix entry (in any module) would only ever run its seeds.
@@ -250,10 +255,8 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
-          # Its analysis cache would share the plain lint job's key while
-          # built with other tags and a go.work: exchanging it poisons
-          # that job's staticcheck facts (SA5011 after t.Fatal in tests
-          # nobody changed). This job runs without a cache.
+          # Without its cache, as the lint job: it would share that
+          # job's cache key while built with other tags and a go.work.
           skip-cache: true
           args: --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/... ./internal/prodwallet/... ./internal/proddb/... ./interop/eudi/scripts/pidwallet/... ./interop/waltid/scripts/wallet/...
 
