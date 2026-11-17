@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/storage"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -35,23 +36,43 @@ func setRow(t *testing.T, store *codecStore, id string, change func(row map[stri
 	}
 }
 
-// The Request Object served at a request_uri is signed from the
-// request's sealed fields, never served as stored: a store writer
-// without the sealing key who puts another request's Request Object in
-// a record doesn't get it served, and so can't have the holder's answer
-// complete that other request (and its result released to another
-// browser). A record without one — as a later version may write it —
-// is still served.
-func TestTransactions_RequestObjectNotServedFromStore(t *testing.T) {
+// requestURIStatus is the status RequestObjectHandler answers a GET of
+// id's request_uri with.
+func requestURIStatus(txs *verifier.Transactions, id string) int {
+	rec := httptest.NewRecorder()
+	txs.RequestObjectHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, txBase+"/"+id, nil))
+	return rec.Code
+}
+
+// servedState is the state of the Request Object served at id's
+// request_uri.
+func servedState(t *testing.T, f *txFixture, txs *verifier.Transactions, id string) string {
+	t.Helper()
+	served, err := txs.RequestObject(context.Background(), id)
+	if err != nil {
+		t.Fatalf("RequestObject: %v", err)
+	}
+	req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+		RequestObject: served, ClientID: f.v.ClientID(), VerifierTrust: wallet.NoVerifierTrust{},
+	})
+	if err != nil {
+		t.Fatalf("ParseAuthorizationRequest: %v", err)
+	}
+	return req.State
+}
+
+// The Request Object served at a request_uri is the one Begin stored,
+// bound into the sealed record: a store writer without the sealing key
+// who puts another request's Request Object in a record, or removes
+// it, leaves the record unreadable, answered 500, and so can't have
+// the holder's answer complete that other request (and its result
+// released to another browser).
+func TestTransactions_RequestObjectBoundToSealedRecord(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, nil)
 	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
 	cfg := verifier.TransactionsConfig{RequestURIBase: txBase, RedirectURI: "https://verifier.example.com/continue", Verify: f.verify}
 	txs, err := verifier.NewTransactions(f.v, store, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-A-0123", SameDevice: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,23 +85,26 @@ func TestTransactions_RequestObjectNotServedFromStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for name, change := range map[string]func(map[string]any){
-		"replaced": func(row map[string]any) { row["request_object"] = objectB },
-		"removed":  func(row map[string]any) { delete(row, "request_object") },
+	for _, c := range []struct {
+		name   string
+		change func(row map[string]any)
+	}{
+		{"replaced", func(row map[string]any) { row["request_object"] = objectB }},
+		{"removed", func(row map[string]any) { delete(row, "request_object") }},
 	} {
-		setRow(t, store, a.ID, change)
-		served, err := txs.RequestObject(ctx, a.ID)
+		a, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-A-0123", SameDevice: true})
 		if err != nil {
-			t.Fatalf("%s: RequestObject: %v", name, err)
+			t.Fatal(err)
 		}
-		req, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
-			RequestObject: served, ClientID: f.v.ClientID(), VerifierTrust: wallet.NoVerifierTrust{},
-		})
-		if err != nil {
-			t.Fatalf("%s: ParseAuthorizationRequest: %v", name, err)
+		if state := servedState(t, f, txs, a.ID); !strings.HasPrefix(state, a.ID+".") {
+			t.Fatalf("%s: before the change, A's request_uri serves state %q", c.name, state)
 		}
-		if !strings.HasPrefix(req.State, a.ID+".") {
-			t.Errorf("%s: A's request_uri serves state %q, not A's", name, req.State)
+		setRow(t, store, a.ID, c.change)
+		if served, err := txs.RequestObject(ctx, a.ID); err == nil {
+			t.Errorf("%s: RequestObject served %.40q…, want the record refused", c.name, served)
+		}
+		if status := requestURIStatus(txs, a.ID); status != http.StatusInternalServerError {
+			t.Errorf("%s: request_uri status %d, want 500", c.name, status)
 		}
 	}
 }
@@ -96,24 +120,79 @@ func (s countingSigner) Sign(r io.Reader, digest []byte, opts crypto.SignerOpts)
 	return s.Signer.Sign(r, digest, opts)
 }
 
-// A request's Request Object is signed once by a Transactions, not for
-// each anonymous fetch of its request_uri: the fetches that follow get
-// the same object. Another request's is signed for it.
-func TestTransactions_RequestObjectSignedOncePerRequest(t *testing.T) {
-	ctx := context.Background()
-	f := newTxFixture(t, nil)
-	var n atomic.Int64
+// countingTransactions is Transactions over store whose Verifier counts
+// its signatures in the returned counter.
+func countingTransactions(t *testing.T, f *txFixture, store verifier.TransactionStore) (*verifier.Transactions, *atomic.Int64) {
+	t.Helper()
+	n := new(atomic.Int64)
 	deps := f.vdeps
-	deps.Signer = countingSigner{deps.Signer, &n}
+	deps.Signer = countingSigner{deps.Signer, n}
 	v, err := verifier.New(f.vcfg, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
 	txs, err := verifier.NewTransactions(v, store, verifier.TransactionsConfig{RequestURIBase: txBase, Verify: f.verify})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return txs, n
+}
+
+// A request_uri GET signs nothing: whatever the store, every fetch is
+// served the Request Object Begin signed and stored, however many
+// requests are live. Another request is served its own.
+func TestTransactions_RequestObjectNotSignedPerFetch(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	for _, c := range []struct {
+		name  string
+		store verifier.TransactionStore
+	}{
+		{"sealed", newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})},
+		{"unsealed", newCodecStore(verifier.TransactionCodec{})},
+		{"in memory", storage.NewVerifierTransactionStore()},
+	} {
+		txs, n := countingTransactions(t, f, c.store)
+		a, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-A-0123"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-B-0123"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored, err := c.store.Get(ctx, a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := n.Load()
+		for range 10 {
+			served, err := txs.RequestObject(ctx, a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if served != stored.RequestObject {
+				t.Fatalf("%s: a fetch served another Request Object than Begin stored", c.name)
+			}
+		}
+		if other, err := txs.RequestObject(ctx, b.ID); err != nil || other == stored.RequestObject {
+			t.Errorf("%s: another request was served %v, %v", c.name, other == stored.RequestObject, err)
+		}
+		if got := n.Load() - before; got != 0 {
+			t.Errorf("%s: %d signatures for 11 fetches, want none", c.name, got)
+		}
+	}
+}
+
+// A record sealed before the Request Object was bound (version 2) is
+// read without it: its Request Object is signed for each fetch from the
+// fields the seal binds, so the one it holds, which a store writer may
+// have replaced, is never served.
+func TestTransactions_RequestObjectOfAnOlderSealedRecord(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	store := newCodecStore(verifier.TransactionCodec{Sealer: testSealer(t)})
+	txs, n := countingTransactions(t, f, store)
 	a, err := txs.BeginWith(ctx, verifier.BeginOptions{Query: f.query, BrowserBinding: "browser-binding-of-A-0123"})
 	if err != nil {
 		t.Fatal(err)
@@ -122,29 +201,34 @@ func TestTransactions_RequestObjectSignedOncePerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	objectB, err := txs.RequestObject(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	tx, err := store.codec.Unmarshal(store.rows[a.ID])
+	if err == nil {
+		store.rows[a.ID], err = verifier.MarshalTransactionVersion(store.codec, tx, 2)
+	}
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	setRow(t, store, a.ID, func(row map[string]any) {
+		if row["v"] != float64(2) || row["request_object"] != tx.RequestObject {
+			t.Fatalf("the rewritten record is version %v, with request_object %t", row["v"], row["request_object"] == tx.RequestObject)
+		}
+		row["request_object"] = objectB
+	})
+
 	before := n.Load()
-	first, err := txs.RequestObject(ctx, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 10 {
-		again, err := txs.RequestObject(ctx, a.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if again != first {
-			t.Fatal("a later fetch served another Request Object")
+	for range 3 {
+		if state := servedState(t, f, txs, a.ID); !strings.HasPrefix(state, a.ID+".") {
+			t.Fatalf("A's request_uri serves state %q, not A's", state)
 		}
 	}
-	other, err := txs.RequestObject(ctx, b.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if other == first {
-		t.Error("another request was served the first one's Request Object")
-	}
-	if got := n.Load() - before; got != 2 {
-		t.Errorf("%d signatures for 12 fetches of 2 requests, want 2", got)
+	if got := n.Load() - before; got != 3 {
+		t.Errorf("%d signatures for 3 fetches of a version 2 record, want 3", got)
 	}
 }
 

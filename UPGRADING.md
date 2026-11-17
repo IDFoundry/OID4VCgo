@@ -315,21 +315,40 @@ have failed to verify, with any further chain left unverified. Chains
 that verify aren't counted, so a response presenting credentials from
 many issuers isn't refused by it.
 
-### Request Objects at a request_uri are signed, not served from the store (`verifier`)
+### The Request Object at a request_uri is sealed with its record (`verifier`)
 
-`Transactions.RequestObject`, and `RequestObjectHandler`'s GET, no
-longer serve the Request Object kept in the transaction's record: a
-store writer without the sealing key could put another request's
-there, and have the holder answer that one. Each `Transactions` signs
-the request's Request Object from its sealed fields the first time it
-serves it, and serves that copy from memory to the fetches that follow
-while the record is unchanged. Expect one more signature per request
-and replica (a billed call with a KMS-backed signer), and Request
-Objects whose bytes differ between replicas; their claims are the
-same. A request_uri POST is signed for each fetch, as before. Upgrade
-every replica: one still on v0.81.0 serves the stored object. Rate
-limit the request_uri endpoint with the response endpoints
-(DEPLOYING.md).
+`verifier.TransactionCodec` writes version 3 records
+(`TransactionCodecVersion`), whose sealed fields are also bound to the
+hash of the signed Request Object `Begin` stores: a store writer
+without the sealing key could put another request's Request Object
+there, and have the holder answer that one. Such a record no longer
+opens. `Transactions.RequestObject`, and `RequestObjectHandler`'s GET,
+still serve the stored Request Object, signing nothing per fetch.
+
+- Version 1 and 2 records still open, without their Request Object,
+  which they don't bind: a request begun before the upgrade has its
+  Request Object signed from its sealed fields for each GET (a billed
+  call with a KMS-backed signer) until it expires. Written back, a
+  record is version 3.
+- An earlier release doesn't read version 3: during a rolling deploy,
+  a request begun or updated on an upgraded replica fails on one not
+  yet upgraded, so finish the rollout quickly (a request lives
+  `TransactionsConfig.Lifetime`), and a rollback fails the requests the
+  new release wrote.
+- A codec without a `Sealer`, and any other unsealed store, binds
+  nothing and serves the Request Object as stored, as before: whoever
+  can write such a store can change every field a Request Object is
+  signed from. A store that seals transactions its own way must bind
+  `RequestObject` as `TransactionCodec` does, or not return it, which
+  has it signed for each fetch.
+- A request_uri POST is signed for each fetch, as before. Rate limit
+  the request_uri endpoint with the response endpoints (DEPLOYING.md).
+
+The request_uri now answers 500 `server_error`, where it answered 404,
+when the store fails, when it answers with another transaction's
+record, and when a record doesn't open or is stripped of its sealed
+fields: a store that fails isn't a request that's unknown. Alert on
+those as on any other server error.
 
 ### App Attest chains (`walletprovider/appattest`)
 

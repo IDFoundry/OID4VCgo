@@ -70,9 +70,9 @@ each, not a deployment template" says what it does differently.
   (`walletprovider.ChallengePath`, `InstancesPath`). Each writes a
   row, and each sealed row spends the Sealer key's budget. The
   Verifier's request_uri (`RequestObjectHandler`) too: each fetch
-  reads a row, and the first on each replica, and every request_uri
-  POST, signs a Request Object (a billed call with a KMS-backed
-  signer).
+  reads a row, and every request_uri POST signs a Request Object (a
+  billed call with a KMS-backed signer), as does every GET of a
+  request whose sealed record an earlier release wrote.
 
 ## Credential Issuer
 

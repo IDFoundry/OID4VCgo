@@ -220,16 +220,13 @@
 // Sealer, or the DB's when it has none, seals only each one's response
 // decryption key and verified claims, bound to its Owner, same-device
 // flag, browser binding hash, origin and query, and (TransactionCodec
-// version 2) its status, expiry, nonce, state and kid, which stay
-// readable: changing one leaves the record unreadable while its sealed
-// fields are there, and the verifier refuses a record stripped of
-// them or holding another transaction's ID. The Request Object served
-// at a request_uri is signed from those fields, not read from the
-// record. Its response_code hash, last error,
-// retain_until and stored request_object (served only by replicas
-// running OID4VCgo v0.81.0 or earlier) are unprotected, and a whole
-// older copy of the record still opens, so the database must be
-// trusted for those.
+// version 2) its status, expiry, nonce, state and kid, and (version 3)
+// the Request Object served at its request_uri, which stay readable:
+// changing one leaves the record unreadable while its sealed fields
+// are there, and the verifier refuses a record stripped of them or
+// holding another transaction's ID. Its response_code hash, last error
+// and retain_until are unprotected, and a whole older copy of the
+// record still opens, so the database must be trusted for those.
 // A Wallet Provider's instances, instance keys and challenges are
 // sealed too, though they hold nothing secret — an instance's public
 // keys, its registration evidence's summary, its App Attest key and

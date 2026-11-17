@@ -69,11 +69,11 @@ type Transaction struct {
 	// key, as the ECDSA key of the same scalar.
 	ResponseDecryptionKey *ecdsa.PrivateKey
 
-	// RequestObject is the Request Object as Begin signed it. It isn't
-	// served: Transactions.RequestObject signs one for each fetch from
-	// the fields above, which a sealing TransactionCodec binds. It's
-	// still written for replicas running OID4VCgo v0.81.0 or earlier,
-	// which serve it, and a store must still persist it.
+	// RequestObject is the Request Object as Begin signed it, which
+	// Transactions.RequestObject serves at the request's request_uri. A
+	// sealing TransactionCodec binds it; one reading a record sealed
+	// before it did returns it "", and Transactions.RequestObject then
+	// signs one for each fetch from the fields above.
 	RequestObject string
 
 	// Origin is set for a Digital Credentials API request (BeginDCAPI,
@@ -442,9 +442,6 @@ type Transactions struct {
 	// kept has a bit set for each kind of transaction (flowOf) the
 	// store has been seen to keep every field of that create checks.
 	kept atomic.Uint32
-
-	// requestObjects is RequestObject's cache of what it signed.
-	requestObjects requestObjectCache
 }
 
 // NewTransactions builds Transactions for v, keeping state in store.
@@ -862,35 +859,28 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 // stopped answering would tell them the holder had presented. An answer
 // a Wallet sends to a request that's no longer pending is refused.
 //
-// It's signed from the request's query, state, nonce and response
-// decryption key — fields a sealing TransactionCodec binds — and never
-// served as stored (Transaction.RequestObject): a store writer without
-// the sealing key could otherwise hand the Wallet another request's
-// Request Object, and so have the holder answer that request. Each
-// Transactions signs it once per request and serves it again, from
-// memory, to the fetches that follow while the record holds the same
-// request ID and bound fields; a record that changed is signed afresh.
-// Every fetch carries the same claims; replicas sign their own, whose
-// signatures differ.
+// It serves the Request Object Begin signed and stored
+// (Transaction.RequestObject), signing nothing per fetch. A sealing
+// TransactionCodec binds it to the record, so a store writer without
+// the sealing key can't hand the Wallet another request's Request
+// Object, and so have the holder answer that request: the record no
+// longer opens. A record sealed before the codec bound it (version 2
+// or earlier) is read without it, and its Request Object is then
+// signed for each fetch from the request's query, state, nonce and
+// response decryption key, fields the seal binds. An unsealed store's
+// copy is served as stored: whoever can write to it can change every
+// field the Request Object would be signed from too. A store that
+// seals transactions its own way must bind RequestObject as
+// TransactionCodec does, or not return it.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
 	tx, err := t.servable(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	key, cacheable := requestObjectKey(tx)
-	if cacheable {
-		if object, ok := t.requestObjects.get(key, t.now()); ok {
-			return object, nil
-		}
+	if tx.RequestObject != "" {
+		return tx.RequestObject, nil
 	}
-	object, err := t.signRequestObject(tx, authorizationRequest{})
-	if err != nil {
-		return "", err
-	}
-	if cacheable {
-		t.requestObjects.put(key, object, tx.ExpiresAt, t.now())
-	}
-	return object, nil
+	return t.signRequestObject(tx, authorizationRequest{})
 }
 
 // servable is the request id, whose Request Object is served at its

@@ -342,8 +342,10 @@ func v1SealedRecord(t *testing.T) (verifier.TransactionCodec, map[string]any) {
 
 // TestTransactionCodec_OpensVersion1: a record version 1 sealed, whose
 // sealed fields weren't bound to its kid, nonce, state, status or
-// expiry, still opens, with its result; written back, it's version 2,
-// bound to them. Its expiry, given in another zone, is the same instant.
+// expiry, still opens, with its result but without its Request Object,
+// which it didn't bind either; written back, it's the current version,
+// bound to them. Its expiry, given in another zone, is the same
+// instant.
 func TestTransactionCodec_OpensVersion1(t *testing.T) {
 	codec, record := v1SealedRecord(t)
 	if record["v"] != float64(1) {
@@ -357,17 +359,22 @@ func TestTransactionCodec_OpensVersion1(t *testing.T) {
 	if tx.Status != verifier.TransactionDone || tx.ResponseDecryptionKey == nil || tx.Result == nil || tx.Result.Credentials[0].Claims["given_name"] != "Jean" {
 		t.Fatalf("version 1 record = %+v; want the completed transaction, its key and result", tx)
 	}
+	if record["request_object"] == "" || tx.RequestObject != "" {
+		t.Errorf("version 1 record's Request Object = %.20q…, want it dropped", tx.RequestObject)
+	}
 	// Version 1 bound none of the fields version 2 added.
 	record["nonce"] = "another-nonce"
 	data, _ = json.Marshal(record)
 	if _, err := codec.Unmarshal(data); err != nil {
 		t.Errorf("a version 1 record with another nonce: %v (version 1 didn't bind it)", err)
 	}
-	// Nor does it open as version 2.
-	record["v"] = verifier.TransactionCodecVersion
-	data, _ = json.Marshal(record)
-	if _, err := codec.Unmarshal(data); err == nil {
-		t.Error("a version 1 record relabelled version 2 opened")
+	// Nor does it open as a later version.
+	for _, version := range []int{2, verifier.TransactionCodecVersion} {
+		record["v"] = version
+		data, _ = json.Marshal(record)
+		if _, err := codec.Unmarshal(data); err == nil {
+			t.Errorf("a version 1 record relabelled version %d opened", version)
+		}
 	}
 
 	rewritten, err := codec.Marshal(tx)
@@ -388,12 +395,123 @@ func TestTransactionCodec_OpensVersion1(t *testing.T) {
 	v2["expires_at"] = expires.In(time.FixedZone("", -7*3600)).Format(time.RFC3339Nano)
 	data, _ = json.Marshal(v2)
 	if _, err := codec.Unmarshal(data); err != nil {
-		t.Errorf("a version 2 record's expiry in another zone: %v", err)
+		t.Errorf("a rewritten record's expiry in another zone: %v", err)
 	}
 	v2["status"] = int(verifier.TransactionPending)
 	data, _ = json.Marshal(v2)
 	if _, err := codec.Unmarshal(data); err == nil {
 		t.Error("a rewritten record reopened")
+	}
+}
+
+// v2SealedRecord is testdata/transaction_codec_v2_sealed.json: a
+// pending transaction as TransactionCodec version 2 (OID4VCgo v0.81.0)
+// sealed it, with the Request Object it stored, under v1SealerKey.
+func v2SealedRecord(t *testing.T) (verifier.TransactionCodec, map[string]any) {
+	t.Helper()
+	codec, _ := v1SealedRecord(t)
+	data, err := os.ReadFile("testdata/transaction_codec_v2_sealed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	return codec, record
+}
+
+// TestTransactionCodec_OpensVersion2: a record version 2 sealed, whose
+// sealed fields weren't bound to its Request Object, still opens, but
+// without it: anyone who can write to the store could have put another
+// request's there. Written back, it's the current version, and a
+// Request Object put in it then no longer opens.
+func TestTransactionCodec_OpensVersion2(t *testing.T) {
+	codec, record := v2SealedRecord(t)
+	if record["v"] != float64(2) || record["request_object"] == "" {
+		t.Fatalf("the fixture is version %v, with request_object %v; want version 2 with one", record["v"], record["request_object"])
+	}
+	record["request_object"] = "another request's Request Object"
+	data, _ := json.Marshal(record)
+	tx, err := codec.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal of a version 2 record: %v", err)
+	}
+	if tx.ID != "tx-v2" || tx.Status != verifier.TransactionPending || tx.ResponseDecryptionKey == nil {
+		t.Fatalf("version 2 record = %+v; want the pending transaction and its key", tx)
+	}
+	if tx.RequestObject != "" {
+		t.Errorf("version 2 record's Request Object = %q, want it dropped", tx.RequestObject)
+	}
+	record["v"] = verifier.TransactionCodecVersion
+	data, _ = json.Marshal(record)
+	if _, err := codec.Unmarshal(data); err == nil {
+		t.Errorf("a version 2 record relabelled version %d opened", verifier.TransactionCodecVersion)
+	}
+
+	rewritten, err := codec.Marshal(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current map[string]any
+	if err := json.Unmarshal(rewritten, &current); err != nil {
+		t.Fatal(err)
+	}
+	if current["v"] != float64(verifier.TransactionCodecVersion) {
+		t.Errorf("rewritten as version %v, want %d", current["v"], verifier.TransactionCodecVersion)
+	}
+	current["request_object"] = "another request's Request Object"
+	data, _ = json.Marshal(current)
+	if _, err := codec.Unmarshal(data); err == nil {
+		t.Error("a rewritten record opened with a Request Object put in it")
+	}
+}
+
+// TestTransactionCodec_BindsRequestObject: a sealed record's Request
+// Object is bound to it, so one replaced, removed or moved from another
+// record leaves it unreadable. A codec without a sealer binds nothing,
+// and reads the Request Object as stored.
+func TestTransactionCodec_BindsRequestObject(t *testing.T) {
+	sealed := verifier.TransactionCodec{Sealer: testSealer(t)}
+	row, want := marshalTestTransaction(t, sealed, "tx-a")
+	other, _ := marshalTestTransaction(t, sealed, "tx-b")
+	var otherFields map[string]any
+	if err := json.Unmarshal(other, &otherFields); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sealed.Unmarshal(row); err != nil || got.RequestObject != want.RequestObject || got.RequestObject == "" {
+		t.Fatalf("Unmarshal = %v; Request Object kept: %t", err, err == nil && got.RequestObject == want.RequestObject)
+	}
+	for _, c := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"replaced", func(m map[string]any) { m["request_object"] = "eyJhbGciOiJFUzI1NiJ9.e30.c2ln" }},
+		{"another record's", func(m map[string]any) { m["request_object"] = otherFields["request_object"] }},
+		{"removed", func(m map[string]any) { delete(m, "request_object") }},
+	} {
+		var fields map[string]any
+		if err := json.Unmarshal(row, &fields); err != nil {
+			t.Fatal(err)
+		}
+		c.change(fields)
+		data, _ := json.Marshal(fields)
+		if _, err := sealed.Unmarshal(data); err == nil {
+			t.Errorf("%s: a sealed record opened", c.name)
+		}
+	}
+
+	unsealed := verifier.TransactionCodec{}
+	plain, _ := marshalTestTransaction(t, unsealed, "tx-c")
+	var fields map[string]any
+	if err := json.Unmarshal(plain, &fields); err != nil {
+		t.Fatal(err)
+	}
+	const stored = "eyJhbGciOiJFUzI1NiJ9.e30.c2ln"
+	fields["request_object"] = stored
+	data, _ := json.Marshal(fields)
+	if got, err := unsealed.Unmarshal(data); err != nil || got.RequestObject != stored {
+		t.Errorf("an unsealed record: %v; Request Object as stored: %t", err, err == nil && got.RequestObject == stored)
 	}
 }
 
@@ -434,7 +552,7 @@ func TestTransactionCodec_RefusesWhatItDidntWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(map[string]any){
-		"version 3":       func(m map[string]any) { m["v"] = 3 },
+		"version 4":       func(m map[string]any) { m["v"] = 4 },
 		"unknown field":   func(m map[string]any) { m["sealer_hint"] = "x" },
 		"status 0":        func(m map[string]any) { m["status"] = 0 },
 		"status expired":  func(m map[string]any) { m["status"] = int(verifier.TransactionExpired) },
