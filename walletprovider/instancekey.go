@@ -39,9 +39,10 @@ type InstanceKey struct {
 	InstanceID string
 
 	// Status is the key's index on one of the provider's status lists,
-	// the one attestations name, and PreviousStatus the one it had in
-	// the previous period, which attestations issued then may still
-	// name, or the zero StatusListRef.
+	// the one attestations name, and PreviousStatus the one it had
+	// before it last moved to a later period's lists, kept while that
+	// list is served, as attestations may still name it, or the zero
+	// StatusListRef.
 	Status         statuslist.StatusListRef
 	PreviousStatus statuslist.StatusListRef
 

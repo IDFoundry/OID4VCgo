@@ -230,15 +230,20 @@ func (l *statusLists) filledBefore(start int64, n int) {
 // moving it there first if it's on an earlier period's list or on no
 // period's (a record from before lists had periods): a fresh index, the
 // old Status kept as PreviousStatus while an attestation naming it may
-// be live, that is, if it's the previous period's, and a RetainUntil
-// from the current period's start. Should the current period's lists
-// be full, a key on the previous period's list keeps its index there,
-// unmoved: that list is served, and its statuses set, until every
-// attestation naming it has expired, so the key's renewal doesn't fail
-// with the lists, as a new key's attestation does. The record changes
-// with a compare-and-swap (InstanceKeyStore.Update); should another
-// request have moved it meanwhile, its move stands, and the index
-// reserved here stays reserved, as every allocated index does.
+// be live, that is, while its list is served, and a RetainUntil from
+// the current period's start. Should the current period's lists be
+// full, a key on the previous period's list keeps its index there,
+// unmoved: that list is served until every attestation naming it has
+// expired, so the key's renewal doesn't fail with the lists, as a new
+// key's attestation does. Its status is set as long as the record names
+// the index: as Status while the key stays, and as PreviousStatus once
+// it moves, its list still served then, so a revocation still reaches
+// the attestations issued late in the full period. A key that moves
+// only once that list is no longer served has no live attestation
+// naming the index. The record changes with a compare-and-swap
+// (InstanceKeyStore.Update); should another request have moved it
+// meanwhile, its move stands, and the index reserved here stays
+// reserved, as every allocated index does.
 //
 // A move happens before recordUse, which refuses an instance that
 // isn't active, and Suspend and Revoke store the state before they
@@ -268,7 +273,7 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 	for range maxUpdateAttempts {
 		moved := ik
 		moved.Status, moved.PreviousStatus, moved.RetainUntil = ref, statuslist.StatusListRef{}, p.retainUntil(cur)
-		if p.onPreviousPeriod(ik.Status, cur) {
+		if start, _, ok := p.parseList(ik.Status.URI); ok && p.served(start, now) {
 			moved.PreviousStatus = ik.Status
 		}
 		// A record swept meanwhile (InstanceKeyRetention) is refused as

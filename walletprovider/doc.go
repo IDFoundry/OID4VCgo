@@ -116,10 +116,10 @@
 // Config.StatusListSize indices, at Config.StatusListBaseURI/{start}/{n},
 // filled one after another, and every attestation names an index on a
 // list of the current period. An instance key used in a later period
-// than its index's gets a fresh index there first, keeping the previous
-// period's as InstanceKey.PreviousStatus, since an attestation issued
-// then may still be live; an attestation outlives its period by less
-// than another. So a period's lists hold the instance keys used in it,
+// than its index's gets a fresh index there first, keeping its old one,
+// while that list is served, as InstanceKey.PreviousStatus, since an
+// attestation naming it may still be live; an attestation outlives its
+// period by less than another. So a period's lists hold the instance keys used in it,
 // not every one ever recorded, and a list is served through the two
 // periods after its own, by the end of which no live attestation names
 // it.

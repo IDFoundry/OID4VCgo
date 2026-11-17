@@ -22,9 +22,9 @@ func withPeriod(c *walletprovider.Config, _ *walletprovider.Dependencies) {
 }
 
 // TestStatusListRotation: an instance key used in a later period moves
-// to that period's lists, keeping its index of the previous period, and
-// only that one, as PreviousStatus; Wallet and Key Attestations name
-// the current period's list.
+// to that period's lists, keeping its old index as PreviousStatus while
+// that index's list is served, and only that one; Wallet and Key
+// Attestations name the current period's list.
 func TestStatusListRotation(t *testing.T) {
 	h := newHarness(t, withPeriod)
 	in, _ := h.register(kindStrongBox)
@@ -57,13 +57,25 @@ func TestStatusListRotation(t *testing.T) {
 	}
 	h.expectStatus(statuslist.StatusValid, key)
 
-	// Two periods on: nothing names the old indices any more.
+	// Two periods on: the old index's list is still served, and an
+	// attestation may name it (a key that kept it while the lists were
+	// full), so it's kept too.
+	h.toNextPeriod()
+	h.toNextPeriod()
+	ref = walletAttestation()
+	twice := h.instanceKey(&key.PublicKey)
+	if ref != twice.Status || twice.Status.URI != listURI(h.periodStart(), 0) || twice.PreviousStatus != moved.Status {
+		t.Fatalf("two periods on, status %+v, record %+v; want on %s, previous %+v", ref, twice, listURI(h.periodStart(), 0), moved.Status)
+	}
+
+	// Three periods on: nothing names the old indices any more.
+	h.toNextPeriod()
 	h.toNextPeriod()
 	h.toNextPeriod()
 	ref = walletAttestation()
 	again := h.instanceKey(&key.PublicKey)
 	if ref != again.Status || again.Status.URI != listURI(h.periodStart(), 0) || again.PreviousStatus != (statuslist.StatusListRef{}) {
-		t.Fatalf("two periods on, status %+v, record %+v; want on %s, no previous", ref, again, listURI(h.periodStart(), 0))
+		t.Fatalf("three periods on, status %+v, record %+v; want on %s, no previous", ref, again, listURI(h.periodStart(), 0))
 	}
 
 	// A Key Attestation moves the key too.
