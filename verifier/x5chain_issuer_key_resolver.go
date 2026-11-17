@@ -10,7 +10,6 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
-	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
 // X5ChainIssuerKeyResolver implements MdocIssuerKeyResolver by
@@ -125,7 +124,7 @@ func (r X5ChainIssuerKeyResolver) verify(ctx context.Context, x5chain [][]byte, 
 	if err != nil {
 		return nil, nil, err
 	}
-	return certchain.VerifyTrustedChainsAt(ctx, x5chain, roots, r.leafPolicy(), r.Revocation, verificationTime(ctx))
+	return verifyTrustedChains(ctx, "x5chain", x5chain, roots, r.leafPolicy(), r.Revocation)
 }
 
 // anchorPools is every trust anchor set r verifies against: Roots and
