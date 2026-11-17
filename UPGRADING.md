@@ -531,6 +531,34 @@ wallet's attestations refused until the period ended.
   of your fleet within a period or two; `MaxStatusListsPerPeriod` turns
   the share off.
 
+### A first message that doesn't decrypt no longer ends a BLE session (`proximity`, `walletflow`, mobile)
+
+Any device in BLE range can write to a holder's GATT server before its
+reader does. A first message that doesn't decode or decrypt for this
+engagement is now rejected, the session left waiting for its reader,
+where it used to end the session with status 10 or 11:
+
+- `walletflow.ProximityPresentation.HandleMessage` returns an event
+  with the new `Rejected` set, `Ended` unset, no `Send`, and `Err`
+  wrapping the new `proximity.ErrEstablishmentRejected`. A custom
+  transport must send nothing, drop the device that sent it, if it can
+  tell, and keep listening, handing the next first message, from any
+  device, to `HandleMessage`. However many arrive, none ends the
+  session: your transport's timeout for the reader's request must.
+  NFC data retrieval is unchanged.
+- `proximity.DeviceSession.TrySessionEstablishment` is new: it is
+  `HandleSessionEstablishment` for a message whose sender isn't yet
+  known to be the reader, returning `ErrEstablishmentRejected` for such
+  a message, which `StatusFor` gives no status reply.
+  `HandleSessionEstablishment` still closes the session on any error.
+- The gomobile façade reports it as the `rejected` event of
+  `ProximityPresentation.HandleMessage` (within ABI 15). OID4VCWallet
+  handles it; an app calling the façade itself must too.
+- The certificate names `Request()` gives, `subject`, `issuer` and
+  `subject_alt_names`, are now cleaned as the reader's `name` is, up to
+  1,024 characters each: an app that matched them against raw
+  certificate text may see them differ.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

@@ -17,7 +17,10 @@ public struct ProximityTimeouts: Sendable {
     /// Seconds to wait for the other device to connect, after the QR code
     /// is shown or scanned.
     public var connectSeconds: TimeInterval
-    /// Seconds to wait for the reader's request, once connected.
+    /// Seconds to wait for the reader's request, once connected. As the
+    /// holder's GATT server, connected is when any device first starts a
+    /// session (State 0x01), not necessarily the reader: the reader's
+    /// whole window may be this, not `connectSeconds` and this.
     public var requestSeconds: TimeInterval
     /// Seconds to wait for the holder to decide, or the holder's answer to
     /// arrive.
