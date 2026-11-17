@@ -347,6 +347,33 @@ type wireJWSJSON struct {
 	} `json:"signatures"`
 }
 
+// dcapiSignatureHeader is what a multi-signed request's protected
+// header carries for its signer.
+type dcapiSignatureHeader struct {
+	ClientID     string          `json:"client_id"`
+	VerifierInfo json.RawMessage `json:"verifier_info"`
+}
+
+// verifyDCAPISignature verifies one signature of a multi-signed request,
+// over its one payload, as a JWS of its own in Compact Serialization
+// (RFC 7515 §7.2.1, §5.1), and binds the client_id its protected header
+// names to the signer's certificate.
+func verifyDCAPISignature(protected, payloadSegment, signature string, params ParseDCAPIRequestDataParams) (*x509.Certificate, []byte, dcapiSignatureHeader, error) {
+	var header dcapiSignatureHeader
+	cert, payload, err := verifyRequestObject(protected+"."+payloadSegment+"."+signature, params.VerifierTrust)
+	if err != nil {
+		return nil, nil, header, err
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(protected)
+	if err != nil || strictjson.Unmarshal(raw, &header) != nil {
+		return nil, nil, header, errors.New("malformed protected header")
+	}
+	if _, err := bindClientID(header.ClientID, cert, params.AcceptX509SANDNS, params.VerifierTrust); err != nil {
+		return nil, nil, header, err
+	}
+	return cert, payload, header, nil
+}
+
 // parseMultiSignedDCAPIRequest is ParseDCAPIRequestData for
 // DCAPIProtocolMultiSigned.
 func parseMultiSignedDCAPIRequest(ctx context.Context, params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
@@ -367,23 +394,8 @@ func parseMultiSignedDCAPIRequest(ctx context.Context, params ParseDCAPIRequestD
 		if err := ctx.Err(); err != nil {
 			return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 		}
-		// Each signature over the one payload is a JWS of its own, in
-		// Compact Serialization (RFC 7515 §7.2.1, §5.1).
-		cert, payload, err := verifyRequestObject(sig.Protected+"."+data.Request.Payload+"."+sig.Signature, params.VerifierTrust)
+		cert, payload, header, err := verifyDCAPISignature(sig.Protected, data.Request.Payload, sig.Signature, params)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("signature %d: %w", i, err))
-			continue
-		}
-		var header struct {
-			ClientID     string          `json:"client_id"`
-			VerifierInfo json.RawMessage `json:"verifier_info"`
-		}
-		raw, err := base64.RawURLEncoding.DecodeString(sig.Protected)
-		if err != nil || strictjson.Unmarshal(raw, &header) != nil {
-			errs = append(errs, fmt.Errorf("signature %d: malformed protected header", i))
-			continue
-		}
-		if _, err := bindClientID(header.ClientID, cert, params.AcceptX509SANDNS, params.VerifierTrust); err != nil {
 			errs = append(errs, fmt.Errorf("signature %d: %w", i, err))
 			continue
 		}
