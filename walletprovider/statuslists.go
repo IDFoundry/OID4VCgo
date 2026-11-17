@@ -205,6 +205,10 @@ func (p *Provider) allocateIn(ctx context.Context, start int64, from, to int) (s
 		return statuslist.StatusListRef{}, statuslist.ErrListsFull
 	}
 	ref, err := p.allocator(start, first, to).Allocate(ctx)
+	if errors.Is(err, statuslist.ErrListsFull) {
+		// Recorded, so the next request needn't count them again.
+		p.lists.filledBefore(start, from, to)
+	}
 	if err != nil {
 		return statuslist.StatusListRef{}, err
 	}
@@ -368,10 +372,10 @@ func (l *statusLists) shareNoFuller(start int64, split int) bool {
 	return inShare*(MaxStatusListsPerPeriod-split) <= rest*split
 }
 
-// filledBefore records that an index was reserved on list n of the
-// period starting at start by an Allocate over lists from on: it moves
-// to a list only once those before it are full, and a full list stays
-// full.
+// filledBefore records that lists from up to n of the period starting
+// at start are full: an Allocate over lists from on reserved an index
+// on list n, which it moves to only once those before it are full, or
+// found every list up to n full. A full list stays full.
 func (l *statusLists) filledBefore(start int64, from, n int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

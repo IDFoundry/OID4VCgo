@@ -221,3 +221,31 @@ func TestStatusListsFullQuotaUsedKeepsPreviousIndex(t *testing.T) {
 		renew(t, h, victim.ID, victimKey)
 	})
 }
+
+// TestStatusListsFullRecorded: a process that finds the lists full
+// records it, so its next request for an index doesn't count their
+// reserved indices again.
+func TestStatusListsFullRecorded(t *testing.T) {
+	idx := &countingIndices{}
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		smallStatusLists(c, d)
+		d.StatusIndices = idx
+	})
+	fillStatusLists(t, h)
+	// A fresh process facing the full lists.
+	p, err := walletprovider.New(h.cfg, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.p = p
+	in, _ := h.register(kindTEE)
+	for i := range 2 {
+		before := idx.calls()
+		if _, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindTEE); !errors.Is(err, statuslist.ErrListsFull) {
+			t.Fatalf("attempt %d: a new instance key with the lists full = %v, want ErrListsFull", i+1, err)
+		}
+		if counted := idx.calls() - before; i > 0 && counted != 0 {
+			t.Fatalf("attempt %d counted the reserved indices of %d lists, known full", i+1, counted)
+		}
+	}
+}
