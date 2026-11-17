@@ -39,6 +39,17 @@ itself unless restricted to a resource, and are now refused. Either:
   token for its own, and issue its own holder's Credential for that
   token's subject.
 
+### A custom DeferredTransactionStore persists RequestedByConfigurationID
+
+`DeferredTransactionRecord` has a new field,
+`RequestedByConfigurationID`, which marks a transaction deferred from
+a request by `credential_configuration_id`. `RequestDeferredCredential`
+then releases it only to a token the Credential Endpoint would accept
+that request from. A store that saves the whole record (the in-memory
+store, `sqlstore`) needs nothing. A store that maps fields one by one
+must persist it too: a record read back without it is checked as one
+saved before it existed, against the configuration alone.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
