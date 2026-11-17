@@ -64,3 +64,13 @@ func TestVerifyKeyBindingJWT_NegativeSkew(t *testing.T) {
 		t.Errorf("VerifyKeyBindingJWT = %v, want a MaxClockSkew error", err)
 	}
 }
+
+// An empty ExpectedSDHash is refused, as an empty audience or nonce is:
+// it would accept a Key Binding JWT without sd_hash, bound to no
+// presentation (RFC 9901 §4.3), before its signature is even checked.
+func TestVerifyKeyBindingJWT_RequiresExpectedSDHash(t *testing.T) {
+	_, err := VerifyKeyBindingJWT("x", nil, jose.ES256, KeyBindingCheck{ExpectedAudience: "a", ExpectedNonce: "n", MaxAge: time.Minute})
+	if err == nil || !strings.Contains(err.Error(), "ExpectedSDHash is required") {
+		t.Errorf("VerifyKeyBindingJWT = %v, want ExpectedSDHash required", err)
+	}
+}

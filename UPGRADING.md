@@ -112,6 +112,14 @@ API changes. A partner whose chains are now refused has to send them
 in order, leaving out certificates that aren't on the path; the
 SPECIFICATIONS.md "Known strictness" entry has the details.
 
+### `sdjwtvc.KeyBindingCheck.ExpectedSDHash` is required
+
+`sdjwtvc.VerifyKeyBindingJWT` refuses an empty `ExpectedSDHash`, as it
+does an empty `ExpectedAudience` or `ExpectedNonce`, and refuses a Key
+Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
+passes the presentation's hash: `Presentation.SDHash(alg)`.
+`sdjwtvc.Verify` and the verifier already did.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
