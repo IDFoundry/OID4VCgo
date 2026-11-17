@@ -58,21 +58,26 @@ object LogoStore {
     suspend fun fetch(context: Context, credentials: List<CredentialSummary>, socketFactory: SSLSocketFactory?) = withContext(Dispatchers.IO) {
         val uris = credentials.flatMap { listOf(it.display?.logo?.uri, it.display?.issuerLogo?.uri) }.filterNotNull().toSet()
         for (uri in uris) {
-            if (!uri.startsWith("https:")) continue
-            val file = file(context, uri)
-            if (file.exists()) continue
-            val data = try {
-                download(uri, socketFactory)
-            } catch (e: IOException) {
-                Log.w("DemoWallet", "fetching a credential logo: $e")
-                null
-            } ?: continue
-            if (BitmapFactory.decodeByteArray(data, 0, data.size) == null) continue
-            file.parentFile?.mkdirs()
-            val partial = File(file.parentFile, file.name + ".tmp")
-            runCatching {
-                partial.writeBytes(data)
-                if (!partial.renameTo(file)) partial.delete()
+            if (uri.startsWith("https:")) keep(file(context, uri), uri, socketFactory)
+        }
+    }
+
+    /** Fetches the logo at [uri] into [file] unless it's kept already. */
+    private fun keep(file: File, uri: String, socketFactory: SSLSocketFactory?) {
+        if (file.exists()) return
+        val data = try {
+            download(uri, socketFactory)
+        } catch (e: IOException) {
+            Log.w("DemoWallet", "fetching a credential logo: $e")
+            null
+        }
+        if (data == null || BitmapFactory.decodeByteArray(data, 0, data.size) == null) return
+        file.parentFile?.mkdirs()
+        val partial = File(file.parentFile, file.name + ".tmp")
+        runCatching {
+            partial.writeBytes(data)
+            if (!partial.renameTo(file) && !partial.delete()) {
+                Log.w("DemoWallet", "couldn't remove a partial credential logo")
             }
         }
     }
