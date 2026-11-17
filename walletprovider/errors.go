@@ -28,9 +28,11 @@ var (
 	// verdict on the device's attestation key, such as Google's
 	// attestation status list naming a certificate of an Android
 	// instance's chain REVOKED or SUSPENDED, not a change of the
-	// provider's own configuration. A Recheck error wrapping one also
-	// wraps ErrEvidenceRejected. The provider then revokes, or
-	// suspends, the instance before refusing the request.
+	// provider's own configuration — or an InstanceKeyRechecker found
+	// that of an instance key's evidence, or an EvidenceVerifier that
+	// of fresh evidence a registered instance sent. A Recheck error
+	// wrapping one also wraps ErrEvidenceRejected. The provider then
+	// revokes, or suspends, the instance before refusing the request.
 	ErrEvidenceRevoked   = errors.New("walletprovider: evidence revoked by its issuer")
 	ErrEvidenceSuspended = errors.New("walletprovider: evidence suspended by its issuer")
 

@@ -142,6 +142,11 @@ func (p *Provider) recordInstanceKey(ctx context.Context, in Instance, key marsh
 		Evidence: req.Evidence, Challenge: challenge, Purpose: PurposeInstance,
 		Keys: []crypto.PublicKey{req.InstanceKey}, Instance: &in,
 	})
+	if issuerVerdict(err) {
+		// The device's attestation key is revoked or suspended: so is
+		// the instance, as when a recheck finds it.
+		return InstanceKey{}, p.recheckRefused(ctx, in, err)
+	}
 	if err == nil {
 		err = p.checkEvidenceFrom(in, req.Evidence.Kind, ev)
 	}
@@ -437,17 +442,24 @@ func advancedCounter(counter, next *uint64, stored uint64) (*uint64, error) {
 // assertion advanced it. Evidence that fails, is of another Kind than
 // the instance registered with, or comes from another platform or app
 // than the instance's, vouches for nothing; a key its evidence places
-// at a security level the Policy refuses is left out.
+// at a security level the Policy refuses is left out. Evidence its
+// issuer has revoked or suspended fails the request, revoking or
+// suspending the instance (recheckRefused).
 func (p *Provider) verifyHolderKeys(ctx context.Context, in Instance, challenge []byte, req KeyAttestationRequest) ([]AttestedKey, *uint64, error) {
 	var vouched []AttestedKey
 	var counter *uint64
 	var lastErr error
 	for _, e := range req.Evidence {
 		ev, err := p.verify(ctx, EvidenceInput{Evidence: e, Challenge: challenge, Purpose: PurposeHolder, Keys: req.Keys, Instance: &in})
-		if errors.Is(err, ErrUnavailable) {
+		switch {
+		case errors.Is(err, ErrUnavailable):
 			// Not a verdict on the key: the wallet asks again later,
 			// rather than get an attestation leaving the key out.
 			return nil, nil, err
+		case issuerVerdict(err):
+			// The device's attestation key is revoked or suspended: so
+			// is the instance, as when a recheck finds it.
+			return nil, nil, p.recheckRefused(ctx, in, err)
 		}
 		if err == nil {
 			err = p.checkEvidenceFrom(in, e.Kind, ev)

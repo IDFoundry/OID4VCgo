@@ -329,6 +329,63 @@ func TestRecheckInstanceKeyChain(t *testing.T) {
 	})
 }
 
+// TestFreshRevokedEvidenceRevokesInstance: fresh evidence a registered
+// instance sends — a new instance key's chain, or a holder key's — that
+// Google's status list names REVOKED or SUSPENDED revokes or suspends
+// the instance, reported to OnRecheckRefused, as a recheck finding it
+// does; the request is refused evidence_rejected.
+func TestFreshRevokedEvidenceRevokesInstance(t *testing.T) {
+	newInstanceKey := func(w *rkpWallet, t *testing.T, list func(serial string)) error {
+		ch, raw := w.f.challenge(t, walletprovider.PurposeInstance)
+		c := w.ca.chain(t, 401, raw)
+		list(serialKey(c.inter))
+		_, err := w.f.client.WalletAttestation(context.Background(), w.registration.leafKey, walletprovider.WalletAttestationRequest{
+			InstanceID: w.id, ClientID: "wallet", InstanceKey: &c.leafKey.PublicKey, Challenge: ch, Evidence: androidkey.Evidence(c.der),
+		})
+		return err
+	}
+	holderKey := func(w *rkpWallet, t *testing.T, list func(serial string)) error {
+		ch, raw := w.f.challenge(t, walletprovider.PurposeHolder)
+		c := w.ca.chain(t, 501, raw)
+		list(serialKey(c.inter))
+		_, err := w.f.client.KeyAttestation(context.Background(), w.registration.leafKey, walletprovider.KeyAttestationRequest{
+			InstanceID: w.id, InstanceKey: &w.instance.leafKey.PublicKey, Challenge: ch,
+			Keys: []crypto.PublicKey{&c.leafKey.PublicKey}, Evidence: []walletprovider.Evidence{androidkey.Evidence(c.der)},
+		})
+		return err
+	}
+	for _, tc := range []struct {
+		name     string
+		request  func(*rkpWallet, *testing.T, func(string)) error
+		status   string
+		verdict  error
+		state    walletprovider.State
+		keyState statuslist.StatusType
+	}{
+		{"new instance key, revoked", newInstanceKey, androidkey.StatusRevoked, walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid},
+		{"new instance key, suspended", newInstanceKey, androidkey.StatusSuspended, walletprovider.ErrEvidenceSuspended, walletprovider.StateSuspended, statuslist.StatusSuspended},
+		{"holder key, revoked", holderKey, androidkey.StatusRevoked, walletprovider.ErrEvidenceRevoked, walletprovider.StateRevoked, statuslist.StatusInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRKPWallet(t, rkpOpts{})
+			err := tc.request(w, t, func(serial string) { w.v.Revocation = listingSerial(t, serial, tc.status) })
+			var refused *walletprovider.RefusedError
+			if !errors.As(err, &refused) || refused.Code != "evidence_rejected" {
+				t.Fatalf("request = %v, want evidence_rejected", err)
+			}
+			if got := w.f.state(t, w.id); got != tc.state {
+				t.Fatalf("the instance is %s, want %s", got, tc.state)
+			}
+			if got := w.f.keyStatus(t, w.id); got != tc.keyState {
+				t.Fatalf("the recorded instance key's status is %v, want %v", got, tc.keyState)
+			}
+			if r := w.f.refusals(); len(r) != 1 || !errors.Is(r[0], tc.verdict) {
+				t.Fatalf("OnRecheckRefused got %v, want one refusal wrapping %v", r, tc.verdict)
+			}
+		})
+	}
+}
+
 // TestInstanceRefusalKeepsInstanceKeyRevocation: when the instance
 // itself is refused for another reason than revocation — the provider's
 // Policy or the Verifier tightened — Google's REVOKED or SUSPENDED

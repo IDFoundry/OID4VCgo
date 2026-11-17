@@ -338,7 +338,14 @@ refusal. The provider runs an instance's rechecker even when its own
 is refused for another reason, still rechecks the instance key a Wallet
 or Key Attestation request names: a REVOKED or SUSPENDED certificate
 of that key's own chain revokes or suspends the instance, answered
-`evidence_rejected` where it was `policy_refused`. And
+`evidence_rejected` where it was `policy_refused`. Fresh evidence a
+registered instance sends, a new instance key's chain or a holder
+key's, that Google's list names REVOKED or SUSPENDED now revokes or
+suspends the instance too, where it only refused the request (a holder
+key's is answered `evidence_rejected`, not `no_key_attested`):
+`androidkey.EvidenceVerifier.Verify` wraps
+`walletprovider.ErrEvidenceRevoked` or `ErrEvidenceSuspended`, as
+`Recheck` does, and a custom `EvidenceVerifier` can too. And
 `Config.OnRecheckRefused` is now called for a `Policy` refusal too
 (`ErrPolicy`, the instance left active): an alert keyed on that
 callback sees refusals it didn't before.
