@@ -101,7 +101,8 @@ var (
 	// Config.MaxInstanceKeysPerPeriod status list indices in the
 	// current period, so a Wallet Attestation for a new instance key,
 	// or for a recorded one not yet used in the period, waits for the
-	// next period.
+	// next period. A recorded key that keeps its previous period's
+	// index because the lists are full is attested all the same.
 	ErrTooManyInstanceKeys = errors.New("walletprovider: too many instance keys this period")
 
 	// ErrUnavailable: an EvidenceVerifier, EvidenceRechecker or

@@ -546,8 +546,10 @@ Once the current period's status lists are full, a recorded instance
 key last used in the previous period now keeps its index there, and
 its Wallet or Key Attestation names it, where the request used to fail
 with HTTP 500. Such a renewal takes none of the instance's
-`MaxInstanceKeysPerPeriod`. A key whose index is older, and every new
-instance key, are still refused until a period's lists have room. When
+`MaxInstanceKeysPerPeriod`, and is attested even once the instance has
+used that up (it isn't answered 429 `too_many_instance_keys`). A key
+whose index is older, and every new instance key, are still refused
+until a period's lists have room. When
 a key moves to a later period's lists, its old index is kept as
 `InstanceKey.PreviousStatus` whenever that list is still served, not
 only when it's the previous period's, so `Suspend`, `Resume` and

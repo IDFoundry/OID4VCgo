@@ -176,7 +176,7 @@ type Config struct {
 	// older ones, and watch StatusListFill. A
 	// recorded key last used in the previous period keeps its index
 	// there once the current period's lists are full, taking none of
-	// this bound, so a wallet that moved its keys in the previous period
+	// this bound, even once the instance has used it up, so a wallet that moved its keys in the previous period
 	// keeps its Wallet Attestations through one full period; new
 	// instance keys, and keys whose index is older, are refused until a
 	// period's lists have room. Lists filled again period after period

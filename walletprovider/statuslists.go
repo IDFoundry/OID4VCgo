@@ -392,9 +392,10 @@ func (l *statusLists) filledBefore(start int64, from, n int) {
 // be live, that is, while its list is served, and a RetainUntil from
 // the current period's start. Should the current period's lists be
 // full, a key on the previous period's list keeps its index there,
-// unmoved: that list is served until every attestation naming it has
-// expired, so the key's renewal doesn't fail with the lists, as a new
-// key's attestation does. Its status is set as long as the record names
+// unmoved, even once the instance has used up its quota, which keeping
+// it takes none of: that list is served until every attestation naming
+// it has expired, so the key's renewal doesn't fail with the lists, as
+// a new key's attestation does. Its status is set as long as the record names
 // the index: as Status while the key stays, and as PreviousStatus once
 // it moves, its list still served then, so a revocation still reaches
 // the attestations issued late in the full period. A key that moves
@@ -420,6 +421,11 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 		return ik, nil
 	}
 	ref, err := p.allocateStatus(ctx, ik.InstanceID, now)
+	if errors.Is(err, ErrTooManyInstanceKeys) && p.onPreviousPeriod(ik.Status, cur) {
+		// The quota is counted before the lists are found full, but
+		// keeping the previous period's index takes none of it.
+		err = p.quotaOrListsFull(ctx, ik.InstanceID, cur, err)
+	}
 	switch {
 	case errors.Is(err, statuslist.ErrListsFull) && p.onPreviousPeriod(ik.Status, cur):
 		p.logger().LogAttrs(context.WithoutCancel(ctx), slog.LevelWarn,
@@ -457,6 +463,44 @@ func (p *Provider) inCurrentPeriod(ctx context.Context, ik InstanceKey, now time
 		}
 	}
 	return InstanceKey{}, fmt.Errorf("walletprovider: moving an instance key to the current status lists: %w after %d attempts", ErrConflict, maxUpdateAttempts)
+}
+
+// quotaOrListsFull returns an error wrapping statuslist.ErrListsFull
+// if the lists of the period starting at start that the instance id's
+// keys take indices from are all full, and quota, the instance's
+// ErrTooManyInstanceKeys, if they aren't or that can't be told.
+func (p *Provider) quotaOrListsFull(ctx context.Context, id string, start int64, quota error) error {
+	in, err := p.getInstance(ctx, id)
+	if err != nil {
+		return quota
+	}
+	split := p.cfg.RecentInstanceStatusLists
+	full, err := p.listsFull(ctx, start, 0, split)
+	if err == nil && full && !p.recent(in, start) && split < MaxStatusListsPerPeriod {
+		full, err = p.listsFull(ctx, start, split, MaxStatusListsPerPeriod)
+	}
+	if err != nil || !full {
+		return quota
+	}
+	return fmt.Errorf("walletprovider: the status lists of the current period are full: %w", statuslist.ErrListsFull)
+}
+
+// listsFull reports whether lists from up to to of the period starting
+// at start are all full, counting the reserved indices of those not
+// known to be full until one has room, and recording those it finds
+// full.
+func (p *Provider) listsFull(ctx context.Context, start int64, from, to int) (bool, error) {
+	for n := p.lists.firstWithRoom(start, from, to); n < to; n++ {
+		fill, err := p.allocator(start, n, n+1).Fill(ctx)
+		if err != nil {
+			return false, err
+		}
+		if !fill[0].Full() {
+			return false, nil
+		}
+		p.lists.filledBefore(start, from, n+1)
+	}
+	return true, nil
 }
 
 // onPreviousPeriod reports whether ref is on a list of the period
