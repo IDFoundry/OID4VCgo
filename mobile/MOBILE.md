@@ -995,11 +995,18 @@ What a wallet's UI needs to show a credential, from the SDK:
     `internal` or `lan` is dropped too: an offer's QR code would
     otherwise make the phone request hosts on its own network. A public
     name whose DNS answers a private address isn't caught; the app's
-    image loader is the place to refuse that. The app loads logos itself
-    (`AsyncImage`); Go fetches none. Loading one tells whoever serves
-    it that the holder is looking, so fetch it once, when the holder
-    accepts the credential rather than on the offer's preview, and
-    keep it, rather than on every screen that shows it.
+    image loader is the place to refuse that. The app loads logos
+    itself; Go fetches none. Loading one tells whoever serves it that
+    the holder is looking, so fetch it once, when the holder accepts
+    the credential rather than on the offer's preview, and keep it,
+    rather than on every screen that shows it. The demo apps do this
+    in their `LogoStore`: each refuses a redirect and, outside
+    development, a host that resolves to a loopback, private or
+    link-local address (checked before connecting, so a DNS answer
+    that changes in between isn't caught), keeps at most 512 KiB and
+    4096 pixels a side, and decodes each logo off the main thread at
+    the size it's shown, never at its own: a small file can decode to
+    hundreds of megabytes.
 - **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
   `validityInfo.validUntil`, is kept as `valid_until`.
 - **Revocation status:**
