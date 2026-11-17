@@ -199,6 +199,9 @@ func (w *Wallet) postToken(
 	ctx context.Context, endpoint fapi.URL, form url.Values, dpopKey crypto.Signer, attestation ClientAttestationSource, op string,
 ) ([]byte, error) {
 	target := endpoint.URL()
+	if dpopKey != nil && !hasNormalPath(&target) {
+		return nil, fmt.Errorf("wallet: %s: token endpoint: %w", op, errNonNormalPath)
+	}
 	htu := target
 	htu.RawQuery, htu.Fragment = "", ""
 	post := tokenPost{target: target.String(), htu: htu.String(), form: form, dpopKey: dpopKey, attestation: attestation, op: op}

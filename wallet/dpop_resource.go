@@ -48,6 +48,9 @@ func (c *dpopResourceClient) Do(ctx context.Context, req *http.Request) (*http.R
 	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
 		return nil, errors.New("wallet: dpop resource client: the request body must be replayable (GetBody) for a DPoP nonce retry")
 	}
+	if !hasNormalPath(req.URL) {
+		return nil, fmt.Errorf("wallet: dpop resource client: %w", errNonNormalPath)
+	}
 	c.mu.Lock()
 	nonce := c.nonce
 	c.mu.Unlock()

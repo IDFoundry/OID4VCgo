@@ -85,6 +85,20 @@ names a device key, and without a `HolderKey` it would be one the
 wallet never proved it holds. Pass the key proved in the Credential
 Request. walletflow always did.
 
+### DPoP requests to non-normal endpoint paths (`wallet`, `walletflow`, mobile)
+
+`Wallet.DPoPResourceClient`'s `Do` and the DPoP-bound token requests
+(`RequestPreAuthorizedCodeToken`, and `RequestRefreshToken` with a
+`DPoPKey`)
+now refuse, before sending anything, an endpoint whose path has a `.`
+or `..` segment or a percent-encoded unreserved character (`%2e`,
+`%7E`, …), as fapigo/client's protected resource client already does:
+a front end routing by the raw path and a server comparing the
+normalized `htu` would read it as different resources. This reaches
+pre-authorized code tokens, deferred credential polls and refreshes
+without client authentication. An issuer whose metadata names such an
+endpoint must name it in normal form.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
