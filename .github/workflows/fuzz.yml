@@ -121,6 +121,9 @@ jobs:
           - id: proximity-handle-session-establishment
             pkg: ./proximity
             name: FuzzHandleSessionEstablishment
+          - id: proximity-try-session-establishment
+            pkg: ./proximity
+            name: FuzzTrySessionEstablishment
           - id: proximity-handle-session-data
             pkg: ./proximity
             name: FuzzHandleSessionData
