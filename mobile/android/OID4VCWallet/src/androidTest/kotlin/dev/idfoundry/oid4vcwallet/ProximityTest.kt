@@ -604,6 +604,36 @@ class ProximityTest {
         }
     }
 
+    /**
+     * First messages Go rejects — from devices that never saw the QR
+     * code — are dropped (`reject`) without ending the session, and the
+     * reader's request after them is taken, committing the transport.
+     */
+    @Test
+    fun blindPeersDoNotEndTheSession(): Unit = runBlocking {
+        val s = setup()
+        val (holderEnd, readerEnd) = PipeTransport.pair()
+        val junk = java.util.concurrent.ConcurrentLinkedQueue(listOf(byteArrayOf(0xA0.toByte()), byteArrayOf(0x01)))
+        val rejects = java.util.concurrent.atomic.AtomicInteger()
+        val commits = java.util.concurrent.atomic.AtomicInteger()
+        val blind = object : ProximityTransport by holderEnd {
+            override suspend fun receive(): ByteArray = junk.poll() ?: holderEnd.receive()
+            override fun reject() {
+                rejects.incrementAndGet()
+            }
+            override fun commit() {
+                commits.incrementAndGet()
+            }
+        }
+        val holder = s.wallet.startProximityPresentation(timeouts, blind, setOf(ProximityBLEMode.PERIPHERAL_SERVER))
+        val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name", "given_name")), timeouts, readerEnd)
+        awaitRequest(holder)
+        assertEquals(2, rejects.get())
+        assertTrue(commits.get() >= 1)
+        holder.cancel()
+        reader.cancel()
+    }
+
     /** A response the transport can't deliver fails the session as a lost connection, and `respond` throws that. */
     @Test
     fun anUndeliveredResponseFailsTheSession(): Unit = runBlocking {

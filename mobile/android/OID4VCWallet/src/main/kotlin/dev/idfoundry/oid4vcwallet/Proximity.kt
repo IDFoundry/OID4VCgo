@@ -343,10 +343,9 @@ public class ProximityPresentation internal constructor(
         try {
             within(timeouts.connect, "no reader connected") { transport.connect() }
             advance(State.WaitingForReader, State.Connected)
-            val first = within(timeouts.request, "the reader sent no request") { transport.receive() }
+            val event = within(timeouts.request, "the reader sent no request") { firstEvent() }
             // An "ended" event has finished the session; any other ("none")
             // carried no request, so nothing would ever end it.
-            val event = handleMessage(first).event
             if (event != "request") {
                 if (event != "ended") {
                     sendTermination()
@@ -390,9 +389,29 @@ public class ProximityPresentation internal constructor(
         }
     }
 
-    /** Hands [message] to Go, sends its reply, and ends the session on an "ended" event. */
+    /**
+     * The event for the first message Go accepts. Any device in range
+     * can write to a GATT server first: one whose message Go rejects (it
+     * never saw the QR code) is dropped, and the next first message, from
+     * any device, is handed to Go.
+     */
+    private suspend fun firstEvent(): String {
+        while (true) {
+            val event = handleMessage(transport.receive()).event
+            if (event != "rejected") return event
+            transport.reject()
+        }
+    }
+
+    /**
+     * Hands [message] to Go, sends its reply, and ends the session on an
+     * "ended" event. Any event but "rejected" commits the transport to
+     * the device that sent [message].
+     */
     private suspend fun handleMessage(message: ByteArray): EventJSON {
         val event = decode<EventJSON>(OID4VC.cancellable { op -> handle.handleMessage(op, message) })
+        if (event.event == "rejected") return event
+        transport.commit()
         event.send?.let { transport.send(it) }
         if (event.event == "ended") {
             finish(
@@ -1203,6 +1222,9 @@ public class ProximityReaderSession internal constructor(
             } catch (e: TimeoutCancellationException) {
                 throw ProximityException(ProximityException.Reason.TimedOut, "the holder's device wasn't found", e)
             }
+            // The reader speaks first: as GATT server (central client
+            // mode), to the first device that started the session.
+            transport.commit()
             val elementsSerializer = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
             val request = if (documents.size == 1) {
                 val elementsJSON = json.encodeToString(elementsSerializer, documents[0].elements)

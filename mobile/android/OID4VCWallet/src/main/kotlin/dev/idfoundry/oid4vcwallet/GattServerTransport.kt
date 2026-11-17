@@ -27,11 +27,17 @@ import java.io.IOException
 import java.util.UUID
 
 /**
- * The GATT server's side of a session: advertises [serviceUUID], serves
- * [characteristics] and takes the first device that connects. The
- * holder in mdoc peripheral server mode, or the reader in mdoc central
- * client mode (serving [ident]). Bluetooth permissions are the caller's
- * to have checked.
+ * The GATT server's side of a session: advertises [serviceUUID] and
+ * serves [characteristics]. The holder in mdoc peripheral server mode,
+ * or the reader in mdoc central client mode (serving [ident]).
+ * Bluetooth permissions are the caller's to have checked.
+ *
+ * Any device nearby can start a session (State 0x01), since the service
+ * UUID is in the clear in adverts. Each one that does is a candidate,
+ * and [receive] returns each candidate's first message, while it keeps
+ * advertising, until [commit] picks the device whose message Go
+ * accepted; [reject] drops one Go rejected. Only then does it stop
+ * advertising and disconnect the others.
  */
 @SuppressLint("MissingPermission")
 internal class GattServerTransport(
@@ -50,17 +56,34 @@ internal class GattServerTransport(
     private val serviceAdded = CompletableDeferred<Unit>()
     private val advertising = CompletableDeferred<Unit>()
     private val started = CompletableDeferred<Unit>()
+    /** The committed peer's messages. */
     private val incoming = Channel<ByteArray>(INCOMING_MESSAGE_CAPACITY)
+    /** Each candidate's first message, until one is committed to. */
+    private val firsts = Channel<Pair<BluetoothDevice, ByteArray>>(2 * MAX_CANDIDATES)
     private val notified = Channel<Int>(Channel.CONFLATED)
     private val sending = Mutex()
     private val reassembler = BleChunks.Reassembler()
 
+    /** A device that started a session, before one was committed to. */
+    private class Candidate {
+        val reassembler = BleChunks.Reassembler()
+        /** Whether its first message was queued: it sends no more before a reply. */
+        var delivered = false
+    }
+
+    /** Devices that started a session, oldest first; under this object's lock. */
+    private val candidates = LinkedHashMap<BluetoothDevice, Candidate>()
+    /** The candidate whose first message [receive] returned last; under the lock. */
+    private var pending: BluetoothDevice? = null
+    /** Devices dropped ([reject], or a malformed chunk): never again; under the lock. */
+    private val refused = HashSet<BluetoothDevice>()
+
+    /** The device committed to ([commit]): the reader. */
     @Volatile private var peer: BluetoothDevice? = null
     /** Each connected device's MTU, until one becomes the peer. */
     private val mtus = java.util.concurrent.ConcurrentHashMap<BluetoothDevice, Int>()
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var closed = false
-    @Volatile private var sessionStarted = false
     /** Why the session failed, once it has. */
     @Volatile private var failure: ProximityTransportException? = null
     private val bluetoothOff = BluetoothOffWatch { fail(it) }
@@ -87,17 +110,17 @@ internal class GattServerTransport(
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.d(TAG, "connection state $newState (status $status)")
             when (newState) {
-                // The peer is the device that starts the session (a State
-                // write of 0x01), not the first to connect: any device
+                // A candidate is a device that starts a session (a State
+                // write of 0x01), not one that connects: any device
                 // nearby can connect (Android reports other apps' LE
-                // connections here too), and locking onto it would shut
-                // the reader out.
-                BluetoothProfile.STATE_CONNECTED -> if (peer != null && peer != device) {
+                // connections here too). Once committed, or refused, a
+                // device is let go.
+                BluetoothProfile.STATE_CONNECTED -> if (unwanted(device)) {
                     server?.cancelConnection(device)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mtus.remove(device)
-                    if (device == peer) fail(disconnectionFailure(manager))
+                    if (device == peer) fail(disconnectionFailure(manager)) else synchronized(this@GattServerTransport) { candidates.remove(device) }
                 }
             }
         }
@@ -128,39 +151,96 @@ internal class GattServerTransport(
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
             if (responseNeeded) server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-            if (peer == null && characteristic.uuid == characteristics.state && value != null &&
-                value.contentEquals(byteArrayOf(GattCharacteristics.STATE_START))
-            ) {
-                // One reader per session: the one that started it. Stop
-                // being found.
-                peer = device
-                mtus[device]?.let { this@GattServerTransport.mtu = it }
-                stopAdvertising()
-            }
-            if (device != peer || value == null) return
-            when (characteristic.uuid) {
-                characteristics.state -> when {
-                    value.contentEquals(byteArrayOf(GattCharacteristics.STATE_START)) -> {
-                        sessionStarted = true
-                        started.complete(Unit)
-                    }
-                    value.contentEquals(byteArrayOf(GattCharacteristics.STATE_END)) ->
-                        fail(ProximityTransportException("the other device ended the session", peerEnded = true))
-                }
-                characteristics.client2Server -> try {
-                    reassembler.add(value)?.let { message ->
-                        val sent = incoming.trySend(message)
-                        if (sent.isFailure && !sent.isClosed) fail(ProximityTransportException(TOO_MANY_MESSAGES))
-                    }
-                } catch (e: IOException) {
-                    fail(ProximityTransportException("a malformed chunk: ${e.message}", cause = e))
-                }
+            if (value == null) return
+            val p = peer
+            if (p == null) {
+                candidateWrote(device, characteristic.uuid, value)
+            } else if (device == p) {
+                peerWrote(characteristic.uuid, value)
             }
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
             notified.trySend(status)
         }
+    }
+
+    /** Whether [device] is to be let go: another once one is committed to, or one refused. */
+    private fun unwanted(device: BluetoothDevice): Boolean {
+        val p = peer
+        return if (p != null) device != p else synchronized(this) { device in refused }
+    }
+
+    /** The committed peer wrote [value] to [uuid]. */
+    private fun peerWrote(uuid: UUID, value: ByteArray) {
+        when (uuid) {
+            characteristics.state -> if (value.contentEquals(byteArrayOf(GattCharacteristics.STATE_END))) {
+                fail(ProximityTransportException("the other device ended the session", peerEnded = true))
+            }
+            characteristics.client2Server -> try {
+                reassembler.add(value)?.let { message ->
+                    val sent = incoming.trySend(message)
+                    if (sent.isFailure && !sent.isClosed) fail(ProximityTransportException(TOO_MANY_MESSAGES))
+                }
+            } catch (e: IOException) {
+                fail(ProximityTransportException("a malformed chunk: ${e.message}", cause = e))
+            }
+        }
+    }
+
+    /**
+     * [device] wrote [value] to [uuid] before a peer was committed to. A
+     * State write of 0x01 makes it a candidate, and its first whole
+     * message goes to [receive]. A malformed chunk refuses it, and 0x02
+     * drops it, ending nothing: it may not be the reader.
+     */
+    private fun candidateWrote(device: BluetoothDevice, uuid: UUID, value: ByteArray) {
+        val start = value.contentEquals(byteArrayOf(GattCharacteristics.STATE_START))
+        val end = value.contentEquals(byteArrayOf(GattCharacteristics.STATE_END))
+        synchronized(this) {
+            if (device in refused) return
+            when {
+                uuid == characteristics.state && start -> addCandidate(device)
+                uuid == characteristics.state && end -> candidates.remove(device)
+                uuid == characteristics.client2Server -> candidateChunk(device, value)
+            }
+        }
+        if (uuid == characteristics.state && start) started.complete(Unit)
+    }
+
+    /**
+     * Makes [device] a candidate, under the lock. With [MAX_CANDIDATES]
+     * already, the oldest that has sent no message yet makes way, so
+     * devices that start sessions and stay silent can't keep the reader
+     * out.
+     */
+    private fun addCandidate(device: BluetoothDevice) {
+        if (device in candidates) return
+        if (candidates.size >= MAX_CANDIDATES) {
+            val silent = candidates.entries.firstOrNull { !it.value.delivered }?.key ?: return
+            candidates.remove(silent)
+        }
+        candidates[device] = Candidate()
+    }
+
+    /** Adds a candidate's chunk, queuing its first whole message, under the lock. */
+    private fun candidateChunk(device: BluetoothDevice, value: ByteArray) {
+        val c = candidates[device]?.takeIf { !it.delivered } ?: return
+        val message = try {
+            c.reassembler.add(value) ?: return
+        } catch (e: IOException) {
+            refuse(device)
+            return
+        }
+        c.delivered = true
+        if (firsts.trySend(device to message).isFailure) refuse(device)
+    }
+
+    /** Forgets [device] for good, letting it go, under the lock. */
+    private fun refuse(device: BluetoothDevice) {
+        candidates.remove(device)
+        refused += device
+        runCatching { server?.cancelConnection(device) }
     }
 
     override suspend fun connect() {
@@ -262,12 +342,48 @@ internal class GattServerTransport(
 
     override suspend fun receive(): ByteArray =
         try {
-            incoming.receive()
+            if (peer != null) {
+                incoming.receive()
+            } else {
+                val (device, message) = firsts.receive()
+                synchronized(this) { pending = device }
+                message
+            }
         } catch (e: ProximityTransportException) {
             throw e
         } catch (e: kotlinx.coroutines.channels.ClosedReceiveChannelException) {
             throw ProximityTransportException("the session ended", peerEnded = true, cause = e)
         }
+
+    @Synchronized override fun reject() {
+        if (peer != null) return
+        val device = pending ?: return
+        pending = null
+        refuse(device)
+    }
+
+    override fun commit() {
+        val others = synchronized(this) {
+            if (peer != null) return
+            // The device whose message Go accepted; before any (a reader
+            // that speaks first), the first to start a session.
+            val chosen = pending?.takeIf { it in candidates } ?: candidates.keys.firstOrNull().takeIf { pending == null }
+            if (chosen == null) {
+                fail(ProximityTransportException("the other device disconnected", peerEnded = true))
+                return
+            }
+            // One reader per session: stop being found, and let the
+            // others go.
+            peer = chosen
+            mtus[chosen]?.let { mtu = it }
+            val others = candidates.keys.filter { it != chosen }
+            candidates.clear()
+            pending = null
+            others
+        }
+        stopAdvertising()
+        others.forEach { runCatching { server?.cancelConnection(it) } }
+    }
 
     /**
      * Why a notification wasn't confirmed in time, with the session
@@ -295,6 +411,7 @@ internal class GattServerTransport(
             failure = e
         }
         incoming.close(e)
+        firsts.close(e)
         if (e.bluetoothUnavailable) notified.close(e)
         serviceAdded.completeExceptionally(e)
         advertising.completeExceptionally(e)
@@ -318,7 +435,7 @@ internal class GattServerTransport(
         stopAdvertising()
         val s = server
         val device = peer
-        if (s != null && device != null && sessionStarted) {
+        if (s != null && device != null) {
             // Best effort: the other side may be gone already.
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -334,6 +451,7 @@ internal class GattServerTransport(
         }
         runCatching { s?.close() }
         incoming.close()
+        firsts.close()
         serviceAdded.cancel()
         advertising.cancel()
         started.cancel()
@@ -341,6 +459,8 @@ internal class GattServerTransport(
 
     private companion object {
         const val TAG = "OID4VCProximity"
+        /** How many devices may start a session at once before one is committed to: a new one displaces the oldest still silent. */
+        const val MAX_CANDIDATES = 8
         const val NOTIFICATION_TIMEOUT_MS = 5_000L
     }
 }

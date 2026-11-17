@@ -115,6 +115,8 @@ internal class CombinedTransport(
 
     override suspend fun send(message: ByteArray): Unit = connected().send(message)
     override suspend fun receive(): ByteArray = connected().receive()
+    override fun reject() = connected().reject()
+    override fun commit() = connected().commit()
     private fun connected(): ProximityTransport = chosen ?: throw ProximityTransportException("engagement not connected")
     override fun close() { arbiter.close(); qr?.close(); nfc.close() }
 }
