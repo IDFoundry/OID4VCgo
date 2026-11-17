@@ -9,6 +9,20 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.81.0 → next
 
+### FAPIgo v0.76.0: an attester's `x5c` must be one path, in order
+
+OID4VCgo now requires FAPIgo v0.76.0; see its UPGRADING.md, section
+v0.76.0. A Wallet Attestation whose `x5c` lists its certificates out
+of order, repeats a subject or a public key, or ends with more than two
+copies of one CA is refused with `invalid_client` at PAR, the Token
+Endpoint and the attested pre-authorized code exchange
+(`server.X5CAttesterChain`). Wallets must send `x5c` leaf first, each
+certificate followed by the one that certifies it, as RFC 7515 §4.1.6
+and HAIP 1.0 require; a CA cross-certified to two anchors may be sent as
+the last two. Before, an unauthenticated caller could send CA
+certificates that certify each other and cost the Authorization Server
+about 60 ms of CPU per request.
+
 ### A Credential Issuer refuses an access token issued for another
 
 An `issuer.Issuer` now refuses an access token whose audience doesn't
