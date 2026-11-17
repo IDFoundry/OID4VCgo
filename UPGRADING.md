@@ -181,6 +181,20 @@ Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
 passes the presentation's hash: `Presentation.SDHash(alg)`.
 `sdjwtvc.Verify` and the verifier already did.
 
+### Issuer chains per response (`verifier`)
+
+`VerifyResponse` verifies each distinct issuer certificate chain once
+per response when `IssuerKeys` is an `X5CIssuerKeyResolver` or
+`MdocIssuerKeys` an `X5ChainIssuerKeyResolver` itself. A resolver of
+your own, one dispatching to several built-in resolvers for instance,
+has each of its calls verified in full, under that call's resolver's
+`LeafPolicy` and `Revocation`. Through a built-in resolver, a response
+is refused as a whole, `malformed`, once
+`MaxFailedIssuerChainsPerResponse` (4) of its distinct issuer chains
+have failed to verify, with any further chain left unverified. Chains
+that verify aren't counted, so a response presenting credentials from
+many issuers isn't refused by it.
+
 ### App Attest chains (`walletprovider/appattest`)
 
 `VerifyAttestation` takes only Apple's chain shape: an `x5c` of exactly
