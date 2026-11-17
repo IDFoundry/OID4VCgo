@@ -54,7 +54,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     /// The committed peer's messages.
     private let incoming = MessageQueue()
     /// Each candidate's first message, until one is committed to.
-    private let firsts = BoundedQueue<FirstMessage>(capacity: 2 * BleCandidates<UUID>.maxCandidates)
+    private let firsts = BoundedQueue<FirstMessage>(capacity: BleCandidates<UUID>.maxFirstMessages)
     private let sending = AsyncMutex()
 
     init(serviceUUID: UUID, characteristics: GattCharacteristics, ident: Data? = nil) {
@@ -321,12 +321,9 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     /// `queue`. With the queue full, that message is refused, not the
     /// ones before it.
     private func candidateChunk(_ value: Data, from id: UUID) {
-        do {
-            guard let message = try candidates.chunk(value, from: id) else { return }
-            if !firsts.offer(FirstMessage(central: id, message: message)) { drop(id, refuse: true) }
-        } catch {
-            drop(id, refuse: true)
-        }
+        candidates.chunk(value, from: id, queueingOn: firsts) { FirstMessage(central: id, message: $0) }
+        // It may have been refused, or have displaced others.
+        if centrals.count > candidates.count { centrals = centrals.filter { candidates.contains($0.key) } }
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {

@@ -31,6 +31,9 @@ enum BleChunks {
     struct Reassembler {
         private var buffer = Data()
 
+        /// The bytes of the message so far.
+        var buffered: Int { buffer.count }
+
         /// Adds `chunk` and returns the whole message when it was the last,
         /// else nil. A chunk with another prefix, or a message over
         /// `maxMessageBytes`, is a protocol error.

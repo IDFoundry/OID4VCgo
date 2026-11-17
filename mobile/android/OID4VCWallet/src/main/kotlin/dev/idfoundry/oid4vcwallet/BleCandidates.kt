@@ -8,20 +8,22 @@ import java.io.IOException
  * their first messages' chunks. Not thread-safe: [GattServerTransport]
  * keeps it under its lock.
  *
- * At most [MAX_CANDIDATES] are listed. A device that starts a session
- * when the list is full displaces the oldest candidate past its
- * [DEADLINE_MS] without a whole message, else the oldest that hasn't
- * sent a chunk; never one partway through its message within its
- * deadline, nor one whose message was handed on. With none to displace,
- * it isn't listed. Each device can be listed [MAX_STARTS] times at most,
- * so devices that only write State can't keep displacing others; one
- * whose message was handed on isn't listed again until Go has judged it.
+ * A device that starts a session is listed, whenever it comes: with
+ * [MAX_CANDIDATES] listed, it displaces the one heard from least
+ * recently (its State 0x01 or its last chunk), never one whose message
+ * was handed on. A chunk that takes the partial messages past
+ * [MAX_BUFFERED_BYTES] displaces others the same way, so memory stays
+ * bounded. However many identities devices that never saw the QR code
+ * use, they can't keep the reader out: displacing it partway through
+ * its message takes [MAX_CANDIDATES] writes from other devices, each
+ * listed or listing itself, between two of its own. Each device can be
+ * listed [MAX_STARTS] times at most, and one whose message was handed on
+ * isn't listed again until Go has judged it, so Go sees one message per
+ * device at a time.
  */
 internal class BleCandidates<ID>(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {
-    private class Candidate(val started: Long) {
+    private class Candidate(var heard: Long) {
         val reassembler = BleChunks.Reassembler()
-        /** Whether a chunk of its first message has arrived. */
-        var receiving = false
         /** Whether its first message was handed on: later chunks are dropped. */
         var delivered = false
     }
@@ -46,19 +48,16 @@ internal class BleCandidates<ID>(private val now: () -> Long = { System.nanoTime
         if (id in candidates) return true
         if (id in refused || id in judging || (starts[id] ?: 0) >= MAX_STARTS) return false
         if (candidates.size >= MAX_CANDIDATES) {
-            candidates.remove(displaceable() ?: return false)
+            candidates.remove(leastRecentlyHeard(except = id) ?: return false)
         }
         starts[id] = (starts[id] ?: 0) + 1
         candidates[id] = Candidate(now())
         return true
     }
 
-    /** The candidate a newcomer displaces, if any. */
-    private fun displaceable(): ID? {
-        val t = now()
-        return candidates.entries.firstOrNull { !it.value.delivered && t - it.value.started > DEADLINE_MS }?.key
-            ?: candidates.entries.firstOrNull { !it.value.delivered && !it.value.receiving }?.key
-    }
+    /** The candidate to displace, other than [except]: the one heard from least recently whose message wasn't handed on. */
+    private fun leastRecentlyHeard(except: ID): ID? =
+        candidates.entries.filter { !it.value.delivered && it.key != except }.minByOrNull { it.value.heard }?.key
 
     /**
      * [id] wrote State 0x02 or disconnected: it is no longer listed. A
@@ -75,11 +74,28 @@ internal class BleCandidates<ID>(private val now: () -> Long = { System.nanoTime
     @Throws(IOException::class)
     fun chunk(id: ID, value: ByteArray): ByteArray? {
         val c = candidates[id]?.takeIf { !it.delivered } ?: return null
-        c.receiving = true
-        val message = c.reassembler.add(value) ?: return null
+        val message = c.reassembler.add(value)
+        c.heard = now()
+        if (message == null) {
+            makeRoom(keeping = id)
+            return null
+        }
         c.delivered = true
         judging += id
         return message
+    }
+
+    /**
+     * Displaces others, least recently heard first, until the partial
+     * messages fit [MAX_BUFFERED_BYTES]. [keeping]'s own is at most
+     * [BleChunks.MAX_MESSAGE_BYTES], so it always fits.
+     */
+    private fun makeRoom(keeping: ID) {
+        var buffered = candidates.values.sumOf { it.reassembler.buffered }
+        while (buffered > MAX_BUFFERED_BYTES) {
+            val other = leastRecentlyHeard(except = keeping) ?: return
+            buffered -= candidates.remove(other)?.reassembler?.buffered ?: 0
+        }
     }
 
     /** Forgets [id] and ignores it from now on. */
@@ -102,14 +118,17 @@ internal class BleCandidates<ID>(private val now: () -> Long = { System.nanoTime
     }
 
     companion object {
-        /** How many devices may start a session at once. */
-        const val MAX_CANDIDATES: Int = 8
+        /** How many devices may be listed at once. */
+        const val MAX_CANDIDATES: Int = 64
         /**
-         * How long, from its State 0x01, a candidate keeps its place while
-         * its first message arrives. Past it, a newcomer may displace it.
+         * How many bytes the listed devices' partial messages may hold in
+         * all: room for a whole message of [BleChunks.MAX_MESSAGE_BYTES]
+         * and as much again.
          */
-        const val DEADLINE_MS: Long = 10_000
+        const val MAX_BUFFERED_BYTES: Int = 2 * BleChunks.MAX_MESSAGE_BYTES
         /** How many times one device may be listed. */
         const val MAX_STARTS: Int = 3
+        /** How many first messages may wait for Go: more is a refused device. */
+        const val MAX_FIRST_MESSAGES: Int = 16
     }
 }

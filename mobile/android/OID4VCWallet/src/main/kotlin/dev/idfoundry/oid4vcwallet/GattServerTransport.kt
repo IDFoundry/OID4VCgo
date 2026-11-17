@@ -59,7 +59,7 @@ internal class GattServerTransport(
     /** The committed peer's messages. */
     private val incoming = Channel<ByteArray>(INCOMING_MESSAGE_CAPACITY)
     /** Each candidate's first message, until one is committed to. */
-    private val firsts = Channel<Pair<BluetoothDevice, ByteArray>>(2 * BleCandidates.MAX_CANDIDATES)
+    private val firsts = Channel<Pair<BluetoothDevice, ByteArray>>(BleCandidates.MAX_FIRST_MESSAGES)
     private val notified = Channel<Int>(Channel.CONFLATED)
     private val sending = Mutex()
     private val reassembler = BleChunks.Reassembler()
