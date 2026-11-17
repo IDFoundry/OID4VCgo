@@ -350,6 +350,17 @@ return `ErrConfig` (the provider's HTTP 500) for an instance of
 another Kind than `androidkey.EvidenceKind`, where they accepted it:
 don't serve the adapter under a Kind of your own.
 
+### DCQL queries over the limits are refused before duplicates are dropped (`wallet`, `walletflow`, mobile)
+
+A presentation request whose DCQL query has more than 64 credential
+queries (`dcql.MaxCredentialQueries`), or a credential query with more
+than 256 claims queries (`dcql.MaxClaimsPerCredential`), is now
+refused as malformed, duplicates counted. v0.81.0 dropped duplicate
+claims queries first, so a credential query repeating the same claims
+over the limit used to be answered. Also, a claims query value of `-0`
+is no longer a duplicate of one of `0`. A Verifier keeps its query
+within the limits, without repeats.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet
