@@ -118,11 +118,14 @@ func (s Settings) Verifier() (*AccessVerifier, error) {
 }
 
 // Prefetch starts fetching the team's keys in the background, unless a
-// fetch is already in flight; a failure is logged.
+// fetch is already in flight; a failure is logged. A failed prefetch
+// doesn't hold off the next fetch, as one a request starts does: the
+// network may not be up yet as the server starts, and the first request
+// then fetches the keys itself.
 func (v *AccessVerifier) Prefetch() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.startFetch(context.Background())
+	v.startFetch(context.Background(), false)
 }
 
 // accessClaims are the claims Verify checks.
@@ -215,11 +218,11 @@ func decodeSegment(seg string, into any) error {
 
 // key is the team's signing key kid. The keys are fetched when they're
 // stale, or when kid is unknown and they weren't fetched in the last
-// keysRefetchAfter; after a failed fetch, none is tried again for
-// keysRefetchAfter, and the keys fetched before stay in use. One fetch
-// runs at a time, detached from ctx (with a timeout of its own) and
-// without holding v.mu: a request that gives up waiting, its client
-// gone, leaves it to finish for the requests after it.
+// keysRefetchAfter; after a failed fetch a request started, none is
+// tried again for keysRefetchAfter, and the keys fetched before stay in
+// use. One fetch runs at a time, detached from ctx (with a timeout of
+// its own) and without holding v.mu: a request that gives up waiting,
+// its client gone, leaves it to finish for the requests after it.
 func (v *AccessVerifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
 	now := v.now()
@@ -234,7 +237,7 @@ func (v *AccessVerifier) key(ctx context.Context, kid string) (*rsa.PublicKey, e
 		v.mu.Unlock()
 		return knownKey(k, held)
 	}
-	f := v.startFetch(ctx)
+	f := v.startFetch(ctx, true)
 	v.mu.Unlock()
 
 	select {
@@ -259,8 +262,9 @@ func knownKey(k *rsa.PublicKey, held bool) (*rsa.PublicKey, error) {
 }
 
 // startFetch is the fetch of the keys in flight, starting one if there
-// is none. v.mu must be held.
-func (v *AccessVerifier) startFetch(ctx context.Context) *keysFetch {
+// is none; should one it starts with backOff fail, none is started
+// again for keysRefetchAfter. v.mu must be held.
+func (v *AccessVerifier) startFetch(ctx context.Context, backOff bool) *keysFetch {
 	if v.fetch != nil {
 		return v.fetch
 	}
@@ -271,10 +275,13 @@ func (v *AccessVerifier) startFetch(ctx context.Context) *keysFetch {
 		keys, err := v.fetchKeys(fctx)
 		cancel()
 		v.mu.Lock()
-		if err != nil {
+		switch {
+		case err != nil && backOff:
 			v.failed = v.now()
 			log.Printf("demoaccess: %v (not retried for %v)", err, keysRefetchAfter)
-		} else {
+		case err != nil:
+			log.Printf("demoaccess: %v (retried on the next request)", err)
+		default:
 			v.keys, v.fetched, v.failed = keys, v.now(), time.Time{}
 		}
 		v.fetch, f.err = nil, err

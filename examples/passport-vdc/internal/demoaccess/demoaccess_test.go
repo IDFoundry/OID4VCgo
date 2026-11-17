@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -124,6 +126,10 @@ type testTeam struct {
 	down   atomic.Bool  // the certs endpoint answers 503
 	// rotated, once set, is published too, as kid "k2".
 	rotated atomic.Pointer[rsa.PrivateKey]
+	// hold, while set, keeps each certs request waiting until release
+	// is closed.
+	hold    atomic.Bool
+	release chan struct{}
 }
 
 func newTestTeam(t *testing.T) *testTeam {
@@ -132,13 +138,16 @@ func newTestTeam(t *testing.T) *testTeam {
 	if err != nil {
 		t.Fatal(err)
 	}
-	team := &testTeam{key: key, kid: "k1"}
+	team := &testTeam{key: key, kid: "k1", release: make(chan struct{})}
 	team.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/cdn-cgi/access/certs" {
 			http.NotFound(w, r)
 			return
 		}
 		team.certs.Add(1)
+		if team.hold.Load() {
+			<-team.release
+		}
 		if team.down.Load() {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
@@ -367,5 +376,72 @@ func TestPrefetch(t *testing.T) {
 	}
 	if n := team.certs.Load(); n != 1 {
 		t.Errorf("certs fetched %d times, want once", n)
+	}
+}
+
+// Requests naming unknown keys while the keys are being fetched share
+// that one fetch, however many there are: a flood of tokens, which
+// needs no credential, costs the team's endpoint one request.
+func TestVerify_ConcurrentRequestsShareOneFetch(t *testing.T) {
+	team := newTestTeam(t)
+	v, _ := newTestVerifier(t, team)
+	team.hold.Store(true)
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = v.Verify(context.Background(), unknownKidToken(fmt.Sprintf("x%d", i)))
+		}()
+	}
+	// Every request has reached the fetch by the time it completes.
+	time.Sleep(200 * time.Millisecond)
+	close(team.release)
+	wg.Wait()
+	if n := team.certs.Load(); n != 1 {
+		t.Errorf("certs fetched %d times for 50 concurrent requests, want once", n)
+	}
+}
+
+// Settings.Verifier starts fetching the team's keys at once, before any
+// request.
+func TestSettingsVerifier_Prefetches(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	if _, err := (Settings{TeamDomain: l.Addr().String(), Audience: "aud-1"}).Verifier(); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	c, err := l.Accept()
+	if err != nil {
+		t.Fatalf("no fetch of the keys started: %v", err)
+	}
+	_ = c.Close()
+}
+
+// A prefetch that fails, the network not up yet as the server starts,
+// doesn't hold off the first request's fetch: the operator's token
+// verifies as soon as the team's endpoint answers.
+func TestPrefetch_FailureDoesntHoldOffRequests(t *testing.T) {
+	team := newTestTeam(t)
+	v, clock := newTestVerifier(t, team)
+	team.down.Store(true)
+	v.Prefetch()
+	v.mu.Lock()
+	f := v.fetch
+	v.mu.Unlock()
+	<-f.done
+	team.down.Store(false)
+	clock.Add(5 * time.Second)
+	if err := v.Verify(context.Background(), team.validToken(t, team.kid, team.key, clock.Now())); err != nil {
+		t.Fatalf("5 s after a failed prefetch: %v", err)
+	}
+	if n := team.certs.Load(); n != 2 {
+		t.Errorf("certs fetched %d times, want twice", n)
 	}
 }
