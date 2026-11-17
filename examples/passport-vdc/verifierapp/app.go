@@ -20,6 +20,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/democrl"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/haip"
@@ -81,6 +82,12 @@ type Config struct {
 	// so wallets that trust its CAs still trust them after a restart.
 	// Empty means new CAs each run.
 	StateDir string
+
+	// Access, if set, is the Cloudflare Access application guarding the
+	// pages under /demo/ at the edge: each request for one must then
+	// carry a token Access signed for it (demoaccess.Guard). Leave it
+	// zero for a local run.
+	Access demoaccess.Settings
 }
 
 // App is a running passport-vdc verifier.
@@ -267,7 +274,11 @@ func New(cfg Config) (*App, error) {
 			return nil, err
 		}
 	}
-	a.handler = a.routes()
+	access, err := cfg.Access.Verifier()
+	if err != nil {
+		return nil, fmt.Errorf("verifierapp: Access: %w", err)
+	}
+	a.handler = demoaccess.Guard(a.routes(), a.origin, access)
 	return a, nil
 }
 

@@ -152,6 +152,9 @@ func (c *dcapiClient) do(method, path, contentType string, body io.Reader) *http
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	if method != http.MethodGet {
+		req.Header.Set("Origin", dcapiOrigin) // the request page's, as a browser sends it
+	}
 	if c.cookie != nil {
 		req.AddCookie(c.cookie)
 	}

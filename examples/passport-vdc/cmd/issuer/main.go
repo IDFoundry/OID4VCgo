@@ -24,6 +24,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 )
@@ -41,6 +42,7 @@ func main() {
 	redirectURIs := flag.String("wallet-redirect-uris", "http://127.0.0.1/callback,https://127.0.0.1:7443/callback", "the demo wallets' redirect URIs, comma-separated (CLI wallet, web wallet)")
 	allowSample := flag.Bool("allow-sample-document", false, "offer to issue gmrtd's sample passport without checking it, simulating an issuer that skipped Passive Authentication (demo only)")
 	webWallet := flag.String("web-wallet", "https://127.0.0.1:7443", "the demo web wallet's URL, for the offer page's \"Open in web wallet\" button (empty to hide it)")
+	access := demoaccess.RegisterFlags(flag.CommandLine)
 	dbPath := flag.String("db", "", "keep the stores in this SQLite file, sealed under a key in FILE.key (default: in memory)")
 	flag.Parse()
 
@@ -61,6 +63,7 @@ func main() {
 			ProviderIssuer: *providerIssuer, ProviderCA: providerCA,
 		},
 		WebWalletURL: *webWallet,
+		Access:       *access,
 	}
 	if *dbPath != "" {
 		if cfg.Database, cfg.DatabaseSealer, err = issuerapp.OpenDatabase(*dbPath, *dbPath+".key"); err != nil {

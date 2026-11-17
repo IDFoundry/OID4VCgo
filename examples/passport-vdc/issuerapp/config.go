@@ -46,6 +46,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/sqlstore"
 )
 
@@ -120,6 +121,12 @@ type Config struct {
 	// DatabaseSealer seals Database's records, which carry passport
 	// data (a deferred issuance's credentials): required with Database.
 	DatabaseSealer sqlstore.Sealer
+
+	// Access, if set, is the Cloudflare Access application guarding the
+	// pages under /demo/ at the edge: each request for one must then
+	// carry a token Access signed for it (demoaccess.Guard). Leave it
+	// zero for a local run.
+	Access demoaccess.Settings
 }
 
 // WalletClient registers the demo Wallet: a client authenticated by

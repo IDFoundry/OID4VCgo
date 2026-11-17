@@ -50,6 +50,7 @@ import (
 
 	"github.com/gmrtd/gmrtd/cms"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotls"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/verifierapp"
@@ -86,6 +87,7 @@ func main() {
 	var iosApps walletprovider.IOSAppsFlag
 	flag.Var(&iosApps, "ios-app", walletprovider.IOSAppsUsage)
 	db := flag.Bool("db", false, "keep the issuer's stores in a SQLite database in the state directory (issuer/stores.db) rather than in memory")
+	access := demoaccess.RegisterFlags(flag.CommandLine)
 	requireHardware := flag.Bool("require-hardware-key-attestation", false, "have the Wallet Provider refuse an Android key whose attestation chain isn't from hardware Google vouches for (an emulator's, say), rather than only log it; a key sent without a chain (iOS, the CLI and web wallets) is still attested")
 	flag.Parse()
 	urls := serviceURLs{issuer: *issuerURL, verifier: *verifierURL, provider: *providerURL}
@@ -100,7 +102,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware, db: *db, androidApps: androidApps, iosApps: iosApps}); err != nil {
+	if err := run(ctx, options{state: *state, open: *open, chrome: *chrome, urls: urls, requireHardware: *requireHardware, db: *db, androidApps: androidApps, iosApps: iosApps, access: *access}); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -155,6 +157,9 @@ type options struct {
 	androidApps walletprovider.AndroidAppsFlag
 	// iosApps: the iOS apps whose keys it attests with App Attest.
 	iosApps walletprovider.IOSAppsFlag
+	// access: the Cloudflare Access application guarding the issuer's
+	// and verifier's pages under /demo/, if any.
+	access demoaccess.Settings
 }
 
 // serviceURLs are the URLs the issuer, verifier and Wallet Provider are
@@ -242,6 +247,7 @@ func run(ctx context.Context, opts options) error {
 		},
 		IssuerURL: issuerURL, CSCAPool: csca, StateDir: issuerState, WebWalletURL: walletURL,
 		AllowSampleDocument: true, // run the demo without a passport, and show the trust paths' difference
+		Access:              opts.access,
 		Wallet: issuerapp.WalletClient{
 			ClientID: walletClientID, RedirectURIs: []string{cliRedirectURI, iosRedirectURI, walletURL + "/callback"},
 			ProviderIssuer: providerIssuer, ProviderCA: provider.CACertificatePEM(),
@@ -262,7 +268,7 @@ func run(ctx context.Context, opts options) error {
 	verifier, err := verifierapp.New(verifierapp.Config{
 		VerifierURL: verifierURL, IssuerVCT: issuerURL + issuerapp.VCTPath,
 		IssuerCAs: []*x509.Certificate{issuer.IssuerCACertificate()}, CSCAPool: csca,
-		WebWalletURL: walletURL, HTTP: httpClient, StateDir: verifierState,
+		WebWalletURL: walletURL, HTTP: httpClient, StateDir: verifierState, Access: opts.access,
 	})
 	if err != nil {
 		return err

@@ -17,6 +17,13 @@ import (
 const (
 	challengeRate  = 1.0
 	challengeBurst = 20.0
+	// The older protocol's attestation endpoints' limit for each client
+	// address, looser than the challenges': each credential a wallet
+	// receives takes a Wallet and a Key Attestation, and behind a
+	// tunnel every wallet shares one address. It slows a client
+	// registering instances; maxDemoInstances bounds them.
+	attestationRate  = 2.0
+	attestationBurst = 60.0
 	// maxLimitedClients bounds the addresses tracked; past it, the one
 	// heard from least recently is forgotten, so a new address is never
 	// turned away for want of room.

@@ -42,7 +42,9 @@ the cover. An app on the library should do the same. Issuer logos are
 URLs the issuer chose: fetch one once, when the holder accepts the
 credential, and keep it, rather than loading it on the offer's preview
 (which tells the issuer, or a tracker it names, that the offer was
-opened).
+opened) or on each display, which would tell it whenever the holder
+opens the wallet or is asked for the credential. The demo keeps them in
+its Application Support directory (`LogoStore` in `WalletModel.swift`).
 
 ## Configuration
 
@@ -263,6 +265,11 @@ open a verifier scenario in Safari on the phone and choose *Verify with
 an ID in this browser*. The first time a Photo ID is received, iOS asks
 whether the app may provide documents.
 
+The sheet names the website iOS vouches for. A reader whose
+certificate chains to the configured reader roots is shown by the name
+it claims, marked not yet verified: its signature is checked in Go when
+the response is built, after Face ID, which names only the website.
+
 A page asking for several documents gets a section per document the
 wallet holds, each with its own choice of credential and a switch to
 leave it out, and the documents it doesn't hold are named. "Share 2"
@@ -341,6 +348,13 @@ open. So one Access rule per host guards them:
    emails a code, with no identity provider to set up.
 4. Save. Don't add `provider.example.com`: the app calls it, with no
    one to log in.
+5. Have the servers check Access's token too, so a request that reaches
+   them some other way is refused: copy the application's
+   **Application Audience (AUD) Tag** (its **Overview** tab) and your
+   team domain (`<team>.cloudflareaccess.com`, in Zero Trust's
+   **Settings**), and start the demo with
+   `-cf-access-team-domain <team>.cloudflareaccess.com -cf-access-aud <tag>`.
+   Both hostnames are in the one application, so one tag covers them.
 
 Opening `https://issuer.example.com/` then asks for your email and the
 code once, and the phone, which uses only the endpoints outside

@@ -44,20 +44,12 @@ PORTS="$(printf '%s\n%s\n%s' "$(cat "$WORK/config.json" "$WORK/services.log")" "
 	| grep -oE '127\.0\.0\.1:[0-9]+' | cut -d: -f2 | sort -u)"
 for p in $PORTS; do "$ADB" reverse "tcp:$p" "tcp:$p" >/dev/null; done
 
-# The app takes the CA from its external files directory, which it
-# creates when first run (from Android 11, adb can't create it).
+# The app takes the CA only from its internal files directory: it goes
+# there through run-as (the debug build allows it).
 (cd .. && ./gradlew -q :DemoWallet:installDebug)
-FILES=/sdcard/Android/data/$PKG/files
-"$ADB" shell am start -W -n "$PKG/.MainActivity" >/dev/null
-"$ADB" shell am force-stop "$PKG"
-"$ADB" shell mkdir -p "$FILES" 2>/dev/null || true
-# Where adb can't write there (Android 11), the CA goes straight to
-# where the app keeps it, through run-as (the debug build allows it).
-if ! "$ADB" push -q "$WORK/services.pem" "$FILES/dev-ca.pem" 2>/dev/null; then
-	"$ADB" push -q "$WORK/services.pem" /data/local/tmp/dev-ca.pem
-	"$ADB" shell "run-as $PKG sh -c 'mkdir -p files && cp /data/local/tmp/dev-ca.pem files/dev-ca.pem'"
-	"$ADB" shell rm -f /data/local/tmp/dev-ca.pem
-fi
+"$ADB" push -q "$WORK/services.pem" /data/local/tmp/dev-ca.pem
+"$ADB" shell "run-as $PKG sh -c 'mkdir -p files && cp /data/local/tmp/dev-ca.pem files/dev-ca.pem'"
+"$ADB" shell rm -f /data/local/tmp/dev-ca.pem
 
 # The authorization code tests sign in at the issuer in Chrome, which
 # accepts the services' self-signed certificate by its key (an SPKI

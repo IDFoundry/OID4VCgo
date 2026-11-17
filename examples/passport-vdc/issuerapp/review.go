@@ -14,6 +14,7 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/passport"
 	"github.com/idfoundry/oid4vcgo/issuer"
@@ -356,7 +357,7 @@ func (a *App) handleReviewStatus(w http.ResponseWriter, _ *http.Request) {
 // handleReviewDecision records a decision. A cross-origin form post is
 // refused, so another site can't decide through a visitor's browser.
 func (a *App) handleReviewDecision(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin decision refused")
 		return
 	}

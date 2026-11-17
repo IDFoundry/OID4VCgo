@@ -488,6 +488,8 @@ final class WalletModel {
         // app quitting.
         await closeIssuance()
         for d in result.deferred { track(d) }
+        // Accepted: keep their logos now, so showing them fetches nothing.
+        await LogoStore.fetch(for: result.credentials)
     }
 
     // MARK: Deferred credentials
@@ -547,9 +549,10 @@ final class WalletModel {
             case .pending(let interval):
                 update(id) { $0.state = .waiting; $0.intervalSeconds = interval }
                 schedule(id)
-            case .issued:
+            case .issued(let summary):
                 forget(id)
                 phase = .done("Received a deferred credential")
+                await LogoStore.fetch(for: [summary])
                 await refresh()
             }
         } catch let e as WalletError where e.code == .credentialDenied {
@@ -824,5 +827,84 @@ final class WalletModel {
         issuance = nil
         offer = nil
         authorized = false
+    }
+}
+
+/// Issuers' logos, kept on the device. Each https logo is fetched once,
+/// when the holder accepts a credential (`fetch(for:)`), and shown from
+/// here after: loading it on each display, the home list's or a consent
+/// screen's, would tell its issuer whenever the holder opens the wallet
+/// or is asked for the credential (`Logo`'s own guidance). A `data:`
+/// logo is decoded in place, with nothing fetched.
+@MainActor
+enum LogoStore {
+    /// The largest logo kept.
+    static let maxBytes = 512 * 1024
+
+    private static var images: [String: UIImage] = [:]
+
+    private static var directory: URL? {
+        try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("Logos", isDirectory: true)
+    }
+
+    /// The logo's image, if it's a `data:` image or was kept when its
+    /// credential was accepted; nothing is fetched.
+    static func image(for logo: Logo?) -> UIImage? {
+        guard let logo else { return nil }
+        if let image = images[logo.uri] { return image }
+        let data = logo.uri.hasPrefix("data:") ? decodeDataURL(logo.uri) : file(for: logo.uri).flatMap { try? Data(contentsOf: $0) }
+        guard let data, let image = UIImage(data: data) else { return nil }
+        images[logo.uri] = image
+        return image
+    }
+
+    /// Fetches and keeps the https logos of `credentials` not kept yet:
+    /// once, as they're accepted. A logo that fails to load is left out.
+    static func fetch(for credentials: [CredentialSummary]) async {
+        let logos = Set(credentials.flatMap { [$0.display?.logo?.uri, $0.display?.issuerLogo?.uri] }.compactMap { $0 })
+        for uri in logos where uri.hasPrefix("https:") {
+            guard let path = file(for: uri), !FileManager.default.fileExists(atPath: path.path) else { continue }
+            guard let url = URL(string: uri), let data = await download(url), UIImage(data: data) != nil else { continue }
+            try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: path, options: [.atomic, .completeFileProtection])
+        }
+    }
+
+    /// `url`'s body, at most `maxBytes`, with no cookies or cache.
+    private static func download(_ url: URL) async -> Data? {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+        guard let (bytes, response) = try? await session.bytes(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              response.expectedContentLength <= Int64(maxBytes) else { return nil }
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                data.append(byte)
+                if data.count > maxBytes { return nil }
+            }
+        } catch {
+            return nil
+        }
+        return data
+    }
+
+    /// Where the logo at `uri` is kept: named by its SHA-256.
+    private static func file(for uri: String) -> URL? {
+        let name = SHA256.hash(data: Data(uri.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory?.appendingPathComponent(name)
+    }
+
+    /// A `data:` URL's bytes: base64 or percent-encoded.
+    private static func decodeDataURL(_ uri: String) -> Data? {
+        guard let comma = uri.firstIndex(of: ",") else { return nil }
+        let header = uri[..<comma]
+        let payload = String(uri[uri.index(after: comma)...])
+        if header.hasSuffix(";base64") { return Data(base64Encoded: payload) }
+        return payload.removingPercentEncoding.map { Data($0.utf8) }
     }
 }

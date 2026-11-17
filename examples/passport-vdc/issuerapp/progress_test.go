@@ -28,7 +28,7 @@ func offerBrowser(t *testing.T, env *demotest.Env, form url.Values) (b *http.Cli
 		t.Fatal(err)
 	}
 	c.Jar = jar
-	resp, err := c.PostForm(env.IssuerURL+"/demo/sample", form)
+	resp, err := demotest.PostForm(&c, env.IssuerURL+"/demo/sample", form)
 	if err != nil {
 		t.Fatal(err)
 	}

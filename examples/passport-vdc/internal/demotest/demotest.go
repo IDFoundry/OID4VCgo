@@ -11,8 +11,11 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -177,6 +180,24 @@ func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: e.roots, MinVersion: tls.VersionTLS12}},
 	}
+}
+
+// Post posts body, of contentType, to rawURL with c as a page of
+// rawURL's own origin does, with that Origin: the pages under /demo/
+// refuse a state-changing request with none (demoaccess.Guard).
+func Post(c *http.Client, rawURL, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Origin", req.URL.Scheme+"://"+req.URL.Host)
+	return c.Do(req)
+}
+
+// PostForm is Post with form, URL-encoded.
+func PostForm(c *http.Client, rawURL string, form url.Values) (*http.Response, error) {
+	return Post(c, rawURL, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
 }
 
 // WalletConfig is the demo wallet's configuration for this Env.

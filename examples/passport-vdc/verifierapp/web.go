@@ -14,6 +14,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoqr"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 )
@@ -397,8 +398,14 @@ func (a *App) handleHome(w http.ResponseWriter, _ *http.Request) {
 const sessionCookie = "passport_vdc_verifier_session"
 
 // handleCreateRequest starts a request from the browser, bound to its
-// session cookie (set here if it has none yet).
+// session cookie (set here if it has none yet). A form another site
+// posts is refused before any session is made: the browser sends no
+// Lax cookie with it, so its Set-Cookie would replace the operator's.
 func (a *App) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
+	if !demoaccess.SameOrigin(r, a.origin) {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "malformed form", http.StatusBadRequest)
 		return

@@ -10,6 +10,7 @@ import (
 
 	"github.com/idfoundry/fapigo/server"
 
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoui"
 )
 
@@ -122,7 +123,7 @@ func (a *App) handleKeptPage(w http.ResponseWriter, _ *http.Request) {
 // handleForget forgets a kept passport. A cross-origin form post is
 // refused, so another site can't forget one through a visitor's browser.
 func (a *App) handleForget(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.IssuerURL {
+	if !demoaccess.SameOrigin(r, a.origin) {
 		a.writeHTMLError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}

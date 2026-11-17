@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/statefile"
 	wp "github.com/idfoundry/oid4vcgo/walletprovider"
@@ -353,4 +356,64 @@ func cloneInstanceKey(ik wp.InstanceKey) wp.InstanceKey {
 	ik.Key = slices.Clone(ik.Key)
 	ik.EvidenceFacts = slices.Clone(ik.EvidenceFacts)
 	return ik
+}
+
+// pruneDemoInstances deletes, with their instance keys, the instances
+// the older protocol registered (on DemoPlatform, other than the shared
+// Key Attestation instance) that were last seen before idleBefore, and
+// then the least recently seen of them past the newest keep, returning
+// how many it deleted. The older protocol registers an instance for
+// any new instance key, from any caller, so these are bounded and
+// expire; a wallet whose instance went registers a new one with its
+// next Wallet Attestation, as the protocol lets any caller do. The
+// status list indices of their keys aren't reused.
+func (s *fileInstanceStore) pruneDemoInstances(idleBefore time.Time, keep int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	demo := s.demoInstancesOldestFirst()
+	n := 0
+	for n < len(demo) && (len(demo)-n > keep || lastSeen(demo[n]).Before(idleBefore)) {
+		n++
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	instances, instanceKeys := maps.Clone(s.state.Instances), maps.Clone(s.state.InstanceKeys)
+	dropped := map[string]bool{}
+	for _, in := range demo[:n] {
+		dropped[in.ID] = true
+		delete(s.state.Instances, in.ID)
+	}
+	maps.DeleteFunc(s.state.InstanceKeys, func(_ string, ik wp.InstanceKey) bool { return dropped[ik.InstanceID] })
+	if err := s.save(); err != nil {
+		s.state.Instances, s.state.InstanceKeys = instances, instanceKeys
+		return 0, err
+	}
+	return n, nil
+}
+
+// demoInstancesOldestFirst lists the instances pruneDemoInstances may
+// delete, the least recently seen first. Called with s.mu held.
+func (s *fileInstanceStore) demoInstancesOldestFirst() []wp.Instance {
+	var out []wp.Instance
+	for id, in := range s.state.Instances {
+		if in.Evidence.Platform == DemoPlatform && id != s.state.HolderInstance {
+			out = append(out, in)
+		}
+	}
+	slices.SortFunc(out, func(a, b wp.Instance) int {
+		if c := lastSeen(a).Compare(lastSeen(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
+// lastSeen is when in was last seen, or registered.
+func lastSeen(in wp.Instance) time.Time {
+	if in.LastSeenAt.IsZero() {
+		return in.CreatedAt
+	}
+	return in.LastSeenAt
 }

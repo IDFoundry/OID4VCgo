@@ -93,9 +93,12 @@ configuration as a demo shortcut; a real reader's key is made in Android
 Keystore and never leaves the device. `mdoc_reader_roots` is the CA the
 wallet recognizes readers by.
 
-With `development`, a `dev-ca.pem` pushed beside it is trusted too: the
-wallet's own requests take it as `development_roots`, since Go reads only
-Android's system CA files. The launch extras `reset` (delete every
+With `development`, in a debuggable build, a `dev-ca.pem` in the app's
+internal files directory (the run scripts copy it there with `run-as`)
+is trusted too: the wallet's own requests take it as
+`development_roots`, since Go reads only Android's system CA files, and
+the demo's Wallet Provider client adds it to the system's CAs for its
+own connections only. The launch extras `reset` (delete every
 credential first), `offer` and `request` (open a link) are for tests.
 
 `provider_url` is the Wallet Provider (`HTTPWalletProvider`). With the

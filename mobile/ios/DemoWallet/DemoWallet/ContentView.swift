@@ -705,19 +705,16 @@ struct CredentialRow: View {
     }
 }
 
-/// An issuer's logo, loaded from its https or data: URL.
+/// An issuer's logo, as kept on the device when its credential was
+/// accepted (LogoStore): showing it fetches nothing.
 struct LogoView: View {
     let logo: Logo?
 
     var body: some View {
-        if let url = logo?.url {
-            AsyncImage(url: url) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                Color.clear
-            }
-            .frame(width: 32, height: 32)
-            .accessibilityLabel(logo?.altText ?? "")
+        if let image = LogoStore.image(for: logo) {
+            Image(uiImage: image).resizable().scaledToFit()
+                .frame(width: 32, height: 32)
+                .accessibilityLabel(logo?.altText ?? "")
         }
     }
 }
