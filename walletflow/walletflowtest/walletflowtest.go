@@ -209,6 +209,12 @@ type Options struct {
 	// Metadata (OpenID4VCI 1.0 §12.2.3) for a wallet that asks for it,
 	// with the signer it returns given the issuer's identifier.
 	SignMetadata func(issuerURL string) *issuer.MetadataSigner
+
+	// extraResources are resources the Authorization Server accepts
+	// besides the Credential Issuer, as one serving other Credential
+	// Issuers too would: set by this package's tests only, to check
+	// that the consent step grants the Credential Issuer alone.
+	extraResources []string
 }
 
 // Env is a running issuer and Wallet Provider.
@@ -305,7 +311,7 @@ func New(opts Options) (env *Env, err error) {
 	asCfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
 	// The Credential Issuer is the one resource its tokens may be
 	// restricted to (RFC 8707).
-	asCfg.Resources = []string{e.issuerURL().String()}
+	asCfg.Resources = append([]string{e.issuerURL().String()}, opts.extraResources...)
 	clientCfg := haip.RecommendedWalletClient(fapi.ClientID(ClientID), ProviderIssuer)
 	// A wallet is a native app: its redirect URIs may be private-use
 	// schemes and loopback http too (RFC 8252), in production as well.
