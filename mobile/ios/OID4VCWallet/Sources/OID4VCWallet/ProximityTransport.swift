@@ -71,49 +71,104 @@ protocol ProximityTransport: AnyObject, Sendable {
     /// Ends the session: 0x02 to State if it started, disconnects, stops
     /// advertising or scanning. Calling it again does nothing.
     func close()
+    /// The device whose message `receive` returned last isn't this
+    /// session's reader (Go rejected it): drop it, and have `receive`
+    /// return the next first message, from any other device. A transport
+    /// with one peer keeps it.
+    func reject()
+    /// The device whose message `receive` returned last is this
+    /// session's reader (Go accepted it): stop looking for others, and
+    /// from now on send to it and receive only from it. Before `send`,
+    /// a GATT server whose `receive` returned nothing yet commits to the
+    /// first device that started the session. Calling it again does
+    /// nothing.
+    func commit()
+}
+
+extension ProximityTransport {
+    func reject() {
+        // One peer: nothing else to wait for.
+    }
+
+    func commit() {
+        // One peer: already committed.
+    }
 }
 
 /// Several transports at once, for a holder offering both BLE modes: it
-/// advertises and scans until a reader connects either way, keeps that
-/// transport and closes the others. It fails only once every one has.
+/// advertises and scans until a reader connects either way, and keeps
+/// every way open until Go accepts a first message (`commit`): that
+/// transport is kept and the others closed. A device that only starts a
+/// session, or sends a first message Go rejects, closes nothing. It
+/// fails only once every transport has.
 final class EitherTransport: ProximityTransport, @unchecked Sendable {
+    /// A transport's first message, before one is chosen.
+    private struct Arrival: Sendable {
+        let index: Int
+        let message: Data
+    }
+
     private let transports: [any ProximityTransport]
     private let lock = NSLock()
+    // Under `lock`.
     private var chosen: (any ProximityTransport)?
+    /// The transport whose message `receive` returned last.
+    private var pending: Int?
+    /// Each transport's wait for Go's verdict on its message: true when
+    /// it was chosen.
+    private var verdicts: [Int: Pending<Bool>] = [:]
+    private var failures: [any Error] = []
+    private var pumps: [Task<Void, Never>] = []
+
+    private let started = Signal()
+    private let arrivals = BoundedQueue<Arrival>()
 
     init(_ transports: [any ProximityTransport]) { self.transports = transports }
 
-    /// The one that connected.
+    /// The one chosen.
     var connected: (any ProximityTransport)? { lock.withLock { chosen } }
 
+    /// Starts every transport and returns once one has connected.
     func connect() async throws {
-        let winner: any ProximityTransport = try await withThrowingTaskGroup(of: Result<Int, any Error>.self) { group in
-            for (i, t) in transports.enumerated() {
-                group.addTask {
-                    do {
-                        try await t.connect()
-                        return .success(i)
-                    } catch {
-                        return .failure(error)
-                    }
-                }
-            }
-            var failure: (any Error)?
-            for try await result in group {
-                switch result {
-                case .success(let i):
-                    // Closing ends the others' connect, which the group
-                    // waits for before it returns.
-                    for (j, t) in transports.enumerated() where j != i { t.close() }
-                    group.cancelAll()
-                    return transports[i]
-                case .failure(let error):
-                    failure = failure ?? error
-                }
-            }
-            throw failure ?? ProximityTransportError("couldn't connect")
+        lock.withLock {
+            guard pumps.isEmpty else { return }
+            pumps = transports.indices.map { i in Task { [self] in await pump(i) } }
         }
-        lock.withLock { chosen = winner }
+        try await started.wait()
+    }
+
+    /// Connects transport `i`, then hands each first message it receives
+    /// to `receive`, waiting for Go's verdict before the next: until it
+    /// is chosen, when its messages go to `receive` directly.
+    private func pump(_ i: Int) async {
+        let t = transports[i]
+        do {
+            try await t.connect()
+            started.signal()
+            while true {
+                let message = try await t.receive()
+                let verdict = Pending<Bool>()
+                lock.withLock { verdicts[i] = verdict }
+                guard arrivals.push(Arrival(index: i, message: message)) else {
+                    throw ProximityTransportError("too many unread messages")
+                }
+                if try await verdict.wait() { return }
+            }
+        } catch {
+            failed(error)
+        }
+    }
+
+    /// A transport failed: the whole fails once every one has, unless
+    /// one was chosen.
+    private func failed(_ error: any Error) {
+        let all: (any Error)? = lock.withLock {
+            failures.append(error)
+            return failures.count == transports.count && chosen == nil ? failures[0] : nil
+        }
+        guard let all else { return }
+        started.fail(all)
+        arrivals.end(all)
     }
 
     func send(_ message: Data) async throws {
@@ -122,12 +177,42 @@ final class EitherTransport: ProximityTransport, @unchecked Sendable {
     }
 
     func receive() async throws -> Data {
-        guard let t = connected else { throw ProximityTransportError("the session hasn't started") }
-        return try await t.receive()
+        if let t = connected { return try await t.receive() }
+        let arrival = try await arrivals.receive()
+        lock.withLock { pending = arrival.index }
+        return arrival.message
+    }
+
+    func reject() {
+        let rejected: (Int, Pending<Bool>?)? = lock.withLock {
+            guard chosen == nil, let i = pending else { return nil }
+            pending = nil
+            return (i, verdicts.removeValue(forKey: i))
+        }
+        guard let (i, verdict) = rejected else { return }
+        transports[i].reject()
+        verdict?.resolve(.success(false))
+    }
+
+    func commit() {
+        let won: (Int, Pending<Bool>?)? = lock.withLock {
+            guard chosen == nil, let i = pending else { return nil }
+            chosen = transports[i]
+            return (i, verdicts.removeValue(forKey: i))
+        }
+        guard let (i, verdict) = won else { return }
+        transports[i].commit()
+        verdict?.resolve(.success(true))
+        for (j, t) in transports.enumerated() where j != i { t.close() }
     }
 
     func close() {
+        let tasks = lock.withLock { pumps }
         for t in transports { t.close() }
+        for task in tasks { task.cancel() }
+        let ended = ProximityTransportError("the session ended", peerEnded: true)
+        started.fail(ended)
+        arrivals.end(ended)
     }
 }
 
@@ -170,25 +255,33 @@ struct GattCharacteristics: @unchecked Sendable {
 }
 
 /// Whole messages waiting for `receive`, and the error that ended them.
-final class MessageQueue: @unchecked Sendable {
+typealias MessageQueue = BoundedQueue<Data>
+
+/// Values waiting for `receive`, oldest first, and the error that ended them.
+final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
     /// How many unread messages it keeps. A session reads each message
     /// before the next is due, so more is a misbehaving peer, not one to
     /// buffer for.
-    static let capacity = 4
+    static var capacity: Int { 4 }
+
+    /// How many unread values this one keeps: `capacity` unless given.
+    private let limit: Int
+
+    init(capacity: Int = BoundedQueue.capacity) { limit = capacity }
 
     private let lock = NSLock()
-    private var messages: [Data] = []
+    private var messages: [Element] = []
     /// The `receive`s waiting, oldest first: each message goes to the
     /// oldest. Each is kept, never overwritten by a later one, so each
     /// is resumed (a dropped continuation never is, and its task waits
     /// forever), and a cancelled one resumes only its own.
-    private var waiters: [(id: UUID, continuation: CheckedContinuation<Data, any Error>)] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Element, any Error>)] = []
     private var ended: (any Error)?
 
-    /// Queues message for `receive`. False when `capacity` messages are
+    /// Queues message for `receive`. False when its limit of messages are
     /// already unread: they're dropped, and the transport should end the
     /// session.
-    func push(_ message: Data) -> Bool {
+    func push(_ message: Element) -> Bool {
         lock.lock()
         if ended != nil { lock.unlock(); return true }
         if !waiters.isEmpty {
@@ -197,7 +290,7 @@ final class MessageQueue: @unchecked Sendable {
             w.resume(returning: message)
             return true
         }
-        guard messages.count < Self.capacity else {
+        guard messages.count < limit else {
             messages.removeAll()
             lock.unlock()
             return false
@@ -219,10 +312,10 @@ final class MessageQueue: @unchecked Sendable {
         for w in ws { w.resume(throwing: e) }
     }
 
-    func receive() async throws -> Data {
+    func receive() async throws -> Element {
         let id = UUID()
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Data, any Error>) in
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Element, any Error>) in
                 lock.lock()
                 if !messages.isEmpty {
                     let m = messages.removeFirst()

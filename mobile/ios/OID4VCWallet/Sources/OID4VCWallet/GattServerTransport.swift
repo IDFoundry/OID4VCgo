@@ -2,14 +2,40 @@ import CoreBluetooth
 import Foundation
 
 /// The GATT server's side of a session (CBPeripheralManager): advertises
-/// `serviceUUID`, serves `characteristics`, and takes the first central
-/// that subscribes. The holder in mdoc peripheral server mode, or the
-/// reader in mdoc central client mode (serving `ident`). The app's
-/// Info.plist needs NSBluetoothAlwaysUsageDescription.
+/// `serviceUUID` and serves `characteristics`. The holder in mdoc
+/// peripheral server mode, or the reader in mdoc central client mode
+/// (serving `ident`). The app's Info.plist needs
+/// NSBluetoothAlwaysUsageDescription.
+///
+/// Any device nearby can start a session (State 0x01), since the service
+/// UUID is in the clear in adverts. Each one that does is a candidate,
+/// and `receive` returns each candidate's first message, while it keeps
+/// advertising, until `commit` picks the device whose message Go
+/// accepted; `reject` drops one Go rejected. Only then does it stop
+/// advertising and ignore the others.
 ///
 /// iOS doesn't tell a peripheral about disconnections: the central
 /// unsubscribing from Server2Client is taken as the other side ending.
 final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManagerDelegate, @unchecked Sendable {
+    /// How many devices may start a session at once before one is
+    /// committed to: a new one displaces the oldest still silent.
+    static let maxCandidates = 8
+
+    /// A device that started a session, before one was committed to.
+    private struct Candidate {
+        let central: CBCentral
+        var reassembler = BleChunks.Reassembler()
+        /// Whether its first message was queued: it sends no more before
+        /// a reply, so later ones are dropped.
+        var delivered = false
+    }
+
+    /// A candidate's first message.
+    private struct FirstMessage: Sendable {
+        let central: UUID
+        let message: Data
+    }
+
     private let serviceUUID: CBUUID
     private let characteristics: GattCharacteristics
     private let ident: Data?
@@ -19,10 +45,17 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     private var manager: CBPeripheralManager?
     private var state: CBMutableCharacteristic?
     private var server2Client: CBMutableCharacteristic?
+    /// The device committed to (`commit`): the reader.
     private var peer: CBCentral?
     private var reassembler = BleChunks.Reassembler()
+    /// Devices that started a session (State 0x01) before one was
+    /// committed to, oldest first: any of them may be the reader.
+    private var candidates: [Candidate] = []
+    /// The candidate whose first message `receive` returned last.
+    private var pending: UUID?
+    /// Devices dropped (`reject`, or a malformed chunk): never again.
+    private var refused = Set<UUID>()
     private var readyToUpdate: Pending<Void>?
-    private var sessionStarted = false
     private var closed = false
     /// What ended the session, the first time: no chunk is sent after it.
     private var failure: ProximityTransportError?
@@ -31,7 +64,10 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     private let serviceAdded = Signal()
     private let advertising = Signal()
     private let started = Signal()
+    /// The committed peer's messages.
     private let incoming = MessageQueue()
+    /// Each candidate's first message, until one is committed to.
+    private let firsts = BoundedQueue<FirstMessage>(capacity: 2 * maxCandidates)
     private let sending = AsyncMutex()
 
     init(serviceUUID: UUID, characteristics: GattCharacteristics, ident: Data? = nil) {
@@ -110,14 +146,53 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         }
     }
 
-    func receive() async throws -> Data { try await incoming.receive() }
+    func receive() async throws -> Data {
+        if queue.sync(execute: { peer != nil }) { return try await incoming.receive() }
+        let first = try await firsts.receive()
+        queue.sync { pending = first.central }
+        return first.message
+    }
+
+    func reject() {
+        queue.sync {
+            guard peer == nil, let id = pending else { return }
+            pending = nil
+            drop(id, refuse: true)
+        }
+    }
+
+    func commit() {
+        queue.sync {
+            guard peer == nil else { return }
+            // The device whose message Go accepted; before any (a reader
+            // that speaks first), the first to start a session.
+            let chosen = pending.map { id in candidates.first { $0.central.identifier == id } } ?? candidates.first
+            guard let chosen else {
+                fail(ProximityTransportError("the other device disconnected", peerEnded: true))
+                return
+            }
+            // One reader per session: stop being found, and ignore the
+            // others from now on.
+            peer = chosen.central
+            candidates = []
+            pending = nil
+            manager?.stopAdvertising()
+        }
+    }
+
+    /// Forgets candidate `id`, and with `refuse`, ignores it from now on:
+    /// on `queue`.
+    private func drop(_ id: UUID, refuse: Bool) {
+        candidates.removeAll { $0.central.identifier == id }
+        if refuse { refused.insert(id) }
+    }
 
     func close() {
         queue.sync {
             guard !closed else { return }
             closed = true
             if let manager {
-                if sessionStarted, let state, let peer {
+                if let state, let peer {
                     // Best effort: the other side may be gone already.
                     _ = manager.updateValue(GattCharacteristics.end, for: state, onSubscribedCentrals: [peer])
                 }
@@ -129,6 +204,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
         }
         let ended = ProximityTransportError("the session ended", peerEnded: true)
         incoming.end(ended)
+        firsts.end(ended)
         started.fail(ended)
         poweredOn.fail(ended)
     }
@@ -138,6 +214,7 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     private func fail(_ error: ProximityTransportError) {
         if failure == nil { failure = error }
         incoming.end(error)
+        firsts.end(error)
         started.fail(error)
         // A send waiting for room in the queue: fail it now rather than
         // at its timeout. Its chunk was never queued.
@@ -181,47 +258,98 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        // The peer is the device that starts the session (a State write
-        // of 0x01), not the first to subscribe: any device nearby can
-        // subscribe, and locking onto it would shut the reader out.
+        // A candidate is a device that starts a session (a State write
+        // of 0x01), not one that subscribes: any device nearby can
+        // subscribe.
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
-        guard central.identifier == peer?.identifier, characteristic.uuid == characteristics.server2Client else { return }
-        fail(ProximityTransportError("the other device disconnected", peerEnded: true))
+        guard characteristic.uuid == characteristics.server2Client else { return }
+        if let peer {
+            guard central.identifier == peer.identifier else { return }
+            fail(ProximityTransportError("the other device disconnected", peerEnded: true))
+        } else {
+            drop(central.identifier, refuse: false)
+        }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
-            if peer == nil, request.characteristic.uuid == characteristics.state, request.value == GattCharacteristics.start {
-                // One reader per session: the one that started it. Stop
-                // being found.
-                peer = request.central
-                peripheral.stopAdvertising()
-            }
-            guard request.central.identifier == peer?.identifier, let value = request.value else { continue }
-            switch request.characteristic.uuid {
-            case characteristics.state:
-                if value == GattCharacteristics.start {
-                    sessionStarted = true
-                    started.signal()
-                } else if value == GattCharacteristics.end {
-                    fail(ProximityTransportError("the other device ended the session", peerEnded: true))
-                }
-            case characteristics.client2Server:
-                do {
-                    if let message = try reassembler.add(value), !incoming.push(message) {
-                        fail(ProximityTransportError("too many unread messages from the other device"))
-                    }
-                } catch {
-                    fail(ProximityTransportError("a malformed chunk: \(error)"))
-                }
-            default:
-                break
+            guard let value = request.value else { continue }
+            if let peer {
+                if request.central.identifier == peer.identifier { peerWrote(value, to: request.characteristic.uuid) }
+            } else {
+                candidateWrote(value, to: request.characteristic.uuid, from: request.central)
             }
         }
         // Writes without response need no answer; any other gets success.
         if let first = requests.first { peripheral.respond(to: first, withResult: .success) }
+    }
+
+    /// The committed peer wrote `value`: on `queue`.
+    private func peerWrote(_ value: Data, to characteristic: CBUUID) {
+        switch characteristic {
+        case characteristics.state:
+            if value == GattCharacteristics.end {
+                fail(ProximityTransportError("the other device ended the session", peerEnded: true))
+            }
+        case characteristics.client2Server:
+            do {
+                if let message = try reassembler.add(value), !incoming.push(message) {
+                    fail(ProximityTransportError("too many unread messages from the other device"))
+                }
+            } catch {
+                fail(ProximityTransportError("a malformed chunk: \(error)"))
+            }
+        default:
+            break
+        }
+    }
+
+    /// `central` wrote `value` before a peer was committed to: on
+    /// `queue`. A State write of 0x01 makes it a candidate, and its first
+    /// whole message goes to `receive`. A malformed chunk refuses it, and
+    /// 0x02 drops it, ending nothing: it may not be the reader.
+    private func candidateWrote(_ value: Data, to characteristic: CBUUID, from central: CBCentral) {
+        let id = central.identifier
+        guard !refused.contains(id) else { return }
+        switch characteristic {
+        case characteristics.state where value == GattCharacteristics.start:
+            addCandidate(central)
+            started.signal()
+        case characteristics.state where value == GattCharacteristics.end:
+            drop(id, refuse: false)
+        case characteristics.client2Server:
+            candidateChunk(value, from: id)
+        default:
+            break
+        }
+    }
+
+    /// Makes `central` a candidate: on `queue`. With `maxCandidates`
+    /// already, the oldest that has sent no message yet makes way, so
+    /// devices that start sessions and stay silent can't keep the reader
+    /// out.
+    private func addCandidate(_ central: CBCentral) {
+        guard !candidates.contains(where: { $0.central.identifier == central.identifier }) else { return }
+        if candidates.count >= Self.maxCandidates {
+            guard let silent = candidates.firstIndex(where: { !$0.delivered }) else { return }
+            candidates.remove(at: silent)
+        }
+        candidates.append(Candidate(central: central))
+    }
+
+    /// Adds a candidate's chunk, queuing its first whole message: on
+    /// `queue`.
+    private func candidateChunk(_ value: Data, from id: UUID) {
+        guard let i = candidates.firstIndex(where: { $0.central.identifier == id }), !candidates[i].delivered else { return }
+        do {
+            guard let message = try candidates[i].reassembler.add(value) else { return }
+            candidates[i].delivered = true
+            if !firsts.push(FirstMessage(central: id, message: message)) { drop(id, refuse: true) }
+        } catch {
+            drop(id, refuse: true)
+        }
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {

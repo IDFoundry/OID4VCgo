@@ -97,6 +97,36 @@ final class StallingTransport: ProximityTransport, @unchecked Sendable {
     func close() { inner.close() }
 }
 
+/// A transport where another device, which never saw the QR code, sends
+/// the first message: junk for this session. It counts the `reject`s and
+/// `commit`s the session makes.
+final class BlindPeerTransport: ProximityTransport, @unchecked Sendable {
+    private let inner: PipeTransport
+    private let lock = NSLock()
+    private var junk: [Data]
+    private var rejectCount = 0
+    private var commitCount = 0
+    var rejects: Int { lock.withLock { rejectCount } }
+    var commits: Int { lock.withLock { commitCount } }
+
+    init(_ inner: PipeTransport, junk: [Data]) {
+        self.inner = inner
+        self.junk = junk
+    }
+
+    func connect() async throws { try await inner.connect() }
+    func send(_ message: Data) async throws { try await inner.send(message) }
+
+    func receive() async throws -> Data {
+        if let next: Data = lock.withLock({ junk.isEmpty ? nil : junk.removeFirst() }) { return next }
+        return try await inner.receive()
+    }
+
+    func reject() { lock.withLock { rejectCount += 1 } }
+    func commit() { lock.withLock { commitCount += 1 } }
+    func close() { inner.close() }
+}
+
 /// In-person presentation through the Swift API, holder and reader in one
 /// process over an in-memory transport: the Go sessions, the key store and
 /// both state machines, without BLE.
@@ -425,6 +455,24 @@ final class ProximityTests: XCTestCase {
         }
     }
 
+    /// First messages Go rejects — from devices that never saw the QR
+    /// code — are dropped (`reject`) without ending the session, and the
+    /// reader's request after them is taken, committing the transport.
+    func testBlindPeersDoNotEndTheSession() async throws {
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        let blind = BlindPeerTransport(holderEnd, junk: [Data([0xA0]), Data([0x01])])
+        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in blind }
+        let reader = try s.reader.start(qrCode: holder.qrCode, docType: Self.docType,
+                                        elements: [Self.namespace: ["family_name", "given_name"]], timeouts: timeouts) { _ in readerEnd }
+        _ = try await request(holder)
+        XCTAssertEqual(blind.rejects, 2)
+        XCTAssertGreaterThanOrEqual(blind.commits, 1)
+        holder.cancel()
+        reader.cancel()
+    }
+
     /// A response the transport can't deliver fails the session as a
     /// lost connection, and `respond` throws that.
     func testAnUndeliveredResponseFailsTheSession() async throws {
@@ -640,10 +688,17 @@ final class EitherTransportTests: XCTestCase {
         let connects: @Sendable (Fake) async throws -> Void
         private let lock = NSLock()
         private var isClosed = false
+        private var rejectCount = 0
         var closed: Bool { lock.withLock { isClosed } }
+        var rejects: Int { lock.withLock { rejectCount } }
         let stop = Signal()
+        /// What `receive` returns, until closed.
+        let message: Data
 
-        init(_ connects: @escaping @Sendable (Fake) async throws -> Void) { self.connects = connects }
+        init(_ message: Data = Data([7]), _ connects: @escaping @Sendable (Fake) async throws -> Void) {
+            self.message = message
+            self.connects = connects
+        }
 
         /// Connects never: until closed.
         static func never() -> Fake { Fake { try await $0.stop.wait() } }
@@ -652,27 +707,64 @@ final class EitherTransportTests: XCTestCase {
         func send(_: Data) async throws {
             // These tests send nothing.
         }
-        func receive() async throws -> Data { Data([7]) }
+        func receive() async throws -> Data {
+            if closed { throw ProximityTransportError("closed") }
+            return message
+        }
+        func reject() { lock.withLock { rejectCount += 1 } }
         func close() {
             lock.withLock { isClosed = true }
             stop.fail(ProximityTransportError("closed"))
         }
     }
 
-    func testFirstToConnectWins() async throws {
+    /// The transport whose first message Go accepts is kept, and the
+    /// others closed only then.
+    func testFirstAcceptedWins() async throws {
         let waiting = Fake.never()
         let connecting = Fake { _ in
             // Connects at once.
         }
         let either = EitherTransport([waiting, connecting])
         try await either.connect()
+        XCTAssertNil(either.connected, "chosen before any message was accepted")
+        XCTAssertFalse(waiting.closed, "the other was stopped on a connection alone")
+        let got = try await either.receive()
+        XCTAssertEqual(got, Data([7]))
+        either.commit()
         XCTAssertTrue(either.connected === connecting)
         XCTAssertTrue(waiting.closed, "the other wasn't stopped")
         XCTAssertFalse(connecting.closed)
-        let got = try await either.receive()
-        XCTAssertEqual(got, Data([7]))
+        let next = try await either.receive()
+        XCTAssertEqual(next, Data([7]))
         either.close()
         XCTAssertTrue(connecting.closed)
+    }
+
+    /// A first message Go rejects leaves every transport open: the next
+    /// first message, from either, is handed on.
+    func testRejectedMessageKeepsEveryWayOpen() async throws {
+        let blind = Fake(Data([1])) { _ in
+            // Connects at once: a device that never saw the QR code.
+        }
+        let reader = Fake(Data([2])) { _ in try await Task.sleep(nanoseconds: 50 * 1_000_000) }
+        let either = EitherTransport([blind, reader])
+        try await either.connect()
+        var got = try await either.receive()
+        XCTAssertEqual(got, Data([1]))
+        either.reject()
+        XCTAssertEqual(blind.rejects, 1)
+        XCTAssertFalse(blind.closed)
+        XCTAssertFalse(reader.closed)
+        // The blind transport's next first message, or the reader's.
+        repeat {
+            got = try await either.receive()
+            if got == Data([1]) { either.reject() }
+        } while got != Data([2])
+        either.commit()
+        XCTAssertTrue(either.connected === reader)
+        XCTAssertTrue(blind.closed)
+        either.close()
     }
 
     /// One way failing (no advertising, say) leaves the other to connect.
@@ -681,6 +773,8 @@ final class EitherTransportTests: XCTestCase {
         let connecting = Fake { _ in try await Task.sleep(nanoseconds: 50 * 1_000_000) }
         let either = EitherTransport([failing, connecting])
         try await either.connect()
+        _ = try await either.receive()
+        either.commit()
         XCTAssertTrue(either.connected === connecting)
     }
 

@@ -6,8 +6,10 @@ import os
 /// `serviceUUID`, connects, subscribes and starts the session. The
 /// reader in mdoc peripheral server mode, and the holder in mdoc central
 /// client mode, where it first reads the reader's Ident characteristic
-/// and fails unless it's `ident` (§8.3.3.1.1.4). The app's Info.plist
-/// needs NSBluetoothAlwaysUsageDescription.
+/// (§8.3.3.1.1.4): a device whose Ident isn't `ident`, that has none, or
+/// that stops answering before it's read, is disconnected and ignored,
+/// and the scan goes on. The app's Info.plist needs
+/// NSBluetoothAlwaysUsageDescription.
 final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     private let serviceUUID: CBUUID
     private let characteristics: GattCharacteristics
@@ -29,6 +31,8 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     private var readyToWrite: Pending<Void>?
     private var identRead: Pending<Data>?
     private var identCharacteristic: CBCharacteristic?
+    /// Whether this attempt's device has shown this session's Ident.
+    private var identChecked = false
     private var sessionStarted = false
     private var closed = false
     /// Devices whose Ident wasn't this session's reader's: never again.
@@ -60,6 +64,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             queue.sync {
                 incoming = MessageQueue()
                 reassembler = BleChunks.Reassembler()
+                identChecked = false
             }
             try await scan()
             do {
@@ -68,8 +73,9 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
                     try await start()
                 } catch is ProximityTimeout {
                     // A device that stops answering mid-setup: one failed
-                    // attempt, as any other.
-                    throw ProximityTransportError("the other device stopped answering")
+                    // attempt, as any other; before its Ident was read,
+                    // as one whose Ident differs.
+                    throw ProximityTransportError("the other device stopped answering", wrongReader: queue.sync { ident != nil && !identChecked })
                 }
                 return
             } catch let error as ProximityTransportError {
@@ -130,7 +136,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         try await perform { $0.discoverServices([self.serviceUUID]) }
         try await perform { p in
             guard let service = p.services?.first(where: { $0.uuid == self.serviceUUID }) else {
-                throw ProximityTransportError("the other device lacks the mdoc service")
+                throw ProximityTransportError("the other device lacks the mdoc service", wrongReader: self.ident != nil)
             }
             var wanted = [self.characteristics.state, self.characteristics.client2Server, self.characteristics.server2Client]
             if self.ident != nil, let id = self.characteristics.ident { wanted.append(id) }
@@ -142,7 +148,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             client2Server = chars.first { $0.uuid == characteristics.client2Server }
             server2Client = chars.first { $0.uuid == characteristics.server2Client }
             if state == nil || client2Server == nil || server2Client == nil {
-                throw ProximityTransportError("the mdoc service lacks a characteristic")
+                throw ProximityTransportError("the mdoc service lacks a characteristic", wrongReader: ident != nil)
             }
             identCharacteristic = chars.first { $0.uuid == characteristics.ident }
         }
@@ -154,12 +160,13 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     }
 
     /// Reads the reader's Ident: a device advertising the service UUID
-    /// that isn't this session's reader fails the session.
+    /// that isn't this session's reader, or that has no Ident to read, is
+    /// refused (`wrongReader`), and ignored from then on.
     private func checkIdent(_ want: Data) async throws {
         let p = Pending<Data>()
         try queue.sync {
             guard !closed, let peripheral else { throw ProximityTransportError("the session ended") }
-            guard let c = identCharacteristic else { throw ProximityTransportError("the reader's service lacks Ident") }
+            guard let c = identCharacteristic else { throw ProximityTransportError("the reader's service lacks Ident", wrongReader: true) }
             identRead = p
             peripheral.readValue(for: c)
         }
@@ -167,6 +174,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         guard got == want else {
             throw ProximityTransportError("the device found isn't this session's reader (its Ident differs)", wrongReader: true)
         }
+        queue.sync { identChecked = true }
     }
 
     /// Starts one GATT operation on the peripheral and waits for its
@@ -281,22 +289,29 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         p.resolve(.success(()))
     }
 
+    /// Whether `p` is this attempt's device: a callback about another,
+    /// one an earlier attempt gave up on, is ignored.
+    private func isCurrent(_ p: CBPeripheral) -> Bool { p.identifier == peripheral?.identifier }
+
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard isCurrent(peripheral) else { return }
         connected?.resolve(.success(()))
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: (any Error)?) {
+        guard isCurrent(peripheral) else { return }
         connected?.resolve(.failure(ProximityTransportError("connecting failed: \(error?.localizedDescription ?? "")")))
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: (any Error)?) {
-        guard peripheral.identifier == self.peripheral?.identifier else { return }
+        guard isCurrent(peripheral) else { return }
         fail(ProximityTransportError("the other device disconnected", peerEnded: sessionStarted))
     }
 
     // MARK: CBPeripheralDelegate, on `queue`
 
-    private func finishOperation(_ error: (any Error)?, _ what: String) {
+    private func finishOperation(_ peripheral: CBPeripheral, _ error: (any Error)?, _ what: String) {
+        guard isCurrent(peripheral) else { return }
         let p = operation
         operation = nil
         if let error {
@@ -307,31 +322,39 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
-        finishOperation(error, "discovering services")
+        finishOperation(peripheral, error, "discovering services")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: (any Error)?) {
-        finishOperation(error, "discovering characteristics")
+        finishOperation(peripheral, error, "discovering characteristics")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: (any Error)?) {
-        finishOperation(error, "subscribing")
+        finishOperation(peripheral, error, "subscribing")
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        guard isCurrent(peripheral) else { return }
         let p = readyToWrite
         readyToWrite = nil
         p?.resolve(.success(()))
     }
 
+    /// Delivers the pending Ident read's result.
+    private func identValue(_ value: Data?, _ error: (any Error)?) {
+        guard let p = identRead else { return }
+        identRead = nil
+        if let value, error == nil {
+            p.resolve(.success(value))
+        } else {
+            p.resolve(.failure(ProximityTransportError("couldn't read the reader's Ident", wrongReader: true)))
+        }
+    }
+
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: (any Error)?) {
-        if characteristic.uuid == characteristics.ident, let p = identRead {
-            identRead = nil
-            if let value = characteristic.value, error == nil {
-                p.resolve(.success(value))
-            } else {
-                p.resolve(.failure(ProximityTransportError("couldn't read the reader's Ident")))
-            }
+        guard isCurrent(peripheral) else { return }
+        if characteristic.uuid == characteristics.ident {
+            identValue(characteristic.value, error)
             return
         }
         guard error == nil, let value = characteristic.value else { return }
