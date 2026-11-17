@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -28,6 +30,58 @@ func (undecidedVerifier) Verify(context.Context, walletprovider.EvidenceInput) (
 	return walletprovider.VerifiedEvidence{}, fmt.Errorf("%w: the status list can't be fetched", walletprovider.ErrUnavailable)
 }
 
+// kindRetryLater is evidence retryLaterVerifier can't decide on.
+const kindRetryLater = "retry-later"
+
+// retryLaterVerifier can't decide for now, and says when it may:
+// its error has a RetryAfter method, as androidkey.StatusSource's has.
+type retryLaterVerifier struct{ after time.Duration }
+
+func (retryLaterVerifier) Kind() string { return kindRetryLater }
+
+func (v retryLaterVerifier) Verify(context.Context, walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
+	return walletprovider.VerifiedEvidence{}, fmt.Errorf("%w: %w", walletprovider.ErrUnavailable, retryLaterError(v))
+}
+
+type retryLaterError struct{ after time.Duration }
+
+func (retryLaterError) Error() string               { return "the status list can't be fetched" }
+func (e retryLaterError) RetryAfter() time.Duration { return e.after }
+
+// postRegistration posts a registration with evidence of kind to ts, a
+// provider's server, c its client, returning the response's status,
+// error code and Retry-After.
+func postRegistration(t *testing.T, ts *httptest.Server, c *walletprovider.Client, kind string) (int, string, string) {
+	t.Helper()
+	regKey, err := jwk.Marshal(&newKey(t).PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := c.Challenge(context.Background(), walletprovider.PurposeRegistration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"challenge": ch.Value, "registration_key": regKey,
+		"evidence": map[string]string{"kind": kind, "data": "eA"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := ts.Client().Post(ts.URL+walletprovider.InstancesPath, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var refusal struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&refusal); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, refusal.Error, resp.Header.Get("Retry-After")
+}
+
 // TestRegisterUnavailable: evidence a verifier can't decide on for now
 // isn't rejected: the registration fails as the provider's own
 // failure, answered 503 server_error with a Retry-After.
@@ -45,34 +99,20 @@ func TestRegisterUnavailable(t *testing.T) {
 		t.Fatalf("Register = %v, want ErrUnavailable, not a rejection", err)
 	}
 
-	regKey, err := jwk.Marshal(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
+	if status, code, retry := postRegistration(t, ts, c, kindUndecided); status != http.StatusServiceUnavailable || code != "server_error" || retry != "30" {
+		t.Fatalf("HTTP %d %q, Retry-After %q; want 503 server_error with Retry-After 30", status, code, retry)
 	}
-	ch2, err := c.Challenge(context.Background(), walletprovider.PurposeRegistration)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(map[string]any{
-		"challenge": ch2.Value, "registration_key": regKey,
-		"evidence": map[string]string{"kind": kindUndecided, "data": "eA"},
+}
+
+// TestUnavailableRetryAfter: a 503's Retry-After is what the error says
+// of when to retry, rounded up to whole seconds, when it says so.
+func TestUnavailableRetryAfter(t *testing.T) {
+	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) {
+		d.Evidence = append(d.Evidence, retryLaterVerifier{after: 41*time.Second + time.Millisecond})
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := ts.Client().Post(ts.URL+walletprovider.InstancesPath, "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	var refusal struct {
-		Error string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&refusal); err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusServiceUnavailable || refusal.Error != "server_error" || resp.Header.Get("Retry-After") == "" {
-		t.Fatalf("HTTP %d %q, Retry-After %q; want 503 server_error with a Retry-After", resp.StatusCode, refusal.Error, resp.Header.Get("Retry-After"))
+	ts, c := h.server("")
+	if status, _, retry := postRegistration(t, ts, c, kindRetryLater); status != http.StatusServiceUnavailable || retry != "42" {
+		t.Fatalf("HTTP %d, Retry-After %q; want 503 with Retry-After 42", status, retry)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
@@ -107,8 +109,24 @@ var (
 )
 
 // unavailableRetryAfter is the Retry-After, in seconds, of a 503
-// answer (ErrUnavailable).
+// answer (ErrUnavailable) whose error says nothing of when to retry
+// (retryAfter).
 const unavailableRetryAfter = "30"
+
+// retryAfter is the Retry-After, in whole seconds, of a 503 answer for
+// err: what an error in its chain with a RetryAfter() time.Duration
+// method says, when that's positive — androidkey.StatusSource's failure
+// says when it fetches Google's list again, so a wallet doesn't retry
+// before — and unavailableRetryAfter otherwise.
+func retryAfter(err error) string {
+	var hint interface{ RetryAfter() time.Duration }
+	if errors.As(err, &hint) {
+		if d := hint.RetryAfter(); d > 0 {
+			return strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10)
+		}
+	}
+	return unavailableRetryAfter
+}
 
 // errDecoding wraps why a request body was refused, for the log.
 var errDecoding = errors.New("walletprovider: decoding the request")
@@ -355,7 +373,7 @@ func (p *Provider) fail(r *http.Request, w http.ResponseWriter, a apiError, err 
 	case http.StatusUnauthorized:
 		w.Header().Set("WWW-Authenticate", RequestHeader)
 	case http.StatusServiceUnavailable:
-		w.Header().Set("Retry-After", unavailableRetryAfter)
+		w.Header().Set("Retry-After", retryAfter(err))
 	}
 	writeJSON(w, a.status, errorBody{Error: a.code, Description: a.description})
 }

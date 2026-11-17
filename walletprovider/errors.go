@@ -112,7 +112,9 @@ var (
 	// provider fails the request, leaves the instance as it is, and
 	// Handler answers HTTP 503 server_error with a Retry-After, for the
 	// wallet to try again later rather than take the evidence as
-	// rejected.
+	// rejected: by default 30 seconds, or, when an error in the chain has
+	// a RetryAfter() time.Duration method returning a positive duration,
+	// as androidkey.StatusSource's failures do, that.
 	ErrUnavailable = errors.New("walletprovider: can't decide for now")
 )
 

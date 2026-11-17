@@ -76,7 +76,8 @@ type StatusSource struct {
 	// fetch succeeds, so keep it short of a day.
 	Grace time.Duration
 	// RetryAfter is how long a failed fetch is remembered; zero means
-	// DefaultStatusRetryAfter.
+	// DefaultStatusRetryAfter. walletprovider's Handler answers the 503
+	// a failure causes with what's left of it as Retry-After.
 	RetryAfter time.Duration
 	// MaxBytes bounds the list's size; zero means DefaultStatusMaxBytes.
 	MaxBytes int64
@@ -124,11 +125,12 @@ func (s *StatusSource) Current(ctx context.Context) (*StatusList, error) {
 func (s *StatusSource) currentLocked(ctx context.Context) (*StatusList, *statusFetch, error) {
 	now := s.now()
 	maxAge := s.maxAge()
-	retrying := s.failure != nil && now.Sub(s.failedAt) < orDefault(s.RetryAfter, DefaultStatusRetryAfter)
+	retryAt := s.failedAt.Add(s.retryAfter())
+	retrying := s.failure != nil && now.Before(retryAt)
 	age := now.Sub(s.fetchedAt)
 	if s.list == nil || age >= maxAge+s.grace() {
 		if retrying {
-			return nil, nil, s.failure
+			return nil, nil, retryAfterError{s.failure, retryAt.Sub(now)}
 		}
 		return nil, s.startLocked(ctx), nil
 	}
@@ -200,7 +202,7 @@ func (s *StatusSource) run(ctx context.Context, f *statusFetch) {
 		f.list = list
 	} else {
 		s.failure, s.failedAt = fmt.Errorf("%w: %w", ErrStatusUnavailable, err), now
-		f.err = s.failure
+		f.err = retryAfterError{s.failure, s.retryAfter()}
 		if s.list != nil && now.Sub(s.fetchedAt) < s.maxAge()+s.grace() {
 			f.list = s.list // within Grace, as Current now answers
 		}
@@ -211,6 +213,25 @@ func (s *StatusSource) run(ctx context.Context, f *statusFetch) {
 }
 
 func (s *StatusSource) maxAge() time.Duration { return orDefault(s.MaxAge, DefaultStatusMaxAge) }
+
+func (s *StatusSource) retryAfter() time.Duration {
+	return orDefault(s.RetryAfter, DefaultStatusRetryAfter)
+}
+
+// retryAfterError is a failed fetch's error, as Current reports it,
+// with how long until the next fetch is tried: its RetryAfter method is
+// what walletprovider's Handler answers a 503 with, as Retry-After, so
+// a wallet doesn't ask again before the list may be had.
+type retryAfterError struct {
+	err   error
+	after time.Duration
+}
+
+func (e retryAfterError) Error() string { return e.err.Error() }
+func (e retryAfterError) Unwrap() error { return e.err }
+
+// RetryAfter is how long until the next fetch is tried.
+func (e retryAfterError) RetryAfter() time.Duration { return e.after }
 
 func (s *StatusSource) grace() time.Duration {
 	switch {

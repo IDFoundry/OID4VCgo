@@ -317,7 +317,9 @@ that started it, and a caller waiting for one stops when its own
 context ends.
 
 When no list can be had, Android registrations and rechecks are now
-answered HTTP 503 `server_error` with a `Retry-After`, not 403
+answered HTTP 503 `server_error` with a `Retry-After` (the time until
+`StatusSource` fetches again: up to its `RetryAfter`, a minute by
+default; 30 seconds for an error that doesn't say), not 403
 `evidence_rejected`: `androidkey.EvidenceVerifier` wraps
 `ErrStatusUnavailable` in the new `walletprovider.ErrUnavailable`,
 which `Provider.Register`, `WalletAttestation` and `KeyAttestation`

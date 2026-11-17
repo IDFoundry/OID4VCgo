@@ -237,6 +237,34 @@ func TestStatusSource_NoGrace(t *testing.T) {
 	}
 }
 
+// TestStatusSource_RetryAfter: a failure says when the next fetch is
+// tried, which walletprovider's Handler answers as Retry-After: all of
+// RetryAfter from the failed fetch, the rest of it while the failure is
+// remembered.
+func TestStatusSource_RetryAfter(t *testing.T) {
+	srv := newStatusServer(t)
+	srv.fail.Store(true)
+	clock := &testClock{t: statusEpoch}
+	src := srv.source(t, clock)
+	src.RetryAfter = 2 * time.Minute
+	retryAfter := func() time.Duration {
+		t.Helper()
+		_, err := src.Current(context.Background())
+		var hint interface{ RetryAfter() time.Duration }
+		if !errors.Is(err, androidkey.ErrStatusUnavailable) || !errors.As(err, &hint) {
+			t.Fatalf("Current = %v, want ErrStatusUnavailable saying when to retry", err)
+		}
+		return hint.RetryAfter()
+	}
+	if got := retryAfter(); got != 2*time.Minute {
+		t.Fatalf("the failed fetch says retry after %v, want 2m", got)
+	}
+	clock.set(statusEpoch.Add(90 * time.Second))
+	if got := retryAfter(); got != 30*time.Second {
+		t.Fatalf("the remembered failure says retry after %v, want 30s", got)
+	}
+}
+
 // TestStatusSource_Verify: a Verifier with a StatusSource checks the
 // chain against the fetched list, and refuses while none is current.
 func TestStatusSource_Verify(t *testing.T) {
@@ -260,8 +288,10 @@ func TestStatusSource_Verify(t *testing.T) {
 	srv.fail.Store(true)
 	clock.set(now.Add(androidkey.DefaultStatusMaxAge + androidkey.DefaultStatusGrace + time.Hour))
 	v.Now = time.Now
-	if _, err := v.Verify(ctx, good.der, testChallenge); !errors.Is(err, androidkey.ErrStatusUnavailable) {
-		t.Fatalf("no current list: %v", err)
+	_, err := v.Verify(ctx, good.der, testChallenge)
+	var hint interface{ RetryAfter() time.Duration }
+	if !errors.Is(err, androidkey.ErrStatusUnavailable) || !errors.As(err, &hint) {
+		t.Fatalf("no current list: %v, want ErrStatusUnavailable saying when to retry", err)
 	}
 	v.RevocationOptional = true
 	if r, err := v.Verify(ctx, good.der, testChallenge); err != nil || r.RevocationChecked {
