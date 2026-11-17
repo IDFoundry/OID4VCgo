@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,7 +68,13 @@ type Transaction struct {
 	// org-iso-mdoc request (BeginMdocDCAPI), the P-256 HPKE recipient
 	// key, as the ECDSA key of the same scalar.
 	ResponseDecryptionKey *ecdsa.PrivateKey
-	RequestObject         string
+
+	// RequestObject is the Request Object as Begin signed it. It isn't
+	// served: Transactions.RequestObject signs one for each fetch from
+	// the fields above, which a sealing TransactionCodec binds. It's
+	// still written for replicas running OID4VCgo v0.81.0 or earlier,
+	// which serve it, and a store must still persist it.
+	RequestObject string
 
 	// Origin is set for a Digital Credentials API request (BeginDCAPI,
 	// BeginMdocDCAPI): the origin of the page that makes it, and an
@@ -558,9 +565,12 @@ func flowOf(tx Transaction) uint32 {
 const maxStoredTimeDrift = time.Second
 
 // lostFields names the fields of tx, just created, that saved — the
-// store's copy — doesn't have as tx does. Query, which a store may
-// re-encode, and the fields that are still unset on a new transaction
-// aren't compared; losing any of them fails closed.
+// store's copy — doesn't have as tx does. Query is compared in a
+// canonical form (canonicalQueryHash), since a store may re-encode it:
+// one that dropped a claim's values or a trusted_authorities entry
+// would have the request accept credentials it was meant to refuse.
+// The fields that are still unset on a new transaction aren't
+// compared; losing any of them fails closed.
 func lostFields(tx, saved Transaction) []string {
 	var lost []string
 	check := func(name string, same bool) {
@@ -572,6 +582,7 @@ func lostFields(tx, saved Transaction) []string {
 	check("KeyID", saved.KeyID == tx.KeyID)
 	check("State", saved.State == tx.State)
 	check("Nonce", saved.Nonce == tx.Nonce)
+	check("Query", sameQuery(tx.Query, saved.Query))
 	check("ResponseDecryptionKey", sameKey(tx.ResponseDecryptionKey, saved.ResponseDecryptionKey))
 	check("RequestObject", saved.RequestObject == tx.RequestObject)
 	check("Origin", saved.Origin == tx.Origin)
@@ -584,6 +595,23 @@ func lostFields(tx, saved Transaction) []string {
 	check("RetainUntil", closeTimes(saved.RetainUntil, tx.RetainUntil))
 	check("Status", saved.Status == tx.Status)
 	return lost
+}
+
+// sameQuery reports whether a and b are the same query once read back
+// through JSON: numbers compared as float64, as a query decoded from
+// JSON holds them (see dcql.ClaimsQuery's Values).
+func sameQuery(a, b dcql.Query) bool {
+	ha, errA := queryHash(a)
+	hb, errB := queryHash(b)
+	return errA == nil && errB == nil && ha == hb
+}
+
+func queryHash(q dcql.Query) ([32]byte, error) {
+	raw, err := json.Marshal(q)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return canonicalQueryHash(raw, false)
 }
 
 func sameKey(a, b *ecdsa.PrivateKey) bool {
@@ -605,8 +633,8 @@ func (t *Transactions) get(ctx context.Context, id string) (Transaction, error) 
 	if err != nil {
 		return Transaction{}, err
 	}
-	if !t.owns(tx) {
-		return Transaction{}, ErrTransactionUnknown
+	if err := t.readable(tx, id); err != nil {
+		return Transaction{}, err
 	}
 	return tx, nil
 }
@@ -615,11 +643,25 @@ func (t *Transactions) get(ctx context.Context, id string) (Transaction, error) 
 // ErrTransactionUnknown when it's another scope's.
 func (t *Transactions) update(ctx context.Context, id string, fn func(*Transaction) error) error {
 	return t.store.Update(ctx, id, func(cur *Transaction) error {
-		if !t.owns(*cur) {
-			return ErrTransactionUnknown
+		if err := t.readable(*cur, id); err != nil {
+			return err
 		}
 		return fn(cur)
 	})
+}
+
+// readable refuses tx, the store's answer for the transaction id, when
+// it's another transaction — a store that returned the wrong record
+// would have one request answered, or its result released, as another —
+// or another scope's.
+func (t *Transactions) readable(tx Transaction, id string) error {
+	if tx.ID != id {
+		return &serverFault{fmt.Errorf("verifier: transactions: store: asked for transaction %q, got %q", id, tx.ID)}
+	}
+	if !t.owns(tx) {
+		return ErrTransactionUnknown
+	}
+	return nil
 }
 
 // checkTransactionsVerify refuses, in TransactionsConfig.Verify, the
@@ -806,12 +848,20 @@ func (t *Transactions) Begin(ctx context.Context, query dcql.Query, browserBindi
 // holding the request's QR code can fetch it, and a request_uri that
 // stopped answering would tell them the holder had presented. An answer
 // a Wallet sends to a request that's no longer pending is refused.
+//
+// It's signed for each fetch, as RequestObjectPost's is, from the
+// request's query, state, nonce and response decryption key — fields a
+// sealing TransactionCodec binds — and never served as stored
+// (Transaction.RequestObject): a store writer without the sealing key
+// could otherwise hand the Wallet another request's Request Object, and
+// so have the holder answer that request. Every fetch carries the same
+// claims; only the signature differs.
 func (t *Transactions) RequestObject(ctx context.Context, id string) (string, error) {
 	tx, err := t.servable(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	return tx.RequestObject, nil
+	return t.signRequestObject(tx, authorizationRequest{})
 }
 
 // servable is the request id, whose Request Object is served at its
@@ -873,23 +923,29 @@ func (t *Transactions) RequestObjectPost(ctx context.Context, id string, post Re
 	if err != nil {
 		return "", err
 	}
-	req := authorizationRequest{
-		query: tx.Query, state: tx.State, nonce: tx.Nonce, encKey: tx.ResponseDecryptionKey, walletNonce: post.WalletNonce,
-	}
+	fetch := authorizationRequest{walletNonce: post.WalletNonce}
 	if post.WalletMetadata != nil {
-		if req.fit, err = t.v.fitWalletMetadata(post.WalletMetadata, tx.Query); err != nil {
+		if fetch.fit, err = t.v.fitWalletMetadata(post.WalletMetadata, tx.Query); err != nil {
 			return "", err
 		}
 	}
+	return t.signRequestObject(tx, fetch)
+}
+
+// signRequestObject signs tx's Request Object for one fetch of its
+// request_uri: tx's query, state, nonce and response encryption key,
+// with fetch's wallet_nonce and client_metadata fit, if any.
+func (t *Transactions) signRequestObject(tx Transaction, fetch authorizationRequest) (string, error) {
 	if tx.ResponseDecryptionKey == nil {
-		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s has no response decryption key", id)}
+		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s has no response decryption key", tx.ID)}
 	}
-	object, kid, err := t.v.signAuthorizationRequest(req)
+	fetch.query, fetch.state, fetch.nonce, fetch.encKey = tx.Query, tx.State, tx.Nonce, tx.ResponseDecryptionKey
+	object, kid, err := t.v.signAuthorizationRequest(fetch)
 	switch {
 	case err != nil:
 		return "", &serverFault{fmt.Errorf("verifier: transactions: %w", err)}
 	case kid != tx.KeyID:
-		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s's response decryption key isn't the one its KeyID names", id)}
+		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s's response decryption key isn't the one its KeyID names", tx.ID)}
 	}
 	return object, nil
 }

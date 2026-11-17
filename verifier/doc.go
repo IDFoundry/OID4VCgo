@@ -55,9 +55,13 @@
 // neither. The record's other fields stay readable; those saying who
 // may read the result, what was asked, and whether and how the request
 // may still be answered (its status, expiry, nonce, state and kid) are
-// bound into the sealing, so changing one leaves the record unreadable,
-// and the store is trusted only for the rest (the response_code hash,
-// the last error) and for not putting back an older copy.
+// bound into the sealing, so changing one leaves the record unreadable.
+// The Request Object served at a request_uri is signed from those
+// bound fields on each fetch, never served from the record. The store
+// is trusted only for the rest (the response_code hash, the last
+// error, retain_until, and the stored request_object, which only
+// replicas running OID4VCgo v0.81.0 or earlier serve) and for not
+// putting back an older copy.
 // TransactionsConfig.ForgetResultOnRead drops the claims as soon as
 // they've been read.
 //
