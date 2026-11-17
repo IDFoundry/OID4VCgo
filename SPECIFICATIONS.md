@@ -349,14 +349,18 @@ guard against a third party say so.
   certificates. Beyond the specifications, no two of its certificates
   may share a subject name or a public key (so both certificates of a
   cross-certified CA can't be sent together), and it must be anchored
-  at its top: its last certificate is a trust anchor or is issued by
-  one, or is an anchor's certificate re-issued or cross-certified (the
-  anchor's subject and key), or the one before it is an anchor (so at
-  most one certificate past the anchor). An intermediate's P-521 key,
+  at one of its top two certificates: its last certificate is a trust
+  anchor or is issued by one, and signed the one before it; failing
+  that, the one before it is itself an anchor (whatever the last one
+  is), or is issued by an anchor whose subject and key the last one
+  carries (that anchor re-issued or cross-certified). So at most one
+  certificate is past the anchor. An intermediate's P-521 key,
   or RSA key over 3072 bits, is refused unless that anchor has one of
   that type. The chain is checked from the anchor down, so a third
-  party's crafted chain costs a signature check or two of a trusted
-  key, however long it is (`internal/certchain.VerifyPresented`). The
+  party's crafted chain costs at most two signature checks per trusted
+  root sharing a name with its top, and one or two with keys a trusted
+  root vouched for, however long it is
+  (`internal/certchain.VerifyPresented`). The
   Wallet Provider's Android Key Attestation and App Attest chains are
   checked to their own, fixed shapes, and a Wallet Attestation's `x5c`
   by FAPIgo, whose rules differ: it accepts both certificates of a CA

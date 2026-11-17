@@ -53,8 +53,9 @@ type AllowedApp struct {
 // fields are the strict choice; each relaxation is a field to set.
 type Verifier struct {
 	// Roots are the trust anchors; nil means GoogleRoots(). A chain is
-	// anchored when its last certificate has the public key of one of
-	// them (it is that root, or a re-issue of it) or is signed by one.
+	// anchored when its last certificate is one of them, byte for byte,
+	// or is signed by one (as a re-issue of a root, self-signed by its
+	// key, is). Merely carrying a root's public key anchors nothing.
 	Roots []*x509.Certificate
 
 	// Revocation provides Google's attestation status list; every

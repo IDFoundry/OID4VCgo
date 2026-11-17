@@ -350,8 +350,11 @@ func DERsFromBase64(entries []any) ([][]byte, error) {
 // x5c or x5chain, leaf first, as HAIP 1.0 requires it (§4.1, §5,
 // §6.1.1): the leaf isn't self-signed, each intermediate signs the
 // certificate before it, and the trust anchor isn't included (a
-// self-signed intermediate is one). A verifier then builds the path to
-// its own anchors.
+// self-signed intermediate is one). It also checks what every verifier
+// of a presented chain here, and FAPIgo's, refuses before any signature
+// (CheckPresentedOrder): no subject name or key repeated, as both
+// certificates of a CA key rollover would be. A verifier then builds
+// the path to its own anchors.
 func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certificate) error {
 	if leaf == nil {
 		return errors.New("certchain: no leaf certificate")
@@ -378,7 +381,7 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 		}
 		child = parent
 	}
-	return nil
+	return CheckPresentedOrder(append([]*x509.Certificate{leaf}, intermediates...))
 }
 
 // CheckIssuerName checks that iss, an SD-JWT VC's issuer claim, names

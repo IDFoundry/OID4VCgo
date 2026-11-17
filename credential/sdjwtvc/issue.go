@@ -160,8 +160,10 @@ type IssueOptions struct {
 	// Verifier holding only the anchor can build the path (HAIP 1.0
 	// §6.1.1: "the credential issuer's signing certificate along with a
 	// trust chain ... The X.509 certificate of the trust anchor MUST NOT
-	// be included"). Each must sign the certificate before it. Requires
-	// IssuerCertificate.
+	// be included"). Each must sign the certificate before it, and no
+	// two certificates of the chain may share a subject name or public
+	// key (as a CA key rollover's two would): a Verifier refuses such a
+	// chain. Requires IssuerCertificate.
 	IssuerIntermediates []*x509.Certificate
 
 	// TypeMetadata, if set, is the Type Metadata the Issuer publishes

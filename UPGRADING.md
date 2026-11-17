@@ -182,12 +182,14 @@ in order, leaf first, each the issuer of the one before; one in which
 two certificates share a subject name or public key; and one with an
 intermediate's P-521 key, or RSA key over 3072 bits, unless a
 configured trust anchor the chain reaches has a key of that type. The
-chain must also be anchored at its top: its last certificate is a
-trust anchor, is issued by one, or carries an anchor's subject and key
-(a re-issue or cross-certificate of it), or the one before it is an
-anchor. A chain carrying two or more certificates past its anchor is
-refused, such as a cross-certificate followed by the CA that issued it
-when only the cross-certified anchor is trusted. No API changes. A
+chain must also be anchored at one of its top two certificates: its
+last certificate is a trust anchor or is issued by one, and signed the
+one before it; failing that, the one before it is itself an anchor, or
+is issued by an anchor whose subject and key the last one carries (a
+re-issue or cross-certificate of that anchor). A chain carrying two
+or more certificates past its anchor is refused, such as a
+cross-certificate followed by the CA that issued it when only the
+cross-certified anchor is trusted. No API changes. A
 partner whose chains are now refused has to send them in order,
 leaving out certificates that aren't on the path; the SPECIFICATIONS.md
 "Known strictness" entry has the details.
@@ -197,17 +199,21 @@ These rules differ from FAPIgo's for a Wallet Attestation's `x5c`
 to two anchors as the last two, which these refuse as a repeated
 subject, and chains of up to 10 certificates, where these allow 8.
 
-### A signer's chain repeating a subject or key (`walletprovider`, `statuslist`, `identifierlist`)
+### A signer's chain repeating a subject or key (`walletprovider`, `statuslist`, `identifierlist`, `issuer`, `verifier`, `credential/sdjwtvc`, `attestation`)
 
 `walletprovider.New`, `statuslist.IssueTokenX5C`,
-`statuslist.IssueTokenCWTX5Chain` and `identifierlist.IssueToken` refuse a
-signer chain in which two certificates share a subject name or a
-public key, such as a CA key rollover's new-with-old certificate
-followed by the old CA's. Every verifier here, and FAPIgo v0.76.0's
-Wallet Attestation check, already refuses such a chain, so a Wallet
-Provider configured with one now fails at startup rather than at every
-Authorization Server. Configure the chain without the rollover
-certificate.
+`statuslist.IssueTokenCWTX5Chain`, `identifierlist.IssueToken`,
+`issuer.New` (the `SDJWTSigner` and `MdocSigner` chains),
+`issuer.NewMetadataHandler`, `issuer.SignMetadataJWS`, `verifier.New`
+(`ClientCertificateChain`), `sdjwtvc.Issue` (`IssuerIntermediates`),
+and `attestation.Issue` and `attestation.IssueWalletAttestation` (a
+`Header.X5C`) refuse a signer chain in which two certificates share a
+subject name or a public key, such as a CA key rollover's new-with-old
+certificate followed by the old CA's. Every verifier here, and FAPIgo
+v0.76.0's Wallet Attestation check, already refuses such a chain, so
+an issuer, verifier or Wallet Provider configured with one now fails
+at startup rather than at every party that checks what it signs.
+Configure the chain without the rollover certificate.
 
 ### A Status List Token's `x5c` without its trust anchor (`statuslist`, `wallet`, `walletflow`, `verifier`)
 

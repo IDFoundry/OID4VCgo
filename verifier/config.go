@@ -43,7 +43,9 @@ type Config struct {
 	// ClientCertificate and the trust anchor, in order, the anchor left
 	// out: they follow it in the Request Object's x5c, so a Wallet
 	// holding only the anchor can build the path. Each must sign the
-	// certificate before it. OPTIONAL.
+	// certificate before it, and no two certificates of the chain may
+	// share a subject name or public key (as a CA key rollover's two
+	// would): a Wallet refuses such a chain. OPTIONAL.
 	ClientCertificateChain []*x509.Certificate
 
 	// ResponseURI is where a Wallet POSTs its (encrypted) response —

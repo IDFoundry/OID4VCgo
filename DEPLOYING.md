@@ -189,12 +189,18 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   next. Each answer costs an ECDH, a decryption and parsing up to
   1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
   presentations per Credential Query: path building over the issuer's
-  presented certificate chain (anchored at its top and checked from
-  there down: one that no configured root anchors costs a signature
-  check per configured root of a matching name, at most two names,
-  and one that a root anchors a check per certificate, at most eight;
-  each distinct chain once per answer, and the answer refused once
-  `MaxFailedIssuerChainsPerResponse` distinct chains have failed), the issuer
+  presented certificate chain (anchored at one of its top two
+  certificates and checked from there down: a crafted one costs at
+  most two signature checks per configured root sharing a name with
+  its top, plus about two where a root anchors it, however long it
+  is; a genuine one, replayed, a check per certificate, at most
+  eight. With the built-in `X5CIssuerKeyResolver` and
+  `X5ChainIssuerKeyResolver` as the request's `IssuerKeys` and
+  `MdocIssuerKeys`, each distinct chain is verified once per answer,
+  and the answer is refused once `MaxFailedIssuerChainsPerResponse`
+  distinct chains have failed to anchor or verify; chains that verify
+  aren't counted, however many there are, and a resolver of your own,
+  even one dispatching to the built-in ones, gets neither), the issuer
   signature, and only then the SD-JWT disclosures the signed payload
   references, and a revocation check per path. Measured on a
   development machine, a crafted answer whose chains no configured root

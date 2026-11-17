@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -557,6 +558,24 @@ func TestIssue_IssuerCertificateSelfSigned(t *testing.T) {
 	_, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type"}, IssueOptions{IssuerCertificate: cert})
 	if err == nil || !strings.Contains(err.Error(), "self-signed") {
 		t.Fatalf("Issue = %v, want a self-signed leaf refused", err)
+	}
+}
+
+// A CA key rollover's chain — the new CA certificate signed with the old
+// key, then the old CA's — verifies link by link but repeats the CA's
+// subject, which every verifier of a presented chain refuses, so Issue
+// refuses it rather than issue credentials no verifier accepts.
+func TestIssue_IssuerChainRepeatingASubject(t *testing.T) {
+	root, rootKey := testcert.CA(t, "root")
+	oldCA, oldKey := testcert.Intermediate(t, "CA", root, rootKey)
+	newCA, newKey := testcert.Intermediate(t, "CA", root, rootKey)
+	newWithOld := testcert.CrossCertify(t, newCA, oldCA, oldKey)
+	cert, issuerKey := testcert.Leaf(t, "test-issuer", newCA, newKey)
+	_, _, err := Issue(issuerKey, jose.ES256, Claims{VCT: "vc-type"}, IssueOptions{
+		IssuerCertificate: cert, IssuerIntermediates: []*x509.Certificate{newWithOld, oldCA},
+	})
+	if err == nil || !strings.Contains(err.Error(), "the same subject name") {
+		t.Fatalf("Issue = %v, want the rollover chain refused for its repeated subject", err)
 	}
 }
 

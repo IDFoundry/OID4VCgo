@@ -138,8 +138,9 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, header Header, claims Clai
 // checkX5C checks h.X5C, when set, as HAIP 1.0 §4.4.1 and §4.5.1
 // require: the leaf's key is signer's, and the chain is one a signer
 // presents (certchain.CheckPresentedChain: the leaf not self-signed,
-// each certificate signing the one before, no anchor). A Verifier
-// would refuse an attestation breaking these.
+// each certificate signing the one before, no anchor, no subject name
+// or key repeated). A Verifier would refuse an attestation breaking
+// these.
 func (h Header) checkX5C(signer crypto.Signer) error {
 	if len(h.X5C) == 0 {
 		return nil
