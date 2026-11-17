@@ -133,9 +133,15 @@ type MdocIssuer struct {
 // it replaces; any other resolver is asked twice, as
 // ResolveMdocIssuerKey and then CheckMdocIssuer would ask it.
 func ResolveMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string) (MdocIssuer, error) {
+	return resolveMdocIssuer(ctx, nil, resolver, x5chain, docType)
+}
+
+// resolveMdocIssuer is ResolveMdocIssuer, an X5ChainIssuerKeyResolver's
+// chain verification memoized in memo when it isn't nil.
+func resolveMdocIssuer(ctx context.Context, memo *chainMemo, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string) (MdocIssuer, error) {
 	issuer := MdocIssuer{resolver: resolver, x5chain: x5chain, docType: docType}
 	if r, ok := x5chainResolver(resolver); ok {
-		leaf, chains, err := r.verify(ctx, x5chain, docType)
+		leaf, chains, err := r.verify(ctx, memo, x5chain, docType)
 		if err != nil {
 			return MdocIssuer{}, err
 		}

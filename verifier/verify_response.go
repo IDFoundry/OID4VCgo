@@ -246,6 +246,9 @@ type VerifyResponseRequest struct {
 	// expected_origins (BuildDCAPIAuthorizationRequestResult.ExpectedOrigins).
 	// VerifyResponse refuses an Origin that isn't one of them.
 	ExpectedOrigins []string
+
+	// chains is VerifyResponse's own: see chainMemo.
+	chains *chainMemo
 }
 
 // VerifiedCredential is one successfully verified Presentation.
@@ -471,8 +474,9 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = WithVerificationTime(ctx, req.Now())
 	}
-	// Each distinct issuer chain in the answer is verified once.
-	ctx = withChainMemo(ctx)
+	// Each distinct issuer chain in the answer is verified once, by the
+	// request's own built-in resolver.
+	req.chains = newChainMemo()
 	if err := v.checkVerifyResponseRequest(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
@@ -654,6 +658,10 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 			// the correct nonce value, the response MUST be rejected").
 			return nil, nil, err
 		}
+		if errors.Is(err, errTooManyIssuerChains) {
+			// Not this presentation's failure: the response's.
+			return nil, nil, newError(ReasonMalformed, "verify issuer chains", errTooManyIssuerChains)
+		}
 		var failed *Error
 		if errors.As(err, &failed) {
 			// The presentation failed, not the response or the
@@ -828,7 +836,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	)
 	x5c, resolvesBoth := x5cResolver(req.IssuerKeys)
 	if resolvesBoth {
-		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, header, payload)
+		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, req.chains, header, payload)
 	} else {
 		issuerPub, issuerAlg, err = req.IssuerKeys.ResolveIssuerKey(ctx, header, payload)
 	}
@@ -1047,7 +1055,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	// issuer's own CA: one bound to another chain fails closed.
 	// Accepting a chain only from the protected header would refuse
 	// conforming mdocs.
-	issuer, err := ResolveMdocIssuer(ctx, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
+	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType)
 	if err != nil {
 		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}

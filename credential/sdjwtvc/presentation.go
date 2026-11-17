@@ -38,17 +38,16 @@ const MaxBytes = 1 << 20 // 1 MiB
 // Parse splits a compact SD-JWT or SD-JWT+KB into its parts (RFC 9901
 // §4) without verifying anything — the issuer JWT's signature, the
 // disclosure/digest matching, and any Key Binding JWT are all checked
-// by Verify. It rejects a presentation larger than MaxBytes — bounding the string-split/base64/JSON work this does on
-// attacker-supplied input before anything is verified (or, for a
-// caller like wallet's own held-credential matching, ever verified at
-// all — see HeldCredential's own doc comment), the same reasoning
-// internal/jose/internal/jwe/internal/cose already apply to their own
-// compact/binary inputs; found missing here in a repo-wide security
-// review specifically because a DC API caller builds a
-// verifier.ParsedResponse directly, with no upstream JWE decrypt step
-// (jwe.MaxCompactBytes) to bound it first the way the redirect flow
-// gets for free. Use ParseMax for a caller that needs a different
-// ceiling.
+// by Verify. It rejects a presentation larger than MaxBytes, but
+// decodes every Disclosure of one within it, whether or not a digest
+// references it: about half a second of CPU for a mebibyte of minimal
+// Disclosures. So don't Parse a presentation or credential someone
+// else sent before it's verified: VerifyPresentation verifies the
+// Issuer-signed JWT first, then decodes only the Disclosures its
+// digests reference, and returns the parsed Presentation too. Parse is
+// for what the caller already trusts, such as a credential it holds
+// (see wallet.HeldCredential). Use ParseMax for a caller that needs a
+// different ceiling.
 func Parse(s string) (Presentation, error) {
 	return ParseMax(s, MaxBytes)
 }

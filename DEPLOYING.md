@@ -68,7 +68,11 @@ each, not a deployment template" says what it does differently.
   service: the Nonce Endpoint and the Credential Offer endpoints, the
   Wallet Provider's challenge and registration endpoints
   (`walletprovider.ChallengePath`, `InstancesPath`). Each writes a
-  row, and each sealed row spends the Sealer key's budget.
+  row, and each sealed row spends the Sealer key's budget. The
+  Verifier's request_uri (`RequestObjectHandler`) too: each fetch
+  reads a row, and the first on each replica, and every request_uri
+  POST, signs a Request Object (a billed call with a KMS-backed
+  signer).
 
 ## Credential Issuer
 
@@ -175,11 +179,16 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   there down: one that no configured root anchors costs a signature
   check per configured root of a matching name, at most two names,
   and one that a root anchors a check per certificate, at most eight;
-  each distinct chain once per answer), the issuer
+  each distinct chain once per answer, and the answer refused once
+  `MaxFailedIssuerChainsPerResponse` distinct chains have failed), the issuer
   signature, and only then the SD-JWT disclosures the signed payload
-  references, and a revocation check per path. A crafted answer can
-  cost several milliseconds of CPU, tens with a large disclosure set,
-  so limit by concurrency as well as by rate: cap the response
+  references, and a revocation check per path. Measured on a
+  development machine, a crafted answer whose chains no configured root
+  anchors is refused after its fourth failed chain, at a few
+  milliseconds of CPU (the more configured roots of matching names,
+  the more); one padding a genuine issuer JWT with a mebibyte of
+  disclosure parts, about 35 ms. So limit by concurrency as
+  well as by rate: cap the response
   handlers' in-flight requests per instance (a semaphore, or your
   proxy's connection limit) so that a burst queues or is refused
   rather than taking every core. Bound each post's body too

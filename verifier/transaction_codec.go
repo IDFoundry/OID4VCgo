@@ -67,9 +67,15 @@ const transactionCodecV1 = 1
 // fields — to have the Verifier hand the result to someone else,
 // reopen a completed request, or keep one answerable past its expiry:
 // the record no longer opens. Each write seals the fields again, bound
-// to the status the transaction then has. The Request Object served at
-// the request's request_uri is signed from those bound fields for each
-// fetch (Transactions.RequestObject), never served from the record.
+// to the status the transaction then has. The binding is checked
+// through the sealed fields, so a record stripped of them opens with
+// nothing checked: Transactions refuses one without its response
+// decryption key, which every request has, and a completed one without
+// its result. Nor does the binding tell one transaction's whole record
+// from another's: Transactions refuses a record whose ID isn't the one
+// it asked the store for. The Request Object served at the request's
+// request_uri is signed from the bound fields
+// (Transactions.RequestObject), never served from the record.
 //
 // What the seal leaves unbound, the store must still be trusted for.
 // Someone who can write to it can change the record's response_code

@@ -181,6 +181,51 @@ Binding JWT without `sd_hash` (RFC 9901 §4.3). A caller of it directly
 passes the presentation's hash: `Presentation.SDHash(alg)`.
 `sdjwtvc.Verify` and the verifier already did.
 
+### SD-JWT VC disclosures are refused after the issuer (`verifier`, `credential/sdjwtvc`)
+
+`VerifyResponse` now reads only an SD-JWT VC presentation's
+Issuer-signed JWT before resolving the issuer's key and verifying its
+signature (RFC 9901 §7.1), and decodes only the Disclosures its
+digests reference. A presentation with an undecodable, repeated or
+unreferenced Disclosure, or with more parts than its digests could
+reference, used to be refused as `malformed`; it is now refused as
+`untrusted_issuer` when its issuer isn't trusted, and otherwise as
+`invalid_credential`. Code that matches on `Error.Reason`,
+`DiscardedPresentation.Code` or a transaction's `LastError` sees the
+new reasons. `sdjwtvc.VerifyPresentation` refuses such a presentation
+after verifying the Issuer-signed JWT, with that error instead of a
+parse error.
+
+### Issuer chains per response (`verifier`)
+
+`VerifyResponse` verifies each distinct issuer certificate chain once
+per response when `IssuerKeys` is an `X5CIssuerKeyResolver` or
+`MdocIssuerKeys` an `X5ChainIssuerKeyResolver` itself. A resolver of
+your own, one dispatching to several built-in resolvers for instance,
+has each of its calls verified in full, under that call's resolver's
+`LeafPolicy` and `Revocation`. Through a built-in resolver, a response
+is refused as a whole, `malformed`, once
+`MaxFailedIssuerChainsPerResponse` (4) of its distinct issuer chains
+have failed to verify, with any further chain left unverified. Chains
+that verify aren't counted, so a response presenting credentials from
+many issuers isn't refused by it.
+
+### Request Objects at a request_uri are signed, not served from the store (`verifier`)
+
+`Transactions.RequestObject`, and `RequestObjectHandler`'s GET, no
+longer serve the Request Object kept in the transaction's record: a
+store writer without the sealing key could put another request's
+there, and have the holder answer that one. Each `Transactions` signs
+the request's Request Object from its sealed fields the first time it
+serves it, and serves that copy from memory to the fetches that follow
+while the record is unchanged. Expect one more signature per request
+and replica (a billed call with a KMS-backed signer), and Request
+Objects whose bytes differ between replicas; their claims are the
+same. A request_uri POST is signed for each fetch, as before. Upgrade
+every replica: one still on v0.81.0 serves the stored object. Rate
+limit the request_uri endpoint with the response endpoints
+(DEPLOYING.md).
+
 ### App Attest chains (`walletprovider/appattest`)
 
 `VerifyAttestation` takes only Apple's chain shape: an `x5c` of exactly

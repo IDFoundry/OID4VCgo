@@ -1,8 +1,11 @@
 package walletflow_test
 
 import (
+	"context"
 	"crypto/x509"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
@@ -42,6 +45,36 @@ func TestIssuerRevocation(t *testing.T) {
 				c.Check(t, tryReceive(t, f, w, configID))
 			})
 		}
+	}
+}
+
+// revokingChecker refuses every chain as revoked, counting them.
+type revokingChecker struct{ checks *atomic.Int32 }
+
+func (c revokingChecker) CheckRevocation(context.Context, certrevocation.Check) error {
+	c.checks.Add(1)
+	return certrevocation.ErrRevoked
+}
+
+// A copy of a batch is checked against its issuer once, not once per
+// holder key it might be bound to.
+func TestIssuerRevocation_CheckedOncePerCopy(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{BatchSize: 3})
+	var checks atomic.Int32
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, Development: true,
+		IssuerRoots: f.env.IssuerRoots, IssuerRevocation: revokingChecker{&checks},
+	}, walletflow.Dependencies{
+		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), Provider: f.env.Provider, HTTP: f.env.HTTP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tryReceive(t, f, w, walletflowtest.SDJWTConfigurationID); !errors.Is(err, certrevocation.ErrRevoked) {
+		t.Fatalf("err = %v, want the issuer revoked", err)
+	}
+	if got := checks.Load(); got != 1 {
+		t.Errorf("issuer chain checked %d times for the first copy of 3, want 1", got)
 	}
 }
 

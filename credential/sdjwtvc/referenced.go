@@ -1,20 +1,38 @@
 package sdjwtvc
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
-// parseReferencedDisclosures decodes parts, a presentation's encoded
-// Disclosures, given payload, its verified Issuer-signed JWT's payload:
-// each part is hashed, and only a part whose digest payload or a part
-// already decoded references (RFC 9901 §4.2.4, §4.2.6) is decoded, in
-// turn. A part no digest references, or one repeating another, is
-// refused, as ResolveDisclosures would refuse it after decoding (§7.1
-// step 3.5), but here before any is decoded: the decoding work is then
-// bounded by the digests the issuer signed. The Disclosures keep their
-// presented order.
-func parseReferencedDisclosures(payload map[string]any, alg HashAlg, parts []string) ([]Disclosure, error) {
-	if len(parts) == 0 {
+// minNestedDigestChars is the fewest encoded Disclosure characters a
+// digest inside a Disclosure takes: the shortest digest, SHA-256's, is
+// 43 base64url characters in the Disclosure's JSON, which encoding the
+// Disclosure grows by a third.
+const minNestedDigestChars = 57
+
+// parseReferencedDisclosures decodes encoded, a presentation's encoded
+// Disclosures joined by '~' (present false for none), given payload,
+// its verified Issuer-signed JWT's payload: each part is hashed, and
+// only a part whose digest payload or a part already decoded
+// references (RFC 9901 §4.2.4, §4.2.6) is decoded, in turn. A part no
+// digest references, or one repeating another, is refused, as
+// ResolveDisclosures would refuse it after decoding (§7.1 step 3.5),
+// but here before any is decoded: the decoding work is then bounded by
+// the digests the issuer signed. So is the hashing: more parts than
+// payload's digests, and the digests encoded's length leaves room for,
+// could reference are refused before any is split off or hashed. The
+// Disclosures keep their presented order.
+func parseReferencedDisclosures(payload map[string]any, alg HashAlg, encoded string, present bool) ([]Disclosure, error) {
+	if !present {
 		return nil, nil
 	}
+	pending := collectDigests(payload, nil, 0)
+	n := strings.Count(encoded, "~") + 1
+	if limit := len(pending) + len(encoded)/minNestedDigestChars; n > limit {
+		return nil, fmt.Errorf("sdjwtvc: %d disclosures presented, more than the payload's digests could reference (%d)", n, limit)
+	}
+	parts := strings.Split(encoded, "~")
 	index := make(map[string]int, len(parts))
 	for i, part := range parts {
 		digest, err := hashString(alg, part)
@@ -28,7 +46,6 @@ func parseReferencedDisclosures(payload map[string]any, alg HashAlg, parts []str
 	}
 	out := make([]Disclosure, len(parts))
 	decoded := 0
-	pending := collectDigests(payload, nil, 0)
 	for len(pending) > 0 {
 		digest := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
