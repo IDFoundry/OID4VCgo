@@ -199,9 +199,17 @@ func tnepServiceParameters(message []byte) (timing tnepTiming, found bool, err e
 // deselection, then the reader's Handover Request, which negotiate
 // answers with the Handover Select.
 type tnepHolder struct {
-	negotiate     func(hr []byte) ([]byte, error)
-	selected      bool
-	handoverReady bool // negotiate has answered
+	negotiate      func(hr []byte) ([]byte, error)
+	selected       bool
+	handoverReady  bool   // negotiate has answered
+	handoverSelect []byte // what negotiate answered
+}
+
+// isHandoverSelect reports whether ndef, an NDEF file with its NLEN, is
+// the Handover Select negotiate answered, rather than another TNEP
+// answer served after it.
+func (h *tnepHolder) isHandoverSelect(ndef []byte) bool {
+	return h.handoverReady && len(ndef) > 2 && bytes.Equal(ndef[2:], h.handoverSelect)
 }
 
 func (h *tnepHolder) transact(message []byte) ([]byte, error) {
@@ -227,6 +235,6 @@ func (h *tnepHolder) transact(message []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	h.handoverReady = true
+	h.handoverReady, h.handoverSelect = true, bytes.Clone(hs)
 	return hs, nil
 }
