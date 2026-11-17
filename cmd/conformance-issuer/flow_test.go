@@ -172,6 +172,8 @@ type parRequestParams struct {
 	AttesterKid       string
 	ClientInstanceKey *ecdsa.PrivateKey
 	Now               time.Time
+	// Resources are the request's RFC 8707 resource parameters.
+	Resources []string
 }
 
 // performPAR drives one PAR request as p.Client — PKCE, a DPoP proof,
@@ -189,6 +191,9 @@ func performPAR(t *testing.T, client *http.Client, p parRequestParams) map[strin
 		"response_type": {"code"}, "client_id": {p.Client.ID},
 		"redirect_uri": {p.Client.RedirectURIs[0]}, "scope": {p.Scope},
 		"code_challenge": {p.CodeChallenge}, "code_challenge_method": {"S256"},
+	}
+	if len(p.Resources) > 0 {
+		parForm["resource"] = p.Resources
 	}
 	parReq, err := http.NewRequest(http.MethodPost, parURL, strings.NewReader(parForm.Encode()))
 	if err != nil {
@@ -232,6 +237,38 @@ func pkceChallenge(t *testing.T) (verifier, challenge string) {
 // credential-request shape.
 func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey, now time.Time) (accessToken, cNonce string) {
 	t.Helper()
+	accessToken = performAuthFlowThroughToken(t, client, cfg, attesterKey, clientKey, now)
+
+	// --- POST /nonce ---
+	nonceReq, err := http.NewRequest(http.MethodPost, cfg.Issuer+"/nonce", http.NoBody)
+	if err != nil {
+		t.Fatalf("new nonce request: %v", err)
+	}
+	nonceResp := doJSON(t, client, nonceReq)
+	cNonce, _ = nonceResp["c_nonce"].(string)
+	if cNonce == "" {
+		t.Fatalf("nonce response has no c_nonce: %+v", nonceResp)
+	}
+	return accessToken, cNonce
+}
+
+// performAuthFlowThroughToken is performAuthFlowThroughNonce up to the
+// access token, with the PAR naming resources.
+func performAuthFlowThroughToken(t *testing.T, client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey, now time.Time, resources ...string) string {
+	t.Helper()
+	redirectURL, verifier := authorizeToCallback(t, client, cfg, attesterKey, clientKey, now, resources...)
+	code := redirectURL.Query().Get("code")
+	if code == "" {
+		t.Fatalf("redirect location has no code: %s (error=%s)", redirectURL, redirectURL.Query().Get("error"))
+	}
+	return exchangeAuthorizationCode(t, client, cfg, attesterKey, clientKey, now, code, verifier)
+}
+
+// authorizeToCallback drives PAR, naming resources, and the consent
+// step approving it, and returns the redirect to the client's callback
+// and the PKCE code_verifier.
+func authorizeToCallback(t *testing.T, client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey, now time.Time, resources ...string) (*url.URL, string) {
+	t.Helper()
 
 	// PKCE
 	verifier, challenge := pkceChallenge(t)
@@ -240,7 +277,7 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 	parResp := performPAR(t, client, parRequestParams{
 		IssuerURL: cfg.Issuer, Scope: cfg.Scope, CodeChallenge: challenge,
 		Client: cfg.Client, AttesterKey: attesterKey, AttesterKid: "attester-1",
-		ClientInstanceKey: clientKey, Now: now,
+		ClientInstanceKey: clientKey, Now: now, Resources: resources,
 	})
 	requestURI, _ := parResp["request_uri"].(string)
 	if requestURI == "" {
@@ -251,13 +288,13 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 	authorizeURL := cfg.Issuer + "/authorize?" + url.Values{
 		"client_id": {cfg.Client.ID}, "request_uri": {requestURI},
 	}.Encode()
-	redirectURL := driveConsentToCallback(t, client, cfg.Issuer, authorizeURL, cfg.DefaultSubject, cfg.Scope)
-	code := redirectURL.Query().Get("code")
-	if code == "" {
-		t.Fatalf("redirect location has no code: %s (error=%s)", redirectURL, redirectURL.Query().Get("error"))
-	}
+	return driveConsentToCallback(t, client, cfg.Issuer, authorizeURL, cfg.DefaultSubject, cfg.Scope), verifier
+}
 
-	// --- POST /token ---
+// exchangeAuthorizationCode redeems code at the Token Endpoint and
+// returns the access token.
+func exchangeAuthorizationCode(t *testing.T, client *http.Client, cfg Config, attesterKey, clientKey *ecdsa.PrivateKey, now time.Time, code, verifier string) string {
+	t.Helper()
 	tokenURL := cfg.Issuer + "/token"
 	tokenDPoP, err := buildDPoPProof(clientKey, http.MethodPost, tokenURL, randomHex(t, 16), "", now)
 	if err != nil {
@@ -278,22 +315,11 @@ func performAuthFlowThroughNonce(t *testing.T, client *http.Client, cfg Config, 
 		tokenReq.Header[k] = v
 	}
 	tokenResp := doJSON(t, client, tokenReq)
-	accessToken, _ = tokenResp["access_token"].(string)
+	accessToken, _ := tokenResp["access_token"].(string)
 	if accessToken == "" {
 		t.Fatalf("token response has no access_token: %+v", tokenResp)
 	}
-
-	// --- POST /nonce ---
-	nonceReq, err := http.NewRequest(http.MethodPost, cfg.Issuer+"/nonce", http.NoBody)
-	if err != nil {
-		t.Fatalf("new nonce request: %v", err)
-	}
-	nonceResp := doJSON(t, client, nonceReq)
-	cNonce, _ = nonceResp["c_nonce"].(string)
-	if cNonce == "" {
-		t.Fatalf("nonce response has no c_nonce: %+v", nonceResp)
-	}
-	return accessToken, cNonce
+	return accessToken
 }
 
 // driveConsentToCallback drives the headless consent step against
