@@ -250,6 +250,11 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
+          # Its analysis cache would share the plain lint job's key while
+          # built with other tags and a go.work: exchanging it poisons
+          # that job's staticcheck facts (SA5011 after t.Fatal in tests
+          # nobody changed). This job runs without a cache.
+          skip-cache: true
           args: --build-tags conformance_production ./cmd/conformance-issuer/... ./cmd/conformance-verifier/... ./internal/prodwallet/... ./internal/proddb/... ./interop/eudi/scripts/pidwallet/... ./interop/waltid/scripts/wallet/...
 
   # mobile/ is its own Go module too: the gomobile boundary (see
