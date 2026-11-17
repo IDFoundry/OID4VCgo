@@ -139,7 +139,9 @@ final class AppWallet {
         let configuration = WalletConfiguration(
             clientID: clientID,
             redirectURI: redirectURI,
-            issuers: .init(roots: issuerRoots),
+            // The issuers whose offers the wallet takes: another's is
+            // refused before the holder is asked for a PIN.
+            issuers: .init(roots: issuerRoots, credentialIssuers: ["https://issuer.example.com"]),
             verifiers: .init(roots: verifierRoots),
             revocation: .init(roles: [.issuer, .status, .verifier], crls: crls))
         keys = KeychainKeyStore()

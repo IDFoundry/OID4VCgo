@@ -190,6 +190,25 @@ class SessionTest {
         s.close()
     }
 
+    /**
+     * `issuers.credentialIssuers` refuses another issuer's offer with
+     * `untrustedIssuer` before the holder is asked for its PIN; a
+     * configuration with issuer roots and no decision about which
+     * issuers' offers it takes, or two, is refused.
+     */
+    @Test
+    fun credentialIssuers(): Unit = runBlocking {
+        val env = env()
+        val listed = env.configuration.let { it.copy(issuers = it.issuers.copy(credentialIssuers = listOf("https://issuer.other.example"))) }
+        val w = wallet(env, configuration = listed)
+        expectCode(WalletException.Code.untrustedIssuer) { w.startIssuance(env.env.preAuthorizedOffer("493536")) }
+
+        val undecided = listed.copy(issuers = listed.issuers.copy(credentialIssuers = emptyList()))
+        expectCode(WalletException.Code.invalidInput) { wallet(env, configuration = undecided) }
+        val both = listed.copy(issuers = listed.issuers.copy(allowAnyCredentialIssuer = true))
+        expectCode(WalletException.Code.invalidInput) { wallet(env, configuration = both) }
+    }
+
     /** Deferred credentials survive the issuance closing and a relaunch: a new Wallet over the same stores polls them. */
     @Test
     fun deferredSurvivesARelaunch(): Unit = runBlocking {

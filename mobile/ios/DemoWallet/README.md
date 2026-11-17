@@ -54,9 +54,23 @@ through), and remembers it:
 
 ```json
 {"wallet": {"client_id": "…", "redirect_uri": "…", "issuer_roots": "<PEM>",
+            "credential_issuers": ["https://…"],
             "verifier_roots": "<PEM>", "development": true},
  "provider_url": "https://…"}
 ```
+
+`credential_issuers` is the issuers whose offers the wallet takes:
+an offer naming another is refused (`untrusted_issuer`) before the
+holder is asked for a PIN, which would otherwise reach whichever issuer
+an offer names (mobile/MOBILE.md, "Issuers whose offers a wallet
+takes"). Copy this into your own app: list your issuers, or, where they
+can't be listed, require signed issuer metadata naming its issuer
+(`issuer_metadata_roots`, `require_signed_issuer_metadata`,
+`require_issuer_metadata_name`). The scripts here list the
+passport-vdc demo's issuer, from its state directory's
+`credential-issuers` (`cmd/demo` writes it, with the tunnel's URL when
+it has one): its metadata signer's certificate names no issuer, so
+signed metadata can't name it.
 
 ## Revocation lists
 

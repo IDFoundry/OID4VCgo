@@ -299,6 +299,36 @@ off for the app: the foreground refresh is what keeps an app in use
 current. A list that does pass its nextUpdate unrefreshed fails its
 role's checks closed until a fresh one arrives.
 
+### Issuers whose offers you take
+
+A pre-authorized offer's PIN goes to the issuer the offer names, before
+the wallet has seen anything that issuer signs:
+``WalletConfiguration/IssuerTrust/roots`` judge it only when its
+credential arrives. A phishing offer naming an attacker's issuer, sent
+beside a genuine service's PIN, would hand the attacker that PIN
+(OpenID4VCI 1.0's Security Considerations, "Transaction Code
+Phishing"). So a wallet that receives credentials decides which
+issuers' offers it takes, or `Wallet(configuration:)` throws
+``WalletError/Code/invalidInput``:
+
+- ``WalletConfiguration/IssuerTrust/credentialIssuers`` lists them:
+  ``Wallet/startIssuance(offer:)`` refuses any other issuer's offer with
+  ``WalletError/Code/untrustedIssuer`` before asking for the PIN. Use
+  it where your issuers are known.
+- Signed issuer metadata naming its issuer:
+  ``WalletConfiguration/IssuerMetadataTrust/roots`` with
+  ``WalletConfiguration/IssuerMetadataTrust/requireSigned`` and
+  ``WalletConfiguration/IssuerMetadataTrust/requireName``, all three,
+  takes only issuers whose metadata a certificate under those roots
+  signs and names them in: the way that scales to an ecosystem whose
+  issuers aren't known in advance. It may be combined with the list.
+- ``WalletConfiguration/IssuerTrust/allowAnyCredentialIssuer`` takes
+  any issuer's offer, and leaves this phishing to your app.
+
+Either way, lead the PIN prompt with the offer's
+``Offer/credentialIssuer``, not its issuer name alone: unsigned
+metadata lets an issuer choose its name.
+
 ### Settings to decide
 
 Each of these is off or open by default. Decide each for your

@@ -14,7 +14,7 @@
 set -eu
 cd "$(dirname "$0")"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
-for f in tls-cert.pem issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem; do
+for f in tls-cert.pem issuer-ca.pem credential-issuers verifier-ca.pem mdoc-reader-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 ADB="${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb"
@@ -43,6 +43,10 @@ config = {
         "client_id": "passport-vdc-wallet",
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        # The demo's issuer, the only one whose offers the app takes: an
+        # offer naming another is refused before the holder is asked for
+        # a PIN. cmd/demo writes it, local or behind a tunnel.
+        "credential_issuers": (state / "credential-issuers").read_text().split(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         "registrar_roots": (state / "registrar-ca.pem").read_text() if (state / "registrar-ca.pem").exists() else "",
         # Readers are recognized by the mdoc reader CA of the demo.

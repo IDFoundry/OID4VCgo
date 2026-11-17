@@ -405,6 +405,43 @@ over the limit used to be answered. Also, a claims query value of `-0`
 is no longer a duplicate of one of `0`. A Verifier keeps its query
 within the limits, without repeats.
 
+### Mobile: a wallet decides which issuers' offers it takes (gomobile ABI 16, Swift, Kotlin)
+
+The mobile configuration takes the same three ways: `credential_issuers`
+(Swift and Kotlin `issuers.credentialIssuers`);
+`issuer_metadata_roots` with `require_signed_issuer_metadata` and
+`require_issuer_metadata_name` (`issuerMetadata.roots`,
+`requireSigned`, `requireName`); or `allow_any_credential_issuer`
+(`issuers.allowAnyCredentialIssuer`). `NewWallet`, Swift's
+`Wallet(configuration:)` and Kotlin's `Wallet` constructor refuse a
+configuration with issuer roots and none of them, or with
+`allow_any_credential_issuer` beside either of the others, as
+`invalid_input`. `startIssuance` refuses an unlisted issuer's offer
+with the new `untrusted_issuer` code (`WalletError.Code.untrustedIssuer`,
+`WalletException.Code.untrustedIssuer`), before asking for its PIN.
+`ABIVersion` is 16: the Swift and Kotlin libraries need a framework
+built from this release.
+
+```swift
+// Before
+WalletConfiguration(clientID: id, redirectURI: uri, issuers: .init(roots: issuerRoots), ...)
+// After
+WalletConfiguration(clientID: id, redirectURI: uri,
+                    issuers: .init(roots: issuerRoots, credentialIssuers: ["https://issuer.example.com"]), ...)
+```
+
+```kotlin
+// Before
+WalletConfiguration(clientID = id, redirectURI = uri, issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots), ...)
+// After
+WalletConfiguration(
+    clientID = id, redirectURI = uri,
+    issuers = WalletConfiguration.IssuerTrust(roots = issuerRoots, credentialIssuers = listOf("https://issuer.example.com")), ...
+)
+```
+
+A JSON configuration adds `"credential_issuers": ["https://issuer.example.com"]`.
+
 ## OID4VCWallet 0.39.0 → 0.40.0
 
 Built from OID4VCgo v0.81.0 (see its entry below, whose wallet

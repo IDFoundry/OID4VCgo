@@ -39,7 +39,7 @@ v1) echo "the Wallet Provider must be started with -ios-app $TEAM_ID.$BUNDLE_ID"
 demo) echo "the Wallet Provider must be started without -ios-app, which turns off the demo provider's own API" ;;
 *) echo "PROVIDER_PROTOCOL is v1 or demo, not $PROVIDER_PROTOCOL" >&2; exit 1 ;;
 esac
-for f in issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem; do
+for f in issuer-ca.pem credential-issuers verifier-ca.pem mdoc-reader-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 
@@ -85,6 +85,10 @@ config = {
         "client_id": "passport-vdc-wallet",
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        # The demo's issuer, the only one whose offers the app takes: an
+        # offer naming another is refused before the holder is asked for
+        # a PIN. cmd/demo writes it, local or behind a tunnel.
+        "credential_issuers": (state / "credential-issuers").read_text().split(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         # The registrar of the verifier relying parties: the app shows
         # their registrations, and warns when one asks for more.

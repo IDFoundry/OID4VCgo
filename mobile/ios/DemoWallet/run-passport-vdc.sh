@@ -15,7 +15,7 @@ set -eu
 cd "$(dirname "$0")"
 DEVICE="${1:-iPhone 16}"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
-for f in tls-cert.pem issuer-ca.pem verifier-ca.pem; do
+for f in tls-cert.pem issuer-ca.pem credential-issuers verifier-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 
@@ -50,6 +50,10 @@ config = {
         "client_id": "passport-vdc-wallet",
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        # The demo's issuer, the only one whose offers the app takes: an
+        # offer naming another is refused before the holder is asked for
+        # a PIN. cmd/demo writes it, local or behind a tunnel.
+        "credential_issuers": (state / "credential-issuers").read_text().split(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         # The registrar of the verifier relying parties: the app shows
         # their registrations, and warns when one asks for more.

@@ -1,12 +1,24 @@
 # OID4VCgo mobile ABI
 
 The API the Go `mobile` package exposes through gomobile: version
-**15** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
+**16** (`ABIVersion`). The Swift package `ios/OID4VCWallet` wraps it in
 typed Swift (`Wallet`, `Issuance`, `Presentation`, `WalletError`), and
 the Kotlin library `android/OID4VCWallet` in Kotlin (the same types,
 with suspend functions, `WalletException` and `StateFlow`s); this
 document is the contract underneath, for those wrappers or an app
 calling the framework directly.
+
+Version 16 has a Wallet that receives credentials (`issuer_roots`,
+`mdoc_issuer_roots` or `mdoc_issuer_roots_by_doctype`) decide which
+issuers' offers it takes, in development too, or `NewWallet` refuses
+its configuration (`invalid_input`): `credential_issuers`, the issuers
+it takes offers from; `issuer_metadata_roots` with
+`require_signed_issuer_metadata` and `require_issuer_metadata_name`; or
+`allow_any_credential_issuer`, which can't be set with either (see the
+configuration below). `StartIssuance` refuses an offer from an issuer
+outside `credential_issuers` with the new `untrusted_issuer` code. A
+version-15 configuration that receives credentials adds one of them;
+the wrappers refuse a framework of another version, as before.
 
 Version 15 (OID4VCWallet 0.28.0) gives the `WalletProvider`'s
 `KeyAttestation` the issuance's instance key: it's
@@ -193,6 +205,7 @@ format or error code below changes incompatibly.
 | `no_matching_credential` | nothing held answers the Verifier's request |
 | `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
+| `untrusted_issuer` | the offer names a Credential Issuer outside `credential_issuers`: it's refused before anything is fetched from that issuer (ABI 16) |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `tls_pin` | a host in `tls_pins` presented a certificate matching none of its pins; nothing was sent to it |
@@ -469,6 +482,7 @@ refused, and the Kotlin library's an `IOException` and a
  "status_cache_dir": "/absolute/path", "status_cache_key": "<base64 of 32 random bytes>",
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
+ "credential_issuers": ["https://issuer.example"], "allow_any_credential_issuer": false,
  "crls": "<PEM X509 CRLs>", "revocation": ["issuer", "verifier"], "crl_issuers": "<PEM>",
  "no_revocation_check": ["status", "issuer_metadata", "registrar", "mdoc_reader"],
  "crl_distribution_points": [{"url": "http://ca.example/ca.crl", "issuer": "<PEM CA certificate>"}],
@@ -674,6 +688,34 @@ certificate doesn't name the issuer; and
 `max_issuer_metadata_age_seconds` refuses metadata signed longer ago.
 The two requirements need `issuer_metadata_roots`. Added within ABI
 version 12.
+A transaction code the holder enters goes to the issuer an offer
+names, before `issuer_roots` decide anything about it, when its
+credential arrives: an attacker can send an offer for its own issuer
+beside a genuine service's PIN, and so phish the PIN (OpenID4VCI 1.0's
+Security Considerations, "Transaction Code Phishing"). So a Wallet
+that receives credentials (`issuer_roots`, `mdoc_issuer_roots` or
+`mdoc_issuer_roots_by_doctype`) must decide which issuers' offers it
+takes, in development too, in one of three ways, or `NewWallet` refuses
+it with `invalid_input`:
+
+- `credential_issuers`, the only Credential Issuer Identifiers it takes
+  offers from, each compared exactly with an offer's
+  `credential_issuer`: `StartIssuance` refuses another's offer with
+  `untrusted_issuer`, before fetching anything from that issuer. An
+  empty identifier is `invalid_input`.
+- signed issuer metadata naming its issuer: `issuer_metadata_roots`
+  with `require_signed_issuer_metadata` and
+  `require_issuer_metadata_name`, all three, so `StartIssuance` refuses
+  an issuer whose metadata isn't signed under the roots by a
+  certificate naming it, before the holder enters a code. It may be
+  combined with `credential_issuers`; both then apply.
+- `allow_any_credential_issuer`, which takes any issuer's offer and
+  can't be set with either: guarding against the phishing above is
+  then the app's.
+
+Either way, lead the PIN prompt with the offer's `credential_issuer`,
+never its `issuer_name` alone, which unsigned metadata lets an issuer
+choose. Added in ABI 16.
 `development`
 relaxes what production requires, for a wallet talking to services on a
 development machine. Never ship an app with it set, nor set it just to

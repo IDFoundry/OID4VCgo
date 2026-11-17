@@ -199,6 +199,7 @@ func TestWalletRevocation_ExplicitChoice(t *testing.T) {
 	base := config{
 		IssuerRoots: pool("issuer root"), VerifierRoots: pool("verifier root"), RegistrarRoots: pool("registrar root"),
 		MdocReaderRoots: pool("reader root"), IssuerMetadataRoots: pool("metadata root"),
+		CredentialIssuers: []string{"https://issuer.example"},
 	}
 	all := []string{"issuer", "issuer_metadata", "registrar", "mdoc_reader", "verifier", "status"}
 	keys := map[string]string{

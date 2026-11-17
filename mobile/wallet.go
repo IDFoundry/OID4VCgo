@@ -105,6 +105,20 @@ type config struct {
 	// credential_issuer it was requested from, which is refused by
 	// default (walletflow.Config.AllowForeignIss).
 	AllowForeignIss bool `json:"allow_foreign_iss,omitempty"`
+	// CredentialIssuers are the only Credential Issuer Identifiers the
+	// wallet takes offers from, each compared exactly: StartIssuance
+	// refuses another's offer with CodeUntrustedIssuer before fetching
+	// its metadata, so the holder is never asked for a transaction code
+	// it would send there (walletflow.Config.CredentialIssuers).
+	// AllowAnyCredentialIssuer takes any issuer's offer instead
+	// (walletflow.Config.AllowAnyCredentialIssuer). A wallet receiving
+	// credentials (issuer_roots or the mdoc ones) decides which issuers'
+	// offers it takes, in development too: CredentialIssuers;
+	// IssuerMetadataRoots with RequireSignedIssuerMetadata and
+	// RequireIssuerMetadataName; or AllowAnyCredentialIssuer, alone
+	// (checkCredentialIssuerTrust).
+	CredentialIssuers        []string `json:"credential_issuers,omitempty"`
+	AllowAnyCredentialIssuer bool     `json:"allow_any_credential_issuer,omitempty"`
 	// IssuerMetadataRoots are PEM certificates: the trust anchors for
 	// signed Credential Issuer Metadata. With them, signed metadata is
 	// asked for and verified; RequireSignedIssuerMetadata refuses an
@@ -537,6 +551,10 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	wcfg.StatusIssuers = cfg.StatusIssuers
 	wcfg.StatusMaxBytes, wcfg.IdentifierListMaxBytes = cfg.StatusMaxBytes, cfg.IdentifierListMaxBytes
 	wcfg.RequireIssuerName, wcfg.AllowForeignIss = cfg.RequireIssuerName, cfg.AllowForeignIss
+	if slices.Contains(cfg.CredentialIssuers, "") {
+		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("credential_issuers names an empty issuer"))
+	}
+	wcfg.CredentialIssuers, wcfg.AllowAnyCredentialIssuer = cfg.CredentialIssuers, cfg.AllowAnyCredentialIssuer
 	if wcfg.IssuerMetadataRoots, err = optionalCertPool("issuer_metadata_roots", cfg.IssuerMetadataRoots); err != nil {
 		return walletflow.Config{}, err
 	}
@@ -586,7 +604,33 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	if wcfg.ProximityDeviceAuth, err = proximityDeviceAuth(cfg.ProximityDeviceAuth); err != nil {
 		return walletflow.Config{}, newError(CodeInvalidInput, err)
 	}
+	if err := checkCredentialIssuerTrust(wcfg); err != nil {
+		return walletflow.Config{}, err
+	}
 	return wcfg, nil
+}
+
+// checkCredentialIssuerTrust is walletflow.New's check that a wallet
+// receiving credentials decides which issuers' offers it takes, and
+// decides it once, with the configuration's own keys in its errors:
+// credential_issuers; issuer_metadata_roots with
+// require_signed_issuer_metadata and require_issuer_metadata_name; or
+// allow_any_credential_issuer, which can't be set with either.
+func checkCredentialIssuerTrust(wcfg walletflow.Config) error {
+	listed := len(wcfg.CredentialIssuers) > 0
+	named := wcfg.RequireSignedIssuerMetadata && wcfg.RequireIssuerMetadataName &&
+		wcfg.IssuerMetadataRoots != nil && !wcfg.IssuerMetadataRoots.Equal(x509.NewCertPool())
+	receives := wcfg.IssuerRoots != nil || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
+	switch {
+	case wcfg.AllowAnyCredentialIssuer && (listed || named):
+		return newError(CodeInvalidInput, errors.New("allow_any_credential_issuer takes any issuer's offer, but credential_issuers "+
+			"or require_signed_issuer_metadata with require_issuer_metadata_name limit them; set one"))
+	case receives && !listed && !named && !wcfg.AllowAnyCredentialIssuer:
+		return newError(CodeInvalidInput, errors.New("a wallet receiving credentials must decide which issuers' offers it takes: "+
+			"credential_issuers; or issuer_metadata_roots with require_signed_issuer_metadata and require_issuer_metadata_name; "+
+			"or allow_any_credential_issuer to take any issuer's"))
+	}
+	return nil
 }
 
 // mdocIssuerTrust sets wcfg's mdoc-specific issuer trust from cfg's
