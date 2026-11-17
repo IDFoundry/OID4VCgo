@@ -345,6 +345,7 @@ func derBase64(certPEM string) string {
 	block, _ := pem.Decode([]byte(certPEM))
 	if block == nil {
 		fail("not a PEM certificate")
+		return ""
 	}
 	return base64.StdEncoding.EncodeToString(block.Bytes)
 }
