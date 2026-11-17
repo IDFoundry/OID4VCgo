@@ -602,9 +602,15 @@ one anyone could make) are kept apart, at most 1,000 of them, and never
 displace a key Google's roots vouch for. `/attestation-challenge`
 answers each client address (an IPv6 one's /64) 20 requests at once,
 then one a second (429 past that), so one client can't use up the
-challenges every other one needs. It reads no forwarded-address header,
-so behind a tunnel every client shares the tunnel's address, and the
-limit applies to them all together.
+challenges every other one needs. `/wallet-attestation` and
+`/key-attestation`, together, take 60 at once, then two a second. It
+reads no forwarded-address header, so behind a tunnel every client
+shares the tunnel's address, and the limits apply to them all
+together. The
+instances this protocol registers, one for each new instance key, are
+kept to the 1,000 most recently seen, and one unseen for 30 days is
+deleted: a wallet whose instance went is registered again with its
+next Wallet Attestation.
 
 Whether a verified chain is hardware Google vouches for — it ends at
 one of Google's hardware attestation roots (embedded; see

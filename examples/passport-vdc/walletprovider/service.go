@@ -55,6 +55,12 @@ const (
 	// is empty.
 	DefaultURL = "https://127.0.0.1:6443"
 
+	// maxDemoInstances bounds the instances the older protocol, which
+	// attests any caller, registers: past it, the least recently seen
+	// goes. One unseen for demoInstanceIdle goes too.
+	maxDemoInstances = 1000
+	demoInstanceIdle = 30 * 24 * time.Hour
+
 	// WalletName is the Wallet Attestations' wallet_name.
 	WalletName = "passport-vdc demo wallet"
 
@@ -269,6 +275,13 @@ func (s *Service) Sweep(ctx context.Context) {
 	case n > 0:
 		s.s.cfg.Logf("wallet provider: deleted %d status lists of past periods", n)
 	}
+	n, err = s.s.store.pruneDemoInstances(s.s.cfg.Now().Add(-demoInstanceIdle), maxDemoInstances)
+	switch {
+	case err != nil:
+		s.s.cfg.Logf("wallet provider: deleting idle demo-protocol instances: %v", err)
+	case n > 0:
+		s.s.cfg.Logf("wallet provider: deleted %d idle demo-protocol instances", n)
+	}
 }
 
 // SweepEvery runs Sweep at once, then every interval until ctx is done.
@@ -291,8 +304,8 @@ func (s *service) handler(legacy bool) http.Handler {
 	mux := http.NewServeMux()
 	if legacy {
 		mux.HandleFunc("POST "+ChallengePath, s.challenge)
-		mux.HandleFunc("POST "+WalletAttestationPath, s.walletAttestation)
-		mux.HandleFunc("POST "+KeyAttestationPath, s.keyAttestation)
+		mux.HandleFunc("POST "+WalletAttestationPath, s.limitAttestations(s.walletAttestation))
+		mux.HandleFunc("POST "+KeyAttestationPath, s.limitAttestations(s.keyAttestation))
 	} else {
 		for _, path := range []string{ChallengePath, WalletAttestationPath, KeyAttestationPath} {
 			mux.HandleFunc("POST "+path, refuseUnattested)
@@ -307,6 +320,20 @@ func (s *service) handler(legacy bool) http.Handler {
 		v1.ServeHTTP(w, r)
 	}))
 	return mux
+}
+
+// limitAttestations limits h, an attestation endpoint of the older
+// protocol, to attestationBurst requests from each client address at
+// once, then attestationRate a second: needing no challenge, they'd
+// otherwise be the protocol's unthrottled way in.
+func (s *service) limitAttestations(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.attestations.allow(clientAddress(r), s.cfg.Now()) {
+			writeError(w, http.StatusTooManyRequests, "too many attestation requests from this address; try again shortly")
+			return
+		}
+		h(w, r)
+	}
 }
 
 // refuseUnattested answers a request of the older protocol, which
@@ -345,7 +372,8 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 	}
 	s := &service{
 		p: p, cfg: cfg, ev: ev, challenges: newClientLimiter(challengeRate, challengeBurst),
-		demo: newDemoVerifier(), store: store,
+		attestations: newClientLimiter(attestationRate, attestationBurst),
+		demo:         newDemoVerifier(), store: store,
 	}
 	if s.lib, err = p.library(cfg, s.demo, store, indices); err != nil {
 		return nil, err
@@ -358,9 +386,11 @@ type service struct {
 	cfg        ServiceConfig
 	ev         *evidence
 	challenges *clientLimiter
-	lib        *wp.Provider
-	demo       *demoVerifier
-	store      *fileInstanceStore
+	// attestations limits the older protocol's attestation endpoints.
+	attestations *clientLimiter
+	lib          *wp.Provider
+	demo         *demoVerifier
+	store        *fileInstanceStore
 
 	// mu serializes recording instance keys, so an instance key is
 	// recorded for one instance.
@@ -516,6 +546,10 @@ func (s *service) newInstanceWalletAttestation(ctx context.Context, key *ecdsa.P
 		}
 		jwt, err := s.lib.WalletAttestation(ctx, wp.WalletAttestationRequest{InstanceID: id, ClientID: s.cfg.ClientID, InstanceKey: key})
 		return id, jwt, err
+	}
+	// Make room for it among the older protocol's instances.
+	if _, err := s.store.pruneDemoInstances(s.cfg.Now().Add(-demoInstanceIdle), maxDemoInstances-1); err != nil {
+		return "", "", err
 	}
 	in, err := s.register(ctx)
 	if err != nil {
