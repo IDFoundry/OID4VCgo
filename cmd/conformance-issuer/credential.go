@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -24,14 +25,18 @@ import (
 // day-rounded, not this value added to the raw issuance instant.
 const issuedCredentialLifetime = 365 * 24 * time.Hour
 
-// nonceHandler serves the OID4VCI Nonce Endpoint (§7) — not a
-// protected resource (issuer.RequestNonce's own doc comment), so no
-// resource.Verifier check here.
-func nonceHandler(iss *issuer.Issuer) http.HandlerFunc {
+// nonceHandler serves the OID4VCI Nonce Endpoint (§7) with
+// requestNonce, an issuer's RequestNonce — not a protected resource
+// (issuer.RequestNonce's own doc comment), so no resource.Verifier
+// check here. Its callers are anonymous: an error is logged, and they
+// get only server_error, never its text (a store's error can name its
+// database, host or user).
+func nonceHandler(requestNonce func(context.Context) (issuer.NonceResult, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		result, err := iss.RequestNonce(r.Context())
+		result, err := requestNonce(r.Context())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("nonce endpoint: %v", err)
+			issuer.WriteError(w, err)
 			return
 		}
 		result.WriteJSON(w)

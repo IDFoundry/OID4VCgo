@@ -61,7 +61,7 @@ func newRouter(srv *server.Server, iss *issuer.Issuer, resourceVerifier *fapires
 		return nil, err
 	}
 	mux.Handle("GET /.well-known/openid-credential-issuer", metadata)
-	mux.HandleFunc("POST /nonce", nonceHandler(iss))
+	mux.HandleFunc("POST /nonce", nonceHandler(iss.RequestNonce))
 	credHandler, err := credentialHandler(iss, resourceVerifier, credentialURL, cfg)
 	if err != nil {
 		return nil, err
