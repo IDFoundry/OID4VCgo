@@ -137,6 +137,16 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY" || true
 
+      # lib.sh saves conformance-issuer's log after every leg, as
+      # <leg>.container.log beside the leg's own log; this catches a
+      # run cut short mid-leg (a timeout, a cancel), where that never
+      # ran.
+      - name: Save the conformance issuer's last log
+        if: always()
+        run: |
+          mkdir -p "${{ runner.temp }}/conformance-results"
+          docker compose -f conformance/issuer/docker-compose.yml logs --no-color --timestamps > "${{ runner.temp }}/conformance-results/conformance-issuer-container.log" 2>&1 || true
+
       - name: Upload conformance results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

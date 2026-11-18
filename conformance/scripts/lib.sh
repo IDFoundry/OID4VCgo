@@ -144,6 +144,37 @@ check_summary() {
 	return $clean
 }
 
+# leg_start_time — the current UTC time, to the second, for
+# capture_container_log's --since.
+leg_start_time() {
+	date -u +%Y-%m-%dT%H:%M:%SZ
+	return 0
+}
+
+# capture_container_log LOG_FILE SINCE — writes what the leg's own
+# server container (cmd/conformance-issuer, -verifier or -wallet-vp)
+# logged since SINCE to LOG_FILE with .log replaced by .container.log,
+# beside the runner's own log, so it lands in CI's uploaded artifact:
+# the next leg recreates the container (the Verifier's legs may only
+# restart it, keeping earlier output, hence --since) and the workflow
+# tears it down, so a leg's server-side errors are otherwise lost.
+# Called after every leg, whatever its exit status. The compose file is
+# LEG_COMPOSE_FILE (relative to REPO_ROOT), a local run_issuer,
+# run_verifier and run_wallet_vp set for their legs; run_wallet leaves
+# it unset, since cmd/conformance-wallet runs in the runner's own
+# process and logs into the runner's own log. These servers log
+# requests, outcomes and errors, never key material: their keys and
+# sealing key are only read from their config, which isn't printed.
+capture_container_log() {
+	local log_file="$1" since="$2"
+	[[ -n "${LEG_COMPOSE_FILE:-}" ]] || return 0
+	local out="${log_file%.log}.container.log"
+	if ! (cd "$REPO_ROOT" && docker compose -f "$LEG_COMPOSE_FILE" logs --no-color --timestamps --since "$since") >"$out" 2>&1; then
+		log "could not capture $LEG_COMPOSE_FILE's container log (see $out)"
+	fi
+	return 0
+}
+
 # run_go_checked NAME LOG_FILE EXCEPTIONS CMD... — runs CMD (a `go run`
 # invocation). Per-module results are graded via check_summary, not
 # the process's own exit code — see this file's own header comment for
@@ -163,8 +194,10 @@ run_go_checked() {
 	shift 3
 	ALL_RUNS+=("$name")
 	log "$name: starting"
-	local cmd_status=0
+	local cmd_status=0 since
+	since="$(leg_start_time)"
 	(cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1 || cmd_status=$?
+	capture_container_log "$log_file" "$since"
 	if [[ $cmd_status -ne 0 ]]; then
 		OVERALL_CLEAN=false
 		record_result "$name" "UNEXPECTED RESULTS (see $log_file)"
@@ -194,7 +227,11 @@ run_go_self_graded() {
 	shift 2
 	ALL_RUNS+=("$name")
 	log "$name: starting"
-	if (cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1; then
+	local cmd_status=0 since
+	since="$(leg_start_time)"
+	(cd "$REPO_ROOT" && "$@") >"$log_file" 2>&1 || cmd_status=$?
+	capture_container_log "$log_file" "$since"
+	if [[ $cmd_status -eq 0 ]]; then
 		record_result "$name" "OK (see $log_file)"
 		log "$name: OK"
 	else
@@ -206,6 +243,7 @@ run_go_self_graded() {
 }
 
 run_issuer() {
+	local LEG_COMPOSE_FILE=conformance/issuer/docker-compose.yml
 	# Exactly the Issuer side's own 2x2 certification profile matrix
 	# (sd_jwt_vc/mdoc x wallet_initiated/issuer_initiated) — the 4 of
 	# the OIDF certification catalog's own 10 OID4VCI HAIP profiles this
@@ -406,6 +444,7 @@ crl control: credential issuer CA without a current CRL=REFUSED'
 }
 
 run_verifier() {
+	local LEG_COMPOSE_FILE=conformance/verifier/docker-compose.yml
 	run_go_self_graded "Verifier sd_jwt_vc" "$WORKDIR/verifier-sdjwt.log" \
 		go run ./conformance/verifier/scripts/run-sdjwt-modules -suite "$CONFORMANCE_SERVER"
 
@@ -429,6 +468,7 @@ run_verifier() {
 }
 
 run_wallet_vp() {
+	local LEG_COMPOSE_FILE=conformance/wallet-vp/docker-compose.yml
 	# The OID4VP Wallet role's 4 catalog profiles: sd_jwt_vc and iso_mdl,
 	# each over direct_post.jwt and over dc_api.jwt (the Digital
 	# Credentials API, run-modules standing in for the browser — see
