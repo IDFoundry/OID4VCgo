@@ -70,9 +70,9 @@ each, not a deployment template" says what it does differently.
   (`walletprovider.ChallengePath`, `InstancesPath`). Each writes a
   row, and each sealed row spends the Sealer key's budget. The
   Verifier's request_uri (`RequestObjectHandler`) too: each fetch
-  reads a row, and the first on each replica, and every request_uri
-  POST, signs a Request Object (a billed call with a KMS-backed
-  signer).
+  reads a row, and every request_uri POST signs a Request Object (a
+  billed call with a KMS-backed signer), as does every GET of a
+  request whose sealed record an earlier release wrote.
 
 ## Credential Issuer
 
@@ -220,26 +220,36 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   encrypt one — and a refused answer leaves the request open for the
   next. Each answer costs an ECDH, a decryption and parsing up to
   1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
-  presentations per Credential Query: path building over the issuer's
-  presented certificate chain (anchored at one of its top two
-  certificates and checked from there down: a crafted one costs at
-  most two signature checks per configured root sharing a name with
-  its top, plus about two where a root anchors it, however long it
-  is; a genuine one, replayed, a check per certificate, at most
-  eight. With the built-in `X5CIssuerKeyResolver` and
-  `X5ChainIssuerKeyResolver` as the request's `IssuerKeys` and
-  `MdocIssuerKeys`, each distinct chain is verified once per answer,
-  and the answer is refused once `MaxFailedIssuerChainsPerResponse`
-  distinct chains have failed to anchor or verify; chains that verify
-  aren't counted, however many there are, and a resolver of your own,
-  even one dispatching to the built-in ones, gets neither), the issuer
-  signature, and only then the SD-JWT disclosures the signed payload
+  presentations per Credential Query: the issuer signature, checked
+  with the presented leaf certificate's key first through a built-in
+  resolver, then path building over the issuer's presented certificate
+  chain (anchored at one of its top two certificates and checked from
+  there down: a crafted one costs at most two signature checks per
+  configured root sharing a name with its top, plus about two where a
+  root anchors it, however long it is; a genuine one, replayed, a check
+  per certificate, at most eight. With the built-in
+  `X5CIssuerKeyResolver` and `X5ChainIssuerKeyResolver` as the
+  request's `IssuerKeys` and `MdocIssuerKeys`, each distinct chain is
+  verified once per answer, and the answer is refused once
+  `MaxFailedIssuerChainsPerResponse` distinct chains haven't verified;
+  chains that verify aren't counted, however many there are, nor are
+  ones refused for revocation or leaf policy, and a resolver of your
+  own, even one dispatching to the built-in ones, gets neither), and
+  only then the SD-JWT disclosures the signed payload
   references, and a revocation check per path. Measured on a
   development machine, a crafted answer whose chains no configured root
   anchors is refused after its fourth failed chain, at a few
   milliseconds of CPU (the more configured roots of matching names,
   the more); one padding a genuine issuer JWT with a mebibyte of
-  disclosure parts, about 35 ms. So limit by concurrency as
+  disclosure parts, about 35 ms. An org-iso-mdoc answer over the
+  Digital Credentials API (ISO/IEC TS 18013-7 Annex C:
+  `HandleMdocDCAPIResponse`, or `mdocdcapi.VerifyResponse` and
+  `VerifyResponseDocuments` directly) is covered the same way, through
+  `verifier.ResponseIssuerChains`: each document's `IssuerAuth` checked
+  with its `x5chain` leaf's key first, each distinct chain verified once
+  per answer, under the same cap; and the first document that fails
+  refuses the whole answer, so at most one chain that doesn't verify is
+  checked per answer. So limit by concurrency as
   well as by rate: cap the response
   handlers' in-flight requests per instance (a semaphore, or your
   proxy's connection limit) so that a burst queues or is refused

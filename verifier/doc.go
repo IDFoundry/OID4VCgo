@@ -58,13 +58,10 @@
 // bound into the sealing, so changing one leaves the record unreadable
 // while its sealed fields are there; Transactions refuses a record
 // stripped of them, and one whose ID isn't the transaction it asked
-// for. The Request Object served at a request_uri is signed from those
-// bound fields, once per request by each Transactions, never served
-// from the record. The store
-// is trusted only for the rest (the response_code hash, the last
-// error, retain_until, and the stored request_object, which only
-// replicas running OID4VCgo v0.81.0 or earlier serve) and for not
-// putting back an older copy.
+// for. The signed Request Object Begin stores, served at the request's
+// request_uri, is bound too, by its hash. The store is trusted only for
+// the rest (the response_code hash, the last error and retain_until)
+// and for not putting back an older copy.
 // TransactionsConfig.ForgetResultOnRead drops the claims as soon as
 // they've been read.
 //

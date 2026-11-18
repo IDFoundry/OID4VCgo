@@ -308,28 +308,74 @@ per response when `IssuerKeys` is an `X5CIssuerKeyResolver` or
 `MdocIssuerKeys` an `X5ChainIssuerKeyResolver` itself. A resolver of
 your own, one dispatching to several built-in resolvers for instance,
 has each of its calls verified in full, under that call's resolver's
-`LeafPolicy` and `Revocation`. Through a built-in resolver, a response
-is refused as a whole, `malformed`, once
-`MaxFailedIssuerChainsPerResponse` (4) of its distinct issuer chains
-have failed to verify, with any further chain left unverified. Chains
-that verify aren't counted, so a response presenting credentials from
-many issuers isn't refused by it.
+`LeafPolicy` and `Revocation`. Through a built-in resolver, once
+`MaxFailedIssuerChainsPerResponse` (4) of a response's distinct issuer
+chains haven't verified (no configured root anchors them, a signature
+in them doesn't verify, or a certificate doesn't parse or is outside
+its validity), the response is refused as a whole, `malformed`, when
+it reaches another distinct chain, which is left unverified. Chains
+that verify aren't counted, even when the leaf policy or revocation
+then refuses them, so a response presenting credentials from many
+issuers, revoked ones among them, isn't refused by it. A response
+holding more than four credentials from issuers no root anchors is,
+even beside a valid one (an optional credential set of foreign loyalty
+cards before a required PID, say), when they come first.
 
-### Request Objects at a request_uri are signed, not served from the store (`verifier`)
+Through a built-in resolver, an SD-JWT VC's Issuer-signed JWT, or an
+mdoc's `IssuerAuth`, is now checked with the key of the `x5c` or
+`x5chain` leaf it presents before its chain is verified, so a genuine
+chain replayed under a signature its key didn't make costs no chain
+check. Such a presentation is refused `invalid_credential` even when
+its chain is untrusted, where it was `untrusted_issuer`; one whose
+leaf doesn't parse is still refused `untrusted_issuer`. A resolver of
+your own sees no change.
 
-`Transactions.RequestObject`, and `RequestObjectHandler`'s GET, no
-longer serve the Request Object kept in the transaction's record: a
-store writer without the sealing key could put another request's
-there, and have the holder answer that one. Each `Transactions` signs
-the request's Request Object from its sealed fields the first time it
-serves it, and serves that copy from memory to the fetches that follow
-while the record is unchanged. Expect one more signature per request
-and replica (a billed call with a KMS-backed signer), and Request
-Objects whose bytes differ between replicas; their claims are the
-same. A request_uri POST is signed for each fetch, as before. Upgrade
-every replica: one still on v0.81.0 serves the stored object. Rate
-limit the request_uri endpoint with the response endpoints
-(DEPLOYING.md).
+The Digital Credentials API's org-iso-mdoc answers (ISO/IEC TS 18013-7
+Annex C) get the same, with an `X5ChainIssuerKeyResolver`:
+`mdocdcapi.VerifyResponse` and `VerifyResponseDocuments`, and so
+`Transactions.HandleMdocDCAPIResponse`, check each document's
+`IssuerAuth` with its `x5chain` leaf's key before its chain, verify a
+chain the answer's documents share once, and apply
+`MaxFailedIssuerChainsPerResponse`. No API changes. A verifier of mdocs
+of its own can do the same through the new
+`verifier.ResponseIssuerChains`, one per response, whose
+`ResolveMdocIssuer` takes the document's `IssuerAuth`;
+`verifier.ResolveMdocIssuer` is unchanged.
+
+### The Request Object at a request_uri is sealed with its record (`verifier`)
+
+`verifier.TransactionCodec` writes version 3 records
+(`TransactionCodecVersion`), whose sealed fields are also bound to the
+hash of the signed Request Object `Begin` stores: a store writer
+without the sealing key could put another request's Request Object
+there, and have the holder answer that one. Such a record no longer
+opens. `Transactions.RequestObject`, and `RequestObjectHandler`'s GET,
+still serve the stored Request Object, signing nothing per fetch.
+
+- Version 1 and 2 records still open, without their Request Object,
+  which they don't bind: a request begun before the upgrade has its
+  Request Object signed from its sealed fields for each GET (a billed
+  call with a KMS-backed signer) until it expires. Written back, a
+  record is version 3.
+- An earlier release doesn't read version 3: during a rolling deploy,
+  a request begun or updated on an upgraded replica fails on one not
+  yet upgraded, so finish the rollout quickly (a request lives
+  `TransactionsConfig.Lifetime`), and a rollback fails the requests the
+  new release wrote.
+- A codec without a `Sealer`, and any other unsealed store, binds
+  nothing and serves the Request Object as stored, as before: whoever
+  can write such a store can change every field a Request Object is
+  signed from. A store that seals transactions its own way must bind
+  `RequestObject` as `TransactionCodec` does, or not return it, which
+  has it signed for each fetch.
+- A request_uri POST is signed for each fetch, as before. Rate limit
+  the request_uri endpoint with the response endpoints (DEPLOYING.md).
+
+The request_uri now answers 500 `server_error`, where it answered 404,
+when the store fails, when it answers with another transaction's
+record, and when a record doesn't open or is stripped of its sealed
+fields: a store that fails isn't a request that's unknown. Alert on
+those as on any other server error.
 
 ### App Attest chains (`walletprovider/appattest`)
 

@@ -20,16 +20,20 @@ import (
 )
 
 // TransactionCodecVersion is the version of the encoding
-// TransactionCodec writes, recorded in each record. Unmarshal reads it
-// and version 1, which OID4VCgo v0.75.3 and earlier wrote, and refuses
-// any other. The two differ only in what a sealed field is bound to
-// (see TransactionCodec): a version 1 record, read and written back,
-// becomes version 2.
-const TransactionCodecVersion = 2
+// TransactionCodec writes, recorded in each record. Unmarshal reads it,
+// version 2, which OID4VCgo v0.76.0 to v0.81.0 wrote, and version 1,
+// which v0.75.3 and earlier wrote, and refuses any other. They differ
+// only in what a sealed field is bound to (see TransactionCodec): an
+// older record, read and written back, becomes version 3.
+const TransactionCodecVersion = 3
 
 // transactionCodecV1 is the version whose sealed fields aren't bound to
 // the record's KeyID, State, Nonce, Status and ExpiresAt.
 const transactionCodecV1 = 1
+
+// transactionCodecV2 is the version whose sealed fields aren't bound to
+// the record's RequestObject.
+const transactionCodecV2 = 2
 
 // TransactionCodec encodes a Transaction for a TransactionStore that
 // keeps it outside the process — a database row, a cache entry — so a
@@ -73,19 +77,27 @@ const transactionCodecV1 = 1
 // decryption key, which every request has, and a completed one without
 // its result. Nor does the binding tell one transaction's whole record
 // from another's: Transactions refuses a record whose ID isn't the one
-// it asked the store for. The Request Object served at the request's
-// request_uri is signed from the bound fields
-// (Transactions.RequestObject), never served from the record.
+// it asked the store for. The signed Request Object Begin stores, which
+// Transactions serves at the request's request_uri
+// (Transactions.RequestObject), is bound too, by its hash: a store
+// writer can't put another request's there.
 //
 // What the seal leaves unbound, the store must still be trusted for.
 // Someone who can write to it can change the record's response_code
-// hash, last error, retain_until (so have it deleted sooner, or kept
-// longer) and request_object (which Transactions no longer serves, and
-// writes only for replicas running OID4VCgo v0.81.0 or earlier, which
-// do); delete the record; or put back an older copy whole (the pending
-// one in place of the completed one, say). Version 1 records, which
-// OID4VCgo v0.75.3 and earlier wrote, bound neither kid, nonce, state,
-// status nor expiry; they still open, and are written back as version 2.
+// hash, last error and retain_until (so have it deleted sooner, or kept
+// longer); delete the record; or put back an older copy whole (the
+// pending one in place of the completed one, say). Older records still
+// open: version 1 records, which OID4VCgo v0.75.3 and earlier wrote,
+// bound neither kid, nonce, state, status, expiry nor Request Object,
+// and version 2 records, which v0.76.0 to v0.81.0 wrote, no Request
+// Object. Unmarshal returns either without its RequestObject, which
+// isn't bound, so Transactions signs the request's Request Object from
+// the bound fields for each fetch; written back, a record is version 3.
+//
+// A codec without a Sealer binds nothing, and Unmarshal returns every
+// field as stored, the Request Object among them: Transactions serves
+// it, since whoever can write such a store can change every field it
+// would be signed from anyway.
 //
 // The zero TransactionCodec seals nothing.
 type TransactionCodec struct {
@@ -160,8 +172,14 @@ type wireCredential struct {
 
 // Marshal encodes tx, sealing its secret fields with c.Sealer if set.
 func (c TransactionCodec) Marshal(tx Transaction) ([]byte, error) {
+	return c.marshal(tx, TransactionCodecVersion)
+}
+
+// marshal is Marshal, writing a record of the given version: one older
+// than TransactionCodecVersion only to test that it still opens.
+func (c TransactionCodec) marshal(tx Transaction, version int) ([]byte, error) {
 	w := wireTransaction{
-		Version: TransactionCodecVersion, ID: tx.ID, KeyID: tx.KeyID, State: tx.State, Nonce: tx.Nonce, Query: tx.Query,
+		Version: version, ID: tx.ID, KeyID: tx.KeyID, State: tx.State, Nonce: tx.Nonce, Query: tx.Query,
 		Sealed: c.Sealer != nil, RequestObject: tx.RequestObject, Origin: tx.Origin, MdocEncryptionInfo: tx.MdocEncryptionInfo, MdocAllowWithheld: tx.MdocAllowWithheld, Owner: tx.Owner,
 		BrowserBindingHash: tx.BrowserBindingHash, SameDevice: tx.SameDevice, ExpiresAt: tx.ExpiresAt, RetainUntil: tx.RetainUntil,
 		Status: tx.Status, ResponseCodeHash: tx.ResponseCodeHash, LastError: tx.LastError,
@@ -212,8 +230,8 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
 	}
 	switch {
-	case w.Version != TransactionCodecVersion && w.Version != transactionCodecV1:
-		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d or %d", w.Version, TransactionCodecVersion, transactionCodecV1)
+	case w.Version != TransactionCodecVersion && w.Version != transactionCodecV2 && w.Version != transactionCodecV1:
+		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: version %d, want %d, %d or %d", w.Version, TransactionCodecVersion, transactionCodecV2, transactionCodecV1)
 	case w.ID == "":
 		return Transaction{}, errors.New("verifier: unmarshal transaction: no id")
 	case w.Status < TransactionPending || w.Status > TransactionClosed:
@@ -277,6 +295,11 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 		}
 		tx.Result = &r
 	}
+	if c.Sealer != nil && w.Version != TransactionCodecVersion {
+		// An older record's Request Object isn't bound: anyone who can
+		// write to the store could have put another request's there.
+		tx.RequestObject = ""
+	}
 	return tx, nil
 }
 
@@ -300,11 +323,14 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // elements (MdocAllowWithheld) has one more, so a store can't let a
 // request that required every element complete without them.
 //
-// A version 2 record's binding (TransactionCodecVersion) is an object
-// instead: that array, as "v1", beside the record's KeyID, State,
-// Nonce, Status and ExpiresAt (in UTC, RFC 3339 with nanoseconds), so a
-// store can't reopen a completed request, extend one's expiry, or swap
-// its nonce, state or kid. A version 1 record's is the array alone.
+// A version 2 record's binding is an object instead: that array, as
+// "v1", beside the record's KeyID, State, Nonce, Status and ExpiresAt
+// (in UTC, RFC 3339 with nanoseconds), so a store can't reopen a
+// completed request, extend one's expiry, or swap its nonce, state or
+// kid. A version 3 record's (TransactionCodecVersion) also holds
+// SHA-256 of its RequestObject, so a store can't change the Request
+// Object served at its request_uri. A version 1 record's is the array
+// alone.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	queryHash, err := canonicalQueryHash(query, true)
 	if err != nil {
@@ -320,14 +346,20 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 	if w.Version == transactionCodecV1 {
 		return json.Marshal(bound)
 	}
+	var requestObjectHash []byte
+	if w.Version != transactionCodecV2 {
+		sum := sha256.Sum256([]byte(w.RequestObject))
+		requestObjectHash = sum[:]
+	}
 	return json.Marshal(struct {
-		V1        []any             `json:"v1"`
-		KeyID     string            `json:"kid"`
-		State     string            `json:"state"`
-		Nonce     string            `json:"nonce"`
-		Status    TransactionStatus `json:"status"`
-		ExpiresAt string            `json:"expires_at"`
-	}{bound, w.KeyID, w.State, w.Nonce, w.Status, w.ExpiresAt.UTC().Format(time.RFC3339Nano)})
+		V1            []any             `json:"v1"`
+		KeyID         string            `json:"kid"`
+		State         string            `json:"state"`
+		Nonce         string            `json:"nonce"`
+		Status        TransactionStatus `json:"status"`
+		ExpiresAt     string            `json:"expires_at"`
+		RequestObject []byte            `json:"request_object,omitempty"`
+	}{bound, w.KeyID, w.State, w.Nonce, w.Status, w.ExpiresAt.UTC().Format(time.RFC3339Nano), requestObjectHash})
 }
 
 // canonicalQueryHash is SHA-256 of query, a DCQL query's JSON, in a

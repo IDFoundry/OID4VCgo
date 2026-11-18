@@ -43,8 +43,8 @@ const requestObjectMediaType = "application/oauth-authz-req+jwt"
 // for a request that's unknown, expired or a Digital Credentials API
 // one, and 500 server_error when the Verifier fails: its store fails
 // or answers with another request's record, or a Request Object can't
-// be signed. A GET is signed once per request (RequestObject), a POST
-// for each fetch.
+// be signed. A GET serves the Request Object Begin signed
+// (RequestObject); a POST is signed for each fetch.
 func (t *Transactions) RequestObjectHandler() http.Handler {
 	return http.HandlerFunc(t.serveRequestObject)
 }
