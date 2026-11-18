@@ -1,6 +1,7 @@
 package cose
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync/atomic"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -329,12 +331,71 @@ func VerifyMax(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte, maxByte
 	if raw.Payload == nil {
 		return Headers{}, Headers{}, nil, errors.New("cose: COSE_Sign1 has a detached (null) payload; use VerifyDetached")
 	}
-	protected, unprotected, err = verifySign1(alg, pub, raw, externalAAD, raw.Payload)
+	protected, unprotected, _, err = verifySign1(alg, pub, raw, externalAAD, raw.Payload)
 	if err != nil {
 		return Headers{}, Headers{}, nil, err
 	}
 	return protected, unprotected, raw.Payload, nil
 }
+
+// Proof is one signature Verify checked: under alg, with a key, over an
+// exact Sig_structure. Given to Verify (or VerifyMax, VerifyDetached)
+// in place of that key, it is the key, except that the same signature
+// over the same Sig_structure under the same algorithm isn't checked
+// again: a caller that checked a COSE_Sign1's signature before it knew
+// whether to trust the key doesn't pay for it twice once it does. Only
+// VerifyProof makes one, so a Proof covers nothing it didn't check, and
+// a caller outside this module, unable to name the type, can't skip a
+// check with a key of its own. Substitute one for a key only through
+// For, which checks it is the same key.
+type Proof struct {
+	alg      Alg
+	pub      crypto.PublicKey
+	toVerify []byte
+	sig      []byte
+}
+
+// VerifyProof is Verify, returning what it checked as a Proof.
+func VerifyProof(alg Alg, pub crypto.PublicKey, sign1, externalAAD []byte) (*Proof, error) {
+	raw, err := decodeRaw(sign1, MaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	if raw.Payload == nil {
+		return nil, errors.New("cose: COSE_Sign1 has a detached (null) payload; use VerifyDetached")
+	}
+	_, _, toVerify, err := verifySign1(alg, pub, raw, externalAAD, raw.Payload)
+	if err != nil {
+		return nil, err
+	}
+	if p, ok := pub.(*Proof); ok {
+		pub = p.pub
+	}
+	return &Proof{alg: alg, pub: pub, toVerify: toVerify, sig: raw.Signature}, nil
+}
+
+// For is p in place of pub, a key the caller resolved and trusts on its
+// own, when p proves a signature under alg by a key equal to pub; pub
+// otherwise, and for a nil p. So Verify still checks under pub whatever
+// p proved.
+func (p *Proof) For(pub crypto.PublicKey, alg Alg) crypto.PublicKey {
+	if p == nil || p.alg != alg {
+		return pub
+	}
+	key, ok := p.pub.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !key.Equal(pub) {
+		return pub
+	}
+	return p
+}
+
+// checks counts the signature checks verifyBytes has run (Checks).
+var checks atomic.Int64
+
+// Checks is how many signatures this package has checked in this
+// process, a Proof's repeat not counted: for tests bounding what an
+// input costs.
+func Checks() int64 { return checks.Load() }
 
 // VerifyDetached is Verify, but expects sign1 to have a detached
 // (null) payload (see SignDetached) — the caller supplies the same
@@ -355,34 +416,36 @@ func VerifyDetachedMax(alg Alg, pub crypto.PublicKey, sign1, detachedPayload, ex
 	if raw.Payload != nil {
 		return Headers{}, Headers{}, errors.New("cose: COSE_Sign1 has an embedded payload; use Verify")
 	}
-	return verifySign1(alg, pub, raw, externalAAD, detachedPayload)
+	protected, unprotected, _, err = verifySign1(alg, pub, raw, externalAAD, detachedPayload)
+	return protected, unprotected, err
 }
 
 // verifySign1 is Verify/VerifyDetached's shared core: sigPayload is
 // always the actual payload bytes Sig_structure is computed over,
-// whether they came embedded in raw or were supplied out of band.
-func verifySign1(alg Alg, pub crypto.PublicKey, raw rawSign1, externalAAD, sigPayload []byte) (protected, unprotected Headers, err error) {
+// whether they came embedded in raw or were supplied out of band. It
+// also returns the Sig_structure it checked.
+func verifySign1(alg Alg, pub crypto.PublicKey, raw rawSign1, externalAAD, sigPayload []byte) (protected, unprotected Headers, toVerify []byte, err error) {
 	protected, unprotected, err = raw.headers()
 	if err != nil {
-		return Headers{}, Headers{}, err
+		return Headers{}, Headers{}, nil, err
 	}
 	if !sameAlg(protected.Alg, alg) {
-		return Headers{}, Headers{}, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, alg)
+		return Headers{}, Headers{}, nil, fmt.Errorf("cose: protected alg %d does not match expected %d", protected.Alg, alg)
 	}
 
-	toVerify, err := encMode.Marshal(sigStructure{
+	toVerify, err = encMode.Marshal(sigStructure{
 		Context:       "Signature1",
 		BodyProtected: raw.Protected,
 		ExternalAAD:   nonNil(externalAAD),
 		Payload:       sigPayload,
 	})
 	if err != nil {
-		return Headers{}, Headers{}, fmt.Errorf("cose: marshal Sig_structure: %w", err)
+		return Headers{}, Headers{}, nil, fmt.Errorf("cose: marshal Sig_structure: %w", err)
 	}
 	if err := verifyBytes(alg, pub, toVerify, raw.Signature); err != nil {
-		return Headers{}, Headers{}, err
+		return Headers{}, Headers{}, nil, err
 	}
-	return protected, unprotected, nil
+	return protected, unprotected, toVerify, nil
 }
 
 // DecodeUnverified decodes an untagged COSE_Sign1's headers and payload
@@ -585,6 +648,16 @@ func signBytes(alg Alg, signer crypto.Signer, toSign []byte) ([]byte, error) {
 }
 
 func verifyBytes(alg Alg, pub crypto.PublicKey, toVerify, sig []byte) error {
+	if p, ok := pub.(*Proof); ok {
+		if p == nil {
+			return errors.New("cose: nil proof")
+		}
+		if p.alg == alg && bytes.Equal(p.toVerify, toVerify) && bytes.Equal(p.sig, sig) {
+			return nil
+		}
+		pub = p.pub
+	}
+	checks.Add(1)
 	if p, ok := ecdsaParamsFor(alg); ok {
 		ecPub, ok := pub.(*ecdsa.PublicKey)
 		if !ok || ecPub.Curve != p.curve {

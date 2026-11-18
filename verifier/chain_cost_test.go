@@ -46,11 +46,18 @@ func unsignedPresentation(t *testing.T, header map[string]any) string {
 // verifies with the leaf's key, so the chain is what decides it.
 func leafSignedPresentation(t *testing.T, key crypto.Signer, x5c ...*x509.Certificate) string {
 	t.Helper()
+	return leafSignedCredential(t, key, `{"vct":"`+testVCT+`"}`, x5c...)
+}
+
+// leafSignedCredential is leafSignedPresentation with payload, the
+// Issuer-signed JWT's: a credential of its own for each payload.
+func leafSignedCredential(t *testing.T, key crypto.Signer, payload string, x5c ...*x509.Certificate) string {
+	t.Helper()
 	chain := make([]any, len(x5c))
 	for i, cert := range x5c {
 		chain[i] = base64.StdEncoding.EncodeToString(cert.Raw)
 	}
-	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dc+sd-jwt", "x5c": chain}, []byte(`{"vct":"`+testVCT+`"}`))
+	jwt, err := jose.Sign(jose.ES256, key, map[string]any{"typ": "dc+sd-jwt", "x5c": chain}, []byte(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +69,19 @@ func multipleQuery(t *testing.T) dcql.Query {
 	return dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "pid", Format: sdjwtvc.CredentialFormat, Meta: testverify.MustSDJWTVCMeta(t, testVCT), Multiple: true}}}
 }
 
-// An answer repeating one issuer chain across its presentations has the
-// chain verified once: the revocation check, run once per verified
-// path, runs once for the three.
+// unboundQuery is multipleQuery without holder binding: a credential
+// with no cnf, presented without a KB-JWT, verifies.
+func unboundQuery(t *testing.T) dcql.Query {
+	t.Helper()
+	q := multipleQuery(t)
+	unbound := false
+	q.Credentials[0].RequireCryptographicHolderBinding = &unbound
+	return q
+}
+
+// An answer repeating one issuer chain across its presentations, each a
+// credential of its own, has the chain verified once: the revocation
+// check, run once per verified path, runs once for the three.
 func TestVerifyResponse_VerifiesEachDistinctChainOnce(t *testing.T) {
 	ca, caKey := testcert.CA(t, "issuer root")
 	leaf, leafKey := testcert.Leaf(t, "issuer", ca, caKey)
@@ -72,14 +89,17 @@ func TestVerifyResponse_VerifiesEachDistinctChainOnce(t *testing.T) {
 	roots.AddCert(ca)
 	var checks atomic.Int32
 	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: verifier.AnyIssuerLeaf, Revocation: countingRevocation{&checks}}
-	pres := leafSignedPresentation(t, leafKey, leaf)
+	var presentations []string
+	for i := range 3 {
+		presentations = append(presentations, leafSignedCredential(t, leafKey, fmt.Sprintf(`{"vct":%q,"jti":"%d"}`, testVCT, i), leaf))
+	}
 
-	_, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: multipleQuery(t), Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": {pres, pres, pres}}},
+	result, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query: unboundQuery(t), Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": presentations}},
 		ExpectedNonce: "n", MaxKeyBindingAge: time.Hour, IssuerKeys: resolver,
 	})
-	if err == nil {
-		t.Fatal("presentations without holder binding accepted")
+	if err != nil || len(result.Credentials) != 3 {
+		t.Fatalf("VerifyResponse = %+v, %v; want the three credentials", result, err)
 	}
 	if got := checks.Load(); got != 1 {
 		t.Errorf("revocation checked %d times for one chain presented three times, want 1", got)

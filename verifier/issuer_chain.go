@@ -181,18 +181,22 @@ func (c *ResponseIssuerChains) ResolveMdocIssuer(ctx context.Context, resolver M
 		c.once.Do(func() { c.memo = newChainMemo() })
 		memo = c.memo
 	}
-	return resolveMdocIssuer(ctx, memo, resolver, cose.X5ChainOf(protected, unprotected), docType, issuerAuthSigned(issuerAuth))
+	return resolveMdocIssuer(ctx, memo, resolver, cose.X5ChainOf(protected, unprotected), docType, issuerAuthSigned(issuerAuth, nil))
 }
 
 // issuerAuthSigned checks issuerAuth, an mdoc's IssuerAuth, with a
-// presented x5chain leaf's key (see leafSignature).
-func issuerAuthSigned(issuerAuth []byte) leafSignature {
+// presented x5chain leaf's key (see leafSignature), keeping the check in
+// proof, when it isn't nil, for mdoc.Verify (cose.Proof).
+func issuerAuthSigned(issuerAuth []byte, proof **cose.Proof) leafSignature {
 	return func(pub crypto.PublicKey) error {
 		alg, err := mdocAlgForKey(pub)
 		if err != nil {
 			return nil
 		}
-		_, _, _, err = cose.Verify(alg, pub, issuerAuth, []byte{})
+		checked, err := cose.VerifyProof(alg, pub, issuerAuth, []byte{})
+		if err == nil && proof != nil {
+			*proof = checked
+		}
 		return err
 	}
 }

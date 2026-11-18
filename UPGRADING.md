@@ -7,6 +7,40 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.83.0 → v0.84.0
+
+### `VerifyResponse` refuses a response after four failed presentations
+
+`VerifyResponse`, and so `Transactions.HandleResponse` and
+`HandleDCAPIResponse`, now counts every presentation it discards
+because a check of its credential failed: its issuer signature,
+validity or digests (`ReasonInvalidCredential`), an issuer chain the
+built-in `X5CIssuerKeyResolver` or `X5ChainIssuerKeyResolver` doesn't
+verify, or its holder binding (`ReasonHolderBinding`). Once
+`MaxFailedPresentationsPerResponse` (4) of a response's presentations
+have failed, across its Credential Queries, the response is refused as
+`ReasonMalformed` ("4 presentations in one response failed to verify")
+at the next presentation, before it is verified. Before, each was
+discarded and the rest verified, so a response with more than four
+such presentations beside valid ones is now refused instead of
+answered by the valid ones. Presentations that verify aren't counted,
+nor are ones discarded for not answering their query, for unrequested
+claims, or because a trusted issuer is refused (revocation, leaf
+policy, `IssuerAuthorized`, `trusted_authorities`). A Wallet's own
+credentials don't fail their signatures or holder binding, so an
+honest response isn't affected. `MaxFailedIssuerChainsPerResponse` is
+unchanged, and still applies alone through `ResponseIssuerChains`
+(`mdocdcapi`).
+
+### A credential presented twice is refused before either copy is verified
+
+A response presenting one credential twice for one Credential Query
+(or, under `DistinctCredentials`, for two) is now refused at the
+second copy, before it is verified, whether or not the first verified.
+Before, the response was refused only when a copy of a credential that
+verified did; copies that failed were each verified and discarded. The
+refusal is the same `ReasonMalformed` error as before.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

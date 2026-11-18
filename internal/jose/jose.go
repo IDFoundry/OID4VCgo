@@ -1,6 +1,7 @@
 package jose
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/ecdsafixed"
@@ -209,34 +211,90 @@ func Verify(alg Alg, pub crypto.PublicKey, compact string) (header map[string]an
 // VerifyMax is Verify with an explicit size ceiling, in bytes, instead
 // of MaxCompactBytes.
 func VerifyMax(alg Alg, pub crypto.PublicKey, compact string, maxBytes int) (header map[string]any, payload []byte, err error) {
+	header, payload, _, err = verifyMax(alg, pub, compact, maxBytes)
+	return header, payload, err
+}
+
+// verifyMax is VerifyMax, also returning the signature it checked as a
+// Proof.
+func verifyMax(alg Alg, pub crypto.PublicKey, compact string, maxBytes int) (header map[string]any, payload []byte, proof *Proof, err error) {
 	if len(compact) > maxBytes {
-		return nil, nil, fmt.Errorf("jose: compact JWS is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
+		return nil, nil, nil, fmt.Errorf("jose: compact JWS is %d bytes, exceeds the %d byte limit", len(compact), maxBytes)
 	}
 	h, encPayload, encSig, err := split(compact)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	header, err = decodeHeader(h)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if hdrAlg, _ := header["alg"].(string); hdrAlg != string(alg) {
-		return nil, nil, fmt.Errorf("jose: header alg %q does not match expected %q", hdrAlg, alg)
+		return nil, nil, nil, fmt.Errorf("jose: header alg %q does not match expected %q", hdrAlg, alg)
 	}
 	payload, err = b64.DecodeString(encPayload)
 	if err != nil {
-		return nil, nil, fmt.Errorf("jose: decode payload: %w", err)
+		return nil, nil, nil, fmt.Errorf("jose: decode payload: %w", err)
 	}
 	sig, err := b64.DecodeString(encSig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("jose: decode signature: %w", err)
+		return nil, nil, nil, fmt.Errorf("jose: decode signature: %w", err)
 	}
-	signingInput := []byte(h + "." + encPayload)
-	if err := verifyBytes(alg, pub, signingInput, sig); err != nil {
-		return nil, nil, err
+	signingInput := h + "." + encPayload
+	if err := verifyBytes(alg, pub, []byte(signingInput), sig); err != nil {
+		return nil, nil, nil, err
 	}
-	return header, payload, nil
+	if p, ok := pub.(*Proof); ok {
+		pub = p.pub
+	}
+	return header, payload, &Proof{alg: alg, pub: pub, signingInput: signingInput, sig: sig}, nil
 }
+
+// Proof is one signature Verify checked: under alg, with a key, over
+// exact signed bytes. Given to Verify (or VerifyMax) in place of that
+// key, it is the key, except that the same signature over the same
+// bytes under the same algorithm isn't checked again: a caller that
+// checked a JWS's signature before it knew whether to trust the key
+// doesn't pay for it twice once it does. Only VerifyProof makes one, so
+// a Proof covers nothing it didn't check, and a caller outside this
+// module, unable to name the type, can't skip a check with a key of its
+// own. Substitute one for a key only through For, which checks it is
+// the same key.
+type Proof struct {
+	alg          Alg
+	pub          crypto.PublicKey
+	signingInput string
+	sig          []byte
+}
+
+// VerifyProof is Verify, returning what it checked as a Proof.
+func VerifyProof(alg Alg, pub crypto.PublicKey, compact string) (*Proof, error) {
+	_, _, proof, err := verifyMax(alg, pub, compact, MaxCompactBytes)
+	return proof, err
+}
+
+// For is p in place of pub, a key the caller resolved and trusts on its
+// own, when p proves a signature under alg by a key equal to pub; pub
+// otherwise, and for a nil p. So Verify still checks under pub whatever
+// p proved.
+func (p *Proof) For(pub crypto.PublicKey, alg Alg) crypto.PublicKey {
+	if p == nil || p.alg != alg {
+		return pub
+	}
+	key, ok := p.pub.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !key.Equal(pub) {
+		return pub
+	}
+	return p
+}
+
+// checks counts the signature checks verifyBytes has run (Checks).
+var checks atomic.Int64
+
+// Checks is how many signatures this package has checked in this
+// process, a Proof's repeat not counted: for tests bounding what an
+// input costs.
+func Checks() int64 { return checks.Load() }
 
 // DecodeUnverified decodes a compact JWS's header and payload without
 // checking its signature — for a caller that needs to read claims (an
@@ -311,6 +369,16 @@ func decodeHeader(encHeader string) (map[string]any, error) {
 }
 
 func verifyBytes(alg Alg, pub crypto.PublicKey, signingInput, sig []byte) error {
+	if p, ok := pub.(*Proof); ok {
+		if p == nil {
+			return errors.New("jose: nil proof")
+		}
+		if p.alg == alg && p.signingInput == string(signingInput) && bytes.Equal(p.sig, sig) {
+			return nil
+		}
+		pub = p.pub
+	}
+	checks.Add(1)
 	if p, ok := ecdsaAlgs[alg]; ok {
 		ecPub, ok := pub.(*ecdsa.PublicKey)
 		if !ok || ecPub.Curve != p.curve {
