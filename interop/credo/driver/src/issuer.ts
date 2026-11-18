@@ -11,8 +11,11 @@ import {
   type OpenId4VciSignSdJwtCredentials,
 } from '@credo-ts/openid4vc'
 
-// Config is the setup's credo.json, plus attester_anchors, which run.sh
-// adds: the Wallet Provider's CA.
+// Config is the setup's credo.json, plus what run.sh adds:
+// attester_anchors, the Wallet Provider's CA; holder_credential_anchors,
+// what Credo's holder trusts the credentials it receives to (OID4VCgo's
+// issuer's CA and IACA); and holder_request_anchors, what it trusts
+// signed requests to (OID4VCgo's verifiers' CA).
 export interface Config {
   tls_cert_pem: string
   tls_key_pem: string
@@ -21,6 +24,11 @@ export interface Config {
   verifier: Signer
   credential_anchors: string[]
   attester_anchors: string[]
+  holder_credential_anchors: string[]
+  holder_request_anchors: string[]
+  // The Wallet Provider agents Credo's holder takes its attestations
+  // from: base URLs by the name a holder request gives (holder.ts).
+  wallet_providers: Record<string, string>
 }
 
 // Signer is a private JWK and its certificate chain, base64 DER, leaf
@@ -33,6 +41,12 @@ export interface Signer {
 export const ISSUER_ID = 'credo'
 export const PID_SD_JWT = 'pid-sd-jwt'
 export const MDL_MDOC = 'mdl-mdoc'
+// The SD-JWT VC PID again, its jwt proofs requiring a Key Attestation
+// (key_attestations_required) of the key storage level the Wallet
+// Provider attests, and, for the control, of a higher one.
+export const PID_SD_JWT_KA = 'pid-sd-jwt-ka'
+export const PID_SD_JWT_KA_HIGH = 'pid-sd-jwt-ka-high'
+const PID_CONFIGURATIONS = new Set([PID_SD_JWT, PID_SD_JWT_KA, PID_SD_JWT_KA_HIGH])
 const PID_VCT = 'urn:eudi:pid:1'
 const MDL_DOCTYPE = 'org.iso.18013.5.1.mDL'
 const MDL_NAMESPACE = 'org.iso.18013.5.1'
@@ -41,15 +55,33 @@ const proofTypes = {
   jwt: { proof_signing_alg_values_supported: [Kms.KnownJwaSignatureAlgorithms.ES256] },
 }
 
-export const credentialConfigurations = {
-  [PID_SD_JWT]: {
-    format: OpenId4VciCredentialFormatProfile.SdJwtDc,
+// keyAttested is a jwt proof requiring a Key Attestation of key storage
+// level.
+function keyAttested(level: string) {
+  return {
+    jwt: {
+      proof_signing_alg_values_supported: [Kms.KnownJwaSignatureAlgorithms.ES256],
+      key_attestations_required: { key_storage: [level] },
+    },
+  }
+}
+
+// pid is the SD-JWT VC PID's configuration, with scope and proof types.
+function pid(scope: string, proof_types_supported: typeof proofTypes | ReturnType<typeof keyAttested>) {
+  return {
+    format: OpenId4VciCredentialFormatProfile.SdJwtDc as const,
     vct: PID_VCT,
-    scope: PID_SD_JWT,
+    scope,
     cryptographic_binding_methods_supported: ['jwk'],
     credential_signing_alg_values_supported: [Kms.KnownJwaSignatureAlgorithms.ES256],
-    proof_types_supported: proofTypes,
-  },
+    proof_types_supported,
+  }
+}
+
+export const credentialConfigurations = {
+  [PID_SD_JWT]: pid(PID_SD_JWT, proofTypes),
+  [PID_SD_JWT_KA]: pid(PID_SD_JWT_KA, keyAttested('iso_18045_moderate')),
+  [PID_SD_JWT_KA_HIGH]: pid(PID_SD_JWT_KA_HIGH, keyAttested('iso_18045_high')),
   [MDL_MDOC]: {
     format: OpenId4VciCredentialFormatProfile.MsoMdoc,
     doctype: MDL_DOCTYPE,
@@ -87,7 +119,7 @@ export const credentialMapper: OpenId4VciCredentialRequestToCredentialMapper = (
   holderBinding,
   credentialConfigurationId,
 }) => {
-  if (credentialConfigurationId === PID_SD_JWT) {
+  if (PID_CONFIGURATIONS.has(credentialConfigurationId)) {
     return {
       type: 'credentials',
       format: ClaimFormat.SdJwtDc,

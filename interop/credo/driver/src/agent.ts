@@ -1,6 +1,6 @@
 // The Credo agent: Askar's storage and key management, in memory, and
 // the OpenID4VC module as Credential Issuer and Verifier on one Express
-// app.
+// app, and as holder.
 
 import { AskarModule } from '@credo-ts/askar'
 import {
@@ -43,10 +43,12 @@ export function createAgent(app: Express, baseUrl: string, config: Config, logLe
 
 export type CredoAgent = ReturnType<typeof createAgent>
 
-// trust is what each verification trusts, by its type: Wallet
-// Attestations and Key Attestations the Wallet Provider's CA,
-// credentials the run's CA and IACA, anything else signed under x5c
-// nothing.
+// trust is what each verification trusts, by its type: the issuer's
+// Wallet Attestations and Key Attestations the Wallet Provider's CA;
+// the Verifier's credentials the run's CA and IACA; the holder's
+// credentials (as it receives them) OID4VCgo's issuer's CA and IACA,
+// and its requests (x509_hash) OID4VCgo's verifiers' CA; anything else
+// signed under x5c nothing.
 function trust(config: Config): GetTrustedIssuersForVerification<VerificationSigner, { type: string }> {
   return (_agentContext, { signer, verification }) => {
     if (signer.method !== 'x509') return Promise.resolve(undefined)
@@ -54,9 +56,12 @@ function trust(config: Config): GetTrustedIssuersForVerification<VerificationSig
       case 'oauth2ClientAttestation':
       case 'openId4VciKeyAttestation':
         return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.attester_anchors }] })
-      case 'credential':
       case 'openId4VpCredential':
         return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.credential_anchors }] })
+      case 'credential':
+        return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.holder_credential_anchors }] })
+      case 'oauth2SecuredAuthorizationRequest':
+        return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.holder_request_anchors }] })
       default:
         return Promise.resolve({ trustedIssuers: [] })
     }

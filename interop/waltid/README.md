@@ -206,7 +206,7 @@ asks.
   changes nothing else, is accepted, and each control differs from it
   in its one change. [`../credo`](../credo/README.md) runs the same
   wallet and transport against Credo's issuer and Verifier (its
-  `-haip` and `-tx-code` are for that run).
+  `-haip`, `-tx-code` and `-proof-key-by-jwk` are for that run).
 - **Sessions.** Verifier2 signs its request and asks for an encrypted
   response only when the session says so (`signed_request`,
   `encrypted_response`); otherwise it serves an unsigned request object

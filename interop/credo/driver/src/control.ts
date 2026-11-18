@@ -1,9 +1,11 @@
 // The control API run.sh drives, on loopback HTTP: it creates Credo's
-// offers and requests and reports their sessions' outcomes.
+// offers and requests and reports their sessions' outcomes, and has
+// Credo's holder receive and present.
 
 import { type DcqlQuery, MdocDeviceResponse, type X509Certificate } from '@credo-ts/core'
 import express from 'express'
 import type { CredoAgent } from './agent.js'
+import { type PresentRequest, present, type ReceiveRequest, receive } from './holder.js'
 import { ISSUER_ID } from './issuer.js'
 import { createRequest } from './verifier.js'
 
@@ -55,6 +57,15 @@ export function controlApi(agent: CredoAgent, signer: X509Certificate) {
       )
     }
     res.json({ state: session.state, error: session.errorMessage, presented })
+  })
+
+  // Credo's holder: an offer redeemed, and a request answered, each
+  // answering the stage it reached and why it stopped (holder.ts).
+  app.post('/holder/receive', async (req, res) => {
+    res.json(await receive(agent, req.body as ReceiveRequest))
+  })
+  app.post('/holder/present', async (req, res) => {
+    res.json(await present(agent, req.body as PresentRequest))
   })
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

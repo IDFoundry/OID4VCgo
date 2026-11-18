@@ -1,21 +1,27 @@
 // Command setup writes the throwaway key material for
-// interop/credo/run.sh: the run's CA, which Credo's TLS certificate,
-// its SD-JWT VC signer and its Verifier's x509_hash Access Certificate
-// chain to; an mdoc IACA and the Document Signer under it, which signs
-// Credo's mdocs; and another CA, which nothing trusts, for the
-// controls. Credo's keys go to the driver as private JWKs
-// (credo.json), as its key management imports them.
+// interop/credo/run.sh: the run's CA, which every TLS certificate of
+// the run, Credo's SD-JWT VC signer and its Verifier's x509_hash Access
+// Certificate chain to, as do OID4VCgo's issuer's SD-JWT VC signer and
+// its verifiers' Access Certificates; an mdoc IACA and the Document
+// Signer under it, which signs Credo's mdocs; and another CA, which
+// nothing trusts, for the controls. Credo's keys go to the driver as
+// private JWKs (credo.json), as its key management imports them;
+// OID4VCgo's as PEM, as cmd/conformance-issuer and
+// cmd/conformance-verifier take them.
 //
-// Usage: go run ./interop/credo/scripts/setup -out DIR -issuer-url URL
+// Usage: go run ./interop/credo/scripts/setup -out DIR -issuer-url URL -our-issuer-url URL
 //
 // DIR receives:
 //
-//	ca.pem                        the run's CA: TLS, the SD-JWT VC signer, the Access Certificate
+//	ca.pem                        the run's CA: TLS, the SD-JWT VC signers, the Access Certificates
 //	iaca.pem                      the IACA Credo's Document Signer chains to
 //	other-ca.pem                  a CA nothing trusts
 //	tls-cert.pem, tls-key.pem     the TLS certificate for localhost
 //	verifier-key.pem              the Access Certificate's key, for the wallet's negative presentations
 //	credo.json                    the driver's keys, chains and trust (interop/credo/driver)
+//	our-issuer-key.pem, our-issuer-cert.pem          OID4VCgo's issuer's SD-JWT VC signer, naming -our-issuer-url
+//	our-verifier-key.pem, our-verifier-cert.pem      OID4VCgo's verifiers' Access Certificate
+//	untrusted-verifier-key.pem, untrusted-verifier-cert.pem  an Access Certificate under other-ca.pem
 package main
 
 import (
@@ -74,19 +80,24 @@ type driverConfig struct {
 func main() {
 	out := flag.String("out", "", "directory to write into")
 	issuerURL := flag.String("issuer-url", "", "Credo's Credential Issuer Identifier, which its SD-JWT VC signer's certificate names (Credo requires an SD-JWT VC's iss to match the leaf's SAN)")
+	ourIssuerURL := flag.String("our-issuer-url", "", "OID4VCgo's Credential Issuer Identifier, which its SD-JWT VC signer's certificate names, for Credo's holder (the same policy)")
 	flag.Parse()
-	if *out == "" || *issuerURL == "" {
-		fail("-out and -issuer-url are required")
+	if *out == "" || *issuerURL == "" || *ourIssuerURL == "" {
+		fail("-out, -issuer-url and -our-issuer-url are required")
 	}
-	if err := run(*out, *issuerURL); err != nil {
+	if err := run(*out, *issuerURL, *ourIssuerURL); err != nil {
 		fail(err.Error())
 	}
 }
 
-func run(dir, issuerURL string) error {
+func run(dir, issuerURL, ourIssuerURL string) error {
 	issuerURI, err := url.Parse(issuerURL)
 	if err != nil {
 		return fmt.Errorf("-issuer-url: %w", err)
+	}
+	ourIssuerURI, err := url.Parse(ourIssuerURL)
+	if err != nil {
+		return fmt.Errorf("-our-issuer-url: %w", err)
 	}
 	files := map[string]string{}
 	ca, err := newCA("OID4VCgo Credo interop CA")
@@ -126,6 +137,10 @@ func run(dir, issuerURL string) error {
 		return err
 	}
 
+	if err := ourFiles(files, ca, other, ourIssuerURI); err != nil {
+		return err
+	}
+
 	iaca, iacaKey, iacaPEM, _, err := conformancecert.GenerateMdocIACA("OID4VCgo Credo interop IACA", country, "https://localhost/")
 	if err != nil {
 		return err
@@ -162,6 +177,35 @@ func run(dir, issuerURL string) error {
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ourFiles are OID4VCgo's side's: its issuer's SD-JWT VC signer under
+// ca, naming issuerURI as Credo's holder requires of an SD-JWT VC's iss
+// (README finding 3), and its verifiers' Access Certificates, one
+// under ca and one under other.
+func ourFiles(files map[string]string, ca, other authority, issuerURI *url.URL) error {
+	for _, l := range []struct {
+		name string
+		ca   authority
+		tmpl x509.Certificate
+	}{
+		{"our-issuer", ca, x509.Certificate{
+			Subject:  pkix.Name{CommonName: "OID4VCgo issuer", Country: []string{country}},
+			DNSNames: []string{issuerURI.Hostname()}, URIs: []*url.URL{issuerURI},
+		}},
+		{"our-verifier", ca, x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo verifier"}}},
+		{"untrusted-verifier", other, x509.Certificate{Subject: pkix.Name{CommonName: "OID4VCgo untrusted verifier"}}},
+	} {
+		key, der, err := leaf(l.ca, l.tmpl)
+		if err != nil {
+			return err
+		}
+		files[l.name+"-cert.pem"] = certPEM(der)
+		if files[l.name+"-key.pem"], err = conformancecert.ECKeyPEM(key); err != nil {
 			return err
 		}
 	}
