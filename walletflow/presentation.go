@@ -305,14 +305,15 @@ func (w *Wallet) newPresentation(ctx context.Context, req wallet.AuthorizationRe
 	// credential that can answer it on its own: the holder, or the
 	// application's policy, chooses. One nothing answers has none; none
 	// at all isn't an error here: the holder is told, and may decline.
+	// All are matched at once, so each held credential is decoded once.
+	matches, err := wallet.MatchEachCredentialQuery(ctx, req.Query, held, trustedAuthorities)
+	if err != nil {
+		return nil, fmt.Errorf("walletflow: %w", err)
+	}
 	for _, cq := range req.Query.Credentials {
 		q := Query{ID: cq.ID, Multiple: cq.Multiple}
-		all := cq
-		all.Multiple = true
-		if matches, err := wallet.MatchDCQLQuery(ctx, dcql.Query{Credentials: []dcql.CredentialQuery{all}}, held, trustedAuthorities); err == nil {
-			for _, h := range matches[cq.ID] {
-				q.Credentials = append(q.Credentials, byCredential[h.Credential])
-			}
+		for _, h := range matches[cq.ID] {
+			q.Credentials = append(q.Credentials, byCredential[h.Credential])
 		}
 		p.queries = append(p.queries, q)
 	}

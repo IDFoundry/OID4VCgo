@@ -1729,7 +1729,13 @@ changes whether *every* bullet below is `(done)`.
   `walletflow.StartDCAPIPresentation` (see [mobile/MOBILE.md](mobile/MOBILE.md)).
   `Config.RequireSignedDCAPIRequests` refuses an unsigned request
   (`ErrUntrustedVerifier`), and `MaxDCAPIRequestBytes` and
-  `MaxDCAPISignatures` bound one.
+  `MaxDCAPISignatures` bound one, and `dcql`'s `Max*` limits bound its
+  query (`MaxMetaBytes` each credential query's `meta`). Opening one
+  then costs about its size, however many credentials the wallet
+  holds: each `meta` is reduced to its format's own members when the
+  request is parsed, and `walletflow` matches all of a request's
+  queries at once (`wallet.MatchEachCredentialQuery`), decoding each
+  held credential once.
   `ParseAuthorizationRequest` requires the Request Object's
   `response_uri` to be an absolute https URL (loopback http only with
   `AllowLoopbackHTTP`), and `SubmitDirectPostResponse` never follows a

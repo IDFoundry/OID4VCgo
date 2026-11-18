@@ -75,6 +75,54 @@ func TestParseDCAPIRequestData_BoundsClaimsBeforeDeduplicating(t *testing.T) {
 	}
 }
 
+// withMeta sets an unsigned request's query to one credential query of
+// format whose meta is meta.
+func withMeta(format string, meta map[string]any) func(map[string]any) {
+	return func(c map[string]any) {
+		claims := []any{map[string]any{"path": []any{"a"}}}
+		if format == "mso_mdoc" {
+			claims = []any{map[string]any{"path": []any{"ns", "e"}}}
+		}
+		c["dcql_query"] = map[string]any{"credentials": []any{map[string]any{"id": "q", "format": format, "meta": meta, "claims": claims}}}
+	}
+}
+
+// A credential query's meta is read for every held credential of its
+// format, so its size is bounded, and only the members its format
+// defines are kept: the members a Wallet ignores are read once, when
+// the request is parsed, however many credentials it holds.
+func TestParseDCAPIRequestData_BoundsMeta(t *testing.T) {
+	f := newDCAPIForms(t)
+	parse := func(format string, meta map[string]any) (wallet.AuthorizationRequest, error) {
+		return wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{
+			Protocol: wallet.DCAPIProtocolUnsigned, Data: f.unsigned(t, withMeta(format, meta)), Origin: testDCAPIOrigin,
+		})
+	}
+	_, err := parse("dc+sd-jwt", map[string]any{"vct_values": []any{"urn:x"}, "x": strings.Repeat("a", dcql.MaxMetaBytes)})
+	var rejected *wallet.RequestRejectedError
+	if !errors.As(err, &rejected) || !strings.Contains(err.Error(), "more than "+strconv.Itoa(dcql.MaxMetaBytes)) {
+		t.Errorf("a meta past the bound: err = %v, want the query refused for its meta's size", err)
+	}
+
+	pad := strings.Repeat("a", dcql.MaxMetaBytes-128)
+	for format, tc := range map[string]struct {
+		meta map[string]any
+		want string
+	}{
+		"dc+sd-jwt": {meta: map[string]any{"vct_values": []any{"urn:x", "urn:y"}, "x": pad}, want: `{"vct_values":["urn:x","urn:y"]}`},
+		"mso_mdoc":  {meta: map[string]any{"doctype_value": "org.iso.18013.5.1.mDL", "x": pad}, want: `{"doctype_value":"org.iso.18013.5.1.mDL"}`},
+	} {
+		req, err := parse(format, tc.meta)
+		if err != nil {
+			t.Errorf("%s, a meta within the bound: %v", format, err)
+			continue
+		}
+		if got := string(req.Query.Credentials[0].Meta); got != tc.want {
+			t.Errorf("%s: meta = %.80s, want %s", format, got, tc.want)
+		}
+	}
+}
+
 // Only a claims query equal to an earlier one in every member is
 // dropped: path elements of each kind, values (1 and 1.0 are one JSON
 // number) and intent_to_retain all count.

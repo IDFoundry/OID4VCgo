@@ -127,12 +127,18 @@ func TestQueryValidate_CredentialQueryBounds(t *testing.T) {
 			Claims:    claims(1),
 			ClaimSets: [][]string{{"c0"}, repeat("c0", dcql.MaxClaimsPerCredential+1)},
 		}, refused: "claim_sets[1]: 257 claims"},
-		"claim set of thousands":   {cq: dcql.CredentialQuery{Claims: claims(2), ClaimSets: [][]string{append(repeat("c0", 3499), "c1")}}, refused: "claim_sets[0]"},
-		"trusted authorities":      {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(dcql.MaxTrustedAuthorities+1, 1)}, refused: "trusted authorities"},
-		"trusted authority values": {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(1, dcql.MaxTrustedAuthorityValues+1)}, refused: "trusted_authorities[0]: 65 values"},
-		"vct_values":               {cq: dcql.CredentialQuery{Meta: vcts(dcql.MaxVCTValues + 1)}, refused: "65 vct_values"},
+		"claim set of thousands":     {cq: dcql.CredentialQuery{Claims: claims(2), ClaimSets: [][]string{append(repeat("c0", 3499), "c1")}}, refused: "claim_sets[0]"},
+		"trusted authorities":        {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(dcql.MaxTrustedAuthorities+1, 1)}, refused: "trusted authorities"},
+		"trusted authority values":   {cq: dcql.CredentialQuery{TrustedAuthorities: authorities(1, dcql.MaxTrustedAuthorityValues+1)}, refused: "trusted_authorities[0]: 65 values"},
+		"vct_values":                 {cq: dcql.CredentialQuery{Meta: vcts(dcql.MaxVCTValues + 1)}, refused: "65 vct_values"},
+		"meta at the bound":          {cq: dcql.CredentialQuery{Meta: paddedMeta(t, dcql.MaxMetaBytes)}},
+		"meta":                       {cq: dcql.CredentialQuery{Meta: paddedMeta(t, dcql.MaxMetaBytes+1)}, refused: "a meta of 4097 bytes"},
+		"meta of a format not known": {cq: dcql.CredentialQuery{Format: "jwt_vc_json", Meta: paddedMeta(t, dcql.MaxMetaBytes+1)}, refused: "a meta of 4097 bytes"},
 	} {
-		tc.cq.ID, tc.cq.Format = "q", "dc+sd-jwt"
+		tc.cq.ID = "q"
+		if tc.cq.Format == "" {
+			tc.cq.Format = "dc+sd-jwt"
+		}
 		if tc.cq.Meta == nil {
 			tc.cq.Meta = vcts(1)
 		}
@@ -146,5 +152,45 @@ func TestQueryValidate_CredentialQueryBounds(t *testing.T) {
 	}
 	if _, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: repeat("urn:test", dcql.MaxVCTValues+1)}); err == nil {
 		t.Error("NewSDJWTVCMeta accepted more than MaxVCTValues vct_values")
+	}
+}
+
+// paddedMeta is a "dc+sd-jwt" meta of exactly n bytes, its one vct
+// followed by a member a wallet ignores.
+func paddedMeta(t *testing.T, n int) json.RawMessage {
+	t.Helper()
+	const head, tail = `{"vct_values":["urn:test"],"x":"`, `"}`
+	if n < len(head)+len(tail) {
+		t.Fatalf("a meta of %d bytes is too short", n)
+	}
+	return json.RawMessage(head + strings.Repeat("a", n-len(head)-len(tail)) + tail)
+}
+
+// A real meta fits MaxMetaBytes with room to spare: MaxVCTValues
+// vct_values of 60 bytes each, the longest a meta needs. The meta
+// builders refuse one past the bound, as Validate would.
+func TestNewMeta_SizeBound(t *testing.T) {
+	vcts := make([]string, dcql.MaxVCTValues)
+	for i := range vcts {
+		vcts[i] = fmt.Sprintf("https://credentials.example.com/vct/%024d", i)
+	}
+	if len(vcts[0]) != 60 {
+		t.Fatalf("vct is %d bytes, want 60", len(vcts[0]))
+	}
+	raw, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: vcts})
+	if err != nil {
+		t.Fatalf("%d vct_values of 60 bytes: %v", len(vcts), err)
+	}
+	if err := (dcql.Query{Credentials: []dcql.CredentialQuery{{ID: "q", Format: "dc+sd-jwt", Meta: raw}}}).Validate(); err != nil {
+		t.Errorf("a meta of %d bytes: %v", len(raw), err)
+	}
+	for i := range vcts {
+		vcts[i] += strings.Repeat("x", 4)
+	}
+	if _, err := dcql.NewSDJWTVCMeta(dcql.SDJWTVCMeta{VCTValues: vcts}); err == nil || !strings.Contains(err.Error(), "more than 4096") {
+		t.Errorf("%d vct_values of 64 bytes: %v, want refused for its size", len(vcts), err)
+	}
+	if _, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: strings.Repeat("d", dcql.MaxMetaBytes)}); err == nil || !strings.Contains(err.Error(), "more than 4096") {
+		t.Errorf("an mdoc meta past the bound: %v, want refused for its size", err)
 	}
 }

@@ -88,7 +88,13 @@ type AuthorizationRequest struct {
 	ResponseURI string
 	Nonce       string
 	State       string
-	Query       dcql.Query
+
+	// Query is the request's DCQL query, validated, with each claims
+	// query repeating an earlier one dropped, and each "dc+sd-jwt" or
+	// "mso_mdoc" credential query's meta reduced to the members its
+	// format defines (vct_values, doctype_value): the others are
+	// ignored, and matching reads a meta once per held credential.
+	Query dcql.Query
 
 	// VerifierCertificate is the Request Object's signing certificate,
 	// as ParseAuthorizationRequestParams.VerifierTrust accepted it —
@@ -738,7 +744,10 @@ func checkRequestObjectClaims(wire wireRequestObjectPayload, nowFunc func() time
 // The counts are bounded before anything is de-duplicated, duplicates
 // included, and the de-duplication is a single pass, so the work done
 // on a request is linear in its size: an unsigned DC API request is
-// anyone's to send.
+// anyone's to send. Once valid, each credential query's meta is reduced
+// to the members its format defines (knownMeta), so that matching and
+// presenting, which read it once per held credential, never re-read
+// what the Wallet ignores.
 func prepareQuery(q dcql.Query) (dcql.Query, error) {
 	if err := checkRawQueryCounts(q); err != nil {
 		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
@@ -749,20 +758,26 @@ func prepareQuery(q dcql.Query) (dcql.Query, error) {
 	if err := q.Validate(); err != nil {
 		return dcql.Query{}, fmt.Errorf("dcql_query: %w", err)
 	}
+	for i, cq := range q.Credentials {
+		q.Credentials[i] = knownMeta(cq)
+	}
 	return q, nil
 }
 
 // checkRawQueryCounts refuses a query with more credential queries, or
-// a credential query with more claims queries, than dcql.Query.Validate
-// allows, counting duplicates: a Verifier has no reason to send more
-// claims queries than it may ask for.
+// a credential query with more claims queries or a bigger meta, than
+// dcql.Query.Validate allows, counting duplicates: a Verifier has no
+// reason to send more claims queries than it may ask for.
 func checkRawQueryCounts(q dcql.Query) error {
 	if len(q.Credentials) > dcql.MaxCredentialQueries {
 		return fmt.Errorf("%d credential queries, more than %d", len(q.Credentials), dcql.MaxCredentialQueries)
 	}
 	for i, cq := range q.Credentials {
-		if len(cq.Claims) > dcql.MaxClaimsPerCredential {
+		switch {
+		case len(cq.Claims) > dcql.MaxClaimsPerCredential:
 			return fmt.Errorf("credentials[%d]: %d claims, more than %d", i, len(cq.Claims), dcql.MaxClaimsPerCredential)
+		case len(cq.Meta) > dcql.MaxMetaBytes:
+			return fmt.Errorf("credentials[%d]: a meta of %d bytes, more than %d", i, len(cq.Meta), dcql.MaxMetaBytes)
 		}
 	}
 	return nil

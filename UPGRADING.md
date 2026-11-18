@@ -151,6 +151,24 @@ from the other endpoints (metadata, nonce, token, credential,
 notification, status lists) still quote their URLs, which carry no
 secret.
 
+### A DCQL credential query's `meta` is limited to 4 KiB (`dcql`, `wallet`, `walletflow`, mobile)
+
+`dcql.Query.Validate` now refuses a credential query whose `meta` is
+over `dcql.MaxMetaBytes` (4096 bytes, as sent). A Wallet refuses such
+a presentation request as malformed (`invalid_request`), a Verifier
+refuses to build one, and `dcql.NewSDJWTVCMeta` and `NewMdocMeta`
+refuse to make one. A real `meta` is far smaller: 64 `vct_values` of 60
+bytes each fit. Before, only the request's size bounded it, and a
+wallet read it again for every credential it held.
+
+A Wallet's parsed `AuthorizationRequest.Query` now carries each
+`dc+sd-jwt` or `mso_mdoc` credential query's `meta` with only
+`vct_values` or `doctype_value`; the members a Wallet ignores are
+dropped. `walletflow` matches a request's queries together with the
+new `wallet.MatchEachCredentialQuery`, and `StartPresentation` and
+`StartDCAPIPresentation` now return the context's error when it ends
+during matching, rather than a request with no credentials listed.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

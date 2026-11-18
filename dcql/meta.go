@@ -33,7 +33,7 @@ type MdocMeta struct {
 }
 
 // NewSDJWTVCMeta marshals meta for use as a CredentialQuery's own
-// Meta field.
+// Meta field, at most MaxMetaBytes long.
 func NewSDJWTVCMeta(meta SDJWTVCMeta) (json.RawMessage, error) {
 	if err := meta.validate(); err != nil {
 		return nil, err
@@ -42,11 +42,11 @@ func NewSDJWTVCMeta(meta SDJWTVCMeta) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dcql: marshal sd-jwt vc meta: %w", err)
 	}
-	return raw, nil
+	return checkMetaSize("sd-jwt vc", raw)
 }
 
 // NewMdocMeta marshals meta for use as a CredentialQuery's own Meta
-// field.
+// field, at most MaxMetaBytes long.
 func NewMdocMeta(meta MdocMeta) (json.RawMessage, error) {
 	if meta.DoctypeValue == "" {
 		return nil, fmt.Errorf("dcql: mdoc meta: doctype_value is required")
@@ -54,6 +54,14 @@ func NewMdocMeta(meta MdocMeta) (json.RawMessage, error) {
 	raw, err := json.Marshal(meta)
 	if err != nil {
 		return nil, fmt.Errorf("dcql: marshal mdoc meta: %w", err)
+	}
+	return checkMetaSize("mdoc", raw)
+}
+
+// checkMetaSize refuses a meta Query.Validate would.
+func checkMetaSize(format string, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) > MaxMetaBytes {
+		return nil, fmt.Errorf("dcql: %s meta: %d bytes, more than %d", format, len(raw), MaxMetaBytes)
 	}
 	return raw, nil
 }
