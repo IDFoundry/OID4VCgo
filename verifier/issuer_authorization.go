@@ -99,7 +99,10 @@ type IssuerAuthorization struct {
 	// verified the issuer's chain. Compare its key with the anchors you
 	// assign to the issuer or type (AnchorIs, AnchorHasKeyIdentifier).
 	// nil means no chain was verified against configured roots (the
-	// issuer key resolver verifies none): refuse it.
+	// issuer key resolver verifies none): refuse it, unless your SD-JWT
+	// VC issuers are trusted without certificates
+	// (VerifyResponseRequest.AllowUnanchoredSDJWTVCIssuers), and then
+	// identify them by what the resolver checked instead.
 	IssuerAnchor []byte
 
 	// Claims are the presentation's disclosed claims, as
