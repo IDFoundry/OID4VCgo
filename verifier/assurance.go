@@ -45,7 +45,17 @@ const (
 	//     systems a pool built from it by adding certificates is refused
 	//     too; on macOS and Windows, where the system pool defers to the
 	//     platform verifier, only an unmodified copy is detected, so
-	//     build issuer roots from the issuers' own CAs, not from it.
+	//     build issuer roots from the issuers' own CAs, not from it;
+	//   - there too, an MdocIssuerKeys that doesn't verify issuer
+	//     chains (an MdocIssuerChainResolver, as X5ChainIssuerKeyResolver
+	//     is, or a wrapper that Unwraps to one), and an IssuerKeys that
+	//     doesn't (an SDJWTVCIssuerChainResolver, as X5CIssuerKeyResolver
+	//     is, or a wrapper that Unwraps to one) unless
+	//     VerifyResponseRequest.AllowUnanchoredSDJWTVCIssuers declares
+	//     its issuers are trusted without certificates: without a
+	//     verified chain, IssuerAnchor is nil, and nothing tells which
+	//     trusted CA vouched for an issuer. NewTransactions applies these
+	//     resolver checks to TransactionsConfig.Verify too.
 	//
 	// Declaring capabilities is not optional under this level: a
 	// resolver that doesn't implement KeySourceAssurance at all is
@@ -106,29 +116,61 @@ func checkKeySourceAssurance(name string, source any) error {
 }
 
 // checkProductionKeySources runs checkKeySourceAssurance against
-// whichever of req's issuer-key resolvers is configured — called only
-// once v's own Config.Assurance is known to be AssuranceProduction.
+// whichever of req's issuer-key resolvers is configured, and requires
+// each to verify issuer chains to roots that aren't the system pool —
+// called only once v's own Config.Assurance is known to be
+// AssuranceProduction.
 func checkProductionKeySources(req VerifyResponseRequest) error {
-	if req.IssuerKeys != nil {
-		if err := checkKeySourceAssurance("issuer_keys", req.IssuerKeys); err != nil {
-			return err
-		}
+	if err := checkProductionSDJWTVCIssuerKeys(req); err != nil {
+		return err
 	}
-	if req.MdocIssuerKeys != nil {
-		if err := checkKeySourceAssurance("mdoc_issuer_keys", req.MdocIssuerKeys); err != nil {
-			return err
-		}
-		// Without the chain, ISO/IEC 18013-5's document signer checks
-		// (the IACA's country, the DS validity) don't run, and status
-		// binding can't tell the DS's CA.
-		if _, ok := mdocChainResolver(req.MdocIssuerKeys); !ok {
-			return errors.New("mdoc_issuer_keys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one) under AssuranceProduction")
-		}
+	return checkProductionMdocIssuerKeys(req.MdocIssuerKeys)
+}
+
+// checkProductionSDJWTVCIssuerKeys is checkProductionKeySources for
+// req.IssuerKeys.
+func checkProductionSDJWTVCIssuerKeys(req VerifyResponseRequest) error {
+	if req.IssuerKeys == nil {
+		return nil
 	}
-	if anchoredBySystemPool(req.IssuerKeys) {
-		return errors.New("issuer_keys: Roots or RootsByVCT holds the system root pool under AssuranceProduction: it anchors every public CA's certificates, a TLS server's among them; trust the credential issuers' own CAs")
+	if err := checkKeySourceAssurance("issuer_keys", req.IssuerKeys); err != nil {
+		return err
 	}
-	for resolver, i := MdocIssuerKeyResolver(req.MdocIssuerKeys), 0; resolver != nil && i < 16; i++ {
+	// Without the verified chain, IssuerAnchor is nil and IssuerChain is
+	// the unverified x5c header's: nothing tells IssuerAuthorized or
+	// trusted_authorities which trusted CA vouched for the issuer.
+	if _, ok := sdJWTVCChainResolver(req.IssuerKeys); !ok && !req.AllowUnanchoredSDJWTVCIssuers {
+		return errors.New("issuer_keys must verify issuer chains (verifier.SDJWTVCIssuerChainResolver, or Unwrap to one) under AssuranceProduction, or set allow_unanchored_sdjwtvc_issuers where issuers' keys are trusted without certificates")
+	}
+	for resolver, i := req.IssuerKeys, 0; resolver != nil && i < 16; i++ {
+		if anchoredBySystemPool(resolver) {
+			return errors.New("issuer_keys: Roots or RootsByVCT holds the system root pool under AssuranceProduction: it anchors every public CA's certificates, a TLS server's among them; trust the credential issuers' own CAs")
+		}
+		wrapper, ok := resolver.(SDJWTVCIssuerKeyResolverWrapper)
+		if !ok {
+			break
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return nil
+}
+
+// checkProductionMdocIssuerKeys is checkProductionKeySources for
+// MdocIssuerKeys.
+func checkProductionMdocIssuerKeys(keys MdocIssuerKeyResolver) error {
+	if keys == nil {
+		return nil
+	}
+	if err := checkKeySourceAssurance("mdoc_issuer_keys", keys); err != nil {
+		return err
+	}
+	// Without the chain, ISO/IEC 18013-5's document signer checks
+	// (the IACA's country, the DS validity) don't run, and status
+	// binding can't tell the DS's CA.
+	if _, ok := mdocChainResolver(keys); !ok {
+		return errors.New("mdoc_issuer_keys must verify issuer chains (verifier.MdocIssuerChainResolver, or Unwrap to one) under AssuranceProduction")
+	}
+	for resolver, i := keys, 0; resolver != nil && i < 16; i++ {
 		if anchoredBySystemPool(resolver) {
 			return errors.New("mdoc_issuer_keys: Roots or RootsByDocType holds the system root pool under AssuranceProduction: it anchors every public CA's certificates; trust the IACAs")
 		}

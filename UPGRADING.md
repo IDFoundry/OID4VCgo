@@ -41,6 +41,39 @@ Before, the response was refused only when a copy of a credential that
 verified did; copies that failed were each verified and discarded. The
 refusal is the same `ReasonMalformed` error as before.
 
+### A production Verifier requires an SD-JWT VC issuer key resolver that verifies chains
+
+Under `AssuranceProduction`, `VerifyResponse` and `NewTransactions`
+(so every Transactions flow, the Digital Credentials API's included)
+now refuse a `VerifyResponseRequest.IssuerKeys`
+(`TransactionsConfig.Verify.IssuerKeys`) that doesn't verify issuer
+certificate chains: one that is neither an
+`SDJWTVCIssuerChainResolver` nor a wrapper that `Unwrap`s to one, as
+`MdocIssuerKeys` already had to be for mdocs. Such a resolver gives no
+`IssuerAnchor`, and an `IssuerChain` that is the credential's
+unverified `x5c` header, so neither `IssuerAuthorized` nor
+`trusted_authorities` can tell which trusted CA vouched for an issuer.
+`AssuranceDevelopment` is unchanged.
+
+Migrate by one of:
+
+- `verifier.X5CIssuerKeyResolver` as `IssuerKeys`, with `RootsByVCT`
+  where each type has its own issuers' anchors.
+- A resolver of your own that wraps one (caching, logging) implementing
+  the new `verifier.SDJWTVCIssuerKeyResolverWrapper`:
+  `Unwrap() verifier.SDJWTVCIssuerKeyResolver` returning the wrapped
+  `X5CIssuerKeyResolver` or other chain resolver. `VerifyResponse` then
+  takes the verified chain and `IssuerAnchor` from it (an
+  `X5CIssuerKeyResolver`'s with the credential, so its `RootsByVCT`
+  applies), and the system root pool check reaches it too.
+- Where issuers' keys are trusted without certificates (from issuer
+  metadata's JWKS, or DIDs), set the new
+  `VerifyResponseRequest.AllowUnanchoredSDJWTVCIssuers`. `IssuerAnchor`
+  is then nil for every SD-JWT VC, so `IssuerAuthorized` must identify
+  issuers by other means it trusts: `IssuerAuthorization.Issuer` from a
+  resolver that resolves each issuer's keys by its `iss` and says so
+  (`IssuerNameBinding`), never `ClaimedIssuer` or `IssuerChain`.
+
 ### Authorize issuers by the anchor that verified them, not by names
 
 No API is removed, but an issuer authorization hook that decides as

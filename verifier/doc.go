@@ -134,7 +134,13 @@
 // anchor that verified the issuer's chain (IssuerAuthorization.IssuerAnchor,
 // AnchorIs), never by names any trusted CA can write; or each type gets
 // its own anchors (X5CIssuerKeyResolver.RootsByVCT,
-// X5ChainIssuerKeyResolver.RootsByDocType).
+// X5ChainIssuerKeyResolver.RootsByDocType). An anchor needs a resolver
+// that verifies issuer chains (SDJWTVCIssuerChainResolver,
+// MdocIssuerChainResolver, or a wrapper that Unwraps to one), which
+// AssuranceProduction requires; for SD-JWT VC issuers trusted without
+// certificates, VerifyResponseRequest.AllowUnanchoredSDJWTVCIssuers
+// opts out, and IssuerAuthorized identifies them by other means.
+//
 // Transactions hosts each request's Request Object at its request_uri
 // (RequestObjectHandler), fetched by GET, and with
 // TransactionsConfig.RequestURIMethodPost by POST too (OpenID4VP 1.0

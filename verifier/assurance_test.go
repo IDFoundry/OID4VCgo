@@ -161,8 +161,13 @@ func TestVerifyResponseKeySourceAssurance(t *testing.T) {
 			req: verifier.VerifyResponseRequest{IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}},
 		},
 		{
-			name: "production, hardened issuer_keys", assurance: verifier.AssuranceProduction,
-			req: verifier.VerifyResponseRequest{IssuerKeys: declaringSDJWTVCIssuerKeyResolver{hardened: true}},
+			name: "production, hardened issuer_keys verifying no chain", assurance: verifier.AssuranceProduction,
+			req:        verifier.VerifyResponseRequest{IssuerKeys: declaringSDJWTVCIssuerKeyResolver{hardened: true}},
+			wantReject: "issuer_keys must verify issuer chains",
+		},
+		{
+			name: "production, hardened issuer_keys, unanchored issuers allowed", assurance: verifier.AssuranceProduction,
+			req: verifier.VerifyResponseRequest{IssuerKeys: declaringSDJWTVCIssuerKeyResolver{hardened: true}, AllowUnanchoredSDJWTVCIssuers: true},
 		},
 		{
 			name: "production, X5ChainIssuerKeyResolver", assurance: verifier.AssuranceProduction,

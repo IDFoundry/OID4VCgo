@@ -161,6 +161,24 @@ type VerifyResponseRequest struct {
 	// say) would be accepted for a PID by mistake.
 	AnyIssuerForAnyType bool
 
+	// AllowUnanchoredSDJWTVCIssuers declares that IssuerKeys
+	// deliberately establishes issuer trust without verifying a
+	// certificate chain to configured roots — by keys from issuer
+	// metadata (a JWKS) or DIDs, say — so it isn't an
+	// SDJWTVCIssuerChainResolver, nor Unwraps to one. Under
+	// AssuranceProduction, VerifyResponse (and NewTransactions, for
+	// TransactionsConfig.Verify) refuses such an IssuerKeys without it.
+	// With it, an SD-JWT VC's IssuerAnchor is nil (in VerifiedCredential
+	// and IssuerAuthorization), and its IssuerChain is the x5c header's,
+	// which no one has verified: IssuerAuthorized must identify the
+	// issuer by other means it trusts — IssuerAuthorization.Issuer, say,
+	// where IssuerKeys resolves each issuer's keys by its iss (from that
+	// issuer's metadata, or its DID) and so declares (IssuerNameBinding)
+	// — never by IssuerChain or ClaimedIssuer. It changes nothing for a
+	// resolver that verifies chains, nor for mdocs, whose
+	// MdocIssuerKeys must verify chains under AssuranceProduction.
+	AllowUnanchoredSDJWTVCIssuers bool
+
 	// DistinctCredentials refuses a response that presents one
 	// credential for more than one credential query (the same
 	// Issuer-signed JWT, or mdoc Mobile Security Object, whatever the
@@ -278,12 +296,11 @@ type VerifiedCredential struct {
 	// leaf first) when its leaf's key is the one the credential verified
 	// with, and nil otherwise. Where the issuer key resolver verifies a
 	// chain — IssuerKeys an SDJWTVCIssuerChainResolver (as
-	// X5CIssuerKeyResolver is; a resolver wrapping one isn't unless it
-	// implements ResolveIssuerChains too), MdocIssuerKeys an
-	// MdocIssuerChainResolver (as X5ChainIssuerKeyResolver is, or one
-	// reached through Unwrap) — it's the path the resolver verified,
-	// without the trust anchor: its last certificate is the one an anchor
-	// signed. Otherwise an SD-JWT VC's is its signed x5c header, which no
+	// X5CIssuerKeyResolver is, or one reached through Unwrap),
+	// MdocIssuerKeys an MdocIssuerChainResolver (as
+	// X5ChainIssuerKeyResolver is, or one reached through Unwrap) — it's
+	// the path the resolver verified, without the trust anchor: its last
+	// certificate is the one an anchor signed. Otherwise an SD-JWT VC's is its signed x5c header, which no
 	// one has checked against a trust anchor, and an mdoc's is nil (the
 	// IssuerAuth x5chain is unprotected, so the holder could edit it).
 	//
@@ -307,8 +324,10 @@ type VerifiedCredential struct {
 	// (AnchorIs, AnchorHasKeyIdentifier) with the anchors you assign to
 	// the issuer or type, never its names. nil when no chain was verified
 	// against configured roots (a resolver that verifies no chain, whose
-	// IssuerChain is the unverified header's or nil): decide nothing on
-	// an issuer by it then, and refuse where you authorize by anchor.
+	// IssuerChain is the unverified header's or nil; AssuranceProduction
+	// allows one for SD-JWT VCs only with AllowUnanchoredSDJWTVCIssuers,
+	// and never for mdocs): decide nothing on an issuer by it then, and
+	// refuse where you authorize by anchor.
 	IssuerAnchor []byte
 
 	// Withheld are the data elements an org-iso-mdoc request asked for
@@ -919,8 +938,8 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	var anchor []byte
 	if resolvesBoth {
 		chain, anchor = verifiedPath(issuerChains, issuerPub)
-	} else if chainResolver, ok := req.IssuerKeys.(SDJWTVCIssuerChainResolver); ok {
-		chains, err := chainResolver.ResolveIssuerChains(ctx, header)
+	} else if chainResolver, ok := sdJWTVCChainResolver(req.IssuerKeys); ok {
+		chains, err := resolveWrappedIssuerChains(ctx, req, chainResolver, header, payload)
 		if err != nil {
 			return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer chain", err)
 		}
@@ -935,6 +954,22 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 	}
 	return claims, &anchoredChain{chain, anchor}, nil
+}
+
+// resolveWrappedIssuerChains is the issuer chains of chainResolver, the
+// SDJWTVCIssuerChainResolver req.IssuerKeys is or wraps, for the
+// credential whose Issuer-signed JWT has header and payload. An
+// X5CIssuerKeyResolver reached through Unwrap resolves them with the
+// credential, so that RootsByVCT can choose its anchors by its vct; any
+// other resolver is asked for the header's.
+func resolveWrappedIssuerChains(ctx context.Context, req VerifyResponseRequest, chainResolver SDJWTVCIssuerChainResolver, header, payload map[string]any) ([][]*x509.Certificate, error) {
+	if x5c, ok := x5cResolver(chainResolver); ok {
+		// The signature was checked with the wrapper's key, and only a
+		// path whose leaf has that key is kept (verifiedPath).
+		_, _, chains, err := x5c.resolveIssuerKeyAndChains(ctx, req.chains, header, payload, nil)
+		return chains, err
+	}
+	return chainResolver.ResolveIssuerChains(ctx, header)
 }
 
 // checkRequestedDisclosures refuses an SD-JWT VC presentation of

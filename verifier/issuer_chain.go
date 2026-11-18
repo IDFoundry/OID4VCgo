@@ -32,7 +32,11 @@ type MdocIssuerChainResolver interface {
 // IssuerAuthorized (VerifiedCredential.IssuerChain) the verified path,
 // without its trust anchor, rather than the x5c header, which can carry
 // certificates that aren't on it, and the anchor itself as
-// VerifiedCredential.IssuerAnchor. X5CIssuerKeyResolver is one.
+// VerifiedCredential.IssuerAnchor. X5CIssuerKeyResolver is one, and a
+// resolver wrapping one reaches it through Unwrap
+// (SDJWTVCIssuerKeyResolverWrapper). Under AssuranceProduction,
+// VerifyResponse requires one, unless
+// VerifyResponseRequest.AllowUnanchoredSDJWTVCIssuers is set.
 //
 // For both, the paths are the ones the resolver's own role policy
 // approves each on its own, not every path the chain verifies on: the
@@ -292,6 +296,33 @@ func mdocChainResolver(resolver MdocIssuerKeyResolver) (MdocIssuerChainResolver,
 			return chain, true
 		}
 		wrapper, ok := resolver.(MdocIssuerKeyResolverWrapper)
+		if !ok {
+			return nil, false
+		}
+		resolver = wrapper.Unwrap()
+	}
+	return nil, false
+}
+
+// SDJWTVCIssuerKeyResolverWrapper is an SDJWTVCIssuerKeyResolver that
+// wraps another, a logging or caching one, say: Unwrap returns the one
+// it wraps, so the verified issuer chain and anchor of an
+// SDJWTVCIssuerChainResolver it wraps still reach VerifiedCredential
+// and IssuerAuthorized, and AssuranceProduction counts it as verifying
+// issuer chains. The wrapper resolves the issuer's key; the chain is
+// the wrapped resolver's, kept only where its leaf has that key.
+type SDJWTVCIssuerKeyResolverWrapper interface {
+	Unwrap() SDJWTVCIssuerKeyResolver
+}
+
+// sdJWTVCChainResolver is resolver as an SDJWTVCIssuerChainResolver, or
+// the one it wraps, through Unwrap.
+func sdJWTVCChainResolver(resolver SDJWTVCIssuerKeyResolver) (SDJWTVCIssuerChainResolver, bool) {
+	for range 16 {
+		if chain, ok := resolver.(SDJWTVCIssuerChainResolver); ok {
+			return chain, true
+		}
+		wrapper, ok := resolver.(SDJWTVCIssuerKeyResolverWrapper)
 		if !ok {
 			return nil, false
 		}

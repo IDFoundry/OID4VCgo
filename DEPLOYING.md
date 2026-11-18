@@ -280,6 +280,16 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   (`MaxMdocDCAPIResponseBytes` for an org-iso-mdoc answer). A refusal
   that repeats the request's `LastError` isn't written again, but a
   different one is, and every one reaches `OnRefused`.
+- [ ] **Issuer key resolvers that verify chains:** `IssuerKeys` an
+  `X5CIssuerKeyResolver` and `MdocIssuerKeys` an
+  `X5ChainIssuerKeyResolver`, or resolvers of your own that wrap them
+  and `Unwrap` to them (`SDJWTVCIssuerKeyResolverWrapper`,
+  `MdocIssuerKeyResolverWrapper`), so that each credential has the
+  `IssuerAnchor` that verified it. `AssuranceProduction` refuses any
+  other; only where SD-JWT VC issuers' keys are trusted without
+  certificates (issuer metadata's JWKS, DIDs) set
+  `AllowUnanchoredSDJWTVCIssuers`, and have `IssuerAuthorized` identify
+  issuers by what your resolver checked, not by `IssuerChain`.
 - [ ] **Which issuer may issue which type:** a root in your issuer
   roots vouches for who signed a credential, not for what it may
   issue, and any root can certify a leaf with any name, or copy another

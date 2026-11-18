@@ -76,8 +76,10 @@ type X5CIssuerKeyResolver struct {
 	// ResolveIssuerChains, which isn't given the credential, can't tell
 	// its type: with RootsByVCT set it refuses. VerifyResponse resolves
 	// an X5CIssuerKeyResolver's key and chains together, with the
-	// credential; a resolver of your own that wraps one and implements
-	// ResolveIssuerChains by calling it is refused there too.
+	// credential, and the chains of one a resolver of your own wraps
+	// and Unwraps to (SDJWTVCIssuerKeyResolverWrapper) with the
+	// credential too; one that implements ResolveIssuerChains by calling
+	// it is refused there.
 	RootsByVCT map[string]*x509.CertPool
 
 	// LeafPolicy, if set, is run on the chain-verified leaf and its
