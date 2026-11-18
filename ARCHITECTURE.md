@@ -517,8 +517,14 @@ changes whether *every* bullet below is `(done)`.
     `InstanceKey.PreviousStatus`, through `InstanceKeyStore.Update`'s
     compare-and-swap. So capacity is per period, not for every key
     ever recorded. `Suspend`/`Resume`/`Revoke` and `RevokeWhere` act
-    on the instance and set both indices of every one of its keys, and
-    `Provider.StatusLists` serves the lists of the periods a live
+    on the instance and set both indices of every one of its keys:
+    the state first, then the statuses, then `Instance.KeyStatusesFor`,
+    so a transition whose status writes fail part-way stays pending
+    until a retry, a `RevokeWhere` run or the instance's next
+    (refused) request sets the rest. Status writes aren't
+    transactional with the instance's record, so pending is a state of
+    its own, not one rolled back. `Provider.StatusLists` serves the
+    lists of the periods a live
     attestation may name (and only those with an index handed out),
     signed with the attestations' own key, the binding issuers check
     by default.

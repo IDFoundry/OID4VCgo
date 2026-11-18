@@ -81,7 +81,7 @@ func (p *Provider) Register(ctx context.Context, req RegisterRequest) (Instance,
 			AppID: ev.AppID, AppVersion: ev.AppVersion, BootState: ev.BootState, DeviceLocked: ev.DeviceLocked,
 		},
 		Credential: slices.Clone(ev.Credential), CredentialID: ev.CredentialID, EvidenceFacts: slices.Clone(ev.Facts),
-		State: StateActive, CreatedAt: now, LastSeenAt: now,
+		State: StateActive, KeyStatusesFor: StateActive, CreatedAt: now, LastSeenAt: now,
 	}
 	if ev.Counter != nil {
 		in.Counter = *ev.Counter

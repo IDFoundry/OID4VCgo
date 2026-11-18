@@ -131,8 +131,13 @@
 // Suspend, Resume and Revoke set the status of every one of an
 // instance's instance keys SUSPENDED, VALID and INVALID, at both its
 // indices, so revoking an installation withdraws every attestation
-// issued for it; a revocation is final. Provider.StatusLists serves the
-// lists (JWT or CWT form, by the request's Accept header), signed with
+// issued for it; a revocation is final. The state is stored first, and
+// the instance's KeyStatusesFor only once every status is set, so a
+// transition whose status writes fail part-way is finished later: by
+// calling it again, by RevokeWhere's next run for a revocation, or by
+// the instance's next request, which sets them before it's refused.
+// Provider.StatusLists serves the lists (JWT or CWT form, by the
+// request's Accept header), signed with
 // the provider's own key and certificate chain, so an issuer's default
 // check — the list signed with the attestation's own key — accepts
 // them. Size Config.StatusListSize for the instance keys used in a

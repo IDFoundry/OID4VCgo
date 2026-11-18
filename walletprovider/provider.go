@@ -281,10 +281,17 @@ type Config struct {
 	// your own logic. It's called on the request's path, before the
 	// refusal is answered: keep it quick, and hand anything slow to
 	// another goroutine. A recheck that couldn't check (a status list
-	// that can't be fetched: ErrUnavailable, answered 503), or a
-	// refusal the provider couldn't revoke or suspend the instance for
-	// (a store failure), fails the request as the provider's own
-	// failure without calling it; the next request rechecks.
+	// that can't be fetched: ErrUnavailable, answered 503) fails the
+	// request as the provider's own failure without calling it; the
+	// next request rechecks. A refusal the provider couldn't finish
+	// revoking or suspending the instance for (a store failure) is
+	// reported too, then fails the request as the provider's own
+	// failure: in is then still active, when storing its state failed,
+	// and the next request rechecks and tries again; or revoked or
+	// suspended with its KeyStatusesFor not yet its State, when setting
+	// its keys' statuses failed, and the instance's next request, refused
+	// for that state, sets them. Revoke or Suspend it (in.ID) to set them
+	// at once.
 	OnRecheckRefused func(ctx context.Context, in Instance, err error)
 
 	// RequireSealedStore makes New refuse Instances, InstanceKeys and

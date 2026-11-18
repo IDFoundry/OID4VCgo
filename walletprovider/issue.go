@@ -515,7 +515,8 @@ func (p *Provider) checkEvidenceFrom(in Instance, kind string, ev VerifiedEviden
 // active, whose evidence Kind has no configured verifier, whose
 // registration evidence the Policy no longer accepts, or whose
 // registration verifier, an EvidenceRechecker, refuses it now
-// (verdict).
+// (verdict). A suspended or revoked instance's keys' statuses are set
+// first when a transition left them pending (completePending).
 //
 // When the Policy or the rechecker refuses the instance for another
 // reason than its evidence's issuer revoking or suspending it, the
@@ -531,6 +532,7 @@ func (p *Provider) activeInstance(ctx context.Context, id string, instanceKey cr
 		return Instance{}, err
 	}
 	if err := stateError(in.State); err != nil {
+		p.completePending(ctx, in)
 		return Instance{}, err
 	}
 	v, err := p.verifierOf(in)
@@ -651,9 +653,10 @@ func recheckError(what string, expired, err error) error {
 // issuer has revoked or suspended revokes or suspends the instance
 // first — through the transitions Revoke and Suspend make, so one
 // racing an operator's Resume still ends with the instance revoked —
-// and every refusal is reported to Config.OnRecheckRefused. The
-// transition isn't cut short by the request's cancellation: once begun,
-// it sets the instance's key statuses too.
+// and every refusal is reported to Config.OnRecheckRefused, even one
+// whose transition failed. The transition isn't cut short by the
+// request's cancellation: once begun, it sets the instance's key
+// statuses too.
 func (p *Provider) recheckRefused(ctx context.Context, in Instance, err error) error {
 	if !errors.Is(err, ErrEvidenceRejected) && !errors.Is(err, ErrPolicy) {
 		return err
@@ -665,20 +668,25 @@ func (p *Provider) recheckRefused(ctx context.Context, in Instance, err error) e
 	case errors.Is(err, ErrEvidenceSuspended):
 		state = StateSuspended
 	}
+	var terr error
 	if state != "" {
 		reason := fmt.Sprintf("%s automatically: %v", state, err)
-		terr := p.transition(context.WithoutCancel(ctx), in.ID, state, reason)
-		if terr != nil && !errors.Is(terr, ErrInstanceRevoked) {
-			// The provider's own failure: the next request rechecks,
-			// and tries again.
-			return fmt.Errorf("walletprovider: making the instance %s after its recheck refused it (%v): %w", state, err, terr)
+		if terr = p.transition(context.WithoutCancel(ctx), in.ID, state, reason); errors.Is(terr, ErrInstanceRevoked) {
+			terr = nil
 		}
-		if stored, gerr := p.getInstance(ctx, in.ID); gerr == nil {
+		if stored, gerr := p.getInstance(context.WithoutCancel(ctx), in.ID); gerr == nil {
 			in = stored
 		}
 	}
 	if p.cfg.OnRecheckRefused != nil {
 		p.cfg.OnRecheckRefused(ctx, in, err)
+	}
+	if terr != nil {
+		// The provider's own failure. Had the state been stored, the
+		// instance's next request, refused for it, sets the statuses
+		// (completePending); had it not, the next request rechecks,
+		// and tries again.
+		return fmt.Errorf("walletprovider: making the instance %s after its recheck refused it (%v): %w", state, err, terr)
 	}
 	return err
 }

@@ -169,6 +169,40 @@ new `wallet.MatchEachCredentialQuery`, and `StartPresentation` and
 `StartDCAPIPresentation` now return the context's error when it ends
 during matching, rather than a request with no credentials listed.
 
+### A Wallet Provider revocation whose status writes fail is finished later
+
+`walletprovider`'s `Suspend`, `Resume` and `Revoke` store the
+instance's state, set its keys' statuses, then record the new
+`Instance.KeyStatusesFor`, the state they're all set for. While it
+isn't the instance's `State`, the transition is pending, and:
+- `RevokeWhere` selects a revoked instance again, finishing its
+  revocation with its first reason, and counts it. It no longer stops
+  at the first instance it fails to revoke: it goes on, and returns a
+  `*walletprovider.RevokeWhereError` naming each failed instance
+  (`Failed`, with each one's error), stopping when its context ends,
+  listing fails, or after 100 failures. Code that compared its error
+  with `==`, or relied on its stopping, uses `errors.As`.
+- A request from a suspended or revoked instance (`VerifyRequest`, and
+  `WalletAttestation`/`KeyAttestation` called directly) sets its keys'
+  statuses before it's refused for its state, as before. A failure is
+  logged at error level with the instance's ID.
+- `Config.OnRecheckRefused` is now called for an automatic revocation
+  or suspension whose transition failed too, before the request fails
+  as the provider's own failure: with the instance as stored, its
+  `KeyStatusesFor` not its `State`. `Revoke` or `Suspend` it then.
+
+An instance stored before this release has no `KeyStatusesFor`, so a
+suspended or revoked one is pending: its next request, or a
+`RevokeWhere` run matching it, sets its statuses once more.
+`RevokeWhere` counts such revoked instances too.
+
+A custom `walletprovider.InstanceStore` keeps the new
+`KeyStatusesFor` field; `walletprovidertest.TestInstanceStoreContract`
+checks it. sqlstore's store keeps it in its record with no migration.
+A store that dropped it would leave every suspended or revoked
+instance pending, its statuses set again at each of its requests and
+each `RevokeWhere` run matching it.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed
