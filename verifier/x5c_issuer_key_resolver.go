@@ -209,7 +209,9 @@ func init() { certchain.RegisterNonSeparating(AnyIssuerLeaf) }
 // from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
 // that LeafPolicy approves each on its own (certchain.ApprovedChains)
 // and Revocation passes: the issuer chain VerifyResponse reports is one
-// of them. With RootsByVCT set it refuses: the header doesn't say the
+// of them. It refuses a header whose x5c includes a trust anchor (a
+// self-issued certificate after the leaf), as ResolveIssuerKey does.
+// With RootsByVCT set it refuses: the header doesn't say the
 // credential's type, which chooses the anchors.
 func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error) {
 	if err := r.Validate(); err != nil {
@@ -220,6 +222,9 @@ func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header ma
 	}
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
+		return nil, err
+	}
+	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, err
 	}
 	_, chains, err := verifyTrustedChains(ctx, nil, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation, nil)
