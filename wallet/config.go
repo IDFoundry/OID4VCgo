@@ -117,7 +117,12 @@ type Config struct {
 	// alternative name, or for a "dns:" identifier a dNSName. Without
 	// it, any certificate under IssuerMetadataRoots can sign any
 	// issuer's metadata; set it where those roots certify several
-	// parties. Requires IssuerMetadataRoots.
+	// parties. It tells them apart only where no CA under those roots
+	// can certify one party's name for another: an https identifier is
+	// confined by uniformResourceIdentifier name constraints on the CAs
+	// (or ones above them), not by dNSName ones, which RFC 5280
+	// §4.2.1.10 applies to DNS names alone. Requires
+	// IssuerMetadataRoots.
 	RequireIssuerMetadataName bool
 
 	// MaxIssuerMetadataAge, when positive, refuses signed Credential

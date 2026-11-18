@@ -224,8 +224,14 @@ const (
 	// rule an SD-JWT VC's iss is held to against its x5c. That stops a
 	// provider from signing in another's name only while it can't get
 	// that name into a certificate: under roots shared by providers, one
-	// that runs a CA under them (or holds an intermediate without name
-	// constraints) can issue itself a certificate naming another. Choose
+	// that runs a CA under them can issue itself a certificate naming
+	// another, unless its CA, or one above it, is name-constrained for
+	// the iss's own name type. For a URI iss that takes
+	// uniformResourceIdentifier constraints, which confine its host but
+	// not its path: a dNSName constraint doesn't apply to URI names (RFC
+	// 5280 §4.2.1.10, which crypto/x509 follows), so a CA confined to
+	// its own DNS domain still certifies any other provider's https iss.
+	// A "dns:" iss takes dNSName constraints. Choose
 	// AttestationIssuerBoundToAnchor for a trust list of several
 	// providers' own CAs; this suits roots that certify only names they
 	// have vetted.

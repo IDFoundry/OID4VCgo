@@ -391,6 +391,15 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 // uniformResourceIdentifier names, compared exactly. A certificate a
 // trusted root issued to another issuer can then sign nothing in this
 // issuer's name, nor can one that shares only its host.
+//
+// That holds only as far as no trusted CA can certify the name for
+// another party. Name constraints confine each name type separately
+// (RFC 5280 §4.2.1.10, which crypto/x509 follows): a URI only by
+// uniformResourceIdentifier constraints, and then only its host; a
+// "dns:" name by dNSName ones. A CA confined by dNSName constraints
+// alone can certify any URI, so every caller binding a URI name
+// documents that, and TestNameConstraints_EachTypeConfinesItsOwnNames
+// pins it.
 func CheckIssuerName(leaf *x509.Certificate, iss string) error {
 	if strings.HasPrefix(iss, "dns:") {
 		name := strings.TrimPrefix(strings.TrimPrefix(iss, "dns:"), "//")

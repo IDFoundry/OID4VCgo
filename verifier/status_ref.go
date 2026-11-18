@@ -96,7 +96,10 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // another issuer's certificate under the same roots can't decide its
 // status. For an SD-JWT VC that's the key that signed the credential,
 // or a certificate naming the credential's iss, or without one the URI
-// its own certificate names (statuslist.VerifyOptions.Issuer). For an
+// its own certificate names (statuslist.VerifyOptions.Issuer), a
+// binding by name that holds only where no other CA under the roots can
+// certify that name: for a URI, uniformResourceIdentifier name
+// constraints confine it, dNSName ones don't. For an
 // mdoc it's ISO/IEC 18013-5 §12.3.6's rule (mdoc.StatusTrust): a chain
 // to the Certificate the MSO's status names, or else to the CA that
 // signed the document signer. A credential that can't be tied to an

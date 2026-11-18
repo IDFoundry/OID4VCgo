@@ -69,8 +69,11 @@ type IssuerAuthorization struct {
 	// whatever the CA that certified the signer wrote: it tells issuers
 	// apart only where no other trusted CA can issue a certificate
 	// naming that issuer (each CA either holds no key an attacker could
-	// use, or is name-constrained to its own issuers' URIs and DNS
-	// names). Where the roots are several providers', any of them can
+	// use, or is name-constrained to its own issuers' names by
+	// constraints of their type: uniformResourceIdentifier ones for a
+	// URI iss, since a dNSName constraint doesn't confine a URI, and
+	// dNSName ones for a "dns:" iss). Where the roots are several
+	// providers', any of them can
 	// name another's issuer: decide by IssuerAnchor, and use Issuer to
 	// tell apart the issuers under one anchor you trust for all of them.
 	Issuer string

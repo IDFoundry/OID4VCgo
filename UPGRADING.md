@@ -243,6 +243,31 @@ unknown member elsewhere in a body. `walletprovider.Client` and the
 Swift and Kotlin `HttpWalletProvider`s send `kty`, `crv`, `x` and `y`
 only, unchanged.
 
+### A name bound by URI needs URI name constraints, not DNS ones
+
+Nothing changes in what's accepted, but a deployment that relies on
+`dNSName` name constraints to keep the members of a shared trust list
+apart is not covered where a check binds a signer by a URI subject
+alternative name: `issuer.AttestationIssuerInCertificate`,
+`X5CIssuerKeyResolver.RequireIssuerName` (and
+`walletflow.Config.RequireIssuerName`) for an https `iss`, the status
+list signer named by `statuslist.VerifyOptions.Issuer`,
+`wallet.Config.RequireIssuerMetadataName`, and a `registration` JWT's
+`iss`. RFC 5280 §4.2.1.10 applies `dNSName` constraints to DNS names
+only, and crypto/x509 follows it: a member CA confined to its own
+domain can still certify another member's https URI. The earlier docs
+named only "an intermediate without name constraints" as the risk.
+
+Where such a trust list is shared, move to one of:
+
+- an anchor-bound mode: `issuer.AttestationIssuerBoundToAnchor` (and
+  fapigo's `AttesterIssuerBoundToAnchor`), or, at a Verifier,
+  `IssuerAuthorization.IssuerAnchor` or `X5CIssuerKeyResolver.RootsByVCT`;
+- `uniformResourceIdentifier` name constraints on each member's CA,
+  which confine a URI's host, though not its path;
+- `dns:` identifiers, under the `dNSName` constraints, where the check
+  takes them (a Key Attestation's or SD-JWT VC's `iss`).
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

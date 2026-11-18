@@ -390,7 +390,9 @@ ecosystem, and record why:
   together where your issuers sign their metadata.
 - `issuers.requireIssuerName`: refuses an SD-JWT VC whose `iss` its
   signing certificate doesn't name. Set it where `issuers.roots` certify several
-  issuers, so one can't issue in another's name.
+  issuers, so one can't issue in another's name. That holds only where
+  none of their CAs can certify another's name: an `https` `iss` is
+  confined by URI name constraints, not by DNS ones.
 - `issuers.allowForeignIss`: receives an SD-JWT VC whose `iss` isn't
   the issuer it came from. Leave it off unless an issuer names itself
   differently, and `issuers.roots` certify it alone.
