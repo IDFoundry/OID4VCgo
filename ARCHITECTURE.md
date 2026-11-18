@@ -1731,7 +1731,14 @@ changes whether *every* bullet below is `(done)`.
   `ParseAuthorizationRequest` does, requires `response_mode`
   `dc_api.jwt`, and refuses unless the origin the platform reports is
   one of the request's `expected_origins` (Appendix A.2) — without that
-  check, any site could replay a request another Verifier built.
+  check, any site could replay a request another Verifier built. The
+  origin is checked first, before the signature and chain: a request
+  from a page it doesn't name gets one plain error whatever else is
+  wrong with it, never the `invalid_request` a page is answered with, so
+  a page replaying a Verifier's Request Object can't learn whether the
+  wallet trusts that Verifier. `expected_origins` read before the
+  signature only picks that error; acceptance, and any answer for the
+  page, wait for the verified payload, which is checked again.
   `ParseDCAPIRequestData` takes the request as the platform delivers
   it, by `protocol`, in all three forms HAIP §5.2 requires a Wallet to
   support: `openid4vp-v1-signed` (the above), `openid4vp-v1-multisigned`

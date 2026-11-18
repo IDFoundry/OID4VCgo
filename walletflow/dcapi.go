@@ -28,6 +28,17 @@ import (
 // for an unsigned request, or for a signed one to its client_id at that
 // origin: two Verifiers whose requests come from one page are two
 // Verifiers (Presentation.ShownTo).
+//
+// A *RequestRefusedError, whose DCAPIResponse the platform hands back to
+// the page, is returned only for a request from the origin it names (a
+// signed one's expected_origins) and, when signed, from a Verifier
+// VerifierTrust accepts. Every other refusal is a plain error with
+// nothing for the page: a signed request from another origin, refused
+// first whatever else is wrong with it (wallet.ParseDCAPIRequest), one
+// from an untrusted Verifier (ErrUntrustedVerifier), and one that
+// can't be parsed (ErrMalformedRequest). Fail the platform's call the
+// same way for each, so the page can't tell them apart: one replaying
+// another Verifier's request can't learn whether the wallet trusts it.
 func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, data []byte, origin string) (*Presentation, error) {
 	if protocol != wallet.DCAPIProtocolUnsigned && w.cfg.VerifierTrust == nil {
 		return nil, fmt.Errorf("walletflow: Config.VerifierTrust is required to answer a signed request: %w", ErrNotConfigured)

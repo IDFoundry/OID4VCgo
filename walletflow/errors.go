@@ -166,7 +166,9 @@ type RequestRefusedError struct {
 	// receiving the error (same-device), "" for none.
 	RedirectURI string
 
-	// DCAPIResponse is a DC API request's error response.
+	// DCAPIResponse is a DC API request's error response. It's only
+	// made for a request from the origin it names: see
+	// StartDCAPIPresentation.
 	DCAPIResponse []byte
 
 	// sendErr is why the error response couldn't be sent: the Verifier
