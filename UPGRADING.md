@@ -113,6 +113,23 @@ of its own mdocs. A `Transaction` record now carries the anchor of each
 verified credential (`issuer_anchor`); a record from an earlier release
 reads with none.
 
+### A `StatusPolicy` refuses a Checker that names the list signer
+
+`verifier.StatusPolicy` now refuses a `Checker` whose `Options` set
+`Issuer`, `IssuerKey` or `UnboundSigner`: `CheckStatusDecision`, so
+`NewTransactions`, `VerifyResponse`, `mdocdcapi.VerifyParams.Status`
+and a proximity reader's `WithStatus`, refuse the configuration at
+every assurance level, and `StatusPolicy.Check`, `RequireValidStatus` and
+`RequireValidStatusFrom` refuse every check. Before, `Issuer` or
+`IssuerKey` set there replaced the binding each check makes between a
+status list's signer and the credential's own issuer: an mdoc's list
+was no longer held to the CA that signed its document signer (ISO/IEC
+18013-5 §12.3.6.2), nor, with `StatusIssuers`, an SD-JWT VC's list to
+its issuer or an accepted Status Issuer, so a list signed with the
+pinned key decided every credential's status. Drop the fields: the
+binding is per credential. A separate Status Issuer is
+`StatusPolicy.StatusIssuers`'s to accept.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

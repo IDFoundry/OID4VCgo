@@ -144,7 +144,11 @@ type VerifyOptions struct {
 	//
 	// With neither Issuer nor IssuerKey set, CheckX5C, CheckCWTX5Chain
 	// and Checker refuse the check unless UnboundSigner decides the
-	// signer.
+	// signer; with either set, UnboundSigner is ignored. All three
+	// describe one Referenced Token's issuer, so leave them unset on a
+	// Checker that checks many issuers' credentials: a
+	// verifier.StatusPolicy sets them per credential, and refuses a
+	// Checker that sets them.
 	Issuer string
 
 	// IssuerKey is the public key that signed the Referenced Token: a
