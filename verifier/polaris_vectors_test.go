@@ -372,6 +372,10 @@ func (r polarisRun) judge(t *testing.T, v polarisVector) (verdict string, reason
 		// production decisions are declared, not made.
 		AnyIssuerForAnyType: true,
 		NoStatusCheck:       true,
+		// A "jwks" vector's issuer key is trusted without a certificate,
+		// as a deployment trusting issuer metadata keys would trust it:
+		// such a deployment declares that under production.
+		AllowUnanchoredSDJWTVCIssuers: v.Trust == "jwks",
 		// The vectors' requests name no claims, yet their presentations
 		// disclose some (OpenID4VP 1.0 §6.4.1 would have a Wallet disclose
 		// none): they test the presentation's verification, not its fit
