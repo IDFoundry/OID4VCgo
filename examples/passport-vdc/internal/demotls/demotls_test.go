@@ -20,7 +20,9 @@ func TestServerGuardsFraming(t *testing.T) {
 	srv := Server("127.0.0.1:0", handler, tls.Certificate{}, time.Second)
 	for path, wantCSP := range map[string]string{"/": "frame-ancestors 'self'", "/doc": "default-src 'none'"} {
 		rec := httptest.NewRecorder()
-		srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:0"
+		srv.Handler.ServeHTTP(rec, req)
 		if got := rec.Header().Get("Content-Security-Policy"); got != wantCSP {
 			t.Errorf("%s: Content-Security-Policy = %q, want %q", path, got, wantCSP)
 		}

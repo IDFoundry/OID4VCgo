@@ -24,8 +24,10 @@ import (
 
 // browser is an HTTP client that, like a person clicking through the
 // pages, sees each redirect rather than following it automatically.
-// browser is a browser for env: it keeps cookies, and stops at each
-// redirect so a test can follow the flow step by step.
+// browser is a browser for env: it keeps cookies, stops at each
+// redirect so a test can follow the flow step by step, and sends a
+// POST with the Origin of the page it posts to, as a form on that page
+// does, unless the test set one.
 func browser(env *demotest.Env) *http.Client {
 	c := *env.HTTP
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -34,7 +36,19 @@ func browser(env *demotest.Env) *http.Client {
 		panic(err)
 	}
 	c.Jar = jar
+	c.Transport = sameOriginPosts{env.HTTP.Transport}
 	return &c
+}
+
+// sameOriginPosts sends each POST without an Origin with its own URL's.
+type sameOriginPosts struct{ next http.RoundTripper }
+
+func (s sameOriginPosts) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPost && r.Header.Get("Origin") == "" {
+		r = r.Clone(r.Context())
+		r.Header.Set("Origin", r.URL.Scheme+"://"+r.URL.Host)
+	}
+	return s.next.RoundTrip(r)
 }
 
 // approvalTag is the interaction tag in the issuer's approval page, as a

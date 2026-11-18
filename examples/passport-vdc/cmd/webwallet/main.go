@@ -68,7 +68,7 @@ func main() {
 	}
 	// Long enough for the callback handler to finish the token and
 	// credential requests.
-	srv := demotls.Server(*addr, app, cert, 2*time.Minute)
+	srv := demotls.Server(*addr, app, cert, 2*time.Minute, *walletURL)
 	log.Printf("passport-vdc web wallet on https://%s", *addr)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

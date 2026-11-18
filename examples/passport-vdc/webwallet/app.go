@@ -4,9 +4,12 @@
 // presenting, showing what the verifier asks for.
 //
 // It is a single-user demo on loopback: no login, and holder keys stored
-// unencrypted, like the rest of walletapp. Every POST refuses a
-// cross-origin request, and nothing is fetched on a GET, so another site
-// can't make this wallet contact a server by linking to it.
+// unencrypted, like the rest of walletapp. Every POST refuses a request
+// that isn't from this wallet's own pages, by its Origin or Referer (one
+// with neither is refused), and nothing is fetched on a GET, so another
+// site can't make this wallet contact a server by linking to it. Served
+// by demotls.Server, it answers only its own host names, so a page
+// whose DNS rebinds to loopback can't read it either.
 package webwallet
 
 import (
@@ -27,6 +30,7 @@ import (
 	"time"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demoaccess"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -57,6 +61,7 @@ type Config struct {
 // App is a running web wallet.
 type App struct {
 	cfg     Config
+	origin  string // WalletURL's origin, as a browser's Origin header names it
 	handler http.Handler
 
 	mu        sync.Mutex
@@ -113,7 +118,7 @@ func New(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("webwallet: WalletURL, Store and VerifierTrust are required")
 	}
 	cfg.Wallet.RedirectURI = cfg.WalletURL + callbackPath
-	a := &App{cfg: cfg, pending: map[string]*pendingPresentation{}, deferred: map[string]*deferredCredential{}}
+	a := &App{cfg: cfg, origin: demoaccess.OriginOfURL(cfg.WalletURL), pending: map[string]*pendingPresentation{}, deferred: map[string]*deferredCredential{}}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -405,12 +410,13 @@ func (a *App) finishReceive(op *receiveOp) {
 	a.mu.Unlock()
 }
 
-// sameOrigin refuses a request another site's page sent: one whose
-// Origin isn't this wallet's. A request without Origin — from a
-// non-browser client — is allowed.
+// sameOrigin refuses a request this wallet's own pages didn't send: one
+// whose Origin, or without one its Referer, isn't this wallet's
+// (demoaccess.SameOrigin). A request with neither is refused too:
+// browsers send Origin on every POST.
 func (a *App) sameOrigin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && origin != a.cfg.WalletURL {
+		if !demoaccess.SameOrigin(r, a.origin) {
 			renderError(w, http.StatusForbidden, "cross-origin request refused")
 			return
 		}

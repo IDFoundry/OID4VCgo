@@ -1,6 +1,8 @@
 // Package demotls provides the passport-vdc demo servers' TLS
-// certificates: an operator-supplied pair, or a generated self-signed
-// loopback certificate written out for clients to trust.
+// certificates — an operator-supplied pair, or a generated self-signed
+// loopback certificate written out for clients to trust — and the
+// http.Server they share, which answers only the server's own host
+// names (HostGuard) and forbids framing (FrameGuard).
 package demotls
 
 import (
@@ -186,14 +188,23 @@ func FrameGuard(next http.Handler) http.Handler {
 	})
 }
 
+// Guarded is handler as every demo server serves it: answering only
+// the host names a server listening on addr and known by urls answers
+// to (HostGuard, ServedHosts), and forbidding framing (FrameGuard).
+func Guarded(handler http.Handler, addr string, urls ...string) http.Handler {
+	return FrameGuard(HostGuard(handler, ServedHosts(addr, urls...)))
+}
+
 // Server is the demo servers' shared http.Server: TLS 1.3 only (FAPI 2.0
 // allows TLS 1.2 with just a few AES-GCM suites), the usual timeouts,
-// ServerErrorLog, and FrameGuard around handler. writeTimeout bounds a
-// response; a handler that makes outbound calls of its own before
-// replying needs a longer one.
-func Server(addr string, handler http.Handler, cert tls.Certificate, writeTimeout time.Duration) *http.Server {
+// ServerErrorLog, and handler Guarded: a request must name addr, one
+// of this machine's loopback names for its port when addr is loopback,
+// or the host of one of urls, the public URLs a tunnel forwards to it.
+// writeTimeout bounds a response; a handler that makes outbound calls
+// of its own before replying needs a longer one.
+func Server(addr string, handler http.Handler, cert tls.Certificate, writeTimeout time.Duration, urls ...string) *http.Server {
 	return &http.Server{
-		Addr: addr, Handler: FrameGuard(handler), ErrorLog: ServerErrorLog(),
+		Addr: addr, Handler: Guarded(handler, addr, urls...), ErrorLog: ServerErrorLog(),
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13},
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: writeTimeout, IdleTimeout: 60 * time.Second,

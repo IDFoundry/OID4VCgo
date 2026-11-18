@@ -172,7 +172,7 @@ func (e *Env) StartWebWallet(t *testing.T, store walletapp.Store) {
 
 func (e *Env) start(t *testing.T, srv *httptest.Server, h http.Handler) {
 	t.Helper()
-	srv.Config.Handler = demotls.FrameGuard(h) // as demotls.Server does
+	srv.Config.Handler = demotls.Guarded(h, srv.Listener.Addr().String()) // as demotls.Server does
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	e.roots.AddCert(srv.Certificate())
