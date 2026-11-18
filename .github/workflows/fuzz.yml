@@ -331,6 +331,9 @@ jobs:
           - id: oid4vci-authorization-detail-rar
             pkg: .
             name: FuzzAuthorizationDetailRARDefinition
+          - id: oid4vci-authorization-detail-claims-within
+            pkg: .
+            name: FuzzClaimsWithin
           - id: verifier-transaction-codec-unmarshal
             pkg: ./verifier
             name: FuzzTransactionCodecUnmarshal
