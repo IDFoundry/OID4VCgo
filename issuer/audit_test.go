@@ -29,7 +29,10 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 		t.Fatalf("RequestDeferredCredential: %v", err)
 	}
 
-	events := sink.recorded()
+	// The record names no credential configuration, so each poll also
+	// records AuditEventLegacyDeferredAuthorization:
+	// TestDeferral_LegacyRecordAudited covers that one.
+	events := sink.recordedExcept(issuer.AuditEventLegacyDeferredAuthorization)
 	if len(events) != 1 {
 		t.Fatalf("got %d audit events, want 1", len(events))
 	}
@@ -51,7 +54,7 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 	); err == nil {
 		t.Fatal("second RequestDeferredCredential = nil error, want error (transaction already invalidated)")
 	}
-	events = sink.recorded()
+	events = sink.recordedExcept(issuer.AuditEventLegacyDeferredAuthorization)
 	if len(events) != 2 {
 		t.Fatalf("got %d audit events, want 2", len(events))
 	}

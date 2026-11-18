@@ -41,6 +41,18 @@ const (
 	// AuditEventRedeemPreAuthorizedCode records the outcome of a
 	// RedeemPreAuthorizedCode call.
 	AuditEventRedeemPreAuthorizedCode
+
+	// AuditEventLegacyDeferredAuthorization records a poll for a
+	// deferred transaction whose record carries neither
+	// DeferredTransactionRecord.CredentialIdentifier nor
+	// RequestedByConfigurationID (saved by OID4VCgo v0.81.0 and before,
+	// or written by a deployment without them), so the access token was
+	// checked against its credential configuration alone: success when
+	// the token grants it, failure otherwise. Once none is recorded for
+	// a full Limits.DeferredTransactionLifetime, no such record is left
+	// pending. The fallback is deprecated and will be removed in a
+	// later release.
+	AuditEventLegacyDeferredAuthorization
 )
 
 // AuditOutcome is a closed set of outcomes for an AuditEvent.
