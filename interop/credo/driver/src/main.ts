@@ -80,7 +80,9 @@ async function main() {
   process.on('SIGINT', stop)
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ ready: false, error: String(error?.stack ?? error) }))
+try {
+  await main()
+} catch (error) {
+  console.error(JSON.stringify({ ready: false, error: String((error as Error)?.stack ?? error) }))
   process.exit(1)
-})
+}

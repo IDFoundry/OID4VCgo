@@ -48,17 +48,17 @@ export type CredoAgent = ReturnType<typeof createAgent>
 // credentials the run's CA and IACA, anything else signed under x5c
 // nothing.
 function trust(config: Config): GetTrustedIssuersForVerification<VerificationSigner, { type: string }> {
-  return async (_agentContext, { signer, verification }) => {
-    if (signer.method !== 'x509') return undefined
+  return (_agentContext, { signer, verification }) => {
+    if (signer.method !== 'x509') return Promise.resolve(undefined)
     switch (verification.type) {
       case 'oauth2ClientAttestation':
       case 'openId4VciKeyAttestation':
-        return { trustedIssuers: [{ method: 'x509', issuance: config.attester_anchors }] }
+        return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.attester_anchors }] })
       case 'credential':
       case 'openId4VpCredential':
-        return { trustedIssuers: [{ method: 'x509', issuance: config.credential_anchors }] }
+        return Promise.resolve({ trustedIssuers: [{ method: 'x509', issuance: config.credential_anchors }] })
       default:
-        return { trustedIssuers: [] }
+        return Promise.resolve({ trustedIssuers: [] })
     }
   }
 }

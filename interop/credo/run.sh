@@ -63,18 +63,58 @@ build_production "$WORK" "$SRC" walletprovider=./interop/walletprovider
 (cd "$SRC" && go build -o "$WORK/wallet" ./interop/waltid/scripts/wallet \
   && go run ./interop/credo/scripts/setup -out "$WORK" -issuer-url "$CREDO_URL/oid4vci/credo")
 
+# askar_sha256 pins Askar's native library, by release and platform:
+# the archive askar-nodejs's install script would fetch, unchecked, from
+# Askar's GitHub releases. Moving the pin to an askar-nodejs that names
+# another release adds its checksums here (README, "Moving the pin").
+askar_sha256() {  # $1 release/archive
+  local key="$1"
+  case "$key" in
+    v0.5.0/library-linux-x86_64.tar.gz) echo dc243dbfce814905810532885b21945fd62ed5ae3fb006f38c3ecd7c698a2adb ;;
+    v0.5.0/library-linux-aarch64.tar.gz) echo 0f5bb24d397b7c329523059d7243f6d0dbcdf419c2a40b4164ce4607ad45dbf5 ;;
+    v0.5.0/library-darwin-universal.tar.gz) echo 249f70967fe529433efa135689fedd9d4413a672a2ccca11be6b7ca8161d846d ;;
+    *) echo "" ;;
+  esac
+}
+
+# askar_library puts askar-nodejs's native library in its native/
+# directory, checked against askar_sha256.
+askar_library() {
+  local pkg=node_modules/@openwallet-foundation/askar-nodejs
+  local version host archive platform arch sum
+  version=$(node -p "require('./$pkg/package.json').binary.version")
+  host=$(node -p "require('./$pkg/package.json').binary.host")
+  case "$(uname -s)" in
+    Linux) platform=linux; case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) arch=$(uname -m) ;; esac ;;
+    Darwin) platform=darwin; arch=universal ;;
+    *) echo "no Askar library for $(uname -s)" >&2; return 1 ;;
+  esac
+  archive="library-$platform-$arch.tar.gz"
+  sum=$(askar_sha256 "$version/$archive")
+  [[ -n "$sum" ]] || { echo "no pinned checksum for Askar $version $archive: add it to askar_sha256" >&2; return 1; }
+  curl -fsSL --max-time 120 -o "$archive" "$host/$version/$archive"
+  echo "$sum  $archive" | shasum -a 256 -c - >/dev/null || { echo "Askar $version $archive: checksum mismatch" >&2; return 1; }
+  mkdir -p "$pkg/native"
+  tar -xzf "$archive" -C "$pkg/native"
+  rm -f "$archive"
+}
+
 # The driver, built in the work dir from the checkout's sources: the
-# pinned release by its lock (npm ci), or CREDO_VERSION's.
+# pinned release by its lock (npm ci), or CREDO_VERSION's. No package's
+# install script runs: the one native library they would fetch, Askar's,
+# is fetched by askar_library and checked; the others' prebuilt binaries
+# ship in their packages.
 mkdir -p "$WORK/driver"
 cp -R "$HERE/driver/package.json" "$HERE/driver/package-lock.json" "$HERE/driver/tsconfig.json" "$HERE/driver/src" "$WORK/driver/"
 (
   cd "$WORK/driver"
-  npm ci --no-audit --no-fund --loglevel=error
+  npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
   if [[ -n "${CREDO_VERSION:-}" ]]; then
     [[ "$CREDO_VERSION" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo "bad CREDO_VERSION: '$CREDO_VERSION'" >&2; exit 2; }
-    npm install --no-audit --no-fund --loglevel=error --no-save \
+    npm install --ignore-scripts --no-audit --no-fund --loglevel=error --no-save \
       "@credo-ts/core@$CREDO_VERSION" "@credo-ts/openid4vc@$CREDO_VERSION" "@credo-ts/node@$CREDO_VERSION" "@credo-ts/askar@$CREDO_VERSION"
   fi
+  askar_library
   npx --no-install tsc -p tsconfig.json
 )
 echo "credo     $(cd "$WORK/driver" && node -p "['core','openid4vc','node','askar'].map(p => '@credo-ts/' + p + '@' + require('./node_modules/@credo-ts/' + p + '/package.json').version).join(' ')")"
@@ -116,17 +156,19 @@ CREDO_UNTRUSTED='No trusted certificate was found while validating the X.509 cha
 # offer creates Credo's pre-authorized code offer of configuration $1,
 # with a tx_code if $2 is true; it writes {id, offer, tx_code} to $3.
 offer() {  # $1 configuration, $2 tx_code, $3 file
+  local config="$1" tx_code="$2" out="$3"
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --arg c "$1" --argjson t "$2" '{configuration_ids: [$c], tx_code: $t}')" "$CONTROL/issuer/offers" > "$3"
+    --data "$(jq -cn --arg c "$config" --argjson t "$tx_code" '{configuration_ids: [$c], tx_code: $t}')" "$CONTROL/issuer/offers" > "$out"
 }
-issuance() { curl -sS --max-time 30 "$CONTROL/issuer/sessions/$1"; }
+issuance() { local id="$1"; curl -sS --max-time 30 "$CONTROL/issuer/sessions/$id"; }
 # request creates Credo's request for DCQL query $1, signed unless $2 is
 # false; it writes {id, request} to $3.
 request() {  # $1 query, $2 signed, $3 file
+  local query="$1" signed="$2" out="$3"
   curl -sS --max-time 30 -X POST -H "$JSON" \
-    --data "$(jq -cn --argjson q "$1" --argjson s "$2" '{query: $q, signed: $s}')" "$CONTROL/verifier/requests" > "$3"
+    --data "$(jq -cn --argjson q "$query" --argjson s "$signed" '{query: $q, signed: $s}')" "$CONTROL/verifier/requests" > "$out"
 }
-verification() { curl -sS --max-time 30 "$CONTROL/verifier/sessions/$1"; }
+verification() { local id="$1"; curl -sS --max-time 30 "$CONTROL/verifier/sessions/$id"; }
 
 # wallet runs OID4VCgo's wallet under HAIP, attested by the trusted
 # Wallet Provider unless the options name another; its outcome is in
@@ -139,7 +181,8 @@ wallet() {  # $1 name; then the wallet's options
 TRUSTED_WP=(-wallet-provider "https://localhost:$WP_PORT" -wallet-provider-tls wallet-provider/tls-cert.pem)
 OTHER_WP=(-wallet-provider "https://localhost:$OTHER_WP_PORT" -wallet-provider-tls other-wallet-provider/tls-cert.pem)
 why() {  # $1 file
-  jq -c '{stage, error} | with_entries(select(.value != null))' "$1" 2>/dev/null | cut -c1-400 || head -c 400 "$1"
+  local file="$1"
+  jq -c '{stage, error} | with_entries(select(.value != null))' "$file" 2>/dev/null | cut -c1-400 || head -c 400 "$file"
 }
 
 echo "### OID4VCgo's wallet ← Credo's issuer"
@@ -217,7 +260,7 @@ present() {  # $1 name, $2 configuration, $3 query, $4 signed; then the wallet's
     -request "$(jq -r .request "request-$name.json")" "$@"
   verification "$(jq -r .id "request-$name.json")" > "present-$name-session.json"
 }
-session() { jq -c '{state, error} | with_entries(select(.value != null))' "present-$1-session.json" 2>/dev/null | cut -c1-400; }
+session() { local name="$1"; jq -c '{state, error} | with_entries(select(.value != null))' "present-$name-session.json" 2>/dev/null | cut -c1-400; }
 
 present pid pid-sd-jwt "$PID_QUERY" true -verifier-ca ca.pem
 if jq -e '.stage == "done" and .query_ids == ["pid"]' present-pid.json >/dev/null \
@@ -247,9 +290,10 @@ else bad "observed: Credo's response encryption JWK changed: $(jq -c -s '[.[].ob
 # each other case differs from it in one change, which Credo must
 # refuse.
 tamper() {  # $1 mode
-  present "tamper-$1" pid-sd-jwt "$PID_QUERY" true -verifier-ca ca.pem -tamper "$1" -verifier2-key verifier-key.pem
+  local mode="$1"
+  present "tamper-$mode" pid-sd-jwt "$PID_QUERY" true -verifier-ca ca.pem -tamper "$mode" -verifier2-key verifier-key.pem
 }
-tampered() { echo "$(jq -c '.tampered | {changed, reply}' "present-tamper-$1.json" 2>/dev/null | cut -c1-400), Credo $(session "tamper-$1")"; }
+tampered() { local mode="$1"; echo "$(jq -c '.tampered | {changed, reply}' "present-tamper-$mode.json" 2>/dev/null | cut -c1-400), Credo $(session "tamper-$mode")"; }
 tamper relay
 if jq -e '.stage == "done" and .tampered.changed == "nothing" and .tampered.reply.status == 200' present-tamper-relay.json >/dev/null \
     && jq -e '.state == "ResponseVerified"' present-tamper-relay-session.json >/dev/null; then

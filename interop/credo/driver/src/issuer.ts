@@ -83,7 +83,7 @@ export async function certificateWithKey(agent: Agent, signer: Signer) {
 
 // credentialMapper issues each configuration's credential, one per
 // holder key.
-export const credentialMapper: OpenId4VciCredentialRequestToCredentialMapper = async ({
+export const credentialMapper: OpenId4VciCredentialRequestToCredentialMapper = ({
   holderBinding,
   credentialConfigurationId,
 }) => {

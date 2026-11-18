@@ -50,7 +50,7 @@ export function controlApi(agent: CredoAgent, signer: X509Certificate) {
           id,
           // An SD-JWT VC's disclosed claims; an mdoc device response's
           // issuer-signed elements.
-          list.map((p) => (p instanceof MdocDeviceResponse ? p.issuerClaims : 'prettyClaims' in p ? p.prettyClaims : undefined)),
+          list.map(presentedClaims),
         ])
       )
     }
@@ -61,4 +61,12 @@ export function controlApi(agent: CredoAgent, signer: X509Certificate) {
     res.status(500).json({ error: String(error instanceof Error ? error.message : error) })
   })
   return app
+}
+
+// presentedClaims is what a verified presentation disclosed: an mdoc
+// device response's issuer-signed elements, an SD-JWT VC's claims.
+function presentedClaims(p: object): unknown {
+  if (p instanceof MdocDeviceResponse) return p.issuerClaims
+  if ('prettyClaims' in p) return p.prettyClaims
+  return undefined
 }

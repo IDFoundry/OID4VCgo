@@ -169,19 +169,33 @@ built in the work directory, so the checkout's `driver/` gets no
 Credo is pinned by exact version in
 [`driver/package.json`](driver/package.json), with every dependency
 locked in [`driver/package-lock.json`](driver/package-lock.json), from
-which `run.sh` installs with `npm ci`; Askar's native library comes
-with `@openwallet-foundation/askar-nodejs`, whose version is the one
-Credo's own repository uses for that release. Dependabot doesn't update
-it. To move it, read the release's changelog
-(`packages/openid4vc/CHANGELOG.md` among them), change the four
-`@credo-ts/*` versions (and Askar's, if the release moved it), then:
+which `run.sh` installs with `npm ci --ignore-scripts`: no package's
+install script runs. Askar's native library, which
+`@openwallet-foundation/askar-nodejs`'s install script would fetch
+from Askar's GitHub releases without a checksum, `run.sh` fetches
+itself and checks against `askar_sha256`, by the release
+askar-nodejs names (`binary.version` in its `package.json`) and the
+platform. askar-nodejs's version is the one Credo's own repository
+uses for that release. Dependabot doesn't update any of it. To move
+it, read the release's changelog (`packages/openid4vc/CHANGELOG.md`
+among them), change the four `@credo-ts/*` versions (and Askar's, if
+the release moved it), then:
 
 ```sh
 cd interop/credo/driver
 rm -rf node_modules package-lock.json
-npm install
+npm install --ignore-scripts
 npx tsc -p tsconfig.json
 ```
+
+If the new askar-nodejs names another Askar release, add that
+release's `library-linux-x86_64`, `library-linux-aarch64` and
+`library-darwin-universal` archives' SHA-256 to `askar_sha256` in
+`run.sh` (download each from
+`https://github.com/openwallet-foundation/askar/releases/download/<release>/`
+and hash it); `run.sh` refuses a release it has no checksum for. The
+weekly run on Credo's newest release fails the same way, naming the
+release, when one moves it.
 
 and run `run.sh`. Credo's API changes between minor releases, so expect
 the driver to need changes with it, and read again whether finding 1
