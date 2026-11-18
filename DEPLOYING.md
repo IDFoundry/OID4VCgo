@@ -484,8 +484,16 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   a certificate of an instance's chain `REVOKED`, the provider revokes
   the instance itself, so the attestations it already holds read
   `INVALID`; `SUSPENDED` suspends it (`Resume` it once Google lifts the
-  suspension). Google's verdict is consulted first, and wins even when
-  a root removed from `Roots`, a tightened `Verifier` or a tightened
+  suspension). Should a status write fail part-way (a store failure),
+  the instance is still refused, and its `KeyStatusesFor` isn't yet
+  its `State`: `OnRecheckRefused` hears of it, the request fails as the
+  provider's own failure, and the next request sets the rest before it's
+  refused. Don't wait for one: `Revoke` (or `Suspend`) the instance
+  `OnRecheckRefused` names, or run
+  `p.RevokeWhere(ctx, func(in walletprovider.Instance) bool { return in.State == walletprovider.StateRevoked }, "")`,
+  which finishes every pending revocation. Google's verdict is
+  consulted first, and wins even when a root removed from `Roots`, a
+  tightened `Verifier` or a tightened
   `Policy` would refuse the instance too — whether it names the
   registration's chain, or the chain of the instance key the request
   names, which under Remote Key Provisioning can have intermediates of
@@ -494,6 +502,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   `INVALID` too, revoke them with `p.RevokeWhere(ctx, match, reason)`,
   `match` calling the adapter's `Recheck` or reading
   `androidkey.InstanceFacts` (a certificate serial, a patch level).
+  It goes on past an instance it fails to revoke, and its error, a
+  `*walletprovider.RevokeWhereError`, names each one: run it again,
+  which finishes them too.
   Keep a verifier in `Dependencies.Evidence` for every `Kind` your
   instances registered with, under that Kind: an instance whose Kind
   no verifier has is refused by policy (`OnRecheckRefused` hears of
@@ -549,7 +560,9 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   called with each refusal and the instance as stored afterwards
   (revoked, suspended or still active), the provider's own `Policy`
   refusals among them: alert on it, and revoke from your own logic the
-  instances a policy refusal leaves active. It runs
+  instances a policy refusal leaves active. It's called even when
+  revoking or suspending the instance failed: alert when its
+  `KeyStatusesFor` isn't its `State`, and `Revoke` or `Suspend` it. It runs
   on the request's path, so hand slow work to another goroutine.
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes

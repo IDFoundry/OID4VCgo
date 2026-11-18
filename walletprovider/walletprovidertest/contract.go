@@ -52,7 +52,7 @@ func sampleInstance(id string) walletprovider.Instance {
 			AppID: "com.example.wallet", AppVersion: 42, BootState: walletprovider.BootStateVerified, DeviceLocked: true,
 		},
 		Credential: []byte{1, 2, 3}, CredentialID: "cred-" + id, Counter: 7,
-		State: walletprovider.StateSuspended, Reason: "lost device", EvidenceFacts: []byte(`{"certificates":[{"serial":"2"}]}`),
+		State: walletprovider.StateSuspended, Reason: "lost device", KeyStatusesFor: walletprovider.StateActive, EvidenceFacts: []byte(`{"certificates":[{"serial":"2"}]}`),
 		CreatedAt: at, LastSeenAt: at.Add(time.Hour),
 		WalletAttestations: 3, KeyAttestations: 5,
 		IndexPeriodStart: at.Unix(), IndicesInPeriod: 4,

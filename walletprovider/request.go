@@ -79,7 +79,9 @@ func SignRequest(registrationKey crypto.Signer, instanceID, challenge, method, p
 // be recent, and carry a challenge issued for PurposeRequest, which it
 // consumes, so a request is accepted once. It refuses a request from
 // an instance that isn't active, having consumed its challenge: the
-// same request is refused again once the instance is resumed.
+// same request is refused again once the instance is resumed. A
+// suspended or revoked instance's keys' statuses are set first when a
+// transition left them pending (Instance.KeyStatusesFor).
 //
 // The signature is checked before anything else about the instance is
 // revealed or changed: a request that doesn't verify fails with
@@ -136,6 +138,7 @@ func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, er
 		return Instance{}, err
 	}
 	if err := stateError(in.State); err != nil {
+		p.completePending(ctx, in)
 		return Instance{}, err
 	}
 	return in, nil

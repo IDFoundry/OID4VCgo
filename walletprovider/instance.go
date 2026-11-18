@@ -92,6 +92,19 @@ type Instance struct {
 	// Reason is why the instance was last suspended or revoked.
 	Reason string
 
+	// KeyStatusesFor is the State the status of every one of the
+	// instance's instance keys was last set for, all of them: a
+	// transition stores it only once each of its status writes
+	// succeeded. While it differs from State, a suspension, resumption
+	// or revocation is pending: its state is stored, but some of the
+	// statuses may not be set yet. Provider.RevokeWhere then selects a
+	// revoked instance again, and a request from a suspended or revoked
+	// one sets them before it's refused. Register stores StateActive;
+	// it's empty for an instance stored before the provider kept it
+	// (v0.83.0 and before), which is pending until its next transition
+	// completes.
+	KeyStatusesFor State
+
 	CreatedAt  time.Time
 	LastSeenAt time.Time
 
