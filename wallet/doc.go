@@ -138,6 +138,18 @@
 // only checks structural well-formedness (oid4vci.CredentialOffer.Validate),
 // never who sent it.
 //
+// The links and references that serve what they refer to to whoever has
+// them never appear in an error, which ends up in logs: a Credential
+// Offer link, its credential_offer_uri (which serves the offer, a
+// pre-authorized code included, until the issuer retires it), and an
+// OpenID4VP invocation link and its request_uri. A *url.Error from
+// parsing or fetching one names a placeholder instead, such as
+// "(the credential_offer_uri)", and keeps its Op and cause, so errors.Is
+// and errors.As still tell a refused connection, a timeout or a refused
+// address. Errors from other requests quote the endpoint they failed
+// at: metadata, nonce, token, credential, deferred credential,
+// notification and status list URLs, which carry no secret.
+//
 // # OID4VP (presentation)
 //
 // PlanAuthorization (authorization_plan.go) works out, from a

@@ -514,7 +514,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 	}
 	target, err := url.Parse(requestURI)
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", redactURLs(err, redactedRequestURI))
 	}
 	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{
 		// RFC 9101 §5.2 serves a GET request_uri as either media type;
@@ -522,7 +522,7 @@ func (w *Wallet) FetchAuthorizationRequest(ctx context.Context, requestURI, clie
 		URL: target, ExpectedContentType: "application/" + requestObjectTyp, AlternateContentTypes: []string{"application/jwt"},
 	})
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: fetch request_uri: %w", redactURLs(err, redactedRequestURI))
 	}
 	return w.ParseAuthorizationRequest(string(res.Body), clientID, "")
 }
@@ -563,14 +563,14 @@ func (w *Wallet) FetchAuthorizationRequestPost(ctx context.Context, requestURI, 
 	}
 	target, err := url.Parse(requestURI)
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: parse request_uri: %w", redactURLs(err, redactedRequestURI))
 	}
 	res, err := w.fetcher.Post(ctx, fapihttp.PostRequest{
 		URL: target, Body: []byte(form.Encode()), ContentType: "application/x-www-form-urlencoded",
 		Accept: requestURIPostContentType, ExpectedContentType: requestURIPostContentType,
 	})
 	if err != nil {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: post request_uri: %w", err)
+		return AuthorizationRequest{}, fmt.Errorf("wallet: fetch authorization request: post request_uri: %w", redactURLs(err, redactedRequestURI))
 	}
 	return w.ParseAuthorizationRequest(string(res.Body), clientID, walletNonce)
 }

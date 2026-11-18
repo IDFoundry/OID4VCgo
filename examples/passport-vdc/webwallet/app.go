@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -253,7 +254,7 @@ func (a *App) handleReceive(w http.ResponseWriter, r *http.Request) {
 		// issuer's approval page.
 		a.finishReceive(op)
 		if res.err != nil {
-			renderError(w, http.StatusBadGateway, "couldn't receive: "+res.err.Error())
+			receiveFailed(w, res.err)
 			return
 		}
 		a.storeReceived(w, r, res)
@@ -284,10 +285,18 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 	res := <-op.done
 	a.finishReceive(op)
 	if res.err != nil {
-		renderError(w, http.StatusBadGateway, "receiving failed: "+res.err.Error())
+		receiveFailed(w, res.err)
 		return
 	}
 	a.storeReceived(w, r, res)
+}
+
+// receiveFailed tells the holder a receive failed, and logs why: the
+// error is the issuer's and the network's detail, not the holder's, and
+// the page is no place for it.
+func receiveFailed(w http.ResponseWriter, err error) {
+	log.Printf("webwallet: receive failed: %v", err)
+	renderError(w, http.StatusBadGateway, "couldn't receive the credential — try the offer again, or ask the issuer for a new one")
 }
 
 // storeReceived stores what a receive got, keeps what the issuer

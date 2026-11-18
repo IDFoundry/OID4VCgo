@@ -123,6 +123,16 @@
 // which query, and which credential_sets option, are the application's
 // to decide.
 //
+// An error from StartIssuance or StartPresentation never carries the
+// offer's credential_offer_uri or the request's request_uri, nor the
+// link either came in: each serves what it refers to — a by-reference
+// offer its pre-authorized code — to whoever reads the logs the error
+// ends up in. A failed fetch of one is a *url.Error naming a placeholder,
+// with its cause kept for errors.Is and errors.As. Other errors quote
+// the endpoints they failed at — the issuer's and Authorization
+// Server's metadata, nonce, token, credential and notification
+// endpoints, and status list URLs — which carry no secret.
+//
 // A Digital Credentials API request names its protocol, and that, not
 // the platform, decides which entry point answers it: "openid4vp-v1-
 // unsigned", "-signed" and "-multisigned" (wallet.DCAPIProtocolUnsigned

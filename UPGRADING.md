@@ -130,6 +130,27 @@ pinned key decided every credential's status. Drop the fields: the
 binding is per credential. A separate Status Issuer is
 `StatusPolicy.StatusIssuers`'s to accept.
 
+### Fetch errors no longer quote `credential_offer_uri` or `request_uri`
+
+A failed fetch of a by-reference Credential Offer's
+`credential_offer_uri`, or of an OpenID4VP request's `request_uri`,
+returned an error quoting it whole, though each serves what it refers
+to (a by-reference offer its pre-authorized code) to anyone who reads
+the logs. The error now names a placeholder instead, `"(the
+credential_offer_uri)"` or `"(the request_uri)"`, in its text and in the
+`*url.Error` that `errors.As` finds, whose `Op` and cause are kept:
+`errors.Is` and `errors.As` still find a timeout, a refused connection
+or `fapihttp.ErrSSRFBlocked`. This applies to
+`wallet.Wallet.ResolveCredentialOffer`, `FetchAuthorizationRequest` and
+`FetchAuthorizationRequestPost`, and so to `walletflow`'s
+`StartIssuance` and `StartPresentation`. A malformed
+`openid4vp://` link's parse error likewise names `"(the request
+link)"`, and a relative `request_uri` is no longer quoted. Code that
+read the URL back out of the error has it from its own input. Errors
+from the other endpoints (metadata, nonce, token, credential,
+notification, status lists) still quote their URLs, which carry no
+secret.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

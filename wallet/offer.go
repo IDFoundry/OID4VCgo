@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 
@@ -28,13 +27,7 @@ func (w *Wallet) ResolveCredentialOffer(ctx context.Context, uri string) (oid4vc
 	if err != nil {
 		// url.Error quotes the whole link, pre-authorized code and all:
 		// errors end up in logs.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			redacted := *urlErr
-			redacted.URL = "(the offer link)"
-			err = &redacted
-		}
-		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: parse uri: %w", err)
+		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: parse uri: %w", redactURLs(err, redactedOfferLink))
 	}
 	q := parsed.Query()
 	hasByValue := q.Has("credential_offer")
@@ -57,11 +50,14 @@ func (w *Wallet) ResolveCredentialOffer(ctx context.Context, uri string) (oid4vc
 func (w *Wallet) fetchCredentialOffer(ctx context.Context, offerURI string) (oid4vci.CredentialOffer, error) {
 	target, err := url.Parse(offerURI)
 	if err != nil {
-		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: parse credential_offer_uri: %w", err)
+		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: parse credential_offer_uri: %w", redactURLs(err, redactedOfferURI))
 	}
 	res, err := w.fetcher.Fetch(ctx, fapihttp.FetchRequest{URL: target, ExpectedContentType: "application/json"})
 	if err != nil {
-		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: fetch credential_offer_uri: %w", err)
+		// A network failure is a *url.Error quoting the reference, which
+		// serves the offer, pre-authorized code and all, to whoever reads
+		// the logs it ends up in.
+		return oid4vci.CredentialOffer{}, fmt.Errorf("wallet: resolve credential offer: fetch credential_offer_uri: %w", redactURLs(err, redactedOfferURI))
 	}
 	return decodeCredentialOffer(res.Body)
 }

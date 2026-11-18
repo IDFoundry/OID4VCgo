@@ -39,7 +39,8 @@ type AuthorizationRequestLink struct {
 func ParseAuthorizationRequestLink(link string) (AuthorizationRequestLink, error) {
 	u, err := url.Parse(link)
 	if err != nil {
-		return AuthorizationRequestLink{}, fmt.Errorf("wallet: parse authorization request link: %w", err)
+		// url.Error quotes the whole link, request_uri and all.
+		return AuthorizationRequestLink{}, fmt.Errorf("wallet: parse authorization request link: %w", redactURLs(err, redactedRequestLink))
 	}
 	q := u.Query()
 	parsed := AuthorizationRequestLink{
@@ -54,7 +55,7 @@ func ParseAuthorizationRequestLink(link string) (AuthorizationRequestLink, error
 		return AuthorizationRequestLink{}, errors.New("wallet: parse authorization request link: request_uri is required")
 	}
 	if ru, err := url.Parse(parsed.RequestURI); err != nil || !ru.IsAbs() || ru.Host == "" {
-		return AuthorizationRequestLink{}, fmt.Errorf("wallet: parse authorization request link: request_uri %q isn't an absolute URL", parsed.RequestURI)
+		return AuthorizationRequestLink{}, errors.New("wallet: parse authorization request link: request_uri isn't an absolute URL")
 	}
 	switch parsed.RequestURIMethod {
 	case "":

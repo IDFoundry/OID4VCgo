@@ -284,6 +284,30 @@ func TestWebWallet_RejectsNonOfferLinks(t *testing.T) {
 	}
 }
 
+// TestWebWallet_ReceiveFailureShowsNoDetail: a receive that fails shows
+// the holder a generic page, never the error, which names the offer's
+// credential_offer_uri and the issuer's and network's detail.
+func TestWebWallet_ReceiveFailureShowsNoDetail(t *testing.T) {
+	env := demotest.New(t, nil)
+	env.StartWebWallet(t, walletapp.Store{Dir: filepath.Join(t.TempDir(), "wallet")})
+	b := browser(env)
+	const secret = "OFFER-REF-5be"
+	offer := "openid-credential-offer://?credential_offer_uri=" + url.QueryEscape("https://127.0.0.1:1/credential-offer/"+secret)
+	resp, err := b.PostForm(env.WebWalletURL+"/receive", url.Values{"offer": {offer}})
+	if err != nil {
+		t.Fatalf("POST /receive: %v", err)
+	}
+	page := read(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(page, "receive the credential") {
+		t.Errorf("status %d, want 502 with the generic message", resp.StatusCode)
+	}
+	for _, detail := range []string{secret, "credential_offer_uri", "walletflow", "fapihttp"} {
+		if strings.Contains(page, detail) {
+			t.Errorf("the page shows %q", detail)
+		}
+	}
+}
+
 // TestWebWallet_DuplicateCallbackDoesNotHang delivers the issuer's
 // redirect twice at once: one completes the receive, the other is
 // refused, and neither is left waiting.
