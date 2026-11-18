@@ -442,6 +442,29 @@ against Multipaz's newest release on Maven Central. See
 [`interop/multipaz/README.md`](../interop/multipaz/README.md) for the
 cases, Multipaz's deviations, and moving the pin.
 
+## Interop with Credo
+
+`.github/workflows/credo-interop.yml` runs `walletflow` against
+[Credo](https://github.com/openwallet-foundation/credo-ts)'s OpenID4VCI
+1.0 Credential Issuer and OpenID4VP 1.0 Verifier, from its published
+npm packages pinned by version and lock: `walletflow` obtaining an
+SD-JWT VC PID and an mDL from Credo's issuer by pre-authorized code
+(DPoP and a Wallet Attestation from OID4VCgo's Wallet Provider
+required, and a `tx_code`), and presenting them to Credo's Verifier (a
+DCQL query in a signed `x509_hash` request, the response encrypted).
+Controls (an untrusted issuer, Verifier and attester, a wrong
+`tx_code`, a request Credo can only send unsigned, and presentations
+whose Key Binding JWT `nonce` or `aud`, a disclosure, or the issuer's
+signature was changed on the way) are refused, each by the refusing
+side's own error. Credo advertises anonymous pre-authorized code
+redemption while it requires a Wallet Attestation, a known gap the run
+notes, failing if it changes. Credo's holder, with OID4VCgo's issuer
+and Verifier, isn't driven yet. It runs on each pull request, daily
+and on each release against the pinned release, and weekly against
+Credo's newest release on npm. See
+[`interop/credo/README.md`](../interop/credo/README.md) for the cases,
+Credo's deviations, and moving the pin.
+
 ## OID4VCgo's wallet at production assurance
 
 The runs above drive OID4VCgo's wallet at development assurance,
