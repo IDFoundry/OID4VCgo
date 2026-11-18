@@ -335,15 +335,18 @@ suspended as last checked), warns when the chosen one's every copy has
 been shown to another website, and presents by the copy policy chosen in
 the app's settings.
 
+The app and the extension change a credential's record (marking a copy
+presented, replacing copies on refresh) only through the store's
+compare-and-swap, which `FileCredentialStore` makes atomic across both
+processes with a `flock` on a lock file in the App Group's container,
+held only across one record's read, compare and write (iOS terminates
+a suspended process holding a lock in a shared container). If the app
+refreshes a credential at the moment the extension presents it, the
+later write finds the record changed, reads it again and makes its
+change on top of the other's.
+
 Known limitations, fine for the demo but not for a production wallet:
 
-- The app and the extension each read, change and write a credential's
-  record (marking a copy presented, replacing copies on refresh) under a
-  lock that only spans their own process. If the app refreshes a
-  credential at the moment the extension presents it, one can overwrite
-  the other's change. A file lock across processes isn't the answer on
-  iOS — an app suspended holding a lock in a shared container is
-  terminated — so it needs writes that check the record's version.
 - The extension reads the whole credential store, including refresh
   grants and pending issuances. Their keys stay in the app's own
   Keychain group, so the extension can't use them, but a production

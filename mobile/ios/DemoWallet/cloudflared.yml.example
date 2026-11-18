@@ -14,6 +14,14 @@
 # certificate (originRequest.caPool: the -state directory's
 # tls-cert.pem, issued for localhost and 127.0.0.1).
 #
+# Don't set originRequest.httpHostHeader: the tunnel must forward each
+# request with its public hostname as the Host. The demo's servers
+# answer only their own names (the public URLs cmd/demo is started with,
+# and 127.0.0.1 or localhost with their port), and refuse any other Host
+# with 421 Misdirected Request; httpHostHeader: localhost, for one,
+# arrives as localhost:443. originServerName below is the name the TLS
+# certificate is checked against, not the Host.
+#
 # The demo's pages have no login, and the issuer takes passport uploads:
 # guard /demo/ on the issuer and verifier hostnames with a Cloudflare
 # Access application, and start the demo with -cf-access-team-domain and
