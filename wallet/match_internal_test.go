@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
 )
@@ -132,5 +135,70 @@ func TestMatchDCQLQuery_MalformedCandidateDecodedOnce(t *testing.T) {
 	}
 	if m.decodes != len(held) {
 		t.Errorf("decoded %d candidates, want %d", m.decodes, len(held))
+	}
+}
+
+// MatchEachCredentialQuery matches every credential query on its own,
+// each against every candidate, decoding each candidate once however
+// many queries there are: a wallet listing what can answer an unsigned
+// request's MaxCredentialQueries queries decoded every held credential
+// once per query.
+func TestMatchEachCredentialQuery_DecodesEachCandidateOnce(t *testing.T) {
+	held := []HeldCredential{{Format: sdjwtvc.CredentialFormat, Credential: "not an sd-jwt"}}
+	for range 10 {
+		held = append(held, matchTestCredential(t, "urn:held"))
+	}
+	var q dcql.Query
+	for i := range dcql.MaxCredentialQueries {
+		vct := "urn:held"
+		if i == 0 {
+			vct = "urn:other"
+		}
+		q.Credentials = append(q.Credentials, matchTestQuery(t, fmt.Sprintf("q%d", i), vct))
+	}
+	if err := q.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	m := newMatcher(held, nil)
+	matches, err := m.matchEach(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.decodes != len(held) {
+		t.Errorf("decoded %d candidates, want each of the %d once", m.decodes, len(held))
+	}
+	if _, ok := matches["q0"]; ok {
+		t.Errorf("matches[q0] = %v, want no entry: no credential is of its type", matches["q0"])
+	}
+	for _, cq := range q.Credentials[1:] {
+		// Every match, though multiple is false.
+		if got := len(matches[cq.ID]); got != len(held)-1 {
+			t.Errorf("matches[%q] has %d credentials, want the %d well-formed ones", cq.ID, got, len(held)-1)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := MatchEachCredentialQuery(ctx, q, held, nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("done context: err = %v, want context.Canceled", err)
+	}
+}
+
+// knownMeta keeps only the members a format defines, which matching
+// reads once per candidate; a meta of another format is left as sent.
+func TestKnownMeta(t *testing.T) {
+	junk := `,"x":[` + strings.Repeat("0,", 1000) + `0]}`
+	for _, tc := range []struct {
+		format, meta, want string
+	}{
+		{sdjwtvc.CredentialFormat, `{"vct_values":["urn:a","urn:b"]` + junk, `{"vct_values":["urn:a","urn:b"]}`},
+		{mdoc.CredentialFormat, `{"doctype_value":"org.iso.18013.5.1.mDL"` + junk, `{"doctype_value":"org.iso.18013.5.1.mDL"}`},
+		{"jwt_vc_json", `{"type_values":[["a"]]` + junk, `{"type_values":[["a"]]` + junk},
+		{sdjwtvc.CredentialFormat, `[]`, `[]`},
+	} {
+		got := knownMeta(dcql.CredentialQuery{ID: "q", Format: tc.format, Meta: json.RawMessage(tc.meta)})
+		if string(got.Meta) != tc.want {
+			t.Errorf("%s meta %.40s: %s, want %.60s", tc.format, tc.meta, got.Meta, tc.want)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -177,17 +178,93 @@ func resolveHeldMdocNameSpaces(issuerSigned mdoc.IssuerSigned) map[string]map[st
 // dcql.TrustedAuthoritiesChecker's own doc comment for why this is a
 // separate, per-query dependency.
 func MatchDCQLQuery(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
-	if err := query.Validate(); err != nil {
+	if err := checkMatchable(query, trustedAuthorities); err != nil {
 		return nil, fmt.Errorf("wallet: match dcql query: %w", err)
+	}
+	return newMatcher(candidates, trustedAuthorities).matchQuery(ctx, query)
+}
+
+// MatchEachCredentialQuery returns, for each of query's Credential
+// Queries on its own, every candidate satisfying it, in candidates'
+// order: what a holder chooses from, where MatchDCQLQuery chooses. It
+// ignores credential_sets and each query's multiple. A Credential
+// Query no candidate satisfies, or of a format this package doesn't
+// support, has no entry. Each candidate is decoded once, however many
+// Credential Queries query has.
+func MatchEachCredentialQuery(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (map[string][]HeldCredential, error) {
+	if err := checkMatchable(query, trustedAuthorities); err != nil {
+		return nil, fmt.Errorf("wallet: match credential queries: %w", err)
+	}
+	out, err := newMatcher(candidates, trustedAuthorities).matchEach(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("wallet: match credential queries: %w", err)
+	}
+	return out, nil
+}
+
+// matchEach is MatchEachCredentialQuery once query is validated.
+func (m *matcher) matchEach(ctx context.Context, query dcql.Query) (map[string][]HeldCredential, error) {
+	out := make(map[string][]HeldCredential, len(query.Credentials))
+	for _, cq := range query.Credentials {
+		cq.Multiple = true
+		matches, err := m.match(ctx, cq)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if err == nil {
+			out[cq.ID] = matches
+		}
+	}
+	return out, nil
+}
+
+// checkMatchable checks query is valid, and that trustedAuthorities is
+// set if any of its Credential Queries declares trusted_authorities.
+func checkMatchable(query dcql.Query, trustedAuthorities dcql.TrustedAuthoritiesChecker) error {
+	if err := query.Validate(); err != nil {
+		return err
 	}
 	if trustedAuthorities == nil {
 		for _, cq := range query.Credentials {
 			if len(cq.TrustedAuthorities) > 0 {
-				return nil, fmt.Errorf("wallet: match dcql query: trusted_authorities is required when credential query %q declares trusted_authorities", cq.ID)
+				return fmt.Errorf("trusted_authorities is required when credential query %q declares trusted_authorities", cq.ID)
 			}
 		}
 	}
-	return newMatcher(candidates, trustedAuthorities).matchQuery(ctx, query)
+	return nil
+}
+
+// knownMeta is cq with its meta reduced to the members its format
+// defines, vct_values for "dc+sd-jwt" (OpenID4VP 1.0 Appendix B.3.5)
+// and doctype_value for "mso_mdoc" (B.2.3): the only ones matching
+// reads, and a Wallet ignores the others. Matching and presenting read
+// a query's meta once per held credential, so the others would be
+// re-read each time. A meta of another format, or one that doesn't
+// decode, is left as it is.
+func knownMeta(cq dcql.CredentialQuery) dcql.CredentialQuery {
+	var known any
+	switch cq.Format {
+	case sdjwtvc.CredentialFormat:
+		m, err := cq.SDJWTVCMeta()
+		if err != nil {
+			return cq
+		}
+		known = m
+	case mdoc.CredentialFormat:
+		m, err := cq.MdocMeta()
+		if err != nil {
+			return cq
+		}
+		known = m
+	default:
+		return cq
+	}
+	raw, err := json.Marshal(known)
+	if err != nil {
+		return cq
+	}
+	cq.Meta = raw
+	return cq
 }
 
 // matchQuery is MatchDCQLQuery once query is validated.
@@ -304,6 +381,8 @@ func (m *matcher) match(ctx context.Context, cq dcql.CredentialQuery) ([]HeldCre
 	if r, ok := m.results[cq.ID]; ok {
 		return r.matches, r.err
 	}
+	// Its meta is read once per candidate: once here, in full.
+	cq = knownMeta(cq)
 	var satisfiedBy func(context.Context, dcql.CredentialQuery, HeldCredential, *decodedCandidate) bool
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:

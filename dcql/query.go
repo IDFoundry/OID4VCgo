@@ -64,17 +64,24 @@ func (q Query) Validate() error {
 // real query needs. A claim_sets entry is bounded by
 // MaxClaimsPerCredential too: it names each of its query's claims at
 // most once (Validate refuses a repeat, which asks for nothing more).
+//
+// MaxMetaBytes bounds one credential query's meta as sent: a wallet
+// reads a query's meta for every credential it holds of the query's
+// format, and members it doesn't know, which it ignores, would
+// otherwise make each read cost up to the whole request's size. A real
+// meta names a type or a few: 64 vct_values of 60 bytes each fit.
 const (
-	MaxCredentialQueries      = 64  // credentials
-	MaxCredentialSets         = 64  // credential_sets
-	MaxCredentialSetOptions   = 64  // options in one credential set
-	MaxClaimsPerCredential    = 256 // claims in one credential query
-	MaxClaimSets              = 64  // claim_sets in one credential query
-	MaxValuesPerClaim         = 64  // values in one claims query
-	MaxPathLength             = 32  // components in one claims path
-	MaxTrustedAuthorities     = 16  // trusted_authorities in one credential query
-	MaxTrustedAuthorityValues = 64  // values in one trusted_authorities entry
-	MaxVCTValues              = 64  // vct_values in one "dc+sd-jwt" credential query's meta
+	MaxCredentialQueries      = 64   // credentials
+	MaxCredentialSets         = 64   // credential_sets
+	MaxCredentialSetOptions   = 64   // options in one credential set
+	MaxClaimsPerCredential    = 256  // claims in one credential query
+	MaxClaimSets              = 64   // claim_sets in one credential query
+	MaxValuesPerClaim         = 64   // values in one claims query
+	MaxPathLength             = 32   // components in one claims path
+	MaxTrustedAuthorities     = 16   // trusted_authorities in one credential query
+	MaxTrustedAuthorityValues = 64   // values in one trusted_authorities entry
+	MaxVCTValues              = 64   // vct_values in one "dc+sd-jwt" credential query's meta
+	MaxMetaBytes              = 4096 // bytes of one credential query's meta, as sent
 )
 
 // checkSize enforces the size bounds above.
@@ -98,6 +105,8 @@ func (q Query) checkSize() error {
 			return fmt.Errorf("dcql: query: credentials[%d]: %d claim sets, more than %d", i, len(cq.ClaimSets), MaxClaimSets)
 		case len(cq.TrustedAuthorities) > MaxTrustedAuthorities:
 			return fmt.Errorf("dcql: query: credentials[%d]: %d trusted authorities, more than %d", i, len(cq.TrustedAuthorities), MaxTrustedAuthorities)
+		case len(cq.Meta) > MaxMetaBytes:
+			return fmt.Errorf("dcql: query: credentials[%d]: a meta of %d bytes, more than %d", i, len(cq.Meta), MaxMetaBytes)
 		}
 		if err := cq.checkNestedSize(); err != nil {
 			return fmt.Errorf("dcql: query: credentials[%d]%w", i, err)
