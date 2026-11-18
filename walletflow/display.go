@@ -266,6 +266,9 @@ type CredentialStatus struct {
 // revoked, suspended or another status than valid. Neither kind of list
 // tells the issuer which credential is checked: each is one list for
 // many credentials (the Token Status List's herd privacy).
+//
+// Config.CredentialIssuers doesn't apply: a credential from an issuer
+// the Config no longer lists still has its lists fetched and checked.
 func (w *Wallet) CheckStatus(ctx context.Context, id string) (StoredCredential, error) {
 	c, err := w.deps.Credentials.Get(ctx, id)
 	if err != nil {
