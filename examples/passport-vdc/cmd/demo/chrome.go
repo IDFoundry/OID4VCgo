@@ -24,6 +24,11 @@ func spkiHash(cert *x509.Certificate) string {
 // site is checked as usual. Chrome honours the SPKI list only with its
 // own --user-data-dir, which also keeps the demo out of your normal
 // profile.
+//
+// Chrome can't limit the exception to the demo's host names: the
+// profile accepts that key under any name. A page whose DNS rebinds its
+// name to loopback is stopped by the servers instead, which refuse any
+// Host but their own (demotls.HostGuard).
 func chromeArgs(profileDir string, cert *x509.Certificate, urls ...string) []string {
 	args := []string{
 		"--user-data-dir=" + profileDir,

@@ -83,7 +83,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := demotls.Server(*addr, app, cert, 30*time.Second)
+	srv := demotls.Server(*addr, app, cert, 30*time.Second, *verifierURL)
 	log.Printf("passport-vdc verifier on https://%s", *addr)
 	log.Fatal(srv.ListenAndServeTLS("", ""))
 }

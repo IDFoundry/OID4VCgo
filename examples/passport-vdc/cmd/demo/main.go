@@ -313,12 +313,12 @@ func run(ctx context.Context, opts options) error {
 
 	servers := []*http.Server{
 		// The wallets ask it for attestations; they never hold its key.
-		demotls.Server(providerAddr, providerService, cert, 30*time.Second),
-		demotls.Server(issuerAddr, issuer, cert, 30*time.Second),
-		demotls.Server(verifierAddr, verifier, cert, 30*time.Second),
+		demotls.Server(providerAddr, providerService, cert, 30*time.Second, opts.urls.provider),
+		demotls.Server(issuerAddr, issuer, cert, 30*time.Second, issuerURL),
+		demotls.Server(verifierAddr, verifier, cert, 30*time.Second, verifierURL),
 		// Long enough for the callback to finish the token and
 		// credential requests.
-		demotls.Server(walletAddr, webWallet, cert, 2*time.Minute),
+		demotls.Server(walletAddr, webWallet, cert, 2*time.Minute, walletURL),
 	}
 	return serve(ctx, servers, opts, leaf)
 }

@@ -340,6 +340,15 @@ accepts the demo's certificate — only that one, identified by its key —
 without a warning. Chrome shows a banner about an unsupported
 command-line flag; that's expected. Use that window for the whole demo.
 
+Chrome's exception (`--ignore-certificate-errors-spki-list`) is by key
+alone: Chrome has no way to limit it to some host names, so that
+profile accepts the demo's certificate for any name. A page whose DNS
+rebinds its own name to 127.0.0.1 would therefore get past the
+certificate check, but not past the servers: each answers only the
+names it's known by (see below) and refuses any other `Host` (421).
+What remains is that anyone holding `.demo-state/tls-key.pem` could
+pose as any site in that profile; keep the profile for the demo.
+
 Otherwise, in the browser you'll use, open https://127.0.0.1:8543,
 https://127.0.0.1:9443 and https://127.0.0.1:7443 and accept the warning,
 or trust `.demo-state/tls-cert.pem`. The certificate is reused on every
@@ -480,6 +489,19 @@ protection against login CSRF, RFC 9700 §4.7): the web wallet sets a
 session cookie when it sends the browser to the issuer, so the approval
 must be completed in that same browser; the CLI's flow is bound to its
 own process.
+
+Every server — issuer, verifier, web wallet and Wallet Provider —
+answers only the host names it's known by: its listen address, this
+machine's loopback names for that port (`127.0.0.1`, `localhost` and,
+unless it listens on IPv4 loopback, `[::1]`), and the host of its
+public URL (`-issuer-url` and so on, which a tunnel forwards with that
+`Host`). A request naming any other `Host` is refused (421 Misdirected
+Request), so a page whose DNS rebinds its own name to this machine
+can't read the web wallet's credentials or the issuer's pages. The web
+wallet's form posts (receive, review, share, check a deferred
+credential, paste a link) need an `Origin`, or without one a `Referer`,
+on the wallet's own origin; one with neither is refused (403), as is
+another site's.
 
 On both the issuer and the verifier, the pages people use are under
 `/demo/` (`/` redirects there): the upload page and the operator's
@@ -1047,7 +1069,7 @@ generator, planned for gmrtd itself).
 | `walletapp` | the wallet, on oid4vcgo's `walletflow` sessions: receive (offer → discovery → HAIP Authorization Code flow or pre-authorized code → credentials) and present (OpenID4VP, selective disclosure); credential store |
 | `verifierapp` | the OpenID4VP verifier: either-format requests, both trust paths, revocation checks |
 | `webwallet` | the browser wallet: credential cards, receive via the issuer's approval page, consent before presenting |
-| `internal/democert`, `internal/demotls` | the demo's X.509 certificates, and its servers' TLS certificates |
+| `internal/democert`, `internal/demotls` | the demo's X.509 certificates, and its servers' TLS certificates and shared `http.Server` (with its Host and framing guards) |
 | `internal/demoqr`, `internal/demoui` | its QR codes, and what its pages share |
 | `internal/statefile` | writes the servers' state files |
 | `internal/demotest` | starts the issuer and verifier on loopback, for tests |
