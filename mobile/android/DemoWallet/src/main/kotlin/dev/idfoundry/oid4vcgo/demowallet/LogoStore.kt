@@ -2,7 +2,6 @@ package dev.idfoundry.oid4vcgo.demowallet
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import dev.idfoundry.oid4vcwallet.CredentialSummary
 import dev.idfoundry.oid4vcwallet.Logo
@@ -28,17 +27,14 @@ import javax.net.ssl.SSLSocketFactory
  * when, or how often, the holder looks at the credential.
  *
  * A logo is the issuer's choice of image, so it's handled as hostile:
- * one larger than [MAX_BYTES], or than [MAX_DIMENSION] pixels a side,
- * is refused, and each is decoded off the main thread at the size it's
- * shown, never at its own: a small file can decode to a bitmap of
- * hundreds of megabytes.
+ * one larger than [MAX_BYTES], or than [BoundedImages.MAX_DIMENSION]
+ * pixels a side, is refused, and each is decoded off the main thread at
+ * the size it's shown, never at its own: a small file can decode to a
+ * bitmap of hundreds of megabytes.
  */
 object LogoStore {
     /** The largest logo kept. */
     private const val MAX_BYTES = 512 * 1024
-
-    /** The widest or tallest logo kept or shown, in pixels. */
-    private const val MAX_DIMENSION = 4096
 
     /** The size a logo is checked at before it's kept, in pixels. */
     private const val CHECK_SIZE = 128
@@ -64,7 +60,7 @@ object LogoStore {
             } else {
                 file(context, logo.uri).takeIf { it.isFile }?.let { runCatching { it.readBytes() }.getOrNull() }
             }
-            data?.let { decode(it, sizePx) }?.also { images[logo.uri] = it }
+            data?.let { BoundedImages.decode(it, sizePx) }?.also { images[logo.uri] = it }
         }
     }
 
@@ -98,7 +94,7 @@ object LogoStore {
             Log.w("DemoWallet", "fetching a credential logo: $e")
             null
         }
-        if (data == null || decode(data, CHECK_SIZE) == null) return
+        if (data == null || BoundedImages.decode(data, CHECK_SIZE) == null) return
         file.parentFile?.mkdirs()
         val partial = File(file.parentFile, file.name + ".tmp")
         runCatching {
@@ -161,21 +157,6 @@ object LogoStore {
             16 -> (b[0].toInt() and 0xFE) == 0xFC
             else -> false
         }
-    }
-
-    /**
-     * [data] decoded at most about [sizePx] pixels a side: its bounds
-     * read first, refused past [MAX_DIMENSION], then sampled down as
-     * it's decoded.
-     */
-    private fun decode(data: ByteArray, sizePx: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
-        val (w, h) = bounds.outWidth to bounds.outHeight
-        if (w <= 0 || h <= 0 || w > MAX_DIMENSION || h > MAX_DIMENSION) return null
-        var sample = 1
-        while (maxOf(w, h) / (sample * 2) >= sizePx) sample *= 2
-        return BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     /** Where the logo at [uri] is kept: named by its SHA-256. */

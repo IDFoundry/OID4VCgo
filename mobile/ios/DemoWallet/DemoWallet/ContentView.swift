@@ -587,7 +587,7 @@ struct HolderHeader: View {
         if let holder {
             HStack(spacing: 12) {
                 if let portrait = holder.portrait {
-                    Image(uiImage: portrait).resizable().scaledToFill().frame(width: 40, height: 50)
+                    ClaimImage(image: portrait, width: 40, height: 50, fill: true)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
                 VStack(alignment: .leading) {
@@ -752,7 +752,7 @@ struct ClaimRows: View {
             }
         } else if let image = Self.image(value, key: path.last ?? "") {
             LabeledContent(path.joined(separator: " · ")) {
-                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 120, maxHeight: 160)
+                ClaimImage(image: image, width: 120, height: 160)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .accessibilityIdentifier("portrait")
             }
@@ -763,18 +763,20 @@ struct ClaimRows: View {
     }
 
     /// An image claim: a data: URL (an SD-JWT VC's picture), or base64
-    /// bytes under a name like an mdoc's portrait. Nonisolated: it only
-    /// decodes, so a credential's summary can build its portrait off the
-    /// main actor.
-    nonisolated static func image(_ v: JSONValue, key: String) -> UIImage? {
+    /// bytes under a name like an mdoc's portrait. It's the issuer's
+    /// choice of image, so only its header is read here, and one refused
+    /// by `BoundedImages` (too large a side) is shown as text: its
+    /// pixels are decoded by `ClaimImage`, off the main actor, at the
+    /// size shown.
+    nonisolated static func image(_ v: JSONValue, key: String) -> EncodedImage? {
         guard case .string(let s) = v else { return nil }
         if s.hasPrefix("data:image/"), let comma = s.firstIndex(of: ","),
            let data = Data(base64Encoded: String(s[s.index(after: comma)...])) {
-            return UIImage(data: data)
+            return EncodedImage(data)
         }
         let named = ["portrait", "picture", "photo", "image"].contains { key.lowercased().contains($0) }
         guard named, let data = Data(base64Encoded: s) else { return nil }
-        return UIImage(data: data)
+        return EncodedImage(data)
     }
 
     /// The SD-JWT VC's own top-level claims, not about the holder.
@@ -965,7 +967,7 @@ struct CandidateCard: View {
             Image(systemName: RequestView.choiceIcon(selected: selected, multiple: multiple))
                 .font(.title2).foregroundStyle(selected ? text : text.opacity(0.45))
             if let portrait = holder?.portrait {
-                Image(uiImage: portrait).resizable().scaledToFill().frame(width: 44, height: 56)
+                ClaimImage(image: portrait, width: 44, height: 56, fill: true)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
                 LogoView(logo: d?.logo ?? d?.issuerLogo)
@@ -1006,7 +1008,7 @@ struct ShareHeader: View {
     var body: some View {
         HStack(spacing: 10) {
             if let portrait = holder?.portrait {
-                Image(uiImage: portrait).resizable().scaledToFill().frame(width: 28, height: 36)
+                ClaimImage(image: portrait, width: 28, height: 36, fill: true)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
             VStack(alignment: .leading) {
@@ -1047,7 +1049,7 @@ struct DisclosedRow: View {
         let value = claims.flatMap { Self.resolve(path, in: $0) }
         if let value, let image = ClaimRows.image(value, key: Self.lastKey(path)) {
             LabeledContent(label) {
-                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 60, maxHeight: 80)
+                ClaimImage(image: image, width: 60, height: 80)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
             .accessibilityIdentifier("disclosed")
@@ -1117,11 +1119,12 @@ struct RegistrationRows: View {
 
 /// Whose credential this is, from its claims: the holder's name, date of
 /// birth and photo, wherever the format keeps them (an SD-JWT VC's
-/// top-level claims, an mdoc's namespaces).
+/// top-level claims, an mdoc's namespaces). The photo is kept encoded:
+/// `ClaimImage` decodes it, off the main actor, at the size shown.
 struct Holder {
     let name: String?
     let birthDate: String?
-    let portrait: UIImage?
+    let portrait: EncodedImage?
 
     init?(claims: JSONValue?) {
         guard let claims else { return nil }

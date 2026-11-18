@@ -1006,7 +1006,9 @@ What a wallet's UI needs to show a credential, from the SDK:
     that changes in between isn't caught), keeps at most 512 KiB and
     4096 pixels a side, and decodes each logo off the main thread at
     the size it's shown, never at its own: a small file can decode to
-    hundreds of megabytes.
+    hundreds of megabytes. A portrait or other image claim is the
+    issuer's choice of image as well, and they decode it the same way
+    (`BoundedImages`).
 - **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
   `validityInfo.validUntil`, is kept as `valid_until`.
 - **Revocation status:**
@@ -1342,7 +1344,13 @@ Verifier received `family_name`.
 - **The authorization page** opens in an Auth Tab, else an ephemeral
   Custom Tab; closing it leaves the offer open, as on iOS. Beginning the
   authorization again then needed walletflow to allow it (#467), on iOS
-  too.
+  too. Any app can open a link on the redirect's private-use scheme, so
+  with an Auth Tab the demo takes the redirect only from the tab's
+  result and ignores such links. A Custom Tab's redirect can only arrive
+  as one; the demo can't check its `state` itself (the authorization
+  URL carries only the pushed request's `request_uri`), but walletflow
+  refuses one that isn't the authorization's and keeps it pending, and
+  the demo then leaves the offer open rather than ending it.
 - **Chrome** doesn't trust the test services' CA, unlike Go and the
   app: the issuer's page shows a certificate warning. The UI tests need
   the CA in the device's user store, which Chrome trusts.

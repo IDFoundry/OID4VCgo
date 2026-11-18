@@ -13,7 +13,6 @@ import androidx.activity.viewModels
 import androidx.browser.auth.AuthTabIntent
 import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
-import kotlinx.coroutines.CompletableDeferred
 
 /**
  * The demo wallet's one activity: the screens, links opened from other
@@ -23,7 +22,7 @@ class MainActivity : ComponentActivity() {
     private val model: WalletModel by viewModels()
 
     /** The authorization in progress: completed by the redirect back, or by the holder closing the page. */
-    private var authorization: CompletableDeferred<String>? = null
+    private var authorization: PendingAuthorization? = null
     private var inCustomTab = false
     private lateinit var authTab: ActivityResultLauncher<Intent>
 
@@ -34,17 +33,15 @@ class MainActivity : ComponentActivity() {
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
         authTab = AuthTabIntent.registerActivityResultLauncher(this) { result ->
-            val pending = authorization ?: return@registerActivityResultLauncher
-            if (result.resultCode == AuthTabIntent.RESULT_OK && result.resultUri != null) {
-                pending.complete(result.resultUri.toString())
-            } else {
-                pending.completeExceptionally(WalletModel.AuthorizationCancelled())
-            }
+            authorization?.tabResult(result.resultUri?.takeIf { result.resultCode == AuthTabIntent.RESULT_OK }?.toString())
         }
         model.attach(this)
+        // A link on the callback scheme while authorizing: in an Auth Tab
+        // it's ignored (any app can send one, and the redirect comes as
+        // the tab's result), in a Custom Tab it's the redirect.
         model.awaitingRedirect = { uri ->
             authorization?.let {
-                it.complete(uri.toString())
+                it.link(uri.toString())
                 true
             } ?: false
         }
@@ -85,7 +82,7 @@ class MainActivity : ComponentActivity() {
             inCustomTab = false
             val pending = authorization ?: return
             window.decorView.postDelayed({
-                if (!pending.isCompleted) pending.completeExceptionally(WalletModel.AuthorizationCancelled())
+                if (!pending.isCompleted) pending.cancel()
             }, 500)
         }
     }
@@ -99,15 +96,17 @@ class MainActivity : ComponentActivity() {
     /**
      * Opens the issuer's authorization page and returns its redirect back
      * to the app: in an Auth Tab where the browser has them, ephemeral (no
-     * cookies kept), as ASWebAuthenticationSession on iOS; else in a
-     * Custom Tab, whose redirect reaches the app as a link.
+     * cookies kept), as ASWebAuthenticationSession on iOS, whose
+     * redirect comes back only as its result; else in a Custom Tab,
+     * whose redirect reaches the app as a link (PendingAuthorization).
      */
-    private suspend fun authorize(url: String): String {
-        val pending = CompletableDeferred<String>()
+    private suspend fun authorize(url: String): AuthorizationRedirect {
+        val browser = CustomTabsClient.getPackageName(this, null)
+        val inAuthTab = browser != null && CustomTabsClient.isAuthTabSupported(this, browser)
+        val pending = PendingAuthorization(inAuthTab)
         authorization = pending
         try {
-            val browser = CustomTabsClient.getPackageName(this, null)
-            if (browser != null && CustomTabsClient.isAuthTabSupported(this, browser)) {
+            if (inAuthTab) {
                 AuthTabIntent.Builder().setEphemeralBrowsingEnabled(true).build()
                     .launch(authTab, Uri.parse(url), model.callbackScheme)
             } else {

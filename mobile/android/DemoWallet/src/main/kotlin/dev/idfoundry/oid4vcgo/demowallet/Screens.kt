@@ -99,7 +99,7 @@ import java.time.Instant
 
 /** The app: the home screen, a credential's page, and the offer, request and scanner over them. */
 @Composable
-fun DemoApp(model: WalletModel, authorize: suspend (String) -> String, openBrowser: (Uri) -> Unit) {
+fun DemoApp(model: WalletModel, authorize: suspend (String) -> AuthorizationRedirect, openBrowser: (Uri) -> Unit) {
     // Test tags as resource IDs: the UI tests (DemoWalletUITests) find
     // views by them, as the iOS demo's by accessibility identifiers.
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) { Box(Modifier.semantics { testTagsAsResourceId = true }) {
@@ -436,7 +436,7 @@ fun HolderHeader(holder: Holder?) {
     }
     Row(Modifier.padding(start = 16.dp, top = 20.dp, bottom = 6.dp).testTag("holder"), verticalAlignment = Alignment.CenterVertically) {
         holder.portrait?.let {
-            Image(it.asImageBitmap(), null, Modifier.size(40.dp, 50.dp).clip(RoundedCornerShape(4.dp)), contentScale = ContentScale.Crop)
+            ClaimImage(it, 40.dp, 50.dp, Modifier.clip(RoundedCornerShape(4.dp)), contentScale = ContentScale.Crop)
             Spacer(Modifier.width(12.dp))
         }
         Column {
@@ -525,7 +525,7 @@ fun PendingRow(model: WalletModel, pending: WalletModel.PendingCredential) {
 /** A Credential Offer: who's offering, what, and the PIN if it needs one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OfferScreen(model: WalletModel, authorize: suspend (String) -> String) {
+fun OfferScreen(model: WalletModel, authorize: suspend (String) -> AuthorizationRedirect) {
     val offer = model.offer ?: return
     val receiving = model.phase == WalletModel.Phase.Receiving
     // Cancelling is for an offer just being shown: once receiving, the
@@ -721,7 +721,7 @@ fun LazyListScope.claimRows(value: JsonElement, path: List<String>) {
         if (image != null) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Image(image.asImageBitmap(), null, Modifier.size(120.dp, 160.dp).clip(RoundedCornerShape(6.dp)).testTag("portrait"))
+                ClaimImage(image, 120.dp, 160.dp, Modifier.clip(RoundedCornerShape(6.dp)).testTag("portrait"))
             }
         } else {
             Labeled(label, Claims.text(value), Modifier.testTag("claim"))
@@ -890,7 +890,7 @@ fun CandidateCard(summary: CredentialSummary, holder: Holder?, selected: Boolean
             Spacer(Modifier.width(12.dp))
             val portrait = holder?.portrait
             if (portrait != null) {
-                Image(portrait.asImageBitmap(), null, Modifier.size(44.dp, 56.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+                ClaimImage(portrait, 44.dp, 56.dp, Modifier.clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
             } else {
                 LogoImage(d?.logo ?: d?.issuerLogo)
             }
@@ -938,7 +938,7 @@ fun DisclosedRow(path: List<PathElement>, claims: JsonElement?, unregistered: Bo
         when {
             image != null -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(label)
-                Image(image.asImageBitmap(), null, Modifier.size(60.dp, 80.dp).clip(RoundedCornerShape(4.dp)))
+                ClaimImage(image, 60.dp, 80.dp, Modifier.clip(RoundedCornerShape(4.dp)))
             }
             value != null -> Labeled(label, Claims.text(value))
             else -> Text(label)

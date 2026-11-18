@@ -419,10 +419,10 @@ jobs:
 
       # Android lint fails on its errors: an API above minSdk 26 called
       # unguarded, or a wrong constant.
-      - name: build the library (release), its host tests and lint, and the demo wallet app
+      - name: build the library (release), its host tests and lint, and the demo wallet app and its host tests
         working-directory: mobile/android
         run: |
-          ./gradlew --console=plain :OID4VCWallet:assembleRelease :OID4VCWallet:testDebugUnitTest :OID4VCWallet:lintDebug :DemoWallet:assembleDebug :DemoWalletUITests:assembleDebug
+          ./gradlew --console=plain :OID4VCWallet:assembleRelease :OID4VCWallet:testDebugUnitTest :OID4VCWallet:lintDebug :DemoWallet:assembleDebug :DemoWallet:testDebugUnitTest :DemoWalletUITests:assembleDebug
           unzip -p OID4VCWallet/build/outputs/aar/OID4VCWallet-release.aar libs/classes.jar > "$RUNNER_TEMP/go.jar"
           if unzip -l "$RUNNER_TEMP/go.jar" | grep -q TestEnv; then
             echo "::error::the release library carries TestEnv"; exit 1
