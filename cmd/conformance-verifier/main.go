@@ -62,10 +62,19 @@ func main() {
 		log.Fatalf("tls certificate: %v", err)
 	}
 	httpServer := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           mux,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{tlsCert}},
+		Addr:      cfg.ListenAddr,
+		Handler:   mux,
+		TLSConfig: &tls.Config{Certificates: []tls.Certificate{tlsCert}},
+		// A client trickling a body or idling on a connection holds it
+		// only so long (DEPLOYING.md). Nothing here long-polls, but a
+		// response's verification may fetch status lists
+		// (statusListFetchTimeout each) before it's answered, which
+		// WriteTimeout leaves room for.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
