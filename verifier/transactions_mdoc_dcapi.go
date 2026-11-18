@@ -170,6 +170,12 @@ type MdocDCAPIVerify struct {
 	IssuerAuthorized    func(ctx context.Context, a IssuerAuthorization) error
 	AnyIssuerForAnyType bool
 
+	// CredentialQueryID is the CredentialQueryID the verified document
+	// carries in the request's result (MdocDCAPIRequest.CredentialQueryID):
+	// IssuerAuthorized gets it too, so a hook shared with OpenID4VP
+	// requests sees the ID Accept and Status do.
+	CredentialQueryID string
+
 	// Assurance is the Verifier's Config.Assurance, and Origins
 	// TransactionsConfig.Origins, normalized.
 	Assurance AssuranceLevel
@@ -342,7 +348,8 @@ func (t *Transactions) verifyMdocDCAPI(ctx context.Context, tx Transaction, data
 		RecipientKey: recipient, ExpiresAt: tx.ExpiresAt, Response: answer.Response,
 		IssuerKeys: verify.MdocIssuerKeys, Now: t.now, MaxClockSkew: verify.MaxClockSkew,
 		IssuerAuthorized: verify.IssuerAuthorized, AnyIssuerForAnyType: verify.AnyIssuerForAnyType,
-		Assurance: t.v.cfg.Assurance, Origins: t.cfg.Origins,
+		CredentialQueryID: cq,
+		Assurance:         t.v.cfg.Assurance, Origins: t.cfg.Origins,
 	})
 	if err != nil {
 		var verr *Error

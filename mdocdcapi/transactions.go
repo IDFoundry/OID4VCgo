@@ -53,6 +53,7 @@ func (p transactionsProtocol) VerifyMdocDCAPIResponse(ctx context.Context, v ver
 		Response: v.Response, IssuerKeys: v.IssuerKeys, Now: v.Now, MaxClockSkew: v.MaxClockSkew,
 		Assurance: v.Assurance, Origins: v.Origins,
 		IssuerAuthorized: v.IssuerAuthorized, AnyIssuerForAnyType: v.AnyIssuerForAnyType,
+		credentialQueryID: v.CredentialQueryID,
 		// Transactions checks status (TransactionsConfig.Status), so its
 		// refusal is reported as its others are.
 		NoStatusCheck: true,

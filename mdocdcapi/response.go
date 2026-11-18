@@ -75,7 +75,12 @@ type VerifyParams struct {
 	// the anchors you assign to the doctype (verifier.AnchorIs), never by
 	// names or key identifiers in IssuerChain, which any trusted root can
 	// copy from another; X5ChainIssuerKeyResolver.RootsByDocType makes
-	// the same separation without a hook.
+	// the same separation without a hook. It gets the document's claims,
+	// and as its CredentialQueryID the one the verified document carries:
+	// its type, as Verified.Credential's, or, through
+	// verifier.Transactions, the request's
+	// verifier.MdocDCAPIRequest.CredentialQueryID, which Accept and
+	// Status see there.
 	IssuerAuthorized func(ctx context.Context, a verifier.IssuerAuthorization) error
 	// AnyIssuerForAnyType declares that every issuer IssuerKeys trusts
 	// may issue the requested doctype, so IssuerAuthorized is
@@ -97,6 +102,11 @@ type VerifyParams struct {
 	// the response: result holds the one credential,
 	// Verified.Credential, and id is "".
 	Accept func(ctx context.Context, id string, result verifier.VerifyResponseResult) error
+
+	// credentialQueryID, when set (ForTransactions), is the
+	// CredentialQueryID IssuerAuthorized gets in place of the document's
+	// type: the one Transactions gives the verified document.
+	credentialQueryID string
 }
 
 // Verified is a verified document.
@@ -529,9 +539,14 @@ func verifyDocument(ctx context.Context, p VerifyParams, chains *verifier.Respon
 		IssuerChain: issuerChain, IssuerAnchor: issuerAnchor, Status: mso.Status,
 	}
 	if p.IssuerAuthorized != nil {
+		credential := verified.Credential()
+		if p.credentialQueryID != "" {
+			credential.CredentialQueryID = p.credentialQueryID
+		}
 		if err := p.IssuerAuthorized(ctx, verifier.IssuerAuthorization{
-			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{req.DocType}, MatchedTypes: []string{mso.DocType},
-			IssuerChain: issuerChain, IssuerAnchor: issuerAnchor, Claims: verified.Credential().Claims,
+			CredentialQueryID: credential.CredentialQueryID,
+			Format:            mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{req.DocType}, MatchedTypes: []string{mso.DocType},
+			IssuerChain: issuerChain, IssuerAnchor: issuerAnchor, Claims: credential.Claims,
 		}); err != nil {
 			return Verified{}, fmt.Errorf("mdocdcapi: issuer authorization: %w", err)
 		}
