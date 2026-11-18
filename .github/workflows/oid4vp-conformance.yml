@@ -135,12 +135,17 @@ jobs:
 
       # The Verifier's own log says why it verified or refused each
       # response (the drivers grade its result page, the suite's verdict
-      # and the module log; see conformance/verifier/README.md).
-      - name: Save the conformance verifier's log
+      # and the module log; see conformance/verifier/README.md). lib.sh
+      # saves each container's log after every leg, as
+      # <leg>.container.log beside the leg's own log; this catches a run
+      # cut short mid-leg (a timeout, a cancel), where that never ran.
+      - name: Save the conformance containers' last logs
         if: always()
         run: |
           mkdir -p "${{ runner.temp }}/conformance-results"
-          docker compose -f conformance/verifier/docker-compose.yml logs --no-color > "${{ runner.temp }}/conformance-results/conformance-verifier-container.log" 2>&1 || true
+          for role in verifier wallet-vp; do
+            docker compose -f "conformance/$role/docker-compose.yml" logs --no-color --timestamps > "${{ runner.temp }}/conformance-results/conformance-$role-container.log" 2>&1 || true
+          done
 
       - name: Upload conformance results
         if: always()
