@@ -224,6 +224,15 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
 - [ ] **Transactions:** `verifier.NewTransactions(v,
   db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)`, so
   a wallet's response can reach any replica.
+- [ ] **An explicit `TransactionsConfig.Scope` for each policy** where
+  several `Transactions` share one store: each reads only the
+  transactions of its own scope. The scope derived when `Scope` is
+  unset tells apart only Verifiers that differ in client_id,
+  `ResponseURI` or `RequestURIBase`, so one Verifier's Digital
+  Credentials API `Transactions` with different `Verify` or `Accept`
+  policies (`RequestURIBase` unset in each) share one, and any of them
+  can complete or read another's request under its own policy. Keep
+  each `Scope` the same on every replica.
 - [ ] **Rate-limit the response endpoints** per client, and per
   request where the post names it: the `direct_post` response URI
   (`HandleResponse`, `HandleUnencryptedError`), and the pages' Digital

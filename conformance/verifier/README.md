@@ -347,7 +347,7 @@ with:
 
 - a durable, atomically updated store, sealed: `sqlstore`'s
   `TransactionStore` over a SQLite file, each transaction encoded by a
-  `verifier.TransactionCodec` (version 2) whose `Sealer` is
+  `verifier.TransactionCodec` (version 3) whose `Sealer` is
   `sealing.AESGCMSealer` under a key generated per run;
 - a CA-issued client certificate, an `https` `response_uri`,
   `crypto/rand`, A128GCM and A256GCM, issuer key resolvers that verify
