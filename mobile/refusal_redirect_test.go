@@ -1,6 +1,12 @@
 package mobile
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/idfoundry/oid4vcgo/walletflow"
+)
 
 // The refusal's redirect_uri is taken once.
 func TestTakeRefusalRedirect(t *testing.T) {
@@ -10,5 +16,41 @@ func TestTakeRefusalRedirect(t *testing.T) {
 	}
 	if got := w.TakeRefusalRedirect(); got != "" {
 		t.Errorf("second take = %q, want none", got)
+	}
+}
+
+// Each StartPresentation's refusal redirect is its Operation's own, so
+// presentations started concurrently can't swap them; the Wallet's
+// holds the latest.
+func TestTakeRefusalRedirect_PerOperation(t *testing.T) {
+	w := &Wallet{}
+	first, second := NewOperation(0), NewOperation(0)
+	refused := func(uri string) error {
+		return fmt.Errorf("walletflow: %w", &walletflow.RequestRefusedError{Code: "invalid_transaction_data", RedirectURI: uri})
+	}
+	w.recordRefusal(first, refused("https://first.example/done"))
+	w.recordRefusal(second, refused("https://second.example/done"))
+	if got := first.TakeRefusalRedirect(); got != "https://first.example/done" {
+		t.Errorf("first Operation's = %q", got)
+	}
+	if got := second.TakeRefusalRedirect(); got != "https://second.example/done" {
+		t.Errorf("second Operation's = %q", got)
+	}
+	if got := first.TakeRefusalRedirect(); got != "" {
+		t.Errorf("first Operation's, again = %q, want none", got)
+	}
+	if got := w.TakeRefusalRedirect(); got != "https://second.example/done" {
+		t.Errorf("Wallet's = %q, want the latest", got)
+	}
+
+	// Another error, or none, leaves no redirect.
+	third := NewOperation(0)
+	w.recordRefusal(third, errors.New("network"))
+	w.recordRefusal(nil, nil)
+	if got := third.TakeRefusalRedirect(); got != "" {
+		t.Errorf("after another error = %q, want none", got)
+	}
+	if got := (*Operation)(nil).TakeRefusalRedirect(); got != "" {
+		t.Errorf("nil Operation's = %q, want none", got)
 	}
 }

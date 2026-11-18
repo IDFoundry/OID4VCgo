@@ -3,6 +3,7 @@ package mobile
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -157,6 +158,12 @@ func ParseRequestLink(link string) (string, error) {
 type Operation struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// refusalRedirect is the redirect_uri the Verifier answered a
+	// request StartPresentation refused under this Operation with
+	// (TakeRefusalRedirect).
+	refusalMu       sync.Mutex
+	refusalRedirect string
 }
 
 // NewOperation returns an Operation that times out after timeoutMillis
@@ -173,6 +180,34 @@ func NewOperation(timeoutMillis int64) *Operation {
 // Cancel cancels the operation: a call using it returns a "cancelled"
 // error. Safe to call more than once, and from any thread.
 func (o *Operation) Cancel() { o.cancel() }
+
+// TakeRefusalRedirect returns, once, the redirect_uri the Verifier
+// answered with when StartPresentation, called with this Operation,
+// failed with request_refused; "" for none. Unlike
+// Wallet.TakeRefusalRedirect, which holds the latest refusal of any
+// call, it is this call's own, so concurrent presentations each get
+// their Verifier's.
+func (o *Operation) TakeRefusalRedirect() string {
+	if o == nil {
+		return ""
+	}
+	o.refusalMu.Lock()
+	defer o.refusalMu.Unlock()
+	uri := o.refusalRedirect
+	o.refusalRedirect = ""
+	return uri
+}
+
+// setRefusalRedirect records uri as op's refusal redirect; nothing for
+// a nil Operation.
+func (o *Operation) setRefusalRedirect(uri string) {
+	if o == nil {
+		return
+	}
+	o.refusalMu.Lock()
+	defer o.refusalMu.Unlock()
+	o.refusalRedirect = uri
+}
 
 // context is op's context; a nil Operation never ends.
 func (o *Operation) context() context.Context {
