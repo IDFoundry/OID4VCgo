@@ -150,6 +150,7 @@ func TestNewTransactions_RefusesSystemPoolIssuerRoots(t *testing.T) {
 	cases := map[string]verifier.VerifyResponseRequest{
 		"issuer_keys":                      {IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
 		"issuer_keys (pointer)":            {IssuerKeys: &verifier.X5CIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
+		"issuer_keys RootsByVCT":           {IssuerKeys: verifier.X5CIssuerKeyResolver{RootsByVCT: map[string]*x509.CertPool{"urn:pid:1": system}, Revocation: certrevocation.NoCheck{}}},
 		"mdoc_issuer_keys":                 {MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
 		"mdoc_issuer_keys (pointer)":       {MdocIssuerKeys: &verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}},
 		"mdoc_issuer_keys (wrapped)":       {MdocIssuerKeys: wrappingResolver{verifier.X5ChainIssuerKeyResolver{Roots: system, Revocation: certrevocation.NoCheck{}}}},

@@ -39,7 +39,7 @@ const (
 	//     ProofBindingKeys. Checked per call rather than in New because
 	//     these resolvers are supplied per call;
 	//   - there too, an X5CIssuerKeyResolver or X5ChainIssuerKeyResolver
-	//     whose Roots (or a RootsByDocType entry) is the system root pool
+	//     whose Roots (or a RootsByVCT or RootsByDocType entry) is the system root pool
 	//     (x509.SystemCertPool), which would accept any public CA's
 	//     certificate as an issuer's. On Linux and the other Unix
 	//     systems a pool built from it by adding certificates is refused
@@ -126,7 +126,7 @@ func checkProductionKeySources(req VerifyResponseRequest) error {
 		}
 	}
 	if anchoredBySystemPool(req.IssuerKeys) {
-		return errors.New("issuer_keys: Roots is the system root pool under AssuranceProduction: it anchors every public CA's certificates, a TLS server's among them; trust the credential issuers' own CAs")
+		return errors.New("issuer_keys: Roots or RootsByVCT holds the system root pool under AssuranceProduction: it anchors every public CA's certificates, a TLS server's among them; trust the credential issuers' own CAs")
 	}
 	for resolver, i := MdocIssuerKeyResolver(req.MdocIssuerKeys), 0; resolver != nil && i < 16; i++ {
 		if anchoredBySystemPool(resolver) {
@@ -148,10 +148,10 @@ func anchoredBySystemPool(resolver any) bool {
 	var pools []*x509.CertPool
 	switch r := resolver.(type) {
 	case X5CIssuerKeyResolver:
-		pools = []*x509.CertPool{r.Roots}
+		pools = r.anchorPools()
 	case *X5CIssuerKeyResolver:
 		if r != nil {
-			pools = []*x509.CertPool{r.Roots}
+			pools = r.anchorPools()
 		}
 	case X5ChainIssuerKeyResolver:
 		pools = r.anchorPools()
