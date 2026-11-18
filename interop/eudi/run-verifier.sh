@@ -676,8 +676,10 @@ if [[ "$WALLET_ASSURANCE" = production ]]; then
   # The verifier's TLS certificate, which walletflow's client checks
   # against the system's roots: here another CA's.
   TLS_ANCHOR=other-ca.pem start_wallet wallet-sdjwt-walletflow.json verifier-ca.pem
+  # The request_uri is a bearer capability: the wallet's errors name it
+  # by a placeholder, never by its value.
   refused_production production-untrusted-tls \
-    'wallet: fetch authorization request: fetch request_uri: fapihttp: Get "REQUEST_URI": tls: failed to verify certificate: x509: certificate signed by unknown authority'
+    'wallet: fetch authorization request: fetch request_uri: fapihttp: Get "(the request_uri)": tls: failed to verify certificate: x509: certificate signed by unknown authority'
 
   # The x509_san_dns Client Identifier Prefix, which the issued
   # credentials' cases (x509_hash, HAIP) don't use: the fixture SD-JWT
@@ -906,7 +908,7 @@ if init_transaction "$SDJWT_QUERY" haip issuer-ca.pem get; then
   authorize untrusted-tls.txt
   result untrusted-tls.json
   wallet_refused untrusted-tls.txt \
-    "wallet: fetch authorization request: fetch request_uri: fapihttp: Get \"$(jq -r '.request_uri' init.json)\": verifier tls certificate: x509: certificate signed by unknown authority" \
+    'wallet: fetch authorization request: fetch request_uri: fapihttp: Get "(the request_uri)": verifier tls certificate: x509: certificate signed by unknown authority' \
     untrusted-tls.json
 else bad "transaction initialized"; fi
 
