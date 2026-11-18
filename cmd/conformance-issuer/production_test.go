@@ -180,6 +180,46 @@ func TestProductionSetup_ShowsAuthorizationErrorsLocally(t *testing.T) {
 	}
 }
 
+// The production setup with Config.Deferred defers a Credential
+// Request and issues it on the Wallet's first poll of the Deferred
+// Credential Endpoint, with a notification_id: the OIDF suite's
+// production deferred run.
+func TestProductionSetup_IssuesDeferredCredential(t *testing.T) {
+	kaKey, _, kaLeafPEM, kaCAPEM, err := conformancecert.GenerateSignerAndCert("production-test-key-attestation", "production-test-key-attestation-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	productionCfg := productionTestConfig(t, kaCAPEM)
+	productionCfg.Deferred = true
+	client, cfg, attesterKey, clientKey := setupFullFlowTestWithConfig(t, productionCfg, "production-client", "production-subject")
+	holderKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessToken, cNonce := performAuthFlowThroughNonce(t, client, cfg, attesterKey, clientKey, now)
+	keyAttestation := buildKeyAttestationJWT(t, kaKey, kaLeafPEM, holderKey, cNonce, now)
+	proof := buildAttestedProofJWT(t, holderKey, cfg.Client.ID, cfg.Issuer, cNonce, keyAttestation, now)
+	status, body := postCredential(t, client, cfg, clientKey, accessToken, now, proof)
+	if status != http.StatusAccepted {
+		t.Fatalf("POST /credential: status %d, body %s; want 202", status, body)
+	}
+	var deferred struct {
+		TransactionID string `json:"transaction_id"`
+	}
+	if err := json.Unmarshal([]byte(body), &deferred); err != nil || deferred.TransactionID == "" {
+		t.Fatalf("credential response %s: want a transaction_id (%v)", body, err)
+	}
+	poll, err := json.Marshal(map[string]string{"transaction_id": deferred.TransactionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued := postProtected(t, client, cfg.Issuer+deferredPath, clientKey, accessToken, poll, now, http.StatusOK)
+	if credentials, _ := issued["credentials"].([]any); len(credentials) != 1 || issued["notification_id"] == nil {
+		t.Fatalf("deferred credential response = %+v, want one credential and a notification_id", issued)
+	}
+}
+
 // postCredential sends one Credential Request with proofJWT, returning
 // the status and body.
 func postCredential(t *testing.T, client *http.Client, cfg Config, clientKey *ecdsa.PrivateKey, accessToken string, now time.Time, proofJWT string) (int, string) {

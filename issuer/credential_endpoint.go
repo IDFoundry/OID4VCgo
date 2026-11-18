@@ -466,7 +466,7 @@ func (iss *Issuer) requestCredential(ctx context.Context, auth AuthorizedRequest
 	if err != nil {
 		return oid4vci.CredentialResponse{}, err
 	}
-	notificationID, err := iss.notificationIDFor(ctx, auth)
+	notificationID, err := iss.notificationIDFor(ctx, auth.ClientID(), auth.Subject)
 	if err != nil {
 		return oid4vci.CredentialResponse{}, fmt.Errorf("issuer: request credential: %w", err)
 	}
@@ -523,13 +523,14 @@ func (iss *Issuer) runPrepare(ctx context.Context, auth AuthorizedRequest, req *
 	return iss.requireDeferral(auth, req.Defer)
 }
 
-// notificationIDFor issues a notification_id bound to auth when
-// Endpoints.Notification is set, and returns "" otherwise.
-func (iss *Issuer) notificationIDFor(ctx context.Context, auth AuthorizedRequest) (string, error) {
+// notificationIDFor issues a notification_id bound to clientID and
+// subject, already authorized, when Endpoints.Notification is set, and
+// returns "" otherwise.
+func (iss *Issuer) notificationIDFor(ctx context.Context, clientID, subject string) (string, error) {
 	if iss.cfg.Endpoints.Notification.IsZero() {
 		return "", nil
 	}
-	return iss.IssueNotificationID(ctx, auth)
+	return iss.issueNotificationID(ctx, clientID, subject)
 }
 
 // maxBatchSize returns this issuer's own effective batch_size ceiling

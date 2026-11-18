@@ -67,18 +67,26 @@ type NotificationRequest struct {
 // RequestNotification, since it was never persisted to
 // Dependencies.Notifications.
 func (iss *Issuer) IssueNotificationID(ctx context.Context, auth AuthorizedRequest) (string, error) {
-	if iss.deps.Notifications == nil {
-		return "", fmt.Errorf("issuer: issue notification id: notifications are not configured")
-	}
 	if err := iss.checkAuthorized(auth); err != nil {
 		return "", err
+	}
+	return iss.issueNotificationID(ctx, auth.ClientID(), auth.Subject)
+}
+
+// issueNotificationID is IssueNotificationID for a client and subject
+// already authorized: RequestCredential's own request, or a Deferred
+// Issuance transaction's, whose access token was checked when the
+// Wallet made the deferred Credential Request.
+func (iss *Issuer) issueNotificationID(ctx context.Context, clientID, subject string) (string, error) {
+	if iss.deps.Notifications == nil {
+		return "", fmt.Errorf("issuer: issue notification id: notifications are not configured")
 	}
 	raw := make([]byte, notificationIDEntropyBytes)
 	if _, err := io.ReadFull(iss.deps.Random, raw); err != nil {
 		return "", fmt.Errorf("issuer: issue notification id: %w", err)
 	}
 	id := base64.RawURLEncoding.EncodeToString(raw)
-	record := NotificationRecord{Owner: iss.storeOwner(), ClientID: auth.ClientID(), Subject: auth.Subject}
+	record := NotificationRecord{Owner: iss.storeOwner(), ClientID: clientID, Subject: subject}
 	if lifetime := iss.cfg.Limits.NotificationLifetime; lifetime > 0 {
 		record.ExpiresAt = iss.deps.Clock.Now().Add(lifetime)
 	}
