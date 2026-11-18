@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.83.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.82.0...v0.83.0) (2026-11-18)
+
+
+### Features
+
+* **issuer:** audit each deferred poll checked by the legacy configuration-only fallback ([9023251](https://github.com/IDFoundry/OID4VCgo/commit/902325140079d1d4850bf01c3c3fa18e58dac616))
+* **walletprovider:** log each record androidkey's AllowUncheckedLegacyEvidence lets through ([c3ed47d](https://github.com/IDFoundry/OID4VCgo/commit/c3ed47d465802cbf9e8075995d42735790a8749e))
+
+
+### Bug Fixes
+
+* **issuer:** treat a deferred transaction without ExpiresAt as lapsed under production ([a58bb8d](https://github.com/IDFoundry/OID4VCgo/commit/a58bb8dfcaf5b568bb5cc2dfa1ea4162fbaaa564))
+
 ## [0.82.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.81.0...v0.82.0) (2026-11-18)
 
 
