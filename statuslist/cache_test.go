@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
@@ -676,24 +677,31 @@ func TestFetcher_ReusesConnections(t *testing.T) {
 }
 
 // A derived transport is dropped once the caller's is collected.
+//
+// It looks up its own entry rather than counting the map: transports
+// earlier tests left behind are dropped by cleanups that run whenever
+// a GC collects them, so the map's size can shrink at any point here.
 func TestFetcher_DerivedTransportsDropped(t *testing.T) {
-	count := func() int {
+	var k derivedKey
+	kept := func() bool {
 		derivedMu.Lock()
 		defer derivedMu.Unlock()
-		return len(derived)
+		_, ok := derived[k]
+		return ok
 	}
-	before := count()
 	func() {
 		tr := &http.Transport{}
-		if _, err := (Fetcher{}).transport(tr); err != nil {
+		f := Fetcher{}
+		k = derivedKey{weak.Make(tr), f.policy()}
+		if _, err := f.transport(tr); err != nil {
 			t.Fatal(err)
 		}
-		if count() != before+1 {
+		if !kept() {
 			t.Fatal("no derived transport was kept")
 		}
 	}()
 	deadline := time.Now().Add(5 * time.Second)
-	for count() > before {
+	for kept() {
 		if time.Now().After(deadline) {
 			t.Fatal("the derived transport outlived its base")
 		}
