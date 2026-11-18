@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
@@ -12,6 +11,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 )
 
@@ -148,7 +148,9 @@ func verifyTokenCWT(token []byte, pub crypto.PublicKey, alg oid4vci.COSEAlg, opt
 	if err != nil {
 		return parsedClaims{}, fmt.Errorf("statuslist: verify CWT signature: %w", err)
 	}
-	if !strings.EqualFold(protected.Typ, CWTTokenMediaType) {
+	// A media type, compared case-insensitively in ASCII alone (RFC 6838
+	// §4.2).
+	if !jose.EqualFoldASCII(protected.Typ, CWTTokenMediaType) {
 		return parsedClaims{}, fmt.Errorf("statuslist: CWT typ is %q, want %q", protected.Typ, CWTTokenMediaType)
 	}
 	return parseChecked(raw, parseCWTPayload, opts)
