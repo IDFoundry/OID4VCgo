@@ -37,8 +37,10 @@ import (
 // it: a credential's iss is then only as trustworthy as every issuer
 // under Roots. RequireIssuerName checks it, but a name in the leaf is
 // only as trustworthy as every CA under Roots too: each can certify a
-// leaf with any subject or subject alternative name. Tell issuers
-// apart by the trust anchor that verified their chain
+// leaf with any subject or subject alternative name that a name
+// constraint of that name's own type doesn't exclude (a dNSName
+// constraint doesn't confine a URI iss; see RequireIssuerName). Tell
+// issuers apart by the trust anchor that verified their chain
 // (VerifiedCredential.IssuerAnchor, IssuerAuthorization.IssuerAnchor),
 // or by giving each type its own anchors (RootsByVCT).
 //
@@ -116,9 +118,17 @@ type X5CIssuerKeyResolver struct {
 	// none of those issuers can sign in another's name. It holds only
 	// where no other trusted CA can issue a certificate naming that
 	// issuer: every CA under Roots can put any name in a leaf it
-	// certifies (and a dNSName name constraint doesn't constrain a URI
-	// name). Where Roots are several providers', tell them apart by
-	// IssuerAnchor or RootsByVCT, not by this. Without it,
+	// certifies, unless it, or a CA above it, is name-constrained for
+	// that name's type. A URI iss is confined only by
+	// uniformResourceIdentifier constraints, and only to a host: a
+	// dNSName constraint doesn't apply to URI names (RFC 5280
+	// §4.2.1.10, which crypto/x509 follows), so CAs each confined to
+	// their own DNS domain still certify one another's https issuers. A
+	// "dns:" iss is confined by dNSName constraints. Where Roots are
+	// several providers', tell them apart by IssuerAnchor or RootsByVCT,
+	// not by this, unless every provider's CA is constrained for its
+	// issuers' names: "dns:" issuers under dNSName constraints, or
+	// URIs under uniformResourceIdentifier ones. Without it,
 	// IssuerAuthorization.Issuer is empty.
 	RequireIssuerName bool
 }

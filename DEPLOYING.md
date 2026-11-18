@@ -176,6 +176,15 @@ each, not a deployment template" says what it does differently.
   that replica's `CacheFor`. A replica waits on another's lease to sign
   only for a bounded time, then signs its own, so one that can't sign
   doesn't hold the others back.
+- [ ] **Key Attestations bound to their Wallet Provider by anchor:**
+  where `X5CAttestationVerifier.Roots` certify several Wallet
+  Providers, as a shared trust list does, set
+  `IssuerBinding: issuer.AttestationIssuerBoundToAnchor` with each
+  provider's `Anchors` (and fapigo's `AttesterIssuerBoundToAnchor` for
+  Wallet Attestations). `AttestationIssuerInCertificate` binds the
+  `iss` to a URI in the certificate, which any provider's CA can write
+  unless it carries `uniformResourceIdentifier` name constraints:
+  `dNSName` constraints don't apply to URIs (RFC 5280 §4.2.1.10).
 - [ ] **Key Attestation and Wallet Attestation status:** the issuer
   checks key attestations' status (`Dependencies.AttestationStatus`,
   `issuer.StatusListAttestationStatus`; required under
@@ -321,7 +330,13 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
     `Roots` or `Anchors`.
 
   `AnyIssuerForAnyType` (`WithAnyIssuerForAnyType`) is right only
-  where every root is trusted for every type you request.
+  where every root is trusted for every type you request. Name
+  constraints don't change this for an https `iss`: a member CA your
+  trust list confines to its own domain with `dNSName` constraints can
+  still certify another member's URI, since only
+  `uniformResourceIdentifier` constraints apply to URIs (RFC 5280
+  §4.2.1.10), so `RequireIssuerName` tells such members apart only
+  under URI constraints, or for `dns:` issuers.
 - [ ] **Certificate revocation:** a `certrevocation.Refresher` per
   process (`certrevocation.NewRefresher`), run in the background with
   `Run(ctx)` after one `Refresh(ctx)` before serving, and its

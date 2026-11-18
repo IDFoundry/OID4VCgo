@@ -120,7 +120,10 @@ type VerifyIssuedCredentialParams struct {
 	// RequireIssuerName does. SD-JWT VC doesn't require them to
 	// correspond (§2.5), and issuers such as the EU reference PID issuer
 	// sign from a certificate naming none, so it's off by default: set
-	// it where IssuerRoots certify several issuers.
+	// it where IssuerRoots certify several issuers. It tells them apart
+	// only where none of their CAs can certify another's name: a URI
+	// iss is confined by uniformResourceIdentifier name constraints, not
+	// by dNSName ones (RFC 5280 §4.2.1.10).
 	RequireIssuerName bool
 
 	// CredentialIssuer, if set, is the Credential Issuer Identifier the

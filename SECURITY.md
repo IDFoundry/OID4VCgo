@@ -313,6 +313,28 @@ they're not yet closed in the library.
   pre-selected, for a request for that type. A Verifier decides whether
   its issuer may issue that type: authorize each of
   `IssuerAuthorization.MatchedTypes`, not only `Type`.
+- **Names bound by URI under DNS name constraints.** Several checks
+  bind a signer to a party by a URI subject alternative name in its
+  certificate: `issuer.AttestationIssuerInCertificate`,
+  `verifier.X5CIssuerKeyResolver.RequireIssuerName` and the status
+  list signer bound by `statuslist.VerifyOptions.Issuer` for an https
+  `iss`, `wallet.Config.RequireIssuerMetadataName`,
+  `VerifyIssuedCredentialParams.RequireIssuerName`, and a
+  `registration` JWT's `iss` (fapigo's `AttesterIssuerInCertificate`
+  is another). Each holds only where no trusted CA can certify that
+  URI for another party. RFC 5280 §4.2.1.10 applies each name
+  constraint type to names of its own type, and crypto/x509 follows
+  it: a CA a trust list confines to its member's DNS domain with
+  `dNSName` constraints can still certify any URI, so a member can
+  sign in another member's https name. Only `uniformResourceIdentifier`
+  constraints, on the member's CA or a CA above it, confine its URIs,
+  and only their host, not their path. Under trust lists shared by
+  several parties, bind by anchor instead
+  (`issuer.AttestationIssuerBoundToAnchor`, fapigo's
+  `AttesterIssuerBoundToAnchor`, the verifier's
+  `IssuerAuthorization.IssuerAnchor` or `RootsByVCT`), or, where the
+  check takes them (a Key Attestation's or SD-JWT VC's `iss`), name
+  parties by `dns:` identifiers under `dNSName` constraints.
 
 ## What to include
 

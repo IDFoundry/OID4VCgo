@@ -671,7 +671,9 @@ Added within ABI 15, after OID4VCWallet 0.28.0.
 `require_issuer_name` refuses a received SD-JWT VC whose `iss` its
 signing certificate doesn't name; SD-JWT VC doesn't require them to
 correspond, so set it where `issuer_roots` certify several issuers.
-A received, deferred or refreshed SD-JWT VC whose `iss` isn't the
+It tells them apart only where none of their CAs can certify another's
+name: an `https` `iss` is confined by URI name constraints, not by DNS
+ones. A received, deferred or refreshed SD-JWT VC whose `iss` isn't the
 `credential_issuer` it was requested from is refused, so an issuer
 can't hand over another's credential, issued for the holder's keys, as
 its own; one without `iss` names nothing to check. `allow_foreign_iss`

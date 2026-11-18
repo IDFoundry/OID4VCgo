@@ -229,7 +229,14 @@ type Registrars struct {
 	// to. REQUIRED. They must anchor only registrars: any end-entity
 	// certificate under them that LeafPolicy accepts can register any
 	// Verifier, so a root that also issues Verifiers' or Issuers'
-	// certificates would let them register themselves.
+	// certificates would let them register themselves. A registration's
+	// iss must be one of its certificate's URI subject alternative
+	// names, but any registrar CA under Roots can certify any URI unless
+	// it, or a CA above it, carries uniformResourceIdentifier name
+	// constraints: dNSName constraints don't apply to URIs (RFC 5280
+	// §4.2.1.10). So where Roots are several registrars' CAs, one can
+	// sign in another's name unless each is URI-constrained to its own
+	// hosts.
 	Roots *x509.CertPool
 	// LeafPolicy, if set, decides whether the verified signing
 	// certificate may act as a registrar: an extended key usage or

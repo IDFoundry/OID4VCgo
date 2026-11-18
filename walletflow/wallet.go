@@ -166,7 +166,9 @@ type Config struct {
 	// (wallet.VerifyIssuedCredentialParams.RequireIssuerName). SD-JWT VC
 	// doesn't require them to correspond, so it's off by default: set
 	// it where IssuerRoots certify several issuers, so none can issue in
-	// another's name.
+	// another's name. That holds only where none of their CAs can
+	// certify another's name: a URI iss is confined by
+	// uniformResourceIdentifier name constraints, not by dNSName ones.
 	RequireIssuerName bool
 
 	// AllowForeignIss receives an SD-JWT VC whose iss isn't the

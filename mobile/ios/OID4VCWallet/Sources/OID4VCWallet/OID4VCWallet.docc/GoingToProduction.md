@@ -352,7 +352,9 @@ ecosystem, and record why:
 - ``WalletConfiguration/IssuerTrust/requireIssuerName``: refuses an SD-JWT VC whose
   `iss` its signing certificate doesn't name. Set it where
   ``WalletConfiguration/IssuerTrust/roots`` certify several issuers, so one
-  can't issue in another's name.
+  can't issue in another's name. That holds only where none of their
+  CAs can certify another's name: an `https` `iss` is confined by URI
+  name constraints, not by DNS ones.
 - ``WalletConfiguration/IssuerTrust/allowForeignIss``: receives an SD-JWT VC whose
   `iss` isn't the issuer it came from. Leave it off unless an issuer
   names itself differently, and ``WalletConfiguration/IssuerTrust/roots``

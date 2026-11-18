@@ -138,7 +138,14 @@ type VerifyOptions struct {
 	// recommends where the Issuer is its own Status Issuer), or have a
 	// certificate naming Issuer (the rule certchain.CheckIssuerName
 	// applies). It also refuses a token whose own iss claim is another
-	// issuer's. For the CWT form (an mdoc's), leave it empty: an mdoc
+	// issuer's. The name binds only as far as no CA under Roots can
+	// certify it for another party: a URI Issuer is confined only by
+	// uniformResourceIdentifier name constraints, which a dNSName
+	// constraint doesn't stand in for (RFC 5280 §4.2.1.10), so where
+	// Roots are several issuers' own CAs constrained by DNS name alone,
+	// any of them can sign lists in another's name; IssuerKey
+	// without Issuer binds by key alone, where the issuer signs its own
+	// lists. For the CWT form (an mdoc's), leave it empty: an mdoc
 	// issuer has no such name, and its status lists are bound by Roots,
 	// which the MSO's status reference can name.
 	//
