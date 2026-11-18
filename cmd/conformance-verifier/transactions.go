@@ -108,7 +108,7 @@ func newTxServer(cfg Config) (*txServer, error) {
 		RedirectURI:          cfg.BaseURL + "/result",
 		Verify: verifier.VerifyResponseRequest{
 			IssuerKeys: issuerKeys, MdocIssuerKeys: mdocIssuerKeys,
-			MaxKeyBindingAge: maxKeyBindingAge,
+			MaxKeyBindingAge: maxKeyBindingAge, MaxClockSkew: maxClockSkew,
 			IssuerAuthorized: cfg.issuerAuthorized(),
 		},
 		OnRefused: func(_ context.Context, id string, err error) {

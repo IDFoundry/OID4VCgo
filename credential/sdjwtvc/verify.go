@@ -68,7 +68,9 @@ type VerifyOptions struct {
 
 	// MaxClockSkew is how far Now may be from the issuer's clock: the
 	// Issuer JWT is accepted up to MaxClockSkew before its nbf and after
-	// its exp. Zero applies them exactly.
+	// its exp. Zero applies them exactly. It becomes
+	// KeyBindingCheck.MaxClockSkew too, bounding how far in the future a
+	// Key Binding JWT's iat may be.
 	MaxClockSkew time.Duration
 
 	// AcceptLegacyTyp, when true, accepts LegacyTypHeader (vc+sd-jwt) as

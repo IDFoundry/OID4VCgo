@@ -62,18 +62,20 @@ type KeyBindingCheck struct {
 	// a matching sd_hash (RFC 9901 §4.3), or it binds no presentation.
 	ExpectedSDHash string
 
-	// MaxClockSkew is how far Now may be from the holder's clock when
-	// checking the Key Binding JWT's own exp and nbf, if it has them.
+	// MaxClockSkew is how far Now may be behind the holder's clock: a
+	// Key Binding JWT whose iat is later than Now by more than this
+	// (or than MaxAge, if that's less) is refused, and its own exp and
+	// nbf, if it has them, are each widened by it. Zero refuses an iat
+	// after Now at all: a holder whose clock runs a second ahead is
+	// refused, so a Verifier sets a little, a minute say.
 	MaxClockSkew time.Duration
 
-	// MaxAge rejects a Key Binding JWT whose iat is further than MaxAge
-	// from now, in EITHER direction — too far in the past (RFC 9901
-	// §7.3 step 5.e) or claiming to be issued in the future (a
-	// forward-dated iat is just as clearly not "the current time" as a
-	// stale one; confirmed live against the OIDF conformance suite's
-	// own kb-jwt-iat-in-future negative test that a purely
-	// past-looking check silently accepts it — a negative "age" is
-	// never greater than a positive MaxAge). Now defaults to time.Now.
+	// MaxAge rejects a Key Binding JWT whose iat is older than MaxAge
+	// (RFC 9901 §7.3 step 5.e). An iat in the future is bounded by
+	// MaxClockSkew, never by more than MaxAge: a forward-dated iat is
+	// just as clearly not "the current time" as a stale one (the OIDF
+	// conformance suite's kb-jwt-iat-in-future negative test presents
+	// one a year ahead). Now defaults to time.Now.
 	// REQUIRED (must be positive): VerifyKeyBindingJWT rejects the Go
 	// zero value rather than silently treating "unset" as "no
 	// freshness check at all" — a caller that left this unset would
@@ -150,8 +152,10 @@ func VerifyKeyBindingJWT(kbJWT string, holderPub crypto.PublicKey, alg oid4vci.J
 	// Times compared, not a negated age: that overflows for an iat far
 	// in the future.
 	t := now()
-	if issued.After(t.Add(check.MaxAge)) {
-		return nil, fmt.Errorf("sdjwtvc: key binding JWT iat is too far in the future (issued %s from now)", issued.Sub(t))
+	// A holder signs at the current time: a later iat is the holder's
+	// clock running ahead, which only MaxClockSkew allows for.
+	if issued.After(t.Add(min(check.MaxClockSkew, check.MaxAge))) {
+		return nil, fmt.Errorf("sdjwtvc: key binding JWT iat is too far in the future (issued %s from now, more than the clock skew allowed, %s)", issued.Sub(t), min(check.MaxClockSkew, check.MaxAge))
 	}
 	if issued.Before(t.Add(-check.MaxAge)) {
 		return nil, fmt.Errorf("sdjwtvc: key binding JWT is too old (issued %s ago)", t.Sub(issued))

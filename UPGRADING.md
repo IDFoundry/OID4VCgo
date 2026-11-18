@@ -373,6 +373,20 @@ before.
 sqlstore's does, needs no change: the codec sets it from the
 transaction's query.
 
+### A Key Binding JWT's `iat` may be in the future by the clock skew alone
+
+`sdjwtvc.VerifyKeyBindingJWT`, and so `VerifyResponse`, accepted a Key
+Binding JWT whose `iat` was up to `MaxKeyBindingAge` in the future (five
+minutes, say). The future side is now bounded by `MaxClockSkew`
+(`VerifyResponseRequest.MaxClockSkew`, `sdjwtvc.VerifyOptions.MaxClockSkew`,
+`KeyBindingCheck.MaxClockSkew`), and never by more than
+`MaxKeyBindingAge`, as status and identifier lists already bound a
+future `iat`. A Verifier that leaves `MaxClockSkew` zero now refuses a
+presentation from a wallet whose clock runs even a second ahead of its
+own (`holder_binding`, "key binding JWT iat is too far in the
+future"): set it, a minute is typical, as it also widens a
+credential's validity window.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

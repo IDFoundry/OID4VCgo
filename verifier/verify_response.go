@@ -107,12 +107,14 @@ type VerifyResponseRequest struct {
 	// validFrom/validUntil are each widened by it. Zero checks them
 	// exactly, which refuses a credential presented just after it was
 	// issued valid from its signing time, when this Verifier's clock is
-	// behind the issuer's. A minute is typical. (A Key Binding JWT's iat
-	// is bounded by MaxKeyBindingAge in both directions already.)
+	// behind the issuer's. A minute is typical. It bounds, too, how far
+	// in the future a Key Binding JWT's iat may be (never by more than
+	// MaxKeyBindingAge): at zero, a holder whose clock runs a second
+	// ahead of this Verifier's is refused.
 	MaxClockSkew time.Duration
 
 	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
-	// may be. REQUIRED (must be positive) when Query includes any
+	// may be; MaxClockSkew how far in the future. REQUIRED (must be positive) when Query includes any
 	// "dc+sd-jwt" Credential Query: a credential bound to a key (cnf)
 	// is presented with a KB-JWT, which is checked, even where the
 	// query doesn't require holder binding (HAIP 1.0 §6.1.1.1).

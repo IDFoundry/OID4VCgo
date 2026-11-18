@@ -33,6 +33,14 @@ const contentTypeHeader = "Content-Type"
 // suite-driven module run, always well under a minute).
 const maxKeyBindingAge = 5 * time.Minute
 
+// maxClockSkew is how far this binary's clock may be from an issuer's
+// or a wallet's (verifier.VerifyResponseRequest.MaxClockSkew): it
+// widens a credential's validity window, and bounds how far in the
+// future a Key Binding JWT's iat may be, so a wallet whose clock runs a
+// little ahead isn't refused while the suite's kb-jwt-iat-in-future,
+// a year ahead, is.
+const maxClockSkew = time.Minute
+
 func newSessionID() (string, error) {
 	buf := make([]byte, sessionIDEntropyBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -303,6 +311,7 @@ func (s *server) verify(r *http.Request, sess *session, parsed verifier.ParsedRe
 		IssuerKeys: s.issuerKeys, MdocIssuerKeys: s.mdocIssuerKeys,
 		ResponseEncryptionKey: sess.decryptionKey,
 		MaxKeyBindingAge:      maxKeyBindingAge,
+		MaxClockSkew:          maxClockSkew,
 		// Config.StatusListTrustAnchorsPEM turns the status check on,
 		// as the suite's runs and the interop runs do; without it, no
 		// status check, decided explicitly. A deployment sets Status
