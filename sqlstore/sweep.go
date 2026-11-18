@@ -22,7 +22,11 @@ import (
 //   - a c_nonce, pre-authorized code or Credential Offer: its ExpiresAt;
 //   - a deferred transaction or notification_id: its ExpiresAt, and
 //     never when that's zero. To give a Wallet longer to collect a
-//     deferred credential after it lapses, pass an earlier now;
+//     deferred credential after it lapses, pass an earlier now. The
+//     issuer always sets ExpiresAt; a deferred transaction a deployment
+//     writes itself without one is kept here, its holder's data with
+//     it, though under AssuranceProduction the issuer answers it as
+//     lapsed (DeferredTransactionStore). Set ExpiresAt on such records;
 //   - a verifier transaction: its RetainUntil, the earliest a store may
 //     delete it, and never when that's zero;
 //   - a Wallet Provider's challenge: its ExpiresAt;
