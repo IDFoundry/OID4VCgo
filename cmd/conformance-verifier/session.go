@@ -33,9 +33,12 @@ type session struct {
 	requestObject string
 	nonce         string
 	decryptionKey *ecdsa.PrivateKey
-	done          bool
-	result        []verifier.VerifiedCredential
-	failErr       error
+	// keyID is decryptionKey's kid, which a direct_post.jwt response
+	// names in its JWE header: handleResponse routes by it.
+	keyID   string
+	done    bool
+	result  []verifier.VerifiedCredential
+	failErr error
 
 	// fetch records how the Wallet fetched the Request Object, on the
 	// fetch that built it: an interop run checks it against the
@@ -47,6 +50,12 @@ type session struct {
 	// result once, to its bearer. redeemed is set once it has.
 	responseCode string
 	redeemed     bool
+
+	// browserBinding is the random value handleAuthorize (or
+	// handleDCAPIRequest) set in the browser's bindingCookie: the
+	// result page shows the outcome to that browser, or to the bearer
+	// of responseCode, and to no one else.
+	browserBinding string
 
 	// dcapi marks a Digital Credentials API request
 	// (handleDCAPIRequest): answered at /dcapi/response/{id}, never at
@@ -96,24 +105,25 @@ func (sess *session) ensureBuilt(v *verifier.Verifier, fetch requestFetch) (stri
 	sess.requestObject = result.RequestObject
 	sess.nonce = result.Nonce
 	sess.decryptionKey = result.ResponseDecryptionKey
+	sess.keyID = result.ResponseEncryptionKeyID
 	sess.built = true
 	return sess.requestObject, nil
 }
 
 // sessionStore holds every pending/completed session in memory,
-// keyed by id. Response correlation (see handlers.go's
-// handleResponse) has no explicit session id to key off — a
-// direct_post.jwt response carries no such field — so it instead
-// tries every still-pending session's own decryptionKey in turn until
-// one successfully decrypts, relying on JWE's own authenticated
-// encryption to reject every wrong key.
+// keyed by id, and every built one by its response encryption key's
+// kid too. A direct_post.jwt response carries no session id, but its
+// JWE header names the kid of the key it was encrypted to (OpenID4VP
+// 1.0 §8.3), as verifier.Transactions routes it: handleResponse finds
+// the one session that kid belongs to and decrypts with its key alone.
 type sessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*session
+	byKeyID  map[string]*session
 }
 
 func newSessionStore() *sessionStore {
-	return &sessionStore{sessions: make(map[string]*session)}
+	return &sessionStore{sessions: make(map[string]*session), byKeyID: make(map[string]*session)}
 }
 
 func (s *sessionStore) put(sess *session) {
@@ -122,6 +132,11 @@ func (s *sessionStore) put(sess *session) {
 	for id, existing := range s.sessions {
 		if time.Since(existing.createdAt) > sessionTTL {
 			delete(s.sessions, id)
+		}
+	}
+	for kid, existing := range s.byKeyID {
+		if time.Since(existing.createdAt) > sessionTTL {
+			delete(s.byKeyID, kid)
 		}
 	}
 	s.sessions[sess.id] = sess
@@ -134,15 +149,23 @@ func (s *sessionStore) get(id string) (*session, bool) {
 	return sess, ok
 }
 
-// pendingDecryptionKeys returns every not-yet-completed session whose
-// own Authorization Request has actually been built (see ensureBuilt —
-// a session the Wallet never fetched request_uri for has no
-// decryptionKey yet and can't be a real match for any response), in no
-// particular order — handleResponse tries each one's decryptionKey in
-// turn until JWE decryption (authenticated encryption, so a wrong key
-// fails rather than silently producing garbage) succeeds against one
-// of them. Correctness doesn't depend on the order; it only affects
-// how many failed attempts happen first.
+// index makes sess, once built, findable by its response encryption
+// key's kid.
+func (s *sessionStore) index(sess *session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess.mu.Lock()
+	kid := sess.keyID
+	sess.mu.Unlock()
+	if kid != "" {
+		s.byKeyID[kid] = sess
+	}
+}
+
+// pendingByKeyID returns the not-yet-completed redirect-flow session
+// whose built Authorization Request's response encryption key has kid
+// (see ensureBuilt: a session the Wallet never fetched request_uri for
+// has no key yet and can't be answered).
 //
 // Checking sess.built under sess.mu here (rather than in handleResponse
 // itself) is also what makes handleResponse's own later unguarded read
@@ -150,17 +173,17 @@ func (s *sessionStore) get(id string) (*session, bool) {
 // once, inside ensureBuilt's own locked section, before built is set —
 // so observing built == true while holding sess.mu establishes a
 // happens-before edge for every read after this function returns.
-func (s *sessionStore) pendingDecryptionKeys() []*session {
+func (s *sessionStore) pendingByKeyID(kid string) (*session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	pending := make([]*session, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		sess.mu.Lock()
-		stillPending := !sess.done && sess.built && !sess.dcapi
-		sess.mu.Unlock()
-		if stillPending {
-			pending = append(pending, sess)
-		}
+	sess, ok := s.byKeyID[kid]
+	if !ok {
+		return nil, false
 	}
-	return pending
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.done || !sess.built || sess.dcapi {
+		return nil, false
+	}
+	return sess, true
 }
