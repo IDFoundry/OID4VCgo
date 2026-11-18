@@ -2014,9 +2014,11 @@ changes whether *every* bullet below is `(done)`.
   `eudi-interop.yml` (the EUDI reference Verifier Endpoint, the EUDI
   OpenID4VP and OpenID4VCI wallet libraries, and the EUDI PID Issuer);
   `waltid-interop.yml` (walt.id's Issuer2, Verifier2 and Wallet2, in
-  all four directions); and `multipaz-interop.yml` (Multipaz in each
+  all four directions); `multipaz-interop.yml` (Multipaz in each
   role for ISO/IEC 18013-5 in person, ISO/IEC TS 18013-7 Annex C over
-  the DC API, OpenID4VP and OpenID4VCI). Each also checks controls the
+  the DC API, OpenID4VP and OpenID4VCI); and `credo-interop.yml`
+  (OID4VCgo's wallet with Credo's OpenID4VCI issuer and OpenID4VP
+  Verifier). Each also checks controls the
   other side must refuse. Separately, `fuzz.yml` runs the Go fuzz
   targets with mutation, daily.
 

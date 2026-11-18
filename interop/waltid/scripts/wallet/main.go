@@ -24,6 +24,12 @@
 // revokes one after issuing it: the result's "revoked" lists the
 // status list entries.
 //
+// interop/credo/run.sh runs it too, against Credo's issuer and
+// Verifier: -tx-code redeems each pre-authorized code with that
+// Transaction Code, and -haip receives under walletflow.ProfileHAIP,
+// which gives a Wallet Attestation at every Token Request; with
+// -tamper, -verifier2-key is then Credo's request object key.
+//
 // The result, written to -out as JSON, says how far the run got and
 // what it saw; run.sh decides whether that's what the case expects.
 // Its "observed" records what walt.id sent of what SPECIFICATIONS.md's
@@ -42,7 +48,7 @@
 // refuse (tamper.go); the result's "tampered" records the change and
 // Verifier2's answer to it.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] -offer URL [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
 package main
 
 import (
@@ -226,6 +232,13 @@ type options struct {
 	// at a private address: Issuer2's and Verifier2's, on the run's
 	// Docker network.
 	allowedPrivateHosts []string
+	// txCode is the Transaction Code each offer's pre-authorized code
+	// is redeemed with ("" for none).
+	txCode string
+	// haip is whether issuance follows walletflow.ProfileHAIP: a Wallet
+	// Attestation at every Token Request, even where the server allows
+	// none (HAIP 1.0 §4.4.1).
+	haip bool
 }
 
 func main() {
@@ -253,6 +266,8 @@ func main() {
 		opts.allowedPrivateHosts = append(opts.allowedPrivateHosts, host)
 		return nil
 	})
+	flag.StringVar(&opts.txCode, "tx-code", "", "the Transaction Code to redeem each offer's pre-authorized code with")
+	flag.BoolVar(&opts.haip, "haip", false, "receive under walletflow.ProfileHAIP: a Wallet Attestation at every Token Request")
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
@@ -339,7 +354,7 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 		return fail(err)
 	}
 
-	if err := receive(ctx, w, offered, opts.revoke, &res); err != nil {
+	if err := receive(ctx, w, offered, opts, &res); err != nil {
 		return fail(err)
 	}
 	if request == "" {
@@ -388,9 +403,12 @@ func (pt parties) transport(tlsRoots *x509.CertPool, seen *observed) (http.Round
 }
 
 // configure sets in cfg and deps what opts says beyond the parties'
-// trust: the wallet's attestations and client_id, and the IACA mdocs
-// chain to.
+// trust: the wallet's attestations and client_id, the IACA mdocs chain
+// to, and the issuance profile.
 func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *walletflow.Dependencies) error {
+	if opts.haip {
+		cfg.IssuanceProfile = walletflow.ProfileHAIP
+	}
 	if opts.attesterConfig != "" {
 		p, err := loadProvider(opts.attesterConfig)
 		if err != nil {
@@ -414,22 +432,22 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 	return nil
 }
 
-// receive redeems each offer, then, with revokeURL, revokes every
-// credential received, recording in res how far it got.
-func receive(ctx context.Context, w *walletflow.Wallet, offered []string, revokeURL string, res *result) error {
+// receive redeems each offer, with opts.txCode, then, with opts.revoke,
+// revokes every credential received, recording in res how far it got.
+func receive(ctx context.Context, w *walletflow.Wallet, offered []string, opts options, res *result) error {
 	var got []walletflow.StoredCredential
 	for _, offer := range offered {
-		creds, err := redeem(ctx, w, offer, res)
+		creds, err := redeem(ctx, w, offer, opts.txCode, res)
 		if err != nil {
 			return err
 		}
 		got = append(got, creds...)
 	}
-	if revokeURL == "" {
+	if opts.revoke == "" {
 		return nil
 	}
 	res.Stage = "revoke"
-	return revoke(ctx, revokeURL, got, res)
+	return revoke(ctx, opts.revoke, got, res)
 }
 
 // present answers request with the default selection, recording in res
@@ -454,9 +472,10 @@ func present(ctx context.Context, w *walletflow.Wallet, request string, res *res
 	return nil
 }
 
-// redeem redeems offer's pre-authorized code, recording in res how far
-// it got and the credentials it received or refused, which it returns.
-func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result) ([]walletflow.StoredCredential, error) {
+// redeem redeems offer's pre-authorized code with txCode, recording in
+// res how far it got and the credentials it received or refused, which
+// it returns.
+func redeem(ctx context.Context, w *walletflow.Wallet, offer, txCode string, res *result) ([]walletflow.StoredCredential, error) {
 	res.Stage = "offer"
 	s, err := w.StartIssuance(ctx, offer)
 	if err != nil {
@@ -464,7 +483,7 @@ func redeem(ctx context.Context, w *walletflow.Wallet, offer string, res *result
 	}
 	defer func() { _ = s.Close(ctx) }()
 	res.Stage = "token"
-	if err := s.RedeemPreAuthorizedCode(ctx, ""); err != nil {
+	if err := s.RedeemPreAuthorizedCode(ctx, txCode); err != nil {
 		return nil, err
 	}
 	res.Stage = "credential"
