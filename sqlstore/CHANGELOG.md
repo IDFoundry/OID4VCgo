@@ -11,7 +11,6 @@
 ### Bug Fixes
 
 * **deps:** pin FAPIgo v0.76.0 ([48d5532](https://github.com/IDFoundry/OID4VCgo/commit/48d5532758330200b6a4edbc36c01ebee453f631))
-* **sqlstore:** require OID4VCgo v0.81.0 ([9747415](https://github.com/IDFoundry/OID4VCgo/commit/9747415261dccd5f88b4459ab7d4412b860127dd))
 * **sqlstore:** require OID4VCgo v0.82.0 ([4bcb08f](https://github.com/IDFoundry/OID4VCgo/commit/4bcb08f60c1071588851b167fcb3aa075e321802))
 * **verifier:** bind the stored Request Object into the sealed record ([acfcbdf](https://github.com/IDFoundry/OID4VCgo/commit/acfcbdf454705c6a5bbf07059390fac9bb8dccc1))
 * **verifier:** refuse records stripped of their sealed fields ([17f98d9](https://github.com/IDFoundry/OID4VCgo/commit/17f98d981b3855176910ec6c1593e911902fb575))
