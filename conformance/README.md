@@ -444,22 +444,34 @@ cases, Multipaz's deviations, and moving the pin.
 
 ## Interop with Credo
 
-`.github/workflows/credo-interop.yml` runs `walletflow` against
+`.github/workflows/credo-interop.yml` runs OID4VCgo against
 [Credo](https://github.com/openwallet-foundation/credo-ts)'s OpenID4VCI
-1.0 Credential Issuer and OpenID4VP 1.0 Verifier, from its published
-npm packages pinned by version and lock: `walletflow` obtaining an
-SD-JWT VC PID and an mDL from Credo's issuer by pre-authorized code
-(DPoP and a Wallet Attestation from OID4VCgo's Wallet Provider
-required, and a `tx_code`), and presenting them to Credo's Verifier (a
-DCQL query in a signed `x509_hash` request, the response encrypted).
-Controls (an untrusted issuer, Verifier and attester, a wrong
-`tx_code`, a request Credo can only send unsigned, and presentations
-whose Key Binding JWT `nonce` or `aud`, a disclosure, or the issuer's
-signature was changed on the way) are refused, each by the refusing
-side's own error. Credo advertises anonymous pre-authorized code
-redemption while it requires a Wallet Attestation, a known gap the run
-notes, failing if it changes. Credo's holder, with OID4VCgo's issuer
-and Verifier, isn't driven yet. It runs on each pull request, daily
+1.0 Credential Issuer, OpenID4VP 1.0 Verifier and holder, from its
+published npm packages pinned by version and lock, in four directions:
+`walletflow` obtaining an SD-JWT VC PID and an mDL from Credo's issuer
+by pre-authorized code (DPoP and a Wallet Attestation from OID4VCgo's
+Wallet Provider required, and a `tx_code`; and a PID whose `jwt` proof
+must carry a Key Attestation from it), and presenting them to Credo's
+Verifier (a DCQL query in a signed `x509_hash` request, the response
+encrypted); and Credo's holder obtaining SD-JWT VC and mdoc PIDs from
+`cmd/conformance-issuer` under HAIP (a Wallet Attestation from
+OID4VCgo's Wallet Provider, DPoP, a `tx_code`, and the issuer's
+`dpop-nonces`, `deferred` and `key-attestation` profiles), and
+presenting them to `cmd/conformance-verifier`, on the default engine
+and through `verifier.Transactions` under production assurance, which
+checks each credential's Token Status List entry. Controls (untrusted
+issuers, Verifiers and attesters on both sides, wrong `tx_code`s, a Key
+Attestation below the key storage Credo requires and one without the
+`c_nonce` OID4VCgo's issuer requires, a credential its issuer revoked,
+a request Credo can only send unsigned, and presentations whose Key
+Binding JWT `nonce` or `aud`, a disclosure, or the issuer's signature
+was changed on the way) are refused, each by the refusing side's own
+error. Three known gaps the run notes, failing if they change: Credo
+advertises anonymous pre-authorized code redemption while it requires
+a Wallet Attestation; its holder can't sign with an attested key whose
+JWK has no `kid` (the run's driver looks such keys up by thumbprint);
+and its issuer can't verify a key-attested `jwt` proof naming its key
+by index, `walletflow`'s default. It runs on each pull request, daily
 and on each release against the pinned release, and weekly against
 Credo's newest release on npm. See
 [`interop/credo/README.md`](../interop/credo/README.md) for the cases,

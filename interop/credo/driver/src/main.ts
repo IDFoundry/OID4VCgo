@@ -1,19 +1,20 @@
 // Credo (credo-ts) for interop/credo/run.sh: one agent that is an
 // OpenID4VCI 1.0 Credential Issuer and an OpenID4VP 1.0 Verifier, its
 // protocol endpoints served over HTTPS at --base-url (on loopback
-// --port), and a control API on loopback HTTP (--control-port), which
-// run.sh drives with curl (control.ts):
+// --port), and a holder (wallet); and a control API on loopback HTTP
+// (--control-port), which run.sh drives with curl (control.ts):
 //
 //   POST /issuer/offers        {configuration_ids, tx_code}  -> {id, offer, tx_code}
 //   GET  /issuer/sessions/ID                                -> {state, error}
 //   POST /verifier/requests    {query, signed}               -> {id, request}
 //   GET  /verifier/sessions/ID                              -> {state, error, presented}
+//   POST /holder/receive       {offer, tx_code, client_id, wallet_provider, keys_by_thumbprint}
+//                              -> {stage, error, token_type, key_attestation, deferred, received}
+//   POST /holder/present       {request, credentials}        -> {stage, error, status, body}
 //
 // --config is the setup's credo.json (keys, certificate chains, trust
-// anchors), with run.sh's attester_anchors. A holder role, for the
-// directions where OID4VCgo issues and verifies, would be a third set
-// of routes on the same control API, and the OpenID4VC module's holder
-// on the same agent.
+// anchors), with run.sh's additions (issuer.ts's Config). The holder
+// fetches over the TLS trust Node takes from NODE_EXTRA_CA_CERTS.
 //
 // It prints one JSON line once it serves: {"ready": true, ...}.
 

@@ -2017,8 +2017,8 @@ changes whether *every* bullet below is `(done)`.
   all four directions); `multipaz-interop.yml` (Multipaz in each
   role for ISO/IEC 18013-5 in person, ISO/IEC TS 18013-7 Annex C over
   the DC API, OpenID4VP and OpenID4VCI); and `credo-interop.yml`
-  (OID4VCgo's wallet with Credo's OpenID4VCI issuer and OpenID4VP
-  Verifier). Each also checks controls the
+  (Credo's OpenID4VCI issuer, OpenID4VP Verifier and holder, in all
+  four directions). Each also checks controls the
   other side must refuse. Separately, `fuzz.yml` runs the Go fuzz
   targets with mutation, daily.
 

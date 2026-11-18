@@ -27,7 +27,9 @@
 // interop/credo/run.sh runs it too, against Credo's issuer and
 // Verifier: -tx-code redeems each pre-authorized code with that
 // Transaction Code, and -haip receives under walletflow.ProfileHAIP,
-// which gives a Wallet Attestation at every Token Request; with
+// which gives a Wallet Attestation at every Token Request;
+// -proof-key-by-jwk names a key-attested jwt proof's key in its jwk
+// header, as Credo's issuer takes it, rather than by its index; with
 // -tamper, -verifier2-key is then Credo's request object key.
 //
 // The result, written to -out as JSON, says how far the run got and
@@ -48,7 +50,7 @@
 // refuse (tamper.go); the result's "tampered" records the change and
 // Verifier2's answer to it.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
 package main
 
 import (
@@ -239,6 +241,10 @@ type options struct {
 	// Attestation at every Token Request, even where the server allows
 	// none (HAIP 1.0 §4.4.1).
 	haip bool
+	// proofKeyByJWK names a key-attested jwt proof's key in its jwk
+	// header rather than by its index (walletflow.Config.ProofKeyByJWK),
+	// for an issuer that takes no index (Credo's).
+	proofKeyByJWK bool
 }
 
 func main() {
@@ -268,6 +274,7 @@ func main() {
 	})
 	flag.StringVar(&opts.txCode, "tx-code", "", "the Transaction Code to redeem each offer's pre-authorized code with")
 	flag.BoolVar(&opts.haip, "haip", false, "receive under walletflow.ProfileHAIP: a Wallet Attestation at every Token Request")
+	flag.BoolVar(&opts.proofKeyByJWK, "proof-key-by-jwk", false, "name a key-attested jwt proof's key in its jwk header, not by its index (walletflow.Config.ProofKeyByJWK)")
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
@@ -409,6 +416,7 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 	if opts.haip {
 		cfg.IssuanceProfile = walletflow.ProfileHAIP
 	}
+	cfg.ProofKeyByJWK = opts.proofKeyByJWK
 	if opts.attesterConfig != "" {
 		p, err := loadProvider(opts.attesterConfig)
 		if err != nil {

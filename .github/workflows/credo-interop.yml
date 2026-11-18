@@ -1,12 +1,19 @@
-# Interop: OID4VCgo's wallet against Credo (credo-ts) as OpenID4VCI 1.0
-# Credential Issuer and OpenID4VP 1.0 Verifier, from its published npm
-# packages, by interop/credo/run.sh: an SD-JWT VC and an mDL issued by
-# pre-authorized code (DPoP, and a Wallet Attestation from OID4VCgo's
-# Wallet Provider), then presented to Credo's signed x509_hash request,
-# the response encrypted; then controls (an untrusted issuer, Verifier
-# and attester, a wrong tx_code, an unsigned request, presentations
-# changed on their way to Credo) refused, each by its reason. The
-# packages are pinned by version and lock (interop/credo/driver's
+# Interop: OID4VCgo against Credo (credo-ts) as OpenID4VCI 1.0
+# Credential Issuer, OpenID4VP 1.0 Verifier and holder, from its
+# published npm packages, by interop/credo/run.sh. OID4VCgo's wallet
+# gets an SD-JWT VC and an mDL from Credo's issuer by pre-authorized
+# code (DPoP, and a Wallet Attestation and Key Attestation from
+# OID4VCgo's Wallet Provider), then presents them to Credo's signed
+# x509_hash request, the response encrypted. Credo's holder gets SD-JWT
+# VC and mdoc PIDs from cmd/conformance-issuer under HAIP (and its
+# dpop-nonces, deferred and key-attestation profiles), then presents
+# them to cmd/conformance-verifier, on its default engine and through
+# verifier.Transactions under production assurance, checking their
+# status. Then controls (untrusted issuers, Verifiers and attesters,
+# wrong tx_codes, Key Attestations either side must refuse, a revoked
+# credential, an unsigned request, presentations changed on their way
+# to Credo) refused, each by its reason. The packages are pinned by
+# version and lock (interop/credo/driver's
 # package-lock.json) and run here on a disposable runner with a
 # read-only token and no secrets. Pull requests, the daily run and each
 # release test the pinned release; the weekly run tests Credo's newest
