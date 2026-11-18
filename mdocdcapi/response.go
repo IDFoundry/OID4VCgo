@@ -70,7 +70,12 @@ type VerifyParams struct {
 	// IssuerAuthorized, if set, decides whether the verified document's
 	// issuer may issue its doctype, as
 	// verifier.VerifyResponseRequest.IssuerAuthorized does; an error
-	// refuses the response.
+	// refuses the response. Decide by its IssuerAnchor, the root among
+	// IssuerKeys' that verified the issuer chain, comparing its key with
+	// the anchors you assign to the doctype (verifier.AnchorIs), never by
+	// names or key identifiers in IssuerChain, which any trusted root can
+	// copy from another; X5ChainIssuerKeyResolver.RootsByDocType makes
+	// the same separation without a hook.
 	IssuerAuthorized func(ctx context.Context, a verifier.IssuerAuthorization) error
 	// AnyIssuerForAnyType declares that every issuer IssuerKeys trusts
 	// may issue the requested doctype, so IssuerAuthorized is
@@ -114,13 +119,19 @@ type Verified struct {
 	// Never the IssuerAuth x5chain itself, which is unprotected
 	// (verifier.CheckMdocIssuer).
 	IssuerChain [][]byte
+	// IssuerAnchor is the trust anchor IssuerChain was verified to, as
+	// DER: the root among IssuerKeys' that verified it, the one to
+	// decide the issuer by (verifier.IssuerAuthorization.IssuerAnchor).
+	// nil when IssuerKeys verifies no chain.
+	IssuerAnchor []byte
 	// Status is the MSO's revocation reference, nil if it has none;
 	// VerifyParams.Status checks it.
 	Status *mdoc.Status
 }
 
 // Credential is v as a verifier.VerifiedCredential — its NameSpaces as
-// Claims, its Status, IssuerChain and Missing (as Withheld) — for what takes one, such as
+// Claims, its Status, IssuerChain, IssuerAnchor and Missing (as
+// Withheld) — for what takes one, such as
 // verifier.StatusPolicy.Check. An Annex C request has no DCQL query, so
 // its CredentialQueryID is the document's type, which names it: a
 // response has at most one document of each type. Namespaces aren't
@@ -131,7 +142,7 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 	for ns, elements := range v.NameSpaces {
 		claims[ns] = elements
 	}
-	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain, Withheld: v.Missing}
+	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain, IssuerAnchor: v.IssuerAnchor, Withheld: v.Missing}
 }
 
 // encryptedResponseData is Annex C.3's EncryptedResponseData.
@@ -486,7 +497,7 @@ func verifyDocument(ctx context.Context, p VerifyParams, chains *verifier.Respon
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: %w", err)
 	}
-	issuerChain, err := issuer.Check(ctx, mso)
+	issuerChain, issuerAnchor, err := issuer.CheckAnchored(ctx, mso)
 	if err != nil {
 		return Verified{}, fmt.Errorf("mdocdcapi: document signer: %w", err)
 	}
@@ -513,18 +524,19 @@ func verifyDocument(ctx context.Context, p VerifyParams, chains *verifier.Respon
 	if err := checkRequested(mso.NameSpaces, req.Elements); err != nil {
 		return Verified{}, err
 	}
+	verified := Verified{
+		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, req.Elements), ValidityInfo: mso.ValidityInfo,
+		IssuerChain: issuerChain, IssuerAnchor: issuerAnchor, Status: mso.Status,
+	}
 	if p.IssuerAuthorized != nil {
 		if err := p.IssuerAuthorized(ctx, verifier.IssuerAuthorization{
 			Format: mdoc.CredentialFormat, Type: mso.DocType, RequestedTypes: []string{req.DocType}, MatchedTypes: []string{mso.DocType},
-			IssuerChain: issuerChain,
+			IssuerChain: issuerChain, IssuerAnchor: issuerAnchor, Claims: verified.Credential().Claims,
 		}); err != nil {
 			return Verified{}, fmt.Errorf("mdocdcapi: issuer authorization: %w", err)
 		}
 	}
-	return Verified{
-		DocType: mso.DocType, NameSpaces: mso.NameSpaces, Missing: missing(mso.NameSpaces, req.Elements), ValidityInfo: mso.ValidityInfo,
-		IssuerChain: issuerChain, Status: mso.Status,
-	}, nil
+	return verified, nil
 }
 
 // checkRequested refuses a disclosed element that wasn't requested: a

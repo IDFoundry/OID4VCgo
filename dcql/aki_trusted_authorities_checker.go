@@ -3,11 +3,7 @@ package dcql
 import (
 	"bytes"
 	"context"
-	"crypto/sha1" //nolint:gosec // RFC 5280's key identifier method
-	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -247,14 +243,5 @@ func (c AKITrustedAuthoritiesChecker) caKeyIdentifiers(ca *x509.Certificate, anc
 // identifier (SHA-1 of the subjectPublicKey BIT STRING's value) and
 // RFC 7093 method 1's (SHA-256 of it, truncated to 160 bits).
 func derivedKeyIdentifiers(cert *x509.Certificate) [][]byte {
-	var spki struct {
-		Algorithm pkix.AlgorithmIdentifier
-		PublicKey asn1.BitString
-	}
-	if rest, err := asn1.Unmarshal(cert.RawSubjectPublicKeyInfo, &spki); err != nil || len(rest) != 0 {
-		return nil
-	}
-	sha1Sum := sha1.Sum(spki.PublicKey.Bytes) //nolint:gosec // RFC 5280's key identifier method, not a security use of SHA-1
-	sha256Sum := sha256.Sum256(spki.PublicKey.Bytes)
-	return [][]byte{sha1Sum[:], sha256Sum[:20]}
+	return certchain.DerivedKeyIdentifiers(cert)
 }

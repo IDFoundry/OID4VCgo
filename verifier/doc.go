@@ -130,7 +130,11 @@
 // The issuer key resolvers establish who a credential's issuer is, not
 // which types it may issue: where trusted issuers aren't all authorized
 // for every requested type, VerifyResponseRequest.IssuerAuthorized
-// decides that per presentation (SD-JWT VC draft-19 §7.7).
+// decides that per presentation (SD-JWT VC draft-19 §7.7), by the trust
+// anchor that verified the issuer's chain (IssuerAuthorization.IssuerAnchor,
+// AnchorIs), never by names any trusted CA can write; or each type gets
+// its own anchors (X5CIssuerKeyResolver.RootsByVCT,
+// X5ChainIssuerKeyResolver.RootsByDocType).
 // Transactions hosts each request's Request Object at its request_uri
 // (RequestObjectHandler), fetched by GET, and with
 // TransactionsConfig.RequestURIMethodPost by POST too (OpenID4VP 1.0

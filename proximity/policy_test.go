@@ -111,6 +111,10 @@ func TestVerify_IssuerAuthorization(t *testing.T) {
 			if len(got.IssuerChain) != 1 || !bytes.Equal(got.IssuerChain[0], fx.signer.Raw) {
 				t.Errorf("IssuerAuthorization.IssuerChain has %d certificates, want the document signer's", len(got.IssuerChain))
 			}
+			// The IACA it chains to is the anchor.
+			if !bytes.Equal(got.IssuerAnchor, fx.ca.Raw) {
+				t.Error("IssuerAuthorization.IssuerAnchor isn't the IACA")
+			}
 			if _, ok := got.Claims[mDLNS].(map[string]any)["age_over_18"]; !ok {
 				t.Errorf("IssuerAuthorization.Claims = %v", got.Claims)
 			}

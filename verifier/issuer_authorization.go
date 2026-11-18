@@ -2,11 +2,15 @@ package verifier
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
+	"encoding/base64"
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/certchain"
 )
 
 // IssuerAuthorization is what VerifyResponseRequest.IssuerAuthorized
@@ -18,6 +22,21 @@ import (
 // Verifiers to "implement explicit checks for issuer authorization",
 // basing acceptance "on both the credential type and the verified
 // authority of the issuer". That is this check.
+//
+// Decide by IssuerAnchor: which of the configured roots verified the
+// issuer's chain, compared by key (AnchorIs, AnchorHasKeyIdentifier)
+// with the anchors you assign to the issuer or to each of
+// MatchedTypes, and refuse a nil one. Names are no evidence of which
+// CA that was: any trusted CA can issue a certificate with any subject
+// or subject alternative name (so Issuer, under RequireIssuerName),
+// and write any issuer name and authority key identifier into the
+// certificates it signs (so those of IssuerChain). Where each type's
+// issuers have their own anchors, per-type roots
+// (X5CIssuerKeyResolver.RootsByVCT, X5ChainIssuerKeyResolver.RootsByDocType)
+// make the same separation without a hook, and a Credential Query's
+// trusted_authorities with an "aki" entry
+// (dcql.AKITrustedAuthoritiesChecker with Roots or Anchors) restricts
+// one query to the CAs it names.
 type IssuerAuthorization struct {
 	// CredentialQueryID is the dcql.CredentialQuery.ID the presentation
 	// answered.
@@ -46,9 +65,14 @@ type IssuerAuthorization struct {
 	// Issuer is an SD-JWT VC's iss when the issuer key resolver checked
 	// the credential's certificate names it (IssuerNameBinding:
 	// X5CIssuerKeyResolver with RequireIssuerName), and "" otherwise. An
-	// unchecked iss is whatever the signer wrote, so an issuer allowed
-	// by name here is never one another issuer under the same roots
-	// impersonated; without the check, decide from IssuerChain.
+	// unchecked iss is whatever the signer wrote. A checked one is
+	// whatever the CA that certified the signer wrote: it tells issuers
+	// apart only where no other trusted CA can issue a certificate
+	// naming that issuer (each CA either holds no key an attacker could
+	// use, or is name-constrained to its own issuers' URIs and DNS
+	// names). Where the roots are several providers', any of them can
+	// name another's issuer: decide by IssuerAnchor, and use Issuer to
+	// tell apart the issuers under one anchor you trust for all of them.
 	Issuer string
 
 	// ClaimedIssuer is an SD-JWT VC's iss as the credential states it,
@@ -63,22 +87,39 @@ type IssuerAuthorization struct {
 	MatchedTypes []string
 
 	// IssuerChain is the issuer certificate chain the credential was
-	// verified with, as VerifiedCredential.IssuerChain, whose doc says
-	// how to tell issuers apart by it: not by the leaf's subject.
+	// verified with, as VerifiedCredential.IssuerChain, without its
+	// trust anchor. Its names and key identifiers, its last
+	// certificate's issuer and authority key identifier among them, are
+	// whatever the CAs that signed them wrote: they don't tell one
+	// trusted CA from another. Decide by IssuerAnchor.
 	IssuerChain [][]byte
+
+	// IssuerAnchor is the trust anchor IssuerChain was verified to, as
+	// VerifiedCredential.IssuerAnchor (DER): the configured root that
+	// verified the issuer's chain. Compare its key with the anchors you
+	// assign to the issuer or type (AnchorIs, AnchorHasKeyIdentifier).
+	// nil means no chain was verified against configured roots (the
+	// issuer key resolver verifies none): refuse it.
+	IssuerAnchor []byte
 
 	// Claims are the presentation's disclosed claims, as
 	// VerifiedCredential.Claims.
 	Claims map[string]any
 }
 
+// anchoredChain is a verified credential's IssuerChain and IssuerAnchor.
+type anchoredChain struct {
+	chain  [][]byte
+	anchor []byte
+}
+
 // authorizeIssuer runs req.IssuerAuthorized on a verified presentation.
 // A refusal is the presentation's: ReasonUntrustedIssuer.
-func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.CredentialQuery, claims map[string]any, chain [][]byte) error {
+func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.CredentialQuery, claims map[string]any, chain *anchoredChain) error {
 	if req.IssuerAuthorized == nil {
 		return nil
 	}
-	a := IssuerAuthorization{CredentialQueryID: cq.ID, Format: cq.Format, IssuerChain: chain, Claims: claims}
+	a := IssuerAuthorization{CredentialQueryID: cq.ID, Format: cq.Format, IssuerChain: chain.chain, IssuerAnchor: chain.anchor, Claims: claims}
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
 		setSDJWTVCTypes(&a, req, cq, claims)
@@ -128,4 +169,55 @@ func setSDJWTVCTypes(a *IssuerAuthorization, req VerifyResponseRequest, cq dcql.
 // IssuerAuthorization.Issuer is set only for a checked iss.
 type IssuerNameBinding interface {
 	BindsIssuerName() bool
+}
+
+// AnchorIs reports whether anchor, an IssuerAnchor (DER), has the public
+// key of one of anchors: whether that root verified the issuer's chain.
+// It compares keys, not names or declared key identifiers, which any
+// root can copy from another: a root reissued with the same key
+// matches, a different root naming itself as another doesn't. A nil or
+// unparsable anchor matches none.
+func AnchorIs(anchor []byte, anchors ...*x509.Certificate) bool {
+	key, ok := anchorKey(anchor)
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(anchors, func(c *x509.Certificate) bool { return c != nil && key.Equal(c.PublicKey) })
+}
+
+// AnchorHasKeyIdentifier reports whether one of keyIDs, each a key
+// identifier base64url-encoded as a trusted_authorities "aki" value is
+// (dcql.AKITrustedAuthorities), is derived from the public key of
+// anchor, an IssuerAnchor (DER): by RFC 5280 §4.2.1.2 method 1 or RFC
+// 7093 method 1, as dcql.AKITrustedAuthoritiesChecker with Roots
+// matches a CA. The Subject Key Identifier the anchor declares isn't
+// matched: another root can declare the same one. A nil or unparsable
+// anchor matches none.
+func AnchorHasKeyIdentifier(anchor []byte, keyIDs ...string) bool {
+	if len(anchor) == 0 {
+		return false
+	}
+	cert, err := x509.ParseCertificate(anchor)
+	if err != nil {
+		return false
+	}
+	for _, id := range certchain.DerivedKeyIdentifiers(cert) {
+		if slices.Contains(keyIDs, base64.RawURLEncoding.EncodeToString(id)) {
+			return true
+		}
+	}
+	return false
+}
+
+// anchorKey is the public key of anchor, an IssuerAnchor.
+func anchorKey(anchor []byte) (interface{ Equal(crypto.PublicKey) bool }, bool) {
+	if len(anchor) == 0 {
+		return nil, false
+	}
+	cert, err := x509.ParseCertificate(anchor)
+	if err != nil {
+		return nil, false
+	}
+	key, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	return key, ok
 }

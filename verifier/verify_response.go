@@ -287,16 +287,29 @@ type VerifiedCredential struct {
 	// one has checked against a trust anchor, and an mdoc's is nil (the
 	// IssuerAuth x5chain is unprotected, so the holder could edit it).
 	//
-	// The leaf's subject is not the issuer's identity: any CA under the
-	// same roots can certify a leaf with that subject. Decide which issuer
-	// this is by the CA the path leads up to (the last certificate's
-	// issuer and authority key identifier, against the anchors you assign
-	// to that issuer), or give each issuer its own roots. An SD-JWT VC's
-	// "iss" in Claims is the issuer's claim, not checked against the leaf
-	// unless X5CIssuerKeyResolver.RequireIssuerName is set (SD-JWT VC
-	// §2.5 doesn't require them to correspond): don't rely on it as
-	// authenticated otherwise.
+	// No name in the chain identifies the issuer: any trusted CA can
+	// certify a leaf with any subject or subject alternative name, and
+	// write any issuer name and authority key identifier into the
+	// certificates it signs, the last one's included. Decide which issuer
+	// this is by IssuerAnchor, or give each type its own roots
+	// (X5CIssuerKeyResolver.RootsByVCT, X5ChainIssuerKeyResolver.RootsByDocType).
+	// An SD-JWT VC's "iss" in Claims is the issuer's claim, not checked
+	// against the leaf unless X5CIssuerKeyResolver.RequireIssuerName is
+	// set (SD-JWT VC §2.5 doesn't require them to correspond), and even
+	// then it holds only where no other trusted CA can issue a
+	// certificate naming that issuer.
 	IssuerChain [][]byte
+
+	// IssuerAnchor is the trust anchor IssuerChain was verified to (DER):
+	// the configured root that signed IssuerChain's last certificate, or
+	// that certificate itself when it is the only one and a root. It is
+	// what tells one trusted CA from another: compare its public key
+	// (AnchorIs, AnchorHasKeyIdentifier) with the anchors you assign to
+	// the issuer or type, never its names. nil when no chain was verified
+	// against configured roots (a resolver that verifies no chain, whose
+	// IssuerChain is the unverified header's or nil): decide nothing on
+	// an issuer by it then, and refuse where you authorize by anchor.
+	IssuerAnchor []byte
 
 	// Withheld are the data elements an org-iso-mdoc request asked for
 	// that the document didn't disclose, by namespace, each sorted
@@ -708,7 +721,7 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (VerifiedCredential, error) {
 	var claims map[string]any
 	var status *mdoc.Status
-	var chain [][]byte
+	var chain *anchoredChain
 	var err error
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
@@ -724,7 +737,7 @@ func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery,
 	if err != nil {
 		return VerifiedCredential{}, err
 	}
-	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain}, nil
+	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain.chain, IssuerAnchor: chain.anchor}, nil
 }
 
 // discardedAs is n presentations answering queryID discarded for
@@ -792,7 +805,7 @@ type discardedError struct{ err error }
 func (e *discardedError) Error() string { return e.err.Error() }
 func (e *discardedError) Unwrap() error { return e.err }
 
-func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, [][]byte, error) {
+func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.CredentialQuery, compact string, req VerifyResponseRequest) (map[string]any, *anchoredChain, error) {
 	if req.IssuerKeys == nil {
 		return nil, nil, fmt.Errorf("dependencies.issuer_keys is required for a %q credential query — see X5CIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", sdjwtvc.CredentialFormat)
 	}
@@ -901,16 +914,17 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	// The resolver's verified path, where it gives one: the header's x5c
 	// can carry certificates that aren't on it. Otherwise the header's
 	// chain, and only where it's the key that verified the credential: a
-	// header can carry anyone's public chain.
+	// header can carry anyone's public chain, and has no anchor.
 	var chain [][]byte
+	var anchor []byte
 	if resolvesBoth {
-		chain = verifiedPath(issuerChains, issuerPub)
+		chain, anchor = verifiedPath(issuerChains, issuerPub)
 	} else if chainResolver, ok := req.IssuerKeys.(SDJWTVCIssuerChainResolver); ok {
 		chains, err := chainResolver.ResolveIssuerChains(ctx, header)
 		if err != nil {
 			return nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer chain", err)
 		}
-		chain = verifiedPath(chains, issuerPub)
+		chain, anchor = verifiedPath(chains, issuerPub)
 	} else {
 		headerChain, _ := certchain.X5CDERsFromHeader(header)
 		chain = keyBoundChain(headerChain, issuerPub)
@@ -920,7 +934,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 			return nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
 		}
 	}
-	return claims, chain, nil
+	return claims, &anchoredChain{chain, anchor}, nil
 }
 
 // checkRequestedDisclosures refuses an SD-JWT VC presentation of
@@ -1026,7 +1040,7 @@ func (v *Verifier) expectedAudience(origin string) string {
 // identifies the credential (answerLog.identify): the holder can't
 // change it, unlike IssuerAuth's unprotected header, or its signature's
 // encoding.
-func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (claims map[string]any, status *mdoc.Status, chain [][]byte, err error) {
+func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (claims map[string]any, status *mdoc.Status, path *anchoredChain, err error) {
 	if req.MdocIssuerKeys == nil {
 		return nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
@@ -1082,7 +1096,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	if err != nil {
 		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
-	chain, err = issuer.Check(ctx, verified)
+	chain, anchor, err := issuer.CheckAnchored(ctx, verified)
 	if err != nil {
 		return nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
@@ -1133,7 +1147,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	for namespace, elements := range verified.NameSpaces {
 		claims[namespace] = elements
 	}
-	return claims, verified.Status, chain, nil
+	return claims, verified.Status, &anchoredChain{chain, anchor}, nil
 }
 
 // buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes
