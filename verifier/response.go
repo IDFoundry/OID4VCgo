@@ -1,14 +1,17 @@
 package verifier
 
 import (
+	"bytes"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"fmt"
-	oid4vci "github.com/idfoundry/oid4vcgo"
-	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"slices"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/jwe"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // ResponseError is a Wallet's own error response (§8.1) — sent instead
@@ -75,9 +78,22 @@ type ParsedResponse struct {
 // instead of a vp_token (see ResponseError for why that alone must not
 // end the request).
 //
-// Transactions.HandleResponse calls this for each answer; call it
-// directly only for flows Transactions doesn't cover.
+// vp_token is decoded member by member, and refused at the first that
+// makes it one no query answers: one of more than
+// dcql.MaxCredentialQueries ids, or of more than
+// MaxPresentationsPerQuery presentations.
+//
+// Transactions.HandleResponse calls this for each answer, refusing
+// too, at the first, an id that isn't one of the request's query's;
+// call it directly only for flows Transactions doesn't cover.
 func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey *ecdsa.PrivateKey) (ParsedResponse, error) {
+	return v.parseDirectPostJWTResponse(responseJWE, decryptionKey, nil)
+}
+
+// parseDirectPostJWTResponse is ParseDirectPostJWTResponse, refusing,
+// when query isn't nil, a vp_token member whose id isn't one of its
+// Credential Queries'.
+func (v *Verifier) parseDirectPostJWTResponse(responseJWE string, decryptionKey *ecdsa.PrivateKey, query *dcql.Query) (ParsedResponse, error) {
 	// A compressed response is refused before decryption: this Verifier
 	// never offers compression, and anyone who sees the Request Object
 	// can encrypt to its response key, so inflating one would let an
@@ -105,19 +121,94 @@ func (v *Verifier) ParseDirectPostJWTResponse(responseJWE string, decryptionKey 
 	}
 
 	var wire struct {
-		VPToken          map[string][]string `json:"vp_token"`
-		State            string              `json:"state"`
-		Error            string              `json:"error"`
-		ErrorDescription string              `json:"error_description"`
+		VPToken          json.RawMessage `json:"vp_token"`
+		State            string          `json:"state"`
+		Error            string          `json:"error"`
+		ErrorDescription string          `json:"error_description"`
 	}
 	if err := strictjson.Unmarshal(plaintext, &wire); err != nil {
 		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: unmarshal", err)
 	}
+	vpToken, err := decodeVPToken(wire.VPToken, query)
+	if err != nil {
+		return ParsedResponse{}, err
+	}
 	if wire.Error != "" {
 		return ParsedResponse{}, &ResponseError{Code: wire.Error, Description: wire.ErrorDescription, State: wire.State}
 	}
-	if len(wire.VPToken) == 0 {
+	if len(vpToken) == 0 {
 		return ParsedResponse{}, newError(ReasonMalformed, "parse direct_post.jwt response: vp_token is missing or empty", nil)
 	}
-	return ParsedResponse{VPToken: wire.VPToken, State: wire.State}, nil
+	return ParsedResponse{VPToken: vpToken, State: wire.State}, nil
+}
+
+// decodeVPToken decodes raw, a vp_token strictjson has checked, as
+// encoding/json would into a map[string][]string, member by member: it
+// refuses, at the first, an id that isn't one of query's Credential
+// Queries (when query isn't nil), more ids than
+// dcql.MaxCredentialQueries, and more presentations for one than
+// MaxPresentationsPerQuery, each of which VerifyResponse would refuse
+// later, so that an answer of many members costs no more than the
+// first that refuses it.
+func decodeVPToken(raw json.RawMessage, query *dcql.Query) (map[string][]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	malformed := func(err error) error {
+		return newError(ReasonMalformed, "parse direct_post.jwt response: vp_token", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil {
+		return nil, malformed(err)
+	} else if tok != json.Delim('{') {
+		return nil, malformed(errors.New("it isn't an object"))
+	}
+	vpToken := map[string][]string{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, malformed(err)
+		}
+		id, _ := tok.(string)
+		switch {
+		case query != nil && !slices.ContainsFunc(query.Credentials, func(cq dcql.CredentialQuery) bool { return cq.ID == id }):
+			return nil, newError(ReasonNotAnswered, "parse direct_post.jwt response: vp_token answers a credential query the request doesn't make", nil)
+		case len(vpToken) == dcql.MaxCredentialQueries:
+			return nil, malformed(fmt.Errorf("more than %d credential queries answered", dcql.MaxCredentialQueries))
+		}
+		presentations, err := decodePresentations(dec)
+		if err != nil {
+			return nil, malformed(err)
+		}
+		vpToken[id] = presentations
+	}
+	return vpToken, nil
+}
+
+// decodePresentations decodes the next value of dec, one vp_token
+// member's, as encoding/json would into a []string, refusing it at
+// the first presentation over MaxPresentationsPerQuery.
+func decodePresentations(dec *json.Decoder) ([]string, error) {
+	tok, err := dec.Token()
+	switch {
+	case err != nil:
+		return nil, err
+	case tok == nil:
+		return nil, nil // null
+	case tok != json.Delim('['):
+		return nil, errors.New("a member isn't an array")
+	}
+	presentations := []string{}
+	for dec.More() {
+		if len(presentations) == MaxPresentationsPerQuery {
+			return nil, fmt.Errorf("more than %d presentations for one credential query", MaxPresentationsPerQuery)
+		}
+		var p string
+		if err := dec.Decode(&p); err != nil {
+			return nil, err
+		}
+		presentations = append(presentations, p)
+	}
+	_, err = dec.Token() // ']'
+	return presentations, err
 }

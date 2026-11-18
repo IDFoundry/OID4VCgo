@@ -22,6 +22,13 @@ const DCAPIProtocolSigned = "openid4vp-v1-signed"
 // request that carries it to the page's endpoint by this much too.
 const MaxDCAPIResponseBytes = maxResponseBodyBytes
 
+// maxDCAPIAnswerTokens bounds the JSON tokens of the data
+// HandleDCAPIResponse and HandleMdocDCAPIResponse take, which is one
+// object of a "response" string, or an "error" and its description, so
+// that one padded with many small tokens is refused at the first
+// thousand of them, before anything else is done with it.
+const maxDCAPIAnswerTokens = 1024
+
 // DCAPIRequest is one entry of navigator.credentials.get's
 // digital.requests: encode it as JSON for the page.
 type DCAPIRequest struct {
@@ -150,7 +157,7 @@ func (t *Transactions) verifyDCAPI(ctx context.Context, tx Transaction, data []b
 		Response string `json:"response"`
 		Error    string `json:"error"`
 	}
-	if err := strictjson.Unmarshal(data, &answer); err != nil {
+	if err := strictjson.UnmarshalLimit(data, &answer, maxDCAPIAnswerTokens); err != nil {
 		return VerifyResponseResult{}, newError(ReasonMalformed, "the Digital Credentials API response isn't a JSON object", err)
 	}
 	switch {
@@ -160,7 +167,7 @@ func (t *Transactions) verifyDCAPI(ctx context.Context, tx Transaction, data []b
 	case answer.Response == "":
 		return VerifyResponseResult{}, newError(ReasonMalformed, `the Digital Credentials API response has neither "response" nor "error"`, nil)
 	}
-	parsed, err := t.v.ParseDirectPostJWTResponse(answer.Response, tx.ResponseDecryptionKey)
+	parsed, err := t.v.parseDirectPostJWTResponse(answer.Response, tx.ResponseDecryptionKey, &tx.Query)
 	if err != nil {
 		// An encrypted error is this request's: only its key decrypts it.
 		return VerifyResponseResult{}, err

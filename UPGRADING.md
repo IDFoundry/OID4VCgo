@@ -215,6 +215,23 @@ honest documents measured hold under 11,000 (an issuer's metadata of
 parser is bounded by its entry cap instead); nothing else refused or
 accepted changes. A Verifier's own transaction records aren't bounded.
 
+The Verifier refuses an answer where it first goes out of bounds,
+before decoding the rest, with the `Reason` its later refusal had:
+
+- `Transactions` refuses a `vp_token` at its first member that isn't
+  one of the request's Credential Queries (`ReasonNotAnswered`, "vp_token
+  answers a credential query the request doesn't make"), where
+  `VerifyResponse` refused it after decoding all of it.
+- `ParseDirectPostJWTResponse`, and so `Transactions`, refuses a
+  `vp_token` of more than 64 members, or of more than
+  `MaxPresentationsPerQuery` presentations for one (`ReasonMalformed`),
+  which `VerifyResponse` refused anyway. An error response's
+  `vp_token`, if it has one, is held to the same bounds before the
+  error is returned.
+- `HandleDCAPIResponse` and `HandleMdocDCAPIResponse` refuse data of
+  more than 1,024 tokens; an honest one is a `response` string, or an
+  `error` and its description.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

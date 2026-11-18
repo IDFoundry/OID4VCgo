@@ -321,7 +321,7 @@ func (t *Transactions) verifyMdocDCAPI(ctx context.Context, tx Transaction, data
 	var answer struct {
 		Response string `json:"response"`
 	}
-	if err := strictjson.Unmarshal(data, &answer); err != nil {
+	if err := strictjson.UnmarshalLimit(data, &answer, maxDCAPIAnswerTokens); err != nil {
 		return VerifyResponseResult{}, newError(ReasonMalformed, "the org-iso-mdoc response isn't a JSON object", err)
 	}
 	if answer.Response == "" {
