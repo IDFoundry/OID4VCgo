@@ -283,7 +283,7 @@ func TestVerifyResponseRefuses(t *testing.T) {
 		"no issuer keys":      {h, good, func(p *VerifyParams) { p.IssuerKeys = nil }, "IssuerKeys"},
 		"issuer not authorized for the doctype": {h, good, func(p *VerifyParams) {
 			p.IssuerAuthorized = func(_ context.Context, a verifier.IssuerAuthorization) error {
-				if a.Format != "mso_mdoc" || a.Type != testmdoc.DocType || !slices.Equal(a.RequestedTypes, []string{testmdoc.DocType}) {
+				if a.Format != "mso_mdoc" || a.Type != testmdoc.DocType || a.CredentialQueryID != testmdoc.DocType || !slices.Equal(a.RequestedTypes, []string{testmdoc.DocType}) {
 					t.Errorf("IssuerAuthorization = %+v", a)
 				}
 				return errors.New("not authorized for " + a.Type)

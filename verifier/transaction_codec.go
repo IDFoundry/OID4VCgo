@@ -345,6 +345,16 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 		return nil, fmt.Errorf("query: %w", err)
 	}
 	bound := []any{w.ID, w.Owner, w.BrowserBindingHash, w.SameDevice, w.Origin, queryHash[:]}
+	// The two optional elements below are untagged, so an empty
+	// MdocEncryptionInfo with MdocAllowWithheld binds like an
+	// MdocEncryptionInfo of "allow_withheld" without it. No record this
+	// package writes has either (BeginMdocDCAPI always sets a base64url
+	// EncryptionInfo), and a store writer can't seal one, so this alone
+	// isn't worth a version whose records earlier releases refuse during
+	// a rolling deploy. When TransactionCodecVersion next changes, tag
+	// them in the new version's binding (an "ei" member and an
+	// "allow_withheld" member, say), keeping this form for the versions
+	// before it.
 	if w.MdocEncryptionInfo != "" {
 		bound = append(bound, w.MdocEncryptionInfo)
 	}

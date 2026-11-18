@@ -90,7 +90,18 @@ func main() {
 			MinVersion:   tls.VersionTLS12,
 			CipherSuites: server.FAPIRWTLSCipherSuites,
 		},
+		// A client trickling a body or idling on a connection holds it
+		// only so long (DEPLOYING.md). Nothing here long-polls: a
+		// Wallet polls the Deferred Credential Endpoint with requests
+		// of its own. A request may fetch an attestation's status list
+		// (30 s at most, in the production setup) before it's answered,
+		// which WriteTimeout leaves room for. MaxHeaderBytes leaves room
+		// for a Client Attestation with its x5c chain, and DPoP proofs.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
 	}
 	log.Printf("listening on %s", cfg.ListenAddr)
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))

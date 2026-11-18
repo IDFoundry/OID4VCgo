@@ -26,27 +26,34 @@ func TestSessionStore_GetUnknownID(t *testing.T) {
 	}
 }
 
-func TestSessionStore_PendingDecryptionKeysExcludesDoneSessions(t *testing.T) {
+func TestSessionStore_PendingByKeyIDExcludesDoneSessions(t *testing.T) {
 	s := newSessionStore()
-	pending := &session{id: "pending", createdAt: time.Now(), built: true}
-	done := &session{id: "done", createdAt: time.Now(), built: true, done: true}
-	s.put(pending)
-	s.put(done)
+	pending := &session{id: "pending", createdAt: time.Now(), built: true, keyID: "kid-pending"}
+	done := &session{id: "done", createdAt: time.Now(), built: true, keyID: "kid-done", done: true}
+	for _, sess := range []*session{pending, done} {
+		s.put(sess)
+		s.index(sess)
+	}
 
-	got := s.pendingDecryptionKeys()
-	if len(got) != 1 || got[0].id != "pending" {
-		t.Fatalf("pendingDecryptionKeys = %+v, want only the pending session", got)
+	if got, ok := s.pendingByKeyID("kid-pending"); !ok || got != pending {
+		t.Fatalf("pendingByKeyID(kid-pending) = %v, %v; want the pending session", got, ok)
+	}
+	if _, ok := s.pendingByKeyID("kid-done"); ok {
+		t.Fatal("pendingByKeyID(kid-done) = found, want an answered session refused")
+	}
+	if _, ok := s.pendingByKeyID("kid-unknown"); ok {
+		t.Fatal("pendingByKeyID(kid-unknown) = found")
 	}
 }
 
-func TestSessionStore_PendingDecryptionKeysExcludesUnbuiltSessions(t *testing.T) {
+func TestSessionStore_PendingByKeyIDExcludesUnbuiltSessions(t *testing.T) {
 	s := newSessionStore()
 	unbuilt := &session{id: "unbuilt", createdAt: time.Now()}
 	s.put(unbuilt)
+	s.index(unbuilt)
 
-	got := s.pendingDecryptionKeys()
-	if len(got) != 0 {
-		t.Fatalf("pendingDecryptionKeys = %+v, want none (session never fetched request_uri)", got)
+	if _, ok := s.pendingByKeyID(""); ok {
+		t.Fatal("pendingByKeyID(\"\") = found, want none (session never fetched request_uri)")
 	}
 }
 
@@ -61,5 +68,17 @@ func TestSessionStore_PutSweepsExpiredSessions(t *testing.T) {
 	}
 	if _, ok := s.get("fresh"); !ok {
 		t.Fatalf("get(fresh) = not found, want found")
+	}
+}
+
+func TestSessionStore_PutSweepsExpiredKeyIDs(t *testing.T) {
+	s := newSessionStore()
+	expired := &session{id: "expired", createdAt: time.Now().Add(-2 * sessionTTL), built: true, keyID: "kid-expired"}
+	s.put(expired)
+	s.index(expired)
+	s.put(&session{id: "fresh", createdAt: time.Now()})
+
+	if _, ok := s.pendingByKeyID("kid-expired"); ok {
+		t.Fatal("pendingByKeyID(kid-expired) = found, want swept away by the second put")
 	}
 }

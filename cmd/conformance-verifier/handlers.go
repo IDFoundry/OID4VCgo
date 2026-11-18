@@ -155,7 +155,12 @@ func (s *server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.sessions.put(&session{id: id, query: query, createdAt: time.Now()})
+	binding, err := bindBrowser(w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.sessions.put(&session{id: id, query: query, createdAt: time.Now(), browserBinding: binding})
 
 	requestURI := s.cfg.BaseURL + "/request/" + id
 	params := url.Values{
@@ -203,15 +208,17 @@ func (s *server) handleRequestObject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("build authorization request: %v", err), http.StatusInternalServerError)
 		return
 	}
+	s.sessions.index(sess)
 
 	w.Header().Set(contentTypeHeader, "application/oauth-authz-req+jwt")
 	_, _ = w.Write([]byte(requestObject)) //nolint:gosec // not XSS-exploitable: Content-Type is a compact JWS (dot-separated base64url segments), never text/html, regardless of walletNonce's own taint
 }
 
 // handleResponse receives the direct_post.jwt response (§8.3.1) at
-// this Verifier's own fixed response_uri, correlates it to a pending
-// session by trying each one's decryptionKey (see sessionStore's own
-// doc comment for why), verifies it, and replies with the HAIP-
+// this Verifier's own fixed response_uri, routes it to the pending
+// session whose response encryption key its JWE header's kid names
+// (see sessionStore's own doc comment), decrypts it with that one key,
+// verifies it, and replies with the HAIP-
 // required "redirect_uri" JSON body pointing at that session's own
 // human-readable result page, with a response_code (§8.2) that
 // handleRedeem releases the result for. A response that matches no
@@ -229,23 +236,22 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var matched *session
-	var parsed verifier.ParsedResponse
-	var walletErr *verifier.ResponseError
-	for _, sess := range s.sessions.pendingDecryptionKeys() {
-		p, err := s.v.ParseDirectPostJWTResponse(responseJWE, sess.decryptionKey)
-		if err == nil {
-			matched, parsed = sess, p
-			break
-		}
-		var re *verifier.ResponseError
-		if errors.As(err, &re) {
-			matched, walletErr = sess, re
-			break
-		}
+	kid, err := verifier.ResponseKeyID(responseJWE)
+	if err != nil {
+		http.Error(w, "the response names no response encryption key", http.StatusBadRequest)
+		return
 	}
-	if matched == nil {
-		http.Error(w, "response did not decrypt against any pending session", http.StatusBadRequest)
+	matched, ok := s.sessions.pendingByKeyID(kid)
+	if !ok {
+		http.Error(w, "the response is for no pending session", http.StatusBadRequest)
+		return
+	}
+	parsed, err := s.v.ParseDirectPostJWTResponse(responseJWE, matched.decryptionKey)
+	var walletErr *verifier.ResponseError
+	if err != nil && !errors.As(err, &walletErr) {
+		// The session stays pending, as an answer that didn't decrypt
+		// leaves it.
+		http.Error(w, "the response did not decrypt", http.StatusBadRequest)
 		return
 	}
 
@@ -258,7 +264,7 @@ func (s *server) handleResponse(w http.ResponseWriter, r *http.Request) {
 	matched.mu.Lock()
 	defer matched.mu.Unlock()
 	// Another response to the same request may have been taken between
-	// pendingDecryptionKeys and here: only the first is verified.
+	// pendingByKeyID and here: only the first is verified.
 	if matched.done {
 		http.Error(w, "the request has already been answered", http.StatusBadRequest)
 		return
@@ -428,10 +434,15 @@ func (s *server) handleDCAPIRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("build authorization request: %v", err), http.StatusInternalServerError)
 		return
 	}
+	binding, err := bindBrowser(w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.sessions.put(&session{
 		id: id, query: query, createdAt: time.Now(), built: true,
 		requestObject: built.RequestObject, nonce: built.Nonce, decryptionKey: built.ResponseDecryptionKey,
-		dcapi: true, origin: origin, expectedOrigins: built.ExpectedOrigins,
+		dcapi: true, origin: origin, expectedOrigins: built.ExpectedOrigins, browserBinding: binding,
 	})
 	// The origin isn't logged: it's the caller's.
 	log.Printf("session %s: created, Digital Credentials API", id)
@@ -489,9 +500,43 @@ func (s *server) handleDCAPIResponse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, outcomeOf(sess))
 }
 
+// bindBrowser sets a fresh random browser binding in w's bindingCookie
+// and returns it: the browser that began a session sees its result
+// page.
+func bindBrowser(w http.ResponseWriter) (string, error) {
+	buf := make([]byte, bindingEntropyBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	binding := base64.RawURLEncoding.EncodeToString(buf)
+	http.SetCookie(w, &http.Cookie{
+		Name: bindingCookie, Value: binding, Path: "/",
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
+	return binding, nil
+}
+
+// mayView reports whether r may see sess's outcome: it comes from the
+// browser that began the session (its bindingCookie), or carries the
+// response_code handleResponse returned in the redirect_uri. The caller
+// holds sess.mu.
+func mayView(sess *session, r *http.Request) bool {
+	if b := browserBinding(r); b != "" && sess.browserBinding != "" &&
+		subtle.ConstantTimeCompare([]byte(b), []byte(sess.browserBinding)) == 1 {
+		return true
+	}
+	code := r.URL.Query().Get("response_code")
+	return code != "" && sess.responseCode != "" &&
+		subtle.ConstantTimeCompare([]byte(code), []byte(sess.responseCode)) == 1
+}
+
 // handleResult renders a plain HTML page reporting one session's own
 // verification outcome — what the suite's own
-// "verifier_verification_result_screenshot" evidence step captures.
+// "verifier_verification_result_screenshot" evidence step captures —
+// to the browser that began it, or to the bearer of its response_code
+// (mayView); anyone else, who may know the id from the public
+// request_uri, gets 403. Unlike handleRedeem, it doesn't use the code
+// up: the browser the Wallet redirects may show it again.
 func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess, ok := s.sessions.get(id)
@@ -501,8 +546,13 @@ func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	if !mayView(sess, r) {
+		writeResultPage(w, http.StatusForbidden, "No result", "this request belongs to another browser")
+		return
+	}
 
 	w.Header().Set(contentTypeHeader, "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	if !sess.done {
 		_, _ = fmt.Fprintf(w, "<html><body><h1>Pending</h1><p>Session %s has not received a response yet.</p></body></html>", html.EscapeString(id))
 		return

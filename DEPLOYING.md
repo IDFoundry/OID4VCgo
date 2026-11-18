@@ -77,6 +77,20 @@ each, not a deployment template" says what it does differently.
   reads a row, and every request_uri POST signs a Request Object (a
   billed call with a KMS-backed signer), as does every GET of a
   request whose sealed record an earlier release wrote.
+- [ ] **Server timeouts.** The handlers bound each body's size, not
+  how long it takes to arrive, and Go's `http.Server` has no read or
+  write timeout by default: a client trickling a body holds a
+  goroutine, a connection and, on a Verifier, a slot of the response
+  handlers' concurrency cap below, for as long as it likes. Set
+  `ReadHeaderTimeout` (10 s, say), `ReadTimeout` (30 s; or a shorter
+  per-handler read deadline with `http.ResponseController`),
+  `WriteTimeout` (long enough for the outbound fetches a request may
+  make before it's answered: status lists, CRLs, metadata), `IdleTimeout`
+  and `MaxHeaderBytes` (64 KiB leaves room for a Client Attestation
+  with its certificate chain and a DPoP proof). Or terminate at a proxy
+  that buffers each request body before forwarding it. Either way,
+  apply a concurrency cap to requests whose body has been read, so slow
+  senders don't hold its slots.
 
 ## Credential Issuer
 
@@ -224,6 +238,15 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
 - [ ] **Transactions:** `verifier.NewTransactions(v,
   db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)`, so
   a wallet's response can reach any replica.
+- [ ] **An explicit `TransactionsConfig.Scope` for each policy** where
+  several `Transactions` share one store: each reads only the
+  transactions of its own scope. The scope derived when `Scope` is
+  unset tells apart only Verifiers that differ in client_id,
+  `ResponseURI` or `RequestURIBase`, so one Verifier's Digital
+  Credentials API `Transactions` with different `Verify` or `Accept`
+  policies (`RequestURIBase` unset in each) share one, and any of them
+  can complete or read another's request under its own policy. Keep
+  each `Scope` the same on every replica.
 - [ ] **Rate-limit the response endpoints** per client, and per
   request where the post names it: the `direct_post` response URI
   (`HandleResponse`, `HandleUnencryptedError`), and the pages' Digital

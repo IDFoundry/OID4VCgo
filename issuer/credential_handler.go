@@ -410,8 +410,9 @@ func writePrepareError(w http.ResponseWriter, err error) {
 // resolvePending calls resolve for transactionID when it's pending,
 // belongs to grant's client and subject, and grant covers its
 // credential configuration, or credential_identifier
-// (deferredAuthorized). Anything else — unknown, resolved,
-// expired, someone else's, not granted — is left for
+// (deferredAuthorizedCheck: RequestDeferredCredential, which answers
+// the poll, checks and audits it again). Anything else — unknown,
+// resolved, expired, someone else's, not granted — is left for
 // RequestDeferredCredential to answer, as is a transaction a concurrent
 // poll resolved first, or is resolving: resolving holds the
 // transaction_ids whose resolve is running.
@@ -421,7 +422,10 @@ func (iss *Issuer) resolvePending(ctx context.Context, resolving *sync.Map, gran
 		return nil
 	}
 	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
-	if err != nil || !iss.deferredAuthorized(ctx, record, grant.Authorized) {
+	if err != nil {
+		return nil
+	}
+	if granted, _ := iss.deferredAuthorizedCheck(record, grant.Authorized); !granted {
 		return nil
 	}
 	if _, running := resolving.LoadOrStore(transactionID, struct{}{}); running {

@@ -548,26 +548,39 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 // check is audited (AuditEventLegacyDeferredAuthorization), so an
 // operator can see when none is left; this fallback is deprecated and
 // will be removed in a later release.
+//
+// Only RequestDeferredCredential calls it, once per poll; a check made
+// before it in the same poll (DeferredCredentialHandler's, before
+// Resolve) calls deferredAuthorizedCheck, which records nothing.
 func (iss *Issuer) deferredAuthorized(ctx context.Context, record DeferredTransactionRecord, auth AuthorizedRequest) bool {
+	granted, legacy := iss.deferredAuthorizedCheck(record, auth)
+	if legacy {
+		var err error
+		if !granted {
+			err = newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
+		}
+		iss.audit(ctx, AuditEventLegacyDeferredAuthorization, auth.ClientID(), err)
+	}
+	return granted
+}
+
+// deferredAuthorizedCheck is deferredAuthorized without the audit:
+// whether auth may poll record, and whether that was decided by the
+// legacy check against the configuration alone.
+func (iss *Issuer) deferredAuthorizedCheck(record DeferredTransactionRecord, auth AuthorizedRequest) (granted, legacy bool) {
 	if !deferredOwner(record, auth) {
-		return false
+		return false, false
 	}
 	id := record.CredentialConfigurationID
 	cc := iss.cfg.CredentialConfigurationsSupported[id]
 	switch {
 	case record.CredentialIdentifier != "":
 		configID, _, err := iss.resolveCredentialConfiguration(auth, CredentialRequest{CredentialIdentifier: record.CredentialIdentifier})
-		return err == nil && (id == "" || configID == id)
+		return err == nil && (id == "" || configID == id), false
 	case record.RequestedByConfigurationID:
-		return iss.authorizeCredentialConfigurationID(auth, id, cc) == nil
+		return iss.authorizeCredentialConfigurationID(auth, id, cc) == nil, false
 	}
-	granted := id == "" || iss.grantsConfiguration(auth, id, cc)
-	var err error
-	if !granted {
-		err = newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
-	}
-	iss.audit(ctx, AuditEventLegacyDeferredAuthorization, auth.ClientID(), err)
-	return granted
+	return id == "" || iss.grantsConfiguration(auth, id, cc), true
 }
 
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded

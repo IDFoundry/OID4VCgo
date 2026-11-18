@@ -235,7 +235,7 @@ func TestHandleRequestObject_RecordsTheFetch(t *testing.T) {
 // Wallet's direct_post.jwt or dc_api.jwt response.
 func encryptTo(t *testing.T, sess *session, payload string) string {
 	t.Helper()
-	compact, err := jwe.Encrypt(&sess.decryptionKey.PublicKey, jwe.A128GCM, []byte(payload), jwe.EncryptOptions{})
+	compact, err := jwe.Encrypt(&sess.decryptionKey.PublicKey, jwe.A128GCM, []byte(payload), jwe.EncryptOptions{KeyID: sess.keyID})
 	if err != nil {
 		t.Fatalf("jwe.Encrypt: %v", err)
 	}
@@ -254,6 +254,110 @@ func get(mux http.Handler, target string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
 	return rec
+}
+
+// getAs is get from the browser that began sess, carrying its
+// bindingCookie.
+func getAs(mux http.Handler, sess *session, target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.AddCookie(&http.Cookie{Name: bindingCookie, Value: sess.browserBinding})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestHandleResult_ShowsTheOutcomeOnlyToItsBrowserOrCode checks that
+// the result page, whose id is in the public request_uri, shows a
+// session's outcome only to the browser that began it or to the bearer
+// of its response_code.
+func TestHandleResult_ShowsTheOutcomeOnlyToItsBrowserOrCode(t *testing.T) {
+	s, mux := newRoutedServer(t, interopTestConfig(t))
+	sess := startBuiltSession(t, s, mux)
+	if sess.browserBinding == "" {
+		t.Fatal("GET /authorize bound no browser")
+	}
+	if rec := getAs(mux, sess, "/result/"+sess.id); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<h1>Pending</h1>") {
+		t.Fatalf("the bound browser's pending page = %d %s", rec.Code, rec.Body)
+	}
+	if rec := postResponse(mux, encryptTo(t, sess, `{"error":"access_denied"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("POST /response = %d: %s", rec.Code, rec.Body)
+	}
+
+	other := &session{browserBinding: "another-browser"}
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"no cookie, no code":         get(mux, "/result/"+sess.id),
+		"another browser's cookie":   getAs(mux, other, "/result/"+sess.id),
+		"a wrong code":               get(mux, "/result/"+sess.id+"?response_code=wrong"),
+		"an empty code, no cookie":   get(mux, "/result/"+sess.id+"?response_code="),
+		"an empty cookie, no code":   getAs(mux, &session{}, "/result/"+sess.id),
+		"another browser, bad code":  getAs(mux, other, "/result/"+sess.id+"?response_code=wrong"),
+		"no cookie, unknown session": get(mux, "/result/unknown"),
+	} {
+		if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "access_denied") {
+			t.Errorf("%s: GET /result = %d %s, want no outcome", name, rec.Code, rec.Body)
+		}
+	}
+
+	if rec := getAs(mux, sess, "/result/"+sess.id); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "access_denied") {
+		t.Fatalf("the bound browser's result page = %d %s, want the outcome", rec.Code, rec.Body)
+	}
+	sess.mu.Lock()
+	code := sess.responseCode
+	sess.mu.Unlock()
+	for range 2 { // the page doesn't use the code up
+		if rec := get(mux, "/result/"+sess.id+"?response_code="+url.QueryEscape(code)); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "access_denied") {
+			t.Fatalf("the code's result page = %d %s, want the outcome", rec.Code, rec.Body)
+		}
+	}
+}
+
+// TestHandleResponse_RoutesByKeyID checks that a response is decrypted
+// only with the key of the session its JWE header's kid names, and
+// that one without a kid, or naming no pending session, is refused.
+func TestHandleResponse_RoutesByKeyID(t *testing.T) {
+	s, mux := newRoutedServer(t, interopTestConfig(t))
+	a := startBuiltSession(t, s, mux)
+	b := startBuiltSession(t, s, mux)
+	if a.keyID == "" || a.keyID == b.keyID {
+		t.Fatalf("key IDs %q and %q, want two distinct ones", a.keyID, b.keyID)
+	}
+
+	noKID, err := jwe.Encrypt(&a.decryptionKey.PublicKey, jwe.A128GCM, []byte(`{"error":"access_denied"}`), jwe.EncryptOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Encrypted to a's key but naming b's: only b's key is tried, so it
+	// doesn't decrypt, and b stays pending.
+	misrouted, err := jwe.Encrypt(&a.decryptionKey.PublicKey, jwe.A128GCM, []byte(`{"error":"access_denied"}`), jwe.EncryptOptions{KeyID: b.keyID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := jwe.Encrypt(&a.decryptionKey.PublicKey, jwe.A128GCM, []byte(`{"error":"access_denied"}`), jwe.EncryptOptions{KeyID: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, response := range map[string]string{"no kid": noKID, "another session's kid": misrouted, "an unknown kid": unknown} {
+		if rec := postResponse(mux, response); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: POST /response = %d, want 400", name, rec.Code)
+		}
+	}
+	for _, sess := range []*session{a, b} {
+		sess.mu.Lock()
+		done := sess.done
+		sess.mu.Unlock()
+		if done {
+			t.Fatalf("session %s answered by a misrouted response", sess.id)
+		}
+	}
+
+	if rec := postResponse(mux, encryptTo(t, b, `{"error":"access_denied"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("b's own response = %d: %s", rec.Code, rec.Body)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.done {
+		t.Fatal("b's own response didn't answer b")
+	}
 }
 
 func decodeOutcome(t *testing.T, rec *httptest.ResponseRecorder) outcome {
@@ -288,8 +392,8 @@ func TestHandleResponse_RedeemsTheResponseCodeOnceAndRefusesAReplay(t *testing.T
 	if redirect.Path != "/result/"+sess.id || code == "" {
 		t.Fatalf("redirect_uri = %q, want /result/%s with a response_code", body.RedirectURI, sess.id)
 	}
-	if rec := get(mux, redirect.Path); rec.Code != http.StatusOK {
-		t.Fatalf("GET %s = %d", redirect.Path, rec.Code)
+	if rec := get(mux, redirect.RequestURI()); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Verification failed") {
+		t.Fatalf("GET %s = %d %s, want the outcome", redirect.RequestURI(), rec.Code, rec.Body)
 	}
 
 	redeem := "/result/" + sess.id + "/redeem?response_code="
@@ -341,7 +445,7 @@ func TestHandleResponse_RejectUnverifiedResponses(t *testing.T) {
 	}
 	// The page names the refusal's verifier.Reason, for the drivers to
 	// grade why the Verifier refused.
-	if page := get(mux, "/result/"+sess.id).Body.String(); !strings.Contains(page, "Verification failed") || !strings.Contains(page, "<pre>reason: malformed</pre>") {
+	if page := getAs(mux, sess, "/result/"+sess.id).Body.String(); !strings.Contains(page, "Verification failed") || !strings.Contains(page, "<pre>reason: malformed</pre>") {
 		t.Fatalf("result page = %s, want the failure and its reason", page)
 	}
 
@@ -358,7 +462,7 @@ func TestHandleResponse_RefusesASecondAnswerToAnAnsweredSession(t *testing.T) {
 	sess.mu.Lock()
 	sess.done = true
 	sess.mu.Unlock()
-	// pendingDecryptionKeys no longer offers it.
+	// pendingByKeyID no longer offers it.
 	if rec := postResponse(mux, encryptTo(t, sess, `{"error":"access_denied"}`)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST /response = %d, want 400", rec.Code)
 	}
@@ -481,10 +585,12 @@ func TestDCAPI_RequestAndAnswers(t *testing.T) {
 	}
 }
 
-func TestSessionStore_PendingDecryptionKeysExcludesDCAPISessions(t *testing.T) {
+func TestSessionStore_PendingByKeyIDExcludesDCAPISessions(t *testing.T) {
 	s := newSessionStore()
-	s.put(&session{id: "dcapi", createdAt: time.Now(), built: true, dcapi: true})
-	if got := s.pendingDecryptionKeys(); len(got) != 0 {
-		t.Fatalf("pendingDecryptionKeys = %+v, want none: a DC API answer never comes to the response_uri", got)
+	sess := &session{id: "dcapi", createdAt: time.Now(), built: true, dcapi: true, keyID: "kid-dcapi"}
+	s.put(sess)
+	s.index(sess)
+	if got, ok := s.pendingByKeyID("kid-dcapi"); ok {
+		t.Fatalf("pendingByKeyID = %+v, want none: a DC API answer never comes to the response_uri", got)
 	}
 }

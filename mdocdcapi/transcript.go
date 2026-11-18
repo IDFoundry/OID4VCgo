@@ -103,6 +103,12 @@ func sessionTranscriptBytes(transcript []byte) ([]byte, error) {
 // check of the origin its platform reports, which the session
 // transcript binds as given; a Verifier's origins are checked to be
 // spelled as the browser gives them (weborigin.Check) too.
+//
+// It checks the origin's form, not its scheme: an http origin passes.
+// The Digital Credentials API is exposed to secure contexts only, so a
+// browser reports an https origin, or an http one on a loopback host
+// (http://localhost), which is a secure context too and which local
+// development pages use.
 func checkOrigin(origin string) error {
 	u, err := url.Parse(origin)
 	switch {

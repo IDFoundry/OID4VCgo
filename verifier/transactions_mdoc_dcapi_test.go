@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -221,12 +222,18 @@ func TestTransactions_MdocDCAPI(t *testing.T) {
 }
 
 // The verified document carries the request's CredentialQueryID, so an
-// Accept shared with OpenID4VP requests reads it as its own query's.
+// Accept, and an IssuerAuthorized, shared with OpenID4VP requests reads
+// it as its own query's.
 func TestTransactions_MdocDCAPICredentialQueryID(t *testing.T) {
 	var accepted verifier.VerifyResponseResult
+	var authorized []string
 	f := newMdocTxFixture(t, mdocTxOptions{tweak: func(cfg *verifier.TransactionsConfig) {
 		cfg.Accept = func(_ context.Context, _ string, result verifier.VerifyResponseResult) error {
 			accepted = result
+			return nil
+		}
+		cfg.Verify.IssuerAuthorized = func(_ context.Context, a verifier.IssuerAuthorization) error {
+			authorized = append(authorized, a.CredentialQueryID)
 			return nil
 		}
 	}})
@@ -242,6 +249,9 @@ func TestTransactions_MdocDCAPICredentialQueryID(t *testing.T) {
 	}
 	if view.Result.Credentials[0].CredentialQueryID != "mdl" || len(accepted.Credentials) != 1 || accepted.Credentials[0].CredentialQueryID != "mdl" {
 		t.Errorf("result %+v, accepted %+v", view.Result, accepted)
+	}
+	if !slices.Equal(authorized, []string{"mdl"}) {
+		t.Errorf("IssuerAuthorized got CredentialQueryIDs %q, want [mdl]", authorized)
 	}
 	req.CredentialQueryID = "not an id"
 	if _, err := f.txs.BeginMdocDCAPI(context.Background(), req, testBinding, dcapiOrigin); err == nil {

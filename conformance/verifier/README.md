@@ -32,13 +32,16 @@ the suite grades, and it skips everything a deployment needs around
 them (the transactions engine has what the first three of these lack,
 and is still a harness: see its section):
 
-- **No session binding.** It keeps its own in-memory session map rather
-  than a `verifier.Transactions`. The `redirect_uri` it returns names
-  `/result/{id}`, which shows the verified claims to anyone who has the
-  id, and the id is also in the public `request_uri`. Its
-  `response_code` is single-use at `/result/{id}/redeem`, but bound to
-  no browser that started the request (OpenID4VP §8.2, HAIP 1.0 §5.1),
-  and the HTML page doesn't need it.
+- **No session binding in the flow.** It keeps its own in-memory
+  session map rather than a `verifier.Transactions`. The
+  `redirect_uri` it returns names `/result/{id}`, whose id is also in
+  the public `request_uri`; that page shows the outcome only to the
+  browser `GET /authorize` (or `POST /dcapi/request`) set a binding
+  cookie in, or to a request carrying the session's `response_code`.
+  The `response_code` is single-use at `/result/{id}/redeem`, but
+  neither redeeming it nor answering the request is bound to that
+  browser (OpenID4VP §8.2, HAIP 1.0 §5.1), as `Transactions` binds
+  them.
 - **No atomic completion.** A session's `done` flag is checked and set
   by the handler under a per-session lock, not by a store's atomic
   update, and only one process's memory holds it.
@@ -86,11 +89,11 @@ These are the default engine's; the transactions engine's are under
   stable for `POST /response`'s own later matching/decryption.
 - `POST /response` — this Verifier's own fixed `response_uri`
   (`verifier.Config.ResponseURI` is set once at construction, so every
-  session shares it): decrypts+parses the `direct_post.jwt` response,
-  correlates it to a pending session by trying each one's own
-  decryption key in turn (JWE's authenticated encryption rejects a
-  wrong key rather than silently misdecoding — see `session.go`'s own
-  doc comment), calls `VerifyResponse`, and replies with
+  session shares it): routes the `direct_post.jwt` response to the
+  pending session whose response encryption key its JWE header's
+  `kid` names, as `Transactions` does (a response without a `kid`, or
+  naming no pending session, is refused with 400), decrypts+parses it
+  with that key alone, calls `VerifyResponse`, and replies with
   `{"redirect_uri": ".../result/{id}?response_code=..."}` — HAIP's own
   requirement on top of plain OID4VP §8.3. A response for no pending
   session (a replayed one among them) is refused with 400, and so,
@@ -98,7 +101,10 @@ These are the default engine's; the transactions engine's are under
   presentation that fails verification (see "Status").
 - `GET /result/{id}` — a plain HTML page reporting that session's
   outcome, for the suite's own "verifier_verification_result_screenshot"
-  evidence capture.
+  evidence capture: to the browser that began the session (its binding
+  cookie, which the drivers keep from `/authorize`, as they do for the
+  transactions engine), or with its `response_code`, which the page
+  doesn't use up; anyone else gets 403.
 - `GET /result/{id}/redeem?response_code=...` — the outcome as JSON,
   once, for the `response_code`, with how the Wallet fetched the
   Request Object: what an interop run checks.
@@ -341,7 +347,7 @@ with:
 
 - a durable, atomically updated store, sealed: `sqlstore`'s
   `TransactionStore` over a SQLite file, each transaction encoded by a
-  `verifier.TransactionCodec` (version 2) whose `Sealer` is
+  `verifier.TransactionCodec` (version 3) whose `Sealer` is
   `sealing.AESGCMSealer` under a key generated per run;
 - a CA-issued client certificate, an `https` `response_uri`,
   `crypto/rand`, A128GCM and A256GCM, issuer key resolvers that verify

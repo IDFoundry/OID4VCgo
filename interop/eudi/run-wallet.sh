@@ -403,10 +403,11 @@ else bad "the verifier received access_denied ($(explain decline.json); $(why re
 echo "== control: the same response posted again, after it was answered"
 drive replay redirect --uri "$(authorize "$SDJWT_VERIFIER" post)" "${SDJWT[@]}" --variant replay
 redeem replay
-# The answered session is no longer pending: nothing decrypts the replay.
+# The answered session is no longer pending: the replay's kid names no
+# pending session.
 if jq -e '.status == "verified"' result-replay.json >/dev/null \
-    && jq -e '.replay_status == 400 and (.replay_body | startswith("response did not decrypt against any pending session"))' replay.json >/dev/null; then
-  ok "the first was verified, the replay refused (HTTP 400, response did not decrypt against any pending session)"
+    && jq -e '.replay_status == 400 and (.replay_body | startswith("the response is for no pending session"))' replay.json >/dev/null; then
+  ok "the first was verified, the replay refused (HTTP 400, the response is for no pending session)"
 else bad "the replay refused ($(jq -c '{dispatch, replay_status, replay_body}' replay.json); $(why result-replay.json))"; fi
 
 wallet_refuses untrusted-verifier "$(authorize "$SDJWT_VERIFIER" post)" 'InvalidJarJwt(cause=Untrusted x5c)' \

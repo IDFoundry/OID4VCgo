@@ -36,7 +36,8 @@ func newHandler(cfg Config) (http.Handler, string, error) {
 
 // bindingCookie holds the browser binding (verifier.BeginOptions) of
 // the request the browser last began at /authorize: the redirect back
-// from the Wallet, and the result page, read it.
+// from the Wallet, and the result page, read it. The default engine
+// sets it too, for its own result page (bindBrowser).
 const bindingCookie = "__Host-verifier-binding"
 
 // bindingEntropyBytes is the browser binding's size before encoding.

@@ -39,7 +39,10 @@ import (
 // one query to the CAs it names.
 type IssuerAuthorization struct {
 	// CredentialQueryID is the dcql.CredentialQuery.ID the presentation
-	// answered.
+	// answered. For an org-iso-mdoc document, which answers no DCQL
+	// query, it's the CredentialQueryID the verified document carries:
+	// MdocDCAPIRequest.CredentialQueryID through Transactions, the
+	// document's type through mdocdcapi alone.
 	CredentialQueryID string
 
 	// Format is the credential format: "dc+sd-jwt" or "mso_mdoc".

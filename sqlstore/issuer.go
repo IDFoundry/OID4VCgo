@@ -209,6 +209,16 @@ func (s *PreAuthorizedCodeStore) SealsRecords() bool { return s.t.d.sealer != ni
 // DeferredTransactionStore is an issuer.DeferredTransactionStore:
 // Dependencies.DeferredTransactions. Invalidate deletes the
 // transaction, its Credentials with it.
+//
+// Sweep deletes a transaction once its ExpiresAt has passed, and never
+// one whose ExpiresAt is zero: the issuer's RequestCredential always
+// sets it, but a record a deployment writes itself, or migrates from a
+// store that didn't keep it, may have none. Under
+// issuer.AssuranceProduction the issuer answers such a record as
+// lapsed, so nothing collects or resolves it, and it stays, its
+// holder's data with it, until it's deleted by hand. Under
+// AssuranceDevelopment it never lapses. Set ExpiresAt on every record
+// you write.
 type DeferredTransactionStore struct {
 	t *table[issuer.DeferredTransactionRecord]
 }
