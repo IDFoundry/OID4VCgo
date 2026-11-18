@@ -32,6 +32,10 @@ import (
 // MaxFailedIssuerChainsPerResponse credentials from issuers no root
 // anchors still is, even beside a valid one. A chain repeated across
 // presentations counts once.
+//
+// VerifyResponse also counts each presentation whose chain fails toward
+// MaxFailedPresentationsPerResponse, with every other failed check, so
+// it refuses such a response at the same point or sooner.
 const MaxFailedIssuerChainsPerResponse = 4
 
 // chainMemo is the outcome of each distinct certificate chain the
@@ -145,7 +149,9 @@ func verifyTrustedChains(ctx context.Context, memo *chainMemo, kind string, ders
 	now := verificationTime(ctx)
 	r.leaf, r.chains, r.err = certchain.VerifyChainsAt(ders, roots, now)
 	unverified := r.err != nil
-	if !unverified {
+	if unverified {
+		r.err = &unverifiedChainError{r.err}
+	} else {
 		if r.chains, r.err = certchain.ApprovedChains(r.leaf, r.chains, policy); r.err == nil {
 			r.chains, r.err = certchain.NotRevokedChains(ctx, r.chains, revocation, now)
 		}
@@ -161,6 +167,15 @@ func verifyTrustedChains(ctx context.Context, memo *chainMemo, kind string, ders
 	memo.mu.Unlock()
 	return r.leaf, r.chains, r.err
 }
+
+// unverifiedChainError is a chain that didn't verify, as
+// MaxFailedIssuerChainsPerResponse counts it, rather than one that
+// verified and was then refused: VerifyResponse counts a presentation
+// whose chain didn't verify toward MaxFailedPresentationsPerResponse.
+type unverifiedChainError struct{ err error }
+
+func (e *unverifiedChainError) Error() string { return e.err.Error() }
+func (e *unverifiedChainError) Unwrap() error { return e.err }
 
 // hashChain identifies ders, each entry length-prefixed so that no two
 // chains share an identity.

@@ -220,34 +220,57 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   encrypt one — and a refused answer leaves the request open for the
   next. Each answer costs an ECDH, a decryption and parsing up to
   1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
-  presentations per Credential Query: the issuer signature, checked
-  with the presented leaf certificate's key first through a built-in
-  resolver, then path building over the issuer's presented certificate
-  chain (anchored at one of its top two certificates and checked from
-  there down: a crafted one costs at most two signature checks per
-  configured root sharing a name with its top, plus about two where a
-  root anchors it, however long it is; a genuine one, replayed, a check
-  per certificate, at most eight. With the built-in
-  `X5CIssuerKeyResolver` and `X5ChainIssuerKeyResolver` as the
-  request's `IssuerKeys` and `MdocIssuerKeys`, each distinct chain is
-  verified once per answer, and the answer is refused once
-  `MaxFailedIssuerChainsPerResponse` distinct chains haven't verified;
-  chains that verify aren't counted, however many there are, nor are
-  ones refused for revocation or leaf policy, and a resolver of your
-  own, even one dispatching to the built-in ones, gets neither), and
-  only then the SD-JWT disclosures the signed payload
-  references, and a revocation check per path. Measured on a
-  development machine, a crafted answer whose chains no configured root
-  anchors is refused after its fourth failed chain, at a few
-  milliseconds of CPU (the more configured roots of matching names,
-  the more); one padding a genuine issuer JWT with a mebibyte of
-  disclosure parts, about 35 ms. An org-iso-mdoc answer over the
+  presentations per Credential Query (more than one only under
+  `multiple`): a hash identifying the credential (an SD-JWT's
+  Issuer-signed header and payload, an mdoc's Mobile Security Object),
+  so that one presented twice refuses the answer at the second copy,
+  unverified; the issuer signature, checked once, with the presented
+  leaf certificate's key through a built-in resolver, whatever curve
+  the sender gave that key (a P-521 check costs about 30 times a P-256
+  one); path building over the issuer's presented certificate chain
+  (anchored at one of its top two certificates and checked from there
+  down: a crafted one costs at most two signature checks per configured
+  root sharing a name with its top, plus about two where a root anchors
+  it, however long it is; a genuine one, replayed, a check per
+  certificate, at most eight); the SD-JWT disclosures the signed payload
+  references; the KB-JWT or mdoc device signature; and a revocation
+  check per path. With the built-in `X5CIssuerKeyResolver` and
+  `X5ChainIssuerKeyResolver` as the request's `IssuerKeys` and
+  `MdocIssuerKeys`, each distinct chain is verified once per answer. A
+  presentation discarded because one of those checks failed (its issuer
+  signature, validity or digests, a chain no root anchors, its holder
+  binding) counts toward `MaxFailedPresentationsPerResponse` (4) across
+  the answer's Credential Queries, and once that many have, the answer
+  is refused at the next presentation, unverified. Presentations that
+  verify aren't counted, nor are ones discarded for what they say (not
+  answering the query, unrequested claims) or whose trusted issuer is
+  refused (revocation, leaf policy, `IssuerAuthorized`); a resolver of
+  your own, even one dispatching to the built-in ones, gets neither the
+  leaf-key check nor the per-answer chain memo, and its refusals aren't
+  counted. Measured on a development machine where one P-521 signature
+  check costs 2.1 ms of CPU and one P-256 check 0.07 ms, through
+  `HandleResponse` under `multiple`: an honest one-presentation answer
+  costs 0.8 ms on a P-256 issuer PKI and 11 ms on a P-521 one; 32
+  self-made P-521 leaves under signatures that don't verify, refused
+  after the fourth, 9–10 ms whatever the issuer PKI; 32 crafted chains,
+  2 ms (P-256) or 20 ms (P-521); 32 copies of a genuine credential with
+  a KB-JWT that doesn't verify, refused at the second copy, 2 ms or
+  13 ms; one genuine issuer JWT padded with a mebibyte of disclosure
+  parts, 17–28 ms. Not capped: presentations of distinct genuine
+  credentials that verify, or are discarded for what they say or their
+  issuer's revocation. Each costs its issuer signature at its issuer's
+  curve, its chain once per answer, and, unless refused before it, its
+  KB-JWT; up to 32 of them per Credential Query cost what an honest
+  answer presenting that many does, and sending them takes that many
+  credentials of the sender's own (and their holder keys, unless
+  revoked). An org-iso-mdoc answer over the
   Digital Credentials API (ISO/IEC TS 18013-7 Annex C:
   `HandleMdocDCAPIResponse`, or `mdocdcapi.VerifyResponse` and
   `VerifyResponseDocuments` directly) is covered the same way, through
   `verifier.ResponseIssuerChains`: each document's `IssuerAuth` checked
   with its `x5chain` leaf's key first, each distinct chain verified once
-  per answer, under the same cap; and the first document that fails
+  per answer, refused once `MaxFailedIssuerChainsPerResponse` distinct
+  chains haven't verified; and the first document that fails
   refuses the whole answer, so at most one chain that doesn't verify is
   checked per answer. So limit by concurrency as
   well as by rate: cap the response

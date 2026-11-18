@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -247,8 +246,10 @@ type VerifyResponseRequest struct {
 	// VerifyResponse refuses an Origin that isn't one of them.
 	ExpectedOrigins []string
 
-	// chains is VerifyResponse's own: see chainMemo.
+	// chains and answer are VerifyResponse's own: see chainMemo and
+	// answerLog.
 	chains *chainMemo
+	answer *answerLog
 }
 
 // VerifiedCredential is one successfully verified Presentation.
@@ -313,7 +314,8 @@ type VerifyResponseResult struct {
 	// Query's multiple, each is a different issued credential:
 	// VerifyResponse refuses a response that presents one twice (the
 	// same Issuer-signed JWT, or mdoc Mobile Security Object, whatever
-	// the holder varied around it). Across Credential Queries the same
+	// the holder varied around it), at the second, before either is
+	// verified. Across Credential Queries the same
 	// credential may answer more than one unless
 	// VerifyResponseRequest.DistinctCredentials is set. Different credentials can still be
 	// the same holder's — batch-issued copies of one credential each
@@ -468,15 +470,19 @@ func (v *Verifier) checkVerifyResponseRequest(req VerifyResponseRequest) error {
 // id, and every one of them is verified and returned, but one
 // credential presented more than once refuses the response (see
 // VerifyResponseResult.Credentials); when false (the default), more
-// than one is a hard error.
+// than one is a hard error. Either way, once
+// MaxFailedPresentationsPerResponse of the response's presentations
+// have failed verification, the response is refused.
 func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest) (VerifyResponseResult, error) {
 	if req.Now != nil {
 		// Certificates are valid, or not, at the verification's instant.
 		ctx = WithVerificationTime(ctx, req.Now())
 	}
 	// Each distinct issuer chain in the answer is verified once, by the
-	// request's own built-in resolver.
+	// request's own built-in resolver; each presentation is identified
+	// before it is verified, and failures are counted across the answer.
 	req.chains = newChainMemo()
+	req.answer = newAnswerLog(req.DistinctCredentials)
 	if err := v.checkVerifyResponseRequest(req); err != nil {
 		return VerifyResponseResult{}, err
 	}
@@ -490,15 +496,12 @@ func (v *Verifier) VerifyResponse(ctx context.Context, req VerifyResponseRequest
 	}
 	result := VerifyResponseResult{}
 	verifiedIDs := make(map[string]bool, len(answered))
-	// The credentials verified so far, across every credential query
-	// under DistinctCredentials: see verifyCredentialQuery.
-	seen := make(map[[sha256.Size]byte]string)
 	var firstFailure error
 	for _, cq := range req.Query.Credentials {
 		if !answered[cq.ID] {
 			continue
 		}
-		vcs, discarded, err := v.verifyCredentialQuery(ctx, cq, req, seen)
+		vcs, discarded, err := v.verifyCredentialQuery(ctx, cq, req)
 		var allFailed *discardedError
 		switch {
 		case errors.As(err, &allFailed):
@@ -627,11 +630,11 @@ func isUnverifiedAKIChecker(checker dcql.TrustedAuthoritiesChecker) bool {
 // and §8.1's own "when multiple is omitted, or set to false, the
 // array MUST contain only one Presentation"), and verifies every one
 // of them, dispatching to the format-specific verification
-// VerifyResponse's own doc comment describes. seen maps each credential
-// already verified in this response, by the hash of its signed part, to
-// the credential query it answered; verifyCredentialQuery adds cq's, and
-// consults another query's only under req.DistinctCredentials.
-func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest, seen map[[sha256.Size]byte]string) ([]VerifiedCredential, []DiscardedPresentation, error) {
+// VerifyResponse's own doc comment describes. Each presentation is
+// identified in req.answer before it is verified (answerLog.identify),
+// and one that fails is counted there toward
+// MaxFailedPresentationsPerResponse.
+func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.CredentialQuery, req VerifyResponseRequest) ([]VerifiedCredential, []DiscardedPresentation, error) {
 	presentations := req.Response.VPToken[cq.ID]
 	if len(presentations) == 0 {
 		return nil, nil, newError(ReasonMalformed, "no presentation returned", nil)
@@ -650,7 +653,16 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 
 	vcs := make([]VerifiedCredential, 0, len(presentations))
 	for i, presented := range presentations {
-		vc, signed, err := v.verifyPresented(ctx, cq, presented, req)
+		if req.answer.full() {
+			// Not this presentation's failure: the response's.
+			return nil, nil, newError(ReasonMalformed, "verify presentations", errTooManyFailedPresentations)
+		}
+		vc, err := v.verifyPresented(ctx, cq, presented, req)
+		var refused *refusedResponseError
+		if errors.As(err, &refused) {
+			// One credential presented twice (answerLog.identify).
+			return nil, nil, refused.err
+		}
 		if errors.Is(err, errNotThisRequest) {
 			// A presentation made for another request, or replayed: the
 			// whole response is refused, not just it (§14.1.2: "If any
@@ -667,6 +679,7 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 			// The presentation failed, not the response or the
 			// configuration: discard it (§8.6).
 			firstErr = cmp.Or(firstErr, err)
+			req.answer.discarded(failed, err)
 			if errors.Is(err, certchain.ErrChainBudget) {
 				// A chain built to the signature-check cap: the rest
 				// of the query's presentations, from the same sender,
@@ -680,14 +693,6 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 		if err != nil {
 			return nil, nil, err
 		}
-		// One credential presented twice isn't two credentials: under
-		// multiple, a Verifier counting them (one per person, say) would
-		// be misled. A Wallet never does it, so the response is refused.
-		// So is one credential answering two queries, where the Verifier
-		// asked for a credential of its own for each.
-		if err := checkNotPresentedBefore(seen, signed, cq.ID, req.DistinctCredentials); err != nil {
-			return nil, nil, err
-		}
 		vcs = append(vcs, vc)
 	}
 	if len(vcs) == 0 && firstErr != nil {
@@ -699,30 +704,27 @@ func (v *Verifier) verifyCredentialQuery(ctx context.Context, cq dcql.Credential
 }
 
 // verifyPresented verifies one presentation answering cq, and that its
-// issuer may issue what it claims, returning it with the part its
-// issuer signed.
-func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (VerifiedCredential, []byte, error) {
+// issuer may issue what it claims.
+func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (VerifiedCredential, error) {
 	var claims map[string]any
 	var status *mdoc.Status
 	var chain [][]byte
-	var signed []byte
 	var err error
 	switch cq.Format {
 	case sdjwtvc.CredentialFormat:
 		claims, chain, err = v.verifySDJWTVCPresentation(ctx, cq, presented, req)
-		signed = sdjwtvcSignedPart(presented)
 	case mdoc.CredentialFormat:
-		claims, status, chain, signed, err = v.verifyMdocPresentation(ctx, cq, presented, req)
+		claims, status, chain, err = v.verifyMdocPresentation(ctx, cq, presented, req)
 	default:
-		return VerifiedCredential{}, nil, fmt.Errorf("format %q is not yet supported", cq.Format)
+		return VerifiedCredential{}, fmt.Errorf("format %q is not yet supported", cq.Format)
 	}
 	if err == nil {
 		err = authorizeIssuer(ctx, req, cq, claims, chain)
 	}
 	if err != nil {
-		return VerifiedCredential{}, nil, err
+		return VerifiedCredential{}, err
 	}
-	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain}, signed, nil
+	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain}, nil
 }
 
 // discardedAs is n presentations answering queryID discarded for
@@ -734,23 +736,6 @@ func discardedAs(queryID string, failed *Error, err error, n int) []DiscardedPre
 		out[i] = d
 	}
 	return out
-}
-
-// checkNotPresentedBefore records signed, a credential's signed part,
-// as presented for queryID in seen, refusing it if it was presented
-// for queryID already, or, under distinct, for another query.
-func checkNotPresentedBefore(seen map[[sha256.Size]byte]string, signed []byte, queryID string, distinct bool) error {
-	identity := sha256.Sum256(signed)
-	if other, ok := seen[identity]; ok {
-		if other == queryID {
-			return newError(ReasonMalformed, "the same credential was presented more than once", nil)
-		}
-		if distinct {
-			return newError(ReasonMalformed, fmt.Sprintf("the same credential was presented for credential queries %q and %q", other, queryID), nil)
-		}
-	}
-	seen[identity] = queryID
-	return nil
 }
 
 // sdjwtvcSignedPart is what identifies the credential an SD-JWT
@@ -818,6 +803,9 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	if !found {
 		return nil, nil, newError(ReasonMalformed, "parse presentation", errors.New("not an SD-JWT (no '~' separator)"))
 	}
+	if err := req.answer.identify(cq.ID, sdjwtvcSignedPart(compact)); err != nil {
+		return nil, nil, err
+	}
 	header, rawPayload, err := jose.DecodeUnverified(issuerJWT)
 	if err != nil {
 		return nil, nil, newError(ReasonMalformed, "decode issuer jwt", err)
@@ -831,11 +819,14 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 	// key and the issuer chain, after checking the Issuer-signed JWT's
 	// signature with the x5c leaf's key, so a genuine chain replayed
 	// under another signature costs no chain check; any other resolver
-	// is asked for each.
+	// is asked for each. That check, kept in proof, is the one
+	// sdjwtvc.VerifyPresentation would make again once the leaf's key is
+	// trusted: proof.For hands it over instead.
 	var (
 		issuerPub    crypto.PublicKey
 		issuerAlg    oid4vci.JOSEAlg
 		issuerChains [][]*x509.Certificate
+		proof        *jose.Proof
 	)
 	x5c, resolvesBoth := x5cResolver(req.IssuerKeys)
 	if resolvesBoth {
@@ -844,7 +835,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 			if err != nil {
 				return nil
 			}
-			_, _, err = jose.Verify(alg, pub, issuerJWT)
+			proof, err = jose.VerifyProof(alg, pub, issuerJWT)
 			return err
 		}
 		issuerPub, issuerAlg, issuerChains, err = x5c.resolveIssuerKeyAndChains(ctx, req.chains, header, payload, signed)
@@ -876,7 +867,7 @@ func (v *Verifier) verifySDJWTVCPresentation(ctx context.Context, cq dcql.Creden
 		}
 	}
 
-	verified, err := sdjwtvc.VerifyPresentation(compact, issuerPub, issuerAlg, sdjwtvc.VerifyOptions{
+	verified, err := sdjwtvc.VerifyPresentation(compact, proof.For(issuerPub, issuerAlg), issuerAlg, sdjwtvc.VerifyOptions{
 		RequireKeyBinding: keyBindingRequirement,
 		HolderPublicKey:   holderPub,
 		KeyBindingAlg:     holderAlg,
@@ -1031,30 +1022,33 @@ func (v *Verifier) expectedAudience(origin string) string {
 // in-band reader ephemeral key to agree a MAC key from, so only
 // DeviceAuthSignature (§12.4.6, ECDSA/EdDSA) is meaningful here.
 //
-// msoBytes is the IssuerAuth payload, the issuer-signed Mobile Security
-// Object: what identifies the credential, which the holder can't change
-// (unlike IssuerAuth's unprotected header, or its signature's
-// encoding).
-func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (claims map[string]any, status *mdoc.Status, chain [][]byte, msoBytes []byte, err error) {
+// The IssuerAuth payload, the issuer-signed Mobile Security Object,
+// identifies the credential (answerLog.identify): the holder can't
+// change it, unlike IssuerAuth's unprotected header, or its signature's
+// encoding.
+func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.CredentialQuery, presented string, req VerifyResponseRequest) (claims map[string]any, status *mdoc.Status, chain [][]byte, err error) {
 	if req.MdocIssuerKeys == nil {
-		return nil, nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
+		return nil, nil, nil, fmt.Errorf("dependencies.mdoc_issuer_keys is required for a %q credential query — see X5ChainIssuerKeyResolver for a ready-made implementation backed by a trust anchor pool", mdoc.CredentialFormat)
 	}
 	if req.ResponseEncryptionKey == nil {
-		return nil, nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
+		return nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(presented)
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
+		return nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
 	}
 	doc, err := oid4vpmdoc.UnmarshalDeviceResponse(raw)
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
+		return nil, nil, nil, newError(ReasonMalformed, "unmarshal device response", err)
 	}
 
-	protected, unprotected, payload, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
+	protected, unprotected, msoBytes, err := cose.DecodeUnverified(doc.IssuerSigned.IssuerAuth)
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
+		return nil, nil, nil, newError(ReasonMalformed, "decode issuer auth", err)
+	}
+	if err := req.answer.identify(cq.ID, msoBytes); err != nil {
+		return nil, nil, nil, err
 	}
 	// The x5chain is normally in the unprotected header (ISO/IEC 18013-5
 	// §12.3.4), so the holder chooses it: any chain to a trusted anchor
@@ -1072,63 +1066,66 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	//
 	// An X5ChainIssuerKeyResolver's chain is verified after IssuerAuth's
 	// signature is checked with the x5chain leaf's key, so a genuine
-	// chain replayed under another signature costs no chain check.
-	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerAuthSigned(doc.IssuerSigned.IssuerAuth))
+	// chain replayed under another signature costs no chain check. That
+	// check, kept in proof, is the one mdoc.Verify would make again once
+	// the leaf's key is trusted: proof.For hands it over instead.
+	var proof *cose.Proof
+	issuer, err := resolveMdocIssuer(ctx, req.chains, req.MdocIssuerKeys, cose.X5ChainOf(protected, unprotected), doc.DocType, issuerAuthSigned(doc.IssuerSigned.IssuerAuth, &proof))
 	if errors.As(err, new(*issuerSignatureError)) {
-		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
+		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
+		return nil, nil, nil, newError(ReasonUntrustedIssuer, "resolve issuer key", err)
 	}
 
-	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, issuer.Key, issuer.Alg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
+	verified, err := mdoc.Verify(doc.IssuerSigned, doc.DocType, proof.For(issuer.Key, issuer.Alg), issuer.Alg, mdoc.VerifyOptions{Now: req.Now, MaxClockSkew: req.MaxClockSkew})
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
+		return nil, nil, nil, newError(ReasonInvalidCredential, "verify issuer signed", err)
 	}
 	chain, err = issuer.Check(ctx, verified)
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
+		return nil, nil, nil, newError(ReasonUntrustedIssuer, "check document signer", err)
 	}
 
 	thumbprintBytes, err := jwk.Thumbprint(&req.ResponseEncryptionKey.PublicKey)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("response encryption key: %w", err)
+		return nil, nil, nil, fmt.Errorf("response encryption key: %w", err)
 	}
 	sessionTranscriptBytes, err := v.buildMdocSessionTranscriptBytes(req, thumbprintBytes)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("build session transcript: %w", err)
+		return nil, nil, nil, fmt.Errorf("build session transcript: %w", err)
 	}
 
 	if doc.DeviceSigned.AuthType != mdoc.DeviceAuthSignature {
-		return nil, nil, nil, nil, newError(ReasonHolderBinding, fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
+		return nil, nil, nil, newError(ReasonHolderBinding, fmt.Sprintf("device authentication type %d is not supported (see verifyMdocPresentation's own doc comment)", doc.DeviceSigned.AuthType), nil)
 	}
 	deviceAlg, err := mdocAlgForKey(verified.DeviceKey)
 	if err != nil {
-		return nil, nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
+		return nil, nil, nil, newError(ReasonHolderBinding, "device key", err)
 	}
 	if err := mdoc.VerifyDeviceSignature(doc.DeviceSigned, verified.DeviceKey, deviceAlg, sessionTranscriptBytes, doc.DocType); err != nil {
 		// The device signature is over a SessionTranscript carrying this
 		// request's nonce and client_id (or origin): one that doesn't
 		// verify was made for another request, or was tampered with.
-		return nil, nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", fmt.Errorf("%w: %w", errNotThisRequest, err))
+		return nil, nil, nil, newError(ReasonHolderBinding, "verify device signature", fmt.Errorf("%w: %w", errNotThisRequest, err))
 	}
 
 	if err := mdoc.CheckKeyAuthorizations(doc.DeviceSigned.NameSpaces, verified.KeyAuthorizations); err != nil {
-		return nil, nil, nil, nil, newError(ReasonHolderBinding, "check key authorizations", err)
+		return nil, nil, nil, newError(ReasonHolderBinding, "check key authorizations", err)
 	}
 
 	if err := cq.SatisfiedByMdocClaims(verified.DocType, verified.NameSpaces); err != nil {
-		return nil, nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
+		return nil, nil, nil, newError(ReasonNotAnswered, "satisfied by mdoc claims", err)
 	}
 	if !req.AllowUnrequestedClaims {
 		if err := checkRequestedElements(cq, verified.NameSpaces); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
 	if len(cq.TrustedAuthorities) > 0 {
 		if err := req.TrustedAuthorities.CheckTrustedAuthorities(ctx, cq.TrustedAuthorities, chain); err != nil {
-			return nil, nil, nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
+			return nil, nil, nil, newError(ReasonUntrustedIssuer, errCategoryTrustedAuthorities, err)
 		}
 	}
 
@@ -1136,7 +1133,7 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 	for namespace, elements := range verified.NameSpaces {
 		claims[namespace] = elements
 	}
-	return claims, verified.Status, chain, payload, nil
+	return claims, verified.Status, chain, nil
 }
 
 // buildMdocSessionTranscriptBytes rebuilds SessionTranscriptBytes

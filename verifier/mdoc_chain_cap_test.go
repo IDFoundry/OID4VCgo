@@ -23,26 +23,28 @@ func TestVerifyResponse_RefusesAfterTooManyFailedMdocChains(t *testing.T) {
 	ca, _ := testcert.CA(t, "document signer root")
 	other, otherKey := testcert.CA(t, "untrusted root")
 	mf := newMdocVerifyFixture(t)
-	protected, unprotected, payload, err := cose.DecodeUnverified(mf.f.IssuerSigned.IssuerAuth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deviceSigned := mf.deviceSigned(t, mf.f, nil)
 	var presentations []string
 	for i := range verifier.MaxFailedIssuerChainsPerResponse + 3 {
+		// A document of its own each: one presented twice is refused
+		// before its chain is looked at.
+		f := testmdoc.Issue(t)
+		protected, unprotected, payload, err := cose.DecodeUnverified(f.IssuerSigned.IssuerAuth)
+		if err != nil {
+			t.Fatal(err)
+		}
 		leaf, leafKey := testcert.Leaf(t, fmt.Sprintf("document signer %d", i), other, otherKey)
 		unprotected.X5Chain = [][]byte{leaf.Raw}
-		issuerSigned := mf.f.IssuerSigned
+		issuerSigned := f.IssuerSigned
 		if issuerSigned.IssuerAuth, err = cose.Sign(cose.ES256, leafKey, protected, unprotected, payload, []byte{}); err != nil {
 			t.Fatal(err)
 		}
-		presentations = append(presentations, presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: issuerSigned, DeviceSigned: deviceSigned}))
+		presentations = append(presentations, presentDocument(t, oid4vpmdoc.Document{DocType: testmdoc.DocType, IssuerSigned: issuerSigned, DeviceSigned: mf.deviceSigned(t, f, nil)}))
 	}
 	query := mf.query
 	query.Credentials = append([]dcql.CredentialQuery(nil), query.Credentials...)
 	query.Credentials[0].Multiple = true
 
-	_, err = mf.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+	_, err := mf.v.VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
 		Query: query, Response: verifier.ParsedResponse{VPToken: map[string][]string{"mdl": presentations}},
 		ExpectedNonce: mf.nonce, ResponseEncryptionKey: mf.responseDecryptionKey,
 		MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: rootsOf(ca), LeafPolicy: verifier.AnyIssuerLeaf, Revocation: certrevocation.NoCheck{}},

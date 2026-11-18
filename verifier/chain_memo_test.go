@@ -141,26 +141,27 @@ func TestVerifyResponse_RefusesAfterTooManyFailedIssuerChains(t *testing.T) {
 }
 
 // Distinct issuer chains that verify aren't counted: a response
-// presenting more of them than the failure limit is verified in full.
+// presenting more of them than the failure limits, each credential
+// verifying, is verified in full.
 func TestVerifyResponse_ValidIssuerChainsArentCapped(t *testing.T) {
 	ca, caKey := testcert.CA(t, "issuer root")
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
 	var checks atomic.Int32
 	resolver := verifier.X5CIssuerKeyResolver{Roots: roots, LeafPolicy: verifier.AnyIssuerLeaf, Revocation: countingRevocation{&checks}}
-	n := verifier.MaxFailedIssuerChainsPerResponse + 12
+	n := max(verifier.MaxFailedIssuerChainsPerResponse, verifier.MaxFailedPresentationsPerResponse) + 12
 	var presentations []string
 	for i := range n {
 		leaf, leafKey := testcert.Leaf(t, fmt.Sprintf("issuer %d", i), ca, caKey)
 		presentations = append(presentations, leafSignedPresentation(t, leafKey, leaf))
 	}
 
-	_, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
-		Query: multipleQuery(t), Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": presentations}},
+	result, err := newTestVerifier(t).VerifyResponse(context.Background(), verifier.VerifyResponseRequest{
+		Query: unboundQuery(t), Response: verifier.ParsedResponse{VPToken: map[string][]string{"pid": presentations}},
 		ExpectedNonce: "n", MaxKeyBindingAge: time.Hour, IssuerKeys: resolver,
 	})
-	if err != nil && strings.Contains(err.Error(), "failed to verify") {
-		t.Fatalf("err = %v: chains that verify were capped", err)
+	if err != nil || len(result.Credentials) != n {
+		t.Fatalf("VerifyResponse = %d credentials, %v; want all %d: chains that verify were capped", len(result.Credentials), err, n)
 	}
 	if got := checks.Load(); got != int32(n) {
 		t.Errorf("%d chains verified, want %d", got, n)
