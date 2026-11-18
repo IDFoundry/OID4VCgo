@@ -313,6 +313,17 @@ the Wallet's offer is lost: check `extension.NewRARRegistry`'s
 `maxDepth`. `cmd/conformance-issuer` and the passport-vdc demo now
 register it 6 deep, where they registered it 4 deep.
 
+### The preview lists an object or array the Verifier receives empty
+
+`wallet.PreviewedCredential.AlwaysDisclosed` (and walletflow's
+`Disclosure.AlwaysDisclosed`) now lists an SD-JWT VC object or array
+that reaches the Verifier empty because it holds only decoy digests or
+only claims the presentation doesn't send, as it already listed a
+literal `{}` or `[]`. The Verifier learns that the claim exists. A
+consent screen showing `AlwaysDisclosed` may show more entries; one
+inside a Disclosure a selected claim sends is in `DisclosedAlong`, and
+a registration's coverage check counts it.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

@@ -274,6 +274,9 @@ jobs:
           - id: wallet-decode-metadata
             pkg: ./wallet
             name: FuzzDecodeMetadata
+          - id: wallet-preview-covers-disclosure
+            pkg: ./wallet
+            name: FuzzPreviewCoversDisclosure
           - id: walletflow-copy-marks
             pkg: ./walletflow
             name: FuzzCopyMarks

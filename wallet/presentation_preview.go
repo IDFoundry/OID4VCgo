@@ -34,7 +34,10 @@ type PreviewedCredential struct {
 	// the plaintext members of a disclosed object or array element a
 	// claim sits within, and the other elements of an array the issuer
 	// disclosed as one. Each is a leaf, walked into objects and arrays;
-	// an index counts the elements the holder's credential has. The
+	// an object or array the Verifier receives empty (one holding only
+	// decoys, or only claims not sent) is a leaf itself, as a literal {}
+	// or [] is. An index counts the elements the holder's credential
+	// has. The
 	// registered JWT and SD-JWT VC claims (iss, vct, cnf, iat, nbf, exp,
 	// status, jti) aside. Show them with Claims. None for an mdoc, whose
 	// every element is selectively disclosed.
@@ -231,33 +234,33 @@ func revealedMembers(obj map[string]any, byDigest map[string]sdjwtvc.Disclosure,
 // presentation sending sent reveals: the members of an object and the
 // elements of an array it reveals, walked down to their values. An
 // element's index counts the elements the holder's credential has (a
-// decoy isn't one), revealed or not. An empty object or array is a leaf
-// itself.
+// decoy isn't one), revealed or not. An object or array that reveals
+// no member or element is a leaf itself: the Verifier receives it
+// empty, whether it is empty in the credential, holds only decoys, or
+// holds only claims the presentation doesn't send.
 func appendRevealedLeaves(out []dcql.Path, path dcql.Path, v any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool, depth int) []dcql.Path {
 	if depth > sdjwtvc.MaxResolveDepth {
 		return append(out, path)
 	}
+	before := len(out)
 	switch t := v.(type) {
 	case map[string]any:
-		if len(t) == 0 {
-			return append(out, path)
-		}
 		for _, m := range revealedMembers(t, byDigest, sent) {
 			out = appendRevealedLeaves(out, childPath(path, dcql.PathKey(m.name)), m.value, byDigest, sent, depth+1)
 		}
 	case []any:
-		if len(t) == 0 {
-			return append(out, path)
-		}
 		out = appendRevealedElementLeaves(out, path, t, byDigest, sent, depth)
 	default:
+		return append(out, path)
+	}
+	if len(out) == before {
 		out = append(out, path)
 	}
 	return out
 }
 
-// appendRevealedElementLeaves appends to out the leaves of arr, a
-// non-empty array at path, as appendRevealedLeaves does: of each
+// appendRevealedElementLeaves appends to out the leaves of arr, an
+// array at path, as appendRevealedLeaves does: of each
 // element it reveals, indexed among the elements the holder's
 // credential has.
 func appendRevealedElementLeaves(out []dcql.Path, path dcql.Path, arr []any, byDigest map[string]sdjwtvc.Disclosure, sent map[string]bool, depth int) []dcql.Path {
