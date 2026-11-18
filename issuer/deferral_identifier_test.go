@@ -207,4 +207,48 @@ func TestDeferral_LegacyRecordAudited(t *testing.T) {
 			t.Errorf("granted poll's event = %+v, want a success for test-client", got[1])
 		}
 	})
+
+	// DeferredCredentialHandler with Resolve checks the poll before
+	// Resolve too: still one event per poll, whether granted or not.
+	t.Run("legacy, through the handler with Resolve", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			auth    issuer.AuthorizedRequest
+			outcome issuer.AuditOutcome
+		}{
+			{"granted", deferralAuth, issuer.AuditOutcomeSuccess},
+			{"not granted", func() issuer.AuthorizedRequest { a := deferralAuth; a.Scopes = nil; return a }(), issuer.AuditOutcomeFailure},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				sink := newFakeAuditSink()
+				f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
+				txID, _ := f.deferOne(t) // pending, so Resolve is reached
+				if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
+					r.RequestedByConfigurationID = false
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				resolved := 0
+				dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+					ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: tc.auth.Subject, Authorized: tc.auth}}),
+					Resolve: func(context.Context, issuer.Grant, string, issuer.DeferredTransactionRecord) error {
+						resolved++
+						return nil
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				postCredentialRequest(t, dh, `{"transaction_id":"`+txID+`"}`)
+				got := legacyEvents(sink)
+				if len(got) != 1 || got[0].Outcome != tc.outcome {
+					t.Fatalf("one poll recorded %+v, want one legacy event with outcome %v", got, tc.outcome)
+				}
+				if want := map[bool]int{true: 1, false: 0}[tc.outcome == issuer.AuditOutcomeSuccess]; resolved != want {
+					t.Fatalf("Resolve called %d times, want %d", resolved, want)
+				}
+			})
+		}
+	})
 }
