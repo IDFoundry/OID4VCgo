@@ -324,6 +324,16 @@ consent screen showing `AlwaysDisclosed` may show more entries; one
 inside a Disclosure a selected claim sends is in `DisclosedAlong`, and
 a registration's coverage check counts it.
 
+### A nil `*X5CVerifierRoots` or `*NoVerifierTrust` is refused
+
+`wallet.New`, and so `walletflow.New`, now refuses a
+`Config.VerifierTrust` that is a nil `*wallet.X5CVerifierRoots` or
+`*wallet.NoVerifierTrust`, and `ParseAuthorizationRequest` and
+`ParseDCAPIRequest` refuse one as their `VerifierTrust`. Before, it
+was accepted and the first signed request panicked. Pass the value, a
+non-nil pointer, or no `VerifierTrust` (a nil interface) for a Wallet
+that only receives credentials.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

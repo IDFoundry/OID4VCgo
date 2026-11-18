@@ -267,14 +267,14 @@ func sanDNSConfig(trust wallet.VerifierTrust) wallet.Config {
 // the chain to anchors: the name alone binds the request to nothing.
 func TestNew_X509SANDNSNeedsTrustAnchors(t *testing.T) {
 	const want = "wallet: config: accept_x509_san_dns needs a VerifierTrust that verifies the x5c chain to trust anchors: X5CVerifierRoots with Roots, or another VerifierTrust, never NoVerifierTrust or none"
-	var nilRoots *wallet.X5CVerifierRoots
+	// A nil *X5CVerifierRoots is refused before, whatever
+	// AcceptX509SANDNS (TestNew_RejectsNilVerifierTrustPointer).
 	for name, trust := range map[string]wallet.VerifierTrust{
 		"none":                        nil,
 		"NoVerifierTrust":             wallet.NoVerifierTrust{},
 		"*NoVerifierTrust":            &wallet.NoVerifierTrust{},
 		"X5CVerifierRoots, no Roots":  wallet.X5CVerifierRoots{},
 		"*X5CVerifierRoots, no Roots": &wallet.X5CVerifierRoots{},
-		"nil *X5CVerifierRoots":       nilRoots,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := wallet.New(sanDNSConfig(trust), wallet.Dependencies{Clock: wallet.ClockFunc(time.Now)}); err == nil || err.Error() != want {

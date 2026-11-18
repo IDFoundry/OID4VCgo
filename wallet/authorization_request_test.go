@@ -397,7 +397,8 @@ func newTestWalletTrusting(t *testing.T, trust wallet.VerifierTrust, do func(*ht
 // certificate issued by the trusted CA is accepted (and its leaf
 // returned); one from another CA, or with a self-signed leaf even when
 // that leaf is itself a trusted root (HAIP 1.0 §5), is rejected; and a
-// missing VerifierTrust is an error rather than a silent skip.
+// missing or nil-pointer VerifierTrust is an error rather than a silent
+// skip or a panic.
 func TestParseAuthorizationRequest_ChecksVerifierTrust(t *testing.T) {
 	v, clientID, trust := newTestVerifier(t)
 	built, err := v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: testQuery(t)})
@@ -427,6 +428,11 @@ func TestParseAuthorizationRequest_ChecksVerifierTrust(t *testing.T) {
 	}
 	if _, err := parse(wallet.NoVerifierTrust{}); err != nil {
 		t.Errorf("NoVerifierTrust: %v", err)
+	}
+	for _, nilTrust := range []wallet.VerifierTrust{(*wallet.X5CVerifierRoots)(nil), (*wallet.NoVerifierTrust)(nil)} {
+		if _, err := parse(nilTrust); err == nil || !strings.Contains(err.Error(), "VerifierTrust is a nil") {
+			t.Errorf("%T(nil) VerifierTrust: error = %v, want it refused", nilTrust, err)
+		}
 	}
 
 	// A self-signed leaf is rejected even when it's itself a trusted root.
@@ -473,6 +479,24 @@ func TestNew_RejectsNoVerifierTrustInProduction(t *testing.T) {
 	cfg.VerifierTrust = wallet.X5CVerifierRoots{Roots: x509.NewCertPool(), Revocation: certrevocation.NoCheck{}}
 	if _, err := wallet.New(cfg, productionDependencies()); err != nil {
 		t.Errorf("New(X5CVerifierRoots) under AssuranceProduction: %v", err)
+	}
+}
+
+// TestNew_RejectsNilVerifierTrustPointer checks New refuses a typed-nil
+// *X5CVerifierRoots or *NoVerifierTrust, whose VerifyVerifierChain
+// would panic at the first request, under either assurance level.
+func TestNew_RejectsNilVerifierTrustPointer(t *testing.T) {
+	for _, assurance := range []wallet.AssuranceLevel{wallet.AssuranceDevelopment, wallet.AssuranceProduction} {
+		cfg := validConfig()
+		cfg.Assurance = assurance
+		cfg.Fetch.AllowLoopbackHTTP = false
+		for _, trust := range []wallet.VerifierTrust{(*wallet.X5CVerifierRoots)(nil), (*wallet.NoVerifierTrust)(nil)} {
+			cfg.VerifierTrust = trust
+			// AssuranceProduction refuses NoVerifierTrust by type first.
+			if _, err := wallet.New(cfg, productionDependencies()); err == nil || !strings.Contains(err.Error(), "nil") && !strings.Contains(err.Error(), "not permitted") {
+				t.Errorf("New(%T(nil)) under %v: error = %v, want it refused", trust, assurance, err)
+			}
+		}
 	}
 }
 
