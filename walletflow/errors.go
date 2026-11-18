@@ -30,9 +30,10 @@ var (
 	// the wallet holds nothing that answers the request.
 	ErrNoMatchingCredential = errors.New("walletflow: no held credential answers the request")
 	// ErrReissueRequired is wrapped by Wallet.RefreshCredential when a
-	// credential can't be refreshed: it came without a refresh token, or
-	// the Authorization Server no longer accepts it. Receive it again
-	// from a new Credential Offer.
+	// credential can't be refreshed: it came without a refresh token,
+	// the Authorization Server no longer accepts it, or the Wallet
+	// Provider no longer attests its refresh grant's instance key.
+	// Receive it again from a new Credential Offer.
 	ErrReissueRequired = errors.New("walletflow: the credential can't be refreshed: receive it again")
 	// ErrRefreshInProgress is wrapped by Wallet.RefreshCredential when
 	// another Wallet sharing the GrantStore — another process — is

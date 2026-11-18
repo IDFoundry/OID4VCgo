@@ -46,7 +46,10 @@ func retiringRefusals() map[string]error {
 		"instance_key_expired":    &walletprovider.RefusedError{Status: 403, Code: walletprovider.CodeInstanceKeyExpired},
 		"registration_expired":    &walletprovider.RefusedError{Status: 403, Code: walletprovider.CodeRegistrationExpired},
 		"instance_key_registered": &walletprovider.RefusedError{Status: 409, Code: walletprovider.CodeInstanceKeyRegistered},
-		"wrapped sentinel":        fmt.Errorf("native provider: %w", walletprovider.ErrInstanceKeyExpired),
+		// The record of the key deleted after its retention, and no
+		// fresh evidence the client can make for it (Android).
+		"evidence_required": &walletprovider.RefusedError{Status: 400, Code: walletprovider.CodeEvidenceRequired},
+		"wrapped sentinel":  fmt.Errorf("native provider: %w", walletprovider.ErrInstanceKeyExpired),
 	}
 }
 
@@ -114,20 +117,31 @@ func TestRefreshCredential_InstanceKeyRetired(t *testing.T) {
 }
 
 // A refusal that doesn't retire the instance key — the instance
-// suspended, say — keeps the grant: a later refresh may succeed.
+// suspended, say, or a retiring code at a status the provider doesn't
+// answer it with, as a redirect or a proxy in front of it may — keeps
+// the grant: a later refresh may succeed.
 func TestRefreshCredential_ProviderRefusalKeepsTheGrant(t *testing.T) {
-	ctx := context.Background()
-	f := newFixture(t, walletflowtest.Options{})
-	w, provider := newRefusingWallet(t, f, walletflow.NewMemoryGrantStore())
-	c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
-	var refusal error = &walletprovider.RefusedError{Status: 403, Code: "instance_not_active"}
-	provider.refusal.Store(&refusal)
-	if _, _, err := w.RefreshCredential(ctx, c.ID); err == nil || errors.Is(err, walletflow.ErrReissueRequired) {
-		t.Fatalf("RefreshCredential = %v, want the refusal, not ErrReissueRequired", err)
-	}
-	provider.refusal.Store(nil)
-	if _, _, err := w.RefreshCredential(ctx, c.ID); err != nil {
-		t.Fatalf("RefreshCredential once the provider attests again = %v", err)
+	for name, refusal := range map[string]error{
+		"instance_not_active":            &walletprovider.RefusedError{Status: 403, Code: "instance_not_active"},
+		"registration_expired at 302":    &walletprovider.RefusedError{Status: 302, Code: walletprovider.CodeRegistrationExpired},
+		"instance_key_expired at 404":    &walletprovider.RefusedError{Status: 404, Code: walletprovider.CodeInstanceKeyExpired},
+		"instance_key_registered at 403": &walletprovider.RefusedError{Status: 403, Code: walletprovider.CodeInstanceKeyRegistered},
+		"evidence_required at 307":       &walletprovider.RefusedError{Status: 307, Code: walletprovider.CodeEvidenceRequired},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t, walletflowtest.Options{})
+			w, provider := newRefusingWallet(t, f, walletflow.NewMemoryGrantStore())
+			c := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+			provider.refusal.Store(&refusal)
+			if _, _, err := w.RefreshCredential(ctx, c.ID); err == nil || errors.Is(err, walletflow.ErrReissueRequired) {
+				t.Fatalf("RefreshCredential = %v, want the refusal, not ErrReissueRequired", err)
+			}
+			provider.refusal.Store(nil)
+			if _, _, err := w.RefreshCredential(ctx, c.ID); err != nil {
+				t.Fatalf("RefreshCredential once the provider attests again = %v", err)
+			}
+		})
 	}
 }
 

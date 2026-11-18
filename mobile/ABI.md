@@ -206,7 +206,7 @@ format or error code below changes incompatibly.
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
-| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
+| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired`, `instance_key_registered` or, within ABI 16, `evidence_required`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `untrusted_issuer` | the offer names a Credential Issuer outside `credential_issuers`: it's refused before fetching its metadata (a `credential_offer_uri` is fetched first); or, under `require_signed_issuer_metadata` and `require_issuer_metadata_name`, the issuer's metadata isn't signed, or is signed naming another issuer. Resuming an authorization, refreshing a credential or polling a deferred one is refused the same way when `credential_issuers` no longer lists its issuer, before anything is sent there, and what the wallet holds from it is kept (ABI 16) |
 | `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
@@ -229,7 +229,7 @@ the wallet's own:
 |---|---|---|
 | `not_configured` | `invalid_input` | the configuration lacks what the call needs |
 | `refresh_in_progress` | `unavailable` | another process is refreshing with the same grant (ABI 13) |
-| the Wallet Provider's error code | `platform` | a Wallet Provider callback (or a `CreateKey` that asked the provider for a challenge) failed with `[refused:code]`: the provider refused with that error code of its protocol, such as `instance_not_active` (suspended), `instance_revoked` or `invalid_signed_request` ([WALLET_PROVIDER.md](WALLET_PROVIDER.md)); a refresh refused with `instance_key_expired`, `registration_expired` or `instance_key_registered` is `reissue_required` instead. Added within ABI 15 |
+| the Wallet Provider's error code | `platform` | a Wallet Provider callback (or a `CreateKey` that asked the provider for a challenge) failed with `[refused:code]`: the provider refused with that error code of its protocol, such as `instance_not_active` (suspended), `instance_revoked` or `invalid_signed_request` ([WALLET_PROVIDER.md](WALLET_PROVIDER.md)); a refresh refused with `instance_key_expired`, `registration_expired`, `instance_key_registered` or `evidence_required` is `reissue_required` instead. Added within ABI 15 |
 | `certificate_revoked` | any code without a detail of its own, such as `protocol` or `untrusted_verifier` | a certificate in a chain checked under `revocation` is revoked (its CA's CRL names it): a credential's issuer on receipt, a Verifier's or mdoc reader's request signer, a status list's signer, or, from a ProximityReader's `HandleMessage`, the document's signer. The message names the certificate. Added within ABI 14 (OID4VCWallet 0.27.0) |
 | `no_current_crl` | likewise | a role named in `revocation` holds no current CRL from the certificate's CA, so its revocation can't be decided and the chain is refused: `RefreshCRLs` (or `SetCRLs`) and try again. Added within ABI 14 (OID4VCWallet 0.27.0) |
 
@@ -452,16 +452,25 @@ failure, reported as `network` (retryable); one starting with
 protocol's error codes — is `platform` with the detail `code`, except
 that a refresh whose `WalletAttestation`, or whose `KeyAttestation`
 for its grant's instance key, is refused with
-`instance_key_expired`, `registration_expired` or
-`instance_key_registered` is `reissue_required`: the provider won't
+`instance_key_expired`, `registration_expired`,
+`instance_key_registered` or `evidence_required` (the provider deleted
+its record of the key after its retention, and the callback couldn't
+send fresh evidence for it; added within ABI 16) is
+`reissue_required`: the provider won't
 attest its grant's instance key again, so the grant and its key are
 deleted. An issuance's `KeyAttestation` refused so stays `platform`,
 and nothing is deleted: its instance key is its own, and the next
 issuance makes another (registering again first, where the native
-provider forgot its registration). Any other is `platform`. The Swift package's adapter marks a `URLError` as
+provider forgot its registration). Any other is `platform`. The mark
+carries no HTTP status, so mark these codes, and `instance_revoked`,
+only for an answer with the status the provider gives them (403; 409
+for `instance_key_registered`, 400 for `evidence_required`): the same
+code in a redirect, or a proxy's answer in front of the provider,
+isn't the provider's refusal. The Swift package's adapter marks a `URLError` as
 network and a `WalletProviderRefusedError` with an error code as
 refused, and the Kotlin library's an `IOException` and a
-`WalletProviderRefusedException` likewise.
+`WalletProviderRefusedException` likewise; their `HttpWalletProvider`
+gives such a code only at its status.
 
 ## Wallet
 

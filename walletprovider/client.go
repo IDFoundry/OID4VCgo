@@ -73,15 +73,26 @@ const (
 // registered again.
 const CodeInstanceKeyRegistered = "instance_key_registered"
 
+// CodeEvidenceRequired is the refusal of a request that sent no evidence
+// where the provider needs it (ErrEvidenceRequired): among others, a
+// Wallet Attestation for an instance key whose record the provider has
+// deleted (Config.InstanceKeyRetention). A wallet whose evidence binds
+// the challenge into the key's own attestation, as Android Key
+// Attestation does, can't make it for that key again.
+const CodeEvidenceRequired = "evidence_required"
+
 // CodeError is the error a refusal with the protocol's error code code
 // matches (errors.Is): ErrRegistrationExpired for
 // CodeRegistrationExpired, ErrInstanceKeyExpired for
 // CodeInstanceKeyExpired, ErrInstanceKeyRegistered for
-// CodeInstanceKeyRegistered, as the Provider's own errors do; nil for
-// any other code. A RefusedError matches it, and a wallet whose
-// provider client isn't this package's (a native one, say) can wrap it
-// in its own refusal, so that walletflow tells what the refusal means
-// for an instance key the same way.
+// CodeInstanceKeyRegistered, ErrEvidenceRequired for
+// CodeEvidenceRequired, as the Provider's own errors do; nil for any
+// other code. A RefusedError matches it at the code's status
+// (CodeStatus), and a wallet whose provider client isn't this package's
+// (a native one, say) can wrap it in its own refusal, so that walletflow
+// tells what the refusal means for an instance key the same way: only
+// for an answer with that status, since walletflow forgets a refresh
+// grant on it.
 func CodeError(code string) error {
 	switch code {
 	case CodeRegistrationExpired:
@@ -90,15 +101,37 @@ func CodeError(code string) error {
 		return ErrInstanceKeyExpired
 	case CodeInstanceKeyRegistered:
 		return ErrInstanceKeyRegistered
+	case CodeEvidenceRequired:
+		return ErrEvidenceRequired
 	}
 	return nil
 }
 
-// Is makes a RefusedError match the error its code does (CodeError), so
-// a wallet can tell what to send fresh evidence for with errors.Is.
+// CodeStatus is the HTTP status Provider.Handler answers a refusal with
+// code with, for the codes CodeError names an error for and
+// "instance_revoked": 403, 409 for CodeInstanceKeyRegistered, 400 for
+// CodeEvidenceRequired; 0 for any other code. A client acts on these
+// codes, which discard a registration or a refresh grant, only at that
+// status: an answer with another — a redirect, or a proxy's page in
+// front of the provider — isn't the provider's refusal.
+func CodeStatus(code string) int {
+	switch code {
+	case CodeRegistrationExpired, CodeInstanceKeyExpired, "instance_revoked":
+		return http.StatusForbidden
+	case CodeInstanceKeyRegistered:
+		return http.StatusConflict
+	case CodeEvidenceRequired:
+		return http.StatusBadRequest
+	}
+	return 0
+}
+
+// Is makes a RefusedError match the error its code does (CodeError), at
+// the code's status (CodeStatus), so a wallet can tell what to send
+// fresh evidence for with errors.Is.
 func (e *RefusedError) Is(target error) bool {
 	sentinel := CodeError(e.Code)
-	return sentinel != nil && target == sentinel
+	return sentinel != nil && target == sentinel && e.Status == CodeStatus(e.Code)
 }
 
 // Client speaks the provider's HTTP protocol (Provider.Handler) for a
