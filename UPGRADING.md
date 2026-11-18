@@ -268,6 +268,27 @@ Where such a trust list is shared, move to one of:
 - `dns:` identifiers, under the `dNSName` constraints, where the check
   takes them (a Key Attestation's or SD-JWT VC's `iss`).
 
+### A signed DC API request is checked for its origin first (`wallet`, `walletflow`)
+
+`wallet.ParseDCAPIRequest` and `ParseDCAPIRequestData`, and so
+`walletflow.StartDCAPIPresentation`, now refuse a signed or
+multi-signed request whose `expected_origins` doesn't name the calling
+origin, or that has none, before checking its signature, chain,
+`response_type`, `response_mode` or anything else, and with the same
+plain error whatever else is wrong with it. Such a request used to get a
+`*RequestRejectedError` (`invalid_request`), and so a
+`walletflow.RequestRefusedError` with a `DCAPIResponse` for the page,
+when it was signed by a Verifier the wallet trusts but asked for another
+response mode, as a redirect-flow Request Object does; and
+`ErrUntrustedVerifier` when the wallet didn't trust it. Any page could
+tell those apart, and so learn which Verifiers the wallet trusts. A
+request from an origin it names is checked as before.
+
+Nothing needs to change, as long as the app fails the platform's call
+the same way for every error that isn't a `RequestRefusedError`, as
+`StartDCAPIPresentation`'s documentation now asks: the mobile libraries
+already do.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

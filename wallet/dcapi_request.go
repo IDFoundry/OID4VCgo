@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // dcAPIResponseMode is the only Response Mode a DC API request may ask
@@ -55,13 +59,25 @@ type ParseDCAPIRequestParams struct {
 // x5c chain with params.VerifierTrust, its signature, and that its
 // client_id is the x509_hash of the signing certificate, or with
 // params.AcceptX509SANDNS an x509_san_dns one of its dNSName subject
-// alternative names — and then what the DC API adds: response_type
-// must be vp_token, response_mode dc_api.jwt, and
-// params.Origin must be one of the request's expected_origins
-// (Appendix A.2: "If the Origin does not match any of the entries in
-// expected_origins, the Wallet MUST return an error"). A request
-// carrying transaction_data is refused with a *RequestRejectedError,
-// as ParseAuthorizationRequest refuses it.
+// alternative names — and then what the DC API adds: params.Origin
+// must be one of the request's expected_origins (Appendix A.2: "If the
+// Origin does not match any of the entries in expected_origins, the
+// Wallet MUST return an error"), response_type must be vp_token and
+// response_mode dc_api.jwt. A request carrying transaction_data is
+// refused with a *RequestRejectedError, as ParseAuthorizationRequest
+// refuses it.
+//
+// The origin is checked first, before the signature, the certificate
+// chain or anything else: a request that doesn't name params.Origin in
+// its expected_origins, or names none, is refused with the same plain
+// error whatever else is wrong with it, and never with a
+// *RequestRejectedError, the refusal a page is answered with. A page
+// replaying another Verifier's request, or its redirect-flow Request
+// Object, learns nothing of whether this Wallet trusts that Verifier,
+// or of how it's configured. Reading expected_origins from the
+// unverified payload only picks that error: a request is accepted, or
+// refused with a *RequestRejectedError, only once its signature and
+// chain are verified and the verified payload names the origin.
 //
 // An x509_san_dns DNS name isn't checked against the origin: OpenID4VP
 // 1.0 §5.9.3 exempts the DC API from its redirect_uri FQDN rule
@@ -92,6 +108,13 @@ func ParseDCAPIRequestContext(ctx context.Context, params ParseDCAPIRequestParam
 	if err := ctx.Err(); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
+	if len(params.Request) <= jose.MaxCompactBytes {
+		if parts := strings.Split(params.Request, "."); len(parts) == 3 {
+			if err := refuseOtherOrigin(parts[1], params.Origin); err != nil {
+				return AuthorizationRequest{}, err
+			}
+		}
+	}
 	cert, payload, err := verifyRequestObject(params.Request, params.VerifierTrust)
 	if err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
@@ -109,12 +132,62 @@ func ParseDCAPIRequestContext(ctx context.Context, params ParseDCAPIRequestParam
 	return finishDCAPIRequest(ctx, wire, params.Origin, cert, wire.ClientID, true)
 }
 
+// refuseOtherOrigin is checkExpectedOrigins of a signed request's
+// payload, the base64url payloadSegment of its JWS, read before its
+// signature or certificate chain is checked. It only picks the error a
+// request is refused with, never that one is accepted: the verified
+// payload is checked again (finishDCAPIRequest), and a payload this
+// can't read is left to the checks that follow, which refuse it. Run
+// first, it refuses a request from a page the request doesn't name
+// with one plain error, however the rest of it would have fared — its
+// Verifier trusted or not, its certificate revoked or not, its
+// response mode another flow's — and before any of that work is done
+// (OpenID4VP 1.0 Appendix A.2).
+func refuseOtherOrigin(payloadSegment, origin string) error {
+	payload, err := b64url.Encoding{}.DecodeString(payloadSegment)
+	if err != nil {
+		return nil
+	}
+	var wire struct {
+		ExpectedOrigins []string `json:"expected_origins"`
+	}
+	if strictjson.Unmarshal(payload, &wire) != nil {
+		return nil
+	}
+	return checkExpectedOrigins(wire.ExpectedOrigins, origin)
+}
+
+// checkExpectedOrigins refuses a signed request whose expected_origins
+// doesn't hold origin (Appendix A.2) with a plain error: no answer for
+// the page. Appendix A.2 says the error SHOULD be invalid_request, but
+// the OIDF suite's wrong-expected-origins fails a wallet that sends one
+// (conformance/wallet-vp/README.md), so the platform's call fails
+// instead.
+func checkExpectedOrigins(expected []string, origin string) error {
+	switch {
+	case len(expected) == 0:
+		return errors.New("wallet: parse dc api request: expected_origins is required for a signed request")
+	case !slices.Contains(expected, origin):
+		return fmt.Errorf("wallet: parse dc api request: origin %q is not in expected_origins", origin)
+	}
+	return nil
+}
+
 // finishDCAPIRequest checks what every DC API request must carry and
-// builds its AuthorizationRequest: response_type vp_token,
-// response_mode dc_api.jwt, a nonce and a response encryption key, and,
-// for a signed request, origin among its expected_origins. An unsigned
+// builds its AuthorizationRequest: for a signed request, origin among
+// its expected_origins, then response_type vp_token, response_mode
+// dc_api.jwt, a nonce and a response encryption key. An unsigned
 // request's expected_origins is ignored (Appendix A.2).
 func finishDCAPIRequest(ctx context.Context, wire wireRequestObjectPayload, origin string, cert *x509.Certificate, clientID string, signed bool) (AuthorizationRequest, error) {
+	// A request from another origin, perhaps replayed by another page,
+	// is refused with no answer for that page before anything that
+	// would answer it: whether this Wallet would have answered it from
+	// the origins it names is none of that page's business.
+	if signed {
+		if err := checkExpectedOrigins(wire.ExpectedOrigins, origin); err != nil {
+			return AuthorizationRequest{}, err
+		}
+	}
 	// A request for another response type or mode: invalid_request,
 	// which the page gets back unencrypted (OID4VP 1.0 Appendix A.4).
 	var refused string
@@ -126,18 +199,6 @@ func finishDCAPIRequest(ctx context.Context, wire wireRequestObjectPayload, orig
 	}
 	if refused != "" {
 		return AuthorizationRequest{}, &RequestRejectedError{Code: "invalid_request", Description: refused, op: dcAPIParseOp}
-	}
-	// A request from another origin, perhaps replayed by another page,
-	// is refused with no answer for that page. Appendix A.2 says the
-	// error SHOULD be invalid_request, but the OIDF suite's
-	// wrong-expected-origins fails a wallet that sends one
-	// (conformance/wallet-vp/README.md), so the platform's call fails
-	// instead.
-	switch {
-	case signed && len(wire.ExpectedOrigins) == 0:
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: expected_origins is required for a signed request")
-	case signed && !slices.Contains(wire.ExpectedOrigins, origin):
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: origin %q is not in expected_origins", origin)
 	}
 	encPub, kid, enc, err := responseEncryption(wire.ClientMetadata)
 	if err != nil {
@@ -284,7 +345,9 @@ type ParseDCAPIRequestDataParams struct {
 //     Origin, which the platform vouches for — show the holder that.
 //
 // Each is then checked as ParseDCAPIRequest checks a signed request,
-// expected_origins excepted for an unsigned one. Answer it the same
+// expected_origins excepted for an unsigned one: a signed or
+// multi-signed request is refused with a plain error, before any of its
+// signatures is checked, unless its expected_origins names Origin. Answer it the same
 // way; the presentations are bound to "origin:" + Origin in every form
 // (Appendix A.4).
 func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
@@ -388,6 +451,13 @@ func parseMultiSignedDCAPIRequest(ctx context.Context, params ParseDCAPIRequestD
 	}
 	if len(data.Request.Signatures) > MaxDCAPISignatures {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %d signatures, more than %d", len(data.Request.Signatures), MaxDCAPISignatures)
+	}
+	// Every signature signs the one payload: its expected_origins is
+	// checked once, before any of them.
+	if len(data.Request.Payload) <= jose.MaxCompactBytes {
+		if err := refuseOtherOrigin(data.Request.Payload, params.Origin); err != nil {
+			return AuthorizationRequest{}, err
+		}
 	}
 	var errs []error
 	for i, sig := range data.Request.Signatures {
