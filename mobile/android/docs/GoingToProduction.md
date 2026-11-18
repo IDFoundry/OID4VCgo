@@ -227,9 +227,13 @@ authorizations: it is for development only.
   SHA-256 digests of a certificate's SubjectPublicKeyInfo. Pin a CA's
   key, so a leaf renewal doesn't break the app, and keep a backup pin:
   a wrong set locks the wallet out of that host until an update. Pins
-  cover the SDK's own requests, not your app's, such as to your Wallet
-  Provider: pin that client yourself (OkHttp's `CertificatePinner`, or
-  a network security configuration).
+  cover the SDK's own requests, not your app's. `HttpWalletProvider`'s
+  requests to your Wallet Provider are made with `HttpURLConnection`,
+  which `network.tlsPins` doesn't reach and which takes no client of
+  yours: pin your provider's host with a `<pin-set>` in your app's
+  network security configuration (`res/xml/network_security_config.xml`,
+  named by the manifest's `android:networkSecurityConfig`), which
+  `HttpURLConnection` follows, with a backup pin and an `expiration`.
 - Outside `development` the SDK's requests reach public addresses only.
   If your issuers, Verifiers, status lists or CRL distribution points
   are inside your own network (an enterprise's, or a test

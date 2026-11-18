@@ -59,7 +59,12 @@ import java.util.Base64
  * 429, a challenge that expired before it was used) as
  * [WalletException.Code.network], which may be retried; a refusal
  * ([WalletProviderRefusedException]) as [WalletException.Code.platform],
- * its message naming the protocol's error code. On `instance_revoked`, it
+ * its message naming the protocol's error code. The codes below that
+ * discard something count only at the status the provider answers them
+ * with (403; 409 for `instance_key_registered`, 400 for
+ * `evidence_required`): the same code in a redirect, or in a page from a
+ * proxy in front of the provider, is a refusal without a code, which
+ * discards nothing. On `instance_revoked`, it
  * forgets the registration and deletes its registration key: the next
  * Wallet Attestation registers the installation again. On
  * `registration_expired` — the provider no longer accepts the evidence
@@ -94,6 +99,19 @@ import java.util.Base64
  * provider fails as [WalletException.Code.platform] without a request,
  * and an instance key made over it is sent alone, attested if the
  * provider has recorded it and refused (`evidence_required`) if not.
+ *
+ * A Wallet Attestation for an instance key whose record the provider
+ * deleted after its retention, sent alone once the challenge the key was
+ * made over has expired, is refused (`evidence_required`): Android Key
+ * Attestation can't vouch for an existing key over a new challenge, so
+ * the wallet reports a refresh needing that key as
+ * [WalletException.Code.reissueRequired] and forgets its refresh grant.
+ *
+ * Its requests are made with [HttpURLConnection], which the wallet's
+ * `network.tlsPins` doesn't reach (those pin the Go SDK's own requests):
+ * to pin the provider's certificates, give its domain a `<pin-set>` in
+ * the app's network security configuration, which [HttpURLConnection]
+ * follows.
  *
  * The installation registers once, and the challenges handed out are
  * remembered, for every `HttpWalletProvider` over the same
@@ -177,16 +195,28 @@ public class HttpWalletProvider internal constructor(
      */
     override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? = when (purpose) {
         KeyPurpose.DPOP -> null
-        KeyPurpose.INSTANCE -> lock.withLock {
-            challenge(PURPOSE_INSTANCE).also { remember(instanceChallenges, it) }.bytes
-        }
-        KeyPurpose.HOLDER -> lock.withLock {
-            val current = holderChallenge?.takeIf { it.expiresAt - clock() > CHALLENGE_REUSE_MARGIN_SECONDS }
-            val c = current ?: challenge(PURPOSE_HOLDER).also {
+        // Fetched outside the lock, which every attestation takes: a
+        // provider slow to answer holds up only the key waiting for it.
+        KeyPurpose.INSTANCE -> challenge(PURPOSE_INSTANCE).also { c -> lock.withLock { remember(instanceChallenges, c) } }.bytes
+        KeyPurpose.HOLDER -> (lock.withLock { currentHolderChallenge() } ?: newHolderChallenge()).bytes
+    }
+
+    /** The holder challenge new holder keys are made over, unless none is or it's near its expiry; under [lock]. */
+    private fun currentHolderChallenge(): IssuedChallenge? =
+        holderChallenge?.takeIf { it.expiresAt - clock() > CHALLENGE_REUSE_MARGIN_SECONDS }
+
+    /**
+     * A new holder challenge, fetched outside [lock], which becomes the
+     * current one: unless another call made one current meanwhile, which
+     * is taken instead, so keys made at once share it, as before.
+     */
+    private suspend fun newHolderChallenge(): IssuedChallenge {
+        val fetched = challenge(PURPOSE_HOLDER)
+        return lock.withLock {
+            currentHolderChallenge() ?: fetched.also {
                 remember(holderChallenges, it)
                 holderChallenge = it
             }
-            c.bytes
         }
     }
 
@@ -248,14 +278,20 @@ public class HttpWalletProvider internal constructor(
         return lock.withLock { instanceChallenges.lastOrNull { it.expiresAt > clock() && contains(leaf, it.bytes) } }
     }
 
-    /** The holder challenge the keys with [evidence] were made over, which no new key is made over after. */
+    /**
+     * The holder challenge the keys with [evidence] were made over, which
+     * no new key is made over after. Keys made over none this provider
+     * remembers unexpired fail here, without a request: sent with another
+     * challenge, which the keys weren't made over, the provider would
+     * refuse them and use that challenge up, failing a concurrent
+     * issuance whose keys were made over it.
+     */
     private suspend fun holderChallengeOf(evidence: List<KeyEvidence>): IssuedChallenge = lock.withLock {
         val leaves = evidence.map { it.certificateChain.first() }
         val chosen = holderChallenges.filter { it.expiresAt > clock() }
             .maxByOrNull { c -> leaves.count { contains(it, c.bytes) } }
             ?.takeIf { c -> leaves.any { contains(it, c.bytes) } }
-            ?: holderChallenge
-            ?: throw StoreException("no holder challenge was given for these keys")
+            ?: throw StoreException("the holder keys weren't made over a holder challenge this Wallet Provider gave, or it has expired: make new keys")
         if (chosen.usedUp) throw StoreException("the holder keys were made over a challenge the Wallet Provider has used up: make new keys")
         // A challenge is used by the request naming it, accepted or
         // not: no new key is made over it. It's still remembered, so
@@ -462,11 +498,20 @@ public class HttpWalletProvider internal constructor(
             parseObject(answer.body) ?: throw StoreException("the Wallet Provider's answer to $path is malformed")
         }
 
-    /** The exception for an answer other than the one documented. */
+    /**
+     * The exception for an answer other than the one documented. A code
+     * that discards the registration, an instance key or a refresh grant
+     * ([CODE_STATUS]) at a status the provider doesn't answer it with — a
+     * redirect, or a page from a proxy in front of the provider — isn't
+     * the provider's refusal: it's dropped, and the answer refused as one
+     * without a code, which discards nothing.
+     */
     private fun failure(path: String, answer: WalletProviderAnswer, isJSON: Boolean): Exception {
         val o = if (isJSON) parseObject(answer.body) else null
-        val code = o?.stringOrNull("error")?.takeIf { it.isNotEmpty() }
-        val description = o?.stringOrNull("error_description")
+        val sent = o?.stringOrNull("error")?.takeIf { it.isNotEmpty() }
+        val atItsStatus = sent == null || CODE_STATUS[sent].let { it == null || it == answer.status }
+        val code = sent.takeIf { atItsStatus }
+        val description = o?.stringOrNull("error_description")?.takeIf { atItsStatus }
         return when {
             answer.status >= 500 || answer.status == 429 || code == INVALID_CHALLENGE ->
                 WalletProviderUnavailableException(answer.status, code, "the Wallet Provider couldn't answer $path: HTTP ${answer.status}" + (code?.let { " $it" } ?: ""))
@@ -519,6 +564,21 @@ public class HttpWalletProvider internal constructor(
         /** The refusals of a signed request that end the registration: it's forgotten, and the next one registers again. */
         internal val FORGETS_REGISTRATION = setOf(INSTANCE_REVOKED, REGISTRATION_EXPIRED)
         internal const val INSTANCE_KEY_REGISTERED = "instance_key_registered"
+        internal const val INSTANCE_KEY_EXPIRED = "instance_key_expired"
+        internal const val EVIDENCE_REQUIRED = "evidence_required"
+
+        /**
+         * The status the provider answers each code that discards
+         * something with (`walletprovider.CodeStatus`): the registration
+         * ([INSTANCE_REVOKED], [REGISTRATION_EXPIRED]), or, in Go, a
+         * refresh grant bound to an instance key ([INSTANCE_KEY_EXPIRED],
+         * [REGISTRATION_EXPIRED], [INSTANCE_KEY_REGISTERED],
+         * [EVIDENCE_REQUIRED]). Acted on only at that status.
+         */
+        internal val CODE_STATUS: Map<String, Int> = mapOf(
+            INSTANCE_REVOKED to 403, REGISTRATION_EXPIRED to 403, INSTANCE_KEY_EXPIRED to 403,
+            INSTANCE_KEY_REGISTERED to 409, EVIDENCE_REQUIRED to 400,
+        )
 
         /** The largest answer read, as the protocol's request limit. */
         internal const val MAX_RESPONSE_BYTES = 256 * 1024

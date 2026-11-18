@@ -584,6 +584,80 @@ class HttpWalletProviderTest {
     }
 
     @Test
+    fun discardingCodesCountOnlyAtTheirStatus() = runBlocking {
+        for (status in listOf(302, 307, 400, 404, 409)) {
+            for (code in listOf("instance_revoked", REGISTRATION_EXPIRED, "instance_key_expired", "evidence_required")) {
+                val s = Setup()
+                val key = s.newInstanceKey()
+                s.walletAttestation(key)
+                val kept = s.registry.instance()!!
+                s.provider.refuse[WALLET_ATTESTATION] = status to code
+                val e = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+                assertTrue("$code at $status: $e", e is WalletProviderRefusedException)
+                e as WalletProviderRefusedException
+                assertEquals(status, e.status)
+                if (code == "evidence_required" && status == 400) {
+                    assertEquals(code, e.error)
+                } else {
+                    // Not the provider's refusal: no code, and nothing discarded.
+                    assertNull("$code at $status", e.error)
+                    assertNull("$code at $status", e.description)
+                    assertFalse("$code at $status", e.message!!.contains(code))
+                }
+                assertEquals("$code at $status", kept.instanceID, s.registry.instance()?.instanceID)
+                assertTrue("$code at $status", s.registrationKeys.publicKey(kept.keyID) != null)
+                assertEquals("$code at $status", 1, s.provider.count(INSTANCES))
+            }
+        }
+    }
+
+    @Test
+    fun holderKeysOverNoRememberedChallengeFailWithoutARequest() = runBlocking {
+        val s = Setup()
+        val instance = s.newInstanceKey()
+        s.walletAttestation(instance)
+        // Keys made over a challenge this provider never gave, while
+        // another is current, which a concurrent issuance's keys share.
+        val stranger = s.keys.createKey(KeyPurpose.HOLDER, ByteArray(32) { 7 })
+        val sharing = s.newHolderKey()
+        val sent = s.provider.count(KEY_ATTESTATION)
+        val e = runCatching { s.keyAttestation(instance, listOf(stranger)) }.exceptionOrNull()
+        assertTrue("$e", e is StoreException && e !is WalletProviderRefusedException && e.message!!.contains("make new keys"))
+        assertEquals(sent, s.provider.count(KEY_ATTESTATION))
+        // The current challenge wasn't spent on them: the keys made over it are attested.
+        assertTrue(s.keyAttestation(instance, listOf(sharing)).isNotEmpty())
+    }
+
+    @Test
+    fun aHolderChallengeIsFetchedOutsideTheLock() = runBlocking {
+        val provider = FakeProvider()
+        val holderAsked = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val transport = WalletProviderTransport { url, headers, body ->
+            if (body.decodeToString().contains("\"holder\"")) {
+                holderAsked.countDown()
+                release.await()
+            }
+            provider.post(url, headers, body)
+        }
+        val wp = HttpWalletProvider("https://wp.example/wp/", InMemoryInstanceRegistry(), FakeKeyStore(), transport, { provider.now }, false)
+        val holder = async(Dispatchers.IO) { wp.attestationChallenge(KeyPurpose.HOLDER) }
+        try {
+            assertTrue(holderAsked.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            // The holder challenge's fetch is stalled: an instance
+            // challenge, which takes the same lock, is handed out all the
+            // same.
+            val instance = kotlinx.coroutines.withTimeoutOrNull(5_000) { wp.attestationChallenge(KeyPurpose.INSTANCE) }
+            assertEquals("an instance challenge waited for the holder challenge's fetch", 32, instance?.size)
+        } finally {
+            release.countDown()
+        }
+        assertEquals(32, holder.await()!!.size)
+        // Two keys made at once share one current holder challenge.
+        assertArrayEquals(wp.attestationChallenge(KeyPurpose.HOLDER), holder.await())
+    }
+
+    @Test
     fun instanceRevokedForgetsTheRegistration() = runBlocking {
         val s = Setup()
         val key = s.newInstanceKey()
