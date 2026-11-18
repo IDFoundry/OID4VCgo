@@ -120,7 +120,9 @@ func (p *MdocPresentation) Requests() []MdocRequest { return p.requests }
 
 // Linkable reports whether presenting the credential id names to this
 // origin now would hand it a copy another Verifier has seen, as
-// Presentation.Linkable does.
+// Presentation.Linkable does. Copies are keyed by the origin, not the
+// Reader: two readers one origin serves share a copy, which this
+// doesn't report.
 func (p *MdocPresentation) Linkable(id string) bool {
 	c, ok := p.byID[id]
 	return ok && p.w.linkable(c, p.verifier())

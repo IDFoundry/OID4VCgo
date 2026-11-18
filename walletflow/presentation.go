@@ -419,6 +419,12 @@ func (p *Presentation) DefaultSelection(ctx context.Context) (Selection, error) 
 // signing or sending anything: show it to the holder for consent. It
 // returns an error wrapping ErrInvalidSelection for a Selection that
 // doesn't answer the request.
+//
+// It lists the claims sent, not what the choice of them tells the
+// Verifier: where claim_sets or credential_sets offer options and a
+// claim carries values, answering with one option can say that a
+// claim it doesn't disclose fails another's values filter, as
+// wallet.PreviewPresentation's doc explains.
 func (p *Presentation) Preview(ctx context.Context, sel Selection) ([]Disclosure, error) {
 	held, err := p.held(ctx, sel)
 	if err != nil {

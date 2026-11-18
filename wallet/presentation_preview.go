@@ -79,6 +79,17 @@ func retainedClaims(cq dcql.CredentialQuery, selected []dcql.Path) []dcql.Path {
 // same choices PresentCredentials does, through the same matching
 // (MatchDCQLQuery) and claim selection. Credentials are ordered by
 // QueryID.
+//
+// It lists the claims a presentation sends, not what the Verifier can
+// infer from which were chosen. Where claim_sets or credential_sets
+// offer options and a claim carries values (DCQL's own design), the
+// first option the holder's credentials satisfy is the one answered,
+// so answering with a later one says the earlier one's value filter
+// failed: with claim_sets [[x], [y]], x asking for birthdate with
+// values ["1990-01-01"], a presentation of y's given_name alone tells
+// the Verifier the holder's birthdate is not 1990-01-01. Each such
+// probe needs the holder's consent, which a consent screen can ask
+// with this in mind.
 func PreviewPresentation(ctx context.Context, query dcql.Query, candidates []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) ([]PreviewedCredential, error) {
 	matches, err := MatchDCQLQuery(ctx, query, candidates, trustedAuthorities)
 	if err != nil {
