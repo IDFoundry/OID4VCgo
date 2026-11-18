@@ -15,7 +15,6 @@ browser = "1.10.0"
 camerax = "1.6.2"
 mlkit-barcode = "17.3.0"
 zxing = "3.5.3"
-coil = "3.6.3"
 credentials = "1.7.0-alpha03"
 registry = "1.0.0-alpha05"
 dokka = "2.2.0"
@@ -45,14 +44,12 @@ androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "
 mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcode" }
 # Draws the QR code a holder shows a reader in person.
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
-coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 androidx-credentials-registry-provider = { module = "androidx.credentials.registry:registry-provider", version.ref = "registry" }
 androidx-credentials-registry-play-services = { module = "androidx.credentials.registry:registry-provider-play-services", version.ref = "registry" }
 androidx-credentials-registry-openid = { module = "androidx.credentials.registry:registry-digitalcredentials-openid", version.ref = "registry" }
 androidx-credentials-registry-mdoc = { module = "androidx.credentials.registry:registry-digitalcredentials-mdoc", version.ref = "registry" }
 androidx-credentials-registry-sdjwtvc = { module = "androidx.credentials.registry:registry-digitalcredentials-sdjwtvc", version.ref = "registry" }
-coil-network = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
