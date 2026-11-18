@@ -403,7 +403,12 @@ suspends the instance too, where it only refused the request (a holder
 key's is answered `evidence_rejected`, not `no_key_attested`):
 `androidkey.EvidenceVerifier.Verify` wraps
 `walletprovider.ErrEvidenceRevoked` or `ErrEvidenceSuspended`, as
-`Recheck` does, and a custom `EvidenceVerifier` can too. And
+`Recheck` does, and a custom `EvidenceVerifier` can too. That holds
+only for evidence the provider gets to verify: a request refused
+first, the instance not active, its registration evidence or (for a Key
+Attestation) its instance key refused, as on `registration_expired`
+or `policy_refused`, or its challenge not valid, revokes nothing on
+the evidence it carries. And
 `Config.OnRecheckRefused` is now called for a `Policy` refusal too
 (`ErrPolicy`, the instance left active): an alert keyed on that
 callback sees refusals it didn't before.
@@ -546,8 +551,10 @@ Once the current period's status lists are full, a recorded instance
 key last used in the previous period now keeps its index there, and
 its Wallet or Key Attestation names it, where the request used to fail
 with HTTP 500. Such a renewal takes none of the instance's
-`MaxInstanceKeysPerPeriod`. A key whose index is older, and every new
-instance key, are still refused until a period's lists have room. When
+`MaxInstanceKeysPerPeriod`, and is attested even once the instance has
+used that up (it isn't answered 429 `too_many_instance_keys`). A key
+whose index is older, and every new instance key, are still refused
+until a period's lists have room. When
 a key moves to a later period's lists, its old index is kept as
 `InstanceKey.PreviousStatus` whenever that list is still served, not
 only when it's the previous period's, so `Suspend`, `Resume` and
@@ -565,7 +572,12 @@ size can't publish a list in which a new one handed out an index past
 2^16 (HTTP 500 for that list), nor set that index's status, so roll
 out quickly, or set
 `StatusListSize: 1 << 16` for the upgrade and raise it in a later
-rollout. Never lower it below an index a served list holds. A list of
+rollout. Never lower it below an index a served list holds. The same
+goes for rolling back: v0.81.0 with `StatusListSize` left zero
+silently takes 2^16 again, and can't publish a list holding an index
+past it (HTTP 500 for that list), nor set that index's status, until
+the list retires. Set `StatusListSize: 1 << 20` before rolling back. A
+list of
 2^20 two-bit statuses packs to 256 KiB, within a Relying Party's
 default 1 MiB token limit whatever its statuses; an issuer's
 `statuslist.Cache` keeps 256 KiB for each of the provider's lists it
@@ -578,9 +590,11 @@ list period (`Instance.CreatedAt`) now take indices from the period's
 first `Config.RecentInstanceStatusLists` lists alone: 16 of the 64 by
 default (`DefaultRecentInstanceStatusLists`). Other instances' keys
 take indices from any list: from those 16 with a chance in proportion
-to their share, otherwise from list 16 onwards, each falling back to
-the other once full, so the 16 hold established wallets' keys as
-densely as the rest do. Many instances
+to their share while they're no fuller than the other lists,
+otherwise from list 16 onwards, the 16 only once the rest are full.
+So the 16 hold established wallets' keys about as densely as the rest
+do, and established wallets' keys don't take the room recent
+instances' need while the rest have it. Many instances
 registered at once can then fill no more than that share of a period,
 where they used to be able to fill every list and have every other
 wallet's attestations refused until the period ended.
@@ -591,15 +605,26 @@ wallet's attestations refused until the period ended.
   as "the status lists of the current period that recently registered
   instances take indices from are full". Its recorded key on the
   previous period's lists keeps its index, as on full lists. Nothing
-  is revoked or forgotten.
+  is revoked or forgotten. A burst that fills the share refuses new
+  wallets' first keys for two periods, not one: its instances are
+  still recent in the next period, and their recorded keys move there
+  without evidence, filling the share again.
+- Size `StatusListSize` for the share too. Where r of a period's keys
+  are recent instances', they all fit while the period uses no more
+  than 1/(1+3r) of its capacity, at worst (established keys used early
+  in the period). An Android wallet that registers again when its
+  Remote Key Provisioning certificates expire is a new, recent
+  instance each time (DEPLOYING.md).
 - `StatusListFill` has a new `RecentInstanceLists` field and a
   `RecentInstanceFree` method; `Lists` are in list order. Alert on
   `RecentInstanceFree` falling fast early in a period (DEPLOYING.md).
 - Attestations now name lists across the period, so an issuer fetches
   more than one of the provider's lists. A key on list 16 or later
-  tells it its instance wasn't registered in the last period or two;
-  one on lists 0 to 15 tells it little, since a quarter of established
-  wallets' keys are there too.
+  tells it its instance was registered before the previous period.
+  One on lists 0 to 15 is a recent or an established instance's:
+  about four times as likely a recent one's as a key across all lists
+  is, and certainly one once recent instances' keys alone fill the
+  share.
 - `SweepStatusLists` now counts every list of a period, not up to the
   first empty one.
 - Raise `RecentInstanceStatusLists` for a launch that registers most

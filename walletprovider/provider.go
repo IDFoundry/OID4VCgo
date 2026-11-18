@@ -133,7 +133,20 @@ type Config struct {
 	// 64 × 2^20/2 ≈ 33.5M a period (a week): 5M wallets each issuing or
 	// refreshing twice a week use about 10M, which leaves a margin of
 	// about three times against many instances filling the lists
-	// (MaxInstanceKeysPerPeriod). A list of 2^20 two-bit statuses packs
+	// (MaxInstanceKeysPerPeriod). The keys of recently registered
+	// instances have a quarter of that, the RecentInstanceStatusLists
+	// share (about 8.4M), less the established instances' keys on it:
+	// these take it only while it's no fuller than the rest, so when
+	// both kinds of key are used throughout the period, recent ones are
+	// refused only once they alone fill it, but established keys used
+	// early in a period, recent ones late, take a part of it first.
+	// Where r of a period's keys are recent instances', they all fit
+	// at worst while the period uses no more than 1/(1+3r) of its
+	// capacity: count an Android wallet that registers again when its
+	// Remote Key Provisioning certificates expire, every few weeks, as
+	// recent, as each new registration is a new instance (about half
+	// the capacity, 16.7M at the default, at r = 1/3). A list of 2^20
+	// two-bit statuses packs
 	// to 256 KiB, so its token stays within a Relying Party's default
 	// limit (statuslist.DefaultMaxTokenBytes) whatever its statuses; its
 	// store holds a row per index handed out, not per index. It may be
@@ -163,7 +176,7 @@ type Config struct {
 	// older ones, and watch StatusListFill. A
 	// recorded key last used in the previous period keeps its index
 	// there once the current period's lists are full, taking none of
-	// this bound, so a wallet that moved its keys in the previous period
+	// this bound, even once the instance has used it up, so a wallet that moved its keys in the previous period
 	// keeps its Wallet Attestations through one full period; new
 	// instance keys, and keys whose index is older, are refused until a
 	// period's lists have room. Lists filled again period after period
@@ -176,10 +189,12 @@ type Config struct {
 	// of an instance registered in the current or previous period
 	// (Instance.CreatedAt) take indices from: a quarter of the period's
 	// capacity by default. Other instances' keys take indices from any
-	// list: from this share with a chance in proportion to its size,
-	// otherwise from the rest, each falling back to the other once full.
-	// So these lists hold established instances' keys as densely as
-	// the rest do, and
+	// list: from this share with a chance in proportion to its size
+	// while it's no fuller than the rest, otherwise from the rest, the
+	// share only once they're full. So these lists hold established
+	// instances' keys about as densely as the rest do, the recent
+	// instances' own keys aren't refused while established ones could
+	// have gone elsewhere, and
 	// instances registered in a burst, each costing a piece of
 	// registration evidence, can fill no more than this share of a
 	// period's lists between them, and leave the rest to the wallets
@@ -189,9 +204,16 @@ type Config struct {
 	// server_error, and logged as the recent instances' share being
 	// full; a recorded key on the previous period's lists keeps its
 	// index there, as on full lists. Nothing is revoked or forgotten.
-	// A key on one of the other lists was registered more than a
-	// period or two ago; one on this share may have been, as much as
-	// any. Zero means
+	// A burst that filled the share fills it again in the next period,
+	// its instances still recent then and their recorded keys moving
+	// without evidence, so it refuses new wallets' first keys for two
+	// periods, not one.
+	// A key on one of the other lists tells an issuer its instance was
+	// registered before the previous period. One on this share is a
+	// recent or an established instance's: about four times as likely
+	// a recent one's as a key across all lists is, as the share is a
+	// quarter of the lists, and certainly one once recent instances'
+	// keys alone fill it. Zero means
 	// DefaultRecentInstanceStatusLists; MaxStatusListsPerPeriod turns
 	// the share off, every instance taking indices from every list in
 	// turn.
@@ -322,8 +344,11 @@ type Dependencies struct {
 	// Clock returns the current time; nil means time.Now.
 	Clock func() time.Time
 
-	// Random is the source of challenges and instance IDs — ordinarily
-	// crypto/rand.Reader. REQUIRED.
+	// Random is the source of challenges and instance IDs, and of the
+	// random choice of the lists an established instance's key takes
+	// an index on (Config.RecentInstanceStatusLists), which hides
+	// recent instances' keys among established ones only while it's
+	// unpredictable. Ordinarily crypto/rand.Reader. REQUIRED.
 	Random io.Reader
 
 	// Logger receives Handler's record of each request it refuses, with

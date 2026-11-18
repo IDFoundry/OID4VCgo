@@ -2,6 +2,7 @@ package walletprovider_test
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"testing"
 	"time"
@@ -140,5 +141,111 @@ func TestStatusListsFullRenewalsKeepQuota(t *testing.T) {
 	in, err := h.deps.Instances.Get(context.Background(), victim.ID)
 	if err != nil || in.IndicesInPeriod != 0 {
 		t.Fatalf("the instance counts %d indices (%v) after the renewals, want 0", in.IndicesInPeriod, err)
+	}
+}
+
+// TestStatusListsFullQuotaUsedKeepsPreviousIndex: an instance that has
+// used up its MaxInstanceKeysPerPeriod still renews a recorded key on
+// the previous period's list once the lists its keys take indices from
+// are full, keeping that index, as the renewal takes none of the
+// quota: for an established instance, every list; for a recent one,
+// its share, the other lists still with room.
+func TestStatusListsFullQuotaUsedKeepsPreviousIndex(t *testing.T) {
+	ctx := context.Background()
+	renew := func(t *testing.T, h *harness, id string, key *ecdsa.PrivateKey) {
+		t.Helper()
+		kept := h.instanceKey(&key.PublicKey).Status
+		jwt, err := h.walletAttestation(id, &key.PublicKey, "")
+		if err != nil {
+			t.Fatalf("the renewal with the lists full and the quota used = %v", err)
+		}
+		if ref := walletAttestationStatus(t, jwt); ref != kept {
+			t.Fatalf("the renewal names %+v, want the previous period's %+v", ref, kept)
+		}
+		in, err := h.deps.Instances.Get(ctx, id)
+		if err != nil || in.IndicesInPeriod != fullListsPerInstance {
+			t.Fatalf("the instance counts %d indices (%v), want its %d", in.IndicesInPeriod, err, fullListsPerInstance)
+		}
+	}
+
+	t.Run("established", func(t *testing.T) {
+		h := newHarness(t, recentShareLists)
+		victim, _ := h.register(kindTEE)
+		victimKey := h.newInstanceKey(victim.ID, kindTEE)
+		capacity := walletprovider.MaxStatusListsPerPeriod * 8 / 2
+		var fleet []string
+		for range capacity / fullListsPerInstance {
+			in, _ := h.register(kindTEE)
+			fleet = append(fleet, in.ID)
+		}
+		h.toNextPeriod()
+		if _, err := h.walletAttestation(victim.ID, &victimKey.PublicKey, ""); err != nil {
+			t.Fatal(err)
+		}
+		// Two periods on, every instance is established: the victim uses
+		// up its quota, then the fleet fills every list.
+		h.toNextPeriod()
+		for range fullListsPerInstance {
+			h.newInstanceKey(victim.ID, kindTEE)
+		}
+		for _, id := range fleet {
+			for range fullListsPerInstance {
+				if _, err := h.walletAttestation(id, &newKey(t).PublicKey, kindTEE); err != nil && !errors.Is(err, statuslist.ErrListsFull) {
+					t.Fatal(err)
+				}
+			}
+		}
+		if fill, err := h.p.StatusListFill(ctx); err != nil || fill.Free() != 0 {
+			t.Fatalf("StatusListFill = %d free, %v; want the lists full", fill.Free(), err)
+		}
+		renew(t, h, victim.ID, victimKey)
+	})
+
+	t.Run("recent", func(t *testing.T) {
+		h := newHarness(t, recentShareLists)
+		h.toNextPeriod()
+		victim, _ := h.register(kindTEE)
+		victimKey := h.newInstanceKey(victim.ID, kindTEE)
+		// The next period: the victim, still recent, uses up its quota,
+		// then instances registered in it fill the rest of the share.
+		h.toNextPeriod()
+		for range fullListsPerInstance {
+			h.newInstanceKey(victim.ID, kindTEE)
+		}
+		if _, refused := burst(t, h, recentShare/fullListsPerInstance-1); refused != 0 {
+			t.Fatalf("%d of the share's indices refused", refused)
+		}
+		if fill, err := h.p.StatusListFill(ctx); err != nil || fill.RecentInstanceFree() != 0 || fill.Free() == 0 {
+			t.Fatalf("StatusListFill = %+v, %v; want the share full, and only it", fill, err)
+		}
+		renew(t, h, victim.ID, victimKey)
+	})
+}
+
+// TestStatusListsFullRecorded: a process that finds the lists full
+// records it, so its next request for an index doesn't count their
+// reserved indices again.
+func TestStatusListsFullRecorded(t *testing.T) {
+	idx := &countingIndices{}
+	h := newHarness(t, func(c *walletprovider.Config, d *walletprovider.Dependencies) {
+		smallStatusLists(c, d)
+		d.StatusIndices = idx
+	})
+	fillStatusLists(t, h)
+	// A fresh process facing the full lists.
+	p, err := walletprovider.New(h.cfg, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.p = p
+	in, _ := h.register(kindTEE)
+	for i := range 2 {
+		before := idx.calls()
+		if _, err := h.walletAttestation(in.ID, &newKey(t).PublicKey, kindTEE); !errors.Is(err, statuslist.ErrListsFull) {
+			t.Fatalf("attempt %d: a new instance key with the lists full = %v, want ErrListsFull", i+1, err)
+		}
+		if counted := idx.calls() - before; i > 0 && counted != 0 {
+			t.Fatalf("attempt %d counted the reserved indices of %d lists, known full", i+1, counted)
+		}
 	}
 }
