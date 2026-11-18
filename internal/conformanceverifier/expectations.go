@@ -115,8 +115,11 @@ var refusals = map[string][]string{
 	// doesn't verify.
 	"oid4vp-1final-verifier-invalid-session-transcript": {reasonHolderBinding, "mdoc: verify DeviceSignature: cose: ES256 signature verification failed"},
 	"oid4vp-1final-verifier-invalid-kb-jwt-signature":   {reasonHolderBinding, "verify key binding JWT signature: jose: ES256 signature verification failed"},
+	// The verifier checks the issuer signature with the presented leaf's
+	// key before it builds the chain.
 	"oid4vp-1final-verifier-invalid-credential-signature": {
-		refusal(verifier.ReasonInvalidCredential), "verify issuer JWT: jose: ES256 signature verification failed",
+		refusal(verifier.ReasonInvalidCredential),
+		"verify issuer signature: the credential's signature doesn't verify with its issuer certificate's key: jose: ES256 signature verification failed",
 	},
 	"oid4vp-1final-verifier-invalid-sd-hash":      {reasonHolderBinding, "key binding JWT sd_hash does not match the presented SD-JWT"},
 	"oid4vp-1final-verifier-invalid-kb-jwt-nonce": {reasonHolderBinding, "key binding JWT is for another request: its nonce does not match"},
