@@ -334,6 +334,28 @@ was accepted and the first signed request panicked. Pass the value, a
 non-nil pointer, or no `VerifierTrust` (a nil interface) for a Wallet
 that only receives credentials.
 
+### One `AuditEventLegacyDeferredAuthorization` per poll
+
+Through `DeferredCredentialHandler` with `Resolve`, a poll for a
+deferred record with neither `CredentialIdentifier` nor
+`RequestedByConfigurationID` recorded two
+`AuditEventLegacyDeferredAuthorization` events, one checked before
+`Resolve` and one in `RequestDeferredCredential`. It now records one,
+as `RequestDeferredCredential` alone does, so counts and alerts on
+the event see half what v0.83.0 recorded for such a deployment.
+
+### An org-iso-mdoc `IssuerAuthorized` hook gets a `CredentialQueryID`
+
+On the org-iso-mdoc path (`Transactions.HandleMdocDCAPIResponse`, and
+`mdocdcapi.VerifyResponse` and `VerifyResponseDocuments`),
+`IssuerAuthorization.CredentialQueryID` was empty. It is now the
+`CredentialQueryID` the verified document carries, which `Accept` and
+`Status` see: the request's `MdocDCAPIRequest.CredentialQueryID`
+(`verifier.MdocDCAPICredentialQueryID` when unset) through
+`Transactions`, the document's type through `mdocdcapi` alone. A hook
+that told the org-iso-mdoc path apart by an empty ID should test
+`Format` and the request instead.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed
