@@ -319,6 +319,9 @@ jobs:
           - id: strictjson-unmarshal
             pkg: ./internal/strictjson
             name: FuzzUnmarshal
+          - id: strictjson-differential
+            pkg: ./internal/strictjson
+            name: FuzzDifferential
           - id: b64url-decode-string
             pkg: ./internal/b64url
             name: FuzzDecodeString
