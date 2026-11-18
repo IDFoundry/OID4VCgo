@@ -36,6 +36,35 @@ kotlin {
     jvmToolchain(17)
 }
 
+// -Pdemo.config=<file> bundles that configuration (the JSON
+// build-shareable.sh writes) into the APK as assets/demo-config.json,
+// which the app applies at its first launch (DemoConfiguration.load):
+// an APK to hand a tester, configured without adb.
+abstract class BundleDemoConfig : DefaultTask() {
+    @get:InputFile
+    abstract val config: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        config.get().asFile.copyTo(outputDir.get().file("demo-config.json").asFile, overwrite = true)
+    }
+}
+
+val demoConfig = providers.gradleProperty("demo.config")
+androidComponents {
+    onVariants { variant ->
+        if (demoConfig.isPresent) {
+            val bundle = tasks.register<BundleDemoConfig>("bundleDemoConfig${variant.name.replaceFirstChar { it.uppercase() }}") {
+                config.set(file(demoConfig.get()))
+            }
+            variant.sources.assets?.addGeneratedSourceDirectory(bundle, BundleDemoConfig::outputDir)
+        }
+    }
+}
+
 // Guava, which the app's dependencies and lint bring in, raised past
 // versions with published vulnerabilities (OSV, via the OpenSSF
 // Scorecard) on every classpath; remove it once they require 33.7.2 or
