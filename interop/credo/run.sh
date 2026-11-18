@@ -187,7 +187,9 @@ wait_ready "http://127.0.0.1:$AGENT_PORT/ready" "http://127.0.0.1:$OTHER_AGENT_P
 # the run has the run's CA's certificate, which Node trusts as well as
 # its own roots (NODE_EXTRA_CA_CERTS).
 jq --rawfile wp wallet-provider/ca.pem --rawfile ca ca.pem --arg iaca "$(jq -r '.iaca_pem' issuer-files/driver.json)" \
-  '. + {attester_anchors: [$wp], holder_credential_anchors: [$ca, $iaca], holder_request_anchors: [$ca]}' credo.json > credo-run.json
+  --arg trusted "http://127.0.0.1:$AGENT_PORT" --arg other "http://127.0.0.1:$OTHER_AGENT_PORT" \
+  '. + {attester_anchors: [$wp], holder_credential_anchors: [$ca, $iaca], holder_request_anchors: [$ca],
+        wallet_providers: {trusted: $trusted, other: $other}}' credo.json > credo-run.json
 NODE_EXTRA_CA_CERTS="$WORK/ca.pem" node driver/build/main.js --config credo-run.json --base-url "$CREDO_URL" --port "$CREDO_PORT" \
   --control-port "$CONTROL_PORT" --log-level "${CREDO_LOG_LEVEL:-info}" > credo.log 2>&1 &
 PIDS+=($!)
@@ -493,7 +495,8 @@ our_offer() {  # $1 configuration, $2 a tx_code
     --data "$(jq -cn --arg c "$config" --arg t "$tx" '{grant: "pre-authorized_code", credential_configuration_ids: [$c], by_reference: true}
       + (if $t == "" then {} else {tx_code: $t} end)')" "http://127.0.0.1:$OFFERS_PORT/offers" | jq -r '.uri'
 }
-AGENT="http://127.0.0.1:$AGENT_PORT" OTHER_AGENT="http://127.0.0.1:$OTHER_AGENT_PORT"
+# The Wallet Provider agents, by their names in credo-run.json.
+AGENT=trusted OTHER_AGENT=other
 # holder_receive has Credo's holder redeem the offer $2, attested through
 # the Wallet Provider agent $3, with the tx_code $4 if given; $5 false
 # has it look up the keys it signs with by kid alone, as Credo does

@@ -8,7 +8,7 @@
 //   GET  /issuer/sessions/ID                                -> {state, error}
 //   POST /verifier/requests    {query, signed}               -> {id, request}
 //   GET  /verifier/sessions/ID                              -> {state, error, presented}
-//   POST /holder/receive       {offer, tx_code, client_id, wallet_provider, keys_by_thumbprint}
+//   POST /holder/receive       {offer, tx_code, client_id, wallet_provider (a name in the config's wallet_providers), keys_by_thumbprint}
 //                              -> {stage, error, token_type, key_attestation, deferred, received}
 //   POST /holder/present       {request, credentials}        -> {stage, error, status, body}
 //
@@ -24,6 +24,7 @@ import { LogLevel } from '@credo-ts/core'
 import express from 'express'
 import { createAgent } from './agent.js'
 import { controlApi } from './control.js'
+import { setWalletProviders } from './holder.js'
 import { type Config, credentialConfigurations, ISSUER_ID, issuerCertificates } from './issuer.js'
 import { requestSigner, VERIFIER_ID } from './verifier.js'
 
@@ -47,6 +48,7 @@ async function main() {
   const logLevel = logLevels[arg(argv, 'log-level', 'warn')]
   if (logLevel === undefined) throw new Error(`--log-level is one of ${Object.keys(logLevels).join(', ')}`)
   const config = JSON.parse(readFileSync(arg(argv, 'config'), 'utf8')) as Config
+  setWalletProviders(config.wallet_providers ?? {})
 
   const app = express()
   const agent = createAgent(app, baseUrl, config, logLevel)

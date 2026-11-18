@@ -22,7 +22,9 @@ export interface ReceiveRequest {
   offer: string
   tx_code?: string
   client_id: string
-  // The Wallet Provider's agent, its http base URL.
+  // The Wallet Provider's agent, by its name in the driver's config
+  // (Config.wallet_providers): the driver fetches only the URLs it was
+  // started with.
   wallet_provider: string
   // false lets Credo look up the attested keys by kid alone, as it does
   // (keylookup.ts): the run's note on README finding 6.
@@ -228,9 +230,26 @@ function bareJwk(jwk: Kms.PublicJwk) {
   return { kty, crv, x, y }
 }
 
-// attest asks the Wallet Provider's agent for an attestation: its JWT.
+// walletProviders is the Wallet Provider agents' base URLs, by name, from
+// the driver's config.
+const walletProviders = new Map<string, string>()
+
+// setWalletProviders sets walletProviders, from Config.wallet_providers.
+export function setWalletProviders(providers: Record<string, string>) {
+  walletProviders.clear()
+  for (const [name, url] of Object.entries(providers)) walletProviders.set(name, url)
+}
+
+// attestationEndpoints is the Wallet Provider agent's two routes.
+const attestationEndpoints = new Set(['/wallet-attestation', '/key-attestation'])
+
+// attest asks the Wallet Provider's agent named provider for an
+// attestation: its JWT.
 async function attest(provider: string, path: string, body: unknown): Promise<string> {
-  const response = await fetch(`${provider}${path}`, {
+  const base = walletProviders.get(provider)
+  if (base === undefined) throw new Error(`no Wallet Provider named ${JSON.stringify(provider)} in the driver's config`)
+  if (!attestationEndpoints.has(path)) throw new Error(`not a Wallet Provider agent route: ${path}`)
+  const response = await fetch(new URL(path, base), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

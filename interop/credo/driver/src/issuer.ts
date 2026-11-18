@@ -26,6 +26,9 @@ export interface Config {
   attester_anchors: string[]
   holder_credential_anchors: string[]
   holder_request_anchors: string[]
+  // The Wallet Provider agents Credo's holder takes its attestations
+  // from: base URLs by the name a holder request gives (holder.ts).
+  wallet_providers: Record<string, string>
 }
 
 // Signer is a private JWK and its certificate chain, base64 DER, leaf
