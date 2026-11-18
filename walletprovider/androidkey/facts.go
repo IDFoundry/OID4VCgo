@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"slices"
 	"time"
@@ -249,7 +250,7 @@ func (v *Verifier) recheckValidity(f *Facts, root *x509.Certificate, allowUnreco
 		if allowUnrecorded {
 			return nil
 		}
-		return fail(ErrLegacyFacts, "the facts don't hold the certificates' validity periods (saved by OID4VCgo v0.80.0 or before)")
+		return fail(ErrLegacyFacts, "%s", unrecordedValidity)
 	}
 	for i, c := range f.Certificates {
 		if !c.RootKey && (now.Before(c.NotBefore) || now.After(c.NotAfter)) {
@@ -258,6 +259,10 @@ func (v *Verifier) recheckValidity(f *Facts, root *x509.Certificate, allowUnreco
 	}
 	return nil
 }
+
+// unrecordedValidity says what Facts saved without validity periods
+// leave unjudged.
+const unrecordedValidity = "the facts don't hold the certificates' validity periods (saved by OID4VCgo v0.80.0 or before)"
 
 // serials are f's certificates' serial numbers, leaf first.
 func (f *Facts) serials() ([]*big.Int, error) {
@@ -334,9 +339,9 @@ func (e EvidenceVerifier) Recheck(ctx context.Context, in walletprovider.Instanc
 	case err != nil:
 		return err
 	case !ok:
-		return e.unchecked("the instance has no evidence facts (registered with OID4VCgo v0.75.3 or before)", remedyRegister)
+		return e.unchecked(ctx, "the instance has no evidence facts (registered with OID4VCgo v0.75.3 or before)", remedyRegister, slog.String("instance", in.ID))
 	}
-	return e.recheck(ctx, &f, remedyRegister)
+	return e.recheck(ctx, &f, remedyRegister, slog.String("instance", in.ID))
 }
 
 // RecheckInstanceKey implements walletprovider.InstanceKeyRechecker: it
@@ -360,9 +365,15 @@ func (e EvidenceVerifier) RecheckInstanceKey(ctx context.Context, in walletprovi
 	case err != nil:
 		return err
 	case !ok:
-		return e.unchecked("the instance key has no evidence facts (recorded with OID4VCgo v0.80.0 or before)", remedyInstanceKey)
+		return e.unchecked(ctx, "the instance key has no evidence facts (recorded with OID4VCgo v0.80.0 or before)", remedyInstanceKey, instanceKeyAttrs(in, k)...)
 	}
-	return e.recheck(ctx, &f, remedyInstanceKey)
+	return e.recheck(ctx, &f, remedyInstanceKey, instanceKeyAttrs(in, k)...)
+}
+
+// instanceKeyAttrs name instance key k of the instance in, for
+// warnUnchecked.
+func instanceKeyAttrs(in walletprovider.Instance, k walletprovider.InstanceKey) []slog.Attr {
+	return []slog.Attr{slog.String("instance", in.ID), slog.String("instance_key", k.Thumbprint)}
 }
 
 // ownKind refuses, as a configuration error, to recheck an instance
@@ -393,25 +404,42 @@ func InstanceKeyFacts(in walletprovider.Instance, k walletprovider.InstanceKey) 
 	return f, true, nil
 }
 
-// unchecked is the verdict on a record with no Facts kept: nil when
-// AllowUncheckedLegacyEvidence, a refusal saying what, and remedy,
-// otherwise.
-func (e EvidenceVerifier) unchecked(what, remedy string) error {
+// unchecked is the verdict on a record with no Facts kept: nil, logged
+// (warnUnchecked), when AllowUncheckedLegacyEvidence, a refusal saying
+// what, and remedy, otherwise.
+func (e EvidenceVerifier) unchecked(ctx context.Context, what, remedy string, attrs ...slog.Attr) error {
 	if e.AllowUncheckedLegacyEvidence {
+		e.warnUnchecked(ctx, what, attrs)
 		return nil
 	}
 	return fmt.Errorf("%w: %w: %w; %s", walletprovider.ErrEvidenceRejected, walletprovider.ErrEvidenceExpired, fail(ErrLegacyFacts, "%s", what), remedy)
 }
 
+// warnUnchecked logs, to Logger, that AllowUncheckedLegacyEvidence let
+// a record through without judging what.
+func (e EvidenceVerifier) warnUnchecked(ctx context.Context, what string, attrs []slog.Attr) {
+	logger := e.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.LogAttrs(ctx, slog.LevelWarn, "androidkey: accepted legacy evidence unchecked (AllowUncheckedLegacyEvidence)",
+		append([]slog.Attr{slog.String("unchecked", what)}, attrs...)...)
+}
+
 // recheck judges f by the Verifier as it is now, wrapping a refusal as
 // Recheck describes; remedy says what the wallet must do once f's chain
-// has expired or can't be judged.
-func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string) error {
+// has expired or can't be judged, and attrs name the record, for
+// warnUnchecked.
+func (e EvidenceVerifier) recheck(ctx context.Context, f *Facts, remedy string, attrs ...slog.Attr) error {
 	if e.Verifier == nil {
 		return fail(ErrConfig, "EvidenceVerifier has no Verifier")
 	}
 	switch err := e.Verifier.recheck(ctx, f, e.AllowUncheckedLegacyEvidence); {
 	case err == nil:
+		if !f.ValidityRecorded() {
+			// Only AllowUncheckedLegacyEvidence lets such Facts pass.
+			e.warnUnchecked(ctx, unrecordedValidity, attrs)
+		}
 		return nil
 	case errors.Is(err, ErrStatusUnavailable):
 		return undecided(err)
