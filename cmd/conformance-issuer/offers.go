@@ -42,12 +42,15 @@ const offerLifetime = 10 * time.Minute
 const maxTxCodeAttempts = 3
 
 // Bounds on the openid_credential authorization_details a pre-authorized
-// code's token carries: one entry per offered configuration.
+// code's token carries: one entry per offered configuration. Depth 6
+// takes claims (5 deep) and their display (6): RedeemPreAuthorizedCode
+// accepts and mints both, and spends the code before the Authorization
+// Server parses what it minted.
 const (
 	maxCredentialAuthorizationDetails = 2
 	maxAuthorizationDetailBytes       = 4 << 10
 	maxAuthorizationDetailsBytes      = maxCredentialAuthorizationDetails * maxAuthorizationDetailBytes
-	maxAuthorizationDetailsDepth      = 4
+	maxAuthorizationDetailsDepth      = 6
 )
 
 // credentialAuthorizationDetail is the openid_credential

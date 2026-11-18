@@ -33,12 +33,15 @@ const preAuthorizedCodeTxCodeDescription = "The PIN shown on the issuer's offer 
 
 // Bounds on the openid_credential authorization_details a token
 // carries: one entry per credential configuration, each a type, a
-// configuration ID and its credential_identifiers.
+// configuration ID, its credential_identifiers and any claims the
+// wallet named. Depth 6 takes claims (5 deep) and their display (6):
+// RedeemPreAuthorizedCode accepts and mints both, and spends the code
+// before the Authorization Server parses what it minted.
 const (
 	maxCredentialAuthorizationDetails = 2
 	maxAuthorizationDetailBytes       = 4 << 10
 	maxAuthorizationDetailsBytes      = maxCredentialAuthorizationDetails * maxAuthorizationDetailBytes
-	maxAuthorizationDetailsDepth      = 4
+	maxAuthorizationDetailsDepth      = 6
 )
 
 // credentialAuthorizationDetails registers the openid_credential

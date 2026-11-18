@@ -3,8 +3,10 @@ package oid4vci
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
+	"strconv"
 
 	"github.com/idfoundry/fapigo/extension"
 )
@@ -17,7 +19,12 @@ import (
 // AuthorizationDetailsTypeOpenIDCredential in each Wallet's
 // RegisteredClientConfig.AuthorizationDetailsTypes. maxObjects and
 // maxBytesPerObject bound one authorization_details array, as
-// RARDefinition's MaxObjects and MaxBytesPerObject do.
+// RARDefinition's MaxObjects and MaxBytesPerObject do. Register it in
+// a registry 6 deep (extension.NewRARRegistry's maxDepth):
+// [{"claims":[{"path":["name"]}]}] is 5 deep, and a claims
+// description's display 6, so a shallower registry refuses objects
+// that carry them. ValidateGrant and ValidateNarrowing take time
+// linear in the sizes of the two objects they compare.
 //
 // credential_identifiers are the Authorization Server's to issue
 // (§6.2), so the definition's checks are:
@@ -26,9 +33,9 @@ import (
 //     credential_identifiers, if present, a non-empty array of
 //     non-empty identifiers, each listed once; locations, if present,
 //     a non-empty array of non-empty strings; and claims, if present,
-//     a non-empty array of claims description objects (Appendix B.1),
-//     each path a valid Claims Path Pointer and none described twice
-//     (Appendix B.3).
+//     a non-empty array of at most MaxAuthorizationDetailClaims claims
+//     description objects (Appendix B.1), each path a valid Claims Path
+//     Pointer and none described twice (Appendix B.3).
 //   - ValidateRequest, on the objects a client sends to start a grant
 //     (a pushed authorization request, say): no credential_identifiers.
 //     A client choosing them is refused with
@@ -76,6 +83,13 @@ func AuthorizationDetailRARDefinition(maxObjects, maxBytesPerObject int) extensi
 	}
 }
 
+// MaxAuthorizationDetailClaims is the most claims descriptions one
+// openid_credential object may carry: AuthorizationDetailRARDefinition's
+// Validate refuses more, whatever the registry's size bounds allow. It
+// is dcql.MaxClaimsPerCredential, the most claims a Verifier may ask of
+// one credential.
+const MaxAuthorizationDetailClaims = 256
+
 // ErrClientCredentialIdentifiers is what AuthorizationDetailRARDefinition's
 // ValidateRequest returns for a client's openid_credential object that
 // carries credential_identifiers.
@@ -100,16 +114,21 @@ func validateAuthorizationDetail(d AuthorizationDetail) error {
 			return fmt.Errorf("oid4vci: openid_credential authorization_details: locations[%d] is empty", i)
 		}
 	}
+	if len(d.Claims) > MaxAuthorizationDetailClaims {
+		return fmt.Errorf("oid4vci: openid_credential authorization_details: %d claims, more than %d", len(d.Claims), MaxAuthorizationDetailClaims)
+	}
 	if err := validateClaimsDescriptions(d.Claims); err != nil {
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: %w", err)
 	}
+	identifiers := make(map[string]struct{}, len(d.CredentialIdentifiers))
 	for i, id := range d.CredentialIdentifiers {
 		if id == "" {
 			return fmt.Errorf("oid4vci: openid_credential authorization_details: credential_identifiers[%d] is empty", i)
 		}
-		if slices.Contains(d.CredentialIdentifiers[:i], id) {
+		if _, listed := identifiers[id]; listed {
 			return fmt.Errorf("oid4vci: openid_credential authorization_details: credential_identifiers[%d] is listed twice", i)
 		}
+		identifiers[id] = struct{}{}
 	}
 	return nil
 }
@@ -156,12 +175,11 @@ func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, ma
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s claims", narrowerName, widerName)
 	case !mayAddIdentifiers && len(wider.CredentialIdentifiers) > 0 && len(narrower.CredentialIdentifiers) == 0:
 		return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s object leaves out the %s credential_identifiers", narrowerName, widerName)
-	case !subsetOf(narrower.Locations, wider.Locations, func(a, b string) bool { return a == b }):
+	case !stringsWithin(narrower.Locations, wider.Locations):
 		member = "locations"
-	case !subsetOf(narrower.Claims, wider.Claims, func(a, b ClaimsDescription) bool { return reflect.DeepEqual(a, b) }):
+	case !claimsWithin(narrower.Claims, wider.Claims):
 		member = "claims"
-	case !mayAddIdentifiers &&
-		!subsetOf(narrower.CredentialIdentifiers, wider.CredentialIdentifiers, func(a, b string) bool { return a == b }):
+	case !mayAddIdentifiers && !stringsWithin(narrower.CredentialIdentifiers, wider.CredentialIdentifiers):
 		member = "credential_identifiers"
 	default:
 		return nil
@@ -169,12 +187,119 @@ func validateNarrowerAuthorizationDetail(wider, narrower AuthorizationDetail, ma
 	return fmt.Errorf("oid4vci: openid_credential authorization_details: the %s %s aren't among the %s ones", narrowerName, member, widerName)
 }
 
-// subsetOf reports whether every element of sub equals one of super.
-func subsetOf[T any](sub, super []T, equal func(a, b T) bool) bool {
+// stringsWithin reports whether every element of sub is one of super's,
+// in time linear in their lengths.
+func stringsWithin(sub, super []string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(super))
+	for _, s := range super {
+		set[s] = struct{}{}
+	}
 	for _, s := range sub {
-		if !slices.ContainsFunc(super, func(x T) bool { return equal(s, x) }) {
+		if _, ok := set[s]; !ok {
 			return false
 		}
 	}
 	return true
+}
+
+// claimsWithin reports whether every claims description in sub equals
+// one of super's, as reflect.DeepEqual compares them, in time linear in
+// their lengths: super's are indexed by claimKey, and a description
+// claimKey can't encode is compared with reflect.DeepEqual against
+// super's that it can't encode either, since a description it can
+// encode never equals one it can't. Every description
+// AuthorizationDetailRARDefinition's Validate accepts can be encoded.
+func claimsWithin(sub, super []ClaimsDescription) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	keys := make(map[string]struct{}, len(super))
+	var unkeyed []ClaimsDescription
+	for _, c := range super {
+		if key, ok := claimKey(c); ok {
+			keys[key] = struct{}{}
+		} else {
+			unkeyed = append(unkeyed, c)
+		}
+	}
+	for _, c := range sub {
+		if key, ok := claimKey(c); ok {
+			if _, found := keys[key]; !found {
+				return false
+			}
+			continue
+		}
+		if !slices.ContainsFunc(unkeyed, func(u ClaimsDescription) bool { return reflect.DeepEqual(c, u) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// claimKey encodes c so that two descriptions have the same key exactly
+// when reflect.DeepEqual reports them equal: a nil Path or Display
+// differs from an empty one, Mandatory compares by value, and each path
+// element by its dynamic type and value, with -0 equal to 0. It reports
+// false for a path element of any type but string, nil, int and
+// float64, or a NaN, which equals nothing.
+func claimKey(c ClaimsDescription) (string, bool) {
+	b := make([]byte, 0, 64)
+	if c.Path == nil {
+		b = append(b, 'N')
+	} else {
+		b = append(b, 'P')
+		b = strconv.AppendInt(b, int64(len(c.Path)), 10)
+		b = append(b, ':')
+		for _, elem := range c.Path {
+			switch v := elem.(type) {
+			case nil:
+				b = append(b, 'n')
+			case string:
+				b = appendLengthPrefixed(append(b, 's'), v)
+			case int:
+				b = strconv.AppendInt(append(b, 'i'), int64(v), 10)
+				b = append(b, ';')
+			case float64:
+				if math.IsNaN(v) {
+					return "", false
+				}
+				if v == 0 {
+					v = 0 // -0 == 0
+				}
+				b = strconv.AppendUint(append(b, 'f'), math.Float64bits(v), 16)
+				b = append(b, ';')
+			default:
+				return "", false
+			}
+		}
+	}
+	switch {
+	case c.Mandatory == nil:
+		b = append(b, 'u')
+	case *c.Mandatory:
+		b = append(b, 't')
+	default:
+		b = append(b, 'f')
+	}
+	if c.Display == nil {
+		b = append(b, 'N')
+	} else {
+		b = append(b, 'D')
+		b = strconv.AppendInt(b, int64(len(c.Display)), 10)
+		b = append(b, ':')
+		for _, d := range c.Display {
+			b = appendLengthPrefixed(appendLengthPrefixed(b, d.Name), d.Locale)
+		}
+	}
+	return string(b), true
+}
+
+// appendLengthPrefixed appends s to b after its length, so that the
+// encoding of a sequence of strings is unambiguous.
+func appendLengthPrefixed(b []byte, s string) []byte {
+	b = strconv.AppendInt(b, int64(len(s)), 10)
+	return append(append(b, ':'), s...)
 }

@@ -74,6 +74,13 @@ func detailsWallet(t *testing.T, env *demotest.Env, configIDs ...string) (wallet
 	for i, id := range configIDs {
 		details[i] = oid4vci.AuthorizationDetail{Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: id}
 	}
+	return detailsWalletAsking(t, env, details)
+}
+
+// detailsWalletAsking is env's wallet configuration, its pre-authorized
+// code Token Requests carrying details.
+func detailsWalletAsking(t *testing.T, env *demotest.Env, details []oid4vci.AuthorizationDetail) (walletapp.Config, *withAuthorizationDetails) {
+	t.Helper()
 	raw, err := json.Marshal(details)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +136,41 @@ func TestPreAuthorized_AcceptsAuthorizationDetails(t *testing.T) {
 	}
 	if !identified[issuerapp.MdocConfigurationID] || !identified[issuerapp.SDJWTConfigurationID] {
 		t.Errorf("Token Response authorization_details = %+v, want a credential_identifier for each configuration", token.AuthorizationDetails)
+	}
+}
+
+// TestPreAuthorized_AcceptsAuthorizationDetailsWithClaims: a
+// pre-authorized code Token Request whose authorization_details name
+// claims (§5.1.1), with a display, gets a token: the Authorization
+// Server's registry is deep enough for what RedeemPreAuthorizedCode
+// accepts and mints, so it doesn't refuse them once the code is spent.
+func TestPreAuthorized_AcceptsAuthorizationDetailsWithClaims(t *testing.T) {
+	ctx := context.Background()
+	env := demotest.New(t, nil)
+	offer, err := env.Issuer.CreatePreAuthorizedTransaction(ctx, demotest.SyntheticEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, transport := detailsWalletAsking(t, env, []oid4vci.AuthorizationDetail{{
+		Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: issuerapp.SDJWTConfigurationID,
+		Claims: []oid4vci.ClaimsDescription{{Path: []any{"given_name"}, Display: []oid4vci.ClaimDisplay{{Name: "Given name", Locale: "en"}}}},
+	}})
+	if _, err := walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode}); err != nil {
+		t.Errorf("Receive: %v", err)
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	var token struct {
+		AuthorizationDetails []oid4vci.AuthorizationDetail `json:"authorization_details"`
+	}
+	if transport.response == nil {
+		t.Fatal("the Token Request with claims got no token")
+	}
+	if err := json.Unmarshal(transport.response, &token); err != nil {
+		t.Fatal(err)
+	}
+	if len(token.AuthorizationDetails) != 1 || len(token.AuthorizationDetails[0].Claims) != 1 {
+		t.Errorf("Token Response authorization_details = %+v, want the one asked for, with its claim", token.AuthorizationDetails)
 	}
 }
 
