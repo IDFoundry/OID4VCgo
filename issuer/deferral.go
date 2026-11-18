@@ -510,9 +510,16 @@ func (iss *Issuer) checkPending(record DeferredTransactionRecord) error {
 }
 
 // deferredExpired reports whether record has an ExpiresAt that has
-// passed.
+// passed. A record with none never lapses, except under
+// AssuranceProduction, where it's treated as lapsed: RequestCredential
+// always sets one, so only a record a deployment wrote itself, or one
+// migrated from a store that didn't keep it, has none, and it would
+// otherwise stay collectable for ever.
 func (iss *Issuer) deferredExpired(record DeferredTransactionRecord) bool {
-	return !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt)
+	if record.ExpiresAt.IsZero() {
+		return iss.cfg.Assurance == AssuranceProduction
+	}
+	return !iss.deps.Clock.Now().Before(record.ExpiresAt)
 }
 
 // deferredOwner reports whether auth may poll record: it's the client,

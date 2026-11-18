@@ -91,7 +91,8 @@ type DeferredTransactionRecord struct {
 	// IssueDeferredCredential issues from them, and restarts ExpiresAt
 	// so the Wallet has a full Limits.DeferredTransactionLifetime to
 	// collect them. A transaction past ExpiresAt is answered as unknown;
-	// zero means it never lapses. Nothing here deletes an expired
+	// zero means it never lapses, except under AssuranceProduction,
+	// where a record without one is answered as lapsed. Nothing here deletes an expired
 	// record: a production store should drop records some time after
 	// their ExpiresAt.
 	CredentialConfigurationID string
