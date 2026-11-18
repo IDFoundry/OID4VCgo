@@ -280,6 +280,28 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   (`MaxMdocDCAPIResponseBytes` for an org-iso-mdoc answer). A refusal
   that repeats the request's `LastError` isn't written again, but a
   different one is, and every one reaches `OnRefused`.
+- [ ] **Which issuer may issue which type:** a root in your issuer
+  roots vouches for who signed a credential, not for what it may
+  issue, and any root can certify a leaf with any name, or copy another
+  root's name and key identifier into what it signs. Where your roots
+  are several providers' (a PID provider's and a loyalty club's, say),
+  pick one:
+  - per-type roots: `X5CIssuerKeyResolver.RootsByVCT` and
+    `X5ChainIssuerKeyResolver.RootsByDocType` (`WithIssuerRootsByDocType`
+    on a proximity reader), each type held to its own providers'
+    anchors;
+  - `IssuerAuthorized` (`WithIssuerAuthorization`) deciding by
+    `IssuerAuthorization.IssuerAnchor`, the root that verified the
+    chain, compared by key with the anchors you assign to each type
+    (`verifier.AnchorIs`, `verifier.AnchorHasKeyIdentifier`) and
+    refusing a nil one, never by `Issuer` or the chain's names and
+    authority key identifiers;
+  - per query, `trusted_authorities` with an `aki` entry naming the
+    type's CAs, checked by `dcql.AKITrustedAuthoritiesChecker` with
+    `Roots` or `Anchors`.
+
+  `AnyIssuerForAnyType` (`WithAnyIssuerForAnyType`) is right only
+  where every root is trusted for every type you request.
 - [ ] **Certificate revocation:** a `certrevocation.Refresher` per
   process (`certrevocation.NewRefresher`), run in the background with
   `Run(ctx)` after one `Refresh(ctx)` before serving, and its

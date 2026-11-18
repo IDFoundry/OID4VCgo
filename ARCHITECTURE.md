@@ -1590,10 +1590,12 @@ changes whether *every* bullet below is `(done)`.
   to its transaction and to the readable fields that say who may read
   it, what it asked, and whether and how it may still be answered —
   owner, browser binding, same-device flag, origin, query, kid, nonce,
-  state, status, expiry (record version 2; version 1 records, still
-  read, bound the first five) — so the store is trusted only for its
-  response_code hash and last error, and not to put back an older
-  copy; `ForgetResultOnRead` drops a result once it's been read.
+  state, status, expiry, and the hash of the signed Request Object it
+  serves (record version 3; version 2 records, still read, bound all
+  but the Request Object, and version 1 records the first five) — so
+  the store is trusted only for its response_code hash, last error and
+  retain_until, and not to put back an older copy whole;
+  `ForgetResultOnRead` drops a result once it's been read.
   `Begin`, `BeginDCAPI` and `BeginMdocDCAPI` read a created transaction back and refuse a
   store that lost a field, since losing `SameDevice` or `Owner` fails
   open. `verifiertest` holds contract tests for a caller's own
