@@ -1085,7 +1085,7 @@ func (t *Transactions) answerRefused(ctx context.Context, tx Transaction, err er
 // anything else is refused with notPending. It's decrypted either way,
 // as a pending request's answer is.
 func (t *Transactions) answerNotPending(tx Transaction, responseJWE string, notPending error) (Answered, error) {
-	_, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
+	_, err := t.v.parseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey, &tx.Query)
 	var walletErr *ResponseError
 	if !errors.As(err, &walletErr) || subtle.ConstantTimeCompare([]byte(walletErr.State), []byte(tx.State)) != 1 {
 		return Answered{}, notPending
@@ -1099,7 +1099,7 @@ func (t *Transactions) answerNotPending(tx Transaction, responseJWE string, notP
 
 // verify decrypts, checks state, verifies and accepts one answer.
 func (t *Transactions) verify(ctx context.Context, tx Transaction, responseJWE string) (VerifyResponseResult, error) {
-	parsed, err := t.v.ParseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey)
+	parsed, err := t.v.parseDirectPostJWTResponse(responseJWE, tx.ResponseDecryptionKey, &tx.Query)
 	var walletErr *ResponseError
 	switch {
 	case errors.As(err, &walletErr):

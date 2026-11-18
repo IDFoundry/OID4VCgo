@@ -145,6 +145,7 @@ func attestedKey(keys []AttestedKey, pub crypto.PublicKey) (AttestedKey, bool) {
 }
 
 type marshaledKey struct {
+	jwk        jwk.JWK
 	json       json.RawMessage
 	thumbprint string
 }
@@ -170,7 +171,7 @@ func marshalKey(pub crypto.PublicKey) (marshaledKey, error) {
 	if err != nil {
 		return marshaledKey{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
-	return marshaledKey{json: raw, thumbprint: thumbprint}, nil
+	return marshaledKey{jwk: k, json: raw, thumbprint: thumbprint}, nil
 }
 
 // randomID returns 16 random bytes, base64url.

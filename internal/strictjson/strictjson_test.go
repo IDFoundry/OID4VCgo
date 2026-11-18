@@ -2,6 +2,9 @@ package strictjson
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +111,77 @@ func TestUnmarshalNested(t *testing.T) {
 	var m map[string]any
 	if err := Unmarshal([]byte(`{"a":{"b":1,"b":2}}`), &m); err == nil {
 		t.Error("a map with a nested duplicate was accepted")
+	}
+}
+
+// The bound counts each value, at any depth, and each member name: a
+// document at it decodes, and one over it is refused, with
+// ErrTooManyTokens.
+func TestUnmarshalLimit(t *testing.T) {
+	doc := []byte(`{"a":[1,{"b":null}],"c":"d"}`) // 9: 2 objects, 3 names, an array, 1, null, "d"
+	var v any
+	if err := UnmarshalLimit(doc, &v, 9); err != nil {
+		t.Errorf("at the bound: %v", err)
+	}
+	if err := UnmarshalLimit(doc, &v, 8); !errors.Is(err, ErrTooManyTokens) {
+		t.Errorf("over the bound: %v, want ErrTooManyTokens", err)
+	}
+	for _, bad := range []int{0, -1} {
+		if err := UnmarshalLimit(doc, &v, bad); err == nil || errors.Is(err, ErrTooManyTokens) {
+			t.Errorf("a bound of %d: %v, want it refused", bad, err)
+		}
+	}
+	// Unmarshal's own: an array of DefaultMaxTokens-1 elements is
+	// DefaultMaxTokens tokens.
+	atBound := []byte("[" + strings.Repeat("0,", DefaultMaxTokens-2) + "0]")
+	if err := Unmarshal(atBound, &v); err != nil {
+		t.Errorf("DefaultMaxTokens tokens: %v", err)
+	}
+	overBound := []byte("[" + strings.Repeat("0,", DefaultMaxTokens-1) + "0]")
+	if err := Unmarshal(overBound, &v); !errors.Is(err, ErrTooManyTokens) {
+		t.Errorf("DefaultMaxTokens+1 tokens: %v, want ErrTooManyTokens", err)
+	}
+}
+
+// A document over the bound is refused where the scan reaches it,
+// having read about as many bytes as the bound's tokens take, however
+// long the document is (DOS-1 of the 2026-11-18 audit).
+func TestUnmarshalLimitStopsAtTheBound(t *testing.T) {
+	const bound = 1000
+	var members strings.Builder
+	members.WriteString(`{"a":{"m0":0`)
+	for i := 1; i < 1<<17; i++ {
+		fmt.Fprintf(&members, `,"m%d":0`, i)
+	}
+	members.WriteString("}}")
+	for name, doc := range map[string]string{
+		"array":   `{"a":[` + strings.Repeat("0,", 1<<19) + `0]}`,
+		"members": members.String(),
+		"objects": `[` + strings.Repeat("{},", 1<<18) + `{}]`,
+	} {
+		s := scanner{data: []byte(doc), max: bound}
+		if err := s.document(nil); !errors.Is(err, ErrTooManyTokens) {
+			t.Errorf("%s: %v, want ErrTooManyTokens", name, err)
+		}
+		// No token here takes more than 8 bytes, with what follows it.
+		if s.i > 8*bound {
+			t.Errorf("%s: refused after %d of %d bytes, want at most %d", name, s.i, len(doc), 8*bound)
+		}
+	}
+}
+
+// One pass over the bytes: checking a document allocates nothing per
+// token, where a json.Decoder.Token walk allocated for every one
+// (DOS-1 of the 2026-11-18 audit).
+func TestUnmarshalAllocations(t *testing.T) {
+	doc := []byte(`{"nonce":"a","claims":[` + strings.Repeat(`0,"x",{},[],`, 1<<12) + `0]}`)
+	var c claims
+	allocs := testing.AllocsPerRun(10, func() {
+		if err := Unmarshal(doc, &c); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 16 {
+		t.Errorf("%v allocations for %d tokens, want a few", allocs, 4<<12)
 	}
 }

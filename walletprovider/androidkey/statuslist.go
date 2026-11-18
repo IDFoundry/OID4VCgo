@@ -12,6 +12,12 @@ import (
 // maxStatusEntries bounds how many entries a list may hold.
 const maxStatusEntries = 1 << 20
 
+// maxStatusTokens bounds a list's JSON tokens as maxStatusEntries
+// does its entries: the document, "entries" and its object, and per
+// entry its name, its object and StatusEntry's four members, names and
+// values. Google's list held about 10,700 tokens in November 2026.
+const maxStatusTokens = 3 + 10*maxStatusEntries
+
 // Status values a StatusEntry can have. Verify refuses a certificate
 // with any entry, whatever its status.
 const (
@@ -50,7 +56,7 @@ func ParseStatusList(data []byte) (*StatusList, error) {
 	var doc struct {
 		Entries *map[string]StatusEntry `json:"entries"`
 	}
-	if err := strictjson.Unmarshal(data, &doc); err != nil {
+	if err := strictjson.UnmarshalLimit(data, &doc, maxStatusTokens); err != nil {
 		return nil, fmt.Errorf("androidkey: status list: %w", err)
 	}
 	if doc.Entries == nil {

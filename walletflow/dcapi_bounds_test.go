@@ -69,7 +69,10 @@ func boundsWallet(t *testing.T, n int) *walletflow.Wallet {
 // credential queries for boundsVCT, each with a few claims and a meta of
 // about metaBytes, its vct_values followed by a member a Wallet ignores,
 // padded at its top level to just under wallet.MaxDCAPIRequestBytes.
-func boundsRequest(t *testing.T, metaBytes int) []byte {
+// Dense pads the ignored members with arrays of zeros, JSON's most
+// tokens for its size; otherwise they are strings, so the request
+// reaches the size bounds within strictjson's token bound.
+func boundsRequest(t *testing.T, metaBytes int, dense bool) []byte {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -77,17 +80,23 @@ func boundsRequest(t *testing.T, metaBytes int) []byte {
 	}
 	x := base64.RawURLEncoding.EncodeToString(key.X.FillBytes(make([]byte, 32)))
 	y := base64.RawURLEncoding.EncodeToString(key.Y.FillBytes(make([]byte, 32)))
-	metaHead := fmt.Sprintf(`{"vct_values":[%q],"x":[`, boundsVCT)
-	// JSON's costliest shape to decode for its size: an array of zeros.
-	zeros := func(n int) string { return strings.TrimSuffix(strings.Repeat("0,", max(n, 1)), ",") }
-	meta := metaHead + zeros((metaBytes-len(metaHead)-2)/2) + "]}"
+	// pad is about n bytes of a JSON value a Wallet ignores: an array of
+	// zeros when dense, else a string.
+	pad := func(n int) string {
+		if dense {
+			return "[" + strings.TrimSuffix(strings.Repeat("0,", max(n/2, 1)), ",") + "]"
+		}
+		return `"` + strings.Repeat("a", max(n, 1)) + `"`
+	}
+	metaHead := fmt.Sprintf(`{"vct_values":[%q],"x":`, boundsVCT)
+	meta := metaHead + pad(metaBytes-len(metaHead)-3) + "}"
 	cqs := make([]string, dcql.MaxCredentialQueries)
 	for i := range cqs {
 		cqs[i] = fmt.Sprintf(`{"id":"q%d","format":"dc+sd-jwt","meta":%s,"claims":[{"path":["given_name"]},{"path":["family_name"]},{"path":["address","locality"]}]}`, i, meta)
 	}
-	head := fmt.Sprintf(`{"response_type":"vp_token","response_mode":"dc_api.jwt","nonce":"bounds-nonce","client_metadata":{"jwks":{"keys":[{"kty":"EC","crv":"P-256","x":%q,"y":%q,"use":"enc","alg":"ECDH-ES","kid":"k"}]}},"dcql_query":{"credentials":[%s]},"padding":[`,
+	head := fmt.Sprintf(`{"response_type":"vp_token","response_mode":"dc_api.jwt","nonce":"bounds-nonce","client_metadata":{"jwks":{"keys":[{"kty":"EC","crv":"P-256","x":%q,"y":%q,"use":"enc","alg":"ECDH-ES","kid":"k"}]}},"dcql_query":{"credentials":[%s]},"padding":`,
 		x, y, strings.Join(cqs, ","))
-	req := head + zeros((wallet.MaxDCAPIRequestBytes-len(head)-64)/2) + "]}"
+	req := head + pad(wallet.MaxDCAPIRequestBytes-len(head)-64) + "}"
 	if len(req) > wallet.MaxDCAPIRequestBytes {
 		t.Fatalf("request is %d bytes, over the %d bound", len(req), wallet.MaxDCAPIRequestBytes)
 	}
@@ -108,7 +117,7 @@ func TestDCAPIPresentation_UnsignedRequestAtTheBounds(t *testing.T) {
 	w := boundsWallet(t, held)
 	const origin = "https://anyone.walletflowtest.example"
 
-	data := boundsRequest(t, dcql.MaxMetaBytes)
+	data := boundsRequest(t, dcql.MaxMetaBytes, false)
 	p, err := w.StartDCAPIPresentation(ctx, wallet.DCAPIProtocolUnsigned, data, origin)
 	if err != nil {
 		t.Fatalf("a %d-byte request at the bounds: %v", len(data), err)
@@ -129,12 +138,20 @@ func TestDCAPIPresentation_UnsignedRequestAtTheBounds(t *testing.T) {
 		t.Errorf("Preview: %v", err)
 	}
 
-	_, err = w.StartDCAPIPresentation(ctx, wallet.DCAPIProtocolUnsigned, boundsRequest(t, dcql.MaxMetaBytes+16), origin)
+	_, err = w.StartDCAPIPresentation(ctx, wallet.DCAPIProtocolUnsigned, boundsRequest(t, dcql.MaxMetaBytes+16, false), origin)
 	var refused *walletflow.RequestRefusedError
 	if !errors.As(err, &refused) || refused.Code != "invalid_request" || !strings.Contains(err.Error(), fmt.Sprintf("more than %d", dcql.MaxMetaBytes)) {
 		t.Errorf("a meta past the bound: err = %v, want the request refused for its size", err)
 	}
 	if refused != nil && len(refused.DCAPIResponse) == 0 {
 		t.Error("the refusal has no response for the page")
+	}
+
+	// The same request padded with zeros holds far more than strictjson's
+	// token bound, and is refused as malformed before any of it is
+	// matched.
+	_, err = w.StartDCAPIPresentation(ctx, wallet.DCAPIProtocolUnsigned, boundsRequest(t, dcql.MaxMetaBytes, true), origin)
+	if err == nil || !strings.Contains(err.Error(), "too many tokens") {
+		t.Errorf("a token-dense request at the bounds: err = %v, want it refused for its tokens", err)
 	}
 }

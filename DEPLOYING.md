@@ -68,7 +68,11 @@ each, not a deployment template" says what it does differently.
   service: the Nonce Endpoint and the Credential Offer endpoints, the
   Wallet Provider's challenge and registration endpoints
   (`walletprovider.ChallengePath`, `InstancesPath`). Each writes a
-  row, and each sealed row spends the Sealer key's budget. The
+  row, and each sealed row spends the Sealer key's budget. Parsing a
+  body, up to `MaxRequestBytes` (256 KiB) and refused at 128 + 64 ×
+  `Policy.MaxKeys` JSON tokens, costs about 2 ms of CPU for one of
+  that size holding one string, and under 0.5 ms for one padded with
+  small tokens or members, before the challenge is looked up. The
   Verifier's request_uri (`RequestObjectHandler`) too: each fetch
   reads a row, and every request_uri POST signs a Request Object (a
   billed call with a KMS-backed signer), as does every GET of a
@@ -219,7 +223,13 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   unauthenticated — anyone holding the request's public key can
   encrypt one — and a refused answer leaves the request open for the
   next. Each answer costs an ECDH, a decryption and parsing up to
-  1 MiB of JSON, then, for up to `MaxPresentationsPerQuery`
+  1 MiB of JSON (one pass refusing it at 131,072 values and member
+  names, and its `vp_token` at its first member that isn't one of the
+  request's Credential Queries or its 33rd presentation for one; a
+  Digital Credentials API post's object at 1,024: 10 to 12 ms of CPU
+  for a mebibyte, whether of one string or of small tokens, and 22 ms
+  for the costliest shape, about 65,000 distinct names in one object;
+  a 2 MiB post, 4 to 5 ms), then, for up to `MaxPresentationsPerQuery`
   presentations per Credential Query (more than one only under
   `multiple`): a hash identifying the credential (an SD-JWT's
   Issuer-signed header and payload, an mdoc's Mobile Security Object),

@@ -241,6 +241,18 @@ changes whether *every* bullet below is `(done)`.
   `VerifyTrustedChainsAt` narrows the verified paths to those the leaf
   policy approves and a `certrevocation.Checker` passes, so the issuer
   chain a resolver reports never runs through a revoked certificate.
+- **`internal/strictjson`** (done) — the JSON decoder every trust
+  boundary uses: encoding/json's decoding, refusing what parsers
+  disagree on (duplicate members, compared unescaped; a member name
+  matching a struct field only case-insensitively; text that isn't
+  UTF-8; an escaped lone surrogate). One pass over the bytes checks all
+  of it, with json.Valid's syntax, before encoding/json decodes, and
+  refuses a document at its first token over a bound
+  (`DefaultMaxTokens`, 131,072 values and member names; a caller with a
+  tighter or a looser bound passes its own), so a document of many
+  small tokens costs about what a string of its size does. Its tests
+  hold it to the separate passes it replaced, kept as a test-only copy,
+  on adversarial and fuzzed documents.
 - **`certrevocation`** (done) — X.509 certificate revocation for a
   relying party: the `Checker` interface over a verified chain, `CRLs`
   (RFC 5280 CRLs the caller fetches and refreshes, used only when
@@ -560,9 +572,11 @@ changes whether *every* bullet below is `(done)`.
     JSON protocol under `/v1/` (challenge, instances,
     wallet-attestation, key-attestation, the status lists) and
     `walletprovider.Client` speaks it, over fapihttp's hardened
-    transport and following no redirect. Bodies are bounded
-    (`MaxRequestBytes`) and decoded strictly (unknown, duplicate or
-    case-folded members refused); refusals are fixed error codes and
+    transport and following no redirect. Bodies are bounded in bytes
+    (`MaxRequestBytes`) and in JSON tokens (a few dozen per key a Key
+    Attestation request may name), and decoded strictly (unknown,
+    duplicate or case-folded members refused, a key's members among
+    them); refusals are fixed error codes and
     descriptions, the internal error going to `Dependencies.Logger`
     only; every signed request that doesn't verify — unknown instance,
     wrong key, used challenge — gets one identical 401. Rate limiting

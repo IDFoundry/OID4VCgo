@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -218,11 +219,17 @@ func (c TransactionCodec) marshal(tx Transaction, version int) ([]byte, error) {
 	return json.Marshal(w)
 }
 
+// recordTokens bounds the tokens of a record, or of its result, only by
+// its bytes: the record is this Verifier's own, and the result of an
+// honest answer of many credentials can hold more than
+// strictjson.DefaultMaxTokens.
+const recordTokens = math.MaxInt
+
 // Unmarshal decodes a record Marshal wrote, opening its sealed fields
 // with c.Sealer.
 func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	var w wireTransaction
-	if err := strictjson.Unmarshal(data, &w); err != nil {
+	if err := strictjson.UnmarshalLimit(data, &w, recordTokens); err != nil {
 		return Transaction{}, fmt.Errorf("verifier: unmarshal transaction: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -450,7 +457,7 @@ func marshalResult(r VerifyResponseResult, query dcql.Query) ([]byte, error) {
 
 func unmarshalResult(data []byte, query dcql.Query) (VerifyResponseResult, error) {
 	var w wireResult
-	if err := strictjson.Unmarshal(data, &w); err != nil {
+	if err := strictjson.UnmarshalLimit(data, &w, recordTokens); err != nil {
 		return VerifyResponseResult{}, err
 	}
 	byID := formats(query)
@@ -465,7 +472,7 @@ func unmarshalResult(data []byte, query dcql.Query) (VerifyResponseResult, error
 			err = fmt.Errorf("credential query %q isn't in the transaction's query", wc.CredentialQueryID)
 		default:
 			// As sdjwtvc.Verify decodes them: numbers as float64.
-			err = strictjson.Unmarshal(wc.Claims, &vc.Claims)
+			err = strictjson.UnmarshalLimit(wc.Claims, &vc.Claims, recordTokens)
 		}
 		if err != nil {
 			return VerifyResponseResult{}, err

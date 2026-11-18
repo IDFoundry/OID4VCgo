@@ -203,6 +203,46 @@ A store that dropped it would leave every suspended or revoked
 instance pending, its statuses set again at each of its requests and
 each `RevokeWhere` run matching it.
 
+### JSON is refused at 131,072 tokens, and answers at their first member out of bounds
+
+Every JSON document OID4VCgo parses from another party (Request
+Objects, metadata, credentials, a Verifier's answers, a Wallet
+Provider's requests and the rest) is now checked in one pass and
+refused at its first token over 131,072, counting values and member
+names, with an error wrapping "json: too many tokens". The largest
+honest documents measured hold under 11,000 (an issuer's metadata of
+100 KB, Google's Android attestation status list of 180 KB, whose
+parser is bounded by its entry cap instead); nothing else refused or
+accepted changes. A Verifier's own transaction records aren't bounded.
+
+The Verifier refuses an answer where it first goes out of bounds,
+before decoding the rest, with the `Reason` its later refusal had:
+
+- `Transactions` refuses a `vp_token` at its first member that isn't
+  one of the request's Credential Queries (`ReasonNotAnswered`, "vp_token
+  answers a credential query the request doesn't make"), where
+  `VerifyResponse` refused it after decoding all of it.
+- `ParseDirectPostJWTResponse`, and so `Transactions`, refuses a
+  `vp_token` of more than 64 members, or of more than
+  `MaxPresentationsPerQuery` presentations for one (`ReasonMalformed`),
+  which `VerifyResponse` refused anyway. An error response's
+  `vp_token`, if it has one, is held to the same bounds before the
+  error is returned.
+- `HandleDCAPIResponse` and `HandleMdocDCAPIResponse` refuse data of
+  more than 1,024 tokens; an honest one is a `response` string, or an
+  `error` and its description.
+
+A Wallet Provider refuses a request body of more than 128 + 64 ×
+`Policy.MaxKeys` tokens (768 by default), and a key in it
+(`registration_key`, `instance_key`, `keys`) with a member other than
+its key type's (`kty`, `crv`, `x`, `y`; `d` is refused as before),
+those RFC 7517 §4 registers (`use`, `key_ops`, `alg`, `kid`, `x5u`,
+`x5c`, `x5t`, `x5t#S256`) and Web Crypto's `ext`, or with one of those
+of another JSON type, as `invalid_request`, as it already refused an
+unknown member elsewhere in a body. `walletprovider.Client` and the
+Swift and Kotlin `HttpWalletProvider`s send `kty`, `crv`, `x` and `y`
+only, unchanged.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

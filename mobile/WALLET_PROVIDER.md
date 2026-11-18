@@ -67,14 +67,20 @@ so on.
   most 256 KiB (`MaxRequestBytes`). Bodies are decoded strictly: a
   member the request doesn't define, a member given twice, a member
   whose name matches only case-insensitively, text that isn't UTF-8,
-  or anything after the object is refused (`400 invalid_request`).
+  or anything after the object is refused (`400 invalid_request`), as
+  is a body of more than 128 + 64 × the provider's `MaxKeys` JSON
+  values and member names (768 by default; an honest registration
+  holds 19).
 - **Responses** are `application/json` with `Cache-Control: no-store`,
   but for the status lists under `/v1/status/`.
 - **Binary values** (evidence data) are base64url without padding.
 - **Times** (`expires_at`) are seconds since the Unix epoch.
 - **Keys** (`registration_key`, `instance_key`, `keys`) are public
   JWKs (RFC 7517): EC P-256 or OKP Ed25519. A JWK carrying a private
-  member (`d`) is refused.
+  member (`d`) is refused, as is one with a member other than its key
+  type's and those RFC 7517 §4 registers (`use`, `key_ops`, `alg`,
+  `kid`, `x5u`, `x5c`, `x5t`, `x5t#S256`), and Web Crypto's `ext`, or
+  one of those of another JSON type.
 - **Challenges** are 32 random bytes, base64url without padding (43
   characters), issued for one purpose, used once, and valid for the
   provider's challenge TTL (by default 5 minutes, at most 15). A

@@ -178,7 +178,8 @@
 // serves this package's own JSON protocol, versioned in its paths
 // (ChallengePath, InstancesPath, WalletAttestationPath,
 // KeyAttestationPath, StatusPath), and Client speaks it for a wallet
-// written in Go. Requests are bounded and decoded strictly; refusals
+// written in Go. Requests are bounded, in bytes and in JSON tokens, and
+// decoded strictly, a key's members as a JWK's (RFC 7517 §4's); refusals
 // carry fixed error codes, never internal error text; and every signed
 // request that doesn't verify gets the same 401. The handler does no
 // rate limiting: an integrator wraps it with their own, per client, as
