@@ -167,6 +167,7 @@ type wireCredential struct {
 	MdocClaims        []byte              `json:"mdoc_claims,omitempty"`
 	MdocStatus        []byte              `json:"mdoc_status,omitempty"`
 	IssuerChain       [][]byte            `json:"issuer_chain,omitempty"`
+	IssuerAnchor      []byte              `json:"issuer_anchor,omitempty"`
 	Withheld          map[string][]string `json:"withheld,omitempty"`
 }
 
@@ -427,7 +428,7 @@ func marshalResult(r VerifyResponseResult, query dcql.Query) ([]byte, error) {
 	byID := formats(query)
 	w := wireResult{Credentials: make([]wireCredential, 0, len(r.Credentials)), Discarded: r.Discarded}
 	for _, vc := range r.Credentials {
-		wc := wireCredential{CredentialQueryID: vc.CredentialQueryID, IssuerChain: vc.IssuerChain, Withheld: vc.Withheld}
+		wc := wireCredential{CredentialQueryID: vc.CredentialQueryID, IssuerChain: vc.IssuerChain, IssuerAnchor: vc.IssuerAnchor, Withheld: vc.Withheld}
 		var err error
 		switch byID[vc.CredentialQueryID] {
 		case mdoc.CredentialFormat:
@@ -455,7 +456,7 @@ func unmarshalResult(data []byte, query dcql.Query) (VerifyResponseResult, error
 	byID := formats(query)
 	r := VerifyResponseResult{Credentials: make([]VerifiedCredential, 0, len(w.Credentials)), Discarded: w.Discarded}
 	for _, wc := range w.Credentials {
-		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, IssuerChain: wc.IssuerChain, Withheld: wc.Withheld}
+		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, IssuerChain: wc.IssuerChain, IssuerAnchor: wc.IssuerAnchor, Withheld: wc.Withheld}
 		var err error
 		switch byID[wc.CredentialQueryID] {
 		case mdoc.CredentialFormat:

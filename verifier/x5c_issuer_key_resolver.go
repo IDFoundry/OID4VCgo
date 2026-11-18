@@ -5,6 +5,8 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"fmt"
+	"slices"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
@@ -26,13 +28,19 @@ import (
 // credential/sdjwtvc.IssueOptions.IssuerCertificate satisfies on the
 // issuing side.
 //
-// The issuer is the leaf's subject (SD-JWT VC, the x5c header). An iss
+// SD-JWT VC has the x5c header's leaf certify the issuer's key; which
+// issuer that is, the resolver can't tell from any name. An iss
 // alongside x5c needn't correspond to a name in the leaf (SD-JWT VC
 // §2.5, as the editors' copy now says outright), and issuers such as
 // the EU reference PID issuer send a leaf with no subject alternative
 // name at all, so by default iss is carried but not checked against
 // it: a credential's iss is then only as trustworthy as every issuer
-// under Roots. RequireIssuerName checks it.
+// under Roots. RequireIssuerName checks it, but a name in the leaf is
+// only as trustworthy as every CA under Roots too: each can certify a
+// leaf with any subject or subject alternative name. Tell issuers
+// apart by the trust anchor that verified their chain
+// (VerifiedCredential.IssuerAnchor, IssuerAuthorization.IssuerAnchor),
+// or by giving each type its own anchors (RootsByVCT).
 //
 // A self-signed leaf is always rejected, even if that exact
 // certificate also happens to be present in Roots — see
@@ -44,8 +52,34 @@ import (
 // chain VerifyResponse reports.
 type X5CIssuerKeyResolver struct {
 	// Roots is the trust anchor set a presented x5c chain must
-	// validate against. REQUIRED.
+	// validate against, for a credential type RootsByVCT doesn't name.
+	// Leave it nil, with RootsByVCT set, to accept only the types it
+	// names. One of the two is REQUIRED.
 	Roots *x509.CertPool
+
+	// RootsByVCT, OPTIONAL, are the trust anchors for each credential
+	// type, keyed on the vct in the Issuer-signed JWT: a credential of a
+	// type it names must chain to that type's anchors, not to Roots.
+	// Without it, every anchor in Roots may sign every type — a loyalty
+	// club's CA a PID, say — so where the anchors are different
+	// providers', name each one's types here. A type named with nil
+	// anchors is refused.
+	//
+	// A credential's aka_vcts are types it says it is of too, and can
+	// answer a query through (dcql.CredentialQuery), but they're its
+	// issuer's own claim (SD-JWT VC draft-19 §7.7). So with RootsByVCT
+	// set, the credential's chain must validate against the anchors of
+	// each of its aka_vcts as well: RootsByVCT's for a type it names,
+	// else Roots, else the credential is refused. The issuer chain
+	// reported is the one validated against its vct's anchors.
+	//
+	// ResolveIssuerChains, which isn't given the credential, can't tell
+	// its type: with RootsByVCT set it refuses. VerifyResponse resolves
+	// an X5CIssuerKeyResolver's key and chains together, with the
+	// credential; a resolver of your own that wraps one and implements
+	// ResolveIssuerChains by calling it is refused there too.
+	RootsByVCT map[string]*x509.CertPool
+
 	// LeafPolicy, if set, is run on the chain-verified leaf and its
 	// verified paths, and can refuse it. Chain validation accepts a
 	// leaf with any key usage, so a certificate issued for another role
@@ -76,10 +110,14 @@ type X5CIssuerKeyResolver struct {
 	// names, any other exactly one of its uniformResourceIdentifier
 	// names; a credential without iss is refused. It's a relying
 	// party's policy, not a requirement of SD-JWT VC: use it where one
-	// root certifies several issuers, so none can sign in another's
-	// name. Without it, IssuerAuthorization.Issuer is
-	// empty, and VerifyResponseRequest.IssuerAuthorized decides from the
-	// verified certificate (IssuerChain) instead.
+	// root you trust for all of them certifies several issuers, so that
+	// none of those issuers can sign in another's name. It holds only
+	// where no other trusted CA can issue a certificate naming that
+	// issuer: every CA under Roots can put any name in a leaf it
+	// certifies (and a dNSName name constraint doesn't constrain a URI
+	// name). Where Roots are several providers', tell them apart by
+	// IssuerAnchor or RootsByVCT, not by this. Without it,
+	// IssuerAuthorization.Issuer is empty.
 	RequireIssuerName bool
 }
 
@@ -159,10 +197,14 @@ func init() { certchain.RegisterNonSeparating(AnyIssuerLeaf) }
 // from the x5c header's leaf to Roots, as ResolveIssuerKey verifies it,
 // that LeafPolicy approves each on its own (certchain.ApprovedChains)
 // and Revocation passes: the issuer chain VerifyResponse reports is one
-// of them.
+// of them. With RootsByVCT set it refuses: the header doesn't say the
+// credential's type, which chooses the anchors.
 func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
+	}
+	if len(r.RootsByVCT) > 0 {
+		return nil, errors.New("verifier: X5CIssuerKeyResolver with RootsByVCT can't resolve issuer chains without the credential's vct")
 	}
 	ders, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
@@ -195,9 +237,19 @@ func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, mem
 	if err := certchain.CheckNoAnchor(ders); err != nil {
 		return nil, "", nil, err
 	}
-	leaf, chains, err := verifyTrustedChains(ctx, memo, "x5c", ders, r.Roots, r.leafPolicy(), r.Revocation, signed)
+	roots, akaRoots, err := r.rootsFor(payload)
 	if err != nil {
 		return nil, "", nil, err
+	}
+	leaf, chains, err := verifyTrustedChains(ctx, memo, "x5c", ders, roots, r.leafPolicy(), r.Revocation, signed)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	for _, roots := range akaRoots {
+		// The signature is checked: only the chain is left to check.
+		if _, _, err := verifyTrustedChains(ctx, memo, "x5c", ders, roots, r.leafPolicy(), r.Revocation, nil); err != nil {
+			return nil, "", nil, fmt.Errorf("the issuer isn't trusted for one of the credential's aka_vcts: %w", err)
+		}
 	}
 	if r.RequireIssuerName {
 		// Required means present: a credential naming no issuer would
@@ -219,6 +271,76 @@ func (r X5CIssuerKeyResolver) resolveIssuerKeyAndChains(ctx context.Context, mem
 		return nil, "", nil, err
 	}
 	return leaf.PublicKey, alg, chains, nil
+}
+
+// rootsFor is the trust anchors a credential whose Issuer-signed JWT
+// has payload must chain to: its vct's (typeRoots), and, with
+// RootsByVCT set, each other set its aka_vcts' types have, once each.
+func (r X5CIssuerKeyResolver) rootsFor(payload map[string]any) (*x509.CertPool, []*x509.CertPool, error) {
+	if len(r.RootsByVCT) == 0 {
+		if r.Roots == nil {
+			return nil, nil, errors.New("verifier: X5CIssuerKeyResolver needs Roots or RootsByVCT")
+		}
+		return r.Roots, nil, nil
+	}
+	vct, ok := payload["vct"].(string)
+	if !ok {
+		return nil, nil, errors.New("verifier: the credential has no vct to choose its trust anchors by (RootsByVCT)")
+	}
+	roots, err := r.typeRoots(vct)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw, present := payload["aka_vcts"]
+	if !present {
+		return roots, nil, nil
+	}
+	aka, ok := raw.([]any)
+	if !ok {
+		return nil, nil, errors.New("verifier: aka_vcts is not an array")
+	}
+	var akaRoots []*x509.CertPool
+	for _, t := range aka {
+		s, ok := t.(string)
+		if !ok {
+			return nil, nil, errors.New("verifier: aka_vcts has an entry that is not a string")
+		}
+		pool, err := r.typeRoots(s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("aka_vcts: %w", err)
+		}
+		if pool != roots && !slices.Contains(akaRoots, pool) {
+			akaRoots = append(akaRoots, pool)
+		}
+	}
+	return roots, akaRoots, nil
+}
+
+// typeRoots is the trust anchors a credential of type vct must chain
+// to: RootsByVCT's for a type it names, else Roots.
+func (r X5CIssuerKeyResolver) typeRoots(vct string) (*x509.CertPool, error) {
+	if roots, ok := r.RootsByVCT[vct]; ok {
+		// A type named with no roots falls back to none: Roots weren't
+		// chosen for it.
+		if roots == nil {
+			return nil, fmt.Errorf("verifier: no trust anchors for credential type %q", vct)
+		}
+		return roots, nil
+	}
+	if r.Roots == nil {
+		return nil, fmt.Errorf("verifier: no trust anchors for credential type %q", vct)
+	}
+	return r.Roots, nil
+}
+
+// anchorPools is every trust anchor set r verifies against: Roots and
+// RootsByVCT's.
+func (r X5CIssuerKeyResolver) anchorPools() []*x509.CertPool {
+	pools := []*x509.CertPool{r.Roots}
+	for _, roots := range r.RootsByVCT {
+		pools = append(pools, roots)
+	}
+	return pools
 }
 
 // x5cResolver is keys as an X5CIssuerKeyResolver, when it's exactly

@@ -1460,7 +1460,10 @@ base64, dates as their text). The holder may withhold elements, so check
 that each one needed is there. `device_auth` is `signature` or `mac`.
 `issuer_chain` is the document signer's verified certificate path, leaf
 first, ending at the root in `issuer_roots` it chained to, as base64
-DER: decide which issuers to accept on it. `issuer` and `trust_anchor`
+DER: decide which issuers to accept on it, by that last certificate's
+key, never by the names or authority key identifiers of the
+certificates below it, which any trusted root can copy from another
+(or use `issuer_roots_by_doctype`). `issuer` and `trust_anchor`
 are its first and last certificates' common names, which any document
 signer under a trusted root can choose, so they're for display only.
 `status`, when present, is the MSO's revocation reference, which

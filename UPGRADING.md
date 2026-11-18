@@ -41,6 +41,45 @@ Before, the response was refused only when a copy of a credential that
 verified did; copies that failed were each verified and discarded. The
 refusal is the same `ReasonMalformed` error as before.
 
+### Authorize issuers by the anchor that verified them, not by names
+
+No API is removed, but an issuer authorization hook that decides as
+the earlier docs said is forgeable where the issuer roots are several
+providers'. Any trusted CA can certify a leaf naming another provider's
+issuer, so `IssuerAuthorization.Issuer` under
+`X5CIssuerKeyResolver.RequireIssuerName` holds only where no other
+trusted CA can issue a certificate with that name. And any trusted root
+can share another's subject name and copy its key identifier into the
+certificates it signs, so the issuer name and authority key identifier
+of `IssuerChain`'s last certificate don't tell which root verified it.
+This applies to `VerifyResponseRequest.IssuerAuthorized`
+(`TransactionsConfig.Verify.IssuerAuthorized`, the org-iso-mdoc path
+included), `mdocdcapi.VerifyParams.IssuerAuthorized` and
+`proximity.WithIssuerAuthorization`.
+
+A hook that decides by `Issuer`, or by names or key identifiers in
+`IssuerChain`, should move to one of:
+
+- `IssuerAuthorization.IssuerAnchor` (new; also
+  `VerifiedCredential.IssuerAnchor`, `mdocdcapi.Verified.IssuerAnchor`),
+  the DER of the configured root that verified the chain, compared by
+  key with the anchors you assign to each type:
+  `verifier.AnchorIs(a.IssuerAnchor, pidRoots...)`, or
+  `verifier.AnchorHasKeyIdentifier(a.IssuerAnchor, akiValues...)` with
+  the values a `trusted_authorities` "aki" query would name. Refuse a
+  nil `IssuerAnchor`: the issuer key resolver verified no chain.
+- Per-type roots, with no hook: the new `X5CIssuerKeyResolver.RootsByVCT`,
+  keyed on the credential's signed `vct`, as `X5ChainIssuerKeyResolver.RootsByDocType`
+  (and `proximity.WithIssuerRootsByDocType`) are for mdocs. Under
+  `RootsByVCT`, a credential's `aka_vcts` are held to their types'
+  anchors too, and `ResolveIssuerChains` refuses, since it isn't given
+  the `vct`.
+
+`MdocIssuer.CheckAnchored` is `Check` with the anchor, for a verifier
+of its own mdocs. A `Transaction` record now carries the anchor of each
+verified credential (`issuer_anchor`); a record from an earlier release
+reads with none.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

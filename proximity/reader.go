@@ -140,9 +140,14 @@ func WithAssurance(level verifier.AssuranceLevel) ReaderOption {
 // may issue its document type, as verifier.VerifyResponseRequest's
 // IssuerAuthorized does: Verify calls authorized with the document's
 // type (Type, RequestedTypes and MatchedTypes, all the requested
-// doctype), claims and issuer chain (Verified.Credential's), and an
-// error refuses the document. Decide on IssuerChain, never on the
-// common names a document signer chooses itself.
+// doctype), claims, issuer chain and trust anchor (Verified.Credential's
+// IssuerChain and IssuerAnchor), and an error refuses the document.
+// Decide by IssuerAnchor, the IACA among Verify's roots that verified
+// the chain, comparing its key with the IACAs you assign to the
+// doctype (verifier.AnchorIs), never by names or key identifiers in
+// the chain: any trusted IACA can write another's name and authority
+// key identifier into the document signer certificates it issues.
+// WithIssuerRootsByDocType makes the same separation without a hook.
 func WithIssuerAuthorization(authorized func(ctx context.Context, a verifier.IssuerAuthorization) error) ReaderOption {
 	return func(c *readerConfig) { c.issuerAuthorized = authorized }
 }
@@ -460,15 +465,20 @@ type Verified struct {
 	// IssuerCN is the document signer certificate's subject common
 	// name; TrustAnchorCN is the common name of the root in roots its
 	// chain verified to. Both are for display: any document signer
-	// under any trusted root names itself, so authorize on IssuerChain.
+	// under any trusted root names itself, and any root can share
+	// another's name, so authorize by IssuerChain's root.
 	IssuerCN      string
 	TrustAnchorCN string
 
 	// IssuerChain is the document signer's verified certificate path,
 	// leaf first, ending at the trusted root: the one ISO/IEC 18013-5's
 	// document signer checks passed on. Decide which issuers to accept
-	// from it, and bind the status list's signer to it with
-	// mdoc.StatusTrust(Status.StatusList, IssuerChain).
+	// by that root, its last certificate, comparing its key with the
+	// IACAs you assign to the doctype (verifier.AnchorIs), never by the
+	// names or authority key identifiers of the certificates below it,
+	// which any trusted IACA can copy from another. Bind the status
+	// list's signer to it with mdoc.StatusTrust(Status.StatusList,
+	// IssuerChain).
 	IssuerChain []*x509.Certificate
 
 	// ValidFrom and ValidUntil are the MSO's validity, which Verify
@@ -490,7 +500,8 @@ type Verified struct {
 // and IssuerChain — for what takes one, such as
 // verifier.StatusPolicy.Check or verifier.RequireValidStatus. Its
 // IssuerChain is v's as DER without the trust anchor, as a Verifier's
-// mdoc's is (the anchor stays when it's the only certificate); its
+// mdoc's is (the anchor stays when it's the only certificate), and its
+// IssuerAnchor that anchor, IssuerChain's last certificate; its
 // CredentialQueryID is "": an ISO/IEC 18013-5 request has no DCQL
 // query.
 func (v Verified) Credential() verifier.VerifiedCredential {
@@ -499,6 +510,10 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 		claims[ns] = elements
 	}
 	path := v.IssuerChain
+	var anchor []byte
+	if len(path) > 0 {
+		anchor = path[len(path)-1].Raw
+	}
 	if len(path) > 1 {
 		path = path[:len(path)-1]
 	}
@@ -506,7 +521,7 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 	for i, c := range path {
 		chain[i] = c.Raw
 	}
-	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: chain}
+	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: chain, IssuerAnchor: anchor}
 }
 
 // Verify decrypts the mdoc's reply and verifies the DeviceResponse in
@@ -623,7 +638,7 @@ func (r *ReaderSession) authorize(ctx context.Context, v Verified, req readerReq
 	if r.issuerAuthorized != nil {
 		if err := r.issuerAuthorized(ctx, verifier.IssuerAuthorization{
 			Format: mdoc.CredentialFormat, Type: v.DocType, RequestedTypes: []string{req.docType}, MatchedTypes: []string{v.DocType},
-			IssuerChain: credential.IssuerChain, Claims: credential.Claims,
+			IssuerChain: credential.IssuerChain, IssuerAnchor: credential.IssuerAnchor, Claims: credential.Claims,
 		}); err != nil {
 			return fmt.Errorf("proximity: issuer authorization: %w", err)
 		}

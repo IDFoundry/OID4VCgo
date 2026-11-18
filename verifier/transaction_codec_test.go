@@ -164,6 +164,10 @@ func TestTransactionCodec_Transactions(t *testing.T) {
 	if err != nil || view.Status != verifier.TransactionDone || view.Result.Credentials[0].Claims["given_name"] != "Jean" {
 		t.Fatalf("Lookup = %+v, %v; want the result", view, err)
 	}
+	// The anchor the issuer chain was verified to survives the store.
+	if anchor, err := x509.ParseCertificate(view.Result.Credentials[0].IssuerAnchor); err != nil || anchor.Subject.CommonName != "tx issuer CA" {
+		t.Fatalf("IssuerAnchor after the store = %v, %v; want the issuer CA", anchor, err)
+	}
 	same := f.begin("browser-binding-same-001", true)
 	answered, err := f.txs.HandleResponse(ctx, f.answer(same, nil))
 	if err != nil || answered.RedirectURI == "" {

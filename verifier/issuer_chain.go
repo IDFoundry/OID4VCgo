@@ -31,11 +31,14 @@ type MdocIssuerChainResolver interface {
 // given one, VerifyResponse hands TrustedAuthorities and
 // IssuerAuthorized (VerifiedCredential.IssuerChain) the verified path,
 // without its trust anchor, rather than the x5c header, which can carry
-// certificates that aren't on it. X5CIssuerKeyResolver is one.
+// certificates that aren't on it, and the anchor itself as
+// VerifiedCredential.IssuerAnchor. X5CIssuerKeyResolver is one.
 //
 // For both, the paths are the ones the resolver's own role policy
 // approves each on its own, not every path the chain verifies on: the
 // first is the issuer chain the rest of the verification decides on.
+// Each path ends at the trust anchor that verified it, one of the
+// resolver's configured roots.
 type SDJWTVCIssuerChainResolver interface {
 	SDJWTVCIssuerKeyResolver
 	ResolveIssuerChains(ctx context.Context, header map[string]any) ([][]*x509.Certificate, error)
@@ -79,32 +82,40 @@ func keyBoundChain(chain [][]byte, issuerPub crypto.PublicKey) [][]byte {
 // trusted_authorities check on it fails. Under AssuranceProduction,
 // VerifyResponse requires an MdocIssuerChainResolver.
 func CheckMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) ([][]byte, error) {
+	chain, _, err := checkMdocIssuer(ctx, resolver, x5chain, docType, issuerPub, verified)
+	return chain, err
+}
+
+// checkMdocIssuer is CheckMdocIssuer, also returning the trust anchor
+// the issuer chain was verified to (see verifiedPath).
+func checkMdocIssuer(ctx context.Context, resolver MdocIssuerKeyResolver, x5chain [][]byte, docType string, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) (chain [][]byte, anchor []byte, err error) {
 	chainResolver, ok := mdocChainResolver(resolver)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if keyBoundChain(x5chain, issuerPub) == nil {
-		return nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
+		return nil, nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
 	}
 	chains, err := chainResolver.ResolveMdocIssuerChains(ctx, x5chain, docType)
 	if err != nil {
-		return nil, fmt.Errorf("issuer certificate chain: %w", err)
+		return nil, nil, fmt.Errorf("issuer certificate chain: %w", err)
 	}
 	return checkDocumentSignerPaths(chains, issuerPub, verified)
 }
 
 // checkDocumentSignerPaths is CheckMdocIssuer's document signer checks
-// over chains, the paths the resolver verified the issuer's x5chain on.
-func checkDocumentSignerPaths(chains [][]*x509.Certificate, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) ([][]byte, error) {
+// over chains, the paths the resolver verified the issuer's x5chain on,
+// returning the issuer chain and its trust anchor.
+func checkDocumentSignerPaths(chains [][]*x509.Certificate, issuerPub crypto.PublicKey, verified mdoc.VerifiedMSO) (chain [][]byte, anchor []byte, err error) {
 	path, err := mdoc.CheckDocumentSigner(verified, chains)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	trusted := verifiedPath([][]*x509.Certificate{path}, issuerPub)
+	trusted, anchor := verifiedPath([][]*x509.Certificate{path}, issuerPub)
 	if trusted == nil {
-		return nil, errors.New("the issuer certificate path that passed the document signer checks isn't the key's")
+		return nil, nil, errors.New("the issuer certificate path that passed the document signer checks isn't the key's")
 	}
-	return trusted, nil
+	return trusted, anchor, nil
 }
 
 // MdocIssuer is an mdoc issuer's key, as ResolveMdocIssuer resolved it
@@ -231,11 +242,21 @@ func resolveMdocIssuer(ctx context.Context, memo *chainMemo, resolver MdocIssuer
 // chain to trust, as CheckMdocIssuer does, from the paths
 // ResolveMdocIssuer verified where it verified them.
 func (i MdocIssuer) Check(ctx context.Context, verified mdoc.VerifiedMSO) ([][]byte, error) {
+	chain, _, err := i.CheckAnchored(ctx, verified)
+	return chain, err
+}
+
+// CheckAnchored is Check, also returning the trust anchor the issuer
+// chain was verified to, as DER: the configured root the chain's last
+// certificate is signed by, the one to authorize the issuer by
+// (IssuerAuthorization.IssuerAnchor). anchor is nil when chain is, as
+// when the resolver isn't an MdocIssuerChainResolver.
+func (i MdocIssuer) CheckAnchored(ctx context.Context, verified mdoc.VerifiedMSO) (chain [][]byte, anchor []byte, err error) {
 	if !i.verifiedChains {
-		return CheckMdocIssuer(ctx, i.resolver, i.x5chain, i.docType, i.Key, verified)
+		return checkMdocIssuer(ctx, i.resolver, i.x5chain, i.docType, i.Key, verified)
 	}
 	if keyBoundChain(i.x5chain, i.Key) == nil {
-		return nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
+		return nil, nil, errors.New("the issuer's x5chain isn't the one its key resolved from")
 	}
 	return checkDocumentSignerPaths(i.chains, i.Key, verified)
 }
@@ -282,8 +303,12 @@ func mdocChainResolver(resolver MdocIssuerKeyResolver) (MdocIssuerChainResolver,
 // verifiedPath is the first of chains whose leaf has issuerPub, as DER,
 // without its last certificate, the trust anchor the path ends at: the
 // form an x5chain takes (RFC 9360 §2), every certificate in it
-// verified.
-func verifiedPath(chains [][]*x509.Certificate, issuerPub crypto.PublicKey) [][]byte {
+// verified. anchor is that last certificate, as DER: the configured
+// root that verified the path, the one thing about it no other trusted
+// root can write (the issuer name and authority key identifier of the
+// path's top certificate are whatever its signer wrote). A path of one
+// certificate keeps it, as its own anchor.
+func verifiedPath(chains [][]*x509.Certificate, issuerPub crypto.PublicKey) (ders [][]byte, anchor []byte) {
 	for _, path := range chains {
 		if len(path) == 0 {
 			continue
@@ -292,14 +317,15 @@ func verifiedPath(chains [][]*x509.Certificate, issuerPub crypto.PublicKey) [][]
 		if !ok || !key.Equal(issuerPub) {
 			continue
 		}
+		anchor = path[len(path)-1].Raw
 		if len(path) > 1 {
 			path = path[:len(path)-1]
 		}
-		ders := make([][]byte, len(path))
+		ders = make([][]byte, len(path))
 		for i, cert := range path {
 			ders[i] = cert.Raw
 		}
-		return ders
+		return ders, anchor
 	}
-	return nil
+	return nil, nil
 }
