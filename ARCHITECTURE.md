@@ -572,9 +572,11 @@ changes whether *every* bullet below is `(done)`.
     JSON protocol under `/v1/` (challenge, instances,
     wallet-attestation, key-attestation, the status lists) and
     `walletprovider.Client` speaks it, over fapihttp's hardened
-    transport and following no redirect. Bodies are bounded
-    (`MaxRequestBytes`) and decoded strictly (unknown, duplicate or
-    case-folded members refused); refusals are fixed error codes and
+    transport and following no redirect. Bodies are bounded in bytes
+    (`MaxRequestBytes`) and in JSON tokens (a few dozen per key a Key
+    Attestation request may name), and decoded strictly (unknown,
+    duplicate or case-folded members refused, a key's members among
+    them); refusals are fixed error codes and
     descriptions, the internal error going to `Dependencies.Logger`
     only; every signed request that doesn't verify — unknown instance,
     wrong key, used challenge — gets one identical 401. Rate limiting

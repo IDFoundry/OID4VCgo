@@ -68,7 +68,11 @@ each, not a deployment template" says what it does differently.
   service: the Nonce Endpoint and the Credential Offer endpoints, the
   Wallet Provider's challenge and registration endpoints
   (`walletprovider.ChallengePath`, `InstancesPath`). Each writes a
-  row, and each sealed row spends the Sealer key's budget. The
+  row, and each sealed row spends the Sealer key's budget. Parsing a
+  body, up to `MaxRequestBytes` (256 KiB) and refused at 128 + 64 ×
+  `Policy.MaxKeys` JSON tokens, costs about 2 ms of CPU for one of
+  that size holding one string, and under 0.5 ms for one padded with
+  small tokens or members, before the challenge is looked up. The
   Verifier's request_uri (`RequestObjectHandler`) too: each fetch
   reads a row, and every request_uri POST signs a Request Object (a
   billed call with a KMS-backed signer), as does every GET of a

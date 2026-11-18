@@ -176,6 +176,12 @@ func ParsePublicKey(raw []byte) (crypto.PublicKey, error) {
 	if err := strictjson.Unmarshal(raw, &k); err != nil {
 		return nil, fmt.Errorf("jwk: unmarshal: %w", err)
 	}
+	return k.PublicOnly()
+}
+
+// PublicOnly is PublicKey for a JWK that must be public: one carrying a
+// private key ("d") is refused, as ParsePublicKey refuses it.
+func (k JWK) PublicOnly() (crypto.PublicKey, error) {
 	if k.D != "" {
 		return nil, fmt.Errorf("jwk: a public key was expected, but the JWK carries a private key")
 	}

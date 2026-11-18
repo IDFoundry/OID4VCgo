@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/idfoundry/oid4vcgo/internal/jwk"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
@@ -54,10 +55,28 @@ type evidenceBody struct {
 	Data string `json:"data"`
 }
 
+// wireJWK is a key in a request body: the members jwk.JWK reads, and
+// the other members RFC 7517 §4 registers, which it ignores. They are
+// decoded as fields, not as raw JSON, so that decodeStrict refuses any
+// other member, and checks the case of their names, as it does in the
+// rest of the body.
+type wireJWK struct {
+	jwk.JWK
+	Use     string   `json:"use,omitempty"`
+	KeyOps  []string `json:"key_ops,omitempty"`
+	Alg     string   `json:"alg,omitempty"`
+	Kid     string   `json:"kid,omitempty"`
+	X5U     string   `json:"x5u,omitempty"`
+	X5C     []string `json:"x5c,omitempty"`
+	X5T     string   `json:"x5t,omitempty"`
+	X5TS256 string   `json:"x5t#S256,omitempty"`
+	Ext     *bool    `json:"ext,omitempty"` // a Web Crypto export's
+}
+
 type registerRequestBody struct {
-	Challenge       string          `json:"challenge"`
-	RegistrationKey json.RawMessage `json:"registration_key"`
-	Evidence        evidenceBody    `json:"evidence"`
+	Challenge       string       `json:"challenge"`
+	RegistrationKey wireJWK      `json:"registration_key"`
+	Evidence        evidenceBody `json:"evidence"`
 }
 
 type registerResponseBody struct {
@@ -65,10 +84,10 @@ type registerResponseBody struct {
 }
 
 type walletAttestationRequestBody struct {
-	ClientID    string          `json:"client_id"`
-	InstanceKey json.RawMessage `json:"instance_key"`
-	Challenge   string          `json:"challenge,omitempty"`
-	Evidence    *evidenceBody   `json:"evidence,omitempty"`
+	ClientID    string        `json:"client_id"`
+	InstanceKey wireJWK       `json:"instance_key"`
+	Challenge   string        `json:"challenge,omitempty"`
+	Evidence    *evidenceBody `json:"evidence,omitempty"`
 }
 
 type walletAttestationResponseBody struct {
@@ -76,11 +95,11 @@ type walletAttestationResponseBody struct {
 }
 
 type keyAttestationRequestBody struct {
-	InstanceKey json.RawMessage   `json:"instance_key"`
-	Challenge   string            `json:"challenge"`
-	Keys        []json.RawMessage `json:"keys"`
-	Evidence    []evidenceBody    `json:"evidence"`
-	Nonce       string            `json:"nonce,omitempty"`
+	InstanceKey wireJWK        `json:"instance_key"`
+	Challenge   string         `json:"challenge"`
+	Keys        []wireJWK      `json:"keys"`
+	Evidence    []evidenceBody `json:"evidence"`
+	Nonce       string         `json:"nonce,omitempty"`
 }
 
 type keyAttestationResponseBody struct {
@@ -96,11 +115,23 @@ type errorBody struct {
 	Description string `json:"error_description,omitempty"`
 }
 
-// decodeStrict decodes the JSON object data into v, refusing members v
-// has no field for, data after the object, and what strictjson refuses
-// (duplicate members, names matching a field only case-insensitively,
-// text that isn't UTF-8).
-func decodeStrict(data []byte, v any) error {
+// bodyTokens bounds the JSON tokens of a request body when a Key
+// Attestation request may name maxKeys keys: a few dozen for each key
+// and its evidence, and room for the rest. An honest body holds a
+// fraction of it (a registration 19), so one of many small
+// tokens, or of many members, is refused within a few kilobytes.
+func bodyTokens(maxKeys int) int { return 128 + 64*maxKeys }
+
+// decodeStrict decodes the JSON object data into v, refusing more than
+// maxTokens tokens and what else strictjson refuses (duplicate members,
+// names matching a field only case-insensitively, text that isn't
+// UTF-8), then members v has no field for, and data after the object.
+// strictjson's check goes first: it stops at the bound, where
+// encoding/json reports each member it doesn't know as it goes.
+func decodeStrict(data []byte, v any, maxTokens int) error {
+	if err := strictjson.UnmarshalLimit(data, v, maxTokens); err != nil {
+		return fmt.Errorf("strict JSON: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -108,9 +139,6 @@ func decodeStrict(data []byte, v any) error {
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("data after the JSON object")
-	}
-	if err := strictjson.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("strict JSON: %w", err)
 	}
 	return nil
 }

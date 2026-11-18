@@ -178,7 +178,7 @@ func (c *Client) Register(ctx context.Context, req RegisterRequest) (string, err
 	if err != nil {
 		return "", err
 	}
-	body := registerRequestBody{Challenge: req.Challenge, RegistrationKey: key.json, Evidence: evidenceBodyOf(req.Evidence)}
+	body := registerRequestBody{Challenge: req.Challenge, RegistrationKey: wireJWK{JWK: key.jwk}, Evidence: evidenceBodyOf(req.Evidence)}
 	var resp registerResponseBody
 	if err := c.post(ctx, InstancesPath, body, nil, http.StatusCreated, &resp); err != nil {
 		return "", err
@@ -202,7 +202,7 @@ func (c *Client) WalletAttestation(ctx context.Context, registrationKey crypto.S
 	if err != nil {
 		return "", err
 	}
-	body := walletAttestationRequestBody{ClientID: req.ClientID, InstanceKey: key.json, Challenge: req.Challenge}
+	body := walletAttestationRequestBody{ClientID: req.ClientID, InstanceKey: wireJWK{JWK: key.jwk}, Challenge: req.Challenge}
 	if req.Evidence.Kind != "" || len(req.Evidence.Data) > 0 {
 		ev := evidenceBodyOf(req.Evidence)
 		body.Evidence = &ev
@@ -241,13 +241,13 @@ func (c *Client) KeyAttestation(ctx context.Context, registrationKey crypto.Sign
 	if err != nil {
 		return KeyAttestationResult{}, fmt.Errorf("the instance key: %w", err)
 	}
-	body := keyAttestationRequestBody{InstanceKey: ik.json, Challenge: req.Challenge, Nonce: req.Nonce}
+	body := keyAttestationRequestBody{InstanceKey: wireJWK{JWK: ik.jwk}, Challenge: req.Challenge, Nonce: req.Nonce}
 	for i, k := range req.Keys {
 		mk, err := marshalKey(k)
 		if err != nil {
 			return KeyAttestationResult{}, fmt.Errorf("key %d: %w", i, err)
 		}
-		body.Keys = append(body.Keys, mk.json)
+		body.Keys = append(body.Keys, wireJWK{JWK: mk.jwk})
 	}
 	for _, e := range req.Evidence {
 		body.Evidence = append(body.Evidence, evidenceBodyOf(e))

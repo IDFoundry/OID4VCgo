@@ -13,8 +13,6 @@ import (
 	"net/url"
 	"strconv"
 	"time"
-
-	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
 // Handler serves the provider's HTTP protocol, version 1: JSON over
@@ -184,7 +182,7 @@ func (p *Provider) serveRegister(w http.ResponseWriter, r *http.Request) {
 	if !p.readJSON(w, r, &req) {
 		return
 	}
-	key, err := jwk.ParsePublicKey(req.RegistrationKey)
+	key, err := req.RegistrationKey.PublicOnly()
 	if err != nil {
 		p.fail(r, w, errMalformed, fmt.Errorf("registration_key: %w", err))
 		return
@@ -208,7 +206,7 @@ func (p *Provider) serveWalletAttestation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	key, err := jwk.ParsePublicKey(req.InstanceKey)
+	key, err := req.InstanceKey.PublicOnly()
 	if err != nil {
 		p.fail(r, w, errMalformed, fmt.Errorf("instance_key: %w", err))
 		return
@@ -238,14 +236,14 @@ func (p *Provider) serveKeyAttestation(w http.ResponseWriter, r *http.Request) {
 		p.fail(r, w, errMalformed, fmt.Errorf("%d keys and %d pieces of evidence, more than %d", len(req.Keys), len(req.Evidence), p.cfg.Policy.maxKeys()))
 		return
 	}
-	instanceKey, err := jwk.ParsePublicKey(req.InstanceKey)
+	instanceKey, err := req.InstanceKey.PublicOnly()
 	if err != nil {
 		p.fail(r, w, errMalformed, fmt.Errorf("instance_key: %w", err))
 		return
 	}
 	kr := KeyAttestationRequest{InstanceID: in.ID, InstanceKey: instanceKey, Challenge: req.Challenge, Nonce: req.Nonce}
-	for i, raw := range req.Keys {
-		key, err := jwk.ParsePublicKey(raw)
+	for i, k := range req.Keys {
+		key, err := k.PublicOnly()
 		if err != nil {
 			p.fail(r, w, errMalformed, fmt.Errorf("keys[%d]: %w", i, err))
 			return
@@ -308,7 +306,7 @@ func (p *Provider) readBody(w http.ResponseWriter, r *http.Request) ([]byte, boo
 // decodeBody decodes body into v strictly (decodeStrict), answering
 // the refusal itself and reporting false if it can't.
 func (p *Provider) decodeBody(w http.ResponseWriter, r *http.Request, body []byte, v any) bool {
-	if err := decodeStrict(body, v); err != nil {
+	if err := decodeStrict(body, v, bodyTokens(p.cfg.Policy.maxKeys())); err != nil {
 		p.fail(r, w, errMalformed, fmt.Errorf("%w: %w", errDecoding, err))
 		return false
 	}

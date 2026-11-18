@@ -232,6 +232,17 @@ before decoding the rest, with the `Reason` its later refusal had:
   more than 1,024 tokens; an honest one is a `response` string, or an
   `error` and its description.
 
+A Wallet Provider refuses a request body of more than 128 + 64 ×
+`Policy.MaxKeys` tokens (768 by default), and a key in it
+(`registration_key`, `instance_key`, `keys`) with a member other than
+its key type's (`kty`, `crv`, `x`, `y`; `d` is refused as before),
+those RFC 7517 §4 registers (`use`, `key_ops`, `alg`, `kid`, `x5u`,
+`x5c`, `x5t`, `x5t#S256`) and Web Crypto's `ext`, or with one of those
+of another JSON type, as `invalid_request`, as it already refused an
+unknown member elsewhere in a body. `walletprovider.Client` and the
+Swift and Kotlin `HttpWalletProvider`s send `kty`, `crv`, `x` and `y`
+only, unchanged.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed
