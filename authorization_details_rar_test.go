@@ -3,6 +3,8 @@ package oid4vci_test
 import (
 	"encoding/json"
 	"errors"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/idfoundry/fapigo/extension"
@@ -160,6 +162,66 @@ func TestAuthorizationDetailRARDefinition_ValidateNarrowing(t *testing.T) {
 		err := registry.ValidateNarrowing(parseCredentialDetails(t, registry, tc.granted), parseCredentialDetails(t, registry, tc.narrowed))
 		if (err == nil) != tc.ok {
 			t.Errorf("%s: ValidateNarrowing = %v, want ok %v", name, err, tc.ok)
+		}
+	}
+}
+
+// credentialClaims are n distinct claims descriptions.
+func credentialClaims(n int) []oid4vci.ClaimsDescription {
+	claims := make([]oid4vci.ClaimsDescription, n)
+	for i := range claims {
+		claims[i] = oid4vci.ClaimsDescription{Path: []any{"claim_" + strconv.Itoa(i)}}
+	}
+	return claims
+}
+
+// One object carries at most MaxAuthorizationDetailClaims claims,
+// whatever size the registry allows it; a registry 5 deep takes them.
+func TestAuthorizationDetailRARDefinition_ClaimsCap(t *testing.T) {
+	registry, err := extension.NewRARRegistry(64<<10, 5, oid4vci.AuthorizationDetailRARDefinition(1, 64<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, oid4vci.MaxAuthorizationDetailClaims, oid4vci.MaxAuthorizationDetailClaims + 1} {
+		raw, err := json.Marshal([]oid4vci.AuthorizationDetail{{
+			Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: "pid", Claims: credentialClaims(n),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = registry.ParseRequest(raw)
+		if ok := n <= oid4vci.MaxAuthorizationDetailClaims; (err == nil) != ok {
+			t.Errorf("%d claims: ParseRequest = %v, want ok %v", n, err, ok)
+		}
+	}
+}
+
+// Checking a token request's narrowing of its grant, which a Wallet can
+// repeat at every refresh (RFC 9396 §6.1), takes work linear in the
+// claims, counted by allocations: the scan it replaces, a
+// reflect.DeepEqual per pair of claims, allocated for each pair.
+func TestAuthorizationDetailRARDefinition_ValidateNarrowingIsLinear(t *testing.T) {
+	def := oid4vci.AuthorizationDetailRARDefinition(1, 64<<10)
+	n := oid4vci.MaxAuthorizationDetailClaims
+	granted := oid4vci.AuthorizationDetail{
+		Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: "pid",
+		CredentialIdentifiers: []string{"a"}, Claims: credentialClaims(n),
+	}
+	reversed := granted
+	reversed.Claims = slices.Clone(granted.Claims)
+	slices.Reverse(reversed.Claims)
+	refused := reversed
+	refused.Claims = slices.Clone(reversed.Claims)
+	refused.Claims[n-1] = oid4vci.ClaimsDescription{Path: []any{"not_granted"}}
+	if err := def.ValidateNarrowing(granted, reversed); err != nil {
+		t.Fatalf("ValidateNarrowing to the same claims reversed: %v", err)
+	}
+	if err := def.ValidateNarrowing(granted, refused); err == nil {
+		t.Fatal("ValidateNarrowing accepted a claim the grant doesn't hold")
+	}
+	for name, narrowed := range map[string]oid4vci.AuthorizationDetail{"accepted": reversed, "refused": refused} {
+		if allocs := testing.AllocsPerRun(3, func() { _ = def.ValidateNarrowing(granted, narrowed) }); allocs > float64(4*n) {
+			t.Errorf("%s: ValidateNarrowing of %d claims made %.0f allocations, more than %d", name, n, allocs, 4*n)
 		}
 	}
 }

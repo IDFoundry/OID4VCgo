@@ -73,7 +73,17 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // server.NoClientAttestationStatusCheck{} when they publish no status. To take openid_credential authorization_details,
 // register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
 // refuses a Wallet's own credential_identifiers, at the pushed
-// authorization request and at the token endpoint alike.
+// authorization request and at the token endpoint alike. Size the
+// registry for the configurations one grant names, for example
+// extension.NewRARRegistry(8<<10, 6,
+// oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)) for two objects
+// of up to 4 KiB each. Give it a nesting depth of 6: an object's claims
+// are 5 deep and a claims description's display 6, and a shallower
+// registry refuses them, at the token endpoint too, after the
+// Credential Issuer's RedeemPreAuthorizedCode has spent a
+// pre-authorized code. The
+// definition caps one object at oid4vci.MaxAuthorizationDetailClaims
+// claims, and compares objects in time linear in their size.
 func RecommendedAuthorizationServerConfig() (server.Config, error) {
 	extensions, err := extension.NewRegistry(oid4vci.IssuerStateExtension)
 	if err != nil {

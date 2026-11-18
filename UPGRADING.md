@@ -289,6 +289,30 @@ the same way for every error that isn't a `RequestRefusedError`, as
 `StartDCAPIPresentation`'s documentation now asks: the mobile libraries
 already do.
 
+### An `openid_credential` object carries at most 256 claims, and is registered 6 deep
+
+`oid4vci.AuthorizationDetailRARDefinition`'s `Validate` now refuses an
+object with more than `oid4vci.MaxAuthorizationDetailClaims` (256)
+claims descriptions, whatever size the registry allows it, as
+`invalid_authorization_details`: at the pushed authorization request,
+at the token endpoint, and at the issuer's pre-authorized Token
+Endpoint (`RedeemPreAuthorizedCode`, `ExchangePreAuthorizedCode`),
+before the code is spent. A credential has far fewer claims, and 256 is the
+most a Verifier may ask of one (`dcql.MaxClaimsPerCredential`). A
+grant made before this release with more claims in one object no
+longer refreshes: FAPIgo refuses it as `invalid_grant`, and the Wallet
+starts a new issuance. Its `ValidateGrant` and `ValidateNarrowing` now
+compare claims, locations and identifiers in time linear in the
+objects' size, deciding as before.
+
+Register the type in a registry 6 deep: an object's `claims` are 5
+deep and a claims description's `display` 6, and a shallower registry
+refuses them. At the token endpoint of a pre-authorized code, that
+refusal comes after `RedeemPreAuthorizedCode` has spent the code, so
+the Wallet's offer is lost: check `extension.NewRARRegistry`'s
+`maxDepth`. `cmd/conformance-issuer` and the passport-vdc demo now
+register it 6 deep, where they registered it 4 deep.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

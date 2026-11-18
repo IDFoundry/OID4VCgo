@@ -477,7 +477,8 @@ type RedeemedPreAuthorizedCode struct {
 // is set (§6.1.1 lets a Wallet send them). fapigo/server's
 // IssueAccessToken and IssueRefreshToken refuse authorization_details
 // unless Config.RAR registers the openid_credential type
-// (oid4vci.AuthorizationDetailRARDefinition) and the
+// (oid4vci.AuthorizationDetailRARDefinition), 6 deep so that it takes
+// the claims this accepts and mints, and the
 // client's registration lists it in AuthorizationDetailsTypes. An
 // embedder that doesn't configure that must refuse a Token Request
 // with authorization_details, with ErrorInvalidAuthorizationDetails,
