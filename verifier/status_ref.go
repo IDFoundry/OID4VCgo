@@ -15,7 +15,8 @@ import (
 
 // StatusListRef returns the Token Status List reference vc carries, in
 // one form whichever format it is: an SD-JWT VC's "status" claim or an
-// mdoc's MSO status. cwt reports which Status List Token form to fetch
+// mdoc's MSO status (MdocStatus), never a namespace of an mdoc's Claims
+// (Format "mso_mdoc"). cwt reports which Status List Token form to fetch
 // for it — CWT for an mdoc, JWT for an SD-JWT VC — as
 // statuslist.Checker.Check takes it. ok is false when vc has no status
 // list reference; err is set when it has a malformed one, when it has a
@@ -52,6 +53,11 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 			return statuslist.StatusListRef{}, false, false, errors.New("verifier: the mdoc's status names no status mechanism this package knows (neither status_list nor identifier_list)")
 		}
 		return statuslist.StatusListRef{Idx: sl.Idx, URI: sl.URI}, true, true, nil
+	}
+	if vc.Format == mdoc.CredentialFormat {
+		// An mdoc's status is its MSO's alone: its Claims are
+		// namespaces, and one named "status" is no reference.
+		return statuslist.StatusListRef{}, false, false, nil
 	}
 	raw, present := vc.Claims["status"]
 	if !present {

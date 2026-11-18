@@ -102,7 +102,7 @@
 // or BuildDCAPISessionTranscriptBytes to match. ResponseKeyID reads a
 // direct_post.jwt response's key ID, to find its request before
 // decrypting it. Each VerifiedCredential carries its status reference
-// (Claims["status"], or MdocStatus), which a StatusPolicy checks — its
+// (an SD-JWT VC's Claims["status"], an mdoc's MdocStatus), which a StatusPolicy checks — its
 // Token Status List with package statuslist, an mdoc's identifier list
 // with identifierlist — as TransactionsConfig.Status or
 // VerifyResponseRequest.Status, before Accept, the Verifier's own

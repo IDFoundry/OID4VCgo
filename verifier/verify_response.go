@@ -276,6 +276,14 @@ type VerifiedCredential struct {
 	// Presentation was matched against.
 	CredentialQueryID string
 
+	// Format is the credential's format: "dc+sd-jwt"
+	// (sdjwtvc.CredentialFormat) or "mso_mdoc" (mdoc.CredentialFormat),
+	// as VerifyResponse, Transactions, mdocdcapi and proximity set it.
+	// An "mso_mdoc" credential's status is MdocStatus alone, never a
+	// namespace of Claims named "status". "" is read as either, as
+	// before it was set: Claims["status"] when MdocStatus is nil.
+	Format string
+
 	// Claims is the Presentation's own disclosed claims — for
 	// "dc+sd-jwt", credential/sdjwtvc.Verify's own resolved payload
 	// (RFC 9901 §7.1's "Processed SD-JWT Payload"), including its
@@ -756,7 +764,7 @@ func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery,
 	if err != nil {
 		return VerifiedCredential{}, err
 	}
-	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain.chain, IssuerAnchor: chain.anchor}, nil
+	return VerifiedCredential{CredentialQueryID: cq.ID, Format: cq.Format, Claims: claims, MdocStatus: status, IssuerChain: chain.chain, IssuerAnchor: chain.anchor}, nil
 }
 
 // discardedAs is n presentations answering queryID discarded for

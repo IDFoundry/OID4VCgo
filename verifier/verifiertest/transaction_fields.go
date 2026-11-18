@@ -97,7 +97,7 @@ func populatedTransaction(t *testing.T, id string) verifier.Transaction {
 		ResponseCodeHash: "code-hash-" + id, LastError: "the answer was refused",
 		Result: &verifier.VerifyResponseResult{
 			Credentials: []verifier.VerifiedCredential{{
-				CredentialQueryID: "pid",
+				CredentialQueryID: "pid", Format: sdjwtvc.CredentialFormat,
 				Claims: map[string]any{
 					"vct": "urn:example:pid", "given_name": "Jean", "age": float64(42), "over_18": true, "middle_name": nil,
 					"nationalities": []any{"FR", "DE"}, "address": map[string]any{"country": "FR", "number": float64(1.5)},
@@ -105,7 +105,7 @@ func populatedTransaction(t *testing.T, id string) verifier.Transaction {
 				},
 				IssuerChain: [][]byte{[]byte("leaf"), []byte("intermediate")},
 			}, {
-				CredentialQueryID: "mdl",
+				CredentialQueryID: "mdl", Format: mdoc.CredentialFormat,
 				Claims: map[string]any{"org.iso.18013.5.1": map[string]any{
 					"age_in_years": uint64(42), "offset": int64(-1), "portrait": []byte{0xff, 0xd8}, "given_name": "Alice",
 					"driving_privileges": []any{map[any]any{"vehicle_category_code": "B"}},

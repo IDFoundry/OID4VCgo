@@ -473,7 +473,7 @@ func unmarshalResult(data []byte, query dcql.Query) (VerifyResponseResult, error
 	byID := formats(query)
 	r := VerifyResponseResult{Credentials: make([]VerifiedCredential, 0, len(w.Credentials)), Discarded: w.Discarded}
 	for _, wc := range w.Credentials {
-		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, IssuerChain: wc.IssuerChain, IssuerAnchor: wc.IssuerAnchor, Withheld: wc.Withheld}
+		vc := VerifiedCredential{CredentialQueryID: wc.CredentialQueryID, Format: byID[wc.CredentialQueryID], IssuerChain: wc.IssuerChain, IssuerAnchor: wc.IssuerAnchor, Withheld: wc.Withheld}
 		var err error
 		switch byID[wc.CredentialQueryID] {
 		case mdoc.CredentialFormat:

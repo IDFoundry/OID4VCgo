@@ -210,6 +210,9 @@ func TestVerifyMdocResponse_SurfacesStatus(t *testing.T) {
 		vc.MdocStatus.StatusList.Idx != 7 || vc.MdocStatus.StatusList.URI != "https://issuer.example.com/statuslists/1" {
 		t.Errorf("MdocStatus = %+v, want status_list idx 7 at the issuer's list", vc.MdocStatus)
 	}
+	if vc.Format != mdoc.CredentialFormat {
+		t.Errorf("Format = %q, want %q", vc.Format, mdoc.CredentialFormat)
+	}
 
 	plain := newMdocVerifyFixture(t)
 	result, err = plain.verify(t, plain.nonce)

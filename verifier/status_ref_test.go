@@ -56,6 +56,19 @@ func TestVerifiedCredential_StatusListRef(t *testing.T) {
 			vc:      verifier.VerifiedCredential{MdocStatus: &mdoc.Status{IdentifierList: &mdoc.IdentifierListRef{URI: uri}}},
 			wantErr: true,
 		},
+		// An mdoc's Claims are namespaces: one named "status" is no
+		// reference, so an mdoc whose MSO has none has no status.
+		"mdoc namespace named status": {
+			vc: verifier.VerifiedCredential{Format: mdoc.CredentialFormat, Claims: map[string]any{
+				"status": map[string]any{"status_list": "not a reference"},
+			}},
+		},
+		"mdoc namespace named status beside an MSO status": {
+			vc: verifier.VerifiedCredential{Format: mdoc.CredentialFormat, Claims: map[string]any{
+				"status": map[string]any{"status_list": map[string]any{"idx": float64(7), "uri": uri + "/namespace"}},
+			}, MdocStatus: &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: 9, URI: uri}}},
+			want: statuslist.StatusListRef{Idx: 9, URI: uri}, wantCWT: true, wantOK: true,
+		},
 		"mdoc index beyond int range": {
 			vc:   verifier.VerifiedCredential{MdocStatus: &mdoc.Status{StatusList: &mdoc.StatusListRef{Idx: math.MaxUint64, URI: uri}}},
 			want: statuslist.StatusListRef{Idx: math.MaxUint64, URI: uri}, wantCWT: true, wantOK: true,
