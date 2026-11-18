@@ -51,6 +51,9 @@ per-issuance keys and status entries, and the shared client ID. The
 provider knows which instance keys belong to which instance, so
 suspending or revoking the instance — the installation — sets the
 status of all of them, withdrawing every attestation it was issued.
+That links them: an issuer holding two of the instance's issuances, or
+issuers pooling theirs, sees exactly their status entries change
+together, and learns that they belong to one instance.
 
 The provider attests nothing without platform evidence, in development
 as in production: a registration, a Wallet Attestation for an instance
