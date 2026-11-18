@@ -263,6 +263,14 @@ func TestPreAuthorizedCode_AuthorizationDetails(t *testing.T) {
 			offer: `{"grant":"pre-authorized_code","credential_configuration_ids":["` + id + `"]}`,
 			extra: url.Values{"authorization_details": {`[{"type":"openid_credential","credential_configuration_id":"` + id + `"}]`}},
 		},
+		// The Authorization Server takes the claims RedeemPreAuthorizedCode
+		// accepts and mints, rather than refusing them once the code is
+		// spent.
+		"requested with claims at the Token Endpoint": {
+			offer: `{"grant":"pre-authorized_code","credential_configuration_ids":["` + id + `"]}`,
+			extra: url.Values{"authorization_details": {`[{"type":"openid_credential","credential_configuration_id":"` + id + `",` +
+				`"claims":[{"path":["given_name"],"mandatory":true,"display":[{"name":"Given name","locale":"en"}]}]}]`}},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			offer, _ := e.offer(t, tc.offer)
