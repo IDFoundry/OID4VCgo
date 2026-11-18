@@ -105,7 +105,10 @@ func (vc VerifiedCredential) StatusListRef() (ref statuslist.StatusListRef, cwt,
 // refused: pass RequireValidStatusFrom a StatusIssuerPolicy to decide
 // its signer (AnyStatusListSigner accepts any under the roots).
 // Where status lists come from a separate Status Issuer, use
-// RequireValidStatusFrom.
+// RequireValidStatusFrom. That binding is each credential's own, so
+// checker's Options.Issuer, IssuerKey and UnboundSigner must be unset:
+// set, one of them would decide every credential's list signer, and
+// every check is refused.
 //
 // Under AssuranceProduction, checker.Fetcher must be one whose
 // HardenedForProduction is true: this function doesn't know the
@@ -249,6 +252,9 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey cr
 	if issuer == "" && issuerKey == nil && statusIssuers == nil {
 		return opts, errUnboundStatusSigner
 	}
+	// The binding is this credential's alone: nothing the caller set
+	// stands in for it (StatusPolicy.Checker refuses these anyway).
+	opts.Issuer, opts.IssuerKey, opts.UnboundSigner = "", nil, nil
 	if statusIssuers == nil {
 		opts.Issuer, opts.IssuerKey = issuer, issuerKey
 		return opts, nil
@@ -264,8 +270,8 @@ func statusOptionsFor(opts statuslist.VerifyOptions, issuer string, issuerKey cr
 		}
 		return nil
 	}
-	// A Status Issuer's token may carry its own iss.
-	opts.Issuer = ""
+	// A Status Issuer's token may carry its own iss, so Issuer and
+	// IssuerKey stay unset: either would make UnboundSigner ignored.
 	return opts, nil
 }
 
@@ -329,6 +335,10 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		return checker, err
 	}
 	c := checker
+	// The binding is this document's alone: Issuer or IssuerKey, left
+	// set, would make UnboundSigner ignored (StatusPolicy.Checker
+	// refuses them anyway).
+	c.Options.Issuer, c.Options.IssuerKey, c.Options.UnboundSigner = "", nil, nil
 	c.Options.RequireExp = true
 	c.Options.X5ChainProtectedOnly = true
 	// An mdoc's list names no issuer: its signer is bound by

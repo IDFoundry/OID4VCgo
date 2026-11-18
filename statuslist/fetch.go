@@ -225,7 +225,8 @@ func freshFor(header http.Header) *time.Duration {
 // IssuerKey, or decides it with UnboundSigner (AnyListSigner where the
 // roots are one issuer's alone) —
 // a verifier.StatusPolicy sets them from a verified credential, for an
-// SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), and is what a
+// SD-JWT VC and for an mdoc (ISO/IEC 18013-5 §12.3.6), refusing a
+// Checker that sets them itself, and is what a
 // Verifier normally uses instead of calling Check directly
 // (verifier.TransactionsConfig.Status, mdocdcapi.VerifyParams.Status,
 // proximity.WithStatus).

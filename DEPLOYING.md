@@ -349,6 +349,8 @@ go crls.Run(ctx)
 cache := statuslist.NewCache(statuslist.CacheOptions{MaxEntries: 1024})
 checker := statuslist.Checker{Fetcher: fetcher, Roots: roots, Cache: cache,
 	// Required under production: the list signers' certificates too.
+	// Leave Issuer, IssuerKey and UnboundSigner unset: a StatusPolicy
+	// binds each list's signer to its own credential's issuer.
 	Options: statuslist.VerifyOptions{Revocation: crls.Checker()}}
 txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```

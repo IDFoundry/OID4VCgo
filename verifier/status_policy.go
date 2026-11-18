@@ -47,6 +47,12 @@ type StatusPolicy struct {
 	// each at its package's default, statuslist.DefaultMaxTokenBytes (1
 	// MiB) and identifierlist.DefaultMaxTokenBytes (4 MiB). Its
 	// Options.MaxTokenBytes bounds status lists alone.
+	//
+	// Its Options.Issuer, IssuerKey and UnboundSigner must be unset:
+	// each check binds the list's signer to the credential's issuer
+	// itself (RequireValidStatus), and a signer named here would
+	// replace that binding for every credential. A policy setting any
+	// of them is refused.
 	Checker statuslist.Checker
 
 	// StatusIssuers, if set, accepts a separate Status Issuer's
@@ -65,6 +71,9 @@ type StatusPolicy struct {
 // every one passes. A proximity reader, or any caller holding verified
 // credentials outside VerifyResponse, checks them with it too.
 func (p *StatusPolicy) Check(ctx context.Context, vcs ...VerifiedCredential) error {
+	if err := checkSignerUnbound(p.Checker.Options); err != nil {
+		return fmt.Errorf("verifier: credential status: %w", err)
+	}
 	if p.RequireReference {
 		if err := requireReferences(vcs); err != nil {
 			return err
@@ -78,13 +87,17 @@ func (p *StatusPolicy) Check(ctx context.Context, vcs ...VerifiedCredential) err
 	return nil
 }
 
-// validate refuses a policy that can't check anything, and under
+// validate refuses a policy that can't check anything, or whose
+// Checker binds every list's signer to one issuer, and under
 // AssuranceProduction one whose Fetcher may reach the Verifier's own
 // network, that has no Cache, or that hasn't decided its list signers'
 // revocation.
 func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 	if p.Checker.Roots == nil {
 		return errors.New("Status.Checker.Roots is required: the trust anchors for status list signers")
+	}
+	if err := checkSignerUnbound(p.Checker.Options); err != nil {
+		return err
 	}
 	if assurance != AssuranceProduction {
 		return nil
@@ -96,6 +109,18 @@ func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 		return errors.New("under AssuranceProduction, Status.Checker.Cache is required (statuslist.NewCache, one shared by the process): without one every answer fetches each issuer's status list again, ignoring its ttl")
 	}
 	return validateRevocation("Status.Checker.Options", p.Checker.Options.Revocation)
+}
+
+// checkSignerUnbound refuses Options that bind a Status List Token's
+// signer for every credential: statuslist.VerifyOptions.Issuer or
+// IssuerKey, set, would replace the binding each check installs as
+// UnboundSigner, so another issuer's list could decide a credential's
+// status (ISO/IEC 18013-5 §12.3.6.2, and StatusIssuers' rule).
+func checkSignerUnbound(o statuslist.VerifyOptions) error {
+	if o.Issuer != "" || o.IssuerKey != nil || o.UnboundSigner != nil {
+		return errors.New("Status.Checker.Options's Issuer, IssuerKey and UnboundSigner must be unset: each check binds the list's signer to the credential's")
+	}
+	return nil
 }
 
 // CheckStatusDecision refuses a configuration's status decision —
