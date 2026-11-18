@@ -1,7 +1,5 @@
 package dev.idfoundry.oid4vcgo.demowallet
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.Color
 import dev.idfoundry.oid4vcwallet.CredentialStatus
 import dev.idfoundry.oid4vcwallet.CredentialSummary
@@ -23,9 +21,10 @@ import java.util.Base64
 /**
  * Whose credential this is, from its claims: the holder's name, date of
  * birth and photo, wherever the format keeps them (an SD-JWT VC's
- * top-level claims, an mdoc's namespaces).
+ * top-level claims, an mdoc's namespaces). The photo is kept encoded:
+ * [ClaimImage] decodes it, off the main thread, at the size shown.
  */
-data class Holder(val name: String?, val birthDate: String?, val portrait: Bitmap?) {
+data class Holder(val name: String?, val birthDate: String?, val portrait: EncodedImage?) {
     /** "Jane Citizen · born 1990-01-01". */
     val line: String get() = listOfNotNull(name, birthDate?.let { "born $it" }).joinToString(" · ")
 
@@ -78,8 +77,15 @@ object Claims {
     /** The SD-JWT VC's own top-level claims, not about the holder. */
     val hidden = setOf("cnf", "iss", "iat", "exp", "nbf", "vct", "status", "_sd_alg")
 
-    /** An image claim: a data: URL (an SD-JWT VC's picture), or base64 bytes under a name like an mdoc's portrait. */
-    fun image(v: JsonElement, key: String): Bitmap? {
+    /**
+     * An image claim: a data: URL (an SD-JWT VC's picture), or base64
+     * bytes under a name like an mdoc's portrait. It's the issuer's
+     * choice of image, so only its header is read here, and one refused
+     * by [BoundedImages] (too large a side) is shown as text: its pixels
+     * are decoded by [ClaimImage], off the main thread, at the size
+     * shown.
+     */
+    fun image(v: JsonElement, key: String): EncodedImage? {
         val s = (v as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
         val encoded = when {
             s.startsWith("data:image/") && ',' in s -> s.substringAfter(',')
@@ -87,7 +93,7 @@ object Claims {
             else -> return null
         }
         val bytes = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull() ?: return null
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        return bytes.takeIf(BoundedImages::accepts)?.let(::EncodedImage)
     }
 
     fun text(v: JsonElement): String = when (v) {

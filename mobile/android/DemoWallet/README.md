@@ -11,8 +11,12 @@ scanned), and presents them in answer to a presentation request link
 - **Receiving:** both grants — the issuer's pages in an Auth Tab (an
   ephemeral Custom Tab where the browser has no Auth Tabs), the
   redirect back on the app's private-use scheme; or a PIN typed in the
-  app. A failure trying again may fix (the network, a wrong PIN) keeps
-  the offer open with Try again. Deferred credentials wait under
+  app. Any app can open a link on that scheme, so with an Auth Tab the
+  redirect is taken only from the tab's result, and with a Custom Tab
+  one the library refuses (not this authorization's `state`) leaves
+  the offer open (`PendingAuthorization.kt`). A failure trying again
+  may fix (the network, a wrong PIN) keeps the offer open with Try
+  again. Deferred credentials wait under
   "Waiting for the issuer", polled at the issuer's interval, and
   survive the app quitting; an authorization the app was killed during
   completes when the redirect arrives.
@@ -68,6 +72,11 @@ codes (a device engagement) out of its logs. Issuer logos are URLs the
 issuer chose: fetch one once, when the holder accepts the credential,
 and keep it, rather than loading it on the offer's preview (which tells
 the issuer, or a tracker it names, that the offer was opened).
+Portraits and other image claims are the issuer's choice of image too,
+and a small file can declare a size that decodes to hundreds of
+megabytes: the demo reads each one's size first, refuses one over 4096
+pixels a side, and decodes it off the main thread at the size it's
+shown, as it does logos (`BoundedImages.kt`).
 
 ## Configuration
 

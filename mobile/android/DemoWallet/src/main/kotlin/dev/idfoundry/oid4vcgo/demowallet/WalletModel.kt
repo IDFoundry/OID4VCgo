@@ -504,17 +504,26 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
     /** The holder closed the issuer's page: the offer stays. */
     class AuthorizationCancelled : Exception("the holder closed the issuer's page")
 
+    /**
+     * A redirect that arrived as a link didn't complete the
+     * authorization. Any app on the device can send one, and walletflow
+     * refuses one that isn't this authorization's: the offer stays open
+     * to try again rather than ending.
+     */
+    private class LinkRedirectRefused(val refusal: WalletException) : Exception(refusal)
+
     /** Starts receiving, as a job Cancel can stop; [authorize] opens the issuer's page and returns the redirect. */
-    fun startReceive(authorize: suspend (String) -> String) {
+    fun startReceive(authorize: suspend (String) -> AuthorizationRedirect) {
         receiveJob = viewModelScope.launch { receive(authorize) }
     }
 
     /**
      * Receives the offered credentials. A failure that trying again may
-     * fix (the network, a wrong PIN) keeps the offer open to try again;
-     * any other ends it.
+     * fix (the network, a wrong PIN) keeps the offer open to try again,
+     * as does a refused redirect that arrived as a link; any other ends
+     * it.
      */
-    private suspend fun receive(authorize: suspend (String) -> String) {
+    private suspend fun receive(authorize: suspend (String) -> AuthorizationRedirect) {
         val issuance = issuance ?: return
         val offer = offer ?: return
         phase = Phase.Receiving
@@ -527,7 +536,12 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                     // After a failed completeAuthorization this starts the
                     // authorization over, as it must.
                     val url = issuance.beginAuthorization()
-                    issuance.completeAuthorization(authorize(url))
+                    val redirect = authorize(url)
+                    try {
+                        issuance.completeAuthorization(redirect.uri)
+                    } catch (e: WalletException) {
+                        if (redirect.fromLink) throw LinkRedirectRefused(e) else throw e
+                    }
                 }
                 authorized = true
             }
@@ -537,6 +551,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
             throw e
         } catch (e: AuthorizationCancelled) {
             phase = Phase.Offered
+        } catch (e: LinkRedirectRefused) {
+            phase = Phase.Offered
+            offerError = describe(e.refusal)
         } catch (e: WalletException) {
             if (e.isRetryable) {
                 phase = Phase.Offered

@@ -700,7 +700,7 @@ private fun ReaderClaim(identifier: String, value: JsonElement) {
     if (image != null) {
         Column(Modifier.padding(vertical = 4.dp)) {
             Text(elementLabel(identifier), style = MaterialTheme.typography.labelMedium)
-            Image(image.asImageBitmap(), elementLabel(identifier), Modifier.size(120.dp).clip(RoundedCornerShape(8.dp)))
+            ClaimImage(image, 120.dp, 120.dp, Modifier.clip(RoundedCornerShape(8.dp)), contentDescription = elementLabel(identifier))
         }
     } else {
         Labeled(elementLabel(identifier), Claims.text(value), Modifier.testTag("reader-claim"))
