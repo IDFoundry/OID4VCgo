@@ -196,6 +196,13 @@ func present(link, dir, format string, yes bool, httpClient *http.Client, trust 
 	return nil
 }
 
+// printPaths prints claim paths, one a line.
+func printPaths(paths [][]string) {
+	for _, c := range paths {
+		fmt.Printf("     - %q\n", strings.Join(c, " › "))
+	}
+}
+
 // chooseShare shows the verifier and what each option would disclose,
 // and asks the holder which to share; false declines.
 func chooseShare(p *walletapp.Prepared, options []walletapp.Option) ([]string, bool) {
@@ -206,9 +213,19 @@ func chooseShare(p *walletapp.Prepared, options []walletapp.Option) ([]string, b
 			holder = "a passport credential"
 		}
 		// %q: the name is the issuer's, and mustn't drive the terminal.
-		fmt.Printf("%d. %q, as %s — it will see only:\n", i+1, holder, o.Format)
-		for _, c := range o.Claims {
-			fmt.Printf("     - %q\n", strings.Join(c, " › "))
+		only := " only"
+		if len(o.AlwaysDisclosed) > 0 {
+			only = ""
+		}
+		fmt.Printf("%d. %q, as %s — it will see%s:\n", i+1, holder, o.Format, only)
+		printPaths(o.Claims)
+		if len(o.AlwaysDisclosed) > 0 {
+			fmt.Println("   and, whatever it asks for, this credential always shows:")
+			printPaths(o.AlwaysDisclosed)
+		}
+		if len(o.Retained) > 0 {
+			fmt.Println("   It says it will keep:")
+			printPaths(o.Retained)
 		}
 	}
 	if p.Several {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -76,8 +77,16 @@ type Option struct {
 	// QueryID is the DCQL credential query this answers.
 	QueryID string
 	// Claims are the claim paths that would be disclosed (e.g.
-	// ["family_name"], or [namespace, element] for an mdoc).
+	// ["family_name"], or [namespace, element] for an mdoc). An index
+	// is in decimal, a wildcard "*".
 	Claims [][]string
+	// AlwaysDisclosed are the SD-JWT VC claims disclosed beyond Claims,
+	// which the verifier receives whatever it asks for
+	// (walletflow.Disclosure.AlwaysDisclosed), as Claims are rendered.
+	AlwaysDisclosed [][]string
+	// Retained are the Claims the verifier says it intends to keep (an
+	// mdoc's intent_to_retain).
+	Retained [][]string
 }
 
 // Present answers an OpenID4VP Authorization Request without asking
@@ -139,7 +148,8 @@ func Prepare(ctx context.Context, requestLink string, store Store, hc *http.Clie
 			claims, _ := ReadClaims(c.Format, c.Credential)
 			for _, d := range disclosed {
 				prepared.Options = append(prepared.Options, Option{
-					Ref: fmt.Sprintf("option-%d", len(prepared.Options)), CredentialID: c.ID, Holder: HolderName(claims), Format: c.Format, QueryID: d.QueryID, Claims: pathStrings(d.Claims),
+					Ref: fmt.Sprintf("option-%d", len(prepared.Options)), CredentialID: c.ID, Holder: HolderName(claims), Format: c.Format, QueryID: d.QueryID,
+					Claims: pathStrings(d.Claims), AlwaysDisclosed: pathStrings(d.AlwaysDisclosed), Retained: pathStrings(d.Retained),
 				})
 			}
 		}
@@ -217,13 +227,21 @@ func LoadCertPool(files string) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-// pathStrings renders claim paths as their components, for display.
+// pathStrings renders claim paths as their components, for display: a
+// key as itself, an index in decimal, a wildcard as "*".
 func pathStrings(paths []dcql.Path) [][]string {
 	out := make([][]string, len(paths))
 	for i, p := range paths {
 		out[i] = make([]string, len(p))
 		for j, el := range p {
-			out[i][j] = el.Key()
+			switch {
+			case el.IsIndex():
+				out[i][j] = strconv.Itoa(el.Index())
+			case el.IsWildcard():
+				out[i][j] = "*"
+			default:
+				out[i][j] = el.Key()
+			}
 		}
 	}
 	return out

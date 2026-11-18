@@ -51,7 +51,9 @@ func portraitOf(claims map[string]any) template.URL {
 
 // optionsFor are a request's options as the consent page shows them:
 // each with its holder's portrait, from the stored credentials, and what
-// it discloses by label (each once) and by claim path.
+// it discloses by label (each once) and by claim path: what's asked
+// for, what the credential discloses whatever is asked for, and what
+// the verifier says it will keep.
 func optionsFor(options []walletapp.Option, stored []walletapp.Stored) []consentOption {
 	portraits := map[string]template.URL{}
 	for _, s := range stored {
@@ -62,13 +64,22 @@ func optionsFor(options []walletapp.Option, stored []walletapp.Stored) []consent
 	out := make([]consentOption, 0, len(options))
 	for _, o := range options {
 		v := consentOption{Ref: o.Ref, Holder: o.Holder, Format: o.Format, Portrait: portraits[o.CredentialID]}
-		for _, p := range o.Claims {
-			if l := demoui.PathLabel(o.Format, p); !slices.Contains(v.Labels, l) {
-				v.Labels = append(v.Labels, l)
-			}
-			v.Paths = append(v.Paths, strings.Join(p, " › "))
-		}
+		v.Labels, v.Paths = pathLabels(o.Format, o.Claims)
+		v.AlsoLabels, v.AlsoPaths = pathLabels(o.Format, o.AlwaysDisclosed)
+		v.RetainedLabels, _ = pathLabels(o.Format, o.Retained)
 		out = append(out, v)
 	}
 	return out
+}
+
+// pathLabels are paths' labels, each once, and the paths themselves,
+// for display.
+func pathLabels(format string, paths [][]string) (labels, shown []string) {
+	for _, p := range paths {
+		if l := demoui.PathLabel(format, p); !slices.Contains(labels, l) {
+			labels = append(labels, l)
+		}
+		shown = append(shown, strings.Join(p, " › "))
+	}
+	return labels, shown
 }
