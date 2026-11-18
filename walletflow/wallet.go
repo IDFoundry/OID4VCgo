@@ -208,15 +208,22 @@ type Config struct {
 	// (OpenID4VCI 1.0's Security Considerations, "Transaction Code
 	// Phishing"). An empty identifier is refused.
 	//
-	// The list applies on every path that talks to an issuer, not only
-	// to offers. Under a Config that no longer lists an issuer, after an
-	// app update drops it, ResumeIssuance, RefreshCredential and a
-	// resumed Deferred's Poll refuse, wrapping ErrUntrustedIssuer, before
-	// sending it anything, and deleting a credential forgets its refresh
-	// grant without revoking it there. Nothing held is forgotten for it:
-	// a pending authorization stays until it expires, a credential and
-	// its refresh grant stay, presentable, until deleted, and a Deferred
-	// stays pending until Abandon. Listing the issuer again resumes them.
+	// The list applies on every path that talks to an issuer but
+	// CheckStatus, not only to offers. Under a Config that no longer
+	// lists an issuer, after an app update drops it, ResumeIssuance,
+	// RefreshCredential and a resumed Deferred's Poll refuse, wrapping
+	// ErrUntrustedIssuer, before sending it anything, and deleting a
+	// credential forgets its refresh grant without revoking it there.
+	// Nothing held is forgotten for it: a pending authorization stays
+	// until it expires, a credential and its refresh grant stay,
+	// presentable, until deleted, and a Deferred stays pending until
+	// Abandon. Listing the issuer again resumes them.
+	//
+	// CheckStatus is exempt, deliberately: it still fetches the status
+	// and identifier lists a held credential names, from an issuer the
+	// list no longer has, since whether that credential was revoked
+	// matters to the holder still presenting it. Each fetch tells the
+	// list's host only that some credential on it is being checked.
 	//
 	// A wallet that receives credentials (IssuerRoots, MdocIssuerRoots
 	// or MdocIssuerRootsByDocType set) must decide which issuers' offers

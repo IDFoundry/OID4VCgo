@@ -164,6 +164,15 @@ func TestNew_RefusesMeaninglessChoices(t *testing.T) {
 	}
 }
 
+// A typed-nil *wallet.X5CVerifierRoots, which would panic at the first
+// request, is refused, not taken as no VerifierTrust.
+func TestNew_RefusesNilVerifierTrustPointer(t *testing.T) {
+	deps := Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore()}
+	if _, err := New(Config{Development: true, VerifierTrust: (*wallet.X5CVerifierRoots)(nil)}, deps); err == nil || !strings.Contains(err.Error(), "nil *X5CVerifierRoots") {
+		t.Errorf("New with a nil *X5CVerifierRoots: error = %v, want it refused", err)
+	}
+}
+
 // In production, two roles whose pools may share an anchor need a leaf
 // policy on each: otherwise a Verifier's certificate could sign
 // credentials, or an issuer's pass for a Verifier.

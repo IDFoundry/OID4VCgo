@@ -26,24 +26,37 @@ type Presentation struct {
 // trust, and finds the credentials that can answer it.
 func (w *Wallet) StartPresentation(op *Operation, requestLink string) (*Presentation, error) {
 	p, err := w.w.StartPresentation(op.context(), requestLink)
-	var refused *walletflow.RequestRefusedError
-	w.refusalMu.Lock()
-	w.refusalRedirect = ""
-	if errors.As(err, &refused) {
-		w.refusalRedirect = refused.RedirectURI
-	}
-	w.refusalMu.Unlock()
+	w.recordRefusal(op, err)
 	if err != nil {
 		return nil, classify(err)
 	}
 	return &Presentation{p: p}, nil
 }
 
+// recordRefusal keeps the redirect_uri a StartPresentation under op
+// that failed with err was answered with, "" for none, for op's
+// TakeRefusalRedirect and the Wallet's.
+func (w *Wallet) recordRefusal(op *Operation, err error) {
+	var refused *walletflow.RequestRefusedError
+	redirect := ""
+	if errors.As(err, &refused) {
+		redirect = refused.RedirectURI
+	}
+	op.setRefusalRedirect(redirect)
+	w.refusalMu.Lock()
+	w.refusalRedirect = redirect
+	w.refusalMu.Unlock()
+}
+
 // TakeRefusalRedirect returns, once, the redirect_uri the Verifier
 // answered the latest refused request with, "" for none. When
 // StartPresentation fails with request_refused, open it, as OpenID4VP
 // §8.2 has the wallet do for a same-device request: the error itself
-// carries no URL.
+// carries no URL. It holds the latest StartPresentation's, whichever
+// call that was: with presentations started concurrently, take the
+// call's own from its Operation (Operation.TakeRefusalRedirect)
+// instead, or one Verifier's redirect may be opened for another's
+// refusal.
 func (w *Wallet) TakeRefusalRedirect() string {
 	w.refusalMu.Lock()
 	defer w.refusalMu.Unlock()

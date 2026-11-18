@@ -166,11 +166,15 @@ type consentPage struct {
 }
 
 // consentOption is one way to answer, as the consent page shows it: its
-// holder's portrait, and what it discloses by label and by claim path.
+// holder's portrait, and what it discloses by label and by claim path:
+// the claims asked for, those every presentation of the credential
+// carries besides (Also), and those the verifier says it will keep.
 type consentOption struct {
-	Ref, Holder, Format string
-	Portrait            template.URL
-	Labels, Paths       []string
+	Ref, Holder, Format   string
+	Portrait              template.URL
+	Labels, Paths         []string
+	AlsoLabels, AlsoPaths []string
+	RetainedLabels        []string
 }
 
 var consentTemplate = parsePage("consent", `<h1>{{.VerifierName}} is asking for your passport</h1>
@@ -182,9 +186,15 @@ var consentTemplate = parsePage("consent", `<h1>{{.VerifierName}} is asking for 
 <fieldset class="choices">
 <legend>{{if .Several}}It accepts several passports: choose each one to share, all in one format.{{else}}Choose what to share{{end}}</legend>
 {{range $i, $o := .Options}}<label class="choice block">{{if $o.Portrait}}<img src="{{$o.Portrait}}" alt="Portrait of {{$o.Holder}}" class="choice-portrait">{{end}}<input type="{{if $.Several}}checkbox{{else}}radio{{end}}" name="credential" value="{{$o.Ref}}" {{if eq $i 0}}checked{{end}}> Share {{if $o.Holder}}<strong>{{$o.Holder}}</strong>'s passport{{else}}a passport credential{{end}} as <span class="fmt">{{$o.Format}}</span>
-<span class="choice-detail"><span class="note">It will see only:</span>
+<span class="choice-detail"><span class="note">It will see{{if not $o.AlsoLabels}} only{{end}}:</span>
 <span class="chips">{{range $o.Labels}}<span class="chip">{{.}}</span>{{end}}</span>
-<span class="note claim-paths">Claim names: {{range $j, $p := $o.Paths}}{{if $j}}, {{end}}<code>{{$p}}</code>{{end}}</span></span>
+<span class="note claim-paths">Claim names: {{range $j, $p := $o.Paths}}{{if $j}}, {{end}}<code>{{$p}}</code>{{end}}</span>
+{{if $o.AlsoLabels}}<span class="note">and, whatever it asks for, this credential always shows:</span>
+<span class="chips">{{range $o.AlsoLabels}}<span class="chip">{{.}}</span>{{end}}</span>
+<span class="note claim-paths">Claim names: {{range $j, $p := $o.AlsoPaths}}{{if $j}}, {{end}}<code>{{$p}}</code>{{end}}</span>
+{{end}}{{if $o.RetainedLabels}}<span class="note">It says it will keep:</span>
+<span class="chips">{{range $o.RetainedLabels}}<span class="chip">{{.}}</span>{{end}}</span>
+{{end}}</span>
 </label>
 {{end}}</fieldset>
 <div class="actions decision">

@@ -313,6 +313,27 @@ the Wallet's offer is lost: check `extension.NewRARRegistry`'s
 `maxDepth`. `cmd/conformance-issuer` and the passport-vdc demo now
 register it 6 deep, where they registered it 4 deep.
 
+### The preview lists an object or array the Verifier receives empty
+
+`wallet.PreviewedCredential.AlwaysDisclosed` (and walletflow's
+`Disclosure.AlwaysDisclosed`) now lists an SD-JWT VC object or array
+that reaches the Verifier empty because it holds only decoy digests or
+only claims the presentation doesn't send, as it already listed a
+literal `{}` or `[]`. The Verifier learns that the claim exists. A
+consent screen showing `AlwaysDisclosed` may show more entries; one
+inside a Disclosure a selected claim sends is in `DisclosedAlong`, and
+a registration's coverage check counts it.
+
+### A nil `*X5CVerifierRoots` or `*NoVerifierTrust` is refused
+
+`wallet.New`, and so `walletflow.New`, now refuses a
+`Config.VerifierTrust` that is a nil `*wallet.X5CVerifierRoots` or
+`*wallet.NoVerifierTrust`, and `ParseAuthorizationRequest` and
+`ParseDCAPIRequest` refuse one as their `VerifierTrust`. Before, it
+was accepted and the first signed request panicked. Pass the value, a
+non-nil pointer, or no `VerifierTrust` (a nil interface) for a Wallet
+that only receives credentials.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

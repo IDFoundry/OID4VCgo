@@ -53,7 +53,8 @@ type Config struct {
 	// Wallet accepts (OID4VP §5.9.3) — see VerifierTrust's own doc
 	// comment. Required by FetchAuthorizationRequest, so optional for a
 	// Wallet that only receives credentials. NoVerifierTrust{} is
-	// rejected under AssuranceProduction.
+	// rejected under AssuranceProduction, and a nil *X5CVerifierRoots or
+	// *NoVerifierTrust always.
 	VerifierTrust VerifierTrust
 
 	// AcceptX509SANDNS also accepts Request Objects whose client_id has

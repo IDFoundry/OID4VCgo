@@ -423,6 +423,9 @@ func verifyRequestObject(requestObject string, trust VerifierTrust) (*x509.Certi
 	if trust == nil {
 		return nil, nil, fmt.Errorf("VerifierTrust is required (NoVerifierTrust{} opts out explicitly)")
 	}
+	if nilVerifierTrustPointer(trust) {
+		return nil, nil, fmt.Errorf("VerifierTrust is a nil %T", trust)
+	}
 	chain, err := certchain.X5CDERsFromHeader(header)
 	if err != nil {
 		return nil, nil, err

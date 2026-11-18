@@ -96,10 +96,12 @@ func (v X5CVerifierRoots) VerifyVerifierChain(chain [][]byte) (*x509.Certificate
 	return leaf, nil
 }
 
-// validateVerifierTrust refuses an X5CVerifierRoots, by value or by
+// validateVerifierTrust refuses a nil *X5CVerifierRoots or
+// *NoVerifierTrust, whose value-receiver VerifyVerifierChain would
+// panic at the first request; an X5CVerifierRoots, by value or by
 // pointer, whose Revocation reports itself incomplete
 // (certrevocation.CRLs.Validate), so New refuses it rather than every
-// request afterwards, and under AssuranceProduction one with no
+// request afterwards; and under AssuranceProduction one with no
 // Revocation, which must be an explicit choice there.
 func validateVerifierTrust(assurance AssuranceLevel, t VerifierTrust) error {
 	var revocation certrevocation.Checker
@@ -108,8 +110,13 @@ func validateVerifierTrust(assurance AssuranceLevel, t VerifierTrust) error {
 	case X5CVerifierRoots:
 		revocation, isX5C = v.Revocation, true
 	case *X5CVerifierRoots:
-		if v != nil {
-			revocation, isX5C = v.Revocation, true
+		if v == nil {
+			return fmt.Errorf("wallet: config: verifier_trust is a nil *X5CVerifierRoots")
+		}
+		revocation, isX5C = v.Revocation, true
+	case *NoVerifierTrust:
+		if v == nil {
+			return fmt.Errorf("wallet: config: verifier_trust is a nil *NoVerifierTrust")
 		}
 	}
 	if isX5C && revocation == nil && assurance == AssuranceProduction {
@@ -119,6 +126,19 @@ func validateVerifierTrust(assurance AssuranceLevel, t VerifierTrust) error {
 		return fmt.Errorf("wallet: config: verifier_trust: Revocation: %w", err)
 	}
 	return nil
+}
+
+// nilVerifierTrustPointer reports whether t is a nil *X5CVerifierRoots
+// or *NoVerifierTrust, whose value-receiver VerifyVerifierChain would
+// panic.
+func nilVerifierTrustPointer(t VerifierTrust) bool {
+	switch v := t.(type) {
+	case *X5CVerifierRoots:
+		return v == nil
+	case *NoVerifierTrust:
+		return v == nil
+	}
+	return false
 }
 
 // verifierLeafProfile refuses a leaf that can't be a Verifier's

@@ -157,6 +157,8 @@
 // rather than the network:
 //
 //	p, err := w.StartDCAPIPresentation(ctx, protocol, data, origin) // show p.Verifier().Origin
+//	queries, sets := p.Queries(), p.CredentialSets()                // choose sel as above
+//	disclosed, err := p.Preview(ctx, sel)                           // holder consents
 //	presented, err := p.Respond(ctx, sel)                           // or p.Decline(ctx)
 //	// return presented.DCAPIResponse to the platform
 //
@@ -174,7 +176,11 @@
 // Config.RequireTrustedMdocReader, the request is refused.
 // Its copies are recorded as shown to the origin, as an OpenID4VP
 // Verifier over the Digital Credentials API would be ("origin:" +
-// origin).
+// origin), not to the reader: under CopyPerVerifier, readers one
+// origin serves (a multi-tenant verification service) share a copy,
+// and Linkable doesn't report it, where OpenID4VP's signed requests are
+// keyed by client_id too. The origin is what MdocLinkable knows when
+// iOS asks for consent, before the request.
 //
 // In person, over Bluetooth (ISO/IEC 18013-5 device retrieval, package
 // proximity), the holder shows a QR code and the reader that scans it
