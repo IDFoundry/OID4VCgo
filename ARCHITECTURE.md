@@ -241,6 +241,18 @@ changes whether *every* bullet below is `(done)`.
   `VerifyTrustedChainsAt` narrows the verified paths to those the leaf
   policy approves and a `certrevocation.Checker` passes, so the issuer
   chain a resolver reports never runs through a revoked certificate.
+- **`internal/strictjson`** (done) — the JSON decoder every trust
+  boundary uses: encoding/json's decoding, refusing what parsers
+  disagree on (duplicate members, compared unescaped; a member name
+  matching a struct field only case-insensitively; text that isn't
+  UTF-8; an escaped lone surrogate). One pass over the bytes checks all
+  of it, with json.Valid's syntax, before encoding/json decodes, and
+  refuses a document at its first token over a bound
+  (`DefaultMaxTokens`, 131,072 values and member names; a caller with a
+  tighter or a looser bound passes its own), so a document of many
+  small tokens costs about what a string of its size does. Its tests
+  hold it to the separate passes it replaced, kept as a test-only copy,
+  on adversarial and fuzzed documents.
 - **`certrevocation`** (done) — X.509 certificate revocation for a
   relying party: the `Checker` interface over a verified chain, `CRLs`
   (RFC 5280 CRLs the caller fetches and refreshes, used only when

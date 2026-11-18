@@ -203,6 +203,18 @@ A store that dropped it would leave every suspended or revoked
 instance pending, its statuses set again at each of its requests and
 each `RevokeWhere` run matching it.
 
+### JSON is refused at 131,072 tokens, and answers at their first member out of bounds
+
+Every JSON document OID4VCgo parses from another party (Request
+Objects, metadata, credentials, a Verifier's answers, a Wallet
+Provider's requests and the rest) is now checked in one pass and
+refused at its first token over 131,072, counting values and member
+names, with an error wrapping "json: too many tokens". The largest
+honest documents measured hold under 11,000 (an issuer's metadata of
+100 KB, Google's Android attestation status list of 180 KB, whose
+parser is bounded by its entry cap instead); nothing else refused or
+accepted changes. A Verifier's own transaction records aren't bounded.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed
