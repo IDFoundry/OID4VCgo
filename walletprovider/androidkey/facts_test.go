@@ -239,9 +239,24 @@ func TestRecheckInstanceKey(t *testing.T) {
 			errors.Is(err, walletprovider.ErrEvidenceRevoked) {
 			t.Fatalf("%s without facts = %v, want ErrLegacyFacts refused", name, err)
 		}
-		if err := recheck(androidkey.EvidenceVerifier{Verifier: v, AllowUncheckedLegacyEvidence: true}); err != nil {
+		logger, logged := captureLog()
+		if err := recheck(androidkey.EvidenceVerifier{Verifier: v, AllowUncheckedLegacyEvidence: true, Logger: logger}); err != nil {
 			t.Fatalf("%s without facts, allowed = %v, want it accepted", name, err)
 		}
+		wantLogged := []string{"level=WARN", "AllowUncheckedLegacyEvidence", "instance=i", "has no evidence facts"}
+		if name == "RecheckInstanceKey" {
+			wantLogged = append(wantLogged, "instance_key=tp")
+		}
+		assertLogged(t, logged.String(), wantLogged...)
+	}
+	// A record judged in full logs nothing, even when legacy ones are
+	// allowed.
+	logger, logged := captureLog()
+	if err := (androidkey.EvidenceVerifier{Verifier: verifierFor(t, c), AllowUncheckedLegacyEvidence: true, Logger: logger}).RecheckInstanceKey(ctx, in, k); err != nil {
+		t.Fatalf("RecheckInstanceKey, allowing legacy records = %v, want it accepted", err)
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("a full recheck logged %q, want nothing", logged.String())
 	}
 	ios := walletprovider.Instance{ID: "i", Evidence: walletprovider.EvidenceSummary{Kind: "apple-app-attest"}}
 	if err := e.RecheckInstanceKey(ctx, ios, k); !errors.Is(err, androidkey.ErrConfig) {

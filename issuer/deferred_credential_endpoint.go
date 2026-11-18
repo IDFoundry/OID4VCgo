@@ -161,7 +161,7 @@ func (iss *Issuer) requestDeferredCredential(ctx context.Context, auth Authorize
 	if iss.deferredExpired(record) {
 		return DeferredCredentialResult{}, newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
 	}
-	if !iss.deferredAuthorized(record, auth) {
+	if !iss.deferredAuthorized(ctx, record, auth) {
 		// As for an unknown one: whether another holder's transaction
 		// exists is none of this one's business. The same client and
 		// subject aren't enough either, if the token doesn't grant the

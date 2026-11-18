@@ -421,7 +421,7 @@ func (iss *Issuer) resolvePending(ctx context.Context, resolving *sync.Map, gran
 		return nil
 	}
 	record, err := iss.pendingDeferredTransaction(ctx, transactionID)
-	if err != nil || !iss.deferredAuthorized(record, grant.Authorized) {
+	if err != nil || !iss.deferredAuthorized(ctx, record, grant.Authorized) {
 		return nil
 	}
 	if _, running := resolving.LoadOrStore(transactionID, struct{}{}); running {

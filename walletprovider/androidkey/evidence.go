@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -76,8 +77,15 @@ type EvidenceVerifier struct {
 	// an upgrade window only, while the wallets in the field move to
 	// fresh evidence (Facts.ValidityRecorded and InstanceFacts find
 	// the instances still needing to), or in development, where a
-	// provider's stores outlive its upgrades.
+	// provider's stores outlive its upgrades. Each record it lets
+	// through is logged, at slog.LevelWarn, to Logger, so the operator
+	// can see when none is left to turn it off.
 	AllowUncheckedLegacyEvidence bool
+
+	// Logger receives a warning for each record AllowUncheckedLegacyEvidence
+	// lets through unjudged, naming the instance (and instance key) and
+	// what wasn't checked. Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 // DefaultMaxAuthTimeout is EvidenceVerifier.MaxAuthTimeout's default:

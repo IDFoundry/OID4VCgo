@@ -146,3 +146,65 @@ func TestDeferral_LegacyRecordNeedsTheConfiguration(t *testing.T) {
 		t.Fatalf("poll of a legacy record with a configuration grant = %+v, %v", res, err)
 	}
 }
+
+// TestDeferral_LegacyRecordAudited: each poll checked against the
+// configuration alone, for a record with neither marker, is audited,
+// as a success when the token grants the configuration and a failure
+// when it doesn't; a poll for a marked record isn't.
+func TestDeferral_LegacyRecordAudited(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T, legacy bool) (deferralFixture, *fakeAuditSink, string) {
+		sink := newFakeAuditSink()
+		f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
+		txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
+		if legacy {
+			if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
+				r.RequestedByConfigurationID = false
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return f, sink, txID
+	}
+	legacyEvents := func(sink *fakeAuditSink) []issuer.AuditEvent {
+		var events []issuer.AuditEvent
+		for _, e := range sink.recorded() {
+			if e.Type == issuer.AuditEventLegacyDeferredAuthorization {
+				events = append(events, e)
+			}
+		}
+		return events
+	}
+
+	t.Run("marked", func(t *testing.T) {
+		f, sink, txID := setup(t, false)
+		if _, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil {
+			t.Fatalf("poll of a marked record: %v", err)
+		}
+		if got := legacyEvents(sink); len(got) != 0 {
+			t.Fatalf("a marked record's poll recorded %+v, want no legacy event", got)
+		}
+	})
+
+	t.Run("legacy", func(t *testing.T) {
+		f, sink, txID := setup(t, true)
+		notGranted := deferralAuth
+		notGranted.Scopes = nil
+		_, err := f.iss.RequestDeferredCredential(ctx, notGranted, issuer.DeferredCredentialRequest{TransactionID: txID})
+		assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+		if _, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil {
+			t.Fatalf("poll of a legacy record with a configuration grant: %v", err)
+		}
+		got := legacyEvents(sink)
+		if len(got) != 2 {
+			t.Fatalf("recorded %d legacy events, want 2: %+v", len(got), got)
+		}
+		if got[0].Outcome != issuer.AuditOutcomeFailure || got[0].Description != string(issuer.ErrorInvalidTransactionID) {
+			t.Errorf("refused poll's event = %+v, want a failure, invalid_transaction_id", got[0])
+		}
+		if got[1].Outcome != issuer.AuditOutcomeSuccess || got[1].ClientID != "test-client" {
+			t.Errorf("granted poll's event = %+v, want a success for test-client", got[1])
+		}
+	})
+}

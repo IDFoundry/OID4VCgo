@@ -270,3 +270,14 @@ func (f *fakeAuditSink) recorded() []issuer.AuditEvent {
 	defer f.mu.Unlock()
 	return append([]issuer.AuditEvent(nil), f.events...)
 }
+
+// recordedExcept is recorded without the events of type except.
+func (f *fakeAuditSink) recordedExcept(except issuer.AuditEventType) []issuer.AuditEvent {
+	var events []issuer.AuditEvent
+	for _, e := range f.recorded() {
+		if e.Type != except {
+			events = append(events, e)
+		}
+	}
+	return events
+}

@@ -1,11 +1,14 @@
 package androidkey_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,8 +76,26 @@ func TestRecheckExpiry(t *testing.T) {
 	if err := e.Recheck(ctx, in); !errors.Is(err, walletprovider.ErrEvidenceRejected) || !errors.Is(err, androidkey.ErrLegacyFacts) {
 		t.Fatalf("Recheck of Facts without validity = %v, want ErrLegacyFacts refused", err)
 	}
-	if err := (androidkey.EvidenceVerifier{Verifier: v, AllowUncheckedLegacyEvidence: true}).Recheck(ctx, in); err != nil {
+	logger, logged := captureLog()
+	if err := (androidkey.EvidenceVerifier{Verifier: v, AllowUncheckedLegacyEvidence: true, Logger: logger}).Recheck(ctx, in); err != nil {
 		t.Fatalf("Recheck of Facts without validity, allowed = %v", err)
+	}
+	assertLogged(t, logged.String(), "level=WARN", "instance="+in.ID, "validity periods")
+}
+
+// captureLog is a logger writing text records to the buffer returned.
+func captureLog() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
+}
+
+// assertLogged fails t unless logged holds each of want.
+func assertLogged(t *testing.T, logged string, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(logged, w) {
+			t.Errorf("log %q doesn't hold %q", logged, w)
+		}
 	}
 }
 

@@ -510,9 +510,16 @@ func (iss *Issuer) checkPending(record DeferredTransactionRecord) error {
 }
 
 // deferredExpired reports whether record has an ExpiresAt that has
-// passed.
+// passed. A record with none never lapses, except under
+// AssuranceProduction, where it's treated as lapsed: RequestCredential
+// always sets one, so only a record a deployment wrote itself, or one
+// migrated from a store that didn't keep it, has none, and it would
+// otherwise stay collectable for ever.
 func (iss *Issuer) deferredExpired(record DeferredTransactionRecord) bool {
-	return !record.ExpiresAt.IsZero() && !iss.deps.Clock.Now().Before(record.ExpiresAt)
+	if record.ExpiresAt.IsZero() {
+		return iss.cfg.Assurance == AssuranceProduction
+	}
+	return !iss.deps.Clock.Now().Before(record.ExpiresAt)
 }
 
 // deferredOwner reports whether auth may poll record: it's the client,
@@ -535,9 +542,13 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 // collect it. For one by credential_configuration_id, the token passes
 // authorizeCredentialConfigurationID: one whose authorization detail
 // for the configuration carries credential_identifiers may not collect
-// it. A record saved before either marker existed is checked against
-// the token granting the configuration at all.
-func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
+// it. A record saved before either marker existed (OID4VCgo v0.81.0
+// and before), or written by a deployment without them, is checked
+// against the token granting the configuration at all, and each such
+// check is audited (AuditEventLegacyDeferredAuthorization), so an
+// operator can see when none is left; this fallback is deprecated and
+// will be removed in a later release.
+func (iss *Issuer) deferredAuthorized(ctx context.Context, record DeferredTransactionRecord, auth AuthorizedRequest) bool {
 	if !deferredOwner(record, auth) {
 		return false
 	}
@@ -550,7 +561,13 @@ func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth Aut
 	case record.RequestedByConfigurationID:
 		return iss.authorizeCredentialConfigurationID(auth, id, cc) == nil
 	}
-	return id == "" || iss.grantsConfiguration(auth, id, cc)
+	granted := id == "" || iss.grantsConfiguration(auth, id, cc)
+	var err error
+	if !granted {
+		err = newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
+	}
+	iss.audit(ctx, AuditEventLegacyDeferredAuthorization, auth.ClientID(), err)
+	return granted
 }
 
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded

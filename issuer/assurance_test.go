@@ -2,6 +2,7 @@ package issuer_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"strings"
 	"testing"
@@ -576,5 +577,43 @@ func TestNewProductionRequiresSealedStores(t *testing.T) {
 	deps.Nonces = unsealedNonceStore{deps.Nonces.(assuredNonceStore)}
 	if _, err := issuer.New(cfg, deps); err != nil {
 		t.Errorf("an unsealed nonce store: %v", err)
+	}
+}
+
+// TestProductionDeferredRecordWithoutExpiryLapsed: RequestCredential
+// always sets a deferred record's ExpiresAt, so under production one
+// without it, written by a deployment or migrated from an old store, is
+// answered as lapsed rather than collectable for ever; under
+// development it still never lapses.
+func TestProductionDeferredRecordWithoutExpiryLapsed(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		assurance issuer.AssuranceLevel
+		expiresAt time.Time
+		wantErr   bool
+	}{
+		{"production, no expiry", issuer.AssuranceProduction, time.Time{}, true},
+		{"production, expiry ahead", issuer.AssuranceProduction, time.Now().Add(time.Hour), false},
+		{"development, no expiry", issuer.AssuranceDevelopment, time.Time{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, deps := productionIssuer(t)
+			cfg.Assurance = tc.assurance
+			store := newFakeDeferredTransactionStore()
+			deps.DeferredTransactions = assuredDeferredTransactionStore{store, issuer.StoreCapabilities{Durable: true, AtomicConsume: true}}
+			iss := newTestIssuer(t, cfg, deps)
+			store.put("txn-1", issuer.DeferredTransactionRecord{
+				Owner: cfg.Issuer.String(), ClientID: "client-a", Status: issuer.DeferredTransactionIssued, ExpiresAt: tc.expiresAt,
+				Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
+			})
+			_, err := iss.RequestDeferredCredential(context.Background(),
+				issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{cfg.Issuer.String()}},
+				issuer.DeferredCredentialRequest{TransactionID: "txn-1"})
+			if tc.wantErr {
+				assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+			} else if err != nil {
+				t.Fatalf("RequestDeferredCredential: %v", err)
+			}
+		})
 	}
 }

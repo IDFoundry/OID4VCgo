@@ -68,7 +68,8 @@
 // that can't be judged — an instance or instance key with no Facts, or
 // Facts without the certificates' validity periods — is refused too
 // (ErrLegacyFacts), unless EvidenceVerifier.AllowUncheckedLegacyEvidence,
-// for an upgrade window.
+// for an upgrade window, which logs each record it lets through
+// (EvidenceVerifier.Logger).
 //
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension

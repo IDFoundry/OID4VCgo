@@ -7,6 +7,42 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.82.0 → v0.83.0
+
+### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed
+
+Under `AssuranceProduction`, `RequestDeferredCredential`,
+`IssueDeferredCredential` and `DenyDeferredCredential` now answer a
+`DeferredTransactionRecord` with a zero `ExpiresAt` as lapsed
+(`invalid_transaction_id` to the Wallet, `ErrDeferredTransactionResolved`
+to the caller). `RequestCredential` has always set it, so only a
+record a deployment wrote itself, or one migrated from a store that
+didn't keep it, is affected. Set `ExpiresAt` on such records. Under
+`AssuranceDevelopment` a zero `ExpiresAt` still never lapses.
+
+### The legacy deferred-transaction check is audited, and deprecated
+
+A deferred record with neither `CredentialIdentifier` nor
+`RequestedByConfigurationID` (saved by v0.81.0 and before, or written
+by a deployment without them) is still released to any token granting
+its credential configuration. Each such poll now records an
+`AuditEventLegacyDeferredAuthorization`: a success when the token
+grants the configuration, a failure when it doesn't. An `AuditSink`
+that switches over `AuditEventType` should handle the new value. Once
+none has been recorded for a full `Limits.DeferredTransactionLifetime`,
+none of those records is pending. This fallback will be removed in a
+later release, after which such records are refused; a deployment
+creating records itself should set one of the two fields.
+
+### `androidkey.EvidenceVerifier` logs what `AllowUncheckedLegacyEvidence` lets through
+
+Each instance or instance key `AllowUncheckedLegacyEvidence` accepts
+without judging it in full (no Facts kept, or Facts without validity
+periods) is now logged at `slog.LevelWarn` to the new
+`EvidenceVerifier.Logger` (nil means `slog.Default()`), naming the
+instance and, for an instance key, its thumbprint. Turn the option
+off once none is logged.
+
 ## v0.81.0 → v0.82.0
 
 ### FAPIgo v0.76.0: an attester's `x5c` must be one path, in order
