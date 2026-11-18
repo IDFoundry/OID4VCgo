@@ -66,7 +66,12 @@ import Foundation
 /// (``WalletProviderRefusedError``) as `.platform`, its `protocolError`
 /// the protocol's error code (`instance_not_active`, `instance_revoked`,
 /// `invalid_signed_request`, …), which `localizedDescription` explains to
-/// the holder. On `instance_revoked`, it forgets the
+/// the holder. The codes below that discard something count only at the
+/// status the provider answers them with (403; 409 for
+/// `instance_key_registered`, 400 for `evidence_required`): the same code
+/// in a redirect, or in a page from a proxy in front of the provider, is
+/// a refusal without a code, which discards nothing. On
+/// `instance_revoked`, it forgets the
 /// registration and deletes its registration key: the next Wallet
 /// Attestation registers the installation again. On
 /// `registration_expired` — the provider no longer accepts the evidence
@@ -86,6 +91,13 @@ import Foundation
 /// holder, as the provider may resume it. A signed request refused as
 /// `invalid_signed_request` isn't retried: check the device's clock, and
 /// that the provider still knows the instance.
+///
+/// Its requests are made with `URLSession`, which the wallet's
+/// ``WalletConfiguration/Network/tlsPins`` doesn't reach (those pin the
+/// Go SDK's own requests): to pin the provider's certificates, list its
+/// host under `NSPinnedDomains` in the app's Info.plist
+/// (`NSAppTransportSecurity`), which every `URLSession` in the app
+/// follows.
 public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// The Keychain tag prefix of ``registrationKeyStore()``'s keys. The
     /// wallet's own ``KeychainKeyStore`` mustn't cover it, as its default
@@ -206,7 +218,7 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         if state.recorded.withLock({ $0.contains(thumbprint) }) {
             do {
                 jwt = try await signed(instance, Self.walletAttestationPath, body).string("wallet_attestation")
-            } catch let e as WalletProviderRefusedError where e.error == "evidence_required" {
+            } catch let e as WalletProviderRefusedError where e.error == Self.evidenceRequired {
                 // The provider deleted its record (retention): assert again.
             }
         }
@@ -452,16 +464,25 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         return object
     }
 
-    /// The error for an answer other than the one documented.
+    /// The error for an answer other than the one documented. A code that
+    /// discards the registration, an instance key or a refresh grant
+    /// (``codeStatus``) at a status the provider doesn't answer it with —
+    /// a redirect, or a page from a proxy in front of the provider — isn't
+    /// the provider's refusal: it's dropped, and the answer refused as
+    /// one without a code, which discards nothing.
     private func failure(_ path: String, _ answer: WalletProviderAnswer, isJSON: Bool) -> Error {
         let object = isJSON ? parseObject(answer.body) : nil
-        let code = (object?["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        var code = (object?["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        var description = object?["error_description"] as? String
+        if let c = code, let want = Self.codeStatus[c], want != answer.status {
+            code = nil
+            description = nil
+        }
         if answer.status >= 500 || answer.status == 429 || code == "invalid_challenge" {
             return WalletProviderUnavailableError(status: answer.status, error: code,
                                                   message: "the Wallet Provider couldn't answer \(path): HTTP \(answer.status)" + (code.map { " " + $0 } ?? ""))
         }
-        return WalletProviderRefusedError(status: answer.status, error: code,
-                                          description: object?["error_description"] as? String, path: path)
+        return WalletProviderRefusedError(status: answer.status, error: code, description: description, path: path)
     }
 
     static func parseBaseURL(_ url: URL, allowHTTP: Bool) throws -> URL {
@@ -495,6 +516,18 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// forgotten, and the next one registers again.
     static let forgetsRegistration: Set<String> = [instanceRevoked, registrationExpired]
     static let instanceKeyRegistered = "instance_key_registered"
+    static let instanceKeyExpired = "instance_key_expired"
+    static let evidenceRequired = "evidence_required"
+    /// The status the provider answers each code that discards something
+    /// with (`walletprovider.CodeStatus`): the registration
+    /// (`instance_revoked`, `registration_expired`), or, in Go, a refresh
+    /// grant bound to an instance key (`instance_key_expired`,
+    /// `registration_expired`, `instance_key_registered`,
+    /// `evidence_required`). Acted on only at that status.
+    static let codeStatus: [String: Int] = [
+        instanceRevoked: 403, registrationExpired: 403, instanceKeyExpired: 403,
+        instanceKeyRegistered: 409, evidenceRequired: 400,
+    ]
 
     /// The largest answer read, as the protocol's request limit.
     static let maxResponseBytes = 256 * 1024

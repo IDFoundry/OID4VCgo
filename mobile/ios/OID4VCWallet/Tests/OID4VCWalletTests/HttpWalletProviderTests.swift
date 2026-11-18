@@ -134,6 +134,38 @@ final class HttpWalletProviderTests: XCTestCase {
         XCTAssertEqual(try env.registry.instance()?.instanceID, "instance-2")
     }
 
+    /// A code that discards the registration counts only at the status
+    /// the provider answers it with: in a redirect, or a proxy's answer
+    /// in front of the provider, it's a refusal without a code, and the
+    /// registration and its key are kept.
+    func testDiscardingCodesOnlyAtTheirStatus() async throws {
+        for status in [302, 307, 400, 404, 409] {
+            for code in ["instance_revoked", "registration_expired", "instance_key_expired", "evidence_required"] {
+                let env = try Env()
+                _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                let first = try XCTUnwrap(env.registry.instance())
+                env.server.state.withLock {
+                    $0.refusals = [code]
+                    $0.refusalStatus = status
+                }
+                do {
+                    _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                    XCTFail("\(code) at \(status): attested")
+                } catch let e as WalletProviderRefusedError {
+                    XCTAssertEqual(e.status, status)
+                    if code == "evidence_required" && status == 400 {
+                        XCTAssertEqual(e.error, code)
+                    } else {
+                        XCTAssertNil(e.error, "\(code) at \(status)")
+                    }
+                }
+                XCTAssertEqual(try env.registry.instance()?.instanceID, first.instanceID, "\(code) at \(status)")
+                XCTAssertNotNil(try env.keys.publicKey(id: first.keyID), "\(code) at \(status)")
+                XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1, "\(code) at \(status)")
+            }
+        }
+    }
+
     /// `registration_expired` forgets the registration and deletes its
     /// key, as `instance_revoked` does, then registers again, with a new
     /// App Attest key, and asks once more under the new registration.
@@ -646,9 +678,10 @@ private struct ServerState: Sendable {
     var registrationError: (Int, String)?
     var challengeStatus = 200
     var revoked = false
-    /// Error codes to refuse the next signed requests with, HTTP 403, in
-    /// turn.
+    /// Error codes to refuse the next signed requests with, in turn, at
+    /// `refusalStatus`, as `revoked` is.
     var refusals: [String] = []
+    var refusalStatus = 403
     var attestStranger = false
     /// The Key Attestation's nonce claim: nil, the nonce sent, omitted
     /// when empty, as the Go provider does; .some(nil), none.
@@ -723,8 +756,9 @@ private final class FakeServer: WalletProviderTransport, @unchecked Sendable {
 
     private func walletAttestation(_ path: String, _ headers: [String: String], _ body: Data, _ o: [String: Any]) throws -> WalletProviderAnswer {
         let instance = try verifySigned(path, headers, body)
-        if state.withLock({ $0.revoked }) { return try answer(403, ["error": "instance_revoked"]) }
-        if let code = nextRefusal() { return try answer(403, ["error": code]) }
+        let status = state.withLock { $0.refusalStatus }
+        if state.withLock({ $0.revoked }) { return try answer(status, ["error": "instance_revoked"]) }
+        if let code = nextRefusal() { return try answer(status, ["error": code]) }
         let key = try jwkPoint(try XCTUnwrap(o["instance_key"] as? [String: Any]))
         let hadEvidence = o["evidence"] != nil
         state.withLock { $0.walletAttestations.append((path, hadEvidence)) }
