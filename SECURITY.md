@@ -297,6 +297,21 @@ they're not yet closed in the library.
   mechanism a key has used, though ISO/IEC 18013-5 §12.4.4 has each key
   use one. The deniability a MAC gives is then lost for that key; no
   attack on the key is known.
+- **BLE peers aren't known before a message decrypts.** ISO/IEC
+  18013-5's BLE retrieval puts each side's service UUID in the clear in
+  its adverts, and the reader's Ident, which a holder in mdoc central
+  client mode checks, can be read by any device and served by another:
+  it tells sessions apart, it doesn't authenticate. Status messages
+  aren't encrypted (§9.1.1.4). Until a message decrypts, the holder
+  (`proximity.DeviceSession.TrySessionEstablishment`) and a reader in
+  mdoc peripheral server mode (`ReaderSession.TryVerify`) reject what
+  doesn't, a bare status included, and the mobile libraries pass over
+  the device that sent it and go on looking, within their timeouts.
+  What remains is availability: a reader in mdoc central client mode
+  still takes the first device that starts a session, a device that
+  answers nothing holds a reader until its idle timeout, and a
+  holder's decline is reported once no other device answers in the
+  reader's connect timeout. `mobile/MOBILE.md` lists the rest.
 - **Linkability across credentials.** `walletflow` warns before a
   presentation would hand one Verifier a copy another has seen
   (`Presentation.Linkable`), judging copies of one credential against

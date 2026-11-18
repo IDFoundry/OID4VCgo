@@ -246,10 +246,27 @@ func parseNFCRequest(hr []byte) ([]nfcBLEOffer, error) {
 	return offers, nil
 }
 
+// MaxHandoverRequestBytes is the largest Handover Request a holder takes
+// in negotiated NFC handover, and maxHandoverRequestRecords the most
+// records it may hold. One offering every carrier this package knows
+// is under 200 bytes in 4 records; the handover, which the holder's
+// device key signs as part of the SessionTranscript (§9.1.5.1), carries
+// it as sent, so it mustn't carry much else the reader chose.
+const (
+	MaxHandoverRequestBytes   = 1024
+	maxHandoverRequestRecords = 16
+)
+
 func parseNFCRequestCarriers(hr []byte) ([]ndefRecord, error) {
+	if len(hr) > MaxHandoverRequestBytes {
+		return nil, fmt.Errorf("proximity: Handover Request is %d bytes, over %d", len(hr), MaxHandoverRequestBytes)
+	}
 	records, err := parseNDEF(hr)
 	if err != nil {
 		return nil, err
+	}
+	if len(records) > maxHandoverRequestRecords {
+		return nil, fmt.Errorf("proximity: Handover Request has %d records, over %d", len(records), maxHandoverRequestRecords)
 	}
 	first := records[0]
 	if first.tnf != 1 || string(first.typ) != "Hr" || len(first.payload) < 2 || first.payload[0] != 0x15 {

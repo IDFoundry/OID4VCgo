@@ -387,6 +387,37 @@ own (`holder_binding`, "key binding JWT iat is too far in the
 future"): set it, a minute is typical, as it also widens a
 credential's validity window.
 
+### A proximity reader tries each answer in mdoc peripheral server mode (`proximity`, mobile)
+
+In mdoc peripheral server mode a reader connects to whichever device
+advertises the holder's service UUID, which is in the clear, and
+`ReaderSession.Verify` ended the session on that device's first
+answer: junk, or a bare status 20 reported as `ErrDeclined`. A reader
+driving its own BLE in that mode should pass answers to the new
+`ReaderSession.TryVerify` (or `TryVerifyDocuments`; the mobile
+`ProximityReaderSession.TryHandleMessage`, additive within ABI 16): an
+answer that doesn't decrypt, or a bare status, is
+`ErrResponseRejected` (the `rejected` event) and leaves the session
+open. Disconnect from that device, pass over it, and send the same
+SessionEstablishment to the next one, within your connect timeout; a
+rejected status 20 also wraps `ErrDeclined`, to report if no other
+device answers. `Verify` is unchanged.
+
+The Swift and Kotlin readers do this themselves, and their holders in
+mdoc central client mode now leave a device whose first message Go
+rejects and connect to the next, instead of staying with it. A
+reader's `declined` state is then reported once no other device
+answers within `connectSeconds` (`connect`): up to 60 seconds after the
+QR code is scanned, by default.
+
+A holder now refuses a SessionEstablishment whose EReaderKeyBytes is
+over `proximity.MaxEReaderKeyBytes` (1,024 bytes) or carries a
+COSE_Key parameter other than kty, kid, alg, crv, x and y, and a
+negotiated NFC Handover Request over `MaxHandoverRequestBytes` (1,024
+bytes) or 16 records: its device key signs both as sent. ISO/IEC
+18013-5's Annex D, Multipaz and this package's own readers send far
+less.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

@@ -303,7 +303,7 @@ func (s *DeviceSession) openEstablishment(msg []byte) (transcript []byte, eReade
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("proximity: decode EReaderKeyBytes: %w: %w", ErrCBORDecoding, err)
 	}
-	if eReaderKey, err = decodeCoseKey(eReaderKeyBytes); err != nil {
+	if eReaderKey, err = decodeEReaderKey(eReaderKeyBytes); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("proximity: EReaderKey: %w", err)
 	}
 	if transcript, err = buildSessionTranscriptBytes(s.deviceEngagement, eReaderKeyBytes, s.handover); err != nil {
