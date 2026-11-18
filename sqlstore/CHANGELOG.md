@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.13.1...sqlstore/v0.14.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** TransactionCodecVersion is 3. OID4VCgo v0.81.0 and earlier don't read version 3 records: during a rolling deploy, a request begun or updated on an upgraded replica fails on one not yet upgraded, and a rollback fails the requests the new release wrote.
+* **deps:** an Authorization Server using server.X5CAttesterChain now refuses, with invalid_client, a Wallet Attestation whose x5c is out of order, repeats a subject or public key, or ends with more than two copies of one CA. Wallets must send x5c leaf first, each certificate followed by its issuer's. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.76.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.76.0 ([48d5532](https://github.com/IDFoundry/OID4VCgo/commit/48d5532758330200b6a4edbc36c01ebee453f631))
+* **sqlstore:** require OID4VCgo v0.82.0 ([4bcb08f](https://github.com/IDFoundry/OID4VCgo/commit/4bcb08f60c1071588851b167fcb3aa075e321802))
+* **verifier:** bind the stored Request Object into the sealed record ([acfcbdf](https://github.com/IDFoundry/OID4VCgo/commit/acfcbdf454705c6a5bbf07059390fac9bb8dccc1))
+* **verifier:** refuse records stripped of their sealed fields ([17f98d9](https://github.com/IDFoundry/OID4VCgo/commit/17f98d981b3855176910ec6c1593e911902fb575))
+* **verifier:** sign the request_uri Request Object from sealed fields ([96dbb08](https://github.com/IDFoundry/OID4VCgo/commit/96dbb08bf984b4f833d34adb0ef1356e245ed8eb))
+
 ## [0.13.1](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.13.0...sqlstore/v0.13.1) (2026-11-16)
 
 
