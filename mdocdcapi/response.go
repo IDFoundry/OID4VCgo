@@ -5,13 +5,13 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/hpke"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/mdocresponse"
@@ -458,7 +458,8 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 	if len(response) > MaxResponseBytes {
 		return nil, fmt.Errorf("mdocdcapi: response is %d bytes, more than %d", len(response), MaxResponseBytes)
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(response)
+	// Strictly: one response has one encoding (b64url).
+	raw, err := b64url.Encoding{}.DecodeString(response)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: response isn't base64url: %w", err)
 	}

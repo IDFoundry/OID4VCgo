@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,5 +188,20 @@ func TestVerifyResponseDocuments_IssuerSignatureBeforeChain(t *testing.T) {
 	}
 	if n := chains.Load(); n != 0 {
 		t.Errorf("VerifyResponse verified its chain (%d revocation checks), want none", n)
+	}
+}
+
+// A response is decoded as strict base64url: one with a line break in
+// it, which encoding/base64 skips, is refused before it's decrypted.
+func TestVerifyResponseDocuments_StrictBase64URL(t *testing.T) {
+	h := newChainHarness(t, 1, elliptic.P256())
+	response := h.respond(t, h.fixtures)
+	var chains atomic.Int32
+	if _, err := h.verify(response, &chains); err != nil {
+		t.Fatalf("the response as encoded: %v", err)
+	}
+	broken := response[:len(response)/2] + "\n" + response[len(response)/2:]
+	if _, err := h.verify(broken, &chains); err == nil || !strings.Contains(err.Error(), "isn't base64url") {
+		t.Errorf("a response with a line break: %v, want it refused as not base64url", err)
 	}
 }
