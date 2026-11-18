@@ -265,6 +265,17 @@ on `issuerChain`, the verified certificate path: `issuer` and
 `trustAnchor` are names any document signer under a trusted IACA can
 choose, for display.
 
+When the holder offers only mdoc peripheral server mode
+(`session.mode`), the reader connects to whichever device advertises
+the holder's Bluetooth service, which any device can copy from the
+holder's adverts. A device whose answer isn't the holder's (it doesn't
+decrypt, or is a bare decline, which isn't authenticated), or that
+drops the link before answering, is passed over, and the same request
+goes to the next one, within `ProximityTimeouts.connect`. So a
+holder's decline is reported as `Declined` only once no other device
+has answered by then: up to 60 seconds after the QR code was scanned,
+by default.
+
 With `statusCheck = StatusCheck.CHECK`, the session checks the
 document's revocation status before it's `Verified`, as
 `session.checkStatus()` does: it closes the connection, fetches the

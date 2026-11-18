@@ -625,7 +625,33 @@ func statusRefOf(status *mdoc.Status) *statusRefJSON {
 //     the session without answering — not authenticated: anyone in
 //     radio range can send that) or "error", with error, a failing
 //     call's text: protocol for a response that doesn't verify.
+//
+// In mdoc peripheral server mode, use TryHandleMessage instead.
 func (p *ProximityReaderSession) HandleMessage(message []byte) string {
+	return p.handleMessage(message, false)
+}
+
+// TryHandleMessage is HandleMessage for an answer from a device not yet
+// known to be the holder: in mdoc peripheral server mode (ble_mode
+// "peripheral_server") the reader connects to whichever device
+// advertises service_uuid, which the holder's adverts carry in the
+// clear. Its events are HandleMessage's, and "rejected": the answer
+// didn't decode or decrypt for this session, or carried only a status,
+// which isn't encrypted, so its sender needn't be the holder. Nothing
+// is sent and the session goes on: disconnect from that device, pass
+// over it, connect to the next one advertising service_uuid, send it
+// the same request, and hand its answer to TryHandleMessage. reason is
+// "declined" for a bare status 20, else "error", with error the
+// failing call's text; when no other device answers in time, report
+// that, as "ended" would have. However many arrive, none ends the
+// session: the caller's own time limit for finding the holder bounds
+// the search.
+func (p *ProximityReaderSession) TryHandleMessage(message []byte) string {
+	return p.handleMessage(message, true)
+}
+
+// handleMessage is HandleMessage, or, rejectable, TryHandleMessage.
+func (p *ProximityReaderSession) handleMessage(message []byte, rejectable bool) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	out := struct {
@@ -637,10 +663,26 @@ func (p *ProximityReaderSession) HandleMessage(message []byte) string {
 		Reason    string          `json:"reason,omitempty"`
 		Error     string          `json:"error,omitempty"`
 	}{result: result{ABIVersion}, Event: "ended"}
-	p.stopped = true
 	// No network request: the CRLs are in memory, and the status is
 	// CheckStatus's.
-	vs, err := p.s.VerifyDocuments(context.Background(), message, p.r.roots, p.r.clock())
+	var vs []proximity.Verified
+	var err error
+	if rejectable {
+		vs, err = p.s.TryVerifyDocuments(context.Background(), message, p.r.roots, p.r.clock())
+	} else {
+		vs, err = p.s.VerifyDocuments(context.Background(), message, p.r.roots, p.r.clock())
+	}
+	if errors.Is(err, proximity.ErrResponseRejected) {
+		out.Event, out.Reason = "rejected", "error"
+		if errors.Is(err, proximity.ErrDeclined) {
+			out.Reason = "declined"
+		} else {
+			out.Error = newError(CodeProtocol, err).Error()
+		}
+		text, _ := marshal(out)
+		return text
+	}
+	p.stopped = true
 	switch {
 	case err == nil:
 		for _, v := range vs {

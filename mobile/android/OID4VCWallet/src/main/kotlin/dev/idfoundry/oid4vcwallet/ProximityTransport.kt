@@ -46,9 +46,11 @@ internal interface ProximityTransport {
 
     /**
      * The device whose message [receive] returned last isn't this
-     * session's reader (Go rejected it): drop it, and have [receive]
-     * return the next first message, from any other device. A transport
-     * with one peer keeps it.
+     * session's peer (Go rejected it): drop it, and have [receive]
+     * return the next first message, from any other device. A GATT
+     * client disconnects, passes over the device, and connects to the
+     * next one advertising the service: at the next [connect], or
+     * [receive]. A transport with one peer keeps it.
      */
     fun reject() {
         // One peer: nothing else to wait for.

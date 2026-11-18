@@ -75,9 +75,11 @@ protocol ProximityTransport: AnyObject, Sendable {
     /// advertising or scanning. Calling it again does nothing.
     func close()
     /// The device whose message `receive` returned last isn't this
-    /// session's reader (Go rejected it): drop it, and have `receive`
-    /// return the next first message, from any other device. A transport
-    /// with one peer keeps it.
+    /// session's peer (Go rejected it): drop it, and have `receive`
+    /// return the next first message, from any other device. A GATT
+    /// client disconnects, passes over the device, and connects to the
+    /// next one advertising the service: at the next `connect`, or
+    /// `receive`. A transport with one peer keeps it.
     func reject()
     /// The device whose message `receive` returned last is this
     /// session's reader (Go accepted it): stop looking for others, and

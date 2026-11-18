@@ -234,6 +234,17 @@ accept on ``VerifiedMdoc/issuerChain``, the verified certificate path:
 ``VerifiedMdoc/issuer`` and ``VerifiedMdoc/trustAnchor`` are names any
 document signer under a trusted IACA can choose, for display.
 
+When the holder offers only mdoc peripheral server mode
+(``ProximityReaderSession/mode``), the reader connects to whichever
+device advertises the holder's Bluetooth service, which any device can
+copy from the holder's adverts. A device whose answer isn't the
+holder's (it doesn't decrypt, or is a bare decline, which isn't
+authenticated), or that drops the link before answering, is passed
+over, and the same request goes to the next one, within
+``ProximityTimeouts/connectSeconds``. So a holder's decline is reported
+as `.declined` only once no other device has answered by then: up to
+60 seconds after the QR code was scanned, by default.
+
 With `statusCheck: .check`, the session checks the document's
 revocation status before it's `.verified`, as
 ``ProximityReaderSession/checkStatus()`` does: it closes the

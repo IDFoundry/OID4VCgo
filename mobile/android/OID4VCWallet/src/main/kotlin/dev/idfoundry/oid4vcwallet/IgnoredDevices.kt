@@ -1,16 +1,19 @@
 package dev.idfoundry.oid4vcwallet
 
 /**
- * The devices a GATT client in mdoc central client mode passes over
- * while it looks for this session's reader: one whose Ident was read and
- * differs (another session's reader), or that has no mdoc service,
- * characteristic or Ident to read. Each is passed over for [IGNORE_MS],
+ * The devices a GATT client passes over while it looks for this
+ * session's peer: in mdoc central client mode, one whose Ident was read
+ * and differs (another session's reader), or that has no mdoc service,
+ * characteristic or Ident to read; in either mode, one whose first
+ * message Go rejected ([ProximityTransport.reject]), or, for a reader,
+ * whose link was lost before it answered. Each is passed over for [IGNORE_MS],
  * not for the session: devices are known by their address, which another
  * device can claim, so one that claims the reader's address and shows
  * another Ident keeps the reader passed over only that long. A failure
- * that says nothing about which device it is — a dropped link, a GATT
- * error, an Ident read that fails or isn't answered — ignores nothing:
- * it is one failed connection attempt. Thread-safe.
+ * while connecting that says nothing about which device it is — a
+ * dropped link, a GATT error, an Ident read that fails or isn't
+ * answered — ignores nothing: it is one failed connection attempt.
+ * Thread-safe.
  */
 internal class IgnoredDevices<K>(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {
     /** When each device is no longer ignored. */

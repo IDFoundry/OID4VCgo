@@ -40,6 +40,13 @@ import java.util.UUID
  * answered, is one failed attempt, retried. Bluetooth permissions are
  * the caller's to have checked.
  *
+ * Neither the service UUID nor the Ident keeps out a device that never
+ * saw the engagement: the UUID is in the clear in adverts, and anyone
+ * can read the reader's Ident and serve it. Only Go can tell the peer
+ * apart, once its message decrypts: [reject] passes over a device whose
+ * message it rejected, and the next [connect], or [receive], connects
+ * to another.
+ *
  * Android's own failures are worked around as Multipaz does: a scan
  * that reports nothing for [SCAN_RESTART_MS] is restarted (Android
  * silently stops reporting to an app it thinks scans too often), and a
@@ -77,6 +84,8 @@ internal class GattClientTransport(
     @Volatile private var mtu = BleChunks.DEFAULT_MTU
     @Volatile private var sessionStarted = false
     @Volatile private var closed = false
+    /** [reject] passed over the device: [receive] connects to another first. */
+    @Volatile private var passedOver = false
     /**
      * Bluetooth turned off: unlike one device's failure, which [connect]
      * retries past, it ends the session.
@@ -175,9 +184,10 @@ internal class GattClientTransport(
         }
     }
 
+    /** Scans, connects and starts the session; after [reject], with the next device advertising the service. */
     override suspend fun connect() {
         // Watching first: Bluetooth turning off just after the check
-        // below is caught too.
+        // below is caught too. Starting again does nothing.
         bluetoothOff.start(context)
         if (manager.adapter?.isEnabled != true) {
             // Nothing started: leave nothing registered.
@@ -194,7 +204,10 @@ internal class GattClientTransport(
             incoming = Channel(INCOMING_MESSAGE_CAPACITY)
             reassembler = BleChunks.Reassembler()
             val status = tryDevice(scan())
-            if (status == BluetoothGatt.GATT_SUCCESS) return
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                passedOver = false
+                return
+            }
             // Another session's reader: keep looking for this one's, until
             // the caller's connect timeout, without spending an attempt.
             if (status == WRONG_READER) continue
@@ -386,12 +399,40 @@ internal class GattClientTransport(
         for (chunk in BleChunks.split(message, BleChunks.characteristicSize(mtu))) write(c2s, chunk)
     }
 
-    override suspend fun receive(): ByteArray =
-        try {
+    override suspend fun receive(): ByteArray {
+        if (passedOver) connect()
+        return try {
             incoming.receive()
         } catch (e: ClosedReceiveChannelException) {
             throw ProximityTransportException(SESSION_ENDED, peerEnded = true, cause = e)
         }
+    }
+
+    /**
+     * The device whose message [receive] returned last isn't this
+     * session's peer (Go rejected its message), or, for a reader, lost
+     * its link before answering: disconnect, and pass over it for a while
+     * ([IgnoredDevices]). The next [connect], or [receive], scans for and
+     * connects to another device advertising the service, within the
+     * caller's own time for it, as the GATT server transport goes on
+     * listening for others.
+     */
+    override fun reject() {
+        val g = synchronized(this) {
+            if (closed) return
+            val g = gatt
+            gatt = null
+            state = null
+            client2Server = null
+            sessionStarted = false
+            passedOver = true
+            g
+        }
+        g?.device?.address?.let { ignored.ignore(it) }
+        runCatching { g?.disconnect() }
+        runCatching { g?.close() }
+        incoming.close(ProximityTransportException("the device was passed over"))
+    }
 
     private fun fail(e: ProximityTransportException) {
         incoming.close(e)
