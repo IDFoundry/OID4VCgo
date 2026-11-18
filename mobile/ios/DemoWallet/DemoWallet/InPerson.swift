@@ -718,9 +718,11 @@ private struct ClaimRow: View {
 
     var body: some View {
         if case .string(let text) = value, identifier == "portrait" || identifier.hasSuffix("_image"),
-           let data = Data(base64Encoded: text), let image = UIImage(data: data) {
+           let data = Data(base64Encoded: text), let image = EncodedImage(data) {
+            // The issuer's choice of image: decoded off the main actor,
+            // at the size shown (BoundedImages).
             LabeledContent(elementLabel(identifier)) {
-                Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 120).clipShape(RoundedRectangle(cornerRadius: 8))
+                ClaimImage(image: image, width: 120, height: 120).clipShape(RoundedRectangle(cornerRadius: 8))
             }
         } else {
             LabeledContent(elementLabel(identifier), value: text(value)).accessibilityIdentifier("reader-claim")

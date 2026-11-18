@@ -1,7 +1,6 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
-import ImageIO
 import LocalAuthentication
 import Observation
 import UIKit
@@ -843,16 +842,14 @@ final class WalletModel {
 /// logo is decoded in place, with nothing fetched.
 ///
 /// A logo is the issuer's choice of image, so it's handled as hostile:
-/// one larger than `maxBytes`, or than `maxDimension` pixels a side, is
-/// refused, and each is decoded off the main actor at the size it's
-/// shown (ImageIO's thumbnail), never at its own: a small file can
-/// decode to hundreds of megabytes.
+/// one larger than `maxBytes`, or than `BoundedImages.maxDimension`
+/// pixels a side, is refused, and each is decoded off the main actor at
+/// the size it's shown (`BoundedImages.thumbnail`), never at its own: a
+/// small file can decode to hundreds of megabytes.
 @MainActor
 enum LogoStore {
     /// The largest logo kept.
     static let maxBytes = 512 * 1024
-    /// The widest or tallest logo kept or shown, in pixels.
-    nonisolated static let maxDimension = 4096
     /// The size a logo is checked at before it's kept, in pixels.
     nonisolated static let checkPixels = 128
 
@@ -877,7 +874,7 @@ enum LogoStore {
         let path = uri.hasPrefix("data:") ? nil : file(for: uri)
         let image = await Task.detached(priority: .utility) { () -> UIImage? in
             let data = uri.hasPrefix("data:") ? decodeDataURL(uri) : path.flatMap { try? Data(contentsOf: $0) }
-            return data.flatMap { thumbnail($0, pixels: pixels) }
+            return data.flatMap { BoundedImages.thumbnail($0, pixels: pixels) }
         }.value
         if let image { images[uri] = image }
         return image
@@ -894,7 +891,7 @@ enum LogoStore {
             guard let url = URL(string: uri), let host = url.host() else { continue }
             if !development, await Task.detached(operation: { resolvesLocal(host) }).value { continue }
             guard let data = await download(url),
-                  await Task.detached(priority: .utility, operation: { thumbnail(data, pixels: checkPixels) != nil }).value
+                  await Task.detached(priority: .utility, operation: { BoundedImages.thumbnail(data, pixels: checkPixels) != nil }).value
             else { continue }
             try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: path, options: [.atomic, .completeFileProtection])
@@ -948,25 +945,6 @@ enum LogoStore {
         let payload = String(uri[uri.index(after: comma)...])
         if header.hasSuffix(";base64") { return Data(base64Encoded: payload) }
         return payload.removingPercentEncoding.map { Data($0.utf8) }
-    }
-
-    /// `data` decoded at most `pixels` a side: its size read first,
-    /// refused past `maxDimension`, then thumbnailed by ImageIO, which
-    /// never decodes the whole image at full size.
-    nonisolated private static func thumbnail(_ data: Data, pixels: Int) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              (1...maxDimension).contains(width), (1...maxDimension).contains(height) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: pixels,
-        ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return UIImage(cgImage: image)
     }
 
     /// Whether `host` answers an address only the device or its own

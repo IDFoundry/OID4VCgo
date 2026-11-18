@@ -45,6 +45,11 @@ credential, and keep it, rather than loading it on the offer's preview
 opened) or on each display, which would tell it whenever the holder
 opens the wallet or is asked for the credential. The demo keeps them in
 its Application Support directory (`LogoStore` in `WalletModel.swift`).
+Portraits and other image claims are the issuer's choice of image too,
+and a small file can declare a size that decodes to hundreds of
+megabytes: the demo reads each one's size first, refuses one over 4096
+pixels a side, and decodes it off the main actor at the size it's
+shown, as it does logos (`BoundedImages.swift`).
 
 ## Configuration
 

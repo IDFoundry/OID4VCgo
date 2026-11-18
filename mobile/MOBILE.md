@@ -1006,7 +1006,9 @@ What a wallet's UI needs to show a credential, from the SDK:
     that changes in between isn't caught), keeps at most 512 KiB and
     4096 pixels a side, and decodes each logo off the main thread at
     the size it's shown, never at its own: a small file can decode to
-    hundreds of megabytes.
+    hundreds of megabytes. A portrait or other image claim is the
+    issuer's choice of image as well, and they decode it the same way
+    (`BoundedImages`).
 - **Expiry:** an SD-JWT VC's `exp`, or an mdoc's
   `validityInfo.validUntil`, is kept as `valid_until`.
 - **Revocation status:**
