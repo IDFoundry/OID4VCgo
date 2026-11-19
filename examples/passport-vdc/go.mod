@@ -5,8 +5,8 @@ go 1.26.11
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0
 	github.com/gmrtd/gmrtd v1.9.0
-	github.com/idfoundry/fapigo v0.76.0
-	github.com/idfoundry/fapigo/sqlstore v0.8.1
+	github.com/idfoundry/fapigo v0.77.0
+	github.com/idfoundry/fapigo/sqlstore v0.9.1
 	github.com/idfoundry/oid4vcgo v0.82.0
 	github.com/idfoundry/oid4vcgo/sqlstore v0.0.0-00010101000000-000000000000
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12

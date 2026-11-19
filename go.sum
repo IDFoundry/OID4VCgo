@@ -5,5 +5,7 @@ github.com/idfoundry/fapigo v0.75.0 h1:xWBCgKI3ubZq+nMMZpYKFtpZX9ScKDAuNNrfxS3IW
 github.com/idfoundry/fapigo v0.75.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo v0.76.0 h1:s7pnzjRr6963eXMcCWvFzfPC+BM/Scw/Iq0oZCqBLvo=
 github.com/idfoundry/fapigo v0.76.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
+github.com/idfoundry/fapigo v0.77.0 h1:Fc1Ru4FzEtYKmLwC5CT+Z2sD88hMvWx8medmCNzvhrY=
+github.com/idfoundry/fapigo v0.77.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
