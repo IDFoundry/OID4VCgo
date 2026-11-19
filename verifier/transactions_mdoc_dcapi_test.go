@@ -392,6 +392,9 @@ func TestTransactions_MdocDCAPIFlowsKeptApart(t *testing.T) {
 	m := newMdocTxFixture(t, mdocTxOptions{store: f.store, verifier: f.v, tweak: func(cfg *verifier.TransactionsConfig) {
 		cfg.RequestURIBase, cfg.RedirectURI = txBase, "https://verifier.example.com/continue?x=1"
 		cfg.Verify.IssuerKeys, cfg.Verify.MaxKeyBindingAge = f.verify.IssuerKeys, time.Hour
+		// m.now is fixed, so the wallet's Key Binding JWT, signed later
+		// and dated in whole seconds, may be dated after it, as in f's.
+		cfg.Verify.MaxClockSkew = f.verify.MaxClockSkew
 	}})
 	ctx := context.Background()
 	openid := f.beginDCAPI(testBinding)
