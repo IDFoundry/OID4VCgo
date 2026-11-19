@@ -45,6 +45,12 @@ final class TestEnv: Sendable {
         return (d["id"]!, d["link"]!)
     }
 
+    /// The link to a request the wallet refuses, whose error response
+    /// the Verifier answers with `redirect` as the redirect_uri.
+    func refusedRequest(redirect: String) throws -> String {
+        try OID4VC.call { env.refusedRequest(redirect, error: $0) }
+    }
+
     func result(_ id: String) throws -> [String: Any] {
         let json = try OID4VC.call { env.requestResult(id, error: $0) }
         return try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
@@ -354,6 +360,32 @@ final class SessionTests: XCTestCase {
         let plain = try await w.startPresentation(request: try env.request(format: "dc+sd-jwt").link)
         XCTAssertEqual(plain.verifier.registration.status, Presentation.Registration.Status.none)
         try await plain.decline()
+    }
+
+    /// A request the wallet refuses throws `requestRefused` carrying the
+    /// redirect_uri the Verifier answered with: this call's own, taken
+    /// from its operation, and still the wallet's latest.
+    func testRefusedRequestCarriesItsRedirect() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let w = try wallet(env)
+        let first = try env.refusedRequest(redirect: "https://verifier.example/first")
+        let second = try env.refusedRequest(redirect: "https://verifier.example/second")
+        var errors: [WalletError] = []
+        for link in [first, second] {
+            do {
+                _ = try await w.startPresentation(request: link)
+                XCTFail("a request carrying transaction_data was answered")
+            } catch let e as WalletError {
+                errors.append(e)
+            }
+        }
+        XCTAssertEqual(errors.map(\.code), [.requestRefused, .requestRefused])
+        XCTAssertEqual(errors.map(\.protocolError), ["invalid_transaction_data", "invalid_transaction_data"])
+        XCTAssertEqual(errors.map(\.refusalRedirect), [URL(string: "https://verifier.example/first"), URL(string: "https://verifier.example/second")])
+        XCTAssertFalse(errors.contains { $0.description.contains("verifier.example") }, "the redirect stays out of logs")
+        XCTAssertEqual(w.takeRefusalRedirect(), URL(string: "https://verifier.example/second"))
+        XCTAssertNil(w.takeRefusalRedirect())
     }
 
     /// A credential received with a refresh token is refreshable: its

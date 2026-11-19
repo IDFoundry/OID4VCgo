@@ -1193,16 +1193,33 @@ public class Wallet(
 
     /**
      * Fetches and verifies an OpenID4VP request (openid4vp://…), and
-     * finds the credentials that can answer it.
+     * finds the credentials that can answer it. A request the wallet
+     * refuses throws [WalletException.Code.requestRefused], whose
+     * [WalletException.refusalRedirect] is where the Verifier asked to
+     * take the holder.
      */
     public suspend fun startPresentation(request: String): Presentation =
-        Presentation(OID4VC.cancellable { op -> handle.startPresentation(op, request) })
+        Presentation(
+            OID4VC.cancellable { op ->
+                try {
+                    OID4VC.wrap { handle.startPresentation(op, request) }
+                } catch (e: WalletException) {
+                    // This call's own, not the latest of any call's.
+                    if (e.code == WalletException.Code.requestRefused) e.refusalRedirect = op.takeRefusalRedirect().ifEmpty { null }
+                    throw e
+                }
+            },
+        )
 
     /**
      * Where the Verifier asked to take the holder after the wallet
      * refused its request: when [startPresentation] throws
      * [WalletException.Code.requestRefused], open this URL, if any, as
-     * OpenID4VP §8.2 has a wallet do. It's returned once.
+     * OpenID4VP §8.2 has a wallet do. It's returned once. It holds the
+     * latest refusal of any call: with presentations started
+     * concurrently, open the exception's own
+     * [WalletException.refusalRedirect] instead, or one Verifier's
+     * redirect may be opened for another's refusal.
      */
     public fun takeRefusalRedirect(): String? = handle.takeRefusalRedirect().ifEmpty { null }
 

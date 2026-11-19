@@ -45,6 +45,9 @@ class TestEnv(deferIssuance: Boolean = false, batchSize: Int = 0) : AutoCloseabl
     /** A request from a Verifier registered for family_name only, asking for family_name and [extra], if set. */
     fun registeredRequest(format: String = SD_JWT, extra: String = ""): Pair<String, String> = pair(env.registeredRequest(format, extra))
 
+    /** The link to a request the wallet refuses, whose error response the Verifier answers with [redirect]. */
+    fun refusedRequest(redirect: String): String = env.refusedRequest(redirect)
+
     fun result(id: String): JsonObject = json.parseToJsonElement(env.requestResult(id)).jsonObject
 
     private fun pair(text: String): Pair<String, String> {
@@ -310,6 +313,32 @@ class SessionTest {
         val plain = w.startPresentation(env.request(SD_JWT).second)
         assertEquals(Presentation.Registration.Status.NONE, plain.verifier.registration.status)
         plain.decline()
+    }
+
+    /**
+     * A request the wallet refuses throws requestRefused carrying the redirect_uri the
+     * Verifier answered with: this call's own, taken from its operation, and still the
+     * wallet's latest.
+     */
+    @Test
+    fun refusedRequestCarriesItsRedirect(): Unit = runBlocking {
+        val env = env()
+        val w = wallet(env)
+        val errors = listOf("https://verifier.example/first", "https://verifier.example/second").map { redirect ->
+            try {
+                w.startPresentation(env.refusedRequest(redirect))
+                fail("a request carrying transaction_data was answered")
+                error("unreachable")
+            } catch (e: WalletException) {
+                e
+            }
+        }
+        assertEquals(listOf(WalletException.Code.requestRefused, WalletException.Code.requestRefused), errors.map { it.code })
+        assertEquals(listOf("invalid_transaction_data", "invalid_transaction_data"), errors.map { it.protocolError })
+        assertEquals(listOf("https://verifier.example/first", "https://verifier.example/second"), errors.map { it.refusalRedirect })
+        assertFalse("the redirect stays out of logs", errors.any { it.message!!.contains("verifier.example") })
+        assertEquals("https://verifier.example/second", w.takeRefusalRedirect())
+        assertNull(w.takeRefusalRedirect())
     }
 
     @Test

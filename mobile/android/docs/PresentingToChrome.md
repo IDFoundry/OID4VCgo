@@ -159,7 +159,7 @@ authentic request it must not answer — `transaction_data` it doesn't
 support, say — and has already told the Verifier, as OpenID4VP requires:
 return a failure to the page, and tell the holder the request wasn't
 answered. Over the DC API there's no redirect to open:
-`Wallet.takeRefusalRedirect` is for requests from links.
+`refusalRedirect` is for requests from links.
 
 `request.selectedCredentialID` is the credential the holder picked in
 the system's chooser: start the consent screen from it. The demo's

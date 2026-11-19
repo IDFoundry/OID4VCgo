@@ -116,9 +116,9 @@ is a complete, working app on this package to compare against.
 - Open ``Presentation/Presented/redirectURI``, when there is one, in the
   browser the request came from.
 - ``WalletError/Code/requestRefused`` from
-  ``Wallet/startPresentation(request:)``: open
-  ``Wallet/takeRefusalRedirect()`` when it returns a URL, and tell the
-  holder the request wasn't answered. (<doc:HandlingErrors>)
+  ``Wallet/startPresentation(request:)``: open the error's
+  ``WalletError/refusalRedirect`` when it has one, and tell the holder
+  the request wasn't answered. (<doc:HandlingErrors>)
 - ``WalletError/Code/deliveryUnknown`` isn't retried: tell the holder to
   check with the Verifier.
 - *Check:* a Verifier outside ``WalletConfiguration/VerifierTrust/roots`` is
