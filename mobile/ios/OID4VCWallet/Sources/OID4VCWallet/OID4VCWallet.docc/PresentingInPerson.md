@@ -242,8 +242,12 @@ holder's (it doesn't decrypt, or is a bare decline, which isn't
 authenticated), or that drops the link before answering, is passed
 over, and the same request goes to the next one, within
 ``ProximityTimeouts/connectSeconds``. So a holder's decline is reported
-as `.declined` only once no other device has answered by then: up to
-60 seconds after the QR code was scanned, by default.
+as `.declined` once no other device advertises the holder's service
+for 5 seconds: a holder that hasn't connected goes on advertising, so
+another device's decline can't end the search. While other devices
+advertise it, a decline can take until
+``ProximityTimeouts/connectSeconds`` ends: up to 60 seconds after the
+QR code was scanned, by default.
 
 With `statusCheck: .check`, the session checks the document's
 revocation status before it's `.verified`, as

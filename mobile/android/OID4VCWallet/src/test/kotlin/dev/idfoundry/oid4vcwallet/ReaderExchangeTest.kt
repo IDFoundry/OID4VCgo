@@ -14,7 +14,8 @@ import kotlin.time.TimeSource
  * A reader in mdoc peripheral server mode connects to whichever device
  * advertises the holder's service UUID: a device whose answer Go
  * rejects, or whose link is lost before it answers, is passed over and
- * the same request goes to the next, until the connect timeout.
+ * the same request goes to the next, until the connect timeout, or until
+ * no other device advertises the UUID.
  */
 class ReaderExchangeTest {
     /** Each answer in turn, or a lost link. */
@@ -23,9 +24,24 @@ class ReaderExchangeTest {
         val sent = mutableListOf<ByteArray>()
         var rejects = 0
         var connects = 0
+        /** Each bounded connect's time to find a device: passing over one. */
+        val findWithins = mutableListOf<kotlin.time.Duration>()
+        /** Connects without that bound. */
+        var unbounded = 0
 
         override suspend fun connect() {
-            if (connects == connectable) throw ProximityTransportException("couldn't connect to the other device")
+            unbounded++
+            next()
+        }
+
+        override suspend fun connect(findWithin: kotlin.time.Duration) {
+            findWithins += findWithin
+            next()
+        }
+
+        /** Connects to the next device; past [connectable], none advertises. */
+        private fun next() {
+            if (connects == connectable) throw ProximityTransportException("no other device advertises the service")
             connects++
         }
 
@@ -74,6 +90,22 @@ class ReaderExchangeTest {
         assertEquals(3, t.connects)
         assertEquals(4, t.sent.size)
         assertTrue("the same request each time", t.sent.all { it.contentEquals(establishment) })
+        assertEquals("each pass over waits only to find another device", List(3) { ReaderExchange.PASS_OVER_FIND }, t.findWithins)
+        assertEquals(0, t.unbounded)
+    }
+
+    @Test
+    fun aDeclineIsTheOutcomeOnceNoOtherDeviceAdvertises() = runBlocking {
+        // The holder declined and stopped advertising: with a minute
+        // left, the reader looks for another device for PASS_OVER_FIND,
+        // not the minute.
+        val t = Fake(listOf(status20), connectable = 0)
+        val event = exchange(t, budget = 1.minutes).run(establishment)
+        assertEquals("rejected", event.event)
+        assertEquals("declined", event.reason)
+        assertEquals(1, t.rejects)
+        assertEquals(listOf(ReaderExchange.PASS_OVER_FIND), t.findWithins)
+        assertEquals(0, t.unbounded)
     }
 
     @Test
@@ -112,6 +144,7 @@ class ReaderExchangeTest {
         val t = object : ProximityTransport {
             var rejects = 0
             override suspend fun connect() = throw ProximityTransportException("couldn't connect to the other device")
+            override suspend fun connect(findWithin: kotlin.time.Duration) = connect()
             override suspend fun send(message: ByteArray) = Unit
             override suspend fun receive(): ByteArray = junk
             override fun reject() {

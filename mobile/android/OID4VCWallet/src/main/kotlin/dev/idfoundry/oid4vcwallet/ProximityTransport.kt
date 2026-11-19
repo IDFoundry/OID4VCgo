@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -26,6 +27,15 @@ internal interface ProximityTransport {
      * started: the GATT client has subscribed and written 0x01 to State.
      */
     suspend fun connect()
+
+    /**
+     * [connect], for a reader that has passed over a device ([reject]):
+     * a GATT client gives up, throwing [ProximityTransportException],
+     * when a scan finds no device advertising the service within
+     * [findWithin]. Connecting to a device found takes the caller's own
+     * time. Other transports connect as [connect] does.
+     */
+    suspend fun connect(findWithin: Duration) = connect()
 
     /** Sends one whole message. */
     suspend fun send(message: ByteArray)

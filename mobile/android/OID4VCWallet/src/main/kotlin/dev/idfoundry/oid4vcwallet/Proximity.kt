@@ -60,8 +60,8 @@ public data class ProximityTimeouts(
      * whichever device advertises the holder's service, so within this it
      * also passes over devices whose answers aren't the holder's and sends
      * its request to the next: a bare "declined", which isn't
-     * authenticated, is reported once no other device answers in that
-     * time.
+     * authenticated, is reported once no other device advertises the
+     * holder's service for 5 seconds, or this ends.
      */
     val connect: Duration = 60.seconds,
     /**

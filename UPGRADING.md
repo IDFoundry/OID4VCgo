@@ -401,14 +401,18 @@ answer that doesn't decrypt, or a bare status, is
 open. Disconnect from that device, pass over it, and send the same
 SessionEstablishment to the next one, within your connect timeout; a
 rejected status 20 also wraps `ErrDeclined`, to report if no other
-device answers. `Verify` is unchanged.
+device answers. A holder that hasn't connected goes on advertising, so
+once no other device advertises the UUID for a few seconds, the
+decline can be reported without waiting out that timeout. `Verify` is
+unchanged.
 
 The Swift and Kotlin readers do this themselves, and their holders in
 mdoc central client mode now leave a device whose first message Go
 rejects and connect to the next, instead of staying with it. A
 reader's `declined` state is then reported once no other device
-answers within `connectSeconds` (`connect`): up to 60 seconds after the
-QR code is scanned, by default.
+advertises the holder's service for 5 seconds, or, while others do,
+once `connectSeconds` (`connect`) ends: up to 60 seconds after the QR
+code is scanned, by default.
 
 A holder now refuses a SessionEstablishment whose EReaderKeyBytes is
 over `proximity.MaxEReaderKeyBytes` (1,024 bytes) or carries a

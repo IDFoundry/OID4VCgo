@@ -27,6 +27,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 
 /**
  * The GATT client's side of a session: scans for [serviceUUID],
@@ -185,7 +187,18 @@ internal class GattClientTransport(
     }
 
     /** Scans, connects and starts the session; after [reject], with the next device advertising the service. */
-    override suspend fun connect() {
+    override suspend fun connect() = connectFinding(null)
+
+    /**
+     * [connect], giving up when a scan finds no device advertising the
+     * service within [findWithin]: the reader's holder, passed over a
+     * device, either still advertises, not having connected, or has gone.
+     * Each scan has the whole time, so a failed attempt's retry finds the
+     * same device again.
+     */
+    override suspend fun connect(findWithin: Duration) = connectFinding(findWithin)
+
+    private suspend fun connectFinding(findWithin: Duration?) {
         // Watching first: Bluetooth turning off just after the check
         // below is caught too. Starting again does nothing.
         bluetoothOff.start(context)
@@ -203,7 +216,7 @@ internal class GattClientTransport(
             // leaving half a message) mustn't spoil this attempt.
             incoming = Channel(INCOMING_MESSAGE_CAPACITY)
             reassembler = BleChunks.Reassembler()
-            val status = tryDevice(scan())
+            val status = tryDevice(scan(findWithin))
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 passedOver = false
                 return
@@ -253,10 +266,24 @@ internal class GattClientTransport(
         }
     }
 
-    /** Scans until a device advertising [serviceUUID] is found. */
-    private suspend fun scan(): BluetoothDevice {
+    /**
+     * Scans until a device advertising [serviceUUID] is found, or, with
+     * [findWithin], throws once none is found in that time, counted from
+     * when Android will run the scan ([ScanStarts]).
+     */
+    private suspend fun scan(findWithin: Duration?): BluetoothDevice {
         val scanner = manager.adapter?.bluetoothLeScanner ?: throw ProximityTransportException(BLUETOOTH_OFF, bluetoothUnavailable = true)
+        var giveUp: TimeSource.Monotonic.ValueTimeMark? = null
         while (true) {
+            // Android runs no scan an app starts too often, or fails it:
+            // wait until it will, rather than scan and find nothing.
+            scanStarts.blockedFor().takeIf { it > 0 }?.let {
+                Log.i(TAG, "waiting ${it / 1000} s for Android to allow another scan")
+                delay(it)
+            }
+            if (giveUp == null) giveUp = findWithin?.let { TimeSource.Monotonic.markNow() + it }
+            val wait = giveUp?.let { -it.elapsedNow() }?.inWholeMilliseconds?.coerceAtMost(SCAN_RESTART_MS) ?: SCAN_RESTART_MS
+            if (wait <= 0) throw ProximityTransportException(NOTHING_ADVERTISING)
             val found = CompletableDeferred<BluetoothDevice>()
             val scanCallback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -272,6 +299,7 @@ internal class GattClientTransport(
                 bluetoothOffFailure?.let { throw it }
                 scanning = found
                 activeScan = scanner to scanCallback
+                scanStarts.record()
                 scanner.startScan(
                 listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUUID)).build()),
                 ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
@@ -279,8 +307,8 @@ internal class GattClientTransport(
             )
             }
             try {
-                withTimeoutOrNull(SCAN_RESTART_MS) { found.await() }?.let { return it }
-                Log.i(TAG, "nothing found in ${SCAN_RESTART_MS / 1000} s: restarting the scan")
+                withTimeoutOrNull(wait) { found.await() }?.let { return it }
+                if (giveUp?.hasPassedNow() != true) Log.i(TAG, "nothing found in ${SCAN_RESTART_MS / 1000} s: restarting the scan")
             } finally {
                 runCatching { scanner.stopScan(scanCallback) }
                 synchronized(this) {
@@ -489,11 +517,14 @@ internal class GattClientTransport(
         /** [tryDevice]'s answer for another session's reader: no GATT status is negative. */
         const val WRONG_READER = -1
         const val SESSION_ENDED = "the session ended"
+        const val NOTHING_ADVERTISING = "no other device advertises the service"
         const val SCAN_RESTART_MS = 10_000L
         const val CONNECT_ATTEMPTS = 10
         const val CONNECT_TIMEOUT_MS = 10_000L
         const val RETRY_DELAY_MS = 500L
         const val OPERATION_TIMEOUT_MS = 5_000L
         const val REQUESTED_MTU = 517
+        /** Android's limit on starting scans is per app: so is this. */
+        val scanStarts = ScanStarts()
     }
 }

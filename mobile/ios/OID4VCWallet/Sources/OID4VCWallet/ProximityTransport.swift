@@ -65,6 +65,12 @@ protocol ProximityTransport: AnyObject, Sendable {
     /// Advertises or scans, connects, and returns once the session has
     /// started: the GATT client has subscribed and written 0x01 to State.
     func connect() async throws
+    /// `connect`, for a reader that has passed over a device (`reject`):
+    /// a GATT client gives up, throwing `ProximityTransportError`, when a
+    /// scan finds no device advertising the service within `findWithin`
+    /// seconds. Connecting to a device found takes the caller's own time.
+    /// Other transports connect as `connect` does.
+    func connect(findWithin: TimeInterval) async throws
     /// Sends one whole message.
     func send(_ message: Data) async throws
     /// The next whole message. It throws a `ProximityTransportError` with
@@ -91,6 +97,10 @@ protocol ProximityTransport: AnyObject, Sendable {
 }
 
 extension ProximityTransport {
+    func connect(findWithin: TimeInterval) async throws {
+        try await connect()
+    }
+
     func reject() {
         // One peer: nothing else to wait for.
     }

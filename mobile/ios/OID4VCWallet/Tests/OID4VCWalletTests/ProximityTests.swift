@@ -134,7 +134,8 @@ final class BlindPeerTransport: ProximityTransport, @unchecked Sendable {
 /// win the scan first: each answers the reader's request with `impostors`'
 /// next answer (nil: its link drops), until the reader passes it over
 /// (`reject`) and connects (`connect`) to the next; then the holder,
-/// unless `holderFound` is false: then no other device is found.
+/// unless `holderFound` is false: then no other device advertises, and a
+/// bounded `connect(findWithin:)` finds none, as the GATT client does.
 final class ImpostorTransport: ProximityTransport, @unchecked Sendable {
     private let inner: PipeTransport
     private let lock = NSLock()
@@ -142,8 +143,14 @@ final class ImpostorTransport: ProximityTransport, @unchecked Sendable {
     private var rejectCount = 0
     private var connectCount = 0
     private var sentCount = 0
+    private var bounds: [TimeInterval] = []
+    private var unboundedCount = 0
     var rejects: Int { lock.withLock { rejectCount } }
     var connects: Int { lock.withLock { connectCount } }
+    /// Each bounded connect's time to find a device: passing over one.
+    var findWithins: [TimeInterval] { lock.withLock { bounds } }
+    /// Connects without that bound.
+    var unbounded: Int { lock.withLock { unboundedCount } }
     /// The requests sent, to impostors and the holder.
     var sent: Int { lock.withLock { sentCount } }
 
@@ -158,9 +165,22 @@ final class ImpostorTransport: ProximityTransport, @unchecked Sendable {
     private var impostor: Data?? { lock.withLock { impostors.first } }
 
     func connect() async throws {
+        lock.withLock { unboundedCount += 1 }
+        try await next(bounded: false)
+    }
+
+    func connect(findWithin: TimeInterval) async throws {
+        lock.withLock { bounds.append(findWithin) }
+        try await next(bounded: true)
+    }
+
+    private func next(bounded: Bool) async throws {
         lock.withLock { connectCount += 1 }
         if impostor != nil { return }
-        if !holderFound { try await Signal().wait() }
+        if !holderFound {
+            if bounded { throw ProximityTransportError("no other device advertises the service") }
+            try await Signal().wait()
+        }
         try await inner.connect()
     }
 
@@ -554,24 +574,27 @@ final class ProximityTests: XCTestCase {
         XCTAssertEqual(impostors.rejects, 3)
         XCTAssertEqual(impostors.connects, 4)
         XCTAssertEqual(impostors.sent, 4, "the same request to each")
+        XCTAssertEqual(impostors.findWithins, Array(repeating: ProximityReaderSession.passOverFindSeconds, count: 3),
+                       "each pass over waits only to find another device")
+        XCTAssertEqual(impostors.unbounded, 1, "the first connect alone")
     }
 
     /// A bare status 20 from the only device found is reported as
-    /// declined, once no other device is found within the connect
-    /// timeout.
-    func testReaderReportsAnUnansweredDeclineOnceTheTimeIsUp() async throws {
+    /// declined once no other device advertises the holder's service,
+    /// not at the end of the connect timeout.
+    func testReaderReportsADeclineOnceNoOtherDeviceAdvertises() async throws {
         let s = try await setup()
         defer { s.env.close() }
         let (holderEnd, readerEnd) = PipeTransport.pair()
         let impostors = ImpostorTransport(readerEnd, impostors: [Data(base64Encoded: "oWZzdGF0dXMU")!], holderFound: false)
-        let started = Date()
         let reader = try s.reader.start(qrCode: try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in holderEnd }.qrCode,
                                         docType: Self.docType, elements: [Self.namespace: ["family_name"]],
-                                        timeouts: ProximityTimeouts(connectSeconds: 2, requestSeconds: 10, idleSeconds: 30)) { _ in impostors }
+                                        timeouts: ProximityTimeouts(connectSeconds: 60, requestSeconds: 10, idleSeconds: 30)) { _ in impostors }
         let result = try await final(reader.states) { $0.isFinal }
         guard case .declined = result else { return XCTFail("reader: \(result)") }
         XCTAssertEqual(impostors.rejects, 1)
-        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 1.5)
+        XCTAssertEqual(impostors.findWithins, [ProximityReaderSession.passOverFindSeconds])
+        XCTAssertEqual(impostors.unbounded, 1, "the first connect alone")
     }
 
     /// A response the transport can't deliver fails the session as a

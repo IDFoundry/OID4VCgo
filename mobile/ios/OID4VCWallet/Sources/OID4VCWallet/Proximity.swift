@@ -20,7 +20,7 @@ public struct ProximityTimeouts: Sendable {
     /// within these seconds it also passes over devices whose answers
     /// aren't the holder's and sends its request to the next: a bare
     /// "declined", which isn't authenticated, is reported once no other
-    /// device answers in that time.
+    /// device advertises the holder's service for 5 seconds, or these end.
     public var connectSeconds: TimeInterval
     /// Seconds to wait for the reader's request, once connected. As the
     /// holder's GATT server, connected is when any device first starts a
@@ -1044,6 +1044,11 @@ struct ReaderEngagement: Decodable {
 
 /// One reader session: follow `states` to `.verified` or another final state.
 public final class ProximityReaderSession: @unchecked Sendable {
+    /// How long a reader passing over a device waits for another to
+    /// advertise the holder's service UUID: a holder advertises
+    /// continuously, many times a second, until a reader connects.
+    static let passOverFindSeconds: TimeInterval = 5
+
     /// Where the session is: follow `states`.
     public enum State: Sendable {
         /// Looking for the holder's device, or waiting for it to connect.
@@ -1168,9 +1173,14 @@ public final class ProximityReaderSession: @unchecked Sendable {
     /// or is a bare status, which isn't encrypted), or whose link is lost
     /// before it answers, is passed over, and the same request goes to the
     /// next device advertising the UUID, until `deadline`. The holder takes
-    /// it once. When no other device is found in time, the outcome is the
-    /// last rejected answer, a "rejected" event, whose reason the caller
-    /// reports as an "ended" one's, or, with none, the lost link.
+    /// it once. Passing over, the reader waits `passOverFindSeconds` for
+    /// another device to advertise the UUID, not the whole time left: a
+    /// holder that hasn't connected still advertises, so when none does,
+    /// the holder has gone, having declined. An impostor can't hurry it
+    /// so: the holder it got ahead of goes on advertising. When no other
+    /// device is found, the outcome is the last rejected answer, a
+    /// "rejected" event, whose reason the caller reports as an "ended"
+    /// one's, or, with none, the lost link.
     private func exchange(_ establishment: Data, deadline: TimeInterval) async throws -> ReaderEventJSON {
         let passesOver = mode == .peripheralServer
         var rejected: ReaderEventJSON?
@@ -1199,14 +1209,14 @@ public final class ProximityReaderSession: @unchecked Sendable {
     /// Passes over the device that answered, or lost its link, and
     /// connects to the next one advertising the holder's service UUID
     /// before `deadline`: true once connected, false when none is found
-    /// in time.
+    /// within `passOverFindSeconds`, or in time.
     private func passOver(deadline: TimeInterval) async throws -> Bool {
         if cancelling.withLock({ $0 }) { throw CancellationError() }
         transport.reject()
         let left = deadline - ProcessInfo.processInfo.systemUptime
         guard left > 0 else { return false }
         do {
-            try await withTimeout(left) { try await self.transport.connect() }
+            try await withTimeout(left) { try await self.transport.connect(findWithin: Self.passOverFindSeconds) }
             return true
         } catch let e as ProximityTransportError where e.bluetoothUnavailable {
             throw e
