@@ -165,7 +165,9 @@ notifications.
    for the mdoc's. Disconnect from that device, pass over it, and send
    the same SessionEstablishment to the next one advertising the UUID,
    within your own time for finding the mdoc; a rejected status 20
-   wraps `ErrDeclined`, to report if no other device answers. A reader
+   wraps `ErrDeclined`, to report if no other device answers. An mdoc
+   that hasn't connected goes on advertising, so once no other device
+   advertises the UUID for a few seconds, report the decline then. A reader
    makes
    a Verifier's decisions when it calls `NewReaderSession`: its
    assurance (`WithAssurance`) and its document signers' revocation

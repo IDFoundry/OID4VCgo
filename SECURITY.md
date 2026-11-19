@@ -310,8 +310,10 @@ they're not yet closed in the library.
   What remains is availability: a reader in mdoc central client mode
   still takes the first device that starts a session, a device that
   answers nothing holds a reader until its idle timeout, and a
-  holder's decline is reported once no other device answers in the
-  reader's connect timeout. `mobile/MOBILE.md` lists the rest.
+  holder's decline is reported once no other device advertises the
+  holder's service for 5 seconds (or the connect timeout ends): a
+  holder that hasn't connected goes on advertising, so an impostor's
+  decline can't end the search. `mobile/MOBILE.md` lists the rest.
 - **Linkability across credentials.** `walletflow` warns before a
   presentation would hand one Verifier a copy another has seen
   (`Presentation.Linkable`), judging copies of one credential against

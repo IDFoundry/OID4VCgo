@@ -65,6 +65,19 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     /// Scans, connects and starts the session; after `reject`, with the
     /// next device advertising the service.
     func connect() async throws {
+        try await connect(finding: nil)
+    }
+
+    /// `connect`, giving up when a scan finds no device advertising the
+    /// service within `findWithin` seconds: the reader's holder, passed
+    /// over a device, either still advertises, not having connected, or
+    /// has gone. Each scan has the whole time, so a failed attempt's
+    /// retry finds the same device again.
+    func connect(findWithin: TimeInterval) async throws {
+        try await connect(finding: findWithin)
+    }
+
+    private func connect(finding findWithin: TimeInterval?) async throws {
         queue.sync {
             if manager == nil { manager = CBCentralManager(delegate: self, queue: queue) }
         }
@@ -79,7 +92,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
                 incoming = MessageQueue()
                 reassembler = BleChunks.Reassembler()
             }
-            try await scan()
+            try await scan(findWithin: findWithin)
             do {
                 do {
                     try await connectToDiscovered()
@@ -118,8 +131,9 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         throw lastError ?? ProximityTransportError("couldn't connect to the other device")
     }
 
-    /// Scans until a peripheral advertising `serviceUUID` is found.
-    private func scan() async throws {
+    /// Scans until a peripheral advertising `serviceUUID` is found, or,
+    /// with `findWithin`, throws once none is found in that time.
+    private func scan(findWithin: TimeInterval?) async throws {
         let p = Pending<Void>()
         try queue.sync {
             guard !closed else { throw ProximityTransportError("the session ended") }
@@ -127,8 +141,18 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
             found = p
             manager?.scanForPeripherals(withServices: [serviceUUID])
         }
-        defer { queue.sync { manager?.stopScan() } }
-        try await p.wait()
+        defer {
+            queue.sync {
+                manager?.stopScan()
+                if found === p { found = nil }
+            }
+        }
+        guard let findWithin else { return try await p.wait() }
+        do {
+            try await withTimeout(findWithin) { try await p.wait() }
+        } catch is ProximityTimeout {
+            throw ProximityTransportError("no other device advertises the service")
+        }
     }
 
     /// Connects to the peripheral `scan` found.

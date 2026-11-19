@@ -1781,16 +1781,23 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   same SessionEstablishment, which the holder takes once. However many
   devices are passed over, the search stops at the connect timeout
   (`connectSeconds` or `connect`, 60 seconds by default, counted from
-  the start of the session): the outcome is then the last rejected
-  answer, so a bare status 20, the genuine holder's decline among
-  them, is reported as declined only once no other device answers in
-  that time, or, with none, the lost link. Over NFC, and as the GATT
-  server in central client mode, the reader still takes the first
-  answer. What remains: a device that answers nothing holds the reader
-  until the idle timeout (300 seconds by default), and a decline now
-  takes up to the connect timeout to report. Covered by unit tests with
-  in-memory transports (`testReaderPassesOverImpostors`,
-  `testReaderReportsAnUnansweredDeclineOnceTheTimeIsUp`; Kotlin
+  the start of the session), or once no other device advertises the
+  holder's service within 5 seconds of passing one over (the GATT
+  client's `connect(findWithin:)`; the time to connect to a device
+  found isn't counted): the outcome is then the last rejected answer,
+  so a bare status 20, the genuine holder's decline among them, is
+  reported as declined, or, with none, the lost link. A holder that
+  hasn't connected advertises continuously, so a declining holder,
+  which has stopped, is reported within seconds, and an impostor's
+  status 20 can't end the search early: the holder it got ahead of is
+  still advertising. Over NFC, and as the GATT server in central client
+  mode, the reader still takes the first answer. What remains: a
+  device that answers nothing holds the reader until the idle timeout
+  (300 seconds by default), and a decline takes up to the connect
+  timeout to report while other devices advertise the service. Covered
+  by unit tests with in-memory transports
+  (`testReaderPassesOverImpostors`,
+  `testReaderReportsADeclineOnceNoOtherDeviceAdvertises`; Kotlin
   `ReaderExchangeTest`), and Go's `TestTryVerifyDocuments_RejectsRepliesNotFromTheHolder`;
   not yet tried against a second device over the radio.
 - **Bluetooth turning off ends the session:** each transport watches
