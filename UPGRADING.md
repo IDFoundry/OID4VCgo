@@ -11,7 +11,7 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
 
-OID4VCgo now requires FAPIgo v0.77.0 and fapigo/sqlstore v0.9.1; see
+OID4VCgo now requires FAPIgo v0.77.1 and fapigo/sqlstore v0.9.1; see
 FAPIgo's UPGRADING.md, section v0.77.0. An Authorization Server
 (`fapigo/server`) refuses, with `invalid_request` naming the claim, a
 PAR or backchannel authentication request whose OIDC `claims`
