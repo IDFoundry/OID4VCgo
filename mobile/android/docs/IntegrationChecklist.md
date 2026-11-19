@@ -119,9 +119,9 @@ is a complete, working app on this library to compare against.
   changed selection is previewed and shown again first.
 - [ ] Open `redirectURI`, when there is one, in the browser the request
   came from.
-- [ ] `requestRefused` from `startPresentation`: open
-  `Wallet.takeRefusalRedirect()` when it returns a URL, and tell the
-  holder the request wasn't answered. Over the DC API, return a failure
+- [ ] `requestRefused` from `startPresentation`: open the exception's
+  `refusalRedirect` when it has one, and tell the holder the request
+  wasn't answered. Over the DC API, return a failure
   to the page. ([Handling errors](HandlingErrors.md))
 - [ ] `deliveryUnknown` isn't retried: tell the holder to check with the
   Verifier.

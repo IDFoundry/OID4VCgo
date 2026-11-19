@@ -1030,17 +1030,31 @@ public final class Wallet: @unchecked Sendable {
     }
 
     /// Fetches and verifies an OpenID4VP request (openid4vp://…), and
-    /// finds the credentials that can answer it.
+    /// finds the credentials that can answer it. A request the wallet
+    /// refuses throws ``WalletError/Code/requestRefused``,
+    /// whose ``WalletError/refusalRedirect`` is where the Verifier asked
+    /// to take the holder.
     public func startPresentation(request: String) async throws -> Presentation {
         let wallet = handle
-        let p = try await OID4VC.cancellable { op in try OID4VC.wrap { try wallet.startPresentation(op, requestLink: request) } }
+        let p = try await OID4VC.cancellable { op in
+            do {
+                return try OID4VC.wrap { try wallet.startPresentation(op, requestLink: request) }
+            } catch var e as WalletError where e.code == .requestRefused {
+                // This call's own, not the latest of any call's.
+                e.refusalRedirect = URL(string: op.takeRefusalRedirect())
+                throw e
+            }
+        }
         return try Presentation(p)
     }
 
     /// Where the Verifier asked to take the holder after the wallet
     /// refused its request: when `startPresentation` throws
     /// `requestRefused`, open this URL, if any, as OpenID4VP §8.2 has a
-    /// wallet do. It's returned once.
+    /// wallet do. It's returned once. It holds the latest refusal of
+    /// any call: with presentations started concurrently, open the
+    /// error's own ``WalletError/refusalRedirect`` instead, or one
+    /// Verifier's redirect may be opened for another's refusal.
     public func takeRefusalRedirect() -> URL? {
         URL(string: handle.takeRefusalRedirect())
     }

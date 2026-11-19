@@ -41,7 +41,7 @@ func present(requestLink: String, wallet: Wallet,
     } catch let error as WalletError where error.code == .requestRefused {
         // A refused request: the Verifier was told, and may say where to
         // take the holder next (OpenID4VP §8.2).
-        return wallet.takeRefusalRedirect()
+        return error.refusalRedirect
     }
     guard presentation.isAnswerable else {
         return try await presentation.decline().redirectURI
@@ -93,11 +93,14 @@ doesn't support, or a parameter OpenID4VP forbids — makes
 ``WalletError/Code/requestRefused``, its ``WalletError/protocolError``
 the error code the wallet sent the Verifier, such as
 `invalid_transaction_data`. Nothing is shown to the holder, and nothing
-is presented. The Verifier may answer the refusal with a redirect:
-``Wallet/takeRefusalRedirect()`` returns it, once, and you open it in
-the browser the request came from, as a
+is presented. The Verifier may answer the refusal with a redirect: the
+error's ``WalletError/refusalRedirect`` is it, and you open it in the
+browser the request came from, as a
 ``Presentation/Presented/redirectURI``, so the holder isn't left
-stranded. Tell the holder the request wasn't answered.
+stranded. It's that call's own, so presentations started at once each
+get their Verifier's; ``Wallet/takeRefusalRedirect()`` returns the
+latest refusal's, of whichever call, once. Tell the holder the request
+wasn't answered.
 
 ### Show what's being asked beyond a registration
 

@@ -125,6 +125,16 @@ public struct WalletError: Error, Equatable, CustomStringConvertible, LocalizedE
     /// remote party's own description, and no URL's path or query.
     public let message: String
 
+    /// Where the Verifier asked to take the holder after the wallet
+    /// refused its request: for a ``WalletError/Code/requestRefused``
+    /// from ``Wallet/startPresentation(request:)``, the `redirect_uri` it
+    /// answered the wallet's error with, nil for none. Open it, as
+    /// OpenID4VP §8.2 has a wallet do for a same-device request. It's
+    /// this call's own, so presentations started concurrently each get
+    /// their Verifier's, unlike ``Wallet/takeRefusalRedirect()``. Never in
+    /// ``message`` or ``description``. From OID4VCWallet 0.41.0.
+    public internal(set) var refusalRedirect: URL?
+
     /// Whether a certificate revocation check caused this: a certificate
     /// in a chain checked under `revocation.roles` is on its CA's revocation
     /// list — a credential's issuer on receipt, a Verifier's or reader's

@@ -188,6 +188,22 @@ func (e *TestEnv) Request(format string) (string, error) {
 	return marshal(map[string]string{"id": id, "link": link})
 }
 
+// RefusedRequest has the Verifier ask for family_name from an SD-JWT
+// VC in a request the wallet refuses, one carrying transaction_data,
+// and answer the wallet's error response with redirectURI as the
+// redirect_uri. It returns the request's link.
+func (e *TestEnv) RefusedRequest(redirectURI string) (string, error) {
+	sdjwt, err := e.env.SDJWTQuery("pid", "family_name")
+	if err != nil {
+		return "", wrapTest(err)
+	}
+	link, err := e.v.BeginRefused(dcql.Query{Credentials: []dcql.CredentialQuery{sdjwt}}, redirectURI)
+	if err != nil {
+		return "", wrapTest(err)
+	}
+	return link, nil
+}
+
 // RegisteredRequest is Request from a Verifier registered (with a
 // registrar registrar_roots trusts) for family_name only, asking for
 // family_name and also extra, if set: a claim beyond its registration.

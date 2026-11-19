@@ -43,7 +43,7 @@ suspend fun present(
     } catch (e: WalletException) {
         // A refused request: the Verifier was told, and may say where to
         // take the holder next (OpenID4VP §8.2).
-        if (e.code == WalletException.Code.requestRefused) return wallet.takeRefusalRedirect()
+        if (e.code == WalletException.Code.requestRefused) return e.refusalRedirect
         throw e
     }
     if (!presentation.isAnswerable) return presentation.decline().redirectURI
@@ -88,10 +88,13 @@ doesn't support, or a parameter OpenID4VP forbids — makes
 `startPresentation` throw `WalletException.Code.requestRefused`, its
 `protocolError` the error code the wallet sent the Verifier, such as
 `invalid_transaction_data`. Nothing is shown to the holder, and nothing
-is presented. The Verifier may answer the refusal with a redirect:
-`Wallet.takeRefusalRedirect()` returns it, once, and you open it in the
-browser the request came from, as a `redirectURI`, so the holder isn't
-left stranded. Tell the holder the request wasn't answered.
+is presented. The Verifier may answer the refusal with a redirect: the
+exception's `refusalRedirect` is it, and you open it in the browser the
+request came from, as a `redirectURI`, so the holder isn't left
+stranded. It's that call's own, so presentations started at once each
+get their Verifier's; `Wallet.takeRefusalRedirect()` returns the latest
+refusal's, of whichever call, once. Tell the holder the request wasn't
+answered.
 
 ## Show what's being asked beyond a registration
 
