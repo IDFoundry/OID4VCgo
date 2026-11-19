@@ -2,11 +2,18 @@ package walletflowtest
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	fapi "github.com/idfoundry/fapigo"
@@ -38,6 +45,19 @@ type Verifier struct {
 	// the response comes back through the platform.
 	v      *verifier.Verifier
 	verify verifier.VerifyResponseRequest
+
+	// key signs BeginRefused's Request Objects, served from base.
+	key  crypto.Signer
+	base string
+	// refused holds BeginRefused's requests by ID.
+	refusedMu sync.Mutex
+	refused   map[string]refusedRequest
+}
+
+// refusedRequest is a BeginRefused request: its Request Object, and the
+// redirect_uri its response_uri answers with.
+type refusedRequest struct {
+	object, redirectURI string
 }
 
 // The browser binding every request is begun with.
@@ -91,6 +111,7 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 		vv, err = verifier.New(cfg, verifier.Dependencies{Signer: key, Random: rand.Reader})
 		must(err)
 	}
+	v.key, v.base, v.refused = key, base, map[string]refusedRequest{}
 	v.v, v.verify = vv, verifier.VerifyResponseRequest{
 		// The test issuer publishes no CRLs.
 		IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: e.IssuerRoots, Revocation: certrevocation.NoCheck{}}, MdocIssuerKeys: verifier.X5ChainIssuerKeyResolver{Roots: e.IssuerRoots, Revocation: certrevocation.NoCheck{}},
@@ -107,12 +128,82 @@ func (e *Env) startVerifier(registered []dcql.Path) (started *Verifier, err erro
 	mux := http.NewServeMux()
 	mux.Handle("GET /request-objects/{id}", v.txs.RequestObjectHandler())
 	mux.Handle("POST /response", v.txs.ResponseHandler())
+	mux.HandleFunc("GET /refused-requests/{id}", func(w http.ResponseWriter, r *http.Request) {
+		req, ok := v.refusedRequest(r.PathValue("id"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/oauth-authz-req+jwt")
+		_, _ = w.Write([]byte(req.object))
+	})
+	mux.HandleFunc("POST /refused-response/{id}", func(w http.ResponseWriter, r *http.Request) {
+		req, ok := v.refusedRequest(r.PathValue("id"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"redirect_uri": req.redirectURI})
+	})
 	ts.Config.Handler = mux
 	ts.StartTLS()
 	e.mu.Lock()
 	e.closers = append(e.closers, ts.Close)
 	e.mu.Unlock()
 	return v, nil
+}
+
+// BeginRefused starts a request a walletflow wallet refuses, signed by
+// the Verifier like any other: it carries transaction_data, none of
+// whose types the wallet recognizes (OpenID4VP §8.4). It returns the
+// openid4vp:// link to it. Its response_uri answers the wallet's error
+// response with redirectURI as the redirect_uri, as a same-device
+// request's does.
+func (v *Verifier) BeginRefused(query dcql.Query, redirectURI string) (link string, err error) {
+	defer recoverInto(&err)
+	raw := make([]byte, 16)
+	_, err = rand.Read(raw)
+	must(err)
+	id := hex.EncodeToString(raw)
+	built, err := v.v.BuildAuthorizationRequest(verifier.BuildAuthorizationRequestRequest{Query: query, State: id})
+	must(err)
+	parts := strings.Split(built.RequestObject, ".")
+	var header, claims map[string]any
+	must(decodeSegment(parts[0], &header))
+	must(decodeSegment(parts[1], &claims))
+	ids := make([]string, len(query.Credentials))
+	for i, q := range query.Credentials {
+		ids[i] = q.ID
+	}
+	td, err := json.Marshal(map[string]any{"type": "org.example.unsupported", "credential_ids": ids})
+	must(err)
+	claims["transaction_data"] = []string{base64.RawURLEncoding.EncodeToString(td)}
+	claims["response_uri"] = v.base + "/refused-response/" + id
+	payload, err := json.Marshal(claims)
+	must(err)
+	object, err := jose.Sign(jose.ES256, v.key, header, payload)
+	must(err)
+	v.refusedMu.Lock()
+	v.refused[id] = refusedRequest{object: object, redirectURI: redirectURI}
+	v.refusedMu.Unlock()
+	return "openid4vp://?" + url.Values{"client_id": {built.ClientID}, "request_uri": {v.base + "/refused-requests/" + id}}.Encode(), nil
+}
+
+func (v *Verifier) refusedRequest(id string) (refusedRequest, bool) {
+	v.refusedMu.Lock()
+	defer v.refusedMu.Unlock()
+	req, ok := v.refused[id]
+	return req, ok
+}
+
+// decodeSegment decodes a compact JWS segment's JSON into out.
+func decodeSegment(segment string, out any) error {
+	b, err := base64.RawURLEncoding.DecodeString(segment)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
 }
 
 // SDJWTQuery asks for an SD-JWT VC of the Env's type, disclosing claims.

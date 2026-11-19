@@ -406,3 +406,25 @@ func TestRespond_OneCopyPerCredential(t *testing.T) {
 		t.Errorf("copies left = %d, want 2: one copy for both queries", left)
 	}
 }
+
+// A signed request carrying transaction_data, which the wallet
+// recognizes none of, is refused, the Verifier told, and the redirect_uri
+// it answers the error response with handed back.
+func TestPresentation_RefusedRequestGivesTheRedirect(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	link, err := v.BeginRefused(dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, "https://verifier.walletflowtest.example/done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.StartPresentation(context.Background(), link)
+	var refused *walletflow.RequestRefusedError
+	if !errors.As(err, &refused) || !errors.Is(err, walletflow.ErrRequestRefused) {
+		t.Fatalf("StartPresentation = %v, want a RequestRefusedError", err)
+	}
+	if refused.Code != "invalid_transaction_data" || refused.RedirectURI != "https://verifier.walletflowtest.example/done" {
+		t.Errorf("refused = %+v", refused)
+	}
+	if strings.Contains(err.Error(), "wasn't told") {
+		t.Errorf("the Verifier wasn't told: %v", err)
+	}
+}

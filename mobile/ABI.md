@@ -1558,7 +1558,9 @@ Provider (`Provider`), makes offers (`AuthorizationCodeOffer`,
 for mdocs of two document types), approves or denies authorizations and deferred
 credentials (`Approve`, `Decide`), revokes (`Revoke`, `RevokeGrants`),
 and plays a Verifier: `Request`, `RegisteredRequest` and
-`RequestResult` for a link, `DCAPIRequest` and `DCAPIResult` over the
+`RequestResult` for a link, `RefusedRequest(redirectURI)` for the link
+to a request the wallet refuses (`request_refused`), whose error
+response the Verifier answers with `redirectURI`, `DCAPIRequest` and `DCAPIResult` over the
 Digital Credentials API. `CertDirectories` reports `SSL_CERT_DIR` as Go
 sees it, for the Android tests. Its `ProximityReader(keys)` creates a key in
 `keys` and issues it a reader authentication certificate from a new test
