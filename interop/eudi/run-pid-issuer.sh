@@ -135,11 +135,15 @@ echo "wallet      $SRC, commit $(git -C "$SRC" rev-parse HEAD 2>/dev/null || ech
 echo "pid issuer  $PID_ISSUER_IMAGE"
 
 # fetch URL SHA256 FILE: downloads URL to FILE, refusing it unless its
-# SHA-256 is the pinned one.
+# SHA-256 is the pinned one. GitHub's raw and codeload hosts sometimes
+# answer a runner 429 or 404 for a moment: each download is retried.
 fetch() {
   local url="$1" sum="$2" out="$3"
   mkdir -p "$(dirname "$out")"
-  curl -sSfL --max-time 120 -o "$out" "$url"
+  if ! curl -sSfL --retry 4 --retry-all-errors --retry-delay 5 --max-time 120 -o "$out" "$url"; then
+    echo "$url couldn't be downloaded" >&2
+    exit 22
+  fi
   if [[ "$(openssl dgst -sha256 -r "$out" | cut -d' ' -f1)" != "$sum" ]]; then
     echo "$url doesn't have the pinned SHA-256" >&2
     exit 2

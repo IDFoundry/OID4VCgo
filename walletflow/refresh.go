@@ -682,13 +682,20 @@ func (s *Issuance) refreshWithAttestation(ctx context.Context, g RefreshGrant) (
 // was recorded for expired (ErrRegistrationExpired), when the wallet
 // registers again, as a new instance; or it's recorded for an instance
 // the wallet no longer is (ErrInstanceKeyRegistered), as after
-// registering again. A walletprovider.Client's refusal matches, as does
-// a native provider's that oid4vcgo/mobile marks with
-// walletprovider.CodeError.
+// registering again; or the provider has deleted its record of the key,
+// unused for its retention, and needs evidence for it again
+// (ErrEvidenceRequired), which the provider client couldn't give: a
+// client that can make fresh evidence for an existing key (App Attest's
+// assertions can) sends it before giving up, and one whose evidence is
+// the key's own attestation over a challenge (Android Key Attestation)
+// can't. A walletprovider.Client's refusal matches, at the status the
+// provider answers it with (walletprovider.CodeStatus), as does a native
+// provider's that oid4vcgo/mobile marks with walletprovider.CodeError.
 func instanceKeyRetired(err error) bool {
 	return errors.Is(err, walletprovider.ErrInstanceKeyExpired) ||
 		errors.Is(err, walletprovider.ErrRegistrationExpired) ||
-		errors.Is(err, walletprovider.ErrInstanceKeyRegistered)
+		errors.Is(err, walletprovider.ErrInstanceKeyRegistered) ||
+		errors.Is(err, walletprovider.ErrEvidenceRequired)
 }
 
 // retiredInstanceKey is err, a refresh's failure with grant g, unless

@@ -900,7 +900,12 @@ const networkPrefix = "[network]"
 // "[refused:instance_revoked] …": it's reported as platform with that
 // code as the detail, so an app can tell the holder why. The Swift
 // package's and Kotlin library's adapters mark a
-// WalletProviderRefusedError (Exception) so.
+// WalletProviderRefusedError (Exception) so. The mark carries no HTTP
+// status, and a code walletprovider.CodeError names discards a refresh
+// grant, so a callback marks those codes only for an answer with the
+// status walletprovider.CodeStatus gives them, as the libraries'
+// HttpWalletProvider does: an answer with another isn't the provider's
+// refusal.
 const refusedPrefix = "[refused:"
 
 // providerError is a Wallet Provider callback's err doing what: a
@@ -933,8 +938,9 @@ func providerError(what string, err error) error {
 // walletprovider.CodeError names an error for: reported as its *Error,
 // it matches that error too, as a walletprovider.Client's refusal
 // does, so walletflow tells what the refusal means for an instance key
-// (registration_expired, instance_key_expired, instance_key_registered:
-// a refresh grant bound to it can't be refreshed again).
+// (registration_expired, instance_key_expired, instance_key_registered,
+// evidence_required: a refresh grant bound to it can't be refreshed
+// again).
 type providerRefusal struct {
 	err      *Error
 	sentinel error

@@ -155,8 +155,13 @@ along with its Wallet Attestations (the Wallet Provider protocol's
   certificate's SubjectPublicKeyInfo. Pin a CA's key, so a leaf renewal
   doesn't break the app, and keep a backup pin: a wrong set locks the
   wallet out of that host until an update. Pins cover the SDK's own
-  requests, which `NSPinnedDomains` doesn't reach, not your app's, such
-  as to your Wallet Provider: pin that `URLSession` yourself.
+  requests, which `NSPinnedDomains` doesn't reach, not your app's.
+  ``HttpWalletProvider``'s requests to your Wallet Provider are made with
+  a `URLSession` of its own, which `tlsPins` doesn't reach and which
+  takes no session of yours: pin your provider's host with
+  `NSPinnedDomains` under `NSAppTransportSecurity` in your app's
+  Info.plist, which every `URLSession` in the app follows, with a backup
+  pin.
 - Outside `development` the SDK's requests reach public addresses only.
   If your issuers, Verifiers, status lists or CRL distribution points
   are inside your own network (an enterprise's, or a test

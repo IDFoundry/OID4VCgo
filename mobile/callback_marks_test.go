@@ -56,13 +56,14 @@ func TestProviderError_RefusalMatchesWalletProviderErrors(t *testing.T) {
 		"registration_expired":    walletprovider.ErrRegistrationExpired,
 		"instance_key_expired":    walletprovider.ErrInstanceKeyExpired,
 		"instance_key_registered": walletprovider.ErrInstanceKeyRegistered,
+		"evidence_required":       walletprovider.ErrEvidenceRequired,
 		"instance_revoked":        nil,
 	} {
 		got := providerError("wallet attestation", errors.New("[refused:"+refusal+"] the Wallet Provider refused /v1/wallet-attestation: HTTP 403 "+refusal))
 		if code(got) != CodePlatform || providerDetail(got) != refusal || !strings.HasPrefix(got.Error(), "[platform:"+refusal+"] wallet attestation:") {
 			t.Errorf("%s: %v, want platform with the code", refusal, got)
 		}
-		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered} {
+		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered, walletprovider.ErrEvidenceRequired} {
 			if errors.Is(got, s) != (s == want) {
 				t.Errorf("%s: matches %v %t", refusal, s, errors.Is(got, s))
 			}

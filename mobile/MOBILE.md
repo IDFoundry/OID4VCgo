@@ -437,12 +437,17 @@ over the chains that verified, so a pin only adds to verification. A
 mismatch fails before the request is sent, as `tls_pin`.
 
 - **What's covered:** every request Go makes: issuers, Authorization
-  Servers, Verifiers, status lists, in development too. Not the app's
-  own requests, such as to its Wallet Provider (attestations): the app
-  pins that client itself (`URLSession` delegate on iOS; OkHttp's
-  `CertificatePinner` or a network security configuration on Android).
-  The platforms' own pinning (`NSPinnedDomains`, network security
-  configuration) doesn't reach Go's requests.
+  Servers, Verifiers, status lists, in development too. Not the
+  platform code's requests, such as `HttpWalletProvider`'s to the
+  Wallet Provider (attestations), which takes no session or client of
+  the app's: the app pins its provider's host with the platform's own
+  pinning, `NSPinnedDomains` in Info.plist on iOS, which `URLSession`
+  follows, and a network security configuration's `<pin-set>` on
+  Android, which `HttpURLConnection` follows. Until the 2026-11-18
+  audit (WPA-3e) the guides told the app to pin "that client"
+  (`URLSession` delegate, OkHttp's `CertificatePinner`), which
+  `HttpWalletProvider` never exposed. The platforms' own pinning
+  doesn't reach Go's requests.
 - **Hosts:** a name, or `*.` and a name for one label below it. Not an
   IP address: a handshake to one sends no SNI, so the check has no host
   to look up. Hosts without pins are verified as before.

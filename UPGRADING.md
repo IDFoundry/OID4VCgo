@@ -418,6 +418,39 @@ bytes) or 16 records: its device key signs both as sent. ISO/IEC
 18013-5's Annex D, Multipaz and this package's own readers send far
 less.
 
+### Wallet Provider refusals count only at their status, and `evidence_required` retires a refresh grant (`walletprovider`, `walletflow`, mobile)
+
+A `walletprovider.RefusedError` now matches `ErrRegistrationExpired`,
+`ErrInstanceKeyExpired` or `ErrInstanceKeyRegistered` only at the
+status `Provider.Handler` answers its code with (403, or 409 for
+`instance_key_registered`; the new `walletprovider.CodeStatus`):
+`walletflow` forgets a refresh grant on these, and the same code in a
+redirect or in a proxy's answer in front of the provider isn't the
+provider's refusal. The Swift and Kotlin `HttpWalletProvider` drop
+such a code, and `instance_revoked`, at any other status, so they no
+longer forget their registration on it. A native provider of your own
+that marks refusals `[refused:code]` should do the same: the mark
+carries no status.
+
+`walletprovider.CodeError` now also names `ErrEvidenceRequired` for
+`evidence_required` (`CodeEvidenceRequired`, at 400), and a refresh
+whose Wallet Attestation is refused so is `ErrReissueRequired`
+(`reissue_required` on mobile), with its grant and instance key
+forgotten: the provider deleted its record of the key after
+`Config.InstanceKeyRetention`, and a client that can't make fresh
+evidence for an existing key, as on Android, can't recover it. Before,
+each later refresh failed again as `platform`.
+
+On Android, `HttpWalletProvider` now refuses, without a request,
+holder keys made over no holder challenge it remembers unexpired,
+rather than send them with the current challenge, which the provider
+used up while refusing them; and it fetches a challenge for a new key
+outside the lock its attestations take. Neither platform's
+`HttpWalletProvider` is covered by `network.tlsPins`: pin your
+provider with `NSPinnedDomains` (iOS) or a network security
+configuration's `<pin-set>` (Android), as the "Going to production"
+guides now say.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

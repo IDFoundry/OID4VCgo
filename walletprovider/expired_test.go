@@ -67,24 +67,39 @@ func TestRecheckExpired(t *testing.T) {
 }
 
 // TestRefusedErrorIs: a Client's RefusedError matches the sentinel its
-// code names (CodeError), and no other.
+// code names (CodeError), and no other, and only at the status the
+// Handler answers that code with (CodeStatus): the same code at another
+// status — a redirect, a proxy's answer — matches none, since walletflow
+// forgets a refresh grant on these.
 func TestRefusedErrorIs(t *testing.T) {
-	for code, want := range map[string]error{
-		walletprovider.CodeRegistrationExpired:   walletprovider.ErrRegistrationExpired,
-		walletprovider.CodeInstanceKeyExpired:    walletprovider.ErrInstanceKeyExpired,
-		walletprovider.CodeInstanceKeyRegistered: walletprovider.ErrInstanceKeyRegistered,
-		"evidence_rejected":                      nil,
+	sentinels := []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered, walletprovider.ErrEvidenceRequired}
+	for _, tc := range []struct {
+		code   string
+		status int
+		want   error
+	}{
+		{walletprovider.CodeRegistrationExpired, 403, walletprovider.ErrRegistrationExpired},
+		{walletprovider.CodeInstanceKeyExpired, 403, walletprovider.ErrInstanceKeyExpired},
+		{walletprovider.CodeInstanceKeyRegistered, 409, walletprovider.ErrInstanceKeyRegistered},
+		{walletprovider.CodeEvidenceRequired, 400, walletprovider.ErrEvidenceRequired},
+		{"evidence_rejected", 403, nil},
 	} {
-		err := fmt.Errorf("asking: %w", &walletprovider.RefusedError{Status: 403, Code: code})
-		if !errors.Is(err, walletprovider.ErrRefused) {
-			t.Fatalf("%s: %v doesn't match ErrRefused", code, err)
+		if got := walletprovider.CodeError(tc.code); got != tc.want {
+			t.Fatalf("CodeError(%s) = %v, want %v", tc.code, got, tc.want)
 		}
-		if got := walletprovider.CodeError(code); got != want {
-			t.Fatalf("CodeError(%s) = %v, want %v", code, got, want)
-		}
-		for _, s := range []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered} {
-			if errors.Is(err, s) != (s == want) {
-				t.Fatalf("%s: matches %v %t", code, s, errors.Is(err, s))
+		for _, status := range []int{tc.status, 302, 307, 400, 401, 403, 404, 409, 418} {
+			want := tc.want
+			if status != tc.status {
+				want = nil
+			}
+			err := fmt.Errorf("asking: %w", &walletprovider.RefusedError{Status: status, Code: tc.code})
+			if !errors.Is(err, walletprovider.ErrRefused) {
+				t.Fatalf("%s at %d: %v doesn't match ErrRefused", tc.code, status, err)
+			}
+			for _, s := range sentinels {
+				if errors.Is(err, s) != (s == want) {
+					t.Fatalf("%s at %d: matches %v %t", tc.code, status, s, errors.Is(err, s))
+				}
 			}
 		}
 	}

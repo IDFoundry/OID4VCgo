@@ -177,7 +177,12 @@ for entry in "${WALTID_FILES[@]}"; do
   read -r path sum <<< "$entry"
   out="$WORK/waltid/$path"
   mkdir -p "$(dirname "$out")"
-  curl -sSfL --proto '=https' --max-time 60 -o "$out" "https://raw.githubusercontent.com/walt-id/waltid-identity/$WALTID_COMMIT/docker-compose/$path"
+  # raw.githubusercontent.com sometimes answers a runner 429 or 404 for
+  # a moment: each download is retried.
+  if ! curl -sSfL --proto '=https' --retry 4 --retry-all-errors --retry-delay 5 --max-time 60 -o "$out" "https://raw.githubusercontent.com/walt-id/waltid-identity/$WALTID_COMMIT/docker-compose/$path"; then
+    echo "$path couldn't be downloaded" >&2
+    exit 22
+  fi
   if [[ "$(openssl dgst -sha256 -r "$out" | cut -d' ' -f1)" != "$sum" ]]; then
     echo "$path doesn't have the pinned SHA-256" >&2
     exit 2
