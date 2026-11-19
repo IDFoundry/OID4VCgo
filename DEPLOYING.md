@@ -473,6 +473,15 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
     lists is (where 5 % of a period's keys are recent instances', 20 %
     of those on lists 0 to 15 are), and certainly one once recent
     instances' keys alone fill the share.
+  - **What a suspension or revocation tells an issuer.** `Suspend`,
+    `Resume` and `Revoke` change the status of every one of the
+    instance's keys at once, and status changes are rare, so an issuer
+    holding two of its issuances, or issuers pooling theirs, see
+    exactly those indices change between two fetches of the lists and
+    link them: to one instance, and everything those keys do from then
+    on. A suspension later lifted leaves them linked all the same.
+    Spreading the writes over the lists' TTL wouldn't hide them, as an
+    issuer may fetch the lists as often as it likes.
 - [ ] **Alert on the status lists filling.** Watch
   `Provider.StatusListFill` from monitoring, every few minutes:
   - when its `Free` won't last until its `End` at the current rate;

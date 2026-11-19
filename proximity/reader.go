@@ -496,8 +496,8 @@ type Verified struct {
 	Status *mdoc.Status
 }
 
-// Credential is v as a verifier.VerifiedCredential — its Claims, Status
-// and IssuerChain — for what takes one, such as
+// Credential is v as a verifier.VerifiedCredential, of Format
+// "mso_mdoc" — its Claims, Status and IssuerChain — for what takes one, such as
 // verifier.StatusPolicy.Check or verifier.RequireValidStatus. Its
 // IssuerChain is v's as DER without the trust anchor, as a Verifier's
 // mdoc's is (the anchor stays when it's the only certificate), and its
@@ -521,7 +521,7 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 	for i, c := range path {
 		chain[i] = c.Raw
 	}
-	return verifier.VerifiedCredential{Claims: claims, MdocStatus: v.Status, IssuerChain: chain, IssuerAnchor: anchor}
+	return verifier.VerifiedCredential{Format: mdoc.CredentialFormat, Claims: claims, MdocStatus: v.Status, IssuerChain: chain, IssuerAnchor: anchor}
 }
 
 // Verify decrypts the mdoc's reply and verifies the DeviceResponse in

@@ -74,3 +74,35 @@ func TestVerifyKeyBindingJWT_RequiresExpectedSDHash(t *testing.T) {
 		t.Errorf("VerifyKeyBindingJWT = %v, want ExpectedSDHash required", err)
 	}
 }
+
+// A Key Binding JWT's iat may be in the future by MaxClockSkew at most,
+// and never by more than MaxAge, however large the skew: the holder
+// signs at the current time, so a later iat is its clock running ahead.
+// Each KB-JWT is signed now; Now is set back to put its iat ahead.
+func TestVerifyKeyBindingJWT_FutureIatBoundedBySkew(t *testing.T) {
+	issuerKey, holderKey := testKey(t), testKey(t)
+	presentation := newKeyBoundSDJWTVCPresentation(t, issuerKey, holderKey, "aud", "n")
+	const future = "key binding JWT iat is too far in the future"
+	for name, tc := range map[string]struct {
+		ahead, skew, maxAge time.Duration
+		want                string // "" accepted
+	}{
+		"iat now, no skew":                   {0, 0, time.Hour, ""},
+		"iat ahead, no skew":                 {30 * time.Second, 0, time.Hour, future},
+		"iat ahead within skew":              {30 * time.Second, time.Minute, time.Hour, ""},
+		"iat ahead beyond skew":              {2 * time.Minute, time.Minute, time.Hour, future},
+		"iat ahead within skew, past MaxAge": {90 * time.Minute, 2 * time.Hour, time.Hour, future},
+	} {
+		_, _, err := Verify(presentation, &issuerKey.PublicKey, jose.ES256, VerifyOptions{
+			RequireKeyBinding: KeyBindingRequired, HolderPublicKey: &holderKey.PublicKey, KeyBindingAlg: jose.ES256,
+			ExpectedAudience: "aud", ExpectedNonce: "n", MaxKeyBindingAge: tc.maxAge, MaxClockSkew: tc.skew,
+			Now: func() time.Time { return time.Now().Add(-tc.ahead) },
+		})
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: Verify = %v, want accepted", name, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+			t.Errorf("%s: Verify = %v, want %q", name, err, tc.want)
+		}
+	}
+}

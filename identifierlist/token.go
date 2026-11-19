@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -18,6 +17,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwtdate"
 	"github.com/idfoundry/oid4vcgo/internal/strictcbor"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -338,7 +338,9 @@ func verifyToken(ctx context.Context, token []byte, roots *x509.CertPool, policy
 	if err != nil {
 		return parsedClaims{}, nil, fmt.Errorf("identifierlist: verify CWT signature: %w", err)
 	}
-	if !strings.EqualFold(protected.Typ, MediaType) && !strings.EqualFold(protected.Typ, BareTyp) {
+	// A media type, compared case-insensitively in ASCII alone (RFC 6838
+	// §4.2).
+	if !jose.EqualFoldASCII(protected.Typ, MediaType) && !jose.EqualFoldASCII(protected.Typ, BareTyp) {
 		return parsedClaims{}, nil, fmt.Errorf("identifierlist: CWT typ is %q, want %q or %q", protected.Typ, MediaType, BareTyp)
 	}
 	var parsed parsedClaims

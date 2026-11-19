@@ -217,6 +217,12 @@ func TestTyp(t *testing.T) {
 	}
 	_, err = VerifyToken(context.Background(), signRaw(t, pki, "application/statuslist+cwt", claims), pki.roots, VerifyOptions{})
 	wantErr(t, "VerifyToken, a status list's typ", err, "want \"application/identifierlist+cwt\" or \"identifierlist+cwt\"")
+	// Case-insensitive in ASCII alone (RFC 6838 §4.2): "ſ" (U+017F)
+	// folds to "s" in Unicode, not here.
+	for _, typ := range []string{"application/identifierli\u017ft+cwt", "identifierli\u017ft+cwt"} {
+		_, err = VerifyToken(context.Background(), signRaw(t, pki, typ, claims), pki.roots, VerifyOptions{})
+		wantErr(t, "VerifyToken, typ "+typ, err, "want \"application/identifierlist+cwt\" or \"identifierlist+cwt\"")
+	}
 }
 
 // TestCheck_Refuses: a token that doesn't verify, isn't the

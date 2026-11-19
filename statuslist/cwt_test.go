@@ -75,7 +75,7 @@ func TestVerifyTokenCWTRejectsExpired(t *testing.T) {
 	}
 }
 
-// A CWT's typ is a media type, matched case-insensitively; another is
+// A CWT's typ is a media type, matched case-insensitively in ASCII; another is
 // refused, as is a ttl that isn't positive (draft-14 §5.2).
 func TestVerifyTokenCWT_TypAndTTL(t *testing.T) {
 	key := testKey(t)
@@ -109,7 +109,10 @@ func TestVerifyTokenCWT_TypAndTTL(t *testing.T) {
 	}{
 		"typ in another case": {sign("Application/StatusList+CWT", nil), true},
 		"another typ":         {sign("not-a-statuslist+cwt", nil), false},
-		"ttl 0":               {sign(CWTTokenMediaType, 0), false},
+		// Case-insensitive in ASCII alone (RFC 6838 §4.2): "ſ" (U+017F)
+		// folds to "s" in Unicode, not here.
+		"typ with a long s": {sign("application/\u017ftatuslist+cwt", nil), false},
+		"ttl 0":             {sign(CWTTokenMediaType, 0), false},
 	} {
 		if _, err := VerifyTokenCWT(tc.token, &key.PublicKey, cose.ES256, VerifyOptions{UnboundSigner: AnyListSigner}); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", name, err)

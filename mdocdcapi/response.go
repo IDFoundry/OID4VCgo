@@ -5,13 +5,13 @@ import (
 	"crypto"
 	"crypto/ecdh"
 	"crypto/hpke"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/mdocresponse"
@@ -139,8 +139,8 @@ type Verified struct {
 	Status *mdoc.Status
 }
 
-// Credential is v as a verifier.VerifiedCredential — its NameSpaces as
-// Claims, its Status, IssuerChain, IssuerAnchor and Missing (as
+// Credential is v as a verifier.VerifiedCredential, of Format
+// "mso_mdoc" — its NameSpaces as Claims, its Status, IssuerChain, IssuerAnchor and Missing (as
 // Withheld) — for what takes one, such as
 // verifier.StatusPolicy.Check. An Annex C request has no DCQL query, so
 // its CredentialQueryID is the document's type, which names it: a
@@ -152,7 +152,7 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 	for ns, elements := range v.NameSpaces {
 		claims[ns] = elements
 	}
-	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain, IssuerAnchor: v.IssuerAnchor, Withheld: v.Missing}
+	return verifier.VerifiedCredential{CredentialQueryID: v.DocType, Format: mdoc.CredentialFormat, Claims: claims, MdocStatus: v.Status, IssuerChain: v.IssuerChain, IssuerAnchor: v.IssuerAnchor, Withheld: v.Missing}
 }
 
 // encryptedResponseData is Annex C.3's EncryptedResponseData.
@@ -458,7 +458,8 @@ func decrypt(response string, key *ecdh.PrivateKey, transcript []byte) ([]byte, 
 	if len(response) > MaxResponseBytes {
 		return nil, fmt.Errorf("mdocdcapi: response is %d bytes, more than %d", len(response), MaxResponseBytes)
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(response)
+	// Strictly: one response has one encoding (b64url).
+	raw, err := b64url.Encoding{}.DecodeString(response)
 	if err != nil {
 		return nil, fmt.Errorf("mdocdcapi: response isn't base64url: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"math/big"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +131,27 @@ func TestX5CIssuerKeyResolver_ResolveIssuerChainsIsTheVerifiedPath(t *testing.T)
 		if len(chain) != 2 || !chain[0].Equal(leaf) || !chain[1].Equal(ca) {
 			t.Errorf("path = %d certificates, want leaf → root", len(chain))
 		}
+	}
+}
+
+// ResolveIssuerChains refuses an x5c that includes its trust anchor, as
+// ResolveIssuerKey does: HAIP 1.0 has the sender leave it out
+// (certchain.CheckNoAnchor).
+func TestX5CIssuerKeyResolver_ResolveIssuerChainsRefusesAnchor(t *testing.T) {
+	ca, caKey := testcert.CA(t, "issuer root")
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	leaf := issuerLeaf(t, ca, caKey, nil, nil)
+	r := verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
+	ctx := context.Background()
+	if chains, err := r.ResolveIssuerChains(ctx, x5cHeader(leaf)); err != nil || len(chains) == 0 {
+		t.Fatalf("ResolveIssuerChains without the anchor: %d chains, %v", len(chains), err)
+	}
+	_, err := r.ResolveIssuerChains(ctx, x5cHeader(leaf, ca))
+	if err == nil || !strings.Contains(err.Error(), "the trust anchor must not be included") {
+		t.Errorf("ResolveIssuerChains with the anchor: %v, want the anchor refused", err)
+	}
+	if _, _, err := r.ResolveIssuerKey(ctx, x5cHeader(leaf, ca), map[string]any{}); err == nil || !strings.Contains(err.Error(), "the trust anchor must not be included") {
+		t.Errorf("ResolveIssuerKey with the anchor: %v, want the anchor refused", err)
 	}
 }

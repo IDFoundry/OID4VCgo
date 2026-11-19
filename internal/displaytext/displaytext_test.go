@@ -21,6 +21,13 @@ func TestClean(t *testing.T) {
 		"\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645": "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
 		"\U0001f469\u200d\U0001f4bb Coders":                "\U0001f469\u200d\U0001f4bb Coders",
 		"bad\xffbyte":                                      "badbyte",
+		// Invisible letters and symbols that aren't format characters.
+		"Bank\u3164\u3164Verified":            "BankVerified",
+		"\u115f\u1160Bank\uffa0":              "Bank",
+		"Bank\u2800\u2800\u2800":              "Bank",
+		"Ba\u034fnk\u17b4\u17b5":              "Bank",
+		"\U0001f469\ufe0f Bank":               "\U0001f469\ufe0f Bank",
+		"\ud55c\uad6d\uc740\ud589 Korea Bank": "\ud55c\uad6d\uc740\ud589 Korea Bank",
 	} {
 		if got := Clean(in, 200); got != want {
 			t.Errorf("Clean(%q) = %q, want %q", in, got, want)

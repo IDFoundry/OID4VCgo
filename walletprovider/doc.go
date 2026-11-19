@@ -106,7 +106,8 @@
 // and never reused, which every Wallet Attestation for the key and
 // every Key Attestation issued with it reference. Issuers see only
 // per-issuance keys, per-issuance status indices and the shared client
-// ID; the provider alone knows which instance keys belong to which
+// ID; until the instance is suspended, resumed or revoked (below), the
+// provider alone knows which instance keys belong to which
 // instance (HAIP 1.0 §11.1 asks a Wallet Provider's backend to be
 // designed with its users' privacy in mind), so keep its stores as
 // private as the users they describe.
@@ -136,6 +137,21 @@
 // transition whose status writes fail part-way is finished later: by
 // calling it again, by RevokeWhere's next run for a revocation, or by
 // the instance's next request, which sets them before it's refused.
+//
+// Those status changes tell issuers which instance keys belong to one
+// instance, which otherwise the provider alone knows. A transition
+// changes every one of the instance's statuses within moments, and status
+// changes on a list are rare, so an issuer holding two of the
+// instance's issuances — or issuers that pool what they hold — sees
+// exactly their indices change between two fetches of the lists and
+// learns that they belong to one instance, and can link whatever
+// those keys do from then on. Spreading the writes out wouldn't hide
+// them: an issuer may fetch the lists as often as it likes, not only
+// once a TTL, so they'd have to be scattered among other changes over
+// hours to hide on lists where few change, and a revocation must act
+// at once. A suspension later lifted (Resume) leaves the instance's
+// keys linked all the same, as long as they're used.
+//
 // Provider.StatusLists serves the lists (JWT or CWT form, by the
 // request's Accept header), signed with
 // the provider's own key and certificate chain, so an issuer's default

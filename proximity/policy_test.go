@@ -150,7 +150,7 @@ func TestVerified_Credential(t *testing.T) {
 		t.Fatal(err)
 	}
 	vc := v.Credential()
-	if vc.MdocStatus != v.Status || vc.CredentialQueryID != "" {
+	if vc.MdocStatus != v.Status || vc.CredentialQueryID != "" || vc.Format != mdoc.CredentialFormat {
 		t.Errorf("Credential() = %+v", vc)
 	}
 	if len(vc.IssuerChain) != len(v.IssuerChain)-1 || !bytes.Equal(vc.IssuerChain[0], v.IssuerChain[0].Raw) {

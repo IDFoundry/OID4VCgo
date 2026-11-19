@@ -18,7 +18,12 @@ import (
 // where the app doesn't expect. The zero-width joiner and non-joiner
 // stay: scripts such as Persian and Devanagari, and emoji sequences,
 // need them to render right, and they join or part neighbouring
-// characters without hiding or reordering any.
+// characters without hiding or reordering any. The invisible letters
+// and marks Unicode lists as default ignorable outside Cf (Hangul
+// fillers U+115F, U+1160, U+3164 and U+FFA0, the combining grapheme
+// joiner, Khmer's inherent vowels) are dropped too, as is the blank
+// braille pattern U+2800, which shows as nothing: each could pad a name
+// with blank space that isn't a space.
 func Clean(s string, limit int) string {
 	text, _ := clean(s, limit)
 	return text
@@ -40,7 +45,7 @@ func clean(s string, limit int) (text string, cut bool) {
 	n := 0
 	for _, r := range s {
 		switch {
-		case r == utf8.RuneError, isHiddenFormat(r):
+		case r == utf8.RuneError, isHiddenFormat(r), isInvisible(r):
 			continue
 		case unicode.IsControl(r), unicode.In(r, unicode.Zl, unicode.Zp):
 			r = ' '
@@ -59,4 +64,12 @@ func clean(s string, limit int) (text string, cut bool) {
 // embeddings, overrides, isolates and marks.
 func isHiddenFormat(r rune) bool {
 	return r != '\u200c' && r != '\u200d' && unicode.Is(unicode.Cf, r)
+}
+
+// isInvisible reports whether r is a character that isn't a format
+// character but shows as nothing: default ignorable (Unicode's
+// Other_Default_Ignorable_Code_Point: the Hangul fillers among them),
+// or the blank braille pattern.
+func isInvisible(r rune) bool {
+	return r == '\u2800' || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
 }

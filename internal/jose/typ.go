@@ -8,12 +8,14 @@ import "strings"
 // "s", nor the Kelvin sign "k". One without a "/" has "application/"
 // implied: "DPoP+JWT" and "application/dpop+jwt" both name "dpop+jwt".
 func TypeIs(typ, want string) bool {
-	return asciiEqualFold(mediaType(typ), mediaType(want))
+	return EqualFoldASCII(mediaType(typ), mediaType(want))
 }
 
-// asciiEqualFold reports whether a and b are equal with ASCII letters
-// compared case-insensitively and every other byte exactly.
-func asciiEqualFold(a, b string) bool {
+// EqualFoldASCII reports whether a and b are equal with ASCII letters
+// compared case-insensitively and every other byte exactly, as media
+// types are compared (RFC 6838 §4.2): unlike strings.EqualFold, "ſ"
+// isn't "s", nor the Kelvin sign "k".
+func EqualFoldASCII(a, b string) bool {
 	if len(a) != len(b) {
 		return false
 	}

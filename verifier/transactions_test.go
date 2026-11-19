@@ -80,7 +80,9 @@ func newTxFixture(t *testing.T, tweak func(*verifier.TransactionsConfig)) *txFix
 		RequestURIBase: txBase, RedirectURI: "https://verifier.example.com/continue?x=1",
 		Verify: verifier.VerifyResponseRequest{
 			IssuerKeys: verifier.X5CIssuerKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}, MaxKeyBindingAge: time.Hour,
-			Now: func() time.Time { return f.now },
+			// f.now is fixed, so the wallet's Key Binding JWTs, signed
+			// later, may be dated after it.
+			Now: func() time.Time { return f.now }, MaxClockSkew: time.Minute,
 		},
 	}
 	if tweak != nil {

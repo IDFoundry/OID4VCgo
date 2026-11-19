@@ -6,7 +6,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/dcql"
+	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/cose"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
@@ -107,12 +107,14 @@ type VerifyResponseRequest struct {
 	// validFrom/validUntil are each widened by it. Zero checks them
 	// exactly, which refuses a credential presented just after it was
 	// issued valid from its signing time, when this Verifier's clock is
-	// behind the issuer's. A minute is typical. (A Key Binding JWT's iat
-	// is bounded by MaxKeyBindingAge in both directions already.)
+	// behind the issuer's. A minute is typical. It bounds, too, how far
+	// in the future a Key Binding JWT's iat may be (never by more than
+	// MaxKeyBindingAge): at zero, a holder whose clock runs a second
+	// ahead of this Verifier's is refused.
 	MaxClockSkew time.Duration
 
 	// MaxKeyBindingAge bounds how old a Key Binding JWT's own "iat"
-	// may be. REQUIRED (must be positive) when Query includes any
+	// may be; MaxClockSkew how far in the future. REQUIRED (must be positive) when Query includes any
 	// "dc+sd-jwt" Credential Query: a credential bound to a key (cnf)
 	// is presented with a KB-JWT, which is checked, even where the
 	// query doesn't require holder binding (HAIP 1.0 §6.1.1.1).
@@ -275,6 +277,14 @@ type VerifiedCredential struct {
 	// CredentialQueryID is the dcql.CredentialQuery.ID this
 	// Presentation was matched against.
 	CredentialQueryID string
+
+	// Format is the credential's format: "dc+sd-jwt"
+	// (sdjwtvc.CredentialFormat) or "mso_mdoc" (mdoc.CredentialFormat),
+	// as VerifyResponse, Transactions, mdocdcapi and proximity set it.
+	// An "mso_mdoc" credential's status is MdocStatus alone, never a
+	// namespace of Claims named "status". "" is read as either, as
+	// before it was set: Claims["status"] when MdocStatus is nil.
+	Format string
 
 	// Claims is the Presentation's own disclosed claims — for
 	// "dc+sd-jwt", credential/sdjwtvc.Verify's own resolved payload
@@ -756,7 +766,7 @@ func (v *Verifier) verifyPresented(ctx context.Context, cq dcql.CredentialQuery,
 	if err != nil {
 		return VerifiedCredential{}, err
 	}
-	return VerifiedCredential{CredentialQueryID: cq.ID, Claims: claims, MdocStatus: status, IssuerChain: chain.chain, IssuerAnchor: chain.anchor}, nil
+	return VerifiedCredential{CredentialQueryID: cq.ID, Format: cq.Format, Claims: claims, MdocStatus: status, IssuerChain: chain.chain, IssuerAnchor: chain.anchor}, nil
 }
 
 // discardedAs is n presentations answering queryID discarded for
@@ -1083,7 +1093,8 @@ func (v *Verifier) verifyMdocPresentation(ctx context.Context, cq dcql.Credentia
 		return nil, nil, nil, fmt.Errorf("response_encryption_key is required for a %q credential query", mdoc.CredentialFormat)
 	}
 
-	raw, err := base64.RawURLEncoding.DecodeString(presented)
+	// Strictly: one DeviceResponse has one encoding (b64url).
+	raw, err := b64url.Encoding{}.DecodeString(presented)
 	if err != nil {
 		return nil, nil, nil, newError(ReasonMalformed, "decode device response", err)
 	}

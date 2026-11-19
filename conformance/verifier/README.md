@@ -217,8 +217,8 @@ JWT issued a year ago or a year from now. The suite's
 `VP1FinalVerifierKbJwtIatIn{Past,Future}` extend
 `AbstractVP1FinalVerifierNegativeTest`, and their summaries say the
 Verifier should reject the presentation: they are negative modules.
-This binary refuses both (`MaxKeyBindingAge` is five minutes; the
-library's clock-skew bound refuses a future `iat`). An earlier version
+This binary refuses both: an `iat` more than `MaxKeyBindingAge` (five
+minutes) old, or more than `MaxClockSkew` (a minute) in the future. An earlier version
 of this file listed them as positive modules that verify; the
 Verifier's own log never said so.
 

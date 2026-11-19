@@ -463,7 +463,8 @@ func (r *Refresher) Checker() CRLs {
 // as the held list while that one is current. It must also not be
 // older than any list accepted from its issuer — the same name and
 // key — from any URL, or in Floors: its thisUpdate isn't before
-// theirs, and when both carry a CRL number, its number isn't lower. That last check stops a replayed old
+// theirs, and when one of them carries a CRL number, it carries one too
+// (RFC 5280 §5.2.3 makes it mandatory), no lower. That last check stops a replayed old
 // list, one still inside its validity, from bringing back a
 // certificate revoked since. Any failure keeps the held list, and a
 // URL whose held list has passed its nextUpdate is a failure too,
@@ -571,6 +572,12 @@ func (r *Refresher) fromRightIssuer(u string, list, held *x509.RevocationList, n
 		return floorKey{}, fmt.Errorf("the CRL's thisUpdate %s is before that of the newest list accepted from its issuer", list.ThisUpdate.UTC().Format(time.RFC3339))
 	case list.Number != nil && floor.number != nil && list.Number.Cmp(floor.number) < 0:
 		return floorKey{}, fmt.Errorf("the CRL number %s is lower than that of the newest list accepted from its issuer, %s", list.Number, floor.number)
+	case list.Number == nil && floor.number != nil:
+		// RFC 5280 §5.2.3 makes the CRL number mandatory: an issuer
+		// whose lists carried one doesn't drop it, and an unnumbered
+		// list with the same thisUpdate as a numbered one would pass
+		// the check above in its place.
+		return floorKey{}, fmt.Errorf("the CRL carries no CRL number, though a list accepted from its issuer did (%s)", floor.number)
 	}
 	return k, nil
 }
