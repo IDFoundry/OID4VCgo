@@ -10,6 +10,13 @@ import os
 /// that has none, is disconnected and passed over for a while
 /// (`IgnoredDevices`), and the scan goes on. Any other failure, an Ident
 /// read that fails or isn't answered included, is one failed attempt.
+///
+/// Neither the service UUID nor the Ident keeps out a device that never
+/// saw the engagement: the UUID is in the clear in adverts, and anyone
+/// can read the reader's Ident and serve it. Only Go can tell the peer
+/// apart, once its message decrypts: `reject` passes over a device whose
+/// message it rejected, and the next `connect`, or `receive`, connects
+/// to another.
 /// The app's Info.plist needs NSBluetoothAlwaysUsageDescription.
 final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     private let serviceUUID: CBUUID
@@ -35,6 +42,8 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     private var identCharacteristic: CBCharacteristic?
     private var sessionStarted = false
     private var closed = false
+    /// `reject` passed over the device: `receive` connects to another first.
+    private var passedOver = false
     /// Devices whose Ident wasn't this session's reader's, or that had
     /// none: passed over for a while.
     private var ignored = IgnoredDevices<UUID>()
@@ -53,8 +62,12 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
         super.init()
     }
 
+    /// Scans, connects and starts the session; after `reject`, with the
+    /// next device advertising the service.
     func connect() async throws {
-        queue.sync { manager = CBCentralManager(delegate: self, queue: queue) }
+        queue.sync {
+            if manager == nil { manager = CBCentralManager(delegate: self, queue: queue) }
+        }
         try await poweredOn.wait()
         let attempts = 3
         var lastError: (any Error)?
@@ -71,6 +84,7 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
                 do {
                     try await connectToDiscovered()
                     try await start()
+                    queue.sync { passedOver = false }
                 } catch is ProximityTimeout {
                     // A device that stops answering mid-setup, its Ident
                     // read included: one failed attempt, as any other.
@@ -225,8 +239,35 @@ final class GattClientTransport: NSObject, ProximityTransport, CBCentralManagerD
     }
 
     func receive() async throws -> Data {
+        if queue.sync(execute: { passedOver }) { try await connect() }
         let messages = queue.sync { incoming }
         return try await messages.receive()
+    }
+
+    /// The device whose message `receive` returned last isn't this
+    /// session's peer (Go rejected its message), or, for a reader, lost
+    /// its link before answering: disconnect, and pass over it for a
+    /// while (`IgnoredDevices`). The next `connect`, or `receive`,
+    /// scans for and connects to another device advertising the service,
+    /// within the caller's own time for it, as the GATT server transport
+    /// goes on listening for others.
+    func reject() {
+        let rejected: MessageQueue? = queue.sync {
+            guard !closed else { return nil }
+            if let peripheral {
+                ignored.ignore(peripheral.identifier)
+                manager?.cancelPeripheralConnection(peripheral)
+            }
+            peripheral = nil
+            state = nil
+            client2Server = nil
+            server2Client = nil
+            identCharacteristic = nil
+            sessionStarted = false
+            passedOver = true
+            return incoming
+        }
+        rejected?.end(ProximityTransportError("the device was passed over"))
     }
 
     func close() {

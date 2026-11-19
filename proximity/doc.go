@@ -116,6 +116,17 @@
 // 11). Either one closes the session: send StatusMessage(status) from
 // StatusFor, then disconnect. Status 20 ends a session normally.
 //
+// Over BLE, a device that never saw the engagement can be the first to
+// write: to the mdoc's GATT server, or, as the GATT server the reader
+// connects to in mdoc peripheral server mode, by advertising the
+// mdoc's service UUID, which is in the clear. Until a message has
+// decrypted, DeviceSession.TrySessionEstablishment and
+// ReaderSession.TryVerify reject one that doesn't (ErrEstablishmentRejected,
+// ErrResponseRejected), with no status reply, and leave the session
+// waiting for the other side; a bare status, which isn't encrypted, is
+// such a reply too. The Ident of mdoc central client mode doesn't keep
+// such a device out: anyone can read it from the reader and serve it.
+//
 // A DeviceRequest that decrypts but doesn't parse — ErrCBORDecoding, or
 // ErrCBORValidation for well-formed CBOR of the wrong shape — can be
 // answered inside the session instead: DeviceSession.ErrorResponse

@@ -321,3 +321,54 @@ func FuzzNFCRequest(f *testing.F) {
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, b []byte) { _, _ = parseNFCRequest(testbounds.Exact(b)) })
 }
+
+// The holder's device key signs the handover's Hr as the reader sent it
+// (§9.1.5.1): an Hr with more than MaxHandoverRequestBytes, or more than
+// maxHandoverRequestRecords records, is refused, so a reader can't carry
+// much of its own choosing there. The largest this package builds is
+// taken with room to spare.
+func TestHandleHandoverRequest_Bounded(t *testing.T) {
+	hr, err := NewNFCHandoverRequestWithNFCData(nil, NFCDataParameters{MaxCommand: 65535, MaxResponse: 65536})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hr) > MaxHandoverRequestBytes/4 {
+		t.Fatalf("a %d-byte Hr of this package's own", len(hr))
+	}
+	records, err := parseNDEF(hr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padded := func(payload []byte, extra int) []byte {
+		rs := append([]ndefRecord(nil), records...)
+		for range extra {
+			rs = append(rs, ndefRecord{tnf: 4, typ: []byte("example.com:note"), payload: payload})
+		}
+		b, err := encodeNDEF(rs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for _, tc := range []struct {
+		name   string
+		hr     []byte
+		refuse bool
+	}{
+		{"as built", hr, false},
+		{"one note", padded([]byte("hi"), 1), false},
+		{"a statement", padded(bytes.Repeat([]byte("I agree to pay. "), MaxHandoverRequestBytes/16), 1), true},
+		{"many records", padded(nil, maxHandoverRequestRecords), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := NewNFCNegotiatedDeviceSession(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = h.HandleHandoverRequest(tc.hr)
+			if (err != nil) != tc.refuse {
+				t.Fatalf("%d-byte Hr: %v, refused %v", len(tc.hr), err, !tc.refuse)
+			}
+		})
+	}
+}

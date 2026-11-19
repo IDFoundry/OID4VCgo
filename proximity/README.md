@@ -117,6 +117,12 @@ notifications.
 3. **Check Ident (central client mode only).** The reader serves
    `ReaderSession.BLEIdent()` on the Ident characteristic. The mdoc
    reads it and disconnects if it differs from `DeviceSession.BLEIdent()`.
+   Ident tells sessions apart; it doesn't authenticate the reader. Any
+   central can read it, and the service UUID is in the reader's
+   adverts, so a device that never saw the QR code can serve both. Only
+   a message that decrypts shows its sender holds the session's keys:
+   pass the first to `TrySessionEstablishment`, and on a rejection
+   disconnect from that device and look for the next.
 4. **Subscribe and start.** The GATT client subscribes to State and
    Server2Client notifications, then writes `0x01` (start) to State.
 5. **Request.** The reader sends `Establishment(docType, elements)`. The
@@ -150,7 +156,17 @@ notifications.
    `Encrypt(BuildDeviceResponse(req, ...), false)`, disclosing only
    elements the request lists (any other is refused). If they decline, or
    nothing matches, the mdoc sends `Termination()` instead. The reader
-   passes either one to `Verify(ctx, msg, roots, now)`. A reader makes
+   passes either one to `Verify(ctx, msg, roots, now)`. In mdoc
+   peripheral server mode the reader connects to whichever device
+   advertises the mdoc's service UUID, which its adverts carry in the
+   clear, so pass it to `TryVerify` instead: a reply that doesn't decode
+   or decrypt, or carries only a status (which isn't encrypted), is
+   `ErrResponseRejected`, gets no reply, and leaves the session waiting
+   for the mdoc's. Disconnect from that device, pass over it, and send
+   the same SessionEstablishment to the next one advertising the UUID,
+   within your own time for finding the mdoc; a rejected status 20
+   wraps `ErrDeclined`, to report if no other device answers. A reader
+   makes
    a Verifier's decisions when it calls `NewReaderSession`: its
    assurance (`WithAssurance`) and its document signers' revocation
    (`WithIssuerRevocation(certrevocation.CRLs{...})`, or
@@ -164,7 +180,8 @@ notifications.
    `verifier.VerifiedCredential`, for checking its status after `Verify`.
    To ask for several documents at once, a reader sends
    `EstablishmentDocuments` (at most `MaxDocRequests`, each of a
-   different type) and passes the answer to `VerifyDocuments`: the
+   different type) and passes the answer to `VerifyDocuments` (or
+   `TryVerifyDocuments`): the
    holder may answer any of them, so check each one needed came back.
    A reader can pass `NewReaderSession`
    `WithMaxClockSkew` — so an mdoc issued by a clock a little ahead of

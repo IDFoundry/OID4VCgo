@@ -1333,7 +1333,17 @@ changes whether *every* bullet below is `(done)`.
   uses the request-level path and exposes `RequestInfo()`; the mobile
   `request_info` JSON and the Kotlin and Swift `requestInfo` carry it.
   A request the holder can't parse or answer gets an in-session
-  `ErrorResponse` (status 11 or 12). The transport — BLE GATT, and chunking — stays in the mobile
+  `ErrorResponse` (status 11 or 12). Over BLE a device that never saw
+  the engagement can be the first to write, as the service UUID is in
+  the clear: until a message decrypts, `DeviceSession.TrySessionEstablishment`
+  and, for a reader in mdoc peripheral server mode,
+  `ReaderSession.TryVerify` reject one that doesn't, a bare status
+  included, and leave the session waiting, so the app can pass over
+  that device. The holder takes an EReaderKey of at most
+  `MaxEReaderKeyBytes` with only an ephemeral key's COSE_Key
+  parameters, and a negotiated NFC Handover Request of at most
+  `MaxHandoverRequestBytes`: its device key signs both as sent.
+  The transport — BLE GATT, and chunking — stays in the mobile
   app, as does the NFC radio; see `proximity/README.md`. Not yet:
   BLE L2CAP, and more than one request per session.
 - **`proximity/nfcapdu`** (done) — NFC's byte protocols for

@@ -28,7 +28,9 @@ final class PipeTransport: ProximityTransport, @unchecked Sendable {
 
     func connect() async throws {
         connected.signal()
-        if !peerConnects { try await Signal().wait() }
+        // A peer that never comes, or, connecting again, one that has
+        // gone: no device is found.
+        if !peerConnects || peer?.closed ?? true { try await Signal().wait() }
         try await peer?.connected.wait()
     }
 
@@ -124,6 +126,62 @@ final class BlindPeerTransport: ProximityTransport, @unchecked Sendable {
 
     func reject() { lock.withLock { rejectCount += 1 } }
     func commit() { lock.withLock { commitCount += 1 } }
+    func close() { inner.close() }
+}
+
+/// A reader's GATT client in mdoc peripheral server mode, where devices
+/// that never saw the QR code advertise the holder's service UUID and
+/// win the scan first: each answers the reader's request with `impostors`'
+/// next answer (nil: its link drops), until the reader passes it over
+/// (`reject`) and connects (`connect`) to the next; then the holder,
+/// unless `holderFound` is false: then no other device is found.
+final class ImpostorTransport: ProximityTransport, @unchecked Sendable {
+    private let inner: PipeTransport
+    private let lock = NSLock()
+    private var impostors: [Data?]
+    private var rejectCount = 0
+    private var connectCount = 0
+    private var sentCount = 0
+    var rejects: Int { lock.withLock { rejectCount } }
+    var connects: Int { lock.withLock { connectCount } }
+    /// The requests sent, to impostors and the holder.
+    var sent: Int { lock.withLock { sentCount } }
+
+    private let holderFound: Bool
+
+    init(_ inner: PipeTransport, impostors: [Data?], holderFound: Bool = true) {
+        self.inner = inner
+        self.impostors = impostors
+        self.holderFound = holderFound
+    }
+
+    private var impostor: Data?? { lock.withLock { impostors.first } }
+
+    func connect() async throws {
+        lock.withLock { connectCount += 1 }
+        if impostor != nil { return }
+        if !holderFound { try await Signal().wait() }
+        try await inner.connect()
+    }
+
+    func send(_ message: Data) async throws {
+        lock.withLock { sentCount += 1 }
+        if impostor == nil { try await inner.send(message) }
+    }
+
+    func receive() async throws -> Data {
+        guard let answer = impostor else { return try await inner.receive() }
+        guard let answer else { throw ProximityTransportError("the other device disconnected", peerEnded: true) }
+        return answer
+    }
+
+    func reject() {
+        lock.withLock {
+            rejectCount += 1
+            if !impostors.isEmpty { impostors.removeFirst() }
+        }
+    }
+
     func close() { inner.close() }
 }
 
@@ -471,6 +529,49 @@ final class ProximityTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(blind.commits, 1)
         holder.cancel()
         reader.cancel()
+    }
+
+    /// A reader in mdoc peripheral server mode connects to whichever
+    /// device advertises the holder's service UUID: devices that answer
+    /// with junk, with a bare status 20 (unauthenticated), or that drop
+    /// the link, are passed over, and the same request, sent to the
+    /// holder next, verifies.
+    func testReaderPassesOverImpostors() async throws {
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        let impostors = ImpostorTransport(readerEnd, impostors: [Data([0x01]), Data(base64Encoded: "oWZzdGF0dXMU")!, nil])
+        let holder = try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in holderEnd }
+        let reader = try s.reader.start(qrCode: holder.qrCode, docType: Self.docType,
+                                        elements: [Self.namespace: ["family_name", "given_name"]], timeouts: timeouts) { _ in impostors }
+        XCTAssertEqual(reader.mode, .peripheralServer)
+        _ = try await request(holder)
+        _ = try await holder.respond(document: 0, credentialID: s.mdocID,
+                                     elements: [.init(namespace: Self.namespace, identifier: "family_name", retain: false)])
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .verified(let v) = result else { return XCTFail("reader: \(result)") }
+        XCTAssertEqual(v.claims[Self.namespace]?["family_name"], .string("Doe"))
+        XCTAssertEqual(impostors.rejects, 3)
+        XCTAssertEqual(impostors.connects, 4)
+        XCTAssertEqual(impostors.sent, 4, "the same request to each")
+    }
+
+    /// A bare status 20 from the only device found is reported as
+    /// declined, once no other device is found within the connect
+    /// timeout.
+    func testReaderReportsAnUnansweredDeclineOnceTheTimeIsUp() async throws {
+        let s = try await setup()
+        defer { s.env.close() }
+        let (holderEnd, readerEnd) = PipeTransport.pair()
+        let impostors = ImpostorTransport(readerEnd, impostors: [Data(base64Encoded: "oWZzdGF0dXMU")!], holderFound: false)
+        let started = Date()
+        let reader = try s.reader.start(qrCode: try s.wallet.startProximityPresentation(timeouts: timeouts) { _ in holderEnd }.qrCode,
+                                        docType: Self.docType, elements: [Self.namespace: ["family_name"]],
+                                        timeouts: ProximityTimeouts(connectSeconds: 2, requestSeconds: 10, idleSeconds: 30)) { _ in impostors }
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .declined = result else { return XCTFail("reader: \(result)") }
+        XCTAssertEqual(impostors.rejects, 1)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 1.5)
     }
 
     /// A response the transport can't deliver fails the session as a

@@ -1653,7 +1653,7 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   subscribe and write 0x01 to State. Until the 2026-11-17 audit
   (F-09), the first device to write 0x01 became the peer: advertising
   stopped, every other device was ignored, `EitherTransport` closed the
-  Ident-checked central client path, and one junk SessionEstablishment
+  central client path, and one junk SessionEstablishment
   from it then ended the session at once with status 10 (or its
   silence held the session until the request timeout). That needed no
   engagement, repeated for every session and every holder in range,
@@ -1719,7 +1719,25 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   or leaves half a message, costs one attempt rather than the session.
 - **A holder in central client mode checks the reader's Ident**
   (§8.3.3.1.1.4) before starting the session, and refuses to start
-  without one. A device whose Ident was read and differs, another
+  without one. The Ident tells sessions apart; it doesn't keep out a
+  device that copied it. The reader's GATT server serves it to any
+  central, its service UUID is in its adverts, and the Ident is a
+  function of the QR code's EDeviceKey alone, so a device that never
+  saw the QR code can read both from the reader and serve them from
+  its own GATT server. Until the 2026-11-18 audit (PRX-2), the holder
+  treated a device that passed the check as its reader: when Go
+  rejected that device's first message, `reject()` was the protocol's
+  no-op in `GattClientTransport`, and the holder went on receiving from
+  it until the request timeout. Contrary to the 2026-11-17 audit's
+  note, a session in central client mode was never safe from a device
+  that hadn't seen the QR code. Now `GattClientTransport.reject()` disconnects,
+  passes over the device for 10 seconds (`IgnoredDevices`), and the
+  next `receive` scans and connects again, to the next device
+  advertising the UUID with the right Ident, within the holder's
+  request timeout, as the GATT server transport goes on listening for
+  others. A device that connects to the reader first still makes it
+  stop advertising (the reader's residual below), and then only it can
+  be found. A device whose Ident was read and differs, another
   session's reader advertising the same service, or that has no mdoc
   service, characteristic or Ident, is disconnected and passed over for
   10 seconds (`IgnoredDevices`), and the scan goes on, without costing
@@ -1738,6 +1756,38 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   up on, including those that arrive between attempts, are ignored.
   The rule is unit-tested on both platforms (`IgnoredDevicesTests`;
   Kotlin `IgnoredDevicesTest`); the transports around it aren't.
+- **A reader in mdoc peripheral server mode passes over devices whose
+  answers aren't the holder's.** The reader takes that mode whenever
+  the holder offers only it, and is then the GATT client: it connects
+  to whichever device advertises the holder's service UUID, which the
+  holder's adverts carry in the clear, and that mode has no Ident.
+  Until the 2026-11-18 audit (PRX-1), the reader sent its request to
+  the first such device and handed its first answer to Go, which ended
+  the session on it: junk failed it, and a bare status 20, which isn't
+  encrypted, was reported as the holder declining, though the impostor
+  needed neither the QR code nor a key. That was F-09's weakness on
+  the reader's side. Now the reader hands answers in that mode to
+  `TryHandleMessage` (`ReaderSession.TryVerifyDocuments`): one that
+  doesn't decode or decrypt, or carries only a status, is the
+  `rejected` event and leaves the Go session waiting. The reader then
+  passes over that device (`reject()`, the same as the holder's GATT
+  client above), as it does one whose link is lost before it answers,
+  connects to the next device advertising the UUID, and sends it the
+  same SessionEstablishment, which the holder takes once. However many
+  devices are passed over, the search stops at the connect timeout
+  (`connectSeconds` or `connect`, 60 seconds by default, counted from
+  the start of the session): the outcome is then the last rejected
+  answer, so a bare status 20, the genuine holder's decline among
+  them, is reported as declined only once no other device answers in
+  that time, or, with none, the lost link. Over NFC, and as the GATT
+  server in central client mode, the reader still takes the first
+  answer. What remains: a device that answers nothing holds the reader
+  until the idle timeout (300 seconds by default), and a decline now
+  takes up to the connect timeout to report. Covered by unit tests with
+  in-memory transports (`testReaderPassesOverImpostors`,
+  `testReaderReportsAnUnansweredDeclineOnceTheTimeIsUp`; Kotlin
+  `ReaderExchangeTest`), and Go's `TestTryVerifyDocuments_RejectsRepliesNotFromTheHolder`;
+  not yet tried against a second device over the radio.
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,

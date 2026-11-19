@@ -42,6 +42,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.Mobile
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.ProximityPresentation as MobileProximityPresentation
 import dev.idfoundry.oid4vcwallet.gomobile.mobile.ProximityReader as MobileProximityReader
@@ -53,7 +54,15 @@ import dev.idfoundry.oid4vcwallet.gomobile.mobile.ProximityReaderSession as Mobi
  * seconds of inactivity before ending a session, §9.1.1.4).
  */
 public data class ProximityTimeouts(
-    /** For the other device to connect, after the QR code is shown or scanned. */
+    /**
+     * For the other device to connect, after the QR code is shown or
+     * scanned. A reader in mdoc peripheral server mode connects to
+     * whichever device advertises the holder's service, so within this it
+     * also passes over devices whose answers aren't the holder's and sends
+     * its request to the next: a bare "declined", which isn't
+     * authenticated, is reported once no other device answers in that
+     * time.
+     */
     val connect: Duration = 60.seconds,
     /**
      * For the reader's request, once connected. As the holder's GATT
@@ -1222,6 +1231,9 @@ public class ProximityReaderSession internal constructor(
 
     private suspend fun run() {
         try {
+            // The time to find the holder's device: to connect, and to pass
+            // over devices whose answers aren't the holder's (ReaderExchange).
+            val deadline = TimeSource.Monotonic.markNow() + timeouts.connect
             try {
                 withTimeout(timeouts.connect) { transport.connect() }
             } catch (e: TimeoutCancellationException) {
@@ -1238,14 +1250,14 @@ public class ProximityReaderSession internal constructor(
                 val requestsJSON = json.encodeToString(ListSerializer(DocumentRequestJSON.serializer()), documents.map { DocumentRequestJSON(it.docType, it.elements) })
                 decode<SendJSON>(OID4VC.offMain { handle.requestDocuments(requestsJSON) })
             }
-            transport.send(request.send)
-            _state.compareAndSet(State.Connecting, State.WaitingForResponse)
-            val answer = try {
-                withTimeout(timeouts.idle) { transport.receive() }
-            } catch (e: TimeoutCancellationException) {
-                throw ProximityException(ProximityException.Reason.TimedOut, "the holder didn't respond in time", e)
-            }
-            val event = decode<ReaderEventJSON>(handle.handleMessage(answer))
+            // In mdoc peripheral server mode the reader connects to whichever
+            // device advertises the holder's service UUID: each answer is tried.
+            val passesOver = !usesNfcData && mode == ProximityBLEMode.PERIPHERAL_SERVER
+            val event = ReaderExchange(
+                transport, passesOver, deadline, timeouts.idle,
+                handle = { answer -> decode(if (passesOver) handle.tryHandleMessage(answer) else handle.handleMessage(answer)) },
+                sent = { _state.compareAndSet(State.Connecting, State.WaitingForResponse) },
+            ).run(request.send)
             sendLast(event)
             finish(
                 when {

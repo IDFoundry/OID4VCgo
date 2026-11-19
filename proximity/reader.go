@@ -552,6 +552,12 @@ func (v Verified) Credential() verifier.VerifiedCredential {
 // the session, since this reader sends one request. After
 // EstablishmentDocuments asked for more than one document, use
 // VerifyDocuments.
+//
+// Where the device answering needn't be the holder — BLE in mdoc
+// peripheral server mode, where the reader connects to whichever device
+// advertises the holder's service UUID — use TryVerify instead: here
+// one reply from a device that never saw the engagement ends the
+// session.
 func (r *ReaderSession) Verify(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) (Verified, error) {
 	if len(r.requests) > 1 {
 		return Verified{}, fmt.Errorf("proximity: %d documents requested: use VerifyDocuments", len(r.requests))
@@ -571,22 +577,79 @@ func (r *ReaderSession) Verify(ctx context.Context, msg []byte, roots *x509.Cert
 // you need came back. A document of a type not requested, or a
 // document that doesn't verify, fails them all.
 func (r *ReaderSession) VerifyDocuments(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) ([]Verified, error) {
+	return r.verifyReply(ctx, msg, roots, now, false)
+}
+
+// TryVerify is Verify for a reply whose sender isn't yet known to be
+// the holder. A reply that doesn't decode or decrypt — its sender
+// doesn't hold the key this session's EReaderKey agrees — or that
+// carries only a status, which anyone in radio range can send
+// (§9.1.1.4), returns an error wrapping ErrResponseRejected and leaves
+// the session waiting for the holder's reply: send nothing back, pass
+// over the device that sent it, and send the same SessionEstablishment
+// to the next device advertising the holder's service UUID. The holder
+// takes it once. A rejected bare status 20 wraps ErrDeclined too: if no
+// other device answers, report it as Verify's ErrDeclined, which is no
+// more authenticated.
+//
+// There is no limit on rejections: any limit would let devices that
+// never saw the engagement end the session, by sending that many. What
+// bounds the search is the caller's own time budget for finding the
+// holder. A reply that decrypts ends the session as Verify's does,
+// whether it verifies or not.
+//
+// In mdoc peripheral server mode the reader connects to whichever
+// device advertises the holder's service UUID, which the holder's
+// adverts carry in the clear (§8.3.3.1.1), so use TryVerify there. Over
+// NFC the device in the field is the one the reader sent its request
+// to, and Verify does.
+func (r *ReaderSession) TryVerify(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) (Verified, error) {
+	if len(r.requests) > 1 {
+		return Verified{}, fmt.Errorf("proximity: %d documents requested: use TryVerifyDocuments", len(r.requests))
+	}
+	vs, err := r.TryVerifyDocuments(ctx, msg, roots, now)
+	if err != nil {
+		return Verified{}, err
+	}
+	return vs[0], nil
+}
+
+// TryVerifyDocuments is VerifyDocuments for a reply whose sender isn't
+// yet known to be the holder, as TryVerify is Verify.
+func (r *ReaderSession) TryVerifyDocuments(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time) ([]Verified, error) {
+	return r.verifyReply(ctx, msg, roots, now, true)
+}
+
+// verifyReply is VerifyDocuments, or, rejectable, TryVerifyDocuments.
+func (r *ReaderSession) verifyReply(ctx context.Context, msg []byte, roots *x509.CertPool, now time.Time, rejectable bool) ([]Verified, error) {
 	if r.closed {
 		return nil, ErrSessionClosed
 	}
 	if !r.sent {
 		return nil, fmt.Errorf("proximity: no request sent")
 	}
+	if r.assurance == verifier.AssuranceProduction && certchain.IsSystemPool(roots) {
+		r.close()
+		return nil, errors.New("proximity: under AssuranceProduction, roots is the system root pool: it anchors every public CA's certificates; trust the IACAs")
+	}
+	// receive changes nothing on an error: the cipher's counter moves
+	// only once a message decrypts.
+	data, status, err := receive(r.cipher, msg)
+	if rejectable {
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("%w: %w", ErrResponseRejected, err)
+		case data == nil && *status == StatusSessionTermination:
+			return nil, fmt.Errorf("%w: status 20 alone, unauthenticated: %w", ErrResponseRejected, ErrDeclined)
+		case data == nil:
+			return nil, fmt.Errorf("%w: status %d alone, unauthenticated", ErrResponseRejected, *status)
+		}
+	}
 	r.closed = true
 	defer r.close()
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if r.assurance == verifier.AssuranceProduction && certchain.IsSystemPool(roots) {
-		return nil, errors.New("proximity: under AssuranceProduction, roots is the system root pool: it anchors every public CA's certificates; trust the IACAs")
-	}
-
-	data, status, err := receive(r.cipher, msg)
 	if err != nil {
 		return nil, err
 	}

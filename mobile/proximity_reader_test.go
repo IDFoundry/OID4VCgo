@@ -542,3 +542,72 @@ func TestTestEnv_ProximityReader(t *testing.T) {
 		t.Errorf("the holder sees the reader as %+v", got)
 	}
 }
+
+// In mdoc peripheral server mode the reader connects to whichever device
+// advertises the holder's service UUID: TryHandleMessage rejects an
+// answer that doesn't show its sender holds the session's keys — junk,
+// or a bare status, which isn't encrypted — sending nothing and keeping
+// the session, and the genuine holder's answer, to the same request,
+// then verifies.
+func TestSessions_ProximityReaderTriesAnswers(t *testing.T) {
+	reader := newTestReader(t)
+	h := newHarness(t, false).withReaderRoots(t, reader)
+	var mdocID string
+	for _, c := range h.receive(t) {
+		if c.Format == "mso_mdoc" {
+			mdocID = c.ID
+		}
+	}
+	cfg, ks := readerConfig(t, h, &reader, nil)
+	rd, err := NewProximityReader(cfg, ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := h.w.StartProximityPresentation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := rd.Start(decode[struct {
+		QRCode string `json:"qr_code"`
+	}](t, holder.Engagement()).QRCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := s.Request("org.example.test.1", `{"org.example.test.1": ["family_name"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, reason string
+		answer       []byte
+	}{
+		{"not CBOR", "error", []byte{0x01}},
+		{"bare status 20", "declined", proximity.StatusMessage(proximity.StatusSessionTermination)},
+		{"bare status 10", "error", proximity.StatusMessage(proximity.StatusSessionEncryptionError)},
+	} {
+		got := decode[readerEvent](t, s.TryHandleMessage(tc.answer))
+		if got.ABI != ABIVersion || got.Event != "rejected" || got.Reason != tc.reason || got.Send != "" || got.Verified != nil {
+			t.Fatalf("%s: TryHandleMessage = %+v", tc.name, got)
+		}
+		if (tc.reason == "error") != strings.HasPrefix(got.Error, "["+CodeProtocol+"]") {
+			t.Errorf("%s: error %q", tc.name, got.Error)
+		}
+	}
+
+	if ev := decode[proximityEvent](t, holder.HandleMessage(NewOperation(0), sent(t, decode[struct{ Send string }](t, req).Send))); ev.Event != "request" {
+		t.Fatalf("holder: %+v", ev)
+	}
+	out, err := holder.Respond(NewOperation(0), 0, mdocID, `[["org.example.test.1","family_name"]]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := sent(t, decode[struct{ Send string }](t, out).Send)
+	if got := decode[readerEvent](t, s.TryHandleMessage(answer)); got.Event != "verified" || got.Verified == nil {
+		t.Fatalf("the holder's answer after rejected ones: %+v", got)
+	}
+	// The answer that decrypted ended the session.
+	if got := decode[readerEvent](t, s.TryHandleMessage(answer)); got.Event != "ended" || got.Reason != "error" {
+		t.Errorf("after the holder's answer: %+v", got)
+	}
+}

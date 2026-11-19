@@ -66,15 +66,30 @@ var (
 	// transport can tell. The error also wraps why (ErrSessionEncryption
 	// or ErrCBORDecoding), but StatusFor gives it no reply.
 	ErrEstablishmentRejected = errors.New("proximity: SessionEstablishment not for this session")
+
+	// ErrResponseRejected is ReaderSession.TryVerify's and
+	// TryVerifyDocuments' error for a reply that doesn't show its
+	// sender holds this session's keys: it doesn't decode or decrypt,
+	// or it carries only a status, which isn't encrypted (§9.1.1.4).
+	// Its sender needn't be the holder: in mdoc peripheral server mode
+	// any device can advertise the holder's service UUID. The session
+	// is still waiting for the holder's reply: send nothing back, pass
+	// over the device that sent it, and send the same
+	// SessionEstablishment to the next. The error also wraps why
+	// (ErrSessionEncryption or ErrCBORDecoding), or ErrDeclined for a
+	// bare status 20, which is what to report if no other device
+	// answers; StatusFor gives it no reply.
+	ErrResponseRejected = errors.New("proximity: reply not from this session's mdoc")
 )
 
 // StatusFor maps an error from this package to the status code the
 // caller sends back with StatusMessage before closing the transport;
 // ok is false for an error with no status reply, such as one from
-// ErrSessionClosed, ErrEstablishmentRejected or a verification failure.
+// ErrSessionClosed, ErrEstablishmentRejected, ErrResponseRejected or a
+// verification failure.
 func StatusFor(err error) (status uint64, ok bool) {
 	switch {
-	case errors.Is(err, ErrEstablishmentRejected):
+	case errors.Is(err, ErrEstablishmentRejected), errors.Is(err, ErrResponseRejected):
 		return 0, false
 	case errors.Is(err, ErrSessionEncryption):
 		return StatusSessionEncryptionError, true

@@ -182,6 +182,36 @@ func decodeCoseKey(b []byte) (*ecdsa.PublicKey, error) {
 	return ec, nil
 }
 
+// MaxEReaderKeyBytes is the most EReaderKeyBytes a holder takes: an EC2
+// COSE_Key on P-521, the largest curve, is under 150 bytes.
+const MaxEReaderKeyBytes = 1024
+
+// eReaderKeyLabels are the COSE_Key parameters a holder takes in
+// EReaderKeyBytes (RFC 9052 §7.1, RFC 9053 §7.1.1): kty, kid, alg, crv,
+// x and y.
+var eReaderKeyLabels = map[int64]bool{1: true, 2: true, 3: true, -1: true, -2: true, -3: true}
+
+// decodeEReaderKey decodes the reader's EReaderKeyBytes as decodeCoseKey
+// does, refusing more than MaxEReaderKeyBytes, or a parameter outside
+// eReaderKeyLabels. The holder's device key signs a SessionTranscript
+// carrying these bytes as sent (§9.1.5.1): it mustn't carry anything
+// else the reader chose.
+func decodeEReaderKey(b []byte) (*ecdsa.PublicKey, error) {
+	if len(b) > MaxEReaderKeyBytes {
+		return nil, fmt.Errorf("proximity: EReaderKeyBytes is %d bytes, over %d: %w", len(b), MaxEReaderKeyBytes, ErrCBORDecoding)
+	}
+	var params map[int64]cbor.RawMessage
+	if err := decMode.Unmarshal(b, &params); err != nil {
+		return nil, fmt.Errorf("proximity: decode COSE_Key: %w: %w", ErrCBORDecoding, err)
+	}
+	for label := range params {
+		if !eReaderKeyLabels[label] {
+			return nil, fmt.Errorf("proximity: COSE_Key parameter %d isn't one an ephemeral key has: %w", label, ErrCBORDecoding)
+		}
+	}
+	return decodeCoseKey(b)
+}
+
 // compressedCoseKey is a COSE_Key whose y may be a bool, the sign bit of
 // a compressed point (RFC 9053 §7.1.1).
 type compressedCoseKey struct {
