@@ -8,9 +8,9 @@
 # request's wallet is built from its own checkout (OID4VCGO_SRC), so a
 # regression shows before it's released; the schedule and each release
 # test published versions. The weekly run tests polaris-id's main
-# instead of the pin (polaris-oid4vp has no release since), to show a
-# break before the pin moves: unreviewed source, on the same disposable
-# runner, read-only token and no secrets.
+# instead of the pin, to show a break before the pin moves: unreviewed
+# source, on the same disposable runner, read-only token and no
+# secrets.
 name: Polaris interop
 
 on:
@@ -51,11 +51,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: EgorKhaklin/polaris-id
-          # polaris-oid4vp v1.0.0, reviewed 2026-10-11 (from 84a805f: the
-          # verifier unchanged; run.sh gained OID4VCGO_BIN/OID4VCGO_SRC
-          # and digest-pinned images). Move it only after reading the
-          # change. The weekly run takes main.
-          ref: ${{ inputs.polaris_ref || (github.event.schedule == '0 8 * * 1' && 'main') || '6f2b890aa56678f090909dd265cf4f113bf04ddc' }}
+          # polaris-oid4vp 1.2.0, reviewed 2026-11-19 (from 6f2b890a,
+          # v1.0.0: serve binds 127.0.0.1 by default and run.sh passes
+          # --bind 0.0.0.0; x5c leaf critical extensions and name
+          # constraints checked; a newer digest-pinned golang:1.26; no
+          # outbound calls or subprocesses added). Move it only after
+          # reading the change. The weekly run takes main.
+          ref: ${{ inputs.polaris_ref || (github.event.schedule == '0 8 * * 1' && 'main') || '6afe4e032687f653b9fdf3d4ee404c34ec788ebc' }}
           path: polaris-id
           persist-credentials: false
 
