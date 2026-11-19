@@ -295,7 +295,7 @@ It runs on each pull request (outside `mobile/`), with the wallet built
 from the pull request's checkout, so a regression shows before it's
 released; daily, against the newest release; on each release, against
 that release's tag (not sqlstore's); and by hand. polaris-id is pinned
-to a reviewed commit (polaris-oid4vp v1.0.0), since its verifier runs
+to a reviewed commit (polaris-oid4vp 1.2.0), since its verifier runs
 from source on the runner (a read-only token, no secrets). Move the pin
 only after reading the change. The weekly run tests polaris-id's `main`
 instead, unreviewed, to show a break before the pin moves, and opens an
