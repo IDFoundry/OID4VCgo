@@ -9,6 +9,25 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.83.0 → v0.84.0
 
+### FAPIgo v0.77.0: a claim may be requested with at most 64 values
+
+OID4VCgo now requires FAPIgo v0.77.0 and fapigo/sqlstore v0.9.1; see
+FAPIgo's UPGRADING.md, section v0.77.0. An Authorization Server
+(`fapigo/server`) refuses, with `invalid_request` naming the claim, a
+PAR or backchannel authentication request whose OIDC `claims`
+parameter (OIDC Core §5.5.1) gives one claim, in `id_token` or
+`userinfo`, more than 64 `values`. Give a claim at most 64 acceptable
+values; real requests give a handful. Before, a large `value` with many
+`values` cost the Authorization Server about 3 s of CPU for each
+completed authorization. DCQL `values` in a presentation request are
+unaffected.
+
+A `storage.GrantRegistry` of your own may now honour the new
+`storage.GrantListing.Key`, listing only the subject's unexpired entry
+with that key, so a refresh-token issuance no longer reads all of the
+subject's grants. A store that ignores it stays correct, only slower;
+fapigo/sqlstore v0.9.1 honours it.
+
 ### `VerifyResponse` refuses a response after four failed presentations
 
 `VerifyResponse`, and so `Transactions.HandleResponse` and

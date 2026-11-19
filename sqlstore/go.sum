@@ -15,8 +15,12 @@ github.com/idfoundry/fapigo v0.75.0 h1:xWBCgKI3ubZq+nMMZpYKFtpZX9ScKDAuNNrfxS3IW
 github.com/idfoundry/fapigo v0.75.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo v0.76.0 h1:s7pnzjRr6963eXMcCWvFzfPC+BM/Scw/Iq0oZCqBLvo=
 github.com/idfoundry/fapigo v0.76.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
+github.com/idfoundry/fapigo v0.77.0 h1:Fc1Ru4FzEtYKmLwC5CT+Z2sD88hMvWx8medmCNzvhrY=
+github.com/idfoundry/fapigo v0.77.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo/sqlstore v0.8.1 h1:cmI5A2MvCMmCGbleaLWwGqq1s5dPlFUN0LIqR4cVg7s=
 github.com/idfoundry/fapigo/sqlstore v0.8.1/go.mod h1:34MRefdAY42GNpZQBDajwVdHBo0iopXEpp9j3nQqeHM=
+github.com/idfoundry/fapigo/sqlstore v0.9.1 h1:TikT/HQNfCc+1ySBFf7EORmjHqGfPwjc3Fpru238jHo=
+github.com/idfoundry/fapigo/sqlstore v0.9.1/go.mod h1:iP57T3gMdVvJcGqFcGSiTxQpqYzbVp2qtUqxcLR1nwA=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
