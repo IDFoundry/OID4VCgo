@@ -29,12 +29,11 @@ The Request Objects `Transactions` serves — `BeginWith`'s, each
 `RequestObjectPost`'s and `BeginDCAPI`'s — now carry `iat`, when they
 were signed, and `exp`, the request's `ExpiresAt` (RFC 7519). A Wallet
 that checks `exp`, as this package's does, refuses a copy served after
-the request stopped being answerable. One whose
-clock runs ahead of the Verifier's by more than the request's
-remaining `Lifetime` refuses it too, so keep the Verifier's clock
-synchronized. `BuildAuthorizationRequest` and
-`BuildDCAPIAuthorizationRequest`, which know no lifetime, are
-unchanged.
+the request stopped being answerable. One whose clock runs ahead of
+the Verifier's by more than the time the request has left refuses it
+too, so keep the Verifier's clock synchronized.
+`BuildAuthorizationRequest` and `BuildDCAPIAuthorizationRequest`, which
+know no lifetime, are unchanged.
 
 ### A Digital Credentials API origin must be one a platform reports (`wallet`, `walletflow`, `mobile`)
 
