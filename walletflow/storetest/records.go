@@ -92,6 +92,10 @@ func fullAuthorization(state string, v int) walletflow.PendingAuthorization {
 		},
 		AuthorizationServer: "https://as.example/" + text("as"), InstanceKeyID: text("instance"), DPoPKeyID: text("dpop"),
 		CreatedAt: at(0, v),
+		OfferedTypes: []walletflow.OfferedType{
+			{ConfigurationID: text("config-a"), Format: text("format-a"), VCT: "https://vct.example/" + text("vct-a"), DocType: text("doctype-a")},
+			{ConfigurationID: text("config-b"), Format: text("format-b"), VCT: "https://vct.example/" + text("vct-b"), DocType: text("doctype-b")},
+		},
 	}
 }
 
