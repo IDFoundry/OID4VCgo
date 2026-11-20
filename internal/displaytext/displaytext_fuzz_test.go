@@ -19,6 +19,7 @@ func FuzzClean(f *testing.F) {
 		"Bank\u2028Verified\u2029", "\ufeffEx\u200bam\u2060ple\u00ad", "Bank\U000e0041\U000e007f",
 		"\u0645\u06cc\u200c\u062e", "\U0001f469\u200d\U0001f4bb", "bad\xffbyte", "\ufffd", "a \u0085 b", "\t\r\n",
 		strings.Repeat("\u00e9", 40), "x\u2026", "Bank\u3164\u115f\u1160\uffa0\u2800\u034f",
+		"\U0001f469\ufe0f Bank\ufe0e\U000e0100\u180b",
 	} {
 		f.Add(seed, uint8(16))
 	}
@@ -66,7 +67,7 @@ func checkShown(t *testing.T, in, out string) {
 			t.Fatalf("Clean(%q) = %q, with %U", in, out, r)
 		case unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d':
 			t.Fatalf("Clean(%q) = %q, with the format character %U", in, out, r)
-		case r == '\u2800', unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r):
+		case r == '\u2800', unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
 			t.Fatalf("Clean(%q) = %q, with the invisible character %U", in, out, r)
 		}
 	}

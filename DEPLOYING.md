@@ -198,7 +198,11 @@ each, not a deployment template" says what it does differently.
   own, and a revocation reaches another replica's readers only after
   that replica's `CacheFor`. A replica waits on another's lease to sign
   only for a bounded time, then signs its own, so one that can't sign
-  doesn't hold the others back.
+  doesn't hold the others back. An identifier list keeps no version in
+  the store, so its tokens are ordered by when they were signed: keep
+  the replicas' clocks synchronised, or one whose clock runs ahead can
+  hold a revocation `Invalidate` was called for back by up to
+  `CacheFor` plus the skew.
 - [ ] **Key Attestations bound to their Wallet Provider by anchor:**
   where `X5CAttestationVerifier.Roots` certify several Wallet
   Providers, as a shared trust list does, set

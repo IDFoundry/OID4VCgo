@@ -1000,8 +1000,12 @@ presentation's candidates `"shown_to_verifier"` and `"linkable_here"`.
   "issuer_logo", "name", "description", "logo", "background_color",
   "text_color"}`. A logo is `{"uri", "alt_text"}`, and only an https URL
   of a public host name (no IP address, single label, or name under
-  `localhost`, `local`, `home.arpa`, `internal` or `lan`) or a `data:`
-  image is passed on.
+  `localhost`, `local`, `home.arpa`, `internal` or `lan`, nor a host
+  whose last label isn't ASCII, which a URL parser may map to one) or a
+  `data:` image is passed on. The host is judged by its name, and a
+  public name can resolve to a private address: load the logo through a
+  client that refuses to connect to a loopback, private or link-local
+  address.
 - `valid_until` is when the credential expires.
 - `copies` is how many copies the wallet holds, each bound to its own
   key, and `copies_left` how many no Verifier has seen. A presentation

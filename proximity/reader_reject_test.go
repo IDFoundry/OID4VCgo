@@ -161,7 +161,7 @@ func TestTryVerify_EndsOnADecryptedReply(t *testing.T) {
 // sent (§9.1.5.1). The holder takes no more than MaxEReaderKeyBytes, and
 // only the parameters an ephemeral key has, so the reader can't put a
 // statement of its own under the holder's signature; kid and alg are
-// taken.
+// taken only as RFC 9052 §7.1 types them, and at most 64 bytes long.
 func TestTrySessionEstablishment_RefusesReaderChosenKeyParameters(t *testing.T) {
 	readerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -184,6 +184,12 @@ func TestTrySessionEstablishment_RefusesReaderChosenKeyParameters(t *testing.T) 
 		{"a text label", map[any]any{1: ck.Kty, -1: ck.Crv, -2: ck.X, -3: ck.Y, "note": "hi"}, true},
 		{"key_ops", map[any]any{1: ck.Kty, 4: []int{7}, -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
 		{"an oversized kid", map[any]any{1: ck.Kty, 2: statement[:MaxEReaderKeyBytes], -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
+		{"a kid of 64 bytes", map[any]any{1: ck.Kty, 2: statement[:64], -1: ck.Crv, -2: ck.X, -3: ck.Y}, false},
+		{"a kid of 65 bytes", map[any]any{1: ck.Kty, 2: statement[:65], -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
+		{"a text kid", map[any]any{1: ck.Kty, 2: "reader-1", -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
+		{"a text alg", map[any]any{1: ck.Kty, 3: "ECDH-ES+HKDF-256", -1: ck.Crv, -2: ck.X, -3: ck.Y}, false},
+		{"a text alg of 65 bytes", map[any]any{1: ck.Kty, 3: string(statement[:65]), -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
+		{"a structured alg", map[any]any{1: ck.Kty, 3: map[string]any{"n": []int{1, 2, 3}}, -1: ck.Crv, -2: ck.X, -3: ck.Y}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			holder, err := NewDeviceSession(nil)

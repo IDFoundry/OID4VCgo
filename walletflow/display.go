@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
@@ -29,11 +30,18 @@ import (
 // data: image, and alternative text. An https URI naming an IP address
 // or a local name (a single label, or one under localhost, local,
 // home.arpa, internal or lan) is dropped: loading it would have the
-// phone reach into its own network for whoever wrote the metadata. The
-// URI is the issuer's: loading it tells the issuer, or whoever serves
-// it, that the holder is looking, so an app should fetch it once — when
-// the holder accepts the credential, not on the offer's preview — and
-// keep it.
+// phone reach into its own network for whoever wrote the metadata. So
+// is one whose host isn't ASCII in its last label (or, under arpa, the
+// one before it), which a URL parser may map to such a name (IDNA, UTS
+// #46): １２７.０.０.１ is 127.0.0.1 to it. An internationalized name in
+// its A-labels (xn--…), as RFC 3986 §3.2.2 asks a URI to carry it, is
+// judged as any other. This judges the name, not the address it
+// resolves to, and a public name can resolve to a private address: an
+// app must load a logo through a client that refuses to connect to a
+// loopback, private or link-local address. The URI is the issuer's:
+// loading it tells the issuer, or whoever serves it, that the holder is
+// looking, so an app should fetch it once — when the holder accepts the
+// credential, not on the offer's preview — and keep it.
 type Logo struct {
 	URI     string
 	AltText string
@@ -160,11 +168,21 @@ func logoOf(l *oid4vci.Logo) *Logo {
 // single label (router, a search-domain name); or a name under a
 // special-use or local-only domain, localDomains. A host whose last
 // label is a number is an IPv4 address to a WHATWG URL parser (as
-// 2130706433 or 0x7f.1 are 127.0.0.1), so it counts as one. A public
-// name whose DNS answers a private address can't be told apart without
-// resolving it.
+// 2130706433 or 0x7f.1 are 127.0.0.1), so it counts as one. A URL
+// parser maps a host that isn't ASCII before reading it (IDNA, UTS
+// #46), and full-width and other compatibility forms of digits, letters
+// and full stops become ASCII there: １２７.０.０.１ is 127.0.0.1, and
+// nas.ｌｏｃａｌ is nas.local. Its last label, and under arpa the one
+// before it, decide what such a host is, and an ASCII label maps to
+// itself, lower-cased, so a host that isn't ASCII counts as local
+// unless those labels are ASCII (asciiTail). A public name whose DNS
+// answers a private address can't be told apart without resolving it.
 func localLogoHost(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	host = strings.TrimSuffix(host, ".")
+	if !isASCII(host) && !asciiTail(host) {
+		return true
+	}
+	host = strings.ToLower(host)
 	if _, err := netip.ParseAddr(host); err == nil || !strings.Contains(host, ".") {
 		return true
 	}
@@ -175,6 +193,28 @@ func localLogoHost(host string) bool {
 	}
 	last := host[strings.LastIndex(host, ".")+1:]
 	return last != "" && (strings.Trim(last, "0123456789") == "" || strings.HasPrefix(last, "0x"))
+}
+
+// asciiTail reports whether host's last label is ASCII, and under arpa
+// the label before it too: the labels that decide whether a name is an
+// IP address or a local one.
+func asciiTail(host string) bool {
+	labels := strings.Split(host, ".")
+	last := labels[len(labels)-1]
+	if !isASCII(last) {
+		return false
+	}
+	return !strings.EqualFold(last, "arpa") || len(labels) < 2 || isASCII(labels[len(labels)-2])
+}
+
+// isASCII reports whether s is ASCII.
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 // localDomains are the domains whose names only a local network

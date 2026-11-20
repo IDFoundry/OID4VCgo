@@ -998,9 +998,14 @@ What a wallet's UI needs to show a credential, from the SDK:
     to refuse. An https URL naming an IP address, a single-label host
     (`router`) or a name under `localhost`, `local`, `home.arpa`,
     `internal` or `lan` is dropped too: an offer's QR code would
-    otherwise make the phone request hosts on its own network. A public
-    name whose DNS answers a private address isn't caught; the app's
-    image loader is the place to refuse that. The app loads logos
+    otherwise make the phone request hosts on its own network. So is
+    one whose host isn't ASCII in its last label: an image loader maps
+    such a host (IDNA, UTS #46) before resolving it, and full-width or
+    other compatibility forms of digits, letters and full stops can
+    spell `127.0.0.1` or `printer.local`; an issuer writes an
+    internationalized name in its A-labels (`xn--…`). A public name
+    whose DNS answers a private address isn't caught; the app's image
+    loader is the place to refuse that. The app loads logos
     itself; Go fetches none. Loading one tells whoever serves it that
     the holder is looking, so fetch it once, when the holder accepts
     the credential rather than on the offer's preview, and keep it,

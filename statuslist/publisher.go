@@ -274,7 +274,11 @@ func acceptsGzip(acceptEncoding []string) bool {
 // ServeHTTP has no token to fall back on if signing fails. With Tokens,
 // this replica signs that token whatever the store holds, and stores it
 // for the others, which serve it from their next check: a store that
-// keeps list versions needs no Invalidate for that.
+// keeps list versions needs no Invalidate for that. A store that keeps
+// none takes the token only if no token signed later, by another
+// replica's clock, is stored: one whose clock runs ahead holds every
+// replica, this one too, to its older token for up to CacheFor plus
+// the skew (see TokenStore).
 func (p *Publisher) Invalidate() {
 	for i := range p.cached {
 		p.cached[i].Invalidate()

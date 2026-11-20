@@ -186,16 +186,17 @@ func decodeCoseKey(b []byte) (*ecdsa.PublicKey, error) {
 // COSE_Key on P-521, the largest curve, is under 150 bytes.
 const MaxEReaderKeyBytes = 1024
 
-// eReaderKeyLabels are the COSE_Key parameters a holder takes in
-// EReaderKeyBytes (RFC 9052 §7.1, RFC 9053 §7.1.1): kty, kid, alg, crv,
-// x and y.
-var eReaderKeyLabels = map[int64]bool{1: true, 2: true, 3: true, -1: true, -2: true, -3: true}
+// maxEReaderKeyParamBytes is the longest kid, or alg written as text, a
+// holder takes in EReaderKeyBytes.
+const maxEReaderKeyParamBytes = 64
 
 // decodeEReaderKey decodes the reader's EReaderKeyBytes as decodeCoseKey
-// does, refusing more than MaxEReaderKeyBytes, or a parameter outside
-// eReaderKeyLabels. The holder's device key signs a SessionTranscript
-// carrying these bytes as sent (§9.1.5.1): it mustn't carry anything
-// else the reader chose.
+// does, refusing more than MaxEReaderKeyBytes, or a parameter
+// checkEReaderKeyParam refuses. The holder's device key signs a
+// SessionTranscript carrying these bytes as sent (§9.1.5.1), so they
+// mustn't carry anything else the reader chose: besides its key, all a
+// reader chooses there is how it encodes the map, and a short kid and
+// alg.
 func decodeEReaderKey(b []byte) (*ecdsa.PublicKey, error) {
 	if len(b) > MaxEReaderKeyBytes {
 		return nil, fmt.Errorf("proximity: EReaderKeyBytes is %d bytes, over %d: %w", len(b), MaxEReaderKeyBytes, ErrCBORDecoding)
@@ -204,12 +205,49 @@ func decodeEReaderKey(b []byte) (*ecdsa.PublicKey, error) {
 	if err := decMode.Unmarshal(b, &params); err != nil {
 		return nil, fmt.Errorf("proximity: decode COSE_Key: %w: %w", ErrCBORDecoding, err)
 	}
-	for label := range params {
-		if !eReaderKeyLabels[label] {
-			return nil, fmt.Errorf("proximity: COSE_Key parameter %d isn't one an ephemeral key has: %w", label, ErrCBORDecoding)
+	for label, value := range params {
+		if err := checkEReaderKeyParam(label, value); err != nil {
+			return nil, err
 		}
 	}
 	return decodeCoseKey(b)
+}
+
+// checkEReaderKeyParam refuses a parameter of EReaderKeyBytes other than
+// an ephemeral key's (RFC 9052 §7.1, RFC 9053 §7.1.1): kty, crv, x and
+// y, which decodeCoseKey takes only as a key on one of cipher suite 1's
+// curves, and a kid and alg. A key for cipher suite 1 needs neither of
+// those, and a holder ignores them (ISO/IEC 18013-5 second edition
+// §12.7.2), so each is taken only as the type RFC 9052 §7.1 gives it —
+// kid a byte string, alg an integer or a text string — and at most
+// maxEReaderKeyParamBytes long.
+func checkEReaderKeyParam(label int64, value cbor.RawMessage) error {
+	var v any
+	switch label {
+	case 1, -1, -2, -3:
+		return nil
+	case 2, 3:
+		if err := decMode.Unmarshal(value, &v); err != nil {
+			return fmt.Errorf("proximity: decode COSE_Key parameter %d: %w: %w", label, ErrCBORDecoding, err)
+		}
+	default:
+		return fmt.Errorf("proximity: COSE_Key parameter %d isn't one an ephemeral key has: %w", label, ErrCBORDecoding)
+	}
+	switch v := v.(type) {
+	case []byte:
+		if label == 2 && len(v) <= maxEReaderKeyParamBytes {
+			return nil
+		}
+	case string:
+		if label == 3 && len(v) <= maxEReaderKeyParamBytes {
+			return nil
+		}
+	case uint64, int64:
+		if label == 3 {
+			return nil
+		}
+	}
+	return fmt.Errorf("proximity: COSE_Key parameter %d isn't a kid (a byte string) or an alg (an integer or a text string) of at most %d bytes: %w", label, maxEReaderKeyParamBytes, ErrCBORDecoding)
 }
 
 // compressedCoseKey is a COSE_Key whose y may be a bool, the sign bit of

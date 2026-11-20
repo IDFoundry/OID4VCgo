@@ -196,7 +196,7 @@ func TestFetcher_AddressPolicy(t *testing.T) {
 		t.Errorf("AllowLoopback fetch: %v", err)
 	}
 
-	cases := map[string]struct{ plain, loopback, private bool }{
+	cases := map[string]addressVerdicts{
 		"93.184.215.14":    {true, true, true},
 		"2606:4700::6810":  {true, true, true},
 		"127.0.0.1":        {false, true, false},
@@ -235,21 +235,73 @@ func TestFetcher_AddressPolicy(t *testing.T) {
 		"ff02::1":         {false, false, false},
 	}
 	for addr, want := range cases {
-		ip := netip.MustParseAddr(addr)
-		got := [3]bool{
-			Fetcher{}.addressAllowed(ip),
-			Fetcher{AllowLoopback: true}.addressAllowed(ip),
-			Fetcher{AllowPrivate: true}.addressAllowed(ip),
-		}
-		if got != [3]bool{want.plain, want.loopback, want.private} {
-			t.Errorf("%s: allowed (default, loopback, private) = %v, want %v", addr, got, want)
-		}
+		checkAddressVerdicts(t, netip.MustParseAddr(addr), want)
 	}
 	if err := (Fetcher{}).checkDial("tcp", "no-port", nil); err == nil {
 		t.Error("checkDial accepted an address without a port")
 	}
 	if err := (Fetcher{}).checkDial("tcp", "name.example:443", nil); err == nil {
 		t.Error("checkDial accepted an unresolved name")
+	}
+}
+
+// addressVerdicts is whether a Fetcher allows an address by default,
+// with AllowLoopback, and with AllowPrivate.
+type addressVerdicts struct{ plain, loopback, private bool }
+
+// checkAddressVerdicts fails t unless the policy's verdicts on ip are
+// want's.
+func checkAddressVerdicts(t *testing.T, ip netip.Addr, want addressVerdicts) {
+	t.Helper()
+	got := addressVerdicts{
+		Fetcher{}.addressAllowed(ip),
+		Fetcher{AllowLoopback: true}.addressAllowed(ip),
+		Fetcher{AllowPrivate: true}.addressAllowed(ip),
+	}
+	if got != want {
+		t.Errorf("%s: allowed (default, loopback, private) = %v, want %v", ip, got, want)
+	}
+}
+
+// TestFetcher_AddressPolicyTranslatedIPv4: an SIIT IPv4-translated
+// address or an ISATAP interface identifier reaches the IPv4 address it
+// embeds through a translator or router on the path, so the policy
+// judges that address too, as fapihttp does; and a zone doesn't hide
+// an address from the policy.
+func TestFetcher_AddressPolicyTranslatedIPv4(t *testing.T) {
+	embed := func(head [12]byte, v4 [4]byte) netip.Addr {
+		var b [16]byte
+		copy(b[:12], head[:])
+		copy(b[12:], v4[:])
+		return netip.AddrFrom16(b)
+	}
+	var (
+		siit       = [12]byte{8: 0xff, 9: 0xff}
+		isatap     = [12]byte{0x26, 0x06, 0x47, 0x00, 8: 0x00, 9: 0x00, 10: 0x5e, 11: 0xfe}
+		isatapU    = [12]byte{0x26, 0x06, 0x47, 0x00, 8: 0x02, 9: 0x00, 10: 0x5e, 11: 0xfe}
+		isatapLink = [12]byte{0xfe, 0x80, 8: 0x00, 9: 0x00, 10: 0x5e, 11: 0xfe}
+		nat64      = [12]byte{0x00, 0x64, 0xff, 0x9b}
+		loopback   = [4]byte{127, 0, 0, 1}
+		private    = [4]byte{10, 0, 0, 1}
+		public     = [4]byte{93, 184, 215, 14}
+	)
+	documentation := netip.AddrFrom16([16]byte{0x20, 0x01, 0x0d, 0xb8, 15: 1})
+	for _, tc := range []struct {
+		ip   netip.Addr
+		want addressVerdicts
+	}{
+		{embed(siit, loopback), addressVerdicts{false, true, false}},
+		{embed(siit, private), addressVerdicts{false, false, true}},
+		{embed(siit, public), addressVerdicts{true, true, true}},
+		{embed(isatap, loopback), addressVerdicts{false, true, false}},
+		{embed(isatapU, private), addressVerdicts{false, false, true}},
+		{embed(isatapU, public), addressVerdicts{true, true, true}},
+		{embed(isatapLink, public), addressVerdicts{false, false, true}},
+		{embed(siit, loopback).WithZone("lo0"), addressVerdicts{false, true, false}},
+		{embed(nat64, private).WithZone("eth0"), addressVerdicts{false, false, true}},
+		{documentation.WithZone("eth0"), addressVerdicts{false, false, false}},
+	} {
+		checkAddressVerdicts(t, tc.ip, tc.want)
 	}
 }
 

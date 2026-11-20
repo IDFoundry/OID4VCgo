@@ -23,7 +23,12 @@ import (
 // fillers U+115F, U+1160, U+3164 and U+FFA0, the combining grapheme
 // joiner, Khmer's inherent vowels) are dropped too, as is the blank
 // braille pattern U+2800, which shows as nothing: each could pad a name
-// with blank space that isn't a space.
+// with blank space that isn't a space. So are the variation selectors
+// (U+FE00–U+FE0F, U+E0100–U+E01EF and Mongolian's free variation
+// selectors): each only picks a glyph for the character before it and
+// shows as nothing itself, so a run of them can carry text no one sees,
+// or set apart a name that looks the same as another. An emoji then
+// shows in its default presentation.
 func Clean(s string, limit int) string {
 	text, _ := clean(s, limit)
 	return text
@@ -68,8 +73,8 @@ func isHiddenFormat(r rune) bool {
 
 // isInvisible reports whether r is a character that isn't a format
 // character but shows as nothing: default ignorable (Unicode's
-// Other_Default_Ignorable_Code_Point: the Hangul fillers among them),
-// or the blank braille pattern.
+// Other_Default_Ignorable_Code_Point: the Hangul fillers among them), a
+// variation selector, or the blank braille pattern.
 func isInvisible(r rune) bool {
-	return r == '\u2800' || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
+	return r == '\u2800' || unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }

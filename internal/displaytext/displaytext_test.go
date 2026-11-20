@@ -3,6 +3,7 @@ package displaytext
 import (
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -26,8 +27,14 @@ func TestClean(t *testing.T) {
 		"\u115f\u1160Bank\uffa0":              "Bank",
 		"Bank\u2800\u2800\u2800":              "Bank",
 		"Ba\u034fnk\u17b4\u17b5":              "Bank",
-		"\U0001f469\ufe0f Bank":               "\U0001f469\ufe0f Bank",
 		"\ud55c\uad6d\uc740\ud589 Korea Bank": "\ud55c\uad6d\uc740\ud589 Korea Bank",
+		// Variation selectors, emoji's among them: invisible, and a
+		// run of them can carry text.
+		"Example Bank\ufe0f\ufe0e\U000e0100":   "Example Bank",
+		"\U0001f469\ufe0f Bank":                "\U0001f469 Bank",
+		"\u845b\U000e0101 Bank":                "\u845b Bank",
+		"\u1820\u180b\u1821\u180f":             "\u1820\u1821",
+		"Bank" + strings.Repeat("\ufe00", 300): "Bank",
 	} {
 		if got := Clean(in, 200); got != want {
 			t.Errorf("Clean(%q) = %q, want %q", in, got, want)
@@ -35,6 +42,23 @@ func TestClean(t *testing.T) {
 	}
 	if got := Clean(strings.Repeat("\u00e9", 500), 200); utf8.RuneCountInString(got) != 200 {
 		t.Errorf("kept %d runes, want 200", utf8.RuneCountInString(got))
+	}
+}
+
+// Every variation selector, all 260, is dropped.
+func TestClean_VariationSelectors(t *testing.T) {
+	n := 0
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.Is(unicode.Variation_Selector, r) {
+			continue
+		}
+		n++
+		if got := Clean("a"+string(r)+"b", 10); got != "ab" {
+			t.Errorf("Clean kept %U: %q", r, got)
+		}
+	}
+	if n != 260 {
+		t.Errorf("%d variation selectors, want 260", n)
 	}
 }
 

@@ -1349,7 +1349,8 @@ changes whether *every* bullet below is `(done)`.
   included, and leave the session waiting, so the app can pass over
   that device. The holder takes an EReaderKey of at most
   `MaxEReaderKeyBytes` with only an ephemeral key's COSE_Key
-  parameters, and a negotiated NFC Handover Request of at most
+  parameters, a kid and alg only of RFC 9052's types and at most 64
+  bytes, and a negotiated NFC Handover Request of at most
   `MaxHandoverRequestBytes`: its device key signs both as sent.
   The transport — BLE GATT, and chunking — stays in the mobile
   app, as does the NFC radio; see `proximity/README.md`. Not yet:

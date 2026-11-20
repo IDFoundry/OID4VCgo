@@ -444,7 +444,9 @@ ecosystem, and record why:
   snapshot shows no claims or portraits.
 - Fetch an issuer's ``Logo`` once, when the holder accepts the
   credential, and keep it: loading it on the offer's preview tells
-  whoever serves it that the offer was opened.
+  whoever serves it that the offer was opened. Fetch it through a
+  session that refuses to connect to a loopback, private or link-local
+  address: the library judges its host by name only.
 - The package and `Mobile.framework` each ship a privacy manifest,
   which Xcode merges into the app's privacy report. Each declares the
   required-reason APIs the library calls: system boot time (35F9.1,

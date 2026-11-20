@@ -540,15 +540,18 @@ public struct WalletConfiguration: Codable, Sendable {
 
 /// An image the issuer names for display: an https URL or a data: image
 /// (nothing else reaches the app, nor an https URL naming an IP address or
-/// localhost), with alternative text. Loading the URL tells whoever serves
-/// it that the holder is looking: fetch it once, when the holder accepts
-/// the credential rather than on the offer's preview, and keep it.
+/// a local name), with alternative text. Its host is judged by its name,
+/// and a public name can resolve to a private address: load the URL
+/// through a session that refuses to connect to a loopback, private or
+/// link-local address. Loading the URL tells whoever serves it that the
+/// holder is looking: fetch it once, when the holder accepts the
+/// credential rather than on the offer's preview, and keep it.
 public struct Logo: Decodable, Equatable, Sendable {
     /// The image: an https URL or a `data:` URL.
     public let uri: String
     /// Text describing the image, for accessibility.
     public let altText: String?
-    /// `uri` as a URL, for `AsyncImage`.
+    /// `uri` as a URL, to load as ``Logo`` says.
     public var url: URL? { URL(string: uri) }
     enum CodingKeys: String, CodingKey { case uri, altText = "alt_text" }
 }
