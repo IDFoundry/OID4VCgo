@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -395,6 +396,124 @@ func TestDeferred_RefusesAnotherTypeAfterARestart(t *testing.T) {
 	if held, _ := relaunched.Credentials(ctx); len(held) != 0 {
 		t.Errorf("credentials = %d; want none kept", len(held))
 	}
+}
+
+// cappedWallet is a wallet asking for refresh tokens, its pending
+// deferred credentials kept in deferred and bounded at perIssuer from
+// one issuer and total in all.
+func (f fixture) cappedWallet(t *testing.T, deferred walletflow.DeferredStore, perIssuer, total int) *walletflow.Wallet {
+	t.Helper()
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
+		Development: true, RequestRefresh: true, MaxPendingDeferredPerIssuer: perIssuer, MaxPendingDeferred: total,
+	}, walletflow.Dependencies{Keys: f.keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Deferred: deferred, Grants: walletflow.NewMemoryGrantStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// A wallet takes no offer from an issuer with as many deferred
+// credentials pending as Config.MaxPendingDeferredPerIssuer, nor from
+// any while it has Config.MaxPendingDeferred pending in all, and
+// refreshes none of the issuer's credentials then: ErrTooManyDeferred.
+// Zero means DefaultMaxPendingDeferredPerIssuer and
+// DefaultMaxPendingDeferred. Nothing is lost: once the pending ones are
+// gone, the refresh is taken. A pending one whose access token has
+// expired, which the issuer will never issue, doesn't count.
+func TestStartIssuance_TooManyDeferred(t *testing.T) {
+	const other = "https://other-issuer.example"
+	for name, c := range map[string]struct {
+		perIssuer, total      int
+		fromIssuer, fromOther int
+		// tokenExpiry is when each pending one's access token expires,
+		// from now: zero for one the Token Response gave no expiry.
+		tokenExpiry time.Duration
+		refused     bool
+	}{
+		"under the bound per issuer":        {perIssuer: 2, fromIssuer: 1},
+		"at the bound per issuer":           {perIssuer: 2, fromIssuer: 2, refused: true},
+		"another issuer at its bound":       {perIssuer: 2, fromOther: 2},
+		"at the bound in all":               {total: 3, fromIssuer: 1, fromOther: 2, refused: true},
+		"under the default per issuer":      {fromIssuer: walletflow.DefaultMaxPendingDeferredPerIssuer - 1},
+		"at the default per issuer":         {fromIssuer: walletflow.DefaultMaxPendingDeferredPerIssuer, refused: true},
+		"at the default in all":             {fromOther: walletflow.DefaultMaxPendingDeferred, refused: true},
+		"tokens still valid count":          {perIssuer: 2, fromIssuer: 2, tokenExpiry: time.Hour, refused: true},
+		"expired tokens don't count":        {perIssuer: 2, fromIssuer: 2, tokenExpiry: -time.Second},
+		"expired tokens don't count in all": {total: 3, fromIssuer: 1, fromOther: 2, tokenExpiry: -time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, walletflowtest.Options{})
+			ctx := context.Background()
+			store := walletflow.NewMemoryDeferredStore()
+			w := f.cappedWallet(t, store, c.perIssuer, c.total)
+			held := receive(t, f, w, walletflowtest.SDJWTConfigurationID)[0]
+			var expiresAt time.Time
+			if c.tokenExpiry != 0 {
+				expiresAt = time.Now().Add(c.tokenExpiry)
+			}
+			for issuer, n := range map[string]int{f.env.IssuerURL: c.fromIssuer, other: c.fromOther} {
+				for i := range n {
+					if err := store.PutDeferred(ctx, walletflow.PendingDeferred{ID: issuer + "#" + strconv.Itoa(i), CredentialIssuer: issuer, AccessTokenExpiresAt: expiresAt}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			s, err := w.StartIssuance(ctx, f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID))
+			if err == nil {
+				_ = s.Close(ctx)
+			}
+			_, _, refreshErr := w.RefreshCredential(ctx, held.ID)
+			if refused := errors.Is(err, walletflow.ErrTooManyDeferred); refused != c.refused || !refused && err != nil {
+				t.Fatalf("StartIssuance = %v, want refused %t", err, c.refused)
+			}
+			if refused := errors.Is(refreshErr, walletflow.ErrTooManyDeferred); refused != c.refused || !refused && refreshErr != nil {
+				t.Fatalf("RefreshCredential = %v, want refused %t", refreshErr, c.refused)
+			}
+			if !c.refused {
+				return
+			}
+			pending, err := store.ListDeferred(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range pending {
+				if err := store.DeleteDeferred(ctx, p.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := w.RefreshCredential(ctx, held.ID); err != nil {
+				t.Errorf("RefreshCredential once none is pending = %v", err)
+			}
+		})
+	}
+}
+
+// A credential the issuer deferred counts: with one pending from it and
+// a bound of one, its next offer is refused, the pending one is still
+// issued, and then the issuer's offers are taken again.
+func TestStartIssuance_TakesOffersOnceDeferredSettle(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{Defer: true})
+	ctx := context.Background()
+	store := walletflow.NewMemoryDeferredStore()
+	deferUntilClosed(t, f, store, walletflow.GrantAuthorizationCode)
+	w := f.cappedWallet(t, store, 1, 0)
+	offer := f.env.AuthorizationCodeOffer(t, walletflowtest.SDJWTConfigurationID)
+	if _, err := w.StartIssuance(ctx, offer); !errors.Is(err, walletflow.ErrTooManyDeferred) {
+		t.Fatalf("StartIssuance with one pending = %v, want ErrTooManyDeferred", err)
+	}
+	pending, err := w.Deferred(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("Deferred = %v, %v", pending, err)
+	}
+	if _, err := waitIssued(t, f, pending[0]); err != nil {
+		t.Fatalf("the pending credential, once issued: %v", err)
+	}
+	s, err := w.StartIssuance(ctx, offer)
+	if err != nil {
+		t.Fatalf("StartIssuance once it's issued = %v", err)
+	}
+	_ = s.Close(ctx)
 }
 
 // newWalletAuthorizing is a wallet keeping its authorizations in auth,

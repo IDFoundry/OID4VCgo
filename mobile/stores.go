@@ -944,8 +944,8 @@ func providerError(what string, err error) error {
 // it matches that error too, as a walletprovider.Client's refusal
 // does, so walletflow tells what the refusal means for an instance key
 // (registration_expired, instance_key_expired, instance_key_registered,
-// evidence_required: a refresh grant bound to it can't be refreshed
-// again).
+// and at a refresh's Wallet Attestation evidence_required: a refresh
+// grant bound to it can't be refreshed again).
 type providerRefusal struct {
 	err      *Error
 	sentinel error

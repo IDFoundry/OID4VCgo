@@ -568,6 +568,11 @@ forgotten: the provider deleted its record of the key after
 `Config.InstanceKeyRetention`, and a client that can't make fresh
 evidence for an existing key, as on Android, can't recover it. Before,
 each later refresh failed again as `platform`.
+A refresh's Key Attestation refused with `evidence_required` is
+returned as is (`platform` on mobile) and keeps the grant: the
+provider answers it there for a request that carried no evidence
+for the new holder keys, before it looks at the instance key the
+refresh's Wallet Attestation has just used.
 
 On Android, `HttpWalletProvider` now refuses, without a request,
 holder keys made over no holder challenge it remembers unexpired,
@@ -578,6 +583,54 @@ outside the lock its attestations take. Neither platform's
 provider with `NSPinnedDomains` (iOS) or a network security
 configuration's `<pin-set>` (Android), as the "Going to production"
 guides now say.
+
+### A credential refreshed or deleted as `Respond` runs is reported as changed (`walletflow`, mobile)
+
+A refresh or a deletion that lands after a presentation's `Respond`
+has reserved a credential's copy, and before it loads the copy's
+holder key, deletes that key: one in another goroutine, process or
+`Wallet` sharing the stores. `Respond` (OpenID4VP, org-iso-mdoc and in
+person) now reports it as it does a credential changed before it
+reserved the copy: `ErrCredentialChanged` for one refreshed, and
+`ErrInvalidSelection` for one deleted (`invalid_selection` on mobile),
+where it was the KeyStore's `ErrNotFound` (`not_found`). Nothing is
+sent either way: start the presentation again. A holder key missing
+from a credential that's still as reserved is still `ErrNotFound`.
+
+### A mobile configuration naming a member twice is refused (mobile)
+
+`NewWallet` and `NewProximityReader` now refuse, as `invalid_input`, a
+configuration in which an object, at any depth, names a member twice,
+and `RespondDocuments` an answer in `answersJSON` that does. Only the
+last of the two counted, so a check of the configuration's text that
+reads the first `"development": false` passed one that went on to set
+`"development": true`. Like the library's other JSON parsing, they
+also refuse text that isn't UTF-8 or escapes a lone surrogate. The
+Swift and Kotlin libraries encode their configurations from typed
+values, which can't name a member twice: only JSON written or
+assembled as text is affected.
+
+### A wallet bounds the deferred credentials pending from an issuer (`walletflow`, mobile)
+
+`StartIssuance` now refuses an offer, and `RefreshCredential` a
+refresh, while the issuer has `DefaultMaxPendingDeferredPerIssuer`
+(64) deferred credentials pending in the `DeferredStore`, or the
+wallet `DefaultMaxPendingDeferred` (256) in all, with an error
+wrapping the new `walletflow.ErrTooManyDeferred` (`unavailable` with
+the detail `too_many_deferred` on mobile), before anything is sent to
+the issuer. Each pending one keeps its holder keys and an access token
+until it's polled to an end or abandoned, and an issuer that deferred
+every request had the wallet make up to 32 more, with their holder
+keys and Key Attestations, for each offer the holder accepted. Nothing
+pending or held is lost: poll the pending ones (`Wallet.Deferred`), or
+`Abandon` those the issuer won't issue, and its offers are taken
+again. A pending one whose access token has expired
+(`PendingDeferred.AccessTokenExpiresAt`) doesn't count: the issuer
+won't be polled with it, so it will never be issued. It still stays,
+with its keys, until it's abandoned, as before. The new
+`Config.MaxPendingDeferredPerIssuer` and
+`Config.MaxPendingDeferred` change the bounds; zero keeps the
+defaults. The mobile configuration keeps the defaults.
 
 ## v0.82.0 → v0.83.0
 

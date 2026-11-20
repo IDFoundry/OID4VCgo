@@ -129,13 +129,19 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
-// A refresh another process is making with the grant is unavailable,
-// retryable, with its own detail.
+// A refresh another process is making with the grant, and a refresh or
+// an offer refused while too many deferred credentials are pending, are
+// unavailable, retryable, each with its own detail.
 func TestClassify_RefreshInProgress(t *testing.T) {
-	var e *Error
-	if !errors.As(classify(fmt.Errorf("walletflow: refresh credential: %w", walletflow.ErrRefreshInProgress)), &e) ||
-		e.Code != CodeUnavailable || e.Detail != DetailRefreshInProgress {
-		t.Errorf("classify = %#v, want [unavailable:refresh_in_progress]", e)
+	for sentinel, detail := range map[error]string{
+		walletflow.ErrRefreshInProgress: DetailRefreshInProgress,
+		walletflow.ErrTooManyDeferred:   DetailTooManyDeferred,
+	} {
+		var e *Error
+		if !errors.As(classify(fmt.Errorf("walletflow: refresh credential: %w", sentinel)), &e) ||
+			e.Code != CodeUnavailable || e.Detail != detail {
+			t.Errorf("classify(%v) = %#v, want [unavailable:%s]", sentinel, e, detail)
+		}
 	}
 }
 

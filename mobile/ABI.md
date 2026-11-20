@@ -199,17 +199,17 @@ format or error code below changes incompatibly.
 | `invalid_input` | an argument or the configuration is malformed, or, with the detail `not_configured`, the configuration lacks what the call needs (`verifier_roots` to present, say): the message names the key |
 | `platform` | a callback into the app failed (its message follows); for a Wallet Provider's refusal the callback marked, the detail is the provider's error code, such as `instance_revoked` |
 | `network` | a request couldn't be made, got no answer, or timed out; retryable |
-| `unavailable` | the service answered with HTTP 5xx or 429; or, with the detail `refresh_in_progress` (ABI 13), another process sharing the CredentialStore is refreshing with the same refresh grant; retryable later |
+| `unavailable` | the service answered with HTTP 5xx or 429; or, with the detail `refresh_in_progress` (ABI 13), another process sharing the CredentialStore is refreshing with the same refresh grant; or, with the detail `too_many_deferred` (within ABI 16), the wallet holds as many deferred credentials pending as it keeps; retryable later |
 | `cancelled` | the Operation was cancelled, or the holder dismissed a holder key's prompt (a `KeyStore.Sign` or `KeyAgreement.Agree` error marked `[cancelled]`) |
 | `not_found` | no key, credential or deferred credential with that ID |
 | `wrong_step` | a session method called out of turn, or after Close |
 | `authorization_denied` | the Authorization Server refused, e.g. the holder declined |
 | `credential_denied` | the issuer refused a deferred credential |
 | `no_matching_credential` | nothing held answers the Verifier's request |
-| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired`, `instance_key_registered` or, within ABI 16, `evidence_required`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
+| `reissue_required` | a credential can't be refreshed: no refresh token was kept, the Authorization Server no longer accepts it, or the Wallet Provider no longer attests its refresh grant's instance key (its `WalletAttestation`, or the `KeyAttestation` of its new holder keys, refused with `[refused:code]` for `instance_key_expired`, `registration_expired` or `instance_key_registered`, or, within ABI 16, its `WalletAttestation` refused for `evidence_required`, when the grant is forgotten; within ABI 15, `platform` with that detail before) |
 | `untrusted_verifier` | the Verifier's request is signed with a certificate that doesn't chain to `verifier_roots`: it's refused unread |
 | `untrusted_issuer` | the offer names a Credential Issuer outside `credential_issuers`: it's refused before fetching its metadata (a `credential_offer_uri` is fetched first); or, under `require_signed_issuer_metadata` and `require_issuer_metadata_name`, the issuer's metadata isn't signed, or is signed naming another issuer. Resuming an authorization, refreshing a credential or polling a deferred one is refused the same way when `credential_issuers` no longer lists its issuer, before anything is sent there, and what the wallet holds from it is kept (ABI 16) |
-| `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed since): nothing was sent |
+| `invalid_selection` | a presentation's selection doesn't answer the request as it asks, or, at `Respond`, what the holder was shown no longer holds (a copy another Verifier has seen would now be presented, or a selected credential was refreshed or deleted since, even while `Respond` ran): nothing was sent |
 | `delivery_unknown` | sending a presentation failed in a way that leaves it unknown whether the Verifier received it; it isn't sent again, which could present twice |
 | `tls_pin` | a host in `tls_pins` presented a certificate matching none of its pins; nothing was sent to it |
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
@@ -229,7 +229,8 @@ the wallet's own:
 |---|---|---|
 | `not_configured` | `invalid_input` | the configuration lacks what the call needs |
 | `refresh_in_progress` | `unavailable` | another process is refreshing with the same grant (ABI 13) |
-| the Wallet Provider's error code | `platform` | a Wallet Provider callback (or a `CreateKey` that asked the provider for a challenge) failed with `[refused:code]`: the provider refused with that error code of its protocol, such as `instance_not_active` (suspended), `instance_revoked` or `invalid_signed_request` ([WALLET_PROVIDER.md](WALLET_PROVIDER.md)); a refresh refused with `instance_key_expired`, `registration_expired`, `instance_key_registered` or `evidence_required` is `reissue_required` instead. Added within ABI 15 |
+| `too_many_deferred` | `unavailable` | `StartIssuance` or `RefreshCredential` while the issuer has 64 deferred credentials pending, or the wallet 256 in all, not counting any whose access token has expired: nothing is sent to the issuer. Poll them (`PollDeferred`), or abandon those the issuer won't issue (`AbandonDeferred`), then try again. Added within ABI 16 |
+| the Wallet Provider's error code | `platform` | a Wallet Provider callback (or a `CreateKey` that asked the provider for a challenge) failed with `[refused:code]`: the provider refused with that error code of its protocol, such as `instance_not_active` (suspended), `instance_revoked` or `invalid_signed_request` ([WALLET_PROVIDER.md](WALLET_PROVIDER.md)); a refresh refused with `instance_key_expired`, `registration_expired` or `instance_key_registered`, or at its `WalletAttestation` with `evidence_required`, is `reissue_required` instead. Added within ABI 15 |
 | `certificate_revoked` | any code without a detail of its own, such as `protocol` or `untrusted_verifier` | a certificate in a chain checked under `revocation` is revoked (its CA's CRL names it): a credential's issuer on receipt, a Verifier's or mdoc reader's request signer, a status list's signer, or, from a ProximityReader's `HandleMessage`, the document's signer. The message names the certificate. Added within ABI 14 (OID4VCWallet 0.27.0) |
 | `no_current_crl` | likewise | a role named in `revocation` holds no current CRL from the certificate's CA, so its revocation can't be decided and the chain is refused: `RefreshCRLs` (or `SetCRLs`) and try again. Added within ABI 14 (OID4VCWallet 0.27.0) |
 
@@ -452,13 +453,17 @@ failure, reported as `network` (retryable); one starting with
 protocol's error codes — is `platform` with the detail `code`, except
 that a refresh whose `WalletAttestation`, or whose `KeyAttestation`
 for its grant's instance key, is refused with
-`instance_key_expired`, `registration_expired`,
-`instance_key_registered` or `evidence_required` (the provider deleted
-its record of the key after its retention, and the callback couldn't
-send fresh evidence for it; added within ABI 16) is
-`reissue_required`: the provider won't
+`instance_key_expired`, `registration_expired` or
+`instance_key_registered`, or whose `WalletAttestation` is refused
+with `evidence_required` (the provider deleted its record of the key
+after its retention, and the callback couldn't send fresh evidence for
+it; added within ABI 16), is `reissue_required`: the provider won't
 attest its grant's instance key again, so the grant and its key are
-deleted. An issuance's `KeyAttestation` refused so stays `platform`,
+deleted. A refresh's `KeyAttestation` refused with `evidence_required`
+stays `platform`, and keeps the grant: the provider answers it there
+for a request with no evidence for the holder keys, before it looks at
+the instance key its `WalletAttestation` has just attested. An
+issuance's `KeyAttestation` refused with any of them stays `platform`,
 and nothing is deleted: its instance key is its own, and the next
 issuance makes another (registering again first, where the native
 provider forgot its registration). Any other is `platform`. The mark
@@ -610,7 +615,10 @@ combination is `invalid_input`. Added within ABI version 12.
 `NewWallet`, and `NewProximityReader`, refuse a configuration with a key
 they don't know, one that matches a key only in case, or anything after
 the JSON object, so a misspelled option is never silently left at its
-default.
+default. They refuse an object, at any depth, that names a member twice
+too (within ABI 16): only the last would count, so a check of the
+configuration's text that reads the first `"development"` could pass
+one that sets the second.
 `mdoc_reader_require_eku`
 recognizes only reader certificates with the ISO/IEC 18013-5 reader
 authentication extended key usage (1.0.18013.5.1.6), and
@@ -959,9 +967,9 @@ run. Added within ABI 14.
 | `AbandonDeferred(deferredID)` | deletes a pending one and its keys, for example after its access token has expired, and its refresh grant once nothing else uses it, revoking the refresh token at the Authorization Server, best effort: a network request |
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
-| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which replaces it under the same ID once issued (don't delete it meanwhile: the refreshed copies would be discarded). One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, the Wallet Provider no longer attests its grant's instance key, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer |
+| `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which replaces it under the same ID once issued (don't delete it meanwhile: the refreshed copies would be discarded). One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, the Wallet Provider no longer attests its grant's instance key, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer. While its issuer has 64 deferred credentials pending, or the wallet 256 in all, it's `unavailable` with the detail `too_many_deferred` (within ABI 16) |
 | `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It verifies each live copy's issuer certificate chain again (an SD-JWT VC's `x5c`, an mdoc's `x5chain`) under the issuer roots configured now and, with `issuer` in `revocation`, against the CRLs held now: a copy whose signer, or a CA above it, has been revoked since, or whose chain no longer verifies, isn't presented ahead of one that passes, and once none is left the credential is `invalid` (`reason` `issuer_certificate_revoked` or `issuer_untrusted`). That isn't final: a later check with a CRL that no longer names the certificate makes it valid again. With no current CRL for a CA on the chain it's `unknown` (`reason` `no_current_crl`), not an error; refresh the lists and check again. A credential with no status or identifier list is checked so too, when it carries a chain and the wallet has roots for it (from OID4VCWallet 0.27.0; before, it was returned unchecked). It also fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 (P-256), ES384 (P-384), ES512 (P-521) or EdDSA (Ed25519) is a `protocol` error (and so, until OID4VCWallet 0.36.0, was an SD-JWT VC's JWT list signed ES384 or ES512). Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A list whose signer's CA has no current CRL under `status` in `revocation` is `unknown` (`no_current_crl`) too (before OID4VCWallet 0.27.0, `protocol`). A credential with neither a list nor a chain to check is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
-| `StartIssuance(op, offerURI)` | an `Issuance` |
+| `StartIssuance(op, offerURI)` | an `Issuance`; `unavailable` with the detail `too_many_deferred` while the offer's issuer has 64 deferred credentials pending, or the wallet 256 in all (within ABI 16) |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found`. One whose offered configuration the issuer's metadata now maps to another kind of credential (format, `vct` or doctype) than the holder was shown is `reissue_required`, and is forgotten |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `SetCallbackCanceller(c)` | gives the wallet a CallbackCanceller (see above), so a call cancelled while it waits for the holder or the Wallet Provider ends that wait; `nil` removes it. Added within ABI 15 |
@@ -1169,7 +1177,8 @@ sent to the reader.
 `elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
 one the document requested (`invalid_selection` otherwise); an element
 that isn't a pair of strings, or anything after the array, is
-`invalid_input` (in `answersJSON` too), and
+`invalid_input` (in `answersJSON` too, as is an answer naming a member
+twice, within ABI 16), and
 `document` an index into `documents`. The credential's next unused copy
 is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.

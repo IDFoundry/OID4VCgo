@@ -467,6 +467,36 @@ func TestSessions_AbandonDeferred(t *testing.T) {
 	}
 }
 
+// An offer from an issuer with as many deferred credentials pending in
+// the app's store as the wallet keeps from one is unavailable, with the
+// detail too_many_deferred; once one of them is gone, its offers are
+// taken again.
+func TestSessions_TooManyDeferred(t *testing.T) {
+	h := newHarness(t, false)
+	ctx := context.Background()
+	store := deferredStore{h.creds}
+	for i := range walletflow.DefaultMaxPendingDeferredPerIssuer {
+		if err := store.PutDeferred(ctx, walletflow.PendingDeferred{ID: fmt.Sprintf("d-%d", i), CredentialIssuer: h.env.env.IssuerURL}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	offer, err := h.env.AuthorizationCodeOffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.w.StartIssuance(NewOperation(0), offer); code(err) != CodeUnavailable || providerDetail(err) != DetailTooManyDeferred {
+		t.Fatalf("StartIssuance with %d pending = %v, want unavailable with %s", walletflow.DefaultMaxPendingDeferredPerIssuer, err, DetailTooManyDeferred)
+	}
+	if err := store.DeleteDeferred(ctx, "d-0"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := h.w.StartIssuance(NewOperation(0), offer)
+	if err != nil {
+		t.Fatalf("StartIssuance with one fewer pending = %v", err)
+	}
+	_ = s.Close()
+}
+
 func TestSessions_DeclineAndNoMatch(t *testing.T) {
 	h := newHarness(t, false)
 	req := decode[struct{ ID, Link string }](t, mustText(t)(h.env.Request("mso_mdoc")))

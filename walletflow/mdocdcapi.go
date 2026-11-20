@@ -297,9 +297,9 @@ func (w *Wallet) heldMdoc(ctx context.Context, r reservedCopy) (mdoc.IssuerSigne
 	if err != nil {
 		return mdoc.IssuerSigned{}, nil, fmt.Errorf("walletflow: credential %q: %w", r.id, err)
 	}
-	k, err := w.deps.Keys.Key(ctx, r.keyID)
+	k, err := w.holderKey(ctx, r)
 	if err != nil {
-		return mdoc.IssuerSigned{}, nil, fmt.Errorf("walletflow: credential %q's holder key: %w", r.id, err)
+		return mdoc.IssuerSigned{}, nil, err
 	}
 	return issuerSigned, k, nil
 }

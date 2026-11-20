@@ -879,13 +879,53 @@ func (w *Wallet) release(ctx context.Context, reserved []reservedCopy, verifier 
 func (p *Presentation) withKeys(ctx context.Context, reserved []reservedCopy) (map[string][]wallet.HeldCredential, error) {
 	out := map[string][]wallet.HeldCredential{}
 	for _, r := range reserved {
-		k, err := p.w.deps.Keys.Key(ctx, r.keyID)
+		k, err := p.w.holderKey(ctx, r)
 		if err != nil {
-			return nil, fmt.Errorf("walletflow: credential %q's holder key: %w", r.id, err)
+			return nil, err
 		}
 		out[r.query] = append(out[r.query], heldCredential(r.c, k))
 	}
 	return out, nil
+}
+
+// holderKey is reserved copy r's holder key. A key that's gone because
+// the credential changed after r was reserved is reported as that
+// change, as reserveOne reports one made before: ErrCredentialChanged
+// for a credential replaced since — refreshed, whose replaced copies'
+// keys are deleted (replaceStored) — and an invalid selection for one
+// deleted since. Only a key gone from a credential that's still as
+// reserved is the KeyStore's ErrNotFound.
+func (w *Wallet) holderKey(ctx context.Context, r reservedCopy) (Key, error) {
+	k, err := w.deps.Keys.Key(ctx, r.keyID)
+	if err == nil {
+		return k, nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		if changed := w.changedSinceReserved(ctx, r); changed != nil {
+			return nil, changed
+		}
+	}
+	return nil, fmt.Errorf("walletflow: credential %q's holder key: %w", r.id, err)
+}
+
+// changedSinceReserved is why reserved copy r is no longer the
+// credential's: an invalid selection when the credential has been
+// deleted, ErrCredentialChanged when it has been replaced (received
+// again, or its copy r bound to another key); nil when it's as reserved,
+// or can't be read.
+func (w *Wallet) changedSinceReserved(ctx context.Context, r reservedCopy) error {
+	c, err := w.deps.Credentials.Get(ctx, r.id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return fmt.Errorf("walletflow: %w: no credential %q", ErrInvalidSelection, r.id)
+	case err != nil:
+		return nil
+	}
+	copies := c.AllCopies()
+	if !c.ReceivedAt.Equal(r.c.ReceivedAt) || r.index >= len(copies) || copies[r.index].HolderKeyID != r.keyID {
+		return fmt.Errorf("walletflow: credential %q: %w", r.id, ErrCredentialChanged)
+	}
+	return nil
 }
 
 func sortedQueries(sel Selection) []string {
