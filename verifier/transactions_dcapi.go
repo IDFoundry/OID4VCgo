@@ -58,8 +58,9 @@ type BegunDCAPI struct {
 // Credentials API (OpenID4VP 1.0 Appendix A): a signed Request Object,
 // response mode dc_api.jwt (HAIP 1.0 §5.2), with origin, the origin of
 // the page that will make the request, as its only expected_origins
-// entry. The page's answer comes back through HandleDCAPIResponse;
-// Lookup and Close work as for Begin's requests.
+// entry, and iat and exp as BeginWith's carry. The page's answer comes
+// back through HandleDCAPIResponse; Lookup and Close work as for
+// Begin's requests.
 //
 // origin is the page's serialized origin (scheme, host and optional
 // port): the answer is verified as bound to it (Appendix A.4). It is
@@ -85,7 +86,8 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	if err != nil {
 		return BegunDCAPI{}, err
 	}
-	built, err := t.v.BuildDCAPIAuthorizationRequest(BuildDCAPIAuthorizationRequestRequest{Query: query, ExpectedOrigins: []string{origin}})
+	expiresAt, retainUntil := t.expiry()
+	built, err := t.v.buildDCAPIAuthorizationRequest(BuildDCAPIAuthorizationRequestRequest{Query: query, ExpectedOrigins: []string{origin}}, t.requestObjectTimes(expiresAt))
 	if err != nil {
 		return BegunDCAPI{}, fmt.Errorf("verifier: transactions: %w", err)
 	}
@@ -95,8 +97,8 @@ func (t *Transactions) BeginDCAPI(ctx context.Context, query dcql.Query, browser
 	tx := Transaction{
 		ID: id, Nonce: built.Nonce, Query: query, ResponseDecryptionKey: built.ResponseDecryptionKey,
 		Origin: origin, Status: TransactionPending, Owner: t.owner,
+		ExpiresAt: expiresAt, RetainUntil: retainUntil,
 	}
-	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
 	if err := t.create(ctx, tx); err != nil {

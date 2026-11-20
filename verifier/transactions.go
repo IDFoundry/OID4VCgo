@@ -819,6 +819,12 @@ type BeginOptions struct {
 // BeginWith creates a presentation request as opts says (see
 // BeginOptions), for the redirect flows: the request is fetched from
 // TransactionsConfig.RequestURIBase, which it needs.
+//
+// Its Request Object carries iat, the time it was signed, and exp, the
+// request's ExpiresAt (RFC 7519 §4.1.6, §4.1.4), so that a Wallet can
+// refuse a copy served after the request stopped being answerable — one
+// saved from its request_uri and served from another, say. Each one
+// RequestObjectPost signs carries them too.
 func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun, error) {
 	query, browserBinding, sameDevice := opts.Query, opts.BrowserBinding, opts.SameDevice
 	if len(browserBinding) < MinBrowserBindingLength {
@@ -845,7 +851,8 @@ func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun,
 	// which has no response key to route it by, can be tied to it
 	// (HandleUnencryptedError); the secret part makes it unguessable.
 	state := id + stateSeparator + secret
-	built, err := t.v.BuildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state})
+	expiresAt, retainUntil := t.expiry()
+	built, err := t.v.buildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state}, t.requestObjectTimes(expiresAt))
 	if err != nil {
 		return Begun{}, fmt.Errorf("verifier: transactions: %w", err)
 	}
@@ -853,8 +860,8 @@ func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun,
 		ID: id, KeyID: built.ResponseEncryptionKeyID, State: state, Nonce: built.Nonce, Query: query,
 		ResponseDecryptionKey: built.ResponseDecryptionKey, RequestObject: built.RequestObject,
 		SameDevice: sameDevice, Status: TransactionPending, Owner: t.owner,
+		ExpiresAt: expiresAt, RetainUntil: retainUntil,
 	}
-	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
 	if err := t.create(ctx, tx); err != nil {
@@ -983,6 +990,7 @@ func (t *Transactions) signRequestObject(tx Transaction, fetch authorizationRequ
 		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s has no response decryption key", tx.ID)}
 	}
 	fetch.query, fetch.state, fetch.nonce, fetch.encKey = tx.Query, tx.State, tx.Nonce, tx.ResponseDecryptionKey
+	fetch.times = requestObjectTimes{issuedAt: t.now(), expiresAt: tx.ExpiresAt}
 	object, kid, err := t.v.signAuthorizationRequest(fetch)
 	switch {
 	case err != nil:
@@ -1353,6 +1361,13 @@ type TransactionView struct {
 func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
 	expiresAt = t.now().Add(t.cfg.Lifetime)
 	return expiresAt, expiresAt.Add(t.cfg.Lifetime)
+}
+
+// requestObjectTimes are the iat and exp of the Request Object a new
+// transaction expiring at expiresAt (expiry) is created with: the time
+// expiry was taken at, and expiresAt.
+func (t *Transactions) requestObjectTimes(expiresAt time.Time) requestObjectTimes {
+	return requestObjectTimes{issuedAt: expiresAt.Add(-t.cfg.Lifetime), expiresAt: expiresAt}
 }
 
 // Lookup reports the request id's progress to whoever asked:

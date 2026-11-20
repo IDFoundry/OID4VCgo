@@ -23,6 +23,19 @@ kept, and another was recorded without a code and redirected as
 `LastError`, sees `unrecognized_error` for those codes. `OnRefused`
 still gets an encrypted error response's own code.
 
+### Transactions' Request Objects carry `iat` and `exp` (`verifier`)
+
+The Request Objects `Transactions` serves — `BeginWith`'s, each
+`RequestObjectPost`'s and `BeginDCAPI`'s — now carry `iat`, when they
+were signed, and `exp`, the request's `ExpiresAt` (RFC 7519). A Wallet
+that checks `exp`, as this package's does, refuses a copy served after
+the request stopped being answerable. One whose
+clock runs ahead of the Verifier's by more than the request's
+remaining `Lifetime` refuses it too, so keep the Verifier's clock
+synchronized. `BuildAuthorizationRequest` and
+`BuildDCAPIAuthorizationRequest`, which know no lifetime, are
+unchanged.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
