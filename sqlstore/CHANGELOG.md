@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.14.0...sqlstore/v0.15.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an Authorization Server using fapigo/server now refuses, with invalid_request naming the claim, a PAR or backchannel authentication request whose OIDC claims parameter gives one claim more than 64 values. Give a claim at most 64 acceptable values. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.77.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.77.0 and fapigo/sqlstore v0.9.1 ([246a1f1](https://github.com/IDFoundry/OID4VCgo/commit/246a1f11a91a36405886c8e077fd77df25e4e531))
+* **deps:** pin FAPIgo v0.77.1 ([f9c78f5](https://github.com/IDFoundry/OID4VCgo/commit/f9c78f51ed62ba8a91794b8651ac59339aad870e))
+* **sqlstore:** bind sealed records to a SealContext, so another tenant's don't open ([68f2ff6](https://github.com/IDFoundry/OID4VCgo/commit/68f2ff6d7e500a5fce5d1dcd9ca323ac1f8fff06))
+* **sqlstore:** give single-statement Postgres writes READ COMMITTED's outcome ([91921ff](https://github.com/IDFoundry/OID4VCgo/commit/91921ffe166702e2747687f02be0ee64ad24c5e1))
+
 ## [0.14.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.13.1...sqlstore/v0.14.0) (2026-11-18)
 
 
