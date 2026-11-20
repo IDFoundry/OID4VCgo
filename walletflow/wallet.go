@@ -25,6 +25,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
+	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -1204,7 +1205,7 @@ func defaultHTTPClient(development bool, pins TLSPins, privateHosts []string) (*
 		if verify == nil {
 			return &http.Client{Timeout: httpTimeout}, nil
 		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport := defaulttransport.Clone()
 		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, VerifyConnection: verify}
 		return &http.Client{Transport: transport, Timeout: httpTimeout}, nil
 	}
