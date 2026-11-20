@@ -93,6 +93,21 @@ Migrate by one of:
   resolver that resolves each issuer's keys by its `iss` and says so
   (`IssuerNameBinding`), never `ClaimedIssuer` or `IssuerChain`.
 
+### A state's IACA must name its state on its document signers (`mdoc`, `verifier`, `proximity`, `mdocdcapi`, `wallet`)
+
+An mdoc's document signer certificate was compared with its IACA's
+`stateOrProvinceName` only when both carried one. So an IACA scoped to
+a state (`C=US, ST=US-CA`) could issue a document signer without a
+state, and sign mDLs claiming another state's `issuing_jurisdiction`
+(`US-NY`), which was then checked against nothing.
+
+`mdoc.CheckDocumentSigner`, and so every mdoc verification (OpenID4VP,
+Annex C, the proximity reader and the wallet's receipt check), now
+refuses a path whose IACA names a state or province its document
+signer doesn't name alike, as ISO/IEC 18013-5 Annex B has it.
+`issuing_jurisdiction` is then held to that state. An IACA without a
+state is unaffected.
+
 ### Authorize issuers by the anchor that verified them, not by names
 
 No API is removed, but an issuer authorization hook that decides as
