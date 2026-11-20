@@ -50,7 +50,7 @@ func TestTransactions_DCAPIOrigins(t *testing.T) {
 	}
 	verify := f.verify
 	verify.AnyIssuerForAnyType = true
-	prodCfg := verifier.TransactionsConfig{Verify: verify, NoStatusCheck: true}
+	prodCfg := verifier.TransactionsConfig{Verify: verify, NoStatusCheck: true, Scope: "dcapi"}
 	// For the Digital Credentials API alone, the missing Origins show
 	// in NewTransactions; with RequestURIBase, in BeginDCAPI.
 	if _, err := verifier.NewTransactions(prod, assuredTransactionStore{f.store}, prodCfg); err == nil || !strings.Contains(err.Error(), "origins") {

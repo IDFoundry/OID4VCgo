@@ -70,6 +70,11 @@ func TestCheckDocumentSigner(t *testing.T) {
 		{"DS country differs from the IACA's", signerChain(t, "SG", "", "US", ""), mdl(nil), "countryName"},
 		{"no countries", signerChain(t, "", "", "", ""), mdl(nil), "countryName"},
 		{"DS state differs from the IACA's", signerChain(t, "US", "US-CA", "US", "US-NY"), mdl(nil), "stateOrProvinceName"},
+		// A state's IACA can't sign for another state's jurisdiction by
+		// leaving its state off the document signer.
+		{"IACA has a state, the DS none", signerChain(t, "US", "US-CA", "US", ""), mdl(map[string]any{"issuing_jurisdiction": "US-NY"}), "stateOrProvinceName"},
+		{"IACA has a state, the DS none, no jurisdiction", signerChain(t, "US", "US-CA", "US", ""), mdl(nil), "stateOrProvinceName"},
+		{"DS has a state, the IACA none", signerChain(t, "US", "", "US", "US-CA"), mdl(map[string]any{"issuing_jurisdiction": "US-CA"}), ""},
 		{"signed outside the DS validity", signerChain(t, "US", "", "US", ""), mdoc.VerifiedMSO{ValidityInfo: mdoc.ValidityInfo{Signed: now.Add(-48 * time.Hour)}}, "validity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

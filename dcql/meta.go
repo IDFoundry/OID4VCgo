@@ -134,17 +134,26 @@ func (c CredentialQuery) SatisfiedBySDJWTVCClaims(claims map[string]any) error {
 // this feeds in); SatisfiedBySDJWTVCClaims itself only needs the
 // pass/fail outcome, so it discards the paths.
 func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Path, error) {
-	meta, err := c.SDJWTVCMeta()
-	if err != nil {
-		return nil, fmt.Errorf("meta: %w", err)
-	}
-	if len(meta.VCTValues) > 0 && !slices.ContainsFunc(credentialTypes(claims), func(t string) bool { return slices.Contains(meta.VCTValues, t) }) {
-		vct, _ := claims["vct"].(string)
-		return nil, fmt.Errorf("credential's own vct %q, and its aka_vcts, are not among the requested vct_values %v", vct, meta.VCTValues)
+	if err := c.checkVCT(claims); err != nil {
+		return nil, err
 	}
 	return c.selectedClaimPaths(func(p Path) ([]any, error) {
 		return p.Select(claims)
 	})
+}
+
+// checkVCT checks claims, an SD-JWT VC's, are of one of the types c's
+// meta asks for, when it asks for any.
+func (c CredentialQuery) checkVCT(claims map[string]any) error {
+	meta, err := c.SDJWTVCMeta()
+	if err != nil {
+		return fmt.Errorf("meta: %w", err)
+	}
+	if len(meta.VCTValues) > 0 && !slices.ContainsFunc(credentialTypes(claims), func(t string) bool { return slices.Contains(meta.VCTValues, t) }) {
+		vct, _ := claims["vct"].(string)
+		return fmt.Errorf("credential's own vct %q, and its aka_vcts, are not among the requested vct_values %v", vct, meta.VCTValues)
+	}
+	return nil
 }
 
 // SatisfiedBySDJWTVCPresentation is SatisfiedBySDJWTVCClaims for what a
@@ -159,18 +168,25 @@ func (c CredentialQuery) SelectedSDJWTVCClaimPaths(claims map[string]any) ([]Pat
 // element's position in the credential from a presentation, and must
 // not rely on it.
 func (c CredentialQuery) SatisfiedBySDJWTVCPresentation(claims map[string]any) error {
-	meta, err := c.SDJWTVCMeta()
-	if err != nil {
-		return fmt.Errorf("meta: %w", err)
+	_, err := c.SatisfiedSDJWTVCPresentationPaths(claims)
+	return err
+}
+
+// SatisfiedSDJWTVCPresentationPaths is SatisfiedBySDJWTVCPresentation
+// returning, on success, the claims paths the presentation may
+// disclose: every one of c.Claims without claim_sets, and with them,
+// those of each option the presentation satisfies, values filters
+// included (satisfiedClaimPaths). §6.4.1 has the Wallet send no
+// selectively disclosable claim outside the option it chose, so one
+// outside every option the presentation satisfies, which may fail its
+// own values filter, isn't one the query asked for.
+func (c CredentialQuery) SatisfiedSDJWTVCPresentationPaths(claims map[string]any) ([]Path, error) {
+	if err := c.checkVCT(claims); err != nil {
+		return nil, err
 	}
-	if len(meta.VCTValues) > 0 && !slices.ContainsFunc(credentialTypes(claims), func(t string) bool { return slices.Contains(meta.VCTValues, t) }) {
-		vct, _ := claims["vct"].(string)
-		return fmt.Errorf("credential's own vct %q, and its aka_vcts, are not among the requested vct_values %v", vct, meta.VCTValues)
-	}
-	_, err = c.selectedClaimPaths(func(p Path) ([]any, error) {
+	return c.satisfiedClaimPaths(func(p Path) ([]any, error) {
 		return p.withIndicesWidened().Select(claims)
 	})
-	return err
 }
 
 // SatisfiedByMdocClaims reports whether docType/nameSpaces — an
@@ -193,14 +209,40 @@ func (c CredentialQuery) SatisfiedByMdocClaims(docType string, nameSpaces map[st
 // see SelectedSDJWTVCClaimPaths's own doc comment for exactly what it
 // returns and why.
 func (c CredentialQuery) SelectedMdocClaimPaths(docType string, nameSpaces map[string]map[string]any) ([]Path, error) {
+	if err := c.checkDocType(docType); err != nil {
+		return nil, err
+	}
+	return c.selectedClaimPaths(mdocElement(nameSpaces))
+}
+
+// SatisfiedMdocClaimPaths is SatisfiedByMdocClaims for what a Verifier
+// receives, returning on success the claims paths the presentation may
+// disclose, as SatisfiedSDJWTVCPresentationPaths does: with
+// claim_sets, those of each option the presentation satisfies.
+func (c CredentialQuery) SatisfiedMdocClaimPaths(docType string, nameSpaces map[string]map[string]any) ([]Path, error) {
+	if err := c.checkDocType(docType); err != nil {
+		return nil, err
+	}
+	return c.satisfiedClaimPaths(mdocElement(nameSpaces))
+}
+
+// checkDocType checks docType is the one c's meta asks for, when it
+// asks for one.
+func (c CredentialQuery) checkDocType(docType string) error {
 	meta, err := c.MdocMeta()
 	if err != nil {
-		return nil, fmt.Errorf("meta: %w", err)
+		return fmt.Errorf("meta: %w", err)
 	}
 	if meta.DoctypeValue != "" && docType != meta.DoctypeValue {
-		return nil, fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
+		return fmt.Errorf("credential's own docType %q does not match the requested doctype_value %q", docType, meta.DoctypeValue)
 	}
-	return c.selectedClaimPaths(func(p Path) ([]any, error) {
+	return nil
+}
+
+// mdocElement is a claims path's lookup in nameSpaces, an mdoc's
+// disclosed data elements.
+func mdocElement(nameSpaces map[string]map[string]any) func(Path) ([]any, error) {
+	return func(p Path) ([]any, error) {
 		namespace, element, ok := p.MdocNamespaceAndElement()
 		if !ok {
 			return nil, fmt.Errorf("claims path %v is not a valid mdoc-format path (exactly two string components)", p)
@@ -214,7 +256,7 @@ func (c CredentialQuery) SelectedMdocClaimPaths(docType string, nameSpaces map[s
 			return nil, fmt.Errorf("namespace %q element %q is not present", namespace, element)
 		}
 		return []any{value}, nil
-	})
+	}
 }
 
 // selectedClaimPaths implements §6.4.1's own "Selecting Claims" rules,
@@ -252,20 +294,7 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) ([]any, error)) (
 		return paths, nil
 	}
 
-	byID := make(map[string]ClaimsQuery, len(c.Claims))
-	for _, cl := range c.Claims {
-		byID[cl.ID] = cl
-	}
-	// Each claim is looked up once, however many options name it.
-	checked := make(map[string]error, len(c.Claims))
-	presentOnce := func(cl ClaimsQuery) error {
-		err, ok := checked[cl.ID]
-		if !ok {
-			err = presentAt(cl, present)
-			checked[cl.ID] = err
-		}
-		return err
-	}
+	byID, presentOnce := c.claimLookup(present)
 	var lastErr error
 	for _, option := range c.ClaimSets {
 		paths, err := claimSetOptionPaths(option, byID, presentOnce)
@@ -276,6 +305,58 @@ func (c CredentialQuery) selectedClaimPaths(present func(Path) ([]any, error)) (
 		return paths, nil
 	}
 	return nil, fmt.Errorf("no claim_sets option is satisfied: %w", lastErr)
+}
+
+// satisfiedClaimPaths is selectedClaimPaths for what a Verifier
+// receives: with claim_sets, it returns the paths of every option the
+// presentation satisfies, each once, rather than the first option's
+// alone. A Wallet sends one option's claims, the first it can satisfy;
+// a presentation that satisfies several may carry any of them, and
+// every claim of a satisfied option has passed its values filter.
+func (c CredentialQuery) satisfiedClaimPaths(present func(Path) ([]any, error)) ([]Path, error) {
+	if len(c.ClaimSets) == 0 {
+		return c.selectedClaimPaths(present)
+	}
+	byID, presentOnce := c.claimLookup(present)
+	paths := []Path{}
+	kept := map[string]bool{}
+	satisfied := false
+	var lastErr error
+	for _, option := range c.ClaimSets {
+		if _, err := claimSetOptionPaths(option, byID, presentOnce); err != nil {
+			lastErr = err
+			continue
+		}
+		satisfied = true
+		for _, id := range option {
+			if !kept[id] {
+				kept[id] = true
+				paths = append(paths, byID[id].Path)
+			}
+		}
+	}
+	if !satisfied {
+		return nil, fmt.Errorf("no claim_sets option is satisfied: %w", lastErr)
+	}
+	return paths, nil
+}
+
+// claimLookup is c's claims by ID, and a check of one of them with
+// present that looks each up once, however many options name it.
+func (c CredentialQuery) claimLookup(present func(Path) ([]any, error)) (map[string]ClaimsQuery, func(ClaimsQuery) error) {
+	byID := make(map[string]ClaimsQuery, len(c.Claims))
+	for _, cl := range c.Claims {
+		byID[cl.ID] = cl
+	}
+	checked := make(map[string]error, len(c.Claims))
+	return byID, func(cl ClaimsQuery) error {
+		err, ok := checked[cl.ID]
+		if !ok {
+			err = presentAt(cl, present)
+			checked[cl.ID] = err
+		}
+		return err
+	}
 }
 
 // claimSetOptionPaths checks one claim_sets option (a list of

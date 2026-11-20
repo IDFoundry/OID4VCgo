@@ -58,7 +58,9 @@ type StatusPolicy struct {
 	// StatusIssuers, if set, accepts a separate Status Issuer's
 	// signature on an issuer's status lists, as RequireValidStatusFrom
 	// does; nil requires each list signed by the credential's own
-	// issuer.
+	// issuer. For an mdoc it decides only when the mdoc has no issuer
+	// chain and its MSO names no status Certificate: ISO/IEC 18013-5
+	// §12.3.6.2 binds every other mdoc's lists to its own IACA.
 	StatusIssuers StatusIssuerPolicy
 
 	// RequireReference refuses a credential with no status reference

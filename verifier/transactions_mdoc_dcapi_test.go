@@ -615,7 +615,7 @@ func TestTransactions_MdocDCAPIProduction(t *testing.T) {
 		t.Fatal(err)
 	}
 	sound := func(c *verifier.TransactionsConfig) {
-		c.NoStatusCheck, c.Verify.AnyIssuerForAnyType = true, true
+		c.NoStatusCheck, c.Verify.AnyIssuerForAnyType, c.Scope = true, true, "mdoc"
 	}
 	ctx := context.Background()
 

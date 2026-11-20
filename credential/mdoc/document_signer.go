@@ -137,7 +137,11 @@ func CheckDocumentSigner(verified VerifiedMSO, chains [][]*x509.Certificate) ([]
 
 // checkSignerNamesItsIACA checks a verified path's document signer
 // names the country, and any state or province, of the IACA at its
-// root.
+// root: an IACA scoped to a state signs document signers for that state
+// alone (ISO/IEC 18013-5 Annex B), so a document signer leaving it off
+// is refused, or its mdocs' issuing_jurisdiction, which
+// checkIssuingAuthority holds to the document signer's state, would be
+// checked against nothing.
 func checkSignerNamesItsIACA(chain []*x509.Certificate) error {
 	// A custom resolver's paths: an empty one, or a nil certificate,
 	// verifies nothing.
@@ -150,7 +154,7 @@ func checkSignerNamesItsIACA(chain []*x509.Certificate) error {
 	if len(iaca.Subject.Country) == 0 || !slices.Equal(iaca.Subject.Country, leaf.Subject.Country) {
 		return fmt.Errorf("mdoc: document signer countryName %v differs from its IACA's %v", leaf.Subject.Country, iaca.Subject.Country)
 	}
-	if len(iaca.Subject.Province) > 0 && len(leaf.Subject.Province) > 0 && !slices.Equal(iaca.Subject.Province, leaf.Subject.Province) {
+	if len(iaca.Subject.Province) > 0 && !slices.Equal(iaca.Subject.Province, leaf.Subject.Province) {
 		return fmt.Errorf("mdoc: document signer stateOrProvinceName %v differs from its IACA's %v", leaf.Subject.Province, iaca.Subject.Province)
 	}
 	return nil

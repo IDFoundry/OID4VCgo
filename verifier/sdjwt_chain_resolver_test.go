@@ -140,7 +140,7 @@ func TestNewTransactions_ProductionRequiresSDJWTVCChainResolver(t *testing.T) {
 		cfg  verifier.TransactionsConfig
 	}{
 		{"redirect", verifier.TransactionsConfig{RequestURIBase: "https://verifier.example.com/request-objects"}},
-		{"DC API", verifier.TransactionsConfig{Origins: []string{"https://verifier.example.com"}}},
+		{"DC API", verifier.TransactionsConfig{Origins: []string{"https://verifier.example.com"}, Scope: "dcapi"}},
 	} {
 		for _, tc := range []struct {
 			name       string

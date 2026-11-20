@@ -113,6 +113,7 @@ func TestIACASubjectChecks(t *testing.T) {
 		{"same state", name("IACA", "US", "CA"), name("DS", "US", "CA"), ""},
 		{"different state", name("IACA", "US", "CA"), name("DS", "US", "NY"), "stateOrProvinceName"},
 		{"state on one side only", name("IACA", "US", ""), name("DS", "US", "NY"), ""},
+		{"state on the IACA only", name("IACA", "US", "CA"), name("DS", "US", ""), "stateOrProvinceName"},
 		{"neither has a country", name("IACA", "", ""), name("DS", "", ""), "countryName"},
 	}
 	for _, tt := range tests {

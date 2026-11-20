@@ -93,6 +93,21 @@ Migrate by one of:
   resolver that resolves each issuer's keys by its `iss` and says so
   (`IssuerNameBinding`), never `ClaimedIssuer` or `IssuerChain`.
 
+### A state's IACA must name its state on its document signers (`mdoc`, `verifier`, `proximity`, `mdocdcapi`, `wallet`)
+
+An mdoc's document signer certificate was compared with its IACA's
+`stateOrProvinceName` only when both carried one. So an IACA scoped to
+a state (`C=US, ST=US-CA`) could issue a document signer without a
+state, and sign mDLs claiming another state's `issuing_jurisdiction`
+(`US-NY`), which was then checked against nothing.
+
+`mdoc.CheckDocumentSigner`, and so every mdoc verification (OpenID4VP,
+Annex C, the proximity reader and the wallet's receipt check), now
+refuses a path whose IACA names a state or province its document
+signer doesn't name alike, as ISO/IEC 18013-5 Annex B has it.
+`issuing_jurisdiction` is then held to that state. An IACA without a
+state is unaffected.
+
 ### Authorize issuers by the anchor that verified them, not by names
 
 No API is removed, but an issuer authorization hook that decides as
@@ -132,6 +147,25 @@ of its own mdocs. A `Transaction` record now carries the anchor of each
 verified credential (`issuer_anchor`); a record from an earlier release
 reads with none.
 
+### `StatusIssuers` no longer decides a chained mdoc's status list (`verifier`, `proximity`, `mdocdcapi`)
+
+`StatusPolicy.StatusIssuers` (or `RequireValidStatusFrom`'s, or
+`AnyStatusListSigner`) used to accept a Status Issuer's signature on an
+mdoc's `status_list` even when the mdoc's issuer chain was known.
+ISO/IEC 18013-5 §12.3.6.2 has such a list signed under the CA that
+signed the document signer, or by the certificate the MSO names. So a
+Status Issuer trusted for SD-JWT VC issuers decided the status of
+every trusted IACA's mDLs, a revoked one included.
+
+It now decides an mdoc's `status_list` only where it already decided
+its `identifier_list`: for an mdoc verified with no issuer chain whose
+MSO names no status `Certificate`. Every other mdoc's lists must be
+signed as §12.3.6.2 says.
+
+A deployment whose mdoc issuers delegate their status lists to
+another signer has them name it in the MSO's status `Certificate`, or
+verifies those mdocs without an issuer chain.
+
 ### A `StatusPolicy` refuses a Checker that names the list signer
 
 `verifier.StatusPolicy` now refuses a `Checker` whose `Options` set
@@ -169,6 +203,26 @@ read the URL back out of the error has it from its own input. Errors
 from the other endpoints (metadata, nonce, token, credential,
 notification, status lists) still quote their URLs, which carry no
 secret.
+
+### Under `claim_sets`, a presentation may disclose only its satisfied options' claims (`verifier`, `dcql`)
+
+`VerifyResponse` (and `Transactions`) without `AllowUnrequestedClaims`
+took any claim a Credential Query's `claims` named, whichever
+`claim_sets` option the presentation satisfied. So a presentation
+satisfying "or failing that, a name" could also carry an address
+whose `country` failed the other option's `values` filter (`DE`
+asked, `FR` sent), and the result kept it.
+
+It now takes only the claims of the options the presentation
+satisfies, values filters included, as OpenID4VP 1.0 §6.4.1 has the
+Wallet send. A claim of any other option is refused as
+`ReasonUnrequestedClaims`. A presentation that satisfies several
+options may carry each one's claims. This library's wallet sends one
+option's claims, and is unaffected. With `AllowUnrequestedClaims`,
+nothing changes.
+
+`dcql.CredentialQuery` gains `SatisfiedSDJWTVCPresentationPaths` and
+`SatisfiedMdocClaimPaths`, which return those claims' paths.
 
 ### A DCQL credential query's `meta` is limited to 4 KiB (`dcql`, `wallet`, `walletflow`, mobile)
 
@@ -378,6 +432,24 @@ A deployment that writes `DeferredTransactionRecord`s itself sets
 `CredentialIdentifier` for a request by `credential_identifier`, or
 `RequestedByConfigurationID` for one by `credential_configuration_id`,
 as `RequestCredential` does.
+
+### A production Digital Credentials API `Transactions` needs a `Scope` (`verifier`)
+
+Under `AssuranceProduction`, `verifier.NewTransactions` refuses a
+`TransactionsConfig` without `RequestURIBase` (one that serves the
+Digital Credentials API alone, OpenID4VP or org-iso-mdoc) unless it
+sets `Scope`.
+
+Every such `Transactions` of one Verifier derived the same scope. So a
+lax policy's `HandleDCAPIResponse` could complete a strict policy's
+request: the answer was verified under the lax policy's `Verify`,
+`Status` and `Accept`, and the strict policy's `Lookup` reported it
+done.
+
+Give each policy a `Scope` of its own, the same on every replica. A
+transaction begun before the upgrade under the derived scope is
+`ErrTransactionUnknown` to the new one, so let those expire first, or
+upgrade between requests.
 
 ### An org-iso-mdoc `IssuerAuthorized` hook gets a `CredentialQueryID`
 
