@@ -168,8 +168,19 @@ func (b *productionBackend) authorizationServer(srvCfg *server.Config, deps *ser
 	deps.Keys, deps.AccessTokens = b.signingKeys, accessTokens
 	deps.Audit = auditLog{}
 	// The attestations the suite's emulated Wallet presents carry no
-	// status claim; one that did would be checked.
-	deps.ClientAttestationStatus = haip.WalletAttestationStatusList{Checker: b.statusChecker(attesterRoots(b.cfg))}
+	// status claim; one that did would be checked. server.New doesn't
+	// check the checker's configuration, so it's checked here, as a
+	// production Authorization Server must.
+	walletStatus := haip.WalletAttestationStatusList{Checker: b.statusChecker(attesterRoots(b.cfg))}
+	statusAssurance := server.AssuranceProduction
+	if b.cfg.Production.AttestationStatusAllowLoopback {
+		log.Print("WARNING: attestation status lists are fetched from loopback addresses, which WalletAttestationStatusList.CheckConfiguration refuses under production assurance: the Wallet Attestation status check's configuration is checked under development assurance")
+		statusAssurance = server.AssuranceDevelopment
+	}
+	if err := walletStatus.CheckConfiguration(statusAssurance); err != nil {
+		return nil, err
+	}
+	deps.ClientAttestationStatus = walletStatus
 
 	var resourceNonces storage.NonceStore
 	if b.cfg.DPoPNonces {

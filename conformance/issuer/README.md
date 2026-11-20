@@ -460,7 +460,9 @@ its development wiring:
 - Wallet Attestations' and key attestations' status checked
   (`haip.WalletAttestationStatusList`,
   `issuer.StatusListAttestationStatus`, sharing one
-  `statuslist.Cache`). The suite's attestations carry no `status`
+  `statuslist.Cache`), each checker's configuration checked as
+  production requires: the Authorization Server's by the binary, as
+  `server.New` doesn't. The suite's attestations carry no `status`
   claim, so no list is ever fetched.
 
 It checks attestation signers' certificates against their CAs' CRLs,
