@@ -218,7 +218,7 @@ func TestService_KeepsInstancesAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	ka := sharedKeyAttestation(t, c1, &holder.PublicKey)
-	kaKept, err := c1.KeyAttestation(ctx, &kept.PublicKey, []*ecdsa.PublicKey{&holder.PublicKey}, "n")
+	kaKept, err := c1.ProvenKeyAttestation(ctx, kept, []*ecdsa.PublicKey{&holder.PublicKey}, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestService_KeepsInstancesAcrossRestart(t *testing.T) {
 	if err := s1.lib.Revoke(ctx, instanceOf(t, s1, &revoked.PublicKey), "test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c1.KeyAttestation(ctx, &revoked.PublicKey, []*ecdsa.PublicKey{&holder.PublicKey}, "n"); err == nil || !strings.Contains(err.Error(), "revoked") {
+	if _, err := c1.ProvenKeyAttestation(ctx, revoked, []*ecdsa.PublicKey{&holder.PublicKey}, "n"); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("a Key Attestation for a revoked instance's key: %v, want refused as revoked", err)
 	}
 

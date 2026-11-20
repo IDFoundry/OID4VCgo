@@ -637,10 +637,21 @@ The wallets never hold the provider's key. They ask its service
 - `POST /wallet-attestation` with the wallet's `client_id` and the
   instance key it proves possession of at PAR and the token endpoint,
   for a Wallet Attestation.
-- `POST /key-attestation` with the issuance's instance key
-  (`instance_key`, one a Wallet Attestation recorded), fresh holder
-  keys and the issuer's `c_nonce`, for a Key Attestation over them
-  carrying that instance key's status.
+- `POST /key-attestation` with fresh holder keys and the issuer's
+  `c_nonce`, for a Key Attestation over them. With the issuance's
+  instance key (`instance_key`, one a Wallet Attestation recorded) and
+  proof the wallet holds it (`instance_key_proof`: the key's ECDSA
+  signature, DER, base64url, over `passport-vdc instance key proof`,
+  the nonce and each holder key's RFC 7638 thumbprint, one per line),
+  the attestation carries that instance key's status, so revoking the
+  instance withdraws it too. An instance key is no secret, since it's
+  the `cnf` of its Wallet Attestation, so a request naming one without
+  the proof gets the shared holder instance's status instead, as does
+  one naming none. The CLI and web wallets send the proof. The mobile
+  demo apps' `HTTPWalletProvider`s can't, as the library gives them no
+  instance key signer, so theirs carry the shared holder instance's
+  status; on the library's `/v1/` protocol, which the iOS demo app uses
+  on a device, they carry the instance's.
 - `POST /attestation-challenge` with `{"purpose": "instance"}` or
   `{"purpose": "holder"}`, for `{"challenge": "<base64url>",
   "expires_in": 300}`: 32 random bytes, usable once, for 5 minutes, for

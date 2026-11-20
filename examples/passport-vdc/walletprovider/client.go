@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -55,22 +56,50 @@ func (c Client) WalletAttestation(ctx context.Context, clientID string, instance
 }
 
 // KeyAttestation asks for a Key Attestation over keys carrying nonce,
-// the Credential Issuer's c_nonce, for instanceKey, the issuance's
-// instance key a Wallet Attestation from the service recorded.
+// the Credential Issuer's c_nonce, naming instanceKey, the issuance's
+// instance key, without proving it: the service issues it under its
+// shared holder instance. ProvenKeyAttestation proves it.
 func (c Client) KeyAttestation(ctx context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	return c.keyAttestation(ctx, instanceKey, nil, keys, nonce)
+}
+
+// ProvenKeyAttestation is KeyAttestation proving the wallet holds
+// instance, the issuance's instance key a Wallet Attestation from the
+// service recorded, so the Key Attestation carries that key's status:
+// suspending or revoking its instance withdraws it too.
+func (c Client) ProvenKeyAttestation(ctx context.Context, instance crypto.Signer, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	return c.keyAttestation(ctx, instance.Public(), instance, keys, nonce)
+}
+
+// keyAttestation asks for a Key Attestation over keys carrying nonce,
+// naming instanceKey, proved by signing with instance unless it's nil.
+func (c Client) keyAttestation(ctx context.Context, instanceKey crypto.PublicKey, instance crypto.Signer, keys []*ecdsa.PublicKey, nonce string) (string, error) {
 	instanceJWK, err := attestation.AttestedKey(instanceKey)
 	if err != nil {
 		return "", fmt.Errorf("walletprovider: instance key: %w", err)
 	}
 	jwks := make([]json.RawMessage, len(keys))
+	thumbprints := make([]string, len(keys))
 	for i, k := range keys {
 		jwk, err := attestation.AttestedKey(k)
 		if err != nil {
 			return "", fmt.Errorf("walletprovider: key %d: %w", i, err)
 		}
+		if _, thumbprints[i], err = parseP256Key(jwk); err != nil {
+			return "", fmt.Errorf("walletprovider: key %d: %w", i, err)
+		}
 		jwks[i] = jwk
 	}
-	jwt, err := c.post(ctx, KeyAttestationPath, KeyAttestationRequest{InstanceKey: instanceJWK, Keys: jwks, Nonce: nonce})
+	req := KeyAttestationRequest{InstanceKey: instanceJWK, Keys: jwks, Nonce: nonce}
+	if instance != nil {
+		digest := instanceKeyProofDigest(nonce, thumbprints)
+		sig, err := instance.Sign(rand.Reader, digest[:], crypto.SHA256)
+		if err != nil {
+			return "", fmt.Errorf("walletprovider: instance key proof: %w", err)
+		}
+		req.InstanceKeyProof = base64.RawURLEncoding.EncodeToString(sig)
+	}
+	jwt, err := c.post(ctx, KeyAttestationPath, req)
 	if err != nil {
 		return "", err
 	}

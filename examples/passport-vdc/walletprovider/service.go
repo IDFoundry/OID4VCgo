@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -90,12 +91,20 @@ type WalletAttestationRequest struct {
 // CertificateChains, in the order of Keys (an empty chain for a key it
 // has none for). InstanceKey is the instance key of the issuance the
 // keys are for, a public JWK a Wallet Attestation from the service
-// recorded: the Key Attestation carries that key's status, so
-// suspending or revoking its instance withdraws it too. Without one,
-// as an older wallet sends, it's issued under the service's shared
-// holder instance.
+// recorded, and InstanceKeyProof proves the request holds it: the Key
+// Attestation then carries that key's status, so suspending or revoking
+// its instance withdraws it too. Without them, as an older wallet or a
+// mobile demo app sends, it's issued under the service's shared holder
+// instance: an instance key is no secret (it's its Wallet Attestation's
+// cnf, which each issuer sees), so naming one proves nothing.
 type KeyAttestationRequest struct {
-	InstanceKey       json.RawMessage   `json:"instance_key,omitempty"`
+	InstanceKey json.RawMessage `json:"instance_key,omitempty"`
+	// InstanceKeyProof is InstanceKey's ECDSA P-256 SHA-256 signature,
+	// ASN.1 DER, base64url without padding, over the UTF-8 text
+	// "passport-vdc instance key proof", then Nonce, then each of Keys'
+	// RFC 7638 thumbprints, in order, each on a line of its own: so it
+	// proves possession for these keys and this nonce alone.
+	InstanceKeyProof  string            `json:"instance_key_proof,omitempty"`
 	Keys              []json.RawMessage `json:"keys"`
 	Nonce             string            `json:"nonce"`
 	CertificateChains [][]string        `json:"certificate_chains,omitempty"`
@@ -212,11 +221,12 @@ func (p *Provider) Handler(clientID string) http.Handler {
 // instance for it, with a registration key of the service's own that
 // signs nothing, and records the instance key for that instance at
 // the security level its chain showed (software without one). A Key
-// Attestation is issued for the instance key the request names, under
-// that key's instance, so it carries that key's status (an instance key
-// no Wallet Attestation recorded is refused, 400); one naming none, for
-// one shared instance key of one shared instance the service registers
-// for the purpose. Suspending or
+// Attestation is issued for the instance key the request names and
+// proves it holds (KeyAttestationRequest.InstanceKeyProof), under that
+// key's instance, so it carries that key's status (an instance key no
+// Wallet Attestation recorded is refused, 400); one naming none, or not
+// proving the one it names, for one shared instance key of one shared
+// instance the service registers for the purpose. Suspending or
 // revoking an instance through the library stops its Wallet
 // Attestations and sets its instance key's status. Without
 // ServiceConfig's paths, instances and status indices are kept in
@@ -673,11 +683,11 @@ func (s *service) keyAttestation(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequest(w, r, &req) || !checkKeyAttestationRequest(w, &req) {
 		return
 	}
-	instanceKey, instanceID, ok := s.requestInstance(w, r, req.InstanceKey)
+	keys, thumbprints, ok := parseRequestKeys(w, req.Keys)
 	if !ok {
 		return
 	}
-	keys, thumbprints, ok := parseRequestKeys(w, req.Keys)
+	instanceKey, instanceID, ok := s.requestInstance(w, r, &req, thumbprints)
 	if !ok {
 		return
 	}
@@ -731,17 +741,26 @@ func checkKeyAttestationRequest(w http.ResponseWriter, req *KeyAttestationReques
 	return true
 }
 
-// requestInstance returns the Key Attestation request's instance key,
-// raw, and the instance a Wallet Attestation recorded it for; none for
-// an empty raw. For one it can't, it writes the error and returns
-// false.
-func (s *service) requestInstance(w http.ResponseWriter, r *http.Request, raw json.RawMessage) (crypto.PublicKey, string, bool) {
-	if len(raw) == 0 {
+// requestInstance returns the Key Attestation request's instance key
+// and the instance a Wallet Attestation recorded it for, when the
+// request proves it holds the key, for keys of thumbprints; none for a
+// request naming none or not proving the one it names, issued under the
+// shared holder instance. For one it can't, it writes the error and
+// returns false.
+func (s *service) requestInstance(w http.ResponseWriter, r *http.Request, req *KeyAttestationRequest, thumbprints []string) (crypto.PublicKey, string, bool) {
+	if len(req.InstanceKey) == 0 {
 		return nil, "", true
 	}
-	key, thumbprint, err := parseP256Key(raw)
+	key, thumbprint, err := parseP256Key(req.InstanceKey)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "instance_key: "+err.Error())
+		return nil, "", false
+	}
+	if req.InstanceKeyProof == "" {
+		return nil, "", true
+	}
+	if !verifyInstanceKeyProof(key, req.InstanceKeyProof, req.Nonce, thumbprints) {
+		writeError(w, http.StatusBadRequest, "instance_key_proof isn't instance_key's signature over the nonce and keys")
 		return nil, "", false
 	}
 	id, err := s.instanceOf(r.Context(), thumbprint)
@@ -755,6 +774,34 @@ func (s *service) requestInstance(w http.ResponseWriter, r *http.Request, raw js
 		return nil, "", false
 	}
 	return key, id, true
+}
+
+// maxInstanceKeyProofLength bounds instance_key_proof: an ECDSA P-256
+// DER signature is at most 72 bytes, 96 in base64url.
+const maxInstanceKeyProofLength = 96
+
+// instanceKeyProofDigest is what a Key Attestation request's instance
+// key signs (KeyAttestationRequest.InstanceKeyProof): the request's
+// nonce and its keys' thumbprints, in order. A nonce is printable
+// ASCII and a thumbprint base64url, so neither holds a line break.
+func instanceKeyProofDigest(nonce string, thumbprints []string) [sha256.Size]byte {
+	return sha256.Sum256([]byte("passport-vdc instance key proof\n" + nonce + "\n" + strings.Join(thumbprints, "\n")))
+}
+
+// verifyInstanceKeyProof reports whether proof is key's signature over
+// nonce and the keys of thumbprints. A proof copied from another
+// request names that request's keys and nonce, so it attests only those
+// keys again, which the request's sender holds.
+func verifyInstanceKeyProof(key *ecdsa.PublicKey, proof, nonce string, thumbprints []string) bool {
+	if len(proof) > maxInstanceKeyProofLength {
+		return false
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(proof)
+	if err != nil {
+		return false
+	}
+	digest := instanceKeyProofDigest(nonce, thumbprints)
+	return ecdsa.VerifyASN1(key, digest[:], sig)
 }
 
 // parseRequestKeys parses the Key Attestation request's keys, returning

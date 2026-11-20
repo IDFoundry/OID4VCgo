@@ -84,13 +84,14 @@ func jwtClaims(t *testing.T, jwt string) map[string]any {
 // TestService_Attests: the Client gets a Wallet Attestation for the
 // wallet's client_id and instance key, and a Key Attestation over its
 // holder keys carrying the issuer's nonce, both from the provider. The
-// Key Attestation carries the status of the instance key it's for.
+// Key Attestation carries the status of the instance key it proves it's
+// for.
 func TestService_Attests(t *testing.T) {
 	_, c := newService(t)
 	ctx := context.Background()
 
-	instanceKey := &p256(t).PublicKey
-	wa, err := c.WalletAttestation(ctx, "wallet-1", instanceKey)
+	instance := p256(t)
+	wa, err := c.WalletAttestation(ctx, "wallet-1", &instance.PublicKey)
 	if err != nil {
 		t.Fatalf("WalletAttestation: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestService_Attests(t *testing.T) {
 		t.Errorf("Wallet Attestation claims = %v", waClaims)
 	}
 
-	ka, err := c.KeyAttestation(ctx, instanceKey, []*ecdsa.PublicKey{&p256(t).PublicKey, &p256(t).PublicKey}, "c-nonce-1")
+	ka, err := c.ProvenKeyAttestation(ctx, instance, []*ecdsa.PublicKey{&p256(t).PublicKey, &p256(t).PublicKey}, "c-nonce-1")
 	if err != nil {
 		t.Fatalf("KeyAttestation: %v", err)
 	}
@@ -136,7 +137,8 @@ func TestService_Refuses(t *testing.T) {
 	}
 
 	h := p.Handler("wallet-1")
-	pub, err := attestation.AttestedKey(&p256(t).PublicKey)
+	holder := p256(t)
+	pub, err := attestation.AttestedKey(&holder.PublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,12 +151,16 @@ func TestService_Refuses(t *testing.T) {
 	repeatedD := strings.TrimSuffix(string(pub), "}") + `,"d":"AAAA","D":""}`
 	// Without an instance_key, as an older wallet sends.
 	valid := `{"keys":[` + string(pub) + `],"nonce":"n"}`
-	unrecorded, err := attestation.AttestedKey(&p256(t).PublicKey)
+	unrecordedKey := p256(t)
+	unrecorded, err := attestation.AttestedKey(&unrecordedKey.PublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Proven: one naming a key it doesn't prove is issued under the
+	// shared holder instance.
+	unrecordedProof := instanceProof(t, unrecordedKey, "n", &holder.PublicKey)
 	for name, tc := range map[string]struct{ path, body string }{
-		"unrecorded instance key": {KeyAttestationPath, `{"instance_key":` + string(unrecorded) + `,"keys":[` + string(pub) + `],"nonce":"n"}`},
+		"unrecorded instance key": {KeyAttestationPath, `{"instance_key":` + string(unrecorded) + `,"instance_key_proof":"` + unrecordedProof + `","keys":[` + string(pub) + `],"nonce":"n"}`},
 		"P-384 instance key":      {KeyAttestationPath, `{"instance_key":{"kty":"EC","crv":"P-384","x":"AA","y":"AA"},"keys":[` + string(pub) + `],"nonce":"n"}`},
 		"private key":             {WalletAttestationPath, `{"client_id":"wallet-1","instance_key":` + string(private) + `}`},
 		"repeated d":              {KeyAttestationPath, `{"keys":[` + repeatedD + `],"nonce":"n"}`},
