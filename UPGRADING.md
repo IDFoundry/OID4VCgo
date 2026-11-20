@@ -34,6 +34,20 @@ names a controller ID with a variation selector now stands without
 that information (`RequestInfoError`), as one with a format character
 already did.
 
+### A status list address that embeds a non-public IPv4 address is refused, however written (`statuslist`)
+
+`statuslist.Fetcher`, which every status and identifier list check
+uses, now decodes two more IPv6 forms that embed an IPv4 address, as
+FAPIgo's fapihttp does: SIIT's IPv4-translated `::ffff:0:a.b.c.d` and
+an ISATAP interface identifier (`…:0:5efe:a.b.c.d` or
+`…:200:5efe:a.b.c.d`, under any prefix). A translator or router on the
+path delivers such an address to the IPv4 one, so it's refused when
+that IPv4 address is: loopback unless `AllowLoopback`, private or
+link-local unless `AllowPrivate`. A zone in an IPv6 literal
+(`[…%25eth0]`) no longer hides an address from the policy's ranges and
+embeddings. A status list served at such an address needs the same
+setting as one served at its IPv4 address.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

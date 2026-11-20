@@ -41,9 +41,12 @@ import (
 // Verifier at its own network. That covers loopback, private,
 // link-local, shared (100.64.0.0/10), unspecified, multicast and the
 // other special-purpose ranges, and an IPv6 address that embeds an
-// IPv4 one (NAT64 64:ff9b::/96, 6to4, IPv4-compatible) is judged by
-// the IPv4 address it reaches. AllowLoopback and AllowPrivate lift
-// that for local development and internal deployments.
+// IPv4 one a translator or tunnel may deliver it to (NAT64
+// 64:ff9b::/96, 6to4, ISATAP, IPv4-compatible, or SIIT's
+// IPv4-translated ::ffff:0:0:0/96) is refused unless that IPv4 address
+// is allowed too, as FAPIgo's fapihttp refuses it. AllowLoopback and
+// AllowPrivate lift that for local development and internal
+// deployments.
 type Fetcher struct {
 	// HTTP is the client fetches use, e.g. one trusting a private CA.
 	// Nil means a client with a 30-second timeout, which is also the
@@ -508,6 +511,7 @@ var (
 	nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
 	sixToFour   = netip.MustParsePrefix("2002::/16")
 	v4Compat    = netip.MustParsePrefix("::/96")
+	siitPrefix  = netip.MustParsePrefix("::ffff:0:0:0/96")
 )
 
 // v4Prefix is the IPv4 prefix a.b.c.d/bits.
@@ -524,24 +528,47 @@ func inAny(prefixes []netip.Prefix, ip netip.Addr) bool {
 	return false
 }
 
-// embeddedIPv4 returns the IPv4 address ip reaches through an IPv4
-// embedding — IPv4-mapped, NAT64 64:ff9b::/96, 6to4 2002::/16 or
-// IPv4-compatible ::/96 — or ip itself.
-func embeddedIPv4(ip netip.Addr) netip.Addr {
+// embeddedIPv4 returns the IPv4 address that ip, an IPv6 address
+// without a zone, embeds and a translator or tunnel on the path may
+// deliver it to, and whether it embeds one: NAT64 64:ff9b::/96, 6to4
+// 2002::/16, an ISATAP interface identifier (0000:5efe or 0200:5efe,
+// under any prefix: RFC 5214 §6.1), IPv4-compatible ::/96 or SIIT's
+// IPv4-translated ::ffff:0:0:0/96 (RFC 2765 §2.1). It decodes the forms
+// FAPIgo's fapihttp decodes, in its order, so that a status list is
+// fetched under the address policy every fapihttp client applies;
+// fapihttp doesn't export its own. Teredo (2001::/32) is among
+// reservedPrefixes, and an IPv4-mapped address is unmapped before.
+func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
+	if !ip.Is6() {
+		return netip.Addr{}, false
+	}
 	b := ip.As16()
 	switch {
-	case ip.Is4In6():
-		return ip.Unmap()
-	case nat64Prefix.Contains(ip), v4Compat.Contains(ip) && !ip.IsUnspecified() && !ip.IsLoopback():
-		return netip.AddrFrom4([4]byte(b[12:16]))
+	case nat64Prefix.Contains(ip):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
 	case sixToFour.Contains(ip):
-		return netip.AddrFrom4([4]byte(b[2:6]))
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	case (b[8] == 0x00 || b[8] == 0x02) && b[9] == 0x00 && b[10] == 0x5e && b[11] == 0xfe:
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case v4Compat.Contains(ip) && !ip.IsUnspecified() && !ip.IsLoopback(), siitPrefix.Contains(ip):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
 	}
-	return ip
+	return netip.Addr{}, false
 }
 
+// addressAllowed reports whether f's policy allows a connection to ip:
+// to the address itself, whatever its zone, and to the IPv4 address it
+// embeds, if any (embeddedIPv4).
 func (f Fetcher) addressAllowed(ip netip.Addr) bool {
-	ip = embeddedIPv4(ip)
+	ip = ip.WithZone("").Unmap()
+	if v4, ok := embeddedIPv4(ip); ok && !f.allows(v4) {
+		return false
+	}
+	return f.allows(ip)
+}
+
+// allows is addressAllowed's verdict on ip alone.
+func (f Fetcher) allows(ip netip.Addr) bool {
 	switch {
 	case ip.IsLoopback():
 		return f.AllowLoopback
