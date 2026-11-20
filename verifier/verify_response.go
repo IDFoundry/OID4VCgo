@@ -258,7 +258,11 @@ type VerifyResponseRequest struct {
 	// Verifier's own, as its configuration knows it. It must be one of
 	// ExpectedOrigins. Never take it from the response's HTTP request
 	// (an Origin header, a parameter): a site that relays a request as
-	// its own would then have its presentation accepted.
+	// its own would then have its presentation accepted. Serve it from
+	// this Verifier alone: an SD-JWT VC presentation is bound to the
+	// origin and nonce, not to the Verifier, so another Verifier on the
+	// same origin can relay one made to it into this one's request
+	// (SECURITY.md, Known limitations).
 	Origin string
 
 	// ExpectedOrigins is REQUIRED with Origin: the request's

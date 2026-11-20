@@ -270,7 +270,27 @@ they're not yet closed in the library.
   presentation can only be judged by the holder, from the Verifier the
   wallet names on its consent screen. Where the Verifier's session must
   be bound to the person presenting, such as a login, use the
-  same-device flow or the Digital Credentials API, not a QR code.
+  same-device flow or the Digital Credentials API, not a QR code; for
+  the latter, see the next item.
+- **Verifiers sharing a Digital Credentials API origin.** Over the
+  Digital Credentials API, an SD-JWT VC presentation is bound to the
+  requesting page's origin and the request's nonce, not to the
+  Verifier: its Key Binding JWT's `aud` is `origin:` and the origin,
+  for a signed request too (OpenID4VP 1.0 Appendix A.4), and nothing it
+  signs names the Verifier's key or Client Identifier. So two Verifiers
+  whose requests list one origin, a verification platform's say, can
+  each use the other's presentations: one that can run script on the
+  shared origin reads the other's nonce and response encryption key
+  from its signed request, has the holder present to it with that
+  nonce, after the holder agreed to present to it, and re-encrypts the
+  answer to the other Verifier's key, which completes the attacker's
+  session there. Neither side can bind the Verifier without breaking
+  interoperability. Serve each Digital Credentials API origin from one
+  Verifier (`TransactionsConfig.Origins`,
+  `VerifyResponseRequest.Origin`). Where one origin must serve several,
+  ask for mdocs: an mdoc's DC API SessionTranscript binds the response
+  encryption key (Appendix B.2.6.2), so a presentation made to one
+  Verifier doesn't verify at another.
 - **Response endpoint timing.** `verifier.Transactions` answers every
   refused or unknown answer to its response endpoint with the same
   reply, so whoever holds a request's QR code can't learn from it
