@@ -185,7 +185,16 @@
 // default isolation, or after BEGIN IMMEDIATE on SQLite, and writes it
 // in the same transaction. So the guarantees hold across every process
 // sharing the database, not just within one. Update callbacks are
-// called once. A Wallet Provider instance's Update takes no callback:
+// called once. A write of one statement gets READ COMMITTED's outcome
+// on Postgres too, whatever the database's default isolation: under a
+// stricter one, a statement that loses a race to a concurrent write
+// fails with a serialization error (SQLSTATE 40001), having changed
+// nothing, and runs again in a READ COMMITTED transaction, so its
+// caller gets the store's own answer (not found,
+// walletprovider.ErrConflict, statuslist.ErrIndexTaken) rather than
+// the database's error. Once Migrate or CheckSchema has found that
+// default isn't READ COMMITTED, every write runs in such a transaction
+// from the start. A Wallet Provider instance's Update takes no callback:
 // it's one UPDATE comparing the instance's revision, refused with
 // walletprovider.ErrConflict if another Update came first.
 // A store that couldn't answer (the database unreachable, a timeout, a
