@@ -34,9 +34,10 @@ import (
 // A proof carrying a key_attestation header (Appendix D.1, F.1) is
 // resolved to the keys that attestation attests: see
 // resolveKeyAttestationHeader. ptc.KeyAttestationsRequired makes the
-// header required.
+// header required. keyAlgs are the algorithms an attested key may be of
+// (bindingKeyAlgs).
 func (iss *Issuer) resolveJWTProofKeys(
-	ctx context.Context, auth AuthorizedRequest, values []string, ptc oid4vci.ProofTypeConfiguration,
+	ctx context.Context, auth AuthorizedRequest, values []string, ptc oid4vci.ProofTypeConfiguration, keyAlgs []string,
 ) ([]resolvedKey, error) {
 	keys := make([]resolvedKey, 0, len(values))
 	var expectedNonce string
@@ -67,7 +68,7 @@ func (iss *Issuer) resolveJWTProofKeys(
 			}
 			keys = append(keys, resolvedKey{Public: pub, JWKRaw: jwkRaw, ProofKeyHeader: keyHeader})
 		case keyAttestation != "":
-			attested, err := iss.resolveKeyAttestationHeader(ctx, keyAttestation, pub, expectedNonce, i, ptc)
+			attested, err := iss.resolveKeyAttestationHeader(ctx, keyAttestation, pub, expectedNonce, i, ptc, keyAlgs)
 			if err != nil {
 				return nil, err
 			}
@@ -151,9 +152,11 @@ func keyAttestationHeader(header map[string]any, i int) (string, error) {
 //     1.0 §9.2), which only the key's holder can use;
 //   - that the proof is "signed by a key contained in the attestation"
 //     (D.1);
-//   - key_attestations_required, and its status, after its freshness.
+//   - key_attestations_required, and that each key it attests is of
+//     one of keyAlgs, the algorithms the proof's own key may be of
+//     (bindingKeyAlgs), and then its status, after its freshness.
 func (iss *Issuer) resolveKeyAttestationHeader(
-	ctx context.Context, compact string, proofKey crypto.PublicKey, nonce string, i int, ptc oid4vci.ProofTypeConfiguration,
+	ctx context.Context, compact string, proofKey crypto.PublicKey, nonce string, i int, ptc oid4vci.ProofTypeConfiguration, keyAlgs []string,
 ) ([]resolvedKey, error) {
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof %d: key_attestation isn't supported by this issuer", i), nil)
@@ -176,10 +179,14 @@ func (iss *Issuer) resolveKeyAttestationHeader(
 	if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 		return nil, err
 	}
+	keys, err := appendAttestedKeys(nil, verified, compact, i, iss.maxBatchSize(), keyAlgs)
+	if err != nil {
+		return nil, err
+	}
 	if err := iss.requestAttestationStatus(ctx, signed, fmt.Sprintf("proof %d", i)); err != nil {
 		return nil, err
 	}
-	return appendAttestedKeys(nil, verified, compact, i, iss.maxBatchSize())
+	return keys, nil
 }
 
 // appendUniqueKeys appends each of add to keys unless keys already has
@@ -491,7 +498,8 @@ func bindingKeyFromJWK(raw []byte) (resolvedKey, error) {
 // review — the exact amplification checkBatchSize exists to prevent,
 // through a side door). The running total across every attestation in
 // values is capped at maxBatchSize independently, for that reason.
-func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []string, ptc oid4vci.ProofTypeConfiguration) ([]resolvedKey, error) {
+// Each attested key must be of one of keyAlgs (bindingKeyAlgs).
+func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []string, ptc oid4vci.ProofTypeConfiguration, keyAlgs []string) ([]resolvedKey, error) {
 	if iss.deps.AttestationVerifier == nil {
 		return nil, newError(ErrorInvalidProof, 400, "attestation proof type is not supported", nil)
 	}
@@ -526,11 +534,11 @@ func (iss *Issuer) resolveAttestationProofKeys(ctx context.Context, values []str
 		if err := meetsKeyAttestationRequirement(verified, ptc.KeyAttestationsRequired, i); err != nil {
 			return nil, err
 		}
-		if err := iss.requestAttestationStatus(ctx, signed, fmt.Sprintf("attestation %d", i)); err != nil {
+		keys, err = appendAttestedKeys(keys, verified, raw, i, maxKeys, keyAlgs)
+		if err != nil {
 			return nil, err
 		}
-		keys, err = appendAttestedKeys(keys, verified, raw, i, maxKeys)
-		if err != nil {
+		if err := iss.requestAttestationStatus(ctx, signed, fmt.Sprintf("attestation %d", i)); err != nil {
 			return nil, err
 		}
 	}
@@ -575,11 +583,6 @@ func (iss *Issuer) verifyOneAttestation(ctx context.Context, raw string, i int, 
 	return VerifiedKeyAttestation{Claims: verified, SignerKey: pub, SignerCertificates: signerCertificates(parsed, pub)}, nil
 }
 
-// appendAttestedKeys appends one resolvedKey per entry in verified's
-// own attested_keys claim to keys, enforcing maxKeys as a running total
-// across every attestation in the request — split out of
-// resolveAttestationProofKeys purely to keep it under the linter's own
-// cognitive complexity ceiling.
 // meetsKeyAttestationRequirement checks a key attestation asserts at
 // least one of the key_storage and user_authentication levels this
 // issuer accepts (key_attestations_required, OID4VCI 1.0 §12.2.4 and
@@ -609,7 +612,15 @@ func meetsKeyAttestationRequirement(verified attestation.VerifiedClaims, req *oi
 	return nil
 }
 
-func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, compact string, i, maxKeys int) ([]resolvedKey, error) {
+// appendAttestedKeys appends one resolvedKey per entry in verified's
+// own attested_keys claim to keys, enforcing maxKeys as a running total
+// across every attestation in the request — split out of
+// resolveAttestationProofKeys purely to keep it under the linter's own
+// cognitive complexity ceiling. Each key must be of one of algs
+// (bindingKeyAlgs): a key attestation vouches for a key's storage, not
+// for its algorithm, which the issuer's policy decides as it does for
+// a proof's own key.
+func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims, compact string, i, maxKeys int, algs []string) ([]resolvedKey, error) {
 	for j, attestedKeyRaw := range verified.AttestedKeys {
 		if len(keys) >= maxKeys {
 			return nil, newError(ErrorInvalidProof, 400,
@@ -619,10 +630,43 @@ func appendAttestedKeys(keys []resolvedKey, verified attestation.VerifiedClaims,
 		if err != nil {
 			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d]: parse jwk", i, j), err)
 		}
+		if alg, ok := keyAlgListed(key.Public, algs); !ok {
+			return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("attestation %d: attested_keys[%d] is a key for alg %q, which proof_signing_alg_values_supported doesn't list", i, j, alg), nil)
+		}
 		key.KeyAttestation = compact
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// bindingKeyAlgs are the algorithms a key bound under proofType, one of
+// cc's proof types, may be of: the one algorithm jose.Verify takes with
+// the key (keyAlgListed) must be one of them.
+//
+// Under the jwt proof type, they're its proof_signing_alg_values_supported,
+// which a proof's own key is held to (Appendix F.1), so a key a key
+// attestation attests beside it is held to them too: each is a key
+// the Wallet could prove with a jwt proof of its own. OpenID4VCI 1.0
+// gives no list for the keys an attestation proof attests: that proof
+// type's proof_signing_alg_values_supported is for the attestation's
+// own signature (Appendix F.3), by the Wallet Provider or the key
+// storage component. Under it, they're the algorithms either cc's jwt
+// or its attestation proof type lists. A Wallet whose keys follow
+// either list of this issuer's metadata is never refused, and a key of
+// an algorithm the configuration lists nowhere is.
+func bindingKeyAlgs(cc CredentialConfiguration, proofType string) []string {
+	jwt := cc.ProofTypesSupported[oid4vci.ProofTypeJWT].ProofSigningAlgValuesSupported
+	if proofType == oid4vci.ProofTypeJWT {
+		return jwt
+	}
+	return append(slices.Clone(jwt), cc.ProofTypesSupported[oid4vci.ProofTypeAttestation].ProofSigningAlgValuesSupported...)
+}
+
+// keyAlgListed is the one algorithm jose.Verify takes with pub
+// (jose.AlgForKey), and whether algs lists it.
+func keyAlgListed(pub crypto.PublicKey, algs []string) (jose.Alg, bool) {
+	alg, err := jose.AlgForKey(pub)
+	return alg, err == nil && slices.Contains(algs, string(alg))
 }
 
 // checkAttestationStatus runs Dependencies.AttestationStatus, when set,

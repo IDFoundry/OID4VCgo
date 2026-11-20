@@ -687,9 +687,14 @@ changes whether *every* bullet below is `(done)`.
   detail carries `credential_identifiers`, only `credential_identifier`
   is accepted (§8.2). An `attestation` proof must assert one of the
   `key_storage`/`user_authentication` levels the configuration's
-  `key_attestations_required` accepts; a `jwt` proof is dated by the
-  consumed `c_nonce` or, with no Nonce Endpoint, by its `iat` within
-  `Limits.MaxProofAge` (Appendix F.4). Signing keys
+  `key_attestations_required` accepts, and each key a key attestation
+  attests must be a key for an algorithm the configuration lists for
+  it: beside a `jwt` proof, the `jwt` proof type's
+  `proof_signing_alg_values_supported`, as for the proof's own key;
+  under the `attestation` proof type, whose list is the attestation's
+  own signature's (Appendix F.3), either proof type's. A `jwt` proof
+  is dated by the consumed `c_nonce` or, with no Nonce Endpoint, by
+  its `iat` within `Limits.MaxProofAge` (Appendix F.4). Signing keys
   (`SDJWTSigner`/`MdocSigner`) and the attestation trust policy
   (`AttestationVerifier`) are new `Dependencies` fields, each required
   only when a configured credential/proof type actually needs it — see

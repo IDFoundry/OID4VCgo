@@ -46,6 +46,15 @@ type CredentialConfiguration struct {
 	// ProofTypesSupported is REQUIRED exactly when
 	// CryptographicBindingMethodsSupported is present, keyed by proof
 	// type identifier (oid4vci.ProofTypeJWT, oid4vci.ProofTypeAttestation).
+	//
+	// Each key a Credential is bound to must be a key for an algorithm
+	// listed here: the jwt proof type's ProofSigningAlgValuesSupported
+	// for a jwt proof's own key and for each key its key_attestation
+	// attests, and, for each key an attestation proof attests, either
+	// proof type's list, since OpenID4VCI 1.0 lists no algorithms for
+	// those keys (the attestation proof type's list is for the key
+	// attestation's own signature, Appendix F.3). An attested key for
+	// another algorithm fails the proof with invalid_proof.
 	ProofTypesSupported map[string]oid4vci.ProofTypeConfiguration
 
 	// VCT is credential/sdjwtvc's own format-specific metadata

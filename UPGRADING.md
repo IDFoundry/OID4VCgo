@@ -7,6 +7,29 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### A key attestation's keys must be for an algorithm the configuration lists (`issuer`)
+
+`RequestCredential` bound every key a key attestation attests, whatever
+its algorithm, though a jwt proof's own key must be for an algorithm
+its proof type's `proof_signing_alg_values_supported` lists. It now
+refuses, with `invalid_proof`, a key attestation attesting a key for
+an algorithm the credential configuration doesn't list for it: in a
+jwt proof's `key_attestation` header, one the `jwt` proof type lists,
+as for the proof's own key; in an `attestation` proof, one either the
+`jwt` or the `attestation` proof type lists, since OpenID4VCI 1.0
+lists no algorithms for those keys (the `attestation` proof type's
+list is for the attestation's own signature). A key is for the one
+algorithm its type takes: ES256 for P-256, ES384 for P-384, ES512 for
+P-521 and EdDSA for Ed25519.
+
+A Wallet whose keys are for an algorithm the issuer's metadata lists
+is unaffected, as are HAIP Wallets, whose keys are P-256. Where Wallets
+attest keys for another algorithm, add it to the proof type's
+`ProofSigningAlgValuesSupported` (for keys an `attestation` proof
+attests, either proof type's).
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
