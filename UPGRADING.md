@@ -7,6 +7,20 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### A holder takes a reader's kid and alg only as RFC 9052 types them, and short (`proximity`, `walletflow`, mobile)
+
+A holder now refuses a SessionEstablishment whose EReaderKey carries a
+kid that isn't a byte string of at most 64 bytes, or an alg that isn't
+an integer or a text string of at most 64 bytes: its device key signs
+the EReaderKeyBytes as sent, and a reader could put close to 1 KiB of
+its own choosing there as a kid, or anything at all as an alg. An
+ephemeral key needs neither, and ISO/IEC 18013-5's Annex D, Multipaz
+and this package's own readers send neither. Such a message is
+refused as one that doesn't decode: `TrySessionEstablishment`
+rejects it, and `HandleSessionEstablishment` ends the session.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
