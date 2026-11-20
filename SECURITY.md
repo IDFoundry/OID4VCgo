@@ -113,7 +113,8 @@ FAPIgo's server (`server.X5CAttesterChain`), whose `Revocation`
 since FAPIgo v0.62.0; the attestation's own status claim is checked by
 `server.Dependencies.ClientAttestationStatus`, which production
 requires (`haip.WalletAttestationStatusList` for a Token Status List,
-`server.NoClientAttestationStatusCheck{}` to decline). A key
+`server.NoClientAttestationStatusCheck{}` to decline), and whose own
+configuration `server.New` checks since FAPIgo v0.78.0. A key
 attestation's status claim is checked by
 `issuer.Dependencies.AttestationStatus`
 (`issuer.StatusListAttestationStatus`). Both bind the Status List

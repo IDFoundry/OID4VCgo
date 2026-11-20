@@ -7,6 +7,34 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration
+
+OID4VCgo now requires FAPIgo v0.78.0; see FAPIgo's UPGRADING.md,
+section v0.78.0. With attestation-based client authentication,
+`server.New` calls the status checker's `CheckConfiguration`
+(`server.ClientAttestationStatusAssurance`) with `Config.Assurance`,
+at every level, and doesn't start on its error.
+
+- **`haip.WalletAttestationStatusList`:** under `AssuranceProduction`,
+  a server whose checker has a `Fetcher` that may reach loopback or
+  private addresses, no `Options.Revocation` or no `Cache` no longer
+  starts. A deployment that called `CheckConfiguration` before
+  `server.New`, as DEPLOYING.md asked, sees no change, and can drop
+  the call.
+- **A checker of your own:** under `AssuranceProduction` it must
+  implement `CheckConfiguration`, refusing what your production rules
+  don't allow. `server.NoClientAttestationStatusCheck{}` needs nothing.
+  A wrapper embedding `WalletAttestationStatusList` inherits its check:
+  override it if the wrapper fetches some other way.
+- **`extension.RARRegistry.ValidateNarrowing`** takes the access
+  token's scope as a third argument: code calling it itself passes the
+  scope, or nil. A token request whose `authorization_details` is `[]`
+  now has the grant's stored details checked, so a grant holding a
+  type `Config.RAR` no longer registers is refused with
+  `invalid_authorization_details`.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

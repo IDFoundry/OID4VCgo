@@ -60,10 +60,10 @@ func FuzzAuthorizationDetailRARDefinition(f *testing.F) {
 			return
 		}
 		grantDetails := rarDetails(t, granted, def)
-		if err := registry.ValidateNarrowing(granted, granted); err != nil {
+		if err := registry.ValidateNarrowing(granted, granted, nil); err != nil {
 			t.Fatalf("a grant doesn't narrow to itself: %v (%s)", err, grantedObjs)
 		}
-		if narrowErr == nil && registry.ValidateNarrowing(granted, narrower) == nil {
+		if narrowErr == nil && registry.ValidateNarrowing(granted, narrower, nil) == nil {
 			for _, d := range rarDetails(t, narrower, def) {
 				if held := rarIdentifiersFor(grantDetails, d.CredentialConfigurationID); !rarSubset(d.CredentialIdentifiers, held) {
 					t.Fatalf("narrowing accepted identifiers %q for %q, the grant holds %q",

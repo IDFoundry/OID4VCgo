@@ -68,8 +68,8 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // Dependencies.ClientAttestationStatus, which checks a Wallet
 // Attestation's status claim (OID4VCI 1.0 Appendix E):
 // WalletAttestationStatusList for Wallet Providers that publish a Token
-// Status List, binding each list's signer to the attestation's (run its
-// CheckConfiguration with Config.Assurance first), or
+// Status List, binding each list's signer to the attestation's
+// (server.New runs its CheckConfiguration at Config.Assurance), or
 // server.NoClientAttestationStatusCheck{} when they publish no status. To take openid_credential authorization_details,
 // register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
 // refuses a Wallet's own credential_identifiers, at the pushed
