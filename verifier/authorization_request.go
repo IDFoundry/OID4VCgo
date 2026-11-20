@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -128,8 +129,16 @@ type BuildAuthorizationRequestResult struct {
 //
 // It doesn't host the built Request Object at a request_uri, parse a
 // response, or do anything past building and signing — see the package
-// doc comment for what's still missing.
+// doc comment for what's still missing. Nor does it know how long the
+// request stays answerable, so its Request Object carries no iat or
+// exp; Transactions' carry both.
 func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestRequest) (BuildAuthorizationRequestResult, error) {
+	return v.buildAuthorizationRequest(req, requestObjectTimes{})
+}
+
+// buildAuthorizationRequest is BuildAuthorizationRequest, its Request
+// Object carrying times.
+func (v *Verifier) buildAuthorizationRequest(req BuildAuthorizationRequestRequest, times requestObjectTimes) (BuildAuthorizationRequestResult, error) {
 	if err := req.Query.Validate(); err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: dcql_query: %w", err)
 	}
@@ -149,7 +158,7 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
 	}
 	requestObject, kid, err := v.signAuthorizationRequest(authorizationRequest{
-		query: req.Query, state: req.State, nonce: nonce, encKey: encKey, walletNonce: req.WalletNonce,
+		query: req.Query, state: req.State, nonce: nonce, encKey: encKey, walletNonce: req.WalletNonce, times: times,
 	})
 	if err != nil {
 		return BuildAuthorizationRequestResult{}, fmt.Errorf("verifier: build authorization request: %w", err)
@@ -164,8 +173,8 @@ func (v *Verifier) BuildAuthorizationRequest(req BuildAuthorizationRequestReques
 // redirect-flow request's query, state, nonce and response encryption
 // key, which a request keeps once built, and what may differ from one
 // fetch of it to the next: the wallet_nonce of a request_uri POST
-// (OpenID4VP 1.0 §5.10) and the client_metadata narrowed to that
-// POST's wallet_metadata (walletFit).
+// (OpenID4VP 1.0 §5.10), the client_metadata narrowed to that POST's
+// wallet_metadata (walletFit), and when it was signed (times).
 type authorizationRequest struct {
 	query       dcql.Query
 	state       string
@@ -173,6 +182,28 @@ type authorizationRequest struct {
 	encKey      *ecdsa.PrivateKey
 	walletNonce string
 	fit         *walletFit
+	times       requestObjectTimes
+}
+
+// requestObjectTimes are a Request Object's iat and exp claims (RFC
+// 7519 §4.1.6, §4.1.4): when it was signed, and when the request it
+// carries stops being answerable, so that a Wallet can refuse a copy
+// served after that, from wherever it was saved. Transactions sets both
+// from the request's own expiry; zero leaves each out, as for a request
+// built without one (BuildAuthorizationRequest,
+// BuildDCAPIAuthorizationRequest).
+type requestObjectTimes struct {
+	issuedAt, expiresAt time.Time
+}
+
+// addTo adds the times that are set to payload, in seconds.
+func (t requestObjectTimes) addTo(payload map[string]any) {
+	if !t.issuedAt.IsZero() {
+		payload["iat"] = t.issuedAt.Unix()
+	}
+	if !t.expiresAt.IsZero() {
+		payload["exp"] = t.expiresAt.Unix()
+	}
 }
 
 // signAuthorizationRequest signs req's Request Object and returns it
@@ -200,6 +231,7 @@ func (v *Verifier) signAuthorizationRequest(req authorizationRequest) (requestOb
 	if req.walletNonce != "" {
 		payload["wallet_nonce"] = req.walletNonce
 	}
+	req.times.addTo(payload)
 	if info, err := v.verifierInfoFor(req.query); err != nil {
 		return "", "", err
 	} else if info != nil {

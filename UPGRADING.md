@@ -722,6 +722,67 @@ link-local unless `AllowPrivate`. A zone in an IPv6 literal
 embeddings. A status list served at such an address needs the same
 setting as one served at its IPv4 address.
 
+### A Wallet's error code is kept only when a specification defines it (`verifier`)
+
+`Transactions` records a Wallet's error response as the request's
+`LastError`, and sends a same-device request's browser back to
+`RedirectURI` with its code as `error`. Anyone holding the request's
+QR code or link can send one, so the code is now kept as sent only when
+RFC 6749 §4.1.2.1, RFC 9101 §7 or OpenID4VP 1.0 §8.5 defines it, and
+any other code is recorded and redirected as `unrecognized_error`.
+Before, any code that was a plain token of up to 64 characters was
+kept, and another was recorded without a code and redirected as
+`invalid_request`. A page that reads `error` at its `RedirectURI`, or
+`LastError`, sees `unrecognized_error` for those codes. `OnRefused`
+still gets an encrypted error response's own code.
+
+### Transactions' Request Objects carry `iat` and `exp` (`verifier`)
+
+The Request Objects `Transactions` serves — `BeginWith`'s, each
+`RequestObjectPost`'s and `BeginDCAPI`'s — now carry `iat`, when they
+were signed, and `exp`, the request's `ExpiresAt` (RFC 7519). A Wallet
+that checks `exp`, as this package's does, refuses a copy served after
+the request stopped being answerable. One whose clock runs ahead of
+the Verifier's by more than the time the request has left refuses it
+too, so keep the Verifier's clock synchronized.
+`BuildAuthorizationRequest` and `BuildDCAPIAuthorizationRequest`, which
+know no lifetime, are unchanged.
+
+### A Digital Credentials API origin must be one a platform reports (`wallet`, `walletflow`, `mobile`)
+
+`wallet.ParseDCAPIRequest` and `ParseDCAPIRequestData`, and so
+`walletflow`'s and the mobile libraries' `StartDCAPIPresentation`, now
+refuse a calling origin unless it is a serialized web origin, spelled
+as a browser gives a page's (`https://verifier.example`, with no path,
+trailing slash, user info, default port or uppercase), or an Android
+app's (`android:apk-key-hash:` and the unpadded base64url SHA-256 of
+its signing certificate). Anything else, an opaque origin's `null`
+included, is refused with a plain error before the request is read:
+`walletflow.ErrMalformedRequest`, and `invalid_input` across the
+mobile boundary. Before, any non-empty origin was accepted and the
+presentations were bound to it as given. Pass the origin exactly as the
+platform reports it: Chrome's through Credential Manager, and the
+Android library's own for an app, already have this form.
+
+### Claims paths into arrays: the wallet and the verifier agree (`wallet`, `verifier`, `dcql`, `sdjwtvc`)
+
+`sdjwtvc.SelectDisclosuresAt`, which the wallet's `Preview` and
+`Respond` use, no longer depends on the order of the paths: a path
+selecting a value whole, such as `["degrees"]`, now discloses all of
+it even when another path, such as `["degrees", 0, "type"]`, walked
+through one of its elements first. Before, that element's other
+members were left out, so a wallet showing the holder a consent screen
+may now show, and send, those members too: what the query asked for.
+
+`VerifyResponse` now accepts what such a wallet presents in two cases
+it refused: that order of paths, as `ReasonUnrequestedClaims`, and an
+index into an array whose other elements the rest of the path can't
+walk, such as `["c", 1, "p"]` where `c` is `["y", {"p": …}]`, as
+`ReasonNotAnswered`. A presentation's index is evaluated over every
+disclosed element, and an element of another type is now passed over;
+a Wildcard in the query itself still refuses such an array, as
+OpenID4VP 1.0 §7.1.1 says.
+
 ## v0.82.0 → v0.83.0
 
 ### A production issuer treats a deferred transaction without `ExpiresAt` as lapsed

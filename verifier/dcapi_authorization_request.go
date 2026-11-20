@@ -92,8 +92,16 @@ type BuildDCAPIAuthorizationRequestResult struct {
 // Serialization requests, Appendix A.3.2.2, and unsigned requests,
 // Appendix A.3.1, are both deliberately not offered — this package
 // builds signed requests exclusively, the same posture
-// BuildAuthorizationRequest already takes for the redirect flow).
+// BuildAuthorizationRequest already takes for the redirect flow). As
+// BuildAuthorizationRequest's, its Request Object carries no iat or
+// exp; Transactions.BeginDCAPI's carries both.
 func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationRequestRequest) (BuildDCAPIAuthorizationRequestResult, error) {
+	return v.buildDCAPIAuthorizationRequest(req, requestObjectTimes{})
+}
+
+// buildDCAPIAuthorizationRequest is BuildDCAPIAuthorizationRequest, its
+// Request Object carrying times.
+func (v *Verifier) buildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationRequestRequest, times requestObjectTimes) (BuildDCAPIAuthorizationRequestResult, error) {
 	if err := req.Query.Validate(); err != nil {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: dcql_query: %w", err)
 	}
@@ -132,6 +140,7 @@ func (v *Verifier) BuildDCAPIAuthorizationRequest(req BuildDCAPIAuthorizationReq
 	if req.State != "" {
 		payload["state"] = req.State
 	}
+	times.addTo(payload)
 	if info, err := v.verifierInfoFor(req.Query); err != nil {
 		return BuildDCAPIAuthorizationRequestResult{}, fmt.Errorf("verifier: build dc api authorization request: %w", err)
 	} else if info != nil {

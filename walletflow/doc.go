@@ -152,9 +152,11 @@
 // serialized as scheme://host[:port] with no trailing slash; on Android,
 // Credential Manager's CallingAppInfo origin, a web origin for a browser
 // on the privileged-browsers list, or "android:apk-key-hash:" and the
-// app's signing certificate digest for an app. StartMdocPresentation
-// takes web origins only (mdocdcapi.ParseRequest refuses anything else).
-// Never take the origin from the request itself.
+// app's signing certificate digest for an app. StartDCAPIPresentation
+// refuses an origin in neither form, an opaque origin's "null"
+// included, and StartMdocPresentation takes web origins only
+// (mdocdcapi.ParseRequest refuses anything else). Never take the origin
+// from the request itself.
 //
 // An OpenID4VP request over the Digital Credentials API (OpenID4VP 1.0
 // Appendix A) is a Presentation too, answered through the platform

@@ -179,6 +179,65 @@ func TestTransactions_RequestURIPost(t *testing.T) {
 	}
 }
 
+// TestTransactions_RequestObjectsCarryIatAndExp: every Request Object a
+// request is served with carries iat, when it was signed, and exp, the
+// request's ExpiresAt (RFC 7519 §4.1.6, §4.1.4): GET's, signed at
+// Begin, each POST's, signed as it's fetched, and a Digital Credentials
+// API request's. So a Wallet can refuse a copy served once the request
+// can no longer be answered, as this package's does, and accepts it
+// until then.
+func TestTransactions_RequestObjectsCarryIatAndExp(t *testing.T) {
+	ctx := context.Background()
+	f := newPostFixture(t, true)
+	begun := f.begin("browser-binding-A", false)
+	began := f.now
+	tx, err := f.store.Get(ctx, begun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getObject, err := f.txs.RequestObject(ctx, begun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = began.Add(time.Minute)
+	_, _, postObject := f.fetch(http.MethodPost, begun.ID, "", url.Values{"wallet_nonce": {"n"}}.Encode())
+	dcapi := f.beginDCAPI(testBinding)
+	dcapiTx, err := f.store.Get(ctx, dcapi.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		object   string
+		iat, exp time.Time
+	}{
+		"GET":    {getObject, began, tx.ExpiresAt},
+		"POST":   {postObject, f.now, tx.ExpiresAt},
+		"DC API": {dcapi.Request.Data.Request, f.now, dcapiTx.ExpiresAt},
+	} {
+		claims := requestObjectClaims(t, c.object)
+		if claims["iat"] != float64(c.iat.Unix()) || claims["exp"] != float64(c.exp.Unix()) {
+			t.Errorf("%s: iat %v, exp %v; want %d and %d", name, claims["iat"], claims["exp"], c.iat.Unix(), c.exp.Unix())
+		}
+	}
+	link, err := url.Parse(begun.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseAt := func(at time.Time) error {
+		_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
+			RequestObject: getObject, ClientID: link.Query().Get("client_id"), VerifierTrust: wallet.NoVerifierTrust{},
+			Now: func() time.Time { return at },
+		})
+		return err
+	}
+	if err := parseAt(tx.ExpiresAt.Add(-time.Second)); err != nil {
+		t.Errorf("the wallet, just before the request expires: %v", err)
+	}
+	if err := parseAt(tx.ExpiresAt.Add(2 * time.Minute)); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Errorf("the wallet, once the request has expired: %v, want the Request Object refused as expired", err)
+	}
+}
+
 // TestTransactions_RequestURIPostWalletMetadata: wallet_metadata
 // narrows the client_metadata to what both support; jwks, a key to
 // encrypt the Request Object to, is ignored (§5.10.1: "a signed,

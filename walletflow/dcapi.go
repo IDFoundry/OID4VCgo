@@ -15,8 +15,10 @@ import (
 // data as the platform hands them over, in any of the unsigned, signed
 // and multi-signed forms (wallet.ParseDCAPIRequestData), and origin the
 // calling page's or app's origin as the platform reports it, never
-// taken from the request — and finds the held credentials that can
-// answer it, without sending anything.
+// taken from the request: a serialized web origin, or an Android app's
+// ("android:apk-key-hash:" and its signing certificate's digest) — and
+// finds the held credentials that can answer it, without sending
+// anything.
 //
 // It's a Presentation like StartPresentation's: show the holder
 // Verifier (its Origin, and its Name when the request is signed),
@@ -36,7 +38,8 @@ import (
 // nothing for the page: a signed request from another origin, refused
 // first whatever else is wrong with it (wallet.ParseDCAPIRequest), one
 // from an untrusted Verifier (ErrUntrustedVerifier), and one that
-// can't be parsed (ErrMalformedRequest). Fail the platform's call the
+// can't be parsed or comes with an origin in neither form, "null"
+// included (ErrMalformedRequest). Fail the platform's call the
 // same way for each, so the page can't tell them apart: one replaying
 // another Verifier's request can't learn whether the wallet trusts it.
 func (w *Wallet) StartDCAPIPresentation(ctx context.Context, protocol string, data []byte, origin string) (*Presentation, error) {
@@ -85,7 +88,9 @@ func (p *Presentation) verifierName() string {
 	case p.req.ClientID == "":
 		return "origin:" + p.req.Origin
 	default:
-		// The origin, which has no space, first: unambiguous.
+		// The origin first, which has no space — the parser takes a
+		// serialized web origin or an Android app's only — so
+		// unambiguous.
 		return "origin:" + p.req.Origin + " client_id:" + p.req.ClientID
 	}
 }

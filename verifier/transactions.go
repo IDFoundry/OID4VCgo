@@ -130,7 +130,9 @@ type Transaction struct {
 	//
 	// It never carries text the answer's sender chose: a refused answer
 	// is recorded as a fixed description of its Reason, and an error
-	// response as its error code alone. Only a TransactionsConfig.Status
+	// response as its error code alone, when RFC 6749, RFC 9101 or
+	// OpenID4VP 1.0 §8.5 defines it for an error response, and
+	// otherwise as "unrecognized_error". Only a TransactionsConfig.Status
 	// or Accept refusal keeps its own text — they run only on an answer
 	// that verified, holder binding included — kept short and printable. It
 	// must still be escaped when displayed. The full error, for the
@@ -341,6 +343,13 @@ type TransactionsConfig struct {
 	// RedirectURI is where a same-device answer sends the browser back
 	// to, with response_code added to its query (OpenID4VP §8.2).
 	// REQUIRED for Begin with sameDevice.
+	//
+	// A Wallet's error response sends the browser back with error added
+	// instead, its error code as Transaction.LastError records it: as
+	// sent when RFC 6749, RFC 9101 or OpenID4VP 1.0 §8.5 defines it for
+	// an error response, and otherwise "unrecognized_error". Anyone
+	// holding the request's QR code or link can send an error response,
+	// so don't show it as the holder declining.
 	RedirectURI string
 
 	// Origins are the serialized origins of the pages that may make a
@@ -810,6 +819,12 @@ type BeginOptions struct {
 // BeginWith creates a presentation request as opts says (see
 // BeginOptions), for the redirect flows: the request is fetched from
 // TransactionsConfig.RequestURIBase, which it needs.
+//
+// Its Request Object carries iat, the time it was signed, and exp, the
+// request's ExpiresAt (RFC 7519 §4.1.6, §4.1.4), so that a Wallet can
+// refuse a copy served after the request stopped being answerable — one
+// saved from its request_uri and served from another, say. Each one
+// RequestObjectPost signs carries them too.
 func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun, error) {
 	query, browserBinding, sameDevice := opts.Query, opts.BrowserBinding, opts.SameDevice
 	if len(browserBinding) < MinBrowserBindingLength {
@@ -836,7 +851,8 @@ func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun,
 	// which has no response key to route it by, can be tied to it
 	// (HandleUnencryptedError); the secret part makes it unguessable.
 	state := id + stateSeparator + secret
-	built, err := t.v.BuildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state})
+	expiresAt, retainUntil := t.expiry()
+	built, err := t.v.buildAuthorizationRequest(BuildAuthorizationRequestRequest{Query: query, State: state}, t.requestObjectTimes(expiresAt))
 	if err != nil {
 		return Begun{}, fmt.Errorf("verifier: transactions: %w", err)
 	}
@@ -844,8 +860,8 @@ func (t *Transactions) BeginWith(ctx context.Context, opts BeginOptions) (Begun,
 		ID: id, KeyID: built.ResponseEncryptionKeyID, State: state, Nonce: built.Nonce, Query: query,
 		ResponseDecryptionKey: built.ResponseDecryptionKey, RequestObject: built.RequestObject,
 		SameDevice: sameDevice, Status: TransactionPending, Owner: t.owner,
+		ExpiresAt: expiresAt, RetainUntil: retainUntil,
 	}
-	tx.ExpiresAt, tx.RetainUntil = t.expiry()
 	sum := sha256.Sum256([]byte(browserBinding))
 	tx.BrowserBindingHash = sum[:]
 	if err := t.create(ctx, tx); err != nil {
@@ -974,6 +990,7 @@ func (t *Transactions) signRequestObject(tx Transaction, fetch authorizationRequ
 		return "", &serverFault{fmt.Errorf("verifier: transactions: request %s has no response decryption key", tx.ID)}
 	}
 	fetch.query, fetch.state, fetch.nonce, fetch.encKey = tx.Query, tx.State, tx.Nonce, tx.ResponseDecryptionKey
+	fetch.times = requestObjectTimes{issuedAt: t.now(), expiresAt: tx.ExpiresAt}
 	object, kid, err := t.v.signAuthorizationRequest(fetch)
 	switch {
 	case err != nil:
@@ -1236,12 +1253,14 @@ const maxFailureText = 256
 
 // failureText is what LastError records for cause. Anyone holding the
 // request's public key can send an answer, and an error's text can
-// carry values from it — a JWE header, a claim, an error description
-// — so only fixed text is recorded for one: a Wallet's error response
-// is reduced to its error code when that's a plain token, and a failed
-// verification to a description of its Reason. A Status or Accept
-// refusal, which only an answer that verified can reach, keeps its own text,
-// cut to maxFailureText with anything unprintable replaced.
+// carry values from it — a JWE header, a claim, an error code or
+// description — so only fixed text is recorded for one: a Wallet's
+// error response is reduced to its error code when a specification
+// defines it, and otherwise to unrecognizedErrorCode (errorCodeOf), and
+// a failed verification to a description of its Reason. A Status or
+// Accept refusal, which only an answer that verified can reach, keeps
+// its own text, cut to maxFailureText with anything unprintable
+// replaced.
 //
 // Every refusal is recorded, whether or not the answer decrypted:
 // decrypting proves nothing about its sender, since anyone can encrypt
@@ -1253,10 +1272,7 @@ func failureText(cause error) string {
 	var verr *Error
 	switch {
 	case errors.As(cause, &walletErr):
-		if isErrorCode(walletErr.Code) {
-			return "an error response arrived: " + walletErr.Code
-		}
-		return "an error response arrived"
+		return "an error response arrived: " + errorCodeOf(walletErr.Code)
 	case errors.As(cause, &accepted):
 		return printableText(accepted.err.Error())
 	case errors.As(cause, &verr):
@@ -1281,21 +1297,6 @@ func printableText(text string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
-}
-
-// isErrorCode reports whether code is a plausible OAuth error code:
-// 1–64 lowercase letters, digits and underscores (RFC 6749 §5.2 codes
-// and the extensions OpenID4VP adds all fit).
-func isErrorCode(code string) bool {
-	if code == "" || len(code) > 64 {
-		return false
-	}
-	for _, r := range code {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
-			return false
-		}
-	}
-	return true
 }
 
 // Redeem releases a same-device request's result to the browser the
@@ -1360,6 +1361,13 @@ type TransactionView struct {
 func (t *Transactions) expiry() (expiresAt, retainUntil time.Time) {
 	expiresAt = t.now().Add(t.cfg.Lifetime)
 	return expiresAt, expiresAt.Add(t.cfg.Lifetime)
+}
+
+// requestObjectTimes are the iat and exp of the Request Object a new
+// transaction expiring at expiresAt (expiry) is created with: the time
+// expiry was taken at, and expiresAt.
+func (t *Transactions) requestObjectTimes(expiresAt time.Time) requestObjectTimes {
+	return requestObjectTimes{issuedAt: expiresAt.Add(-t.cfg.Lifetime), expiresAt: expiresAt}
 }
 
 // Lookup reports the request id's progress to whoever asked:
@@ -1568,17 +1576,43 @@ func storeFault(err error) error {
 	return &serverFault{err}
 }
 
-// errorCodeOf is a Wallet's error code fit for a redirect: a plain
-// OAuth error code token (lowercase letters and underscores) as it is,
-// anything else invalid_request.
+// definedErrorCodes are the error codes an Authorization Error Response
+// is defined to carry.
+var definedErrorCodes = map[string]bool{
+	// RFC 6749 §4.1.2.1.
+	"invalid_request":           true,
+	"unauthorized_client":       true,
+	"access_denied":             true,
+	"unsupported_response_type": true,
+	"invalid_scope":             true,
+	"server_error":              true,
+	"temporarily_unavailable":   true,
+	// RFC 9101 §7, for a Request Object the Wallet couldn't use.
+	"invalid_request_uri":       true,
+	"invalid_request_object":    true,
+	"request_not_supported":     true,
+	"request_uri_not_supported": true,
+	// OpenID4VP 1.0 §8.5, which adds RFC 6749 §5.2's invalid_client.
+	"invalid_client":             true,
+	"vp_formats_not_supported":   true,
+	"invalid_request_uri_method": true,
+	"invalid_transaction_data":   true,
+	"wallet_unavailable":         true,
+}
+
+// unrecognizedErrorCode is what an error response's code is recorded
+// and redirected as when it isn't one of definedErrorCodes.
+const unrecognizedErrorCode = "unrecognized_error"
+
+// errorCodeOf is a Wallet's error code as LastError records it and a
+// same-device request's redirect_uri carries it back to the Verifier:
+// as sent when it's one of definedErrorCodes, and otherwise
+// unrecognizedErrorCode. An error response is unauthenticated — anyone
+// holding the request's QR code or link can send one — so a code of the
+// sender's own choosing would be text it put on the Verifier's page.
 func errorCodeOf(code string) string {
-	if code == "" || len(code) > 64 {
-		return "invalid_request"
+	if definedErrorCodes[code] {
+		return code
 	}
-	for _, r := range code {
-		if (r < 'a' || r > 'z') && r != '_' {
-			return "invalid_request"
-		}
-	}
-	return code
+	return unrecognizedErrorCode
 }

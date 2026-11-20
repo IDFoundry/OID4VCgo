@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -174,6 +175,88 @@ func TestVerifyResponse_SDJWTVCArrayIndexIsAnyDisclosedElement(t *testing.T) {
 	// presentation can't show which it was.
 	if err := verify(dcql.ClaimsQuery{Path: path("nationalities", 0), Values: []any{"DE"}}, second); err != nil {
 		t.Errorf("an index's position: %v, want it unchecked", err)
+	}
+}
+
+// TestVerifyResponse_ArrayPathsAgreeWithTheWallet: what
+// wallet.PresentCredentials presents for a query whose claims paths
+// point into arrays, VerifyResponse accepts, and what it doesn't ask
+// for is still refused (OpenID4VP 1.0 §7.1). An index into an array
+// whose other elements the rest of the path can't walk — a string
+// beside the object it names — is found among the disclosed elements.
+// A path asking for a whole array beside one through an element of it
+// discloses the whole array, whichever comes first.
+func TestVerifyResponse_ArrayPathsAgreeWithTheWallet(t *testing.T) {
+	ctx := context.Background()
+	_, _, v := newTestVerifierWithConfig(t)
+	issuerKey, holderKey := testP256Key(t), testP256Key(t)
+	holderJWK, err := jwkFromECDSA(&holderKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	element := func(p, q any) any {
+		obj := map[string]any{"p": sdjwtvc.SD(p)}
+		if q != nil {
+			obj["q"] = sdjwtvc.SD(q)
+		}
+		return sdjwtvc.SDElement(obj)
+	}
+	cred, _, err := sdjwtvc.Issue(issuerKey, jose.ES256, sdjwtvc.Claims{VCT: testVCT, CNF: map[string]any{"jwk": holderJWK}, Additional: map[string]any{
+		"mixed":  []any{"y", element("y", nil)},
+		"nested": []any{element(2.0, 2.0), element(1.0, nil)},
+		"other":  sdjwtvc.SD("not asked for"),
+	}}, sdjwtvc.IssueOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: cred, HolderKey: holderKey, HolderKeyAlg: jose.ES256}
+	queryFor := func(paths ...dcql.Path) dcql.Query {
+		query := testIdentityQuery(t)
+		query.Credentials[0].Claims = nil
+		for _, p := range paths {
+			query.Credentials[0].Claims = append(query.Credentials[0].Claims, dcql.ClaimsQuery{Path: p})
+		}
+		return query
+	}
+	verify := func(query dcql.Query, presented map[string][]string) (map[string]any, error) {
+		result, err := v.VerifyResponse(ctx, verifier.VerifyResponseRequest{
+			Query: query, Response: verifier.ParsedResponse{VPToken: presented},
+			ExpectedNonce: "n", IssuerKeys: fixedSDJWTVCIssuerKeyResolver{pub: &issuerKey.PublicKey, alg: jose.ES256},
+			MaxKeyBindingAge: time.Hour, NoStatusCheck: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return result.Credentials[0].Claims, nil
+	}
+	for name, c := range map[string]struct {
+		paths    []dcql.Path
+		claim    string
+		disclose string
+	}{
+		"an index beside a string":     {[]dcql.Path{path("mixed", 1, "p")}, "mixed", "[y map[p:y]]"},
+		"an element, then all of them": {[]dcql.Path{path("nested", 0, "q"), path("nested")}, "nested", "[map[p:2 q:2] map[p:1]]"},
+		"all of them, then an element": {[]dcql.Path{path("nested"), path("nested", 0, "q")}, "nested", "[map[p:2 q:2] map[p:1]]"},
+	} {
+		query := queryFor(c.paths...)
+		presented, err := wallet.PresentCredentials(ctx, wallet.PresentationRequest{Query: query, Credentials: []wallet.HeldCredential{held}, Audience: v.ClientID(), Nonce: "n"})
+		if err != nil {
+			t.Fatalf("%s: the wallet: %v", name, err)
+		}
+		claims, err := verify(query, presented)
+		if err != nil || fmt.Sprint(claims[c.claim]) != c.disclose || claims["other"] != nil {
+			t.Errorf("%s: %v (claims %v), want %s alone disclosed as %s", name, err, claims, c.claim, c.disclose)
+		}
+	}
+
+	// The whole array, when the query asks for one element's member.
+	over, err := wallet.PresentSDJWTVCSelective(held, v.ClientID(), "n", []dcql.Path{path("nested")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = verify(queryFor(path("nested", 0, "q")), map[string][]string{"identity_credential": {over}})
+	if verr := (*verifier.Error)(nil); !errors.As(err, &verr) || verr.Reason() != verifier.ReasonUnrequestedClaims {
+		t.Errorf("the whole array for one element's member: %v, want ReasonUnrequestedClaims", err)
 	}
 }
 
