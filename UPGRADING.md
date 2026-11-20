@@ -7,6 +7,27 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### A refresh's Key Attestation refused as `evidence_required` keeps its grant (`walletflow`, mobile)
+
+`RefreshCredential` now forgets a refresh grant on
+`walletprovider.ErrEvidenceRequired` (`evidence_required`) only when
+the refresh's Wallet Attestation is refused with it: the provider
+deleted its record of the instance key after
+`Config.InstanceKeyRetention`. At the Key Attestation of the refresh's
+new holder keys, which follows a Wallet Attestation for the same key,
+the provider answers it for a request that carried no evidence, before
+it looks at the instance key, so it says only that the client sent
+none. The refusal is now returned as is (`platform` with the detail
+`evidence_required` on mobile), and the grant and its instance key are
+kept; v0.84.0 forgot them there too, and each later refresh was
+`ErrReissueRequired`. Only a provider client that can send a Key
+Attestation request without evidence is affected, such as a
+`walletflow.WalletProvider` of your own over `walletprovider.Client`,
+or a native provider of your own: the Swift and Kotlin
+`HttpWalletProvider` always send evidence.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

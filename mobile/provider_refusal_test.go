@@ -44,22 +44,38 @@ func (p *markingProvider) KeyAttestation(instanceKeyJWK, keysJWK []byte, nonce s
 // the key (instance_not_active) keeps the grant. That holds at the
 // refresh's Wallet Attestation, and, once that passed, at the Key
 // Attestation of its new holder keys, which is for the same instance
-// key.
+// key. evidence_required retires the key at the Wallet Attestation
+// alone, where the provider deleted its record of the key; at the Key
+// Attestation it says only that no evidence was sent, and keeps the
+// grant.
 func TestSessions_RefreshRefusedByNativeProvider(t *testing.T) {
-	stages := map[string]func(*markingProvider) *atomic.Pointer[string]{
-		"wallet attestation": func(p *markingProvider) *atomic.Pointer[string] { return &p.refusal },
-		"key attestation":    func(p *markingProvider) *atomic.Pointer[string] { return &p.keyRefusal },
+	stages := map[string]struct {
+		refusing func(*markingProvider) *atomic.Pointer[string]
+		// retiring are the refusals that retire the grant's instance key
+		// at the stage, and keeping those that keep the grant.
+		retiring, keeping []string
+	}{
+		"wallet attestation": {
+			refusing: func(p *markingProvider) *atomic.Pointer[string] { return &p.refusal },
+			retiring: []string{"instance_key_expired", "instance_key_registered", "registration_expired", "evidence_required"},
+			keeping:  []string{"instance_not_active"},
+		},
+		"key attestation": {
+			refusing: func(p *markingProvider) *atomic.Pointer[string] { return &p.keyRefusal },
+			retiring: []string{"instance_key_expired", "instance_key_registered", "registration_expired"},
+			keeping:  []string{"instance_not_active", "evidence_required"},
+		},
 	}
-	for stage, refusing := range stages {
-		for _, refusal := range []string{"instance_key_expired", "instance_key_registered", "registration_expired"} {
+	for stage, s := range stages {
+		for _, refusal := range s.retiring {
 			t.Run(stage+"/"+refusal, func(t *testing.T) {
-				testRefreshRefusedByNativeProvider(t, refusal, refusing)
+				testRefreshRefusedByNativeProvider(t, refusal, s.keeping, s.refusing)
 			})
 		}
 	}
 }
 
-func testRefreshRefusedByNativeProvider(t *testing.T, refusal string, refusing func(*markingProvider) *atomic.Pointer[string]) {
+func testRefreshRefusedByNativeProvider(t *testing.T, refusal string, keeping []string, refusing func(*markingProvider) *atomic.Pointer[string]) {
 	env, err := StartBatchTestEnv(false, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -74,13 +90,14 @@ func testRefreshRefusedByNativeProvider(t *testing.T, refusal string, refusing f
 	keys := len(h.keys.keys)
 	refused := refusing(provider)
 
-	suspended := "instance_not_active"
-	refused.Store(&suspended)
-	if _, err := h.w.RefreshCredential(NewOperation(0), id); code(err) != CodePlatform || providerDetail(err) != suspended {
-		t.Fatalf("refused as suspended: %v, want platform instance_not_active", err)
-	}
-	if len(h.keys.keys) != keys {
-		t.Fatalf("keys after a suspension = %d, want %d: the grant's instance key kept", len(h.keys.keys), keys)
+	for _, kept := range keeping {
+		refused.Store(&kept)
+		if _, err := h.w.RefreshCredential(NewOperation(0), id); code(err) != CodePlatform || providerDetail(err) != kept {
+			t.Fatalf("refused with %s: %v, want platform %s", kept, err, kept)
+		}
+		if len(h.keys.keys) != keys {
+			t.Fatalf("keys after %s = %d, want %d: the grant's instance key kept", kept, len(h.keys.keys), keys)
+		}
 	}
 
 	refused.Store(&refusal)
