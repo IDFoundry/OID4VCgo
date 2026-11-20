@@ -19,6 +19,23 @@ import (
 // interval the issuer asks for.
 const minPollInterval = time.Second
 
+// DefaultMaxPendingDeferredPerIssuer is how many deferred credentials a
+// Credential Issuer may have pending before the wallet takes no more
+// from it, when Config.MaxPendingDeferredPerIssuer is zero: 64, twice
+// the most one issuance defers (MaxCredentialRequests), so an issuer
+// that deferred the largest offer can have another taken before it
+// issues the first. An issuer defers what it can't issue at once, a
+// manual check say, and a holder has a few pending from it at most.
+const DefaultMaxPendingDeferredPerIssuer = 2 * MaxCredentialRequests
+
+// DefaultMaxPendingDeferred is how many deferred credentials the wallet
+// keeps pending in all, when Config.MaxPendingDeferred is zero: 256,
+// four issuers at DefaultMaxPendingDeferredPerIssuer. It bounds the
+// holder keys, Key Attestations and access tokens that offers from many
+// issuers — under Config.AllowAnyCredentialIssuer, any issuer — can have
+// the wallet keep, as the bound per issuer can't.
+const DefaultMaxPendingDeferred = 4 * DefaultMaxPendingDeferredPerIssuer
+
 // PendingDeferred is a deferred credential (OpenID4VCI 1.0 §9) as a
 // DeferredStore keeps it: what polling it needs after the wallet
 // restarts. A DPoP access token is bound to the DPoP key (RFC 9449),
@@ -413,6 +430,46 @@ func (w *Wallet) endListing() {
 	if w.listings == 0 {
 		maps.DeleteFunc(w.settled, func(_ string, deleted bool) bool { return deleted })
 	}
+}
+
+// checkPendingDeferred refuses, wrapping ErrTooManyDeferred, to take
+// more from credentialIssuer while it has
+// Config.MaxPendingDeferredPerIssuer deferred credentials pending, or
+// the wallet Config.MaxPendingDeferred in all: before an offer from it
+// is taken, or one of its credentials refreshed, either of which may be
+// deferred too. One whose access token has expired doesn't count: the
+// issuer refuses to be polled with it, so it will never be issued, and
+// only Abandon removes it.
+func (w *Wallet) checkPendingDeferred(ctx context.Context, credentialIssuer string) error {
+	perIssuer, total := w.cfg.MaxPendingDeferredPerIssuer, w.cfg.MaxPendingDeferred
+	if perIssuer == 0 {
+		perIssuer = DefaultMaxPendingDeferredPerIssuer
+	}
+	if total == 0 {
+		total = DefaultMaxPendingDeferred
+	}
+	pending, err := w.deps.Deferred.ListDeferred(ctx)
+	if err != nil {
+		return fmt.Errorf("walletflow: list deferred credentials: %w", err)
+	}
+	now := w.deps.Clock()
+	fromIssuer, live := 0, 0
+	for _, p := range pending {
+		if !p.AccessTokenExpiresAt.IsZero() && !now.Before(p.AccessTokenExpiresAt) {
+			continue
+		}
+		live++
+		if p.CredentialIssuer == credentialIssuer {
+			fromIssuer++
+		}
+	}
+	switch {
+	case fromIssuer >= perIssuer:
+		return fmt.Errorf("walletflow: %w: %d from %q, the most the wallet keeps from one issuer", ErrTooManyDeferred, fromIssuer, credentialIssuer)
+	case live >= total:
+		return fmt.Errorf("walletflow: %w: %d, the most the wallet keeps", ErrTooManyDeferred, live)
+	}
+	return nil
 }
 
 // keepDeferred stores p as pending, already prepared to poll with its

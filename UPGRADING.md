@@ -54,6 +54,28 @@ Swift and Kotlin libraries encode their configurations from typed
 values, which can't name a member twice: only JSON written or
 assembled as text is affected.
 
+### A wallet bounds the deferred credentials pending from an issuer (`walletflow`, mobile)
+
+`StartIssuance` now refuses an offer, and `RefreshCredential` a
+refresh, while the issuer has `DefaultMaxPendingDeferredPerIssuer`
+(64) deferred credentials pending in the `DeferredStore`, or the
+wallet `DefaultMaxPendingDeferred` (256) in all, with an error
+wrapping the new `walletflow.ErrTooManyDeferred` (`unavailable` with
+the detail `too_many_deferred` on mobile), before anything is sent to
+the issuer. Each pending one keeps its holder keys and an access token
+until it's polled to an end or abandoned, and an issuer that deferred
+every request had the wallet make up to 32 more, with their holder
+keys and Key Attestations, for each offer the holder accepted. Nothing
+pending or held is lost: poll the pending ones (`Wallet.Deferred`), or
+`Abandon` those the issuer won't issue, and its offers are taken
+again. A pending one whose access token has expired
+(`PendingDeferred.AccessTokenExpiresAt`) doesn't count: the issuer
+won't be polled with it, so it will never be issued. It still stays,
+with its keys, until it's abandoned, as before. The new
+`Config.MaxPendingDeferredPerIssuer` and
+`Config.MaxPendingDeferred` change the bounds; zero keeps the
+defaults. The mobile configuration keeps the defaults.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

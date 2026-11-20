@@ -375,6 +375,27 @@ type Config struct {
 	// one copy.
 	BatchSize int
 
+	// MaxPendingDeferredPerIssuer and MaxPendingDeferred bound the
+	// deferred credentials (OpenID4VCI 1.0 §9) pending in
+	// Dependencies.Deferred, each with its holder keys and an access
+	// token: from one Credential Issuer, and in all. While an issuer has
+	// MaxPendingDeferredPerIssuer pending, or the wallet
+	// MaxPendingDeferred, StartIssuance refuses that issuer's offer, and
+	// RefreshCredential a refresh of one of its credentials, with an
+	// error wrapping ErrTooManyDeferred, before anything is sent there:
+	// nothing pending or held is lost. Poll the pending ones
+	// (Wallet.Deferred), or Abandon those the issuer won't issue, then
+	// try again. A pending one whose access token has expired
+	// (PendingDeferred.AccessTokenExpiresAt) doesn't count: the issuer
+	// refuses to be polled with it, so it will never be issued, and stays,
+	// with its keys, until it's abandoned. They're checked as an offer is
+	// taken, and one issuance defers at most MaxCredentialRequests, so up
+	// to that many less one may be pending past a bound. Zero means
+	// DefaultMaxPendingDeferredPerIssuer and DefaultMaxPendingDeferred;
+	// New refuses a negative one.
+	MaxPendingDeferredPerIssuer int
+	MaxPendingDeferred          int
+
 	// ProofKeyByJWK names the key of a jwt proof carrying a Key
 	// Attestation in the proof's jwk header (wallet.Wallet's
 	// GenerateProofWithKeyAttestation), rather than by its index in the
@@ -777,6 +798,10 @@ func (c Config) validateChoices() error {
 		return fmt.Errorf("walletflow: Config.CopyPolicy %d isn't a policy", c.CopyPolicy)
 	case c.BatchSize < 0:
 		return fmt.Errorf("walletflow: Config.BatchSize %d is negative", c.BatchSize)
+	case c.MaxPendingDeferredPerIssuer < 0:
+		return fmt.Errorf("walletflow: Config.MaxPendingDeferredPerIssuer %d is negative", c.MaxPendingDeferredPerIssuer)
+	case c.MaxPendingDeferred < 0:
+		return fmt.Errorf("walletflow: Config.MaxPendingDeferred %d is negative", c.MaxPendingDeferred)
 	case c.ProofKeyByJWK && c.ProofKeyByIndex:
 		return errors.New("walletflow: Config.ProofKeyByJWK and ProofKeyByIndex name a proof's key in two ways; set one")
 	case slices.Contains(c.CredentialIssuers, ""):

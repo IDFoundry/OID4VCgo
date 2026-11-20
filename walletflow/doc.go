@@ -108,6 +108,10 @@
 // A deferred credential outlives its Issuance: after a restart,
 // w.Deferred(ctx) lists the pending ones to Poll, kept in the
 // DeferredStore with the access token and DPoP key ID that poll them.
+// While an issuer has Config.MaxPendingDeferredPerIssuer of them pending
+// (64 by default), or the wallet Config.MaxPendingDeferred in all (256),
+// StartIssuance and RefreshCredential take nothing more from it
+// (ErrTooManyDeferred): Poll them, or Abandon those it won't issue.
 //
 // and a presentation:
 //

@@ -154,9 +154,11 @@ func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
 func TestNew_RefusesMeaninglessChoices(t *testing.T) {
 	deps := Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore()}
 	for name, cfg := range map[string]Config{
-		"issuance profile": {IssuanceProfile: 9, Development: true},
-		"copy policy":      {CopyPolicy: 9, Development: true},
-		"batch size":       {BatchSize: -3, Development: true},
+		"issuance profile":            {IssuanceProfile: 9, Development: true},
+		"copy policy":                 {CopyPolicy: 9, Development: true},
+		"batch size":                  {BatchSize: -3, Development: true},
+		"pending deferred per issuer": {MaxPendingDeferredPerIssuer: -1, Development: true},
+		"pending deferred":            {MaxPendingDeferred: -1, Development: true},
 	} {
 		if _, err := New(cfg, deps); err == nil {
 			t.Errorf("%s: accepted", name)

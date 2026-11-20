@@ -270,7 +270,10 @@ func (w *Wallet) lockGrant(id string) func() {
 // token no longer grants its credential_identifier, or which one it
 // holds wasn't kept. Receive it again from a new Credential Offer then.
 // A credential whose issuer Config.CredentialIssuers no longer lists is
-// refused, wrapping ErrUntrustedIssuer, and kept with its grant.
+// refused, wrapping ErrUntrustedIssuer, and kept with its grant; so is
+// one whose issuer has Config.MaxPendingDeferredPerIssuer deferred
+// credentials pending, or while the wallet has Config.MaxPendingDeferred
+// in all, wrapping ErrTooManyDeferred.
 //
 // If the issuer defers the new credential, the old one stays as it is
 // and the Deferred is returned to poll: once settled, its credential
@@ -291,6 +294,10 @@ func (w *Wallet) RefreshCredential(ctx context.Context, id string) (StoredCreden
 	}
 	if old.GrantID == "" {
 		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: it came without a refresh token: %w", ErrReissueRequired)
+	}
+	// The refresh may be deferred too.
+	if err := w.checkPendingDeferred(ctx, old.CredentialIssuer); err != nil {
+		return StoredCredential{}, nil, fmt.Errorf("walletflow: refresh credential: %w", err)
 	}
 	// One refresh with a grant at a time: an Authorization Server that
 	// rotates refresh tokens refuses the old one once the new is issued.

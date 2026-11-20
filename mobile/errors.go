@@ -135,6 +135,10 @@ func classifyCode(err error) error {
 		// The app's other process is refreshing with the grant: retry
 		// once it's done.
 		return &Error{Code: CodeUnavailable, Detail: DetailRefreshInProgress, Message: "another process is refreshing with this refresh grant"}
+	case errors.Is(err, walletflow.ErrTooManyDeferred):
+		// The wallet's own bound: retry once deferred credentials have
+		// been issued or abandoned.
+		return &Error{Code: CodeUnavailable, Detail: DetailTooManyDeferred, Message: "too many deferred credentials are pending"}
 	case errors.Is(err, wallet.ErrUntrustedVerifier):
 		return newError(CodeUntrustedVerifier, wallet.ErrUntrustedVerifier)
 	case errors.Is(err, walletflow.ErrUntrustedIssuer):
@@ -193,6 +197,16 @@ const DetailNotConfigured = "not_configured"
 // refresh token is never redeemed twice at once. Try again once that
 // refresh is done.
 const DetailRefreshInProgress = "refresh_in_progress"
+
+// DetailTooManyDeferred is the detail of an unavailable error from
+// StartIssuance or RefreshCredential while the issuer has 64 deferred
+// credentials pending, or the wallet 256 in all
+// (walletflow.DefaultMaxPendingDeferredPerIssuer,
+// walletflow.DefaultMaxPendingDeferred), not counting any whose access
+// token has expired: nothing is sent to the issuer.
+// Poll the pending ones (Deferred, PollDeferred), or abandon those the
+// issuer won't issue (AbandonDeferred), then try again.
+const DetailTooManyDeferred = "too_many_deferred"
 
 // configNames are walletflow's names for what a wallet is configured
 // with, and NewWallet's for them.

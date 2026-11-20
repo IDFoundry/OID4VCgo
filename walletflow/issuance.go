@@ -179,7 +179,10 @@ type Issuance struct {
 // StartIssuance resolves the Credential Offer offerURI (an
 // openid-credential-offer:// link, or its credential_offer or
 // credential_offer_uri) and fetches the issuer's metadata. Show the
-// holder Offer before going on; call Close when done.
+// holder Offer before going on; call Close when done. An offer from an
+// issuer with Config.MaxPendingDeferredPerIssuer deferred credentials
+// pending, or while the wallet has Config.MaxPendingDeferred in all, is
+// refused before its metadata is fetched, wrapping ErrTooManyDeferred.
 func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance, error) {
 	if err := w.checkIssuance(); err != nil {
 		return nil, err
@@ -189,6 +192,9 @@ func (w *Wallet) StartIssuance(ctx context.Context, offerURI string) (*Issuance,
 		return nil, fmt.Errorf("walletflow: credential offer: %w", err)
 	}
 	if err := w.checkCredentialIssuer(offer.CredentialIssuer); err != nil {
+		return nil, err
+	}
+	if err := w.checkPendingDeferred(ctx, offer.CredentialIssuer); err != nil {
 		return nil, err
 	}
 	metadata, err := w.core.FetchCredentialIssuerMetadata(ctx, offer.CredentialIssuer)

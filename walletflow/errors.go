@@ -38,6 +38,13 @@ var (
 	// now issues another kind of credential than was requested, or shown
 	// to the holder.
 	ErrReissueRequired = errors.New("walletflow: the credential can't be refreshed: receive it again")
+	// ErrTooManyDeferred is wrapped by Wallet.StartIssuance and
+	// Wallet.RefreshCredential while the issuer has
+	// Config.MaxPendingDeferredPerIssuer deferred credentials pending, or
+	// the wallet Config.MaxPendingDeferred in all: nothing is sent to the
+	// issuer. Poll the pending ones (Wallet.Deferred), or Abandon those
+	// the issuer won't issue, then try again.
+	ErrTooManyDeferred = errors.New("walletflow: too many deferred credentials are pending")
 	// ErrRefreshInProgress is wrapped by Wallet.RefreshCredential when
 	// another Wallet sharing the GrantStore — another process — is
 	// redeeming the credential's refresh grant: a refresh token is never
