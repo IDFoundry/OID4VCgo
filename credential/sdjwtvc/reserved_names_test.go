@@ -70,7 +70,7 @@ func TestIssue_OpaqueValuesIssueAsBefore(t *testing.T) {
 		Street string      `json:"street"`
 		Number json.Number `json:"number"`
 	}
-	raw := json.RawMessage(`{"big":12345678901234567890,"f":1.5,"list":[1,"a",null]}`)
+	raw := json.RawMessage(`{"big":9007199254740991,"f":1.5,"list":[1,"a",null]}`)
 	key := testKey(t)
 	sdjwt, _, err := Issue(key, jose.ES256, Claims{VCT: "urn:x", Additional: map[string]any{
 		"raw": raw, "addr": address{Street: "Main", Number: "10"}, "hidden": SD(raw),

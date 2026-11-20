@@ -55,8 +55,9 @@ func ParseStatusClaim(status map[string]any) (StatusListRef, error) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list is missing the required idx claim")
 	}
 	idxFloat, ok := idxRaw.(float64)
-	// 2^53 bounds the integers a float64 holds exactly.
-	if !ok || idxFloat < 0 || idxFloat > 1<<53 || idxFloat != math.Trunc(idxFloat) {
+	// A float64 holds every integer up to 2^53 − 1 exactly; 2^53 may
+	// be 2^53 + 1, rounded.
+	if !ok || idxFloat < 0 || idxFloat >= 1<<53 || idxFloat != math.Trunc(idxFloat) {
 		return StatusListRef{}, fmt.Errorf("statuslist: status_list.idx is not a non-negative integer")
 	}
 

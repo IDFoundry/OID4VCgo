@@ -255,7 +255,11 @@ they're not yet closed in the library.
   numbers as float64, so a `values` filter on an integer larger than
   2^53 in magnitude is rounded: it can match a claim one off it, and
   miss its own. This applies to the wallet's filter and the verifier's
-  check alike.
+  check alike. An SD-JWT VC's claims can't hold such a number:
+  `sdjwtvc.Issue` won't sign one beyond ±(2^53 − 1)
+  (`sdjwtvc.MaxSafeInteger`), and `Verify` refuses one signed anyway,
+  so that two values an issuer signed apart never verify as one. Carry
+  identifiers as strings.
 - **Relayed cross-device requests.** In the cross-device flow nothing
   ties the device that shows a QR code to the one that started the
   Verifier's session (OpenID4VP 1.0 §14.2). An attacker can start a

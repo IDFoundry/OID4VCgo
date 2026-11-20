@@ -248,7 +248,9 @@ func issuerJWTHeader(opts IssueOptions) map[string]any {
 // is always a bare SD-JWT — its compact form ends in "~" per RFC 9901
 // §4. The returned Disclosures are every one Issue generated; the
 // Holder needs all of them to later choose a subset to present (via
-// Presentation/ResolveDisclosures).
+// Presentation/ResolveDisclosures). It refuses a claim holding a number
+// beyond ±MaxSafeInteger, which Verify would refuse: carry one as a
+// string.
 func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueOptions) (sdjwt string, disclosures []Disclosure, err error) {
 	if err := checkIssueInputs(signer, claims, opts); err != nil {
 		return "", nil, err
@@ -295,6 +297,9 @@ func Issue(signer crypto.Signer, alg oid4vci.JOSEAlg, claims Claims, opts IssueO
 	payload, err := json.Marshal(sealed)
 	if err != nil {
 		return "", nil, fmt.Errorf("sdjwtvc: marshal payload: %w", err)
+	}
+	if err := checkNumbers(payload); err != nil {
+		return "", nil, fmt.Errorf("sdjwtvc: payload: %w", err)
 	}
 
 	header := issuerJWTHeader(opts)

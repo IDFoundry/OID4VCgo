@@ -85,7 +85,9 @@ type VerifyOptions struct {
 // typ, vct and validity, each Disclosure's digest, and, when
 // RequireKeyBinding is KeyBindingRequired, the Key Binding JWT against
 // HolderPublicKey — and returns the Processed SD-JWT Payload (RFC 9901
-// §7.1's term) plus the Issuer-signed JWT's raw JOSE header.
+// §7.1's term) plus the Issuer-signed JWT's raw JOSE header. It refuses
+// a payload or Disclosure holding a number beyond ±MaxSafeInteger,
+// which no float64 holds exactly.
 //
 // It is one step of verifying a presentation, not all of it. The caller
 // still:
@@ -198,6 +200,9 @@ func verifyIssuerJWT(issuerJWT string, issuerPub crypto.PublicKey, issuerAlg oid
 	var decoded map[string]any
 	if err := strictjson.Unmarshal(rawPayload, &decoded); err != nil {
 		return nil, nil, "", fmt.Errorf("sdjwtvc: unmarshal issuer JWT payload: %w", err)
+	}
+	if err := checkNumbers(rawPayload); err != nil {
+		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload: %w", err)
 	}
 	if _, ok := decoded["vct"].(string); !ok {
 		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload is missing the required vct claim")
