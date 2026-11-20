@@ -21,6 +21,19 @@ and this package's own readers send neither. Such a message is
 refused as one that doesn't decode: `TrySessionEstablishment`
 rejects it, and `HandleSessionEstablishment` ends the session.
 
+### Text shown to the holder loses its variation selectors (`walletflow`, `proximity`, mobile)
+
+Text from another party that the holder is shown (an issuer's display
+metadata, a reader's names, an error's text) now has every variation
+selector dropped, U+FE0F, which asks for an emoji's colour
+presentation, among them. Each shows as nothing, so a run of them can
+carry text no one sees, or set apart a name that looks the same as
+another. An emoji in an issuer's name then shows in its default
+presentation. A proximity request whose second-edition information
+names a controller ID with a variation selector now stands without
+that information (`RequestInfoError`), as one with a format character
+already did.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
