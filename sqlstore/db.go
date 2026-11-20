@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,7 +21,10 @@ const (
 	// Postgres is PostgreSQL, 13 or later, through any database/sql
 	// driver (github.com/jackc/pgx/v5/stdlib, say). A transaction runs
 	// at READ COMMITTED, whatever the server's default, and locks the
-	// rows it changes with SELECT … FOR UPDATE.
+	// rows it changes with SELECT … FOR UPDATE. A write of one statement
+	// gets READ COMMITTED's outcome too: where a stricter default
+	// isolation fails it with a serialization error (SQLSTATE 40001), it
+	// runs again in a READ COMMITTED transaction.
 	Postgres
 
 	// SQLite is SQLite, 3.35 or later, through any database/sql driver
@@ -74,6 +78,12 @@ type DB struct {
 	// a write holds its one slot. Other processes, and other DBs on the
 	// same file, still wait on the busy handler.
 	sqliteWrites chan struct{}
+
+	// pinIsolation is whether every Postgres write, single statements
+	// included, runs in a READ COMMITTED transaction: Migrate or
+	// CheckSchema found the database's default isolation level isn't
+	// READ COMMITTED (see writeOne).
+	pinIsolation atomic.Bool
 }
 
 // New returns a DB using db, a database of dialect. It doesn't touch the
@@ -130,15 +140,65 @@ func (d *DB) write(ctx context.Context, fn func(q querier) error) error {
 	return tx.Commit()
 }
 
-// writeOne runs fn, which makes one change in one statement: on the
-// database itself for Postgres, where a statement is atomic, and as
-// write does for SQLite, which then waits its busy timeout for the
-// write lock.
+// writeOne runs fn, which makes one change in one statement, with
+// write's guarantees. On SQLite it is write, which waits its busy
+// timeout for the write lock. On Postgres the statement runs on its
+// own, in the implicit transaction PostgreSQL gives it, saving BEGIN
+// and COMMIT's round trips: one statement is atomic at every isolation
+// level, and at READ COMMITTED one that waits on a row a concurrent
+// transaction changes re-checks its WHERE against the row as committed,
+// so a lost compare-and-swap or consume gets its typed outcome. At
+// REPEATABLE READ or SERIALIZABLE — a database's, role's or
+// connection's default_transaction_isolation — it fails instead with a
+// serialization error (SQLSTATE 40001), having changed nothing, and fn
+// runs again in write's READ COMMITTED transaction, where it gets the
+// outcome it would have had there all along. Once Migrate or
+// CheckSchema has found the database's default isn't READ COMMITTED,
+// every statement runs in write's transaction from the start
+// (pinIsolation), which needs no rerun, so that holds too with a driver
+// whose errors don't report their SQLSTATE. fn may run twice: it must
+// set whatever it reports afresh each time.
 func (d *DB) writeOne(ctx context.Context, fn func(q querier) error) error {
-	if d.dialect == SQLite {
-		return d.sqliteWrite(ctx, fn)
+	if d.dialect == SQLite || d.pinIsolation.Load() {
+		return d.write(ctx, fn)
 	}
-	return fn(d.db)
+	err := fn(d.db)
+	if sqlState(err) == serializationFailure {
+		return d.write(ctx, fn)
+	}
+	return err
+}
+
+// The SQLSTATE codes of PostgreSQL's errors the stores act on.
+const (
+	serializationFailure = "40001"
+	deadlockDetected     = "40P01"
+)
+
+// sqlState is err's SQLSTATE, as a driver reports it — pgx's
+// *pgconn.PgError and lib/pq's *pq.Error each have a SQLState method —
+// or the empty string.
+func sqlState(err error) string {
+	var coded interface{ SQLState() string }
+	if errors.As(err, &coded) {
+		return coded.SQLState()
+	}
+	return ""
+}
+
+// checkIsolation sets pinIsolation unless the database's default
+// isolation level, as a connection of d's pool reports it, is READ
+// COMMITTED. Postgres only.
+func (d *DB) checkIsolation(ctx context.Context) error {
+	if d.dialect != Postgres {
+		return nil
+	}
+	var level string
+	if err := d.db.QueryRowContext(ctx, "SHOW default_transaction_isolation").Scan(&level); err != nil {
+		return fmt.Errorf("read the default transaction isolation: %w", err)
+	}
+	d.pinIsolation.Store(!strings.EqualFold(level, "read committed"))
+	return nil
 }
 
 // sqliteWrite is write for SQLite. database/sql's BeginTx can't ask for

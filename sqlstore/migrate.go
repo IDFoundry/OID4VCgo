@@ -91,9 +91,15 @@ func SchemaVersion() int { return len(migrations) }
 // PostgreSQL the tables are created in the connection's current schema
 // (the first in its search_path). On SQLite, it refuses a database
 // that isn't in WAL mode, as CheckSchema does: open it with
-// journal_mode(WAL) in its DSN (see the package documentation).
+// journal_mode(WAL) in its DSN (see the package documentation). On
+// PostgreSQL, it reads the database's default isolation level: where
+// that isn't READ COMMITTED, d runs each of its writes in a READ
+// COMMITTED transaction from then on, as CheckSchema has it do.
 func (d *DB) Migrate(ctx context.Context) error {
 	if err := d.checkJournalMode(ctx); err != nil {
+		return fmt.Errorf("sqlstore: migrate: %w", err)
+	}
+	if err := d.checkIsolation(ctx); err != nil {
 		return fmt.Errorf("sqlstore: migrate: %w", err)
 	}
 	for _, m := range migrations {
@@ -158,9 +164,15 @@ func (d *DB) checkJournalMode(ctx context.Context) error {
 // CheckSchema returns an error unless every migration this package's
 // stores need has been applied, and, on SQLite, the database is in WAL
 // mode: call it at startup, where Migrate is run separately, to fail
-// fast rather than on the first request.
+// fast rather than on the first request. On PostgreSQL, it reads the
+// database's default isolation level: where that isn't READ COMMITTED,
+// d runs each of its writes in a READ COMMITTED transaction from then
+// on, rather than run a write again after a serialization error.
 func (d *DB) CheckSchema(ctx context.Context) error {
 	if err := d.checkJournalMode(ctx); err != nil {
+		return fmt.Errorf("sqlstore: check schema: %w", err)
+	}
+	if err := d.checkIsolation(ctx); err != nil {
 		return fmt.Errorf("sqlstore: check schema: %w", err)
 	}
 	rows, err := d.db.QueryContext(ctx, d.sql.migrationVersions)

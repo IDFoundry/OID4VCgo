@@ -31,3 +31,8 @@ const PostgresLegacyMigrationLockExclusive = "SELECT pg_advisory_xact_lock(80280
 // PostgresSweepLock is the statement taking Sweep's lock on the
 // current schema.
 const PostgresSweepLock = postgresSweepLock
+
+// PinsIsolation reports whether d runs every Postgres write in a READ
+// COMMITTED transaction from the start: Migrate or CheckSchema found the
+// database's default isolation level isn't READ COMMITTED.
+func PinsIsolation(d *DB) bool { return d.pinIsolation.Load() }

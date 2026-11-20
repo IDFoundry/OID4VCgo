@@ -164,17 +164,10 @@ const maxDeadlockRetries = 3
 func (s *StatusIndexStore) retryingDeadlock(ctx context.Context, fn func(q querier) error) error {
 	for attempt := 0; ; attempt++ {
 		err := s.d.writeOne(ctx, fn)
-		if err == nil || attempt == maxDeadlockRetries || !deadlocked(err) {
+		if err == nil || attempt == maxDeadlockRetries || sqlState(err) != deadlockDetected {
 			return err
 		}
 	}
-}
-
-// deadlocked reports whether err is Postgres's deadlock_detected, as a
-// driver reports it: pgx's and lib/pq's errors both have SQLState.
-func deadlocked(err error) bool {
-	var coded interface{ SQLState() string }
-	return errors.As(err, &coded) && coded.SQLState() == "40P01"
 }
 
 // Reserved implements statuslist.IndexStore. It reads the list's
