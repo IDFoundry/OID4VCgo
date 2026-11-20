@@ -77,8 +77,11 @@
 //
 // Set Config.Assurance to AssuranceProduction in production. New then
 // refuses FakeVerifier, whose evidence is a JSON document anyone can
-// write, and stores that don't seal their records, unless
-// Config.UnsealedStores.
+// write; stores that don't seal their records, unless
+// Config.UnsealedStores; and the evidence verifiers' development
+// settings, which a verifier refuses through its CheckConfiguration
+// (ConfigurationCheck): appattest's AllowDevelopment, and an androidkey
+// StatusSource's AllowLoopback.
 //
 // DEPLOYING.md in the repository is the checklist for running several
 // replicas: Config.Assurance, sqlstore's stores,

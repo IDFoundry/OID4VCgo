@@ -436,9 +436,16 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   - `walletprovidertest.FakeVerifier`, whose evidence anyone can
     write: a provider built with it registers anyone and attests any
     key, at whatever security level it was set to report;
-  - stores that don't seal their records (below).
+  - stores that don't seal their records (below);
+  - the evidence verifiers' development settings, which each verifier
+    refuses through its `CheckConfiguration`
+    (`walletprovider.ConfigurationCheck`): App Attest's
+    `AllowDevelopment`, and an Android `StatusSource` with
+    `AllowLoopback`. A verifier of your own that wraps one should
+    forward the method, or embed the wrapped verifier.
 
-  It leaves the evidence verifiers' own settings to their items.
+  It takes `androidkey.EvidenceVerifier.AllowUncheckedLegacyEvidence`,
+  whose upgrade window (below) production needs too.
 - [ ] **Capacity: `Config.StatusListSize`.** A period's lists hold 64
   × `StatusListSize`/2 instance keys used in it, and every issuance
   uses a new one: the default (2^20) holds about 33.5M a week. Size it
@@ -647,6 +654,7 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
 
   Leave the option unset outside the window; set it in development,
   where a provider's stores may outlive its upgrades.
+  `AssuranceProduction` takes it, for the window.
 - [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
   called with each refusal and the instance as stored afterwards
   (revoked, suspended or still active), the provider's own `Policy`
@@ -667,7 +675,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   (`walletprovider/appattest`). For App Attest, list each app's App ID
   (team ID and bundle ID) in `appattest.Verifier.Apps`, and leave
   `AllowDevelopment` unset in production, so only released builds
-  register. Both are rechecked before each Wallet and Key Attestation:
+  register (`AssuranceProduction` refuses it). Both are rechecked
+  before each Wallet and Key Attestation:
   unsetting `AllowDevelopment` at a production cutover, or removing an
   app from `Apps`, refuses the instances registered before it at their
   next request (a policy refusal: they stay active, and

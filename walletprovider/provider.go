@@ -297,8 +297,9 @@ type Config struct {
 	// Assurance is how strict New is about what the provider is built
 	// from; zero means AssuranceDevelopment. Set AssuranceProduction in
 	// production: New then refuses walletprovidertest.FakeVerifier,
-	// which attests any key for anyone, and stores that don't seal their
-	// records (unless UnsealedStores).
+	// which attests any key for anyone, stores that don't seal their
+	// records (unless UnsealedStores), and the evidence verifiers'
+	// development settings.
 	Assurance AssuranceLevel
 
 	// UnsealedStores accepts, under AssuranceProduction, Instances,
@@ -428,6 +429,9 @@ func New(cfg Config, deps Dependencies) (*Provider, error) {
 		if _, ok := p.verifiers[kind]; ok {
 			return nil, fmt.Errorf("walletprovider: dependencies: Evidence[%d]'s Kind %q appears more than once", i, kind)
 		}
+		if err := checkConfiguration(v, cfg.Assurance); err != nil {
+			return nil, fmt.Errorf("walletprovider: dependencies: Evidence[%d] (Kind %q): %w", i, kind, err)
+		}
 		p.verifiers[kind] = v
 	}
 	if err := p.checkSigner(); err != nil {
@@ -459,6 +463,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.RecentInstanceStatusLists == 0 {
 		c.RecentInstanceStatusLists = DefaultRecentInstanceStatusLists
+	}
+	if c.Assurance == 0 {
+		c.Assurance = AssuranceDevelopment
 	}
 	return c
 }

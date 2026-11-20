@@ -76,9 +76,12 @@ type Verifier struct {
 	// development environment as well as production. A development
 	// build's key is a Secure Enclave key Apple attested all the same;
 	// leave this unset in production so only a released build
-	// registers. Unsetting it applies to the instances registered with
-	// a development key too: through EvidenceVerifier.Recheck, each
-	// gets no more Wallet or Key Attestations from its next request on.
+	// registers: a walletprovider.Provider under AssuranceProduction
+	// refuses an EvidenceVerifier whose Verifier sets it
+	// (EvidenceVerifier.CheckConfiguration). Unsetting it applies to the
+	// instances registered with a development key too: through
+	// EvidenceVerifier.Recheck, each gets no more Wallet or Key
+	// Attestations from its next request on.
 	AllowDevelopment bool
 
 	// Roots are the trust anchors; nil means AppleRoots().

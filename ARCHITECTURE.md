@@ -491,7 +491,11 @@ changes whether *every* bullet below is `(done)`.
     refuses `FakeVerifier`, or a type embedding it, by a mark it
     embeds (`internal/testonly`), so no exported interface gains a
     method for it. Production also requires sealed stores, unless
-    `Config.UnsealedStores`, as the issuer's does.
+    `Config.UnsealedStores`, as the issuer's does, and has each evidence
+    verifier check its own settings through the optional
+    `ConfigurationCheck`, as `issuer.New` has its dependencies do:
+    `appattest` refuses `AllowDevelopment`, and `androidkey` a
+    `StatusSource` with `AllowLoopback`.
   - **Evidence is pluggable, by `Kind`.** An `EvidenceVerifier` is
     given the evidence, the consumed challenge (one-use, short-lived,
     bound to a `Purpose`), the keys the request names and, after

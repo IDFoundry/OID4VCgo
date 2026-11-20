@@ -53,6 +53,10 @@
 // refusal: the instance stays active, and restoring the setting lets
 // it through again.
 //
+// It's a walletprovider.ConfigurationCheck too: a provider under
+// walletprovider.AssuranceProduction refuses one whose Verifier sets
+// AllowDevelopment, so only released builds register there.
+//
 // mobile/WALLET_PROVIDER.md in the repository is the protocol an app
 // follows: what each request's evidence is, and the client data's
 // exact bytes, with test vectors.

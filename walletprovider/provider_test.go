@@ -1,9 +1,11 @@
 package walletprovider_test
 
 import (
+	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/url"
 	"reflect"
@@ -16,6 +18,8 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
+	"github.com/idfoundry/oid4vcgo/walletprovider/androidkey"
+	"github.com/idfoundry/oid4vcgo/walletprovider/appattest"
 	"github.com/idfoundry/oid4vcgo/walletprovider/walletprovidertest"
 )
 
@@ -26,6 +30,15 @@ func TestNewRefuses(t *testing.T) {
 			ca, caKey := testcert.CA(t, "CA")
 			leaf, key := testcert.Issue(t, tmpl, ca, caKey)
 			d.Signer, d.Chain = key, []*x509.Certificate{leaf}
+		}
+	}
+	// underProduction is a production provider, its stores sealed, with
+	// evidence as its verifiers.
+	underProduction := func(evidence ...walletprovider.EvidenceVerifier) mutation {
+		return func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction
+			sealAll(d)
+			d.Evidence = evidence
 		}
 	}
 	id, _ := url.Parse(identifier)
@@ -175,6 +188,13 @@ func TestNewRefuses(t *testing.T) {
 			c.Assurance, c.UnsealedStores, c.RequireSealedStore = walletprovider.AssuranceProduction, true, true
 			d.Evidence = withoutFakes(d.Evidence)
 		}, "RequireSealedStore is set, and Instances doesn't seal"},
+		{"a verifier refusing production", underProduction(checkedVerifier{refuse: true}), `Evidence[0] (Kind "checked"): refused under production`},
+		{"App Attest development builds under production", underProduction(appattest.EvidenceVerifier{
+			Verifier: &appattest.Verifier{Apps: []string{iosApp}, AllowDevelopment: true},
+		}), "appattest: verifier misconfigured: the Verifier sets AllowDevelopment"},
+		{"Google's status list on loopback under production", underProduction(androidkey.EvidenceVerifier{
+			Verifier: &androidkey.Verifier{Revocation: &androidkey.StatusSource{AllowLoopback: true}},
+		}), "androidkey: verifier misconfigured: the Verifier's Revocation is a StatusSource with AllowLoopback"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,32 +224,71 @@ func withoutFakes(evidence []walletprovider.EvidenceVerifier) []walletprovider.E
 	})
 }
 
+// checkedVerifier is an evidence verifier that checks its
+// configuration (walletprovider.ConfigurationCheck): it records the
+// level it's checked at in got, if set, and refuses production when
+// refuse is set.
+type checkedVerifier struct {
+	got    *walletprovider.AssuranceLevel
+	refuse bool
+}
+
+func (checkedVerifier) Kind() string { return "checked" }
+
+func (checkedVerifier) Verify(context.Context, walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
+	return walletprovider.VerifiedEvidence{}, errors.New("checkedVerifier verifies nothing")
+}
+
+func (v checkedVerifier) CheckConfiguration(level walletprovider.AssuranceLevel) error {
+	if v.got != nil {
+		*v.got = level
+	}
+	if v.refuse && level == walletprovider.AssuranceProduction {
+		return errors.New("refused under production")
+	}
+	return nil
+}
+
 // TestNewAssurance: AssuranceDevelopment, like a zero Assurance, takes
-// FakeVerifier and unsealed stores; AssuranceProduction takes the other
-// verifiers, with sealed stores, or unsealed ones under UnsealedStores.
+// FakeVerifier, unsealed stores and the evidence verifiers' development
+// settings; AssuranceProduction takes the other verifiers, androidkey's
+// AllowUncheckedLegacyEvidence among their settings, with sealed
+// stores, or unsealed ones under UnsealedStores. Each verifier's
+// ConfigurationCheck is called with the provider's level.
 func TestNewAssurance(t *testing.T) {
 	for _, c := range []struct {
-		name   string
-		level  walletprovider.AssuranceLevel
-		kind   string // a registration's evidence
-		mutate func(*walletprovider.Config, *walletprovider.Dependencies)
+		name     string
+		level    walletprovider.AssuranceLevel
+		kind     string // a registration's evidence
+		devFlags bool   // the verifiers' development settings
+		mutate   func(*walletprovider.Config, *walletprovider.Dependencies)
 	}{
-		{"zero", 0, kindFake, nil},
-		{"development", walletprovider.AssuranceDevelopment, kindFake, nil},
-		{"production, sealed", walletprovider.AssuranceProduction, kindTEE, func(_ *walletprovider.Config, d *walletprovider.Dependencies) { sealAll(d) }},
-		{"production, UnsealedStores", walletprovider.AssuranceProduction, kindTEE, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.UnsealedStores = true }},
+		{"zero", 0, kindFake, true, nil},
+		{"development", walletprovider.AssuranceDevelopment, kindFake, true, nil},
+		{"production, sealed", walletprovider.AssuranceProduction, kindTEE, false, func(_ *walletprovider.Config, d *walletprovider.Dependencies) { sealAll(d) }},
+		{"production, UnsealedStores", walletprovider.AssuranceProduction, kindTEE, false, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.UnsealedStores = true }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			var checked walletprovider.AssuranceLevel
 			h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
 				cfg.Assurance = c.level
 				if c.level == walletprovider.AssuranceProduction {
 					d.Evidence = withoutFakes(d.Evidence)
 				}
+				d.Evidence = append(d.Evidence, checkedVerifier{got: &checked},
+					appattest.EvidenceVerifier{Verifier: &appattest.Verifier{Apps: []string{iosApp}, AllowDevelopment: c.devFlags}},
+					androidkey.EvidenceVerifier{
+						Verifier:                     &androidkey.Verifier{Revocation: &androidkey.StatusSource{AllowLoopback: c.devFlags}},
+						AllowUncheckedLegacyEvidence: true,
+					})
 				if c.mutate != nil {
 					c.mutate(cfg, d)
 				}
 			})
 			h.register(c.kind)
+			if want := max(c.level, walletprovider.AssuranceDevelopment); checked != want {
+				t.Fatalf("CheckConfiguration was called with level %d, want %d", checked, want)
+			}
 		})
 	}
 }

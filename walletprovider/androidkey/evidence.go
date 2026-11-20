@@ -79,7 +79,9 @@ type EvidenceVerifier struct {
 	// the instances still needing to), or in development, where a
 	// provider's stores outlive its upgrades. Each record it lets
 	// through is logged, at slog.LevelWarn, to Logger, so the operator
-	// can see when none is left to turn it off.
+	// can see when none is left to turn it off. A provider under
+	// walletprovider.AssuranceProduction takes it, for such a window:
+	// CheckConfiguration doesn't refuse it.
 	AllowUncheckedLegacyEvidence bool
 
 	// Logger receives a warning for each record AllowUncheckedLegacyEvidence
@@ -95,10 +97,27 @@ const DefaultMaxAuthTimeout = 30 * time.Second
 var (
 	_ walletprovider.EvidenceRechecker    = EvidenceVerifier{}
 	_ walletprovider.InstanceKeyRechecker = EvidenceVerifier{}
+	_ walletprovider.ConfigurationCheck   = EvidenceVerifier{}
 )
 
 // Kind implements walletprovider.EvidenceVerifier: EvidenceKind.
 func (EvidenceVerifier) Kind() string { return EvidenceKind }
+
+// CheckConfiguration implements walletprovider.ConfigurationCheck:
+// under walletprovider.AssuranceProduction it refuses, with ErrConfig, a
+// Verifier whose Revocation is a StatusSource with AllowLoopback set,
+// which is for tests and local development. It takes
+// AllowUncheckedLegacyEvidence at every level, as that's for an upgrade
+// window in production too.
+func (e EvidenceVerifier) CheckConfiguration(assurance walletprovider.AssuranceLevel) error {
+	if assurance != walletprovider.AssuranceProduction || e.Verifier == nil {
+		return nil
+	}
+	if s, ok := e.Verifier.Revocation.(*StatusSource); ok && s != nil && s.AllowLoopback {
+		return fail(ErrConfig, "the Verifier's Revocation is a StatusSource with AllowLoopback, which walletprovider.AssuranceProduction refuses")
+	}
+	return nil
+}
 
 // Verify implements walletprovider.EvidenceVerifier.
 func (e EvidenceVerifier) Verify(ctx context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {
