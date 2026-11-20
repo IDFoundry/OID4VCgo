@@ -117,8 +117,19 @@ func TestRequireValidStatus_MdocSignerUnderTheDocumentSignersIACA(t *testing.T) 
 		}
 		return errors.New("not a Status Issuer")
 	})
-	if err := delegated(ctx, "id", credential("/other", nil)); err != nil {
-		t.Errorf("a Status Issuer the policy accepts: %v", err)
+	// ISO/IEC 18013-5 §12.3.6.2 binds the list of an mdoc whose issuer
+	// chain is known to its own IACA: a Status Issuer the policy
+	// accepts, for other credentials, doesn't decide it.
+	if err := delegated(ctx, "id", credential("/other", nil)); err == nil || !strings.Contains(err.Error(), "12.3.6.2") {
+		t.Errorf("a Status Issuer the policy accepts, for an mdoc whose chain is known: %v, want refused", err)
+	}
+	// One verified with no issuer chain, and whose MSO names no
+	// Certificate, has nothing else to bind its list's signer: the
+	// policy decides it.
+	unchained := credential("/other", nil)
+	unchained.Credentials[0].IssuerChain = nil
+	if err := delegated(ctx, "id", unchained); err != nil {
+		t.Errorf("a Status Issuer the policy accepts, for an mdoc with no chain: %v", err)
 	}
 }
 

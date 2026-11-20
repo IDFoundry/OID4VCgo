@@ -132,6 +132,25 @@ of its own mdocs. A `Transaction` record now carries the anchor of each
 verified credential (`issuer_anchor`); a record from an earlier release
 reads with none.
 
+### `StatusIssuers` no longer decides a chained mdoc's status list (`verifier`, `proximity`, `mdocdcapi`)
+
+`StatusPolicy.StatusIssuers` (or `RequireValidStatusFrom`'s, or
+`AnyStatusListSigner`) used to accept a Status Issuer's signature on an
+mdoc's `status_list` even when the mdoc's issuer chain was known.
+ISO/IEC 18013-5 §12.3.6.2 has such a list signed under the CA that
+signed the document signer, or by the certificate the MSO names. So a
+Status Issuer trusted for SD-JWT VC issuers decided the status of
+every trusted IACA's mDLs, a revoked one included.
+
+It now decides an mdoc's `status_list` only where it already decided
+its `identifier_list`: for an mdoc verified with no issuer chain whose
+MSO names no status `Certificate`. Every other mdoc's lists must be
+signed as §12.3.6.2 says.
+
+A deployment whose mdoc issuers delegate their status lists to
+another signer has them name it in the MSO's status `Certificate`, or
+verifies those mdocs without an issuer chain.
+
 ### A `StatusPolicy` refuses a Checker that names the list signer
 
 `verifier.StatusPolicy` now refuses a `Checker` whose `Options` set

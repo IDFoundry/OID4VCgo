@@ -173,7 +173,9 @@ func requireReferences(vcs []VerifiedCredential) error {
 // error to refuse. issuer is the credential's (its iss, or the URI its
 // own certificate names), so a Status Issuer can be accepted for some
 // issuers and not others; it's "" for an mdoc, or an SD-JWT VC with
-// neither, so decide from leaf and chains.
+// neither, so decide from leaf and chains. It's consulted for an mdoc
+// only when the mdoc has no issuer chain and its MSO names no status
+// Certificate (RequireValidStatusFrom).
 type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 // RequireValidStatusFrom is RequireValidStatus for deployments whose
@@ -183,9 +185,12 @@ type StatusIssuerPolicy func(issuer string, leaf *x509.Certificate, chains [][]*
 // credential's issuer, as RequireValidStatus requires, or a Status
 // Issuer statusIssuers accepts for that issuer. Anyone else under the
 // roots is refused. checker.Options.LeafPolicy, if set, still applies
-// to every signer. For an mdoc's identifier list, statusIssuers decides
-// the signer only when the mdoc carries no issuer chain and its MSO
-// names no Certificate. A nil statusIssuers is RequireValidStatus.
+// to every signer. For an mdoc's status list or identifier list,
+// statusIssuers decides the signer only when the mdoc carries no issuer
+// chain and its MSO names no Certificate: otherwise ISO/IEC 18013-5
+// §12.3.6.2 alone does, which has the list signed under the CA that
+// signed the document signer, or by the certificate the MSO names. A
+// nil statusIssuers is RequireValidStatus.
 func RequireValidStatusFrom(checker statuslist.Checker, statusIssuers StatusIssuerPolicy) func(ctx context.Context, id string, result VerifyResponseResult) error {
 	policy := &StatusPolicy{Checker: checker, StatusIssuers: statusIssuers}
 	return func(ctx context.Context, _ string, result VerifyResponseResult) error {
@@ -295,7 +300,9 @@ var errUnboundStatusSigner = errors.New("the credential was verified with no iss
 // anchor may decide every credential's status — roots of one issuer
 // alone, say. Without a policy, a credential that can't be tied to an
 // issuer certificate (verified by a resolver that reports no issuer
-// chain) has its status check refused.
+// chain) has its status check refused. An mdoc with an issuer chain, or
+// whose MSO names a status Certificate, keeps ISO/IEC 18013-5
+// §12.3.6.2's binding whatever the policy.
 func AnyStatusListSigner(string, *x509.Certificate, [][]*x509.Certificate) error { return nil }
 
 // issuerName is an SD-JWT VC's issuer, for its status list: its iss,
@@ -329,11 +336,14 @@ func (vc VerifiedCredential) issuerKey() crypto.PublicKey {
 }
 
 // mdocStatusChecker is checker for an mdoc's revocation list: its
-// signer trusted as ISO/IEC 18013-5 §12.3.6 says (mdoc.StatusTrust), or
-// a Status Issuer statusIssuers accepts, given no issuer name. An mdoc
-// verified with no issuer chain, and whose MSO names no status
-// Certificate, is refused unless statusIssuers decides its signer. The
-// list must carry exp and its signer's x5chain protected (§12.3.6.3).
+// signer trusted as ISO/IEC 18013-5 §12.3.6 says (mdoc.StatusTrust),
+// under the CA that signed the document signer or the certificate the
+// MSO names. statusIssuers, given no issuer name, decides the signer
+// only of an mdoc verified with no issuer chain and whose MSO names no
+// status Certificate, as for its identifier list
+// (requireNotOnIdentifierList); without it, such an mdoc is refused.
+// The list must carry exp and its signer's x5chain protected
+// (§12.3.6.3).
 func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, statusIssuers StatusIssuerPolicy) (statuslist.Checker, error) {
 	var ref *mdoc.StatusListRef
 	if vc.MdocStatus != nil {
@@ -371,13 +381,9 @@ func mdocStatusChecker(checker statuslist.Checker, vc VerifiedCredential, status
 		c.Options.UnboundSigner = statuslist.AnyListSigner
 		return c, nil
 	}
-	c.Options.UnboundSigner = func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
-		err := trust.LeafPolicy(leaf, chains)
-		if err != nil && statusIssuers != nil && statusIssuers("", leaf, chains) == nil {
-			return nil
-		}
-		return err
-	}
+	// §12.3.6.2 alone: a Status Issuer statusIssuers accepts for
+	// another issuer's credentials mustn't decide this IACA's mdocs.
+	c.Options.UnboundSigner = trust.LeafPolicy
 	return c, nil
 }
 
