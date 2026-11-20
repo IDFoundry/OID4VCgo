@@ -7,40 +7,6 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
-## v0.84.0 → v0.85.0
-
-### A Wallet Provider has a production assurance level (`walletprovider`, `androidkey`, `appattest`)
-
-`walletprovider.Config` has a new `Assurance` field, an
-`AssuranceLevel` as the issuer and the verifier have. Zero keeps
-today's behaviour (`AssuranceDevelopment`). Under the new
-`walletprovider.AssuranceProduction`, `New` refuses:
-
-- `walletprovidertest.FakeVerifier`, or a type embedding it, among
-  `Dependencies.Evidence`: its evidence is a JSON document anyone can
-  write, so a provider built with it registers anyone and attests any
-  key, at whatever security level it was set to report.
-- `Instances`, `InstanceKeys` and `Challenges` stores that don't seal
-  their records (`sealing.Store`), as `RequireSealedStore` does, unless
-  the new `Config.UnsealedStores` accepts them, as the issuer's
-  `Config.UnsealedStores` does: only where they're as protected as the
-  provider's signing key. `RequireSealedStore` refuses them at any
-  level, `UnsealedStores` or not.
-- An evidence verifier whose `CheckConfiguration`, of the new optional
-  `walletprovider.ConfigurationCheck`, refuses the level.
-  `appattest.EvidenceVerifier` refuses a `Verifier` with
-  `AllowDevelopment`, and `androidkey.EvidenceVerifier` one whose
-  `Revocation` is a `StatusSource` with `AllowLoopback`, each wrapping
-  its package's `ErrConfig`. `androidkey`'s
-  `AllowUncheckedLegacyEvidence` is taken, for an upgrade window. A
-  verifier of your own that wraps one of them in a named field hides
-  the method: forward it, or embed the wrapped verifier.
-
-Set it in production, with your stores sealed (sqlstore's `DB` with an
-`Options.Sealer`). `New` calls `CheckConfiguration` at every level,
-with the provider's level; the two verifiers refuse only under
-production, so other levels are unchanged.
-
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
@@ -665,6 +631,38 @@ with its keys, until it's abandoned, as before. The new
 `Config.MaxPendingDeferredPerIssuer` and
 `Config.MaxPendingDeferred` change the bounds; zero keeps the
 defaults. The mobile configuration keeps the defaults.
+
+### A Wallet Provider has a production assurance level (`walletprovider`, `androidkey`, `appattest`)
+
+`walletprovider.Config` has a new `Assurance` field, an
+`AssuranceLevel` as the issuer and the verifier have. Zero keeps
+today's behaviour (`AssuranceDevelopment`). Under the new
+`walletprovider.AssuranceProduction`, `New` refuses:
+
+- `walletprovidertest.FakeVerifier`, or a type embedding it, among
+  `Dependencies.Evidence`: its evidence is a JSON document anyone can
+  write, so a provider built with it registers anyone and attests any
+  key, at whatever security level it was set to report.
+- `Instances`, `InstanceKeys` and `Challenges` stores that don't seal
+  their records (`sealing.Store`), as `RequireSealedStore` does, unless
+  the new `Config.UnsealedStores` accepts them, as the issuer's
+  `Config.UnsealedStores` does: only where they're as protected as the
+  provider's signing key. `RequireSealedStore` refuses them at any
+  level, `UnsealedStores` or not.
+- An evidence verifier whose `CheckConfiguration`, of the new optional
+  `walletprovider.ConfigurationCheck`, refuses the level.
+  `appattest.EvidenceVerifier` refuses a `Verifier` with
+  `AllowDevelopment`, and `androidkey.EvidenceVerifier` one whose
+  `Revocation` is a `StatusSource` with `AllowLoopback`, each wrapping
+  its package's `ErrConfig`. `androidkey`'s
+  `AllowUncheckedLegacyEvidence` is taken, for an upgrade window. A
+  verifier of your own that wraps one of them in a named field hides
+  the method: forward it, or embed the wrapped verifier.
+
+Set it in production, with your stores sealed (sqlstore's `DB` with an
+`Options.Sealer`). `New` calls `CheckConfiguration` at every level,
+with the provider's level; the two verifiers refuse only under
+production, so other levels are unchanged.
 
 ## v0.82.0 → v0.83.0
 
