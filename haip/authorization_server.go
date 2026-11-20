@@ -70,18 +70,20 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // WalletAttestationStatusList for Wallet Providers that publish a Token
 // Status List, binding each list's signer to the attestation's
 // (server.New runs its CheckConfiguration at Config.Assurance), or
-// server.NoClientAttestationStatusCheck{} when they publish no status. To take openid_credential authorization_details,
-// register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
-// refuses a Wallet's own credential_identifiers, at the pushed
-// authorization request and at the token endpoint alike. Have the
-// consent step grant no configuration's scope beside an object for it
-// (issuer.Issuer.UndetailedScopes): a token request may leave a
-// granted object out, and the scope would then grant the configuration
-// whole. Size the
-// registry for the configurations one grant names, for example
-// extension.NewRARRegistry(8<<10, 6,
-// oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)) for two objects
-// of up to 4 KiB each. Give it a nesting depth of 6: an object's claims
+// server.NoClientAttestationStatusCheck{} when they publish no status.
+// To take openid_credential authorization_details, register
+// issuer.AuthorizationDetailRARDefinition, built from the Credential
+// Issuer's issuer.Config, in Config.RAR: it refuses a Wallet's own
+// credential_identifiers, at the pushed authorization request and at
+// the token endpoint alike, and a token request leaving a granted
+// object out while the token keeps its configuration's scope, which
+// would then grant the configuration whole. Have the consent step grant
+// no configuration's scope beside an object for it
+// (issuer.Issuer.UndetailedScopes), so a Wallet may still leave one
+// out. Size the registry for the configurations one grant names, for
+// example extension.NewRARRegistry(8<<10, 6,
+// issuer.AuthorizationDetailRARDefinition(issuerConfig, 2, 4<<10)) for
+// two objects of up to 4 KiB each. Give it a nesting depth of 6: an object's claims
 // are 5 deep and a claims description's display 6, and a shallower
 // registry refuses them, at the token endpoint too, after the
 // Credential Issuer's RedeemPreAuthorizedCode has spent a

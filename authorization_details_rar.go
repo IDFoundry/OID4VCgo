@@ -68,12 +68,14 @@ import (
 // Those checks hold for the objects a token request asks for: one
 // that leaves a granted object out altogether — authorization_details
 // set to [], or naming another of the grant's objects only — gets a
-// token without it, which fapigo/server allows (RFC 9396 §6.1) and
-// gives a definition no say in. The token then grants that
-// configuration only if the grant holds its scope too, and then for
-// every claim, by credential_configuration_id. So never grant a
-// configuration's scope beside an object for it: the consent step
-// grants one or the other (issuer.Issuer.UndetailedScopes).
+// token without it (RFC 9396 §6.1). The token then grants that
+// configuration only if it keeps the configuration's scope, and then
+// for every claim, by credential_configuration_id. This definition
+// knows no configuration's scope, so it allows every such omission
+// (it sets no ValidateOmission). An Authorization Server registers
+// issuer.AuthorizationDetailRARDefinition instead, which refuses that
+// one, and its consent step grants a configuration's scope or an
+// object for it, not both (issuer.Issuer.UndetailedScopes).
 //
 // The binding rule for the Credential Issuer: a credential_identifier
 // is a handle the Authorization Server minted for one grant, not an

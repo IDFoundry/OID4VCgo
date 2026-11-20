@@ -245,7 +245,7 @@ func (a *App) buildAuthorizationServer() error {
 	// (handleToken), so its metadata lists it, with the
 	// authorization_details its tokens may carry.
 	cfg.AdditionalGrantTypes = []string{preAuthorizedCodeGrantType}
-	if cfg.RAR, err = credentialAuthorizationDetails(); err != nil {
+	if cfg.RAR, err = credentialAuthorizationDetails(a.issuerURL); err != nil {
 		return fmt.Errorf("issuerapp: authorization details: %w", err)
 	}
 

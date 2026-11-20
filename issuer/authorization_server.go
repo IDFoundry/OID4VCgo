@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/idfoundry/fapigo/extension"
+
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
@@ -118,10 +120,13 @@ import (
 //		})
 //	}
 //
-// A consent step granting openid_credential authorization_details
-// grants, beside them, only the scopes of configurations they don't
-// name (UndetailedScopes): a configuration's scope would grant it whole
-// to a token request that leaves its narrowed object out.
+// Register AuthorizationDetailRARDefinition in the Authorization
+// Server's Config.RAR: it refuses a token request that leaves a granted
+// openid_credential object out while the token keeps the scope of the
+// object's configuration, which would then grant it whole. A consent
+// step granting such objects grants, beside them, only the scopes of
+// configurations they don't name (UndetailedScopes), so that a Wallet
+// asking for a token for one of them can still leave the others out.
 //
 // Leaving GrantedAuthorization.Resources nil grants every resource the
 // request named: a Wallet whose request names another Credential
@@ -236,11 +241,13 @@ import (
 // by both (OpenID4VCI 1.0 §5.1.2), and the authorization_details object
 // is what holds then: the consent step may narrow it to fewer claims,
 // and to credential_identifiers it mints. Granting the configuration's
-// scope beside it would undo that. A token request may leave a granted
-// object out (authorization_details=[], RFC 9396 §6.1), and
-// fapigo/server then issues a token without it, which the scope alone
-// authorizes for the configuration by credential_configuration_id, and
-// for every claim. A scope several configurations share goes when a
+// scope beside it would undo that: a token request may leave a granted
+// object out (authorization_details=[], RFC 9396 §6.1), and the scope
+// alone would then authorize the configuration by
+// credential_configuration_id, for every claim.
+// AuthorizationDetailRARDefinition refuses such a token request; without
+// the scope in the grant, the Wallet may leave the object out. A scope
+// several configurations share goes when a
 // detail names any of them: grant the others by authorization_details
 // too. A detail that doesn't parse, or isn't for this Credential
 // Issuer, is passed by.
@@ -263,6 +270,47 @@ func (iss *Issuer) UndetailedScopes(scopes []string, details []json.RawMessage) 
 		}
 	}
 	return slices.DeleteFunc(slices.Clone(scopes), func(s string) bool { return detailed[s] })
+}
+
+// AuthorizationDetailRARDefinition is
+// oid4vci.AuthorizationDetailRARDefinition for the Authorization Server
+// of the Credential Issuer cfg configures, with a ValidateOmission hook
+// (fapigo's extension.RARDefinition): a token request narrowing a grant
+// (RFC 9396 §6.1) that leaves out a granted openid_credential object for
+// this Credential Issuer is refused, with invalid_authorization_details,
+// while the access token keeps the Scope of the object's credential
+// configuration. The object governs a configuration that a scope and an
+// object both authorize (OpenID4VCI 1.0 §5.1.2). Without it the scope
+// alone would authorize the configuration by credential_configuration_id,
+// for every claim, and the claims consent kept and the
+// credential_identifiers the Authorization Server minted would be lost.
+// Every other omission is allowed: a token for one of two granted
+// credentials, an object left out at a refresh whose scope parameter
+// leaves its scope out too, an object for another Credential Issuer.
+//
+// Register it in the Authorization Server's Config.RAR in place of
+// oid4vci.AuthorizationDetailRARDefinition, with the same maxObjects and
+// maxBytesPerObject. cfg is the Config New is given. Only its Issuer,
+// AuthorizationServers and the configurations' scopes are read, when
+// this is called, so the definition can be built before the
+// Authorization Server the Issuer's Dependencies need.
+func AuthorizationDetailRARDefinition(cfg Config, maxObjects, maxBytesPerObject int) extension.RARDefinition[oid4vci.AuthorizationDetail] {
+	scopes := make(map[string]string, len(cfg.CredentialConfigurationsSupported))
+	for id, cc := range cfg.CredentialConfigurationsSupported {
+		if cc.Scope != "" {
+			scopes[id] = cc.Scope
+		}
+	}
+	issuerID, listsAuthorizationServers := cfg.Issuer.String(), len(cfg.AuthorizationServers) > 0
+	def := oid4vci.AuthorizationDetailRARDefinition(maxObjects, maxBytesPerObject)
+	def.ValidateOmission = func(granted oid4vci.AuthorizationDetail, scope []string) error {
+		s, ok := scopes[granted.CredentialConfigurationID]
+		if !ok || !slices.Contains(scope, s) || !detailForIssuer(granted, issuerID, listsAuthorizationServers) {
+			return nil
+		}
+		return fmt.Errorf("issuer: the access token keeps scope %q, so it can't leave out the openid_credential object for %q, which governs it (OpenID4VCI 1.0 §5.1.2)", s, granted.CredentialConfigurationID)
+	}
+	return def
 }
 
 // ErrResourceNotThisIssuer is wrapped by AuthorizationResources' error:

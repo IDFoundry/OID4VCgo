@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
 
-	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
@@ -56,12 +56,18 @@ const (
 // redeemed: without this, such a request spent the code and got an
 // error. PAR still refuses authorization_details — no
 // AuthorizationCodeRARPolicy is set — so the authorization code flow
-// stays scope-based; were it set, oid4vci.AuthorizationDetailRARDefinition
-// already refuses a wallet's own credential_identifiers there and at
-// the token endpoint, and lets the consent add the ones it mints.
-func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
+// stays scope-based; were it set, the definition already refuses a
+// wallet's own credential_identifiers there and at the token endpoint,
+// and lets the consent add the ones it mints. It is
+// issuer.AuthorizationDetailRARDefinition, built from issuerURL and the
+// configurations' scopes, so a token request leaving out a granted
+// object while the token keeps its configuration's scope is refused.
+func credentialAuthorizationDetails(issuerURL fapi.URL) (*extension.RARRegistry, error) {
+	scopes := issuer.Config{Issuer: issuerURL, CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+		MdocConfigurationID: {Scope: MdocScope}, SDJWTConfigurationID: {Scope: SDJWTScope},
+	}}
 	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth,
-		oid4vci.AuthorizationDetailRARDefinition(maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes))
+		issuer.AuthorizationDetailRARDefinition(scopes, maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes))
 }
 
 // preAuthorizedOffer records a claimed transaction's pre-authorized code,

@@ -180,7 +180,7 @@ func newServers(cfg Config) (servers, error) {
 	}
 	if cfg.usesAuthorizationDetails() {
 		// The authorization_details its tokens may carry.
-		if srvCfg.RAR, err = credentialAuthorizationDetails(); err != nil {
+		if srvCfg.RAR, err = credentialAuthorizationDetails(cfg, issuerURL); err != nil {
 			return servers{}, err
 		}
 	}

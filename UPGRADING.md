@@ -35,6 +35,36 @@ at every level, and doesn't start on its error.
   type `Config.RAR` no longer registers is refused with
   `invalid_authorization_details`.
 
+### Refuse a token request leaving out an object its scope still grants (issuer)
+
+The new `issuer.AuthorizationDetailRARDefinition` is
+`oid4vci.AuthorizationDetailRARDefinition` with FAPIgo v0.78.0's
+`ValidateOmission` hook. A token request (a code exchange, CIBA or a
+refresh) that leaves out a granted `openid_credential` object for this
+Credential Issuer, with `authorization_details=[]` or by naming only
+the grant's other objects, is refused with
+`invalid_authorization_details` while the access token keeps the scope
+of the object's configuration. The object governs then (OpenID4VCI 1.0
+§5.1.2). Without it, the scope alone authorized the configuration by
+`credential_configuration_id`, for every claim, whatever claims consent
+kept or `credential_identifiers` it minted.
+
+**What to change:** register it in the Authorization Server's
+`Config.RAR` in place of `oid4vci.AuthorizationDetailRARDefinition`,
+built from the `issuer.Config` you give `issuer.New`. It reads only
+`Issuer`, `AuthorizationServers` and the configurations' scopes, so it
+can be built before the Authorization Server:
+
+```go
+registry, err := extension.NewRARRegistry(8<<10, 6,
+	issuer.AuthorizationDetailRARDefinition(issuerConfig, 2, 4<<10))
+```
+
+A consent step using `issuer.Issuer.UndetailedScopes` grants no
+configuration's scope beside its object, so nothing it grants is
+refused. One that does grant both now has a token request leaving the
+object out refused, where before the token kept the scope.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
