@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	fapi "github.com/idfoundry/fapigo"
+
+	"github.com/idfoundry/oid4vcgo/wallet"
 )
 
 func testNonceEndpoint(t *testing.T) fapi.URL {
@@ -50,5 +53,21 @@ func TestRequestNonce_PropagatesTransportError(t *testing.T) {
 	})
 	if _, err := w.RequestNonce(context.Background(), testNonceEndpoint(t)); err == nil {
 		t.Fatalf("RequestNonce = nil error, want error")
+	}
+}
+
+// A c_nonce longer than MaxCNonceLength is refused, since the wallet
+// signs it into every proof and sends it to its Wallet Provider; one of
+// exactly wallet.MaxCNonceLength bytes is taken.
+func TestRequestNonce_BoundsTheNonce(t *testing.T) {
+	for _, n := range []int{wallet.MaxCNonceLength, wallet.MaxCNonceLength + 1} {
+		nonce := strings.Repeat("n", n)
+		w := newTestWallet(t, func(*http.Request) (*http.Response, error) {
+			return jsonResponse([]byte(`{"c_nonce":"` + nonce + `"}`)), nil
+		})
+		result, err := w.RequestNonce(context.Background(), testNonceEndpoint(t))
+		if ok := n <= wallet.MaxCNonceLength; (err == nil) != ok || (ok && result.CNonce != nonce) {
+			t.Errorf("a %d-byte c_nonce: %v, accepted %v; want accepted %v", n, err, err == nil, ok)
+		}
 	}
 }

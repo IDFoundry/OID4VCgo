@@ -11,6 +11,13 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
+// MaxCNonceLength is the longest c_nonce RequestNonce accepts, in bytes.
+// A Wallet signs its c_nonce into every proof of a Credential Request,
+// and sends it to its Wallet Provider for each Key Attestation, so a
+// Nonce Response can't make each of them as large as itself. An
+// issuer's nonce is a few dozen bytes; §7.2 sets no length.
+const MaxCNonceLength = 1024
+
 // NonceResult is returned by a successful RequestNonce.
 type NonceResult struct {
 	// CNonce is the fresh challenge (§7.2) — pass it to GenerateProof.
@@ -35,7 +42,7 @@ type DPoPNonceUser interface {
 // RequestNonce implements the Nonce Endpoint's own client side (§7.1):
 // an unauthenticated HTTP POST with an empty body. The Nonce Endpoint
 // is not a protected resource (§7.1) — no access token or DPoP proof
-// is needed to call it.
+// is needed to call it. A c_nonce longer than MaxCNonceLength is refused.
 func (w *Wallet) RequestNonce(ctx context.Context, endpoint fapi.URL) (NonceResult, error) {
 	target := endpoint.URL()
 	res, err := w.fetcher.Post(ctx, fapihttp.PostRequest{
@@ -59,6 +66,9 @@ func (w *Wallet) RequestNonce(ctx context.Context, endpoint fapi.URL) (NonceResu
 	}
 	if body.CNonce == "" {
 		return NonceResult{}, fmt.Errorf("wallet: request nonce: response is missing c_nonce")
+	}
+	if len(body.CNonce) > MaxCNonceLength {
+		return NonceResult{}, fmt.Errorf("wallet: request nonce: c_nonce is longer than %d bytes", MaxCNonceLength)
 	}
 	return NonceResult{CNonce: body.CNonce, DPoPNonce: res.Header.Get("DPoP-Nonce")}, nil
 }
