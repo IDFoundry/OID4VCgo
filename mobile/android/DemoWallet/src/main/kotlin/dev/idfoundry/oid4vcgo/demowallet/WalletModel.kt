@@ -195,7 +195,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                 Wallet(
                     config.wallet.let { it.copy(presentation = it.presentation.copy(copyPolicy = copyPolicy), revocation = it.revocation.copy(crls = crls)) }, keys!!,
                     FileCredentialStore.standard(getApplication()),
-                    config.providerURL?.let { HTTPWalletProvider(it, DevelopmentTLS.socketFactory(getApplication(), config)) },
+                    config.providerURL?.let { HTTPWalletProvider(it, keys!!, DevelopmentTLS.socketFactory(getApplication(), config)) },
                 )
             }
             // With the revocation lists last fetched (DemoConfiguration.CRLS).
