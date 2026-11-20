@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.84.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.83.0...v0.84.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **verifier:** without AllowUnrequestedClaims, VerifyResponse and Transactions refuse, as ReasonUnrequestedClaims, a presentation that discloses a claim of a claim_sets option it doesn't satisfy, where it was accepted when any claims path of the query named the claim. See UPGRADING.md.
+* **mdoc:** mdoc.CheckDocumentSigner, and so every mdoc verification, refuses a document signer path whose IACA names a stateOrProvinceName that the document signer doesn't name alike. See UPGRADING.md.
+* **verifier:** StatusPolicy.StatusIssuers (RequireValidStatusFrom, AnyStatusListSigner) no longer accepts a Status Issuer's signature on the status_list of an mdoc whose issuer chain is known, or whose MSO names a status Certificate. ISO/IEC 18013-5 §12.3.6.2's binding applies, as it did to identifier_list. See UPGRADING.md.
+* **verifier:** under AssuranceProduction, verifier.NewTransactions refuses a TransactionsConfig without RequestURIBase unless it sets Scope. Give each Digital Credentials API policy a Scope of its own, the same on every replica. See UPGRADING.md.
+* **sdjwtvc:** an SD-JWT VC whose issuer JWT payload or a Disclosure holds a number beyond ±(2^53 − 1) is refused by sdjwtvc.Verify, and so by the verifier, wallet and walletflow, and sdjwtvc.Issue refuses to sign one. Issue such values as strings; reissue a credential issued with one. See UPGRADING.md.
+* **issuer:** a deferred transaction record with neither CredentialIdentifier nor RequestedByConfigurationID is refused with invalid_transaction_id, where it was checked against the token granting its credential configuration. Before upgrading, check on v0.83.0 that AuditEventLegacyDeferredAuthorization has been silent for a full Limits.DeferredTransactionLifetime. A deployment writing DeferredTransactionRecords itself sets one of the two fields. See UPGRADING.md.
+* **deps:** an Authorization Server using fapigo/server now refuses, with invalid_request naming the claim, a PAR or backchannel authentication request whose OIDC claims parameter gives one claim more than 64 values. Give a claim at most 64 acceptable values. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.77.0.
+* **verifier:** a verifier.StatusPolicy, RequireValidStatus or RequireValidStatusFrom whose statuslist.Checker sets Options.Issuer, Options.IssuerKey or Options.UnboundSigner is now refused. Drop the fields: the binding is per credential, and a separate Status Issuer is StatusPolicy.StatusIssuers's to accept. See UPGRADING.md.
+* **verifier:** under AssuranceProduction, VerifyResponseRequest.IssuerKeys must be an SDJWTVCIssuerChainResolver (such as X5CIssuerKeyResolver) or Unwrap to one (SDJWTVCIssuerKeyResolverWrapper). A deployment whose SD-JWT VC issuers are trusted without certificates sets AllowUnanchoredSDJWTVCIssuers and authorizes issuers without IssuerAnchor.
+
+### Features
+
+* **issuer:** hold a deferred transaction to its credential configuration as it is when issued ([f65fc0a](https://github.com/IDFoundry/OID4VCgo/commit/f65fc0a3b2bd669bede9457534e0f6e666b1d44c))
+* **verifier:** add X5CIssuerKeyResolver.RootsByVCT ([c8f1729](https://github.com/IDFoundry/OID4VCgo/commit/c8f1729ae74d2c6111c8f092ff929e04e6a4f67b))
+* **verifier:** expose the verified issuer anchor to IssuerAuthorized ([06515a6](https://github.com/IDFoundry/OID4VCgo/commit/06515a62cad09ede32a28c1c3381804ec784b2f3))
+* **verifier:** require an SD-JWT VC issuer chain resolver under production ([593c2f3](https://github.com/IDFoundry/OID4VCgo/commit/593c2f31ca736c0a2658e0a41ba3864c30e2d533))
+* **walletflow:** bound the deferred credentials pending from an issuer and in all ([04704a7](https://github.com/IDFoundry/OID4VCgo/commit/04704a73f694748fd7ecaf669eec8d800786bdaa))
+* **walletprovider:** have evidence verifiers refuse their development settings under production ([1c68d27](https://github.com/IDFoundry/OID4VCgo/commit/1c68d27b646218d83795b5815c7a738b595b8a54))
+* **walletprovider:** refuse walletprovidertest.FakeVerifier under a production assurance level ([5f9b329](https://github.com/IDFoundry/OID4VCgo/commit/5f9b329e24f5c091c72b3dfbce65d874939410b1))
+* **walletprovider:** require sealed stores under production assurance, unless UnsealedStores ([3f6b37c](https://github.com/IDFoundry/OID4VCgo/commit/3f6b37cf2c0d7b86f89e4c08d8a98e2c2cdda3d2))
+
+
+### Bug Fixes
+
+* **android:** bound the demo's claim images, and take an Auth Tab's redirect only from its result ([e91b64d](https://github.com/IDFoundry/OID4VCgo/commit/e91b64d2bda3143b5380b2908c72f9d067d8c168))
+* **certrevocation:** fetch CRLs without content coding, so MaxBytes bounds what's sent ([4357226](https://github.com/IDFoundry/OID4VCgo/commit/4357226cb5b02b34d9a49aa4d069eccb82c6bbac))
+* **certrevocation:** refuse an unnumbered CRL after a numbered one ([dd12f1b](https://github.com/IDFoundry/OID4VCgo/commit/dd12f1be47b89c34b8b888b907f7d254fe875530))
+* check strict JSON in one bounded pass, and refuse answers at their first member out of bounds ([#1116](https://github.com/IDFoundry/OID4VCgo/issues/1116)) ([206acb1](https://github.com/IDFoundry/OID4VCgo/commit/206acb10cfa66e821ed62ca560d7d2bc6d83a1a9))
+* compare openid_credential authorization details in linear time, and cap their claims at 256 ([68a615f](https://github.com/IDFoundry/OID4VCgo/commit/68a615f60e504c83b6155da53559a81b6fe34d6e))
+* **conformance-issuer:** answer a Nonce Endpoint failure with server_error alone ([1c30a23](https://github.com/IDFoundry/OID4VCgo/commit/1c30a238ee1cda14d2ebd47725855e2721f000d7))
+* **conformance-issuer:** check the Authorization Server's Wallet Attestation status checker as production requires ([e0a9118](https://github.com/IDFoundry/OID4VCgo/commit/e0a91184ef917b9c580f4f4e26cb7a91e5631482))
+* **conformance-issuer:** register openid_credential 6 deep, so a Token Request naming claims keeps its code ([a362779](https://github.com/IDFoundry/OID4VCgo/commit/a36277911b7f3cbdab5eb630b0122ce13c099707))
+* **conformance-verifier:** show a session's result only to its browser, and route responses by kid ([95fb925](https://github.com/IDFoundry/OID4VCgo/commit/95fb925e70518a08e8672e98270a8f40fa944d21))
+* **conformance:** bound how long a client may take to send a request ([ee34749](https://github.com/IDFoundry/OID4VCgo/commit/ee347499b4ff636003153670bb038d7d3eb80ea6))
+* **dcql:** pass over array elements a presented claims path can't walk ([19441bb](https://github.com/IDFoundry/OID4VCgo/commit/19441bb4ee824c0e2bc48e7d9668eeb19a7b9969))
+* **deps:** pin FAPIgo v0.77.0 and fapigo/sqlstore v0.9.1 ([246a1f1](https://github.com/IDFoundry/OID4VCgo/commit/246a1f11a91a36405886c8e077fd77df25e4e531))
+* **deps:** pin FAPIgo v0.77.1 ([f9c78f5](https://github.com/IDFoundry/OID4VCgo/commit/f9c78f51ed62ba8a91794b8651ac59339aad870e))
+* **issuer:** keep a credential_configuration_id request to its grant's narrowing, whatever the details' order ([9cdcc2d](https://github.com/IDFoundry/OID4VCgo/commit/9cdcc2d8e576a5eb8ae85002d991de99e32d8d65))
+* **issuer:** record the legacy deferred check once per poll ([1f2342d](https://github.com/IDFoundry/OID4VCgo/commit/1f2342d2b2b013453feb158cc12baad3226ae8b3))
+* **issuer:** refuse a deferred record with neither marker, removing the legacy fallback ([bff8d97](https://github.com/IDFoundry/OID4VCgo/commit/bff8d97625563001219ae4eddfa051ffbf6b0c8a))
+* **issuer:** refuse a nonce key that isn't random under AssuranceProduction ([8f4ae13](https://github.com/IDFoundry/OID4VCgo/commit/8f4ae13a40012bfe98d9749c2844bea95b048679))
+* **issuer:** refuse an attested key for an algorithm the configuration doesn't list ([430fb8b](https://github.com/IDFoundry/OID4VCgo/commit/430fb8b236ebef9f359808ef30a43c3d7879ce1c))
+* **mdoc:** refuse a document signer that leaves off its IACA's state ([85ee6bd](https://github.com/IDFoundry/OID4VCgo/commit/85ee6bd4f79c0837179fd7602d660191d13ff028))
+* **mobile:** refuse a configuration or answer naming a JSON member twice ([af44e4b](https://github.com/IDFoundry/OID4VCgo/commit/af44e4ba0bf594d197caa92f6d93db3e755f97b9))
+* **mobile:** report a reader's decline once no other device advertises the holder's service ([b8a9a8c](https://github.com/IDFoundry/OID4VCgo/commit/b8a9a8c5e3d1a52658dcec18c16cecb3eee3dc2a))
+* **proximity:** let a reader reject replies not from the holder, and bound what the holder signs ([8484001](https://github.com/IDFoundry/OID4VCgo/commit/8484001dfc6e399ae0ea134b3316c811ef75cd8d))
+* **proximity:** take a reader's kid and alg only as RFC 9052 types them, and short ([7d10f75](https://github.com/IDFoundry/OID4VCgo/commit/7d10f75cff5d39e9306a6fcc66fed6a434ca3495))
+* **sdjwtvc:** bound a Key Binding JWT's future iat by the clock skew ([3335b33](https://github.com/IDFoundry/OID4VCgo/commit/3335b33b8678bfdb4b359492530de4709e6d47fc))
+* **sdjwtvc:** refuse numbers beyond 2^53 - 1, which verify as their float64 neighbours ([625afeb](https://github.com/IDFoundry/OID4VCgo/commit/625afeb9d60fd665cd7566fe152b147822596c2c))
+* **sdjwtvc:** select the same disclosures whatever the order of the claims paths ([e0517c6](https://github.com/IDFoundry/OID4VCgo/commit/e0517c696f260662976096177c5edc777a9cefee))
+* **sqlstore:** bind sealed records to a SealContext, so another tenant's don't open ([68f2ff6](https://github.com/IDFoundry/OID4VCgo/commit/68f2ff6d7e500a5fce5d1dcd9ca323ac1f8fff06))
+* **statuslist:** compare a CWT typ case-insensitively in ASCII alone ([bb6e840](https://github.com/IDFoundry/OID4VCgo/commit/bb6e84053eee1a73b642fc32257e41b72861ffb0))
+* **statuslist:** don't panic when http.DefaultTransport is wrapped, nor end the process on a fetch's panic ([ac1825f](https://github.com/IDFoundry/OID4VCgo/commit/ac1825f31b163b5ea0a689b26f1e04d2d9296279))
+* **statuslist:** refuse SIIT and ISATAP addresses that embed a non-public IPv4 address ([e055db7](https://github.com/IDFoundry/OID4VCgo/commit/e055db73cdffea0982ffd17b325a23d0a0e8b464))
+* **verifier:** count every failed presentation toward a per-response cap ([8d9b79b](https://github.com/IDFoundry/OID4VCgo/commit/8d9b79b9b2463b2b9ba5d21e281745f448b86ba4))
+* **verifier:** decode an mdoc vp_token and Annex C response as strict base64url ([635af9c](https://github.com/IDFoundry/OID4VCgo/commit/635af9c5a916c101a2cf330a8c1b6cb532d54550))
+* **verifier:** give an org-iso-mdoc IssuerAuthorized hook the document's CredentialQueryID ([7a25f71](https://github.com/IDFoundry/OID4VCgo/commit/7a25f7126a88e22d143f6f7237649fcb0095d61a))
+* **verifier:** give Transactions' Request Objects iat and exp ([2609867](https://github.com/IDFoundry/OID4VCgo/commit/2609867294572288a88aa955be9d8607110acbf4))
+* **verifier:** keep a Wallet's error code only when a specification defines it ([3a36837](https://github.com/IDFoundry/OID4VCgo/commit/3a3683713286742310b929f0c08e430a6d59831f))
+* **verifier:** keep ISO/IEC 18013-5 §12.3.6.2's binding for a chained mdoc's status list under StatusIssuers ([e4ac6a7](https://github.com/IDFoundry/OID4VCgo/commit/e4ac6a7b4b1eedb7a3ae0fedfed7a038d9ef2fd7))
+* **verifier:** read an mdoc's status from its MSO alone ([39c0062](https://github.com/IDFoundry/OID4VCgo/commit/39c006261fadb167c8672a2c0676b357d5cf50f4))
+* **verifier:** refuse a status Checker that names the list signer ([4db8b99](https://github.com/IDFoundry/OID4VCgo/commit/4db8b99a88beaa328f90679b25222ba9afaef0b9))
+* **verifier:** refuse an x5c with its trust anchor in ResolveIssuerChains too ([ecc0ffd](https://github.com/IDFoundry/OID4VCgo/commit/ecc0ffd45549108eafa0741278c56e85f77b0ba8))
+* **verifier:** require a Scope for a production Digital Credentials API Transactions ([ffd15eb](https://github.com/IDFoundry/OID4VCgo/commit/ffd15eb414f6c1d5c513ce5e1376e31c1438b92b))
+* **verifier:** under claim_sets, take only the claims of the options a presentation satisfies ([8b3e345](https://github.com/IDFoundry/OID4VCgo/commit/8b3e3458e32a54270088888a62b3c1a1c53d9f1b))
+* **wallet:** bound each DCQL meta and match a request's queries together ([3131340](https://github.com/IDFoundry/OID4VCgo/commit/3131340d1690e6d9f83719df7de31d816c65930f))
+* **wallet:** check a signed DC API request's origin before anything else ([66d33a4](https://github.com/IDFoundry/OID4VCgo/commit/66d33a4d2b72f1e85f6869a27fb8f00fb0e85ce2))
+* **walletflow:** drop a logo whose host isn't ASCII in its last label ([8222f6e](https://github.com/IDFoundry/OID4VCgo/commit/8222f6e4b43a34f456aa937660ea9cffbf64a7b3))
+* **walletflow:** drop invisible fillers from text shown to the holder ([7eb368c](https://github.com/IDFoundry/OID4VCgo/commit/7eb368cd7e1956c5e49602b334db22166b1e5b24))
+* **walletflow:** drop variation selectors from text shown to the holder ([f43d394](https://github.com/IDFoundry/OID4VCgo/commit/f43d394c51b5e73cce78ca2033fe21f5f263a42f))
+* **walletflow:** hold a resumed authorization to the credential types the holder was shown ([64da420](https://github.com/IDFoundry/OID4VCgo/commit/64da42029e59c3cb87dfa554d78b3ae0298f4365))
+* **walletflow:** keep a refresh grant whose Key Attestation is refused as evidence_required ([0b73f42](https://github.com/IDFoundry/OID4VCgo/commit/0b73f4277a3d2ca6cf060ec2d9b0544fadf16baa))
+* **walletflow:** report a credential refreshed as Respond loads its key as changed ([e6f1987](https://github.com/IDFoundry/OID4VCgo/commit/e6f19879681de8c9cb5b41972d3279c5902fd9ba))
+* **wallet:** keep credential_offer_uri and request_uri out of fetch errors ([73285c1](https://github.com/IDFoundry/OID4VCgo/commit/73285c18693ca45a8ed8c59849b7513e900a4230))
+* **wallet:** list in the preview an object or array the Verifier receives empty ([b223677](https://github.com/IDFoundry/OID4VCgo/commit/b2236776a8c1623c6e1342f2366f3f2d796e8838))
+* **walletprovider:** act on refusal codes only at their status, and retire a grant on evidence_required ([8c8484d](https://github.com/IDFoundry/OID4VCgo/commit/8c8484dad754ec1759cdb5391440d9e5f8c43630))
+* **walletprovider:** finish a revocation or suspension whose status writes failed ([c02399e](https://github.com/IDFoundry/OID4VCgo/commit/c02399e335e4046dbf8ae6df77f1dcca204e9fc9))
+* **walletprovider:** finish revocations a racing transition overwrote, and outlast instance traffic ([7af74b8](https://github.com/IDFoundry/OID4VCgo/commit/7af74b8df0215fe42d61a15c36965e6a0d17fb64))
+* **wallet:** refuse a c_nonce longer than 1024 bytes ([36e508c](https://github.com/IDFoundry/OID4VCgo/commit/36e508c07c161da12c9da7506efa6b01c1a6b902))
+* **wallet:** refuse a Digital Credentials API origin no platform reports ([6a77d42](https://github.com/IDFoundry/OID4VCgo/commit/6a77d42fa6bd5cae66545320b653b48f89b8632b))
+* **wallet:** refuse a nil *X5CVerifierRoots or *NoVerifierTrust as VerifierTrust ([571edcc](https://github.com/IDFoundry/OID4VCgo/commit/571edccf3aafbe57bf814258ec3024585d27e2db))
+
 ## [0.83.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.82.0...v0.83.0) (2026-11-18)
 
 
