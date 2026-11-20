@@ -89,6 +89,9 @@ func (d Disclosure) encode() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("sdjwtvc: encode disclosure: %w", err)
 	}
+	if err := checkNumbers(raw); err != nil {
+		return "", fmt.Errorf("sdjwtvc: encode disclosure: %w", err)
+	}
 	return b64.EncodeToString(raw), nil
 }
 
@@ -113,6 +116,9 @@ func ParseDisclosure(s string) (Disclosure, error) {
 	var arr []json.RawMessage
 	if err := strictjson.Unmarshal(raw, &arr); err != nil {
 		return Disclosure{}, fmt.Errorf("sdjwtvc: unmarshal disclosure: %w", err)
+	}
+	if err := checkNumbers(raw); err != nil {
+		return Disclosure{}, fmt.Errorf("sdjwtvc: disclosure: %w", err)
 	}
 
 	d := Disclosure{encoded: s}

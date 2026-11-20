@@ -408,6 +408,23 @@ before.
 sqlstore's does, needs no change: the codec sets it from the
 transaction's query.
 
+### An SD-JWT VC holding a number beyond 2^53 − 1 is refused (`sdjwtvc`, `verifier`, `wallet`, `walletflow`)
+
+An SD-JWT VC's claims decode into float64s, and no float64 holds
+every integer beyond ±(2^53 − 1) exactly: 9007199254740993 decoded as
+9007199254740992. So two values an issuer signed apart, account
+numbers say, verified as one, and a DCQL `values` filter for one
+matched the other.
+- `sdjwtvc.Verify`, and so every verifier, wallet and walletflow check
+  of an SD-JWT VC, now refuses an issuer JWT payload or Disclosure
+  holding a number beyond ±`sdjwtvc.MaxSafeInteger`, in whatever form:
+  an integer, a fraction or an exponent.
+- `sdjwtvc.Issue` refuses to sign one.
+
+An issuer whose claims hold such numbers issues them as strings. A
+credential issued with one before can't be verified or presented any
+more: reissue it.
+
 ### A Key Binding JWT's `iat` may be in the future by the clock skew alone
 
 `sdjwtvc.VerifyKeyBindingJWT`, and so `VerifyResponse`, accepted a Key
