@@ -25,9 +25,13 @@ type keyRecord struct {
 // KeyStore is a walletflow.KeyStore of software P-256 keys, each kept
 // in the database sealed by the DB's Sealer: Dependencies.Keys for a
 // wallet running on a server, where the keys' protection is the
-// Sealer's key and whatever holds it (a KMS, say). A wallet on a phone
-// belongs with the platform's secure hardware instead (the Secure
-// Enclave, Android Keystore), which never lets a key out.
+// Sealer's key and whatever holds it (a KMS, say). A server keeping
+// many users' wallets, a schema or file each, under one Sealer key
+// gives each user's DB its own Options.SealContext: without one, a
+// database writer can copy one user's keys into another's wallet,
+// where they open and sign. A wallet on a phone belongs with the
+// platform's secure hardware instead (the Secure Enclave, Android
+// Keystore), which never lets a key out.
 type KeyStore struct {
 	t *table[keyRecord]
 }

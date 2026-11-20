@@ -51,16 +51,48 @@ type Options struct {
 	// Sealer, if set, seals every record the issuer, walletflow and
 	// walletprovider stores write (an AEAD such as sealing.AESGCMSealer,
 	// with a key kept outside the database), each bound to its table and
-	// key, so a copy of the database reveals none of their contents and a
-	// record can't be moved to another key. The columns a store looks
-	// records up or sweeps them by stay readable: keys, Owners, the
-	// pre-authorized code's Transaction Code hash, a wallet instance's key
-	// thumbprint and revision, and expiry times. The verifier's
-	// TransactionStore is sealed by its own TransactionCodec instead.
+	// key, and to the SealContext, so a copy of the database reveals none
+	// of their contents and a record can't be moved to another key. The
+	// columns a store looks records up or sweeps them by stay readable:
+	// keys, Owners, the pre-authorized code's Transaction Code hash, a
+	// wallet instance's key thumbprint and revision, and expiry times.
+	// The verifier's TransactionStore is sealed by its own
+	// TransactionCodec instead.
 	//
 	// A DB with a Sealer refuses records written without one, and one
 	// without a Sealer those written with one. KeyStore requires it.
 	Sealer Sealer
+
+	// SealContext, if set, names whose records these are — the tenant,
+	// user or deployment whose schema or file the DB uses — and the
+	// Sealer binds each record to it too, so a record sealed for one
+	// never opens as another's, though they share the Sealer's key.
+	// Without it, a database writer can copy a record into the table of
+	// the same name in another schema or file sealed under the same
+	// key, and it opens there: a wallet's holder keys, credentials and
+	// refresh tokens, say, into another user's wallet. So wherever DBs
+	// of several tenants, a schema or file each, share a Sealer key,
+	// give each its own SealContext, or each tenant a key of its own.
+	//
+	// It must name the tenant for good, as the records do: a stable
+	// tenant ID, never the schema's or file's name, which a restore into
+	// another schema or a rename changes, leaving every record
+	// unreadable. It needs a Sealer.
+	//
+	// A DB with a SealContext refuses records sealed in another, and
+	// those sealed without one unless ReadWithoutSealContext is set; a
+	// DB without one refuses records sealed in a SealContext. To move a
+	// database to a SealContext, see BindRecords. The verifier's
+	// transactions, which their TransactionCodec seals, aren't bound to
+	// it: the codec binds each to its Owner.
+	SealContext string
+
+	// ReadWithoutSealContext lets a DB with a SealContext also read the
+	// records sealed without one, before it had it: set it while moving
+	// a database to a SealContext, and unset it once BindRecords has
+	// sealed them in it. Until then, a record sealed without one can
+	// still be copied in from another tenant's database.
+	ReadWithoutSealContext bool
 }
 
 // DB holds the issuer, verifier, walletflow, statuslist and
@@ -72,6 +104,9 @@ type DB struct {
 	// sql is the dialect's statements.
 	sql    *queries
 	sealer Sealer
+	// sealContext and readWithoutSealContext are Options'.
+	sealContext            string
+	readWithoutSealContext bool
 
 	// sqliteWrites serializes this DB's own SQLite transactions, which
 	// would otherwise only wait on SQLite's busy handler for each other:
@@ -96,11 +131,21 @@ func New(db *sql.DB, dialect Dialect, opts Options) (*DB, error) {
 	if dialect != Postgres && dialect != SQLite {
 		return nil, fmt.Errorf("sqlstore: unknown dialect %v", dialect)
 	}
+	switch {
+	case opts.SealContext != "" && opts.Sealer == nil:
+		return nil, errors.New("sqlstore: Options.SealContext needs a Sealer")
+	case opts.ReadWithoutSealContext && opts.SealContext == "":
+		return nil, errors.New("sqlstore: Options.ReadWithoutSealContext needs a SealContext")
+	}
 	q := &postgresQueries
 	if dialect == SQLite {
 		q = &sqliteQueries
 	}
-	return &DB{db: db, dialect: dialect, sql: q, sealer: opts.Sealer, sqliteWrites: make(chan struct{}, 1)}, nil
+	return &DB{
+		db: db, dialect: dialect, sql: q,
+		sealer: opts.Sealer, sealContext: opts.SealContext, readWithoutSealContext: opts.ReadWithoutSealContext,
+		sqliteWrites: make(chan struct{}, 1),
+	}, nil
 }
 
 // Dialect is the database's dialect.
