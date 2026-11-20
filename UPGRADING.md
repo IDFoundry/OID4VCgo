@@ -379,6 +379,24 @@ A deployment that writes `DeferredTransactionRecord`s itself sets
 `RequestedByConfigurationID` for one by `credential_configuration_id`,
 as `RequestCredential` does.
 
+### A production Digital Credentials API `Transactions` needs a `Scope` (`verifier`)
+
+Under `AssuranceProduction`, `verifier.NewTransactions` refuses a
+`TransactionsConfig` without `RequestURIBase` (one that serves the
+Digital Credentials API alone, OpenID4VP or org-iso-mdoc) unless it
+sets `Scope`.
+
+Every such `Transactions` of one Verifier derived the same scope. So a
+lax policy's `HandleDCAPIResponse` could complete a strict policy's
+request: the answer was verified under the lax policy's `Verify`,
+`Status` and `Accept`, and the strict policy's `Lookup` reported it
+done.
+
+Give each policy a `Scope` of its own, the same on every replica. A
+transaction begun before the upgrade under the derived scope is
+`ErrTransactionUnknown` to the new one, so let those expire first, or
+upgrade between requests.
+
 ### An org-iso-mdoc `IssuerAuthorized` hook gets a `CredentialQueryID`
 
 On the org-iso-mdoc path (`Transactions.HandleMdocDCAPIResponse`, and

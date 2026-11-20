@@ -254,8 +254,9 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   `ResponseURI` or `RequestURIBase`, so one Verifier's Digital
   Credentials API `Transactions` with different `Verify` or `Accept`
   policies (`RequestURIBase` unset in each) share one, and any of them
-  can complete or read another's request under its own policy. Keep
-  each `Scope` the same on every replica.
+  can complete or read another's request under its own policy:
+  `AssuranceProduction` refuses such a `Transactions` without a
+  `Scope`. Keep each `Scope` the same on every replica.
 - [ ] **Rate-limit the response endpoints** per client, and per
   request where the post names it: the `direct_post` response URI
   (`HandleResponse`, `HandleUnencryptedError`), and the pages' Digital

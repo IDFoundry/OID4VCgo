@@ -392,7 +392,9 @@ type TransactionsConfig struct {
 	// accept differently; instances of one deployment, alike, share it.
 	// Transactions for the Digital Credentials API alone have no
 	// RequestURIBase, so those of one Verifier always derive the same
-	// scope: give each policy among them its own.
+	// scope: give each policy among them its own, which
+	// AssuranceProduction requires (NewTransactions refuses one
+	// without).
 	//
 	// A transaction saved before scopes were recorded has none: a
 	// Transactions with the derived scope reads it, as before, under
@@ -724,6 +726,10 @@ func checkProductionTransactions(store TransactionStore, cfg TransactionsConfig)
 		// Without RequestURIBase only BeginDCAPI can begin a request,
 		// and without Origins it refuses every one.
 		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base serves the Digital Credentials API alone: set origins, the origins of the pages that make its requests")
+	case cfg.RequestURIBase == "" && cfg.Scope == "":
+		// Its derived scope is the Verifier's alone, which every other
+		// such Transactions of the Verifier derives too.
+		return errors.New("verifier: transactions: under AssuranceProduction, a Transactions without request_uri_base derives the scope every such Transactions of its Verifier derives, so either could complete the other's requests under its own verify, status and accept: set scope, unique to each policy")
 	case cfg.MdocDCAPI != nil && len(cfg.Origins) == 0:
 		// MdocDCAPI serves org-iso-mdoc requests alone, all of them over
 		// the Digital Credentials API, and without Origins
