@@ -27,7 +27,10 @@ type NonceSpender interface {
 	// issuance.ExpiresAt. It returns an error wrapping ErrNonceUnknown
 	// if the nonce is recorded already, under any Owner, and any other
 	// error only when it couldn't answer. A store may forget the record
-	// after ExpiresAt: the nonce has expired by then. The Issuer spends
+	// after ExpiresAt, by its own clock or the time a sweep is given:
+	// ExpiresAt is 5 minutes past the nonce's own expiry, so the nonce
+	// has expired by then on every replica whose clock is no more than
+	// that behind (see Dependencies.NonceKeys). The Issuer spends
 	// under an Owner its Consume never asks for, so Consume, which
 	// returns only a nonce recorded under the Owner it's given, never
 	// takes a spent nonce for an issued one.
@@ -260,7 +263,12 @@ func spentNonceOwner(owner string) string {
 
 // spentNonceMargin keeps a spent c_nonce's record past the nonce's
 // expiry, so that a store swept by a clock running ahead of this
-// replica's doesn't forget a nonce this replica still accepts.
+// replica's doesn't forget a nonce this replica still accepts. It is
+// the clock difference a deployment may have between the clock that
+// expires records (a sweep's now, or a store's own) and any replica's:
+// forgotten by a clock further ahead, the record no longer stops a
+// replica accepting the nonce again. Dependencies.NonceKeys,
+// NonceSpender and DEPLOYING.md state it; change them with it.
 const spentNonceMargin = 5 * time.Minute
 
 // isStatelessNonce reports whether nonce has a stateless c_nonce's

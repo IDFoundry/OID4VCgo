@@ -688,6 +688,15 @@ type Dependencies struct {
 	// ([old, new]) everywhere, then put it first ([new, old]), and drop
 	// the old key once NonceLifetime has passed since the last replica
 	// took the second step.
+	//
+	// A spent c_nonce's record outlives the nonce by 5 minutes, and a
+	// store may forget it then. That margin is how far the clock that
+	// expires records may run ahead of any replica's Clock: the now each
+	// sqlstore.DB.Sweep is given, on every host that runs it, or a
+	// store's own expiry. One further ahead deletes the record while a
+	// replica still takes the nonce as unexpired, and that replica
+	// accepts it again. Keep the hosts' clocks synchronized (NTP), and
+	// alert on their offset.
 	NonceKeys [][]byte
 
 	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce
