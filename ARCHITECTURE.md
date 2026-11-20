@@ -915,7 +915,10 @@ changes whether *every* bullet below is `(done)`.
   256-bit `transaction_id` and `interval`.
   `IssueDeferredCredential` later verifies those key attestations again
   (signature, `exp`, status), denying the transaction if one no longer
-  verifies, then issues one Credential per stored key from the content
+  verifies, and holds the stored keys to the configuration as it is
+  then (the algorithms their proof type takes, its
+  `key_attestations_required`), denying it if they no longer meet it,
+  then issues one Credential per stored key from the content
   it's given, exactly as an immediate issuance would, with a
   `notification_id` bound to the stored client;
   `DenyDeferredCredential` refuses it. `DeferredCredentialHandlerConfig.Resolve`

@@ -138,10 +138,14 @@ type DeferredTransactionRecord struct {
 	// under: oid4vci.ProofTypeJWT, in jwt proofs' key_attestation
 	// headers, or oid4vci.ProofTypeAttestation. IssueDeferredCredential
 	// verifies their signatures again by an algorithm that proof type's
-	// proof_signing_alg_values_supported lists, as the request did. ""
-	// without KeyAttestations, or in a record saved before this field
-	// existed, whose attestations are verified by an algorithm any of
-	// the configuration's proof types lists.
+	// proof_signing_alg_values_supported lists, as the request did, and
+	// holds BindingKeys to what that proof type requires of them now:
+	// the algorithms it takes, and its key_attestations_required. ""
+	// without KeyAttestations, whose keys are held to the jwt proof
+	// type, or in a record saved before this field existed, whose
+	// attestations are verified by an algorithm any of the
+	// configuration's proof types lists, and whose keys need meet only
+	// one of the jwt and attestation proof types' requirements.
 	KeyAttestationProofType string
 
 	// ProofKeyHeaders, when the request's jwt proofs conveyed a binding

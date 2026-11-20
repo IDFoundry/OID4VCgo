@@ -30,6 +30,34 @@ attest keys for another algorithm, add it to the proof type's
 `ProofSigningAlgValuesSupported` (for keys an `attestation` proof
 attests, either proof type's).
 
+### A deferred transaction is held to the configuration as it is when issued (`issuer`)
+
+`IssueDeferredCredential` verified a pending transaction's key
+attestations and kid- or x5c-conveyed proof keys again, but not that
+its keys still met the credential configuration. A transaction
+deferred before the configuration required key attestations, or
+raised the levels it accepts, was still issued to keys it now refuses.
+It now holds the transaction's keys to the configuration as it is
+when it's called, as `RequestCredential` would: each must be for an
+algorithm the proof type it arrived under takes, and, where that proof
+type now has `key_attestations_required`, be attested by one of the
+transaction's key attestations, each asserting a level it accepts for
+whichever of `key_storage` and `user_authentication` it constrains.
+Keys that arrived by jwt proofs without a key attestation are held to
+the `jwt` proof type, which the configuration must still take. A
+transaction that doesn't meet them is denied: `IssueDeferredCredential`
+returns the new `ErrDeferredProofPolicy`, and the Wallet's next poll
+receives `credential_request_denied`.
+
+A configuration that hasn't changed since a transaction was deferred
+is unaffected, except for a transaction v0.84.0 or earlier deferred
+with a key attestation attesting a key for an algorithm the
+configuration doesn't list, which the entry above refuses at the
+Credential Endpoint: it is denied too. Tightening a proof type now
+reaches the transactions already pending: issue those that should
+still be issued under the old configuration before deploying the new
+one.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
