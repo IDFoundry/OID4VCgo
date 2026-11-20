@@ -710,23 +710,34 @@ func (p *Provider) getInstance(ctx context.Context, id string) (Instance, error)
 const maxUpdateAttempts = 8
 
 // update applies fn to the stored instance with id and stores the
-// result, reading it again and retrying when a concurrent update
-// changed it in between. An error from fn stops it, unstored.
+// result, reading it again and retrying at once when a concurrent
+// update changed it in between, up to maxUpdateAttempts times: a
+// request's update. A transition's is updateForTransition. An error
+// from fn stops it, unstored.
 func (p *Provider) update(ctx context.Context, id string, fn func(*Instance) error) error {
 	for range maxUpdateAttempts {
-		in, err := p.getInstance(ctx, id)
-		if err != nil {
+		if stored, err := p.tryUpdate(ctx, id, fn); stored || err != nil {
 			return err
-		}
-		if err := fn(&in); err != nil {
-			return err
-		}
-		switch err := p.deps.Instances.Update(ctx, in); {
-		case err == nil:
-			return nil
-		case !errors.Is(err, ErrConflict):
-			return fmt.Errorf("walletprovider: updating instance: %w", err)
 		}
 	}
 	return fmt.Errorf("walletprovider: updating instance: %w after %d attempts", ErrConflict, maxUpdateAttempts)
+}
+
+// tryUpdate is one of update's attempts: it reports false, with no
+// error, when a concurrent update changed the instance first.
+func (p *Provider) tryUpdate(ctx context.Context, id string, fn func(*Instance) error) (bool, error) {
+	in, err := p.getInstance(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if err := fn(&in); err != nil {
+		return false, err
+	}
+	switch err := p.deps.Instances.Update(ctx, in); {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, ErrConflict):
+		return false, fmt.Errorf("walletprovider: updating instance: %w", err)
+	}
+	return false, nil
 }

@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/statuslist"
 )
@@ -29,6 +32,12 @@ func stateError(s State) error {
 // instance with ErrInstanceRevoked. Suspending a suspended instance
 // sets the statuses again, finishing a suspension whose status writes
 // failed.
+//
+// Suspend, Resume and Revoke outlast the instance's own requests, which
+// update its record too: each keeps retrying the update a concurrent
+// one beat, pausing a little longer each time, for up to 10 seconds or
+// until ctx ends. Their ErrConflict, wrapped, is then transient: call
+// again.
 func (p *Provider) Suspend(ctx context.Context, id, reason string) error {
 	return p.transition(ctx, id, StateSuspended, reason)
 }
@@ -63,7 +72,7 @@ func (p *Provider) Revoke(ctx context.Context, id, reason string) error {
 // KeyAttestation), so it's listed here, or no attestation names its
 // new index.
 func (p *Provider) transition(ctx context.Context, id string, state State, reason string) error {
-	if err := p.update(ctx, id, func(in *Instance) error {
+	if err := p.updateForTransition(ctx, id, func(in *Instance) error {
 		if in.State == StateRevoked && state != StateRevoked {
 			return ErrInstanceRevoked
 		}
@@ -82,6 +91,43 @@ func (p *Provider) transition(ctx context.Context, id string, state State, reaso
 // errUnchanged makes update store nothing.
 var errUnchanged = errors.New("walletprovider: unchanged")
 
+// How a transition's updates of the instance retry a compare-and-swap
+// that concurrent updates beat (updateForTransition): for up to
+// transitionRetry, pausing between tries from transitionPauseMin,
+// doubling up to transitionPauseMax, each pause between half its bound
+// and the whole. A request's update retries maxUpdateAttempts times at
+// once instead, so the instance's own requests, which each update its
+// record, give way to an operator's Suspend, Resume or Revoke.
+const (
+	transitionRetry    = 10 * time.Second
+	transitionPauseMin = time.Millisecond
+	transitionPauseMax = 100 * time.Millisecond
+)
+
+// updateForTransition is update for a transition: storing its state,
+// recording its key statuses as set, or clearing that record. It
+// retries as transitionRetry says, until ctx ends.
+func (p *Provider) updateForTransition(ctx context.Context, id string, fn func(*Instance) error) error {
+	deadline := time.Now().Add(transitionRetry)
+	pause := transitionPauseMin
+	for attempt := 1; ; attempt++ {
+		if stored, err := p.tryUpdate(ctx, id, fn); stored || err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("walletprovider: updating instance: %w after %d attempts", ErrConflict, attempt)
+		}
+		wait := time.NewTimer(pause/2 + rand.N(pause/2+1)) //nolint:gosec // G404: jitter, which needn't be unpredictable
+		select {
+		case <-ctx.Done():
+			wait.Stop()
+			return fmt.Errorf("walletprovider: updating instance: %w", context.Cause(ctx))
+		case <-wait.C:
+		}
+		pause = min(2*pause, transitionPauseMax)
+	}
+}
+
 // settle sets the status of each instance key of the instance id for
 // state, then stores state as its KeyStatusesFor: only once every
 // write succeeded, and only while state is still the instance's.
@@ -91,18 +137,27 @@ var errUnchanged = errors.New("walletprovider: unchanged")
 // their writes land. So once they're set, the instance is read again,
 // and while its state isn't the one they were set for, they're set for
 // the state it has — the last transition to store a state sets its
-// statuses last, and a revoked instance's keys end INVALID. Should a
-// write fail, the ones before it may have landed after the other
-// transition stored its KeyStatusesFor, so that's cleared (unsettle),
-// leaving its state pending.
+// statuses last, and a revoked instance's keys end INVALID. Should
+// settle fail at any step after its first write — a write, reading the
+// instance again, recording its KeyStatusesFor — the statuses it wrote
+// for a state that's no longer the instance's may have landed after
+// another transition stored its KeyStatusesFor, so that's cleared
+// (unsettle), leaving that state pending.
 func (p *Provider) settle(ctx context.Context, id string, state State) error {
+	var wrote []State
+	fail := func(err error) error {
+		p.unsettle(ctx, id, wrote)
+		return err
+	}
 	for range maxUpdateAttempts {
+		if !slices.Contains(wrote, state) {
+			wrote = append(wrote, state)
+		}
 		if err := p.setKeyStatuses(ctx, id, keyStatus[state]); err != nil {
-			p.unsettle(ctx, id, state)
-			return err
+			return fail(err)
 		}
 		stored := state
-		err := p.update(ctx, id, func(in *Instance) error {
+		err := p.updateForTransition(ctx, id, func(in *Instance) error {
 			stored = in.State
 			if in.State != state || in.KeyStatusesFor == state {
 				return errUnchanged
@@ -111,25 +166,26 @@ func (p *Provider) settle(ctx context.Context, id string, state State) error {
 			return nil
 		})
 		if err != nil && !errors.Is(err, errUnchanged) {
-			return fmt.Errorf("walletprovider: recording the instance's key statuses as set: %w", err)
+			return fail(fmt.Errorf("walletprovider: recording the instance's key statuses as set: %w", err))
 		}
 		if stored == state {
 			return nil
 		}
 		state = stored
 	}
-	return fmt.Errorf("walletprovider: setting the instance's key statuses: %w after %d attempts", ErrConflict, maxUpdateAttempts)
+	return fail(fmt.Errorf("walletprovider: setting the instance's key statuses: %w after %d attempts", ErrConflict, maxUpdateAttempts))
 }
 
 // unsettle clears the KeyStatusesFor of the instance id when it's the
-// instance's State and that isn't wrote, the state a failed settle was
-// setting the statuses for, whose writes may have overwritten some of
-// the statuses KeyStatusesFor says are set. It isn't cut short by
-// ctx's cancellation; should it fail too, the store is failing, which
-// settle reports.
-func (p *Provider) unsettle(ctx context.Context, id string, wrote State) {
-	_ = p.update(context.WithoutCancel(ctx), id, func(in *Instance) error {
-		if in.State == wrote || in.KeyStatusesFor != in.State {
+// instance's State but a failed settle wrote statuses for another of
+// wrote's states: those writes may have overwritten some of the
+// statuses KeyStatusesFor says are set. It isn't cut short by ctx's
+// cancellation; should it fail too, the store is failing, which settle
+// reports, and RevokeWhere still finds a revoked instance's keys not
+// INVALID (statusesSet).
+func (p *Provider) unsettle(ctx context.Context, id string, wrote []State) {
+	_ = p.updateForTransition(context.WithoutCancel(ctx), id, func(in *Instance) error {
+		if in.KeyStatusesFor != in.State || !slices.ContainsFunc(wrote, func(s State) bool { return s != in.State }) {
 			return errUnchanged
 		}
 		in.KeyStatusesFor = ""
@@ -188,6 +244,67 @@ func (p *Provider) setKeyStatuses(ctx context.Context, id string, status statusl
 // transition, reads at a time.
 const listPageSize = 100
 
+// liveAttestationMargin is how long past MaxAttestationTTL after an
+// instance was last seen (LastSeenAt) an attestation issued to it may
+// still be live: a request that read the clock before a later one
+// stored its LastSeenAt after it, or the clocks of the provider's
+// replicas disagreeing.
+const liveAttestationMargin = time.Hour
+
+// mayHaveLiveAttestations reports whether an attestation issued to in
+// may still be live at now.
+func mayHaveLiveAttestations(in Instance, now time.Time) bool {
+	return in.LastSeenAt.IsZero() || now.Before(in.LastSeenAt.Add(MaxAttestationTTL+liveAttestationMargin))
+}
+
+// statusesSet reports whether the status of each instance key of the
+// instance id is status, at its Status and PreviousStatus on the lists
+// still served: the statuses a transition to it sets (setKeyStatuses),
+// read back.
+func (p *Provider) statusesSet(ctx context.Context, id string, status statuslist.StatusType, now time.Time) (bool, error) {
+	after := ""
+	for {
+		page, err := p.deps.InstanceKeys.List(ctx, id, after, listPageSize)
+		if err != nil {
+			return false, fmt.Errorf("walletprovider: listing the instance's keys: %w", err)
+		}
+		for _, k := range page {
+			for _, ref := range []statuslist.StatusListRef{k.Status, k.PreviousStatus} {
+				if start, _, ok := p.parseList(ref.URI); !ok || !p.served(start, now) {
+					continue
+				}
+				switch got, err := p.deps.StatusIndices.Status(ctx, ref.URI, ref.Idx); {
+				case err != nil:
+					return false, fmt.Errorf("walletprovider: reading an instance key's status: %w", err)
+				case got != status:
+					return false, nil
+				}
+			}
+		}
+		if len(page) < listPageSize {
+			return true, nil
+		}
+		after = page[len(page)-1].Thumbprint
+	}
+}
+
+// revocationFinished reports whether in is revoked with every one of
+// its keys' statuses set: recorded as set (KeyStatusesFor) and, while
+// an attestation issued to it may still be live, read back INVALID. A
+// transition that raced the revocation, and failed or died before it
+// could clear the record, may have overwritten some after it was
+// stored. A status that can't be read counts as not set.
+func (p *Provider) revocationFinished(ctx context.Context, in Instance, now time.Time) bool {
+	if in.State != StateRevoked || in.KeyStatusesFor != StateRevoked {
+		return false
+	}
+	if !mayHaveLiveAttestations(in, now) {
+		return true
+	}
+	set, err := p.statusesSet(ctx, in.ID, keyStatus[StateRevoked], now)
+	return set && err == nil
+}
+
 // maxRevokeWhereFailures is how many instances RevokeWhere fails to
 // revoke before it stops.
 const maxRevokeWhereFailures = 100
@@ -205,10 +322,18 @@ const maxRevokeWhereFailures = 100
 // sees each instance once, as it was when read.
 //
 // It passes by an instance already revoked whose keys' statuses are
-// all set (KeyStatusesFor), and finishes the revocation of a revoked
-// one whose aren't, keeping the reason it was revoked for, counting it
-// too. So RevokeWhere(ctx, func(in Instance) bool { return in.State ==
-// StateRevoked }, "") finishes every revocation pending.
+// all set, and finishes the revocation of a revoked one whose aren't,
+// keeping the reason it was revoked for, counting it too. All set means
+// recorded as set (KeyStatusesFor) and, while an attestation issued to
+// the instance may still be live (for MaxAttestationTTL after its
+// LastSeenAt, and an hour more), read back INVALID too: a Suspend or
+// Resume that raced the revocation, and failed or whose process died
+// before it could clear that record, may have set some of them VALID
+// or SUSPENDED after the revocation set them all. So
+// RevokeWhere(ctx, func(in Instance) bool { return in.State ==
+// StateRevoked }, "") finishes every revocation pending; reading the
+// statuses back costs it a read for each index of the keys of each
+// revoked instance last seen within that time.
 //
 // An instance it fails to revoke doesn't stop it: it goes on to the
 // next, and returns a *RevokeWhereError naming each one that failed. It
@@ -227,6 +352,7 @@ func (p *Provider) RevokeWhere(ctx context.Context, match func(Instance) bool, r
 		}
 		return revoked, &RevokeWhereError{Failed: failed, Err: stop}
 	}
+	now := p.now()
 	after := ""
 	for {
 		page, err := p.deps.Instances.List(ctx, after, listPageSize)
@@ -234,7 +360,7 @@ func (p *Provider) RevokeWhere(ctx context.Context, match func(Instance) bool, r
 			return result(fmt.Errorf("walletprovider: listing instances: %w", err))
 		}
 		for _, in := range page {
-			if in.State == StateRevoked && in.KeyStatusesFor == StateRevoked || !match(in) {
+			if p.revocationFinished(ctx, in, now) || !match(in) {
 				continue
 			}
 			if err := p.Revoke(ctx, in.ID, reason); err != nil {

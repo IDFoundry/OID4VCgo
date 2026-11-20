@@ -136,7 +136,13 @@
 // the instance's KeyStatusesFor only once every status is set, so a
 // transition whose status writes fail part-way is finished later: by
 // calling it again, by RevokeWhere's next run for a revocation, or by
-// the instance's next request, which sets them before it's refused.
+// the instance's next request, which sets them before it's refused. A
+// transition that fails after writing statuses for a state a
+// concurrent one replaced clears that one's KeyStatusesFor, as its
+// writes may have landed after; and RevokeWhere reads back the
+// statuses of an instance revoked recently enough for its attestations
+// to be live, so it finishes too a revocation whose statuses a racing
+// transition overwrote before its process died.
 //
 // Those status changes tell issuers which instance keys belong to one
 // instance, which otherwise the provider alone knows. A transition
