@@ -24,10 +24,15 @@ import (
 // Defaults for a RefresherConfig field left zero, and the fixed bounds
 // of Run's schedule.
 const (
-	// DefaultCRLMaxBytes bounds a fetched CRL's size. An IACA's CRL is
-	// a few kilobytes, and a large CA shards its CRLs so each stays well
-	// below this; the bound is what a broken or hostile distribution
-	// point can make the process buffer.
+	// DefaultCRLMaxBytes bounds a fetched CRL's size, as sent: a fetch
+	// asks for no content coding, so no compressed answer is inflated
+	// past it. An IACA's CRL is a few kilobytes, and a large CA shards
+	// its CRLs so each stays well below this; the bound is what a broken
+	// or hostile distribution point can make the process buffer, and
+	// parse before its signature is checked, which allocates several
+	// dozen times the CRL's size for one of nothing but entries. Set
+	// RefresherConfig.MaxBytes lower where the CRLs are known to be
+	// small, as an IACA's are.
 	DefaultCRLMaxBytes = 8 << 20
 
 	// DefaultCRLFetchTimeout bounds one fetch, every redirect hop
@@ -153,7 +158,8 @@ type RefresherConfig struct {
 	// HTTPClient, whose own transport decides that.
 	AllowLoopback bool
 
-	// MaxBytes bounds a CRL's size; zero means DefaultCRLMaxBytes.
+	// MaxBytes bounds a CRL's size, as sent; zero means
+	// DefaultCRLMaxBytes.
 	MaxBytes int64
 
 	// MaxInterval is the longest Run waits between passes; zero means
@@ -602,6 +608,12 @@ func (r *Refresher) fetch(ctx context.Context, u string, held heldCRL) (*x509.Re
 		return nil, validators{}, errors.New("can't build the request")
 	}
 	req.Header.Set("Accept", "application/pkix-crl")
+	// Asking for no content coding keeps net/http from asking for gzip
+	// itself and inflating the answer, so MaxBytes bounds what's sent,
+	// not what a small gzip stream inflates to before the CRL is parsed
+	// and its signature checked. A compressed answer sent anyway reaches
+	// the parse as it is, and is refused.
+	req.Header.Set("Accept-Encoding", "identity")
 	conditional := held.list != nil && (held.etag != "" || held.lastModified != "")
 	if conditional {
 		if held.etag != "" {
