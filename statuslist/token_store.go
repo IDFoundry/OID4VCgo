@@ -26,7 +26,19 @@ import (
 // at version zero — still shares tokens: a status change is then
 // served once the token's CacheFor has passed, or at once when the
 // replica that made it calls the Publisher's Invalidate, as without a
-// TokenStore.
+// TokenStore — provided the replicas' clocks agree. Such a store orders
+// a list's tokens only by when they were signed, so the token
+// Invalidate has signed replaces the stored one only if it was signed
+// later. A replica whose clock runs ahead can have a token stored that
+// it signed before the change but dated after it: every replica, the
+// one that called Invalidate too from its next check, then serves that
+// token until it's CacheFor old by their clocks, up to CacheFor plus
+// the skew after the change. A store that keeps versions doesn't
+// depend on the clocks for this: the change raises the version, and a
+// token signed from it replaces one signed from an earlier version,
+// whenever that was signed. sqlstore's StatusListTokenStore keeps a
+// status list's versions; an identifier list has none, so its replicas
+// need synchronised clocks for Invalidate to take effect at once.
 //
 // A token is stored with its signer (StoredToken.Signer: the SHA-256 of
 // its chain's leaf certificate), which a store keeps and returns as it
