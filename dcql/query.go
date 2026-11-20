@@ -434,9 +434,12 @@ type ClaimsQuery struct {
 	// Values is OPTIONAL: an exact-match filter over the claim Path
 	// selects (§6.3). Each element is a string, integer, or boolean.
 	// SatisfiedBySDJWTVCClaims/SatisfiedByMdocClaims (and their
-	// Selected* twins) require one selected value to equal one of
-	// these: the Wallet's filter, and verifier.VerifyResponse's check
-	// that what it received matches the query. A query decoded from
+	// Selected* and Satisfied*Paths twins) require one selected value to
+	// equal one of these: the Wallet's filter, and
+	// verifier.VerifyResponse's check that what it received matches the
+	// query. Under claim_sets, VerifyResponse keeps only the claims of
+	// the options a presentation satisfies, so a claim it keeps has
+	// passed its filter (unless AllowUnrequestedClaims). A query decoded from
 	// JSON holds its integers as float64, exact only up to 2^53 in
 	// magnitude: a larger value is rounded, so it can match a claim one
 	// off it and miss its own. Keep a values filter's integers within

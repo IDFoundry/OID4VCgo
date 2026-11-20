@@ -204,6 +204,26 @@ from the other endpoints (metadata, nonce, token, credential,
 notification, status lists) still quote their URLs, which carry no
 secret.
 
+### Under `claim_sets`, a presentation may disclose only its satisfied options' claims (`verifier`, `dcql`)
+
+`VerifyResponse` (and `Transactions`) without `AllowUnrequestedClaims`
+took any claim a Credential Query's `claims` named, whichever
+`claim_sets` option the presentation satisfied. So a presentation
+satisfying "or failing that, a name" could also carry an address
+whose `country` failed the other option's `values` filter (`DE`
+asked, `FR` sent), and the result kept it.
+
+It now takes only the claims of the options the presentation
+satisfies, values filters included, as OpenID4VP 1.0 §6.4.1 has the
+Wallet send. A claim of any other option is refused as
+`ReasonUnrequestedClaims`. A presentation that satisfies several
+options may carry each one's claims. This library's wallet sends one
+option's claims, and is unaffected. With `AllowUnrequestedClaims`,
+nothing changes.
+
+`dcql.CredentialQuery` gains `SatisfiedSDJWTVCPresentationPaths` and
+`SatisfiedMdocClaimPaths`, which return those claims' paths.
+
 ### A DCQL credential query's `meta` is limited to 4 KiB (`dcql`, `wallet`, `walletflow`, mobile)
 
 `dcql.Query.Validate` now refuses a credential query whose `meta` is
