@@ -641,17 +641,22 @@ The wallets never hold the provider's key. They ask its service
   `c_nonce`, for a Key Attestation over them. With the issuance's
   instance key (`instance_key`, one a Wallet Attestation recorded) and
   proof the wallet holds it (`instance_key_proof`: the key's ECDSA
-  signature, DER, base64url, over `passport-vdc instance key proof`,
-  the nonce and each holder key's RFC 7638 thumbprint, one per line),
-  the attestation carries that instance key's status, so revoking the
-  instance withdraws it too. An instance key is no secret, since it's
-  the `cnf` of its Wallet Attestation, so a request naming one without
-  the proof gets the shared holder instance's status instead, as does
-  one naming none. The CLI and web wallets send the proof. The mobile
-  demo apps' `HTTPWalletProvider`s can't, as the library gives them no
-  instance key signer, so theirs carry the shared holder instance's
-  status; on the library's `/v1/` protocol, which the iOS demo app uses
-  on a device, they carry the instance's.
+  signature with SHA-256, DER, unpadded base64url, over
+  `passport-vdc instance key proof`, the nonce and each holder key's
+  RFC 7638 thumbprint, one per line), the attestation carries that
+  instance key's status, so revoking the instance withdraws it too. An
+  instance key is no secret, since it's the `cnf` of its Wallet
+  Attestation, so a request naming one without the proof gets the
+  shared holder instance's status instead, as does one naming none.
+  The CLI and web wallets send the proof, and so do the mobile demo
+  apps' `HTTPWalletProvider`s, signing with the instance key in the
+  app's key store: the iOS app finds it by its public key among its
+  `KeychainKeyStore`'s keys, the Android app by the `KeyEvidence.keyID`
+  the Kotlin library gives it. Neither asks the holder, and a key the
+  app can't sign with fails the Key Attestation rather than send it
+  without the proof. On the library's `/v1/` protocol, which the iOS
+  demo app uses on a device, Key Attestations carry the instance's
+  status too.
 - `POST /attestation-challenge` with `{"purpose": "instance"}` or
   `{"purpose": "holder"}`, for `{"challenge": "<base64url>",
   "expires_in": 300}`: 32 random bytes, usable once, for 5 minutes, for
@@ -717,9 +722,10 @@ an instance key is seen, the service registers a library instance for
 it (with a registration key of its own, since the demo wallets have
 none) and records the instance key for that instance, at the security
 level its chain showed (software without one); a Key Attestation is
-issued for the instance key its request names, under that key's
-instance (one naming none, as an older wallet's, for one shared
-instance key of one shared instance). Every attestation then names its
+issued for the instance key its request names and proves it holds,
+under that key's instance (one naming none, as an older wallet's, or
+not proving the one it names, for one shared instance key of one
+shared instance). Every attestation then names its
 instance key's entry in one of the provider's Token Status Lists,
 served under `/v1/status/`, one set a week (`-url` on
 `cmd/wallet-provider`, `-provider-url` on `cmd/demo`), and a revoked

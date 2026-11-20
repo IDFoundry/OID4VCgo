@@ -2113,10 +2113,21 @@ requires the issuance's `instance_key`.
   the issuance ends. That needs `client_id`; without one, the request
   fails with `proof_unsupported`.
 - **The demo provider:** the passport-vdc service's `/key-attestation`
-  takes an optional `instance_key` and issues under that key's
-  instance (`400` for one no Wallet Attestation recorded); without one,
-  as an older demo app sends, it issues under its shared holder
-  instance, as before.
+  takes an optional `instance_key` with `instance_key_proof`, the key's
+  signature over the nonce and the holder keys' thumbprints, and issues
+  under that key's instance (`400` for one no Wallet Attestation
+  recorded, or a proof that doesn't verify). An instance key is no
+  secret, so one named without the proof, or none, as an older demo app
+  sends, gets its shared holder instance.
+- **The demo apps sign the proof** with the instance key in the app's
+  key store, through the `KeyStore`'s `sign`. The provider callback
+  gets the key's JWK, not a signer: the Kotlin library also names the
+  key (`KeyEvidence.keyID`), while the Swift
+  `keyAttestation(instanceKey:keys:nonce:)` gives only the JWK, so the
+  iOS app compares it with each `KeychainKeyStore` key's public key.
+  Instance keys never need user presence, so the proof never prompts.
+  A key the app can't sign with fails the Key Attestation: sent without
+  the proof, it would come back under the shared instance unnoticed.
 
 ## Cancelling a callback's wait (ABI 15)
 

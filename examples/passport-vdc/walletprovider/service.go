@@ -93,8 +93,8 @@ type WalletAttestationRequest struct {
 // keys are for, a public JWK a Wallet Attestation from the service
 // recorded, and InstanceKeyProof proves the request holds it: the Key
 // Attestation then carries that key's status, so suspending or revoking
-// its instance withdraws it too. Without them, as an older wallet or a
-// mobile demo app sends, it's issued under the service's shared holder
+// its instance withdraws it too. Without them, as an older wallet or
+// demo app sends, it's issued under the service's shared holder
 // instance: an instance key is no secret (it's its Wallet Attestation's
 // cnf, which each issuer sees), so naming one proves nothing.
 type KeyAttestationRequest struct {
