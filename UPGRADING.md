@@ -7,74 +7,6 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
-## v0.84.0 → v0.85.0
-
-### A key attestation's keys must be for an algorithm the configuration lists (`issuer`)
-
-`RequestCredential` bound every key a key attestation attests, whatever
-its algorithm, though a jwt proof's own key must be for an algorithm
-its proof type's `proof_signing_alg_values_supported` lists. It now
-refuses, with `invalid_proof`, a key attestation attesting a key for
-an algorithm the credential configuration doesn't list for it: in a
-jwt proof's `key_attestation` header, one the `jwt` proof type lists,
-as for the proof's own key; in an `attestation` proof, one either the
-`jwt` or the `attestation` proof type lists, since OpenID4VCI 1.0
-lists no algorithms for those keys (the `attestation` proof type's
-list is for the attestation's own signature). A key is for the one
-algorithm its type takes: ES256 for P-256, ES384 for P-384, ES512 for
-P-521 and EdDSA for Ed25519.
-
-A Wallet whose keys are for an algorithm the issuer's metadata lists
-is unaffected, as are HAIP Wallets, whose keys are P-256. Where Wallets
-attest keys for another algorithm, add it to the proof type's
-`ProofSigningAlgValuesSupported` (for keys an `attestation` proof
-attests, either proof type's).
-
-### A deferred transaction is held to the configuration as it is when issued (`issuer`)
-
-`IssueDeferredCredential` verified a pending transaction's key
-attestations and kid- or x5c-conveyed proof keys again, but not that
-its keys still met the credential configuration. A transaction
-deferred before the configuration required key attestations, or
-raised the levels it accepts, was still issued to keys it now refuses.
-It now holds the transaction's keys to the configuration as it is
-when it's called, as `RequestCredential` would: each must be for an
-algorithm the proof type it arrived under takes, and, where that proof
-type now has `key_attestations_required`, be attested by one of the
-transaction's key attestations, each asserting a level it accepts for
-whichever of `key_storage` and `user_authentication` it constrains.
-Keys that arrived by jwt proofs without a key attestation are held to
-the `jwt` proof type, which the configuration must still take. A
-transaction that doesn't meet them is denied: `IssueDeferredCredential`
-returns the new `ErrDeferredProofPolicy`, and the Wallet's next poll
-receives `credential_request_denied`.
-
-A configuration that hasn't changed since a transaction was deferred
-is unaffected, except for a transaction v0.84.0 or earlier deferred
-with a key attestation attesting a key for an algorithm the
-configuration doesn't list, which the entry above refuses at the
-Credential Endpoint: it is denied too. Tightening a proof type now
-reaches the transactions already pending: issue those that should
-still be issued under the old configuration before deploying the new
-one.
-
-### A production issuer refuses a nonce key that isn't random (`issuer`)
-
-Under `AssuranceProduction`, `issuer.New` now refuses a
-`Dependencies.NonceKeys` key with fewer than four distinct byte
-values, or that repeats a pattern shorter than half its length: a key
-left as zero bytes, a repeated character, or a word or phrase repeated
-to `MinNonceKeyBytes`. Whoever guesses the key makes c_nonces the
-issuer accepts. Random bytes, and hex or base64 text of random bytes,
-pass (a random key is refused with a probability below 2^-67).
-`AssuranceDevelopment` is unchanged.
-
-Replace a refused key with a random one, from `openssl rand 32` say.
-The two-phase rotation DEPLOYING.md describes keeps the old key beside
-the new one, which `New` now refuses: deploy the new key alone. The
-c_nonces issued under the old key are then refused with
-`invalid_nonce`, and Wallets fetch new ones.
-
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
@@ -850,6 +782,72 @@ walk, such as `["c", 1, "p"]` where `c` is `["y", {"p": …}]`, as
 disclosed element, and an element of another type is now passed over;
 a Wildcard in the query itself still refuses such an array, as
 OpenID4VP 1.0 §7.1.1 says.
+
+### A key attestation's keys must be for an algorithm the configuration lists (`issuer`)
+
+`RequestCredential` bound every key a key attestation attests, whatever
+its algorithm, though a jwt proof's own key must be for an algorithm
+its proof type's `proof_signing_alg_values_supported` lists. It now
+refuses, with `invalid_proof`, a key attestation attesting a key for
+an algorithm the credential configuration doesn't list for it: in a
+jwt proof's `key_attestation` header, one the `jwt` proof type lists,
+as for the proof's own key; in an `attestation` proof, one either the
+`jwt` or the `attestation` proof type lists, since OpenID4VCI 1.0
+lists no algorithms for those keys (the `attestation` proof type's
+list is for the attestation's own signature). A key is for the one
+algorithm its type takes: ES256 for P-256, ES384 for P-384, ES512 for
+P-521 and EdDSA for Ed25519.
+
+A Wallet whose keys are for an algorithm the issuer's metadata lists
+is unaffected, as are HAIP Wallets, whose keys are P-256. Where Wallets
+attest keys for another algorithm, add it to the proof type's
+`ProofSigningAlgValuesSupported` (for keys an `attestation` proof
+attests, either proof type's).
+
+### A deferred transaction is held to the configuration as it is when issued (`issuer`)
+
+`IssueDeferredCredential` verified a pending transaction's key
+attestations and kid- or x5c-conveyed proof keys again, but not that
+its keys still met the credential configuration. A transaction
+deferred before the configuration required key attestations, or
+raised the levels it accepts, was still issued to keys it now refuses.
+It now holds the transaction's keys to the configuration as it is
+when it's called, as `RequestCredential` would: each must be for an
+algorithm the proof type it arrived under takes, and, where that proof
+type now has `key_attestations_required`, be attested by one of the
+transaction's key attestations, each asserting a level it accepts for
+whichever of `key_storage` and `user_authentication` it constrains.
+Keys that arrived by jwt proofs without a key attestation are held to
+the `jwt` proof type, which the configuration must still take. A
+transaction that doesn't meet them is denied: `IssueDeferredCredential`
+returns the new `ErrDeferredProofPolicy`, and the Wallet's next poll
+receives `credential_request_denied`.
+
+A configuration that hasn't changed since a transaction was deferred
+is unaffected, except for a transaction v0.83.0 or earlier deferred
+with a key attestation attesting a key for an algorithm the
+configuration doesn't list, which the entry above refuses at the
+Credential Endpoint: it is denied too. Tightening a proof type now
+reaches the transactions already pending: issue those that should
+still be issued under the old configuration before deploying the new
+one.
+
+### A production issuer refuses a nonce key that isn't random (`issuer`)
+
+Under `AssuranceProduction`, `issuer.New` now refuses a
+`Dependencies.NonceKeys` key with fewer than four distinct byte
+values, or that repeats a pattern shorter than half its length: a key
+left as zero bytes, a repeated character, or a word or phrase repeated
+to `MinNonceKeyBytes`. Whoever guesses the key makes c_nonces the
+issuer accepts. Random bytes, and hex or base64 text of random bytes,
+pass (a random key is refused with a probability below 2^-67).
+`AssuranceDevelopment` is unchanged.
+
+Replace a refused key with a random one, from `openssl rand 32` say.
+The two-phase rotation DEPLOYING.md describes keeps the old key beside
+the new one, which `New` now refuses: deploy the new key alone. The
+c_nonces issued under the old key are then refused with
+`invalid_nonce`, and Wallets fetch new ones.
 
 ## v0.82.0 → v0.83.0
 
