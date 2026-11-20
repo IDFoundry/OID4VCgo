@@ -620,7 +620,9 @@ func issuerErrorResponse(err error) (*http.Response, error) {
 // the transaction's own creation/resolution stands in for whatever
 // deployment-specific business process does that for real (see
 // issuer.DeferredTransactionRecord's own doc comment), exactly like
-// storage.DeferredTransactionStore.Put exists for.
+// storage.DeferredTransactionStore.Put exists for. Its records say, as
+// RequestCredential's do, that the request was by
+// credential_configuration_id: a record that doesn't is refused.
 func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 	issuerURL, err := fapi.ParseIssuerURL("http://localhost", fapi.AllowLoopbackHTTP())
 	if err != nil {
@@ -682,9 +684,10 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 		t.Fatalf("wallet.New: %v", err)
 	}
 
-	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: []string{"identity_credential"}}
 	if err := deferredTransactions.Put(context.Background(), "txn-1", issuer.DeferredTransactionRecord{
 		ClientID: "client-a", Status: issuer.DeferredTransactionPending,
+		CredentialConfigurationID: "IdentityCredential", RequestedByConfigurationID: true,
 	}); err != nil {
 		t.Fatalf("Put (pending): %v", err)
 	}
@@ -700,6 +703,7 @@ func TestWalletIssuerDeferredAndNotificationRoundTrip(t *testing.T) {
 
 	if err := deferredTransactions.Put(context.Background(), "txn-1", issuer.DeferredTransactionRecord{
 		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
+		CredentialConfigurationID: "IdentityCredential", RequestedByConfigurationID: true,
 		Credentials:    []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 		NotificationID: "notif-1",
 	}); err != nil {

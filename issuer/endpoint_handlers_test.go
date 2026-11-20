@@ -17,7 +17,7 @@ import (
 func clientGrant(clientID string) *fakeTokens {
 	return &fakeTokens{grant: issuer.Grant{
 		DPoPNonce:  "next-nonce",
-		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID)},
+		Authorized: issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID(clientID), Scopes: identityScope},
 	}}
 }
 

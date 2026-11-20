@@ -20,19 +20,17 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 
 	store.put("txn-1", issuer.DeferredTransactionRecord{
 		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
+		CredentialConfigurationID: "IdentityCredential", RequestedByConfigurationID: true,
 		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 	})
-	if _, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: []string{"identity_credential"}}
+	if _, err := iss.RequestDeferredCredential(context.Background(), auth,
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	); err != nil {
 		t.Fatalf("RequestDeferredCredential: %v", err)
 	}
 
-	// The record names no credential configuration, so each poll also
-	// records AuditEventLegacyDeferredAuthorization:
-	// TestDeferral_LegacyRecordAudited covers that one.
-	events := sink.recordedExcept(issuer.AuditEventLegacyDeferredAuthorization)
+	events := sink.recorded()
 	if len(events) != 1 {
 		t.Fatalf("got %d audit events, want 1", len(events))
 	}
@@ -48,13 +46,12 @@ func TestAudit_RequestDeferredCredential(t *testing.T) {
 
 	// A second attempt against the now-invalidated transaction must
 	// still record exactly one more event, this time a failure.
-	if _, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
+	if _, err := iss.RequestDeferredCredential(context.Background(), auth,
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	); err == nil {
 		t.Fatal("second RequestDeferredCredential = nil error, want error (transaction already invalidated)")
 	}
-	events = sink.recordedExcept(issuer.AuditEventLegacyDeferredAuthorization)
+	events = sink.recorded()
 	if len(events) != 2 {
 		t.Fatalf("got %d audit events, want 2", len(events))
 	}

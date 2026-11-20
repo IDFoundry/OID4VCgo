@@ -542,45 +542,25 @@ func deferredOwner(record DeferredTransactionRecord, auth AuthorizedRequest) boo
 // collect it. For one by credential_configuration_id, the token passes
 // authorizeCredentialConfigurationID: one whose authorization detail
 // for the configuration carries credential_identifiers may not collect
-// it. A record saved before either marker existed (OID4VCgo v0.81.0
-// and before), or written by a deployment without them, is checked
-// against the token granting the configuration at all, and each such
-// check is audited (AuditEventLegacyDeferredAuthorization), so an
-// operator can see when none is left; this fallback is deprecated and
-// will be removed in a later release.
-//
-// Only RequestDeferredCredential calls it, once per poll; a check made
-// before it in the same poll (DeferredCredentialHandler's, before
-// Resolve) calls deferredAuthorizedCheck, which records nothing.
-func (iss *Issuer) deferredAuthorized(ctx context.Context, record DeferredTransactionRecord, auth AuthorizedRequest) bool {
-	granted, legacy := iss.deferredAuthorizedCheck(record, auth)
-	if legacy {
-		var err error
-		if !granted {
-			err = newError(ErrorInvalidTransactionID, 400, unknownTransactionID, nil)
-		}
-		iss.audit(ctx, AuditEventLegacyDeferredAuthorization, auth.ClientID(), err)
-	}
-	return granted
-}
-
-// deferredAuthorizedCheck is deferredAuthorized without the audit:
-// whether auth may poll record, and whether that was decided by the
-// legacy check against the configuration alone.
-func (iss *Issuer) deferredAuthorizedCheck(record DeferredTransactionRecord, auth AuthorizedRequest) (granted, legacy bool) {
+// it. A record with neither marker — saved by OID4VCgo v0.81.0 and
+// before, or written by a deployment without them — is refused, as an
+// unknown transaction: nothing says which request it answers, and
+// checking it against the configuration alone, the fallback v0.82.0
+// and v0.83.0 kept for such records, let a token for another dataset
+// collect it.
+func (iss *Issuer) deferredAuthorized(record DeferredTransactionRecord, auth AuthorizedRequest) bool {
 	if !deferredOwner(record, auth) {
-		return false, false
+		return false
 	}
 	id := record.CredentialConfigurationID
-	cc := iss.cfg.CredentialConfigurationsSupported[id]
 	switch {
 	case record.CredentialIdentifier != "":
 		configID, _, err := iss.resolveCredentialConfiguration(auth, CredentialRequest{CredentialIdentifier: record.CredentialIdentifier})
-		return err == nil && (id == "" || configID == id), false
+		return err == nil && (id == "" || configID == id)
 	case record.RequestedByConfigurationID:
-		return iss.authorizeCredentialConfigurationID(auth, id, cc) == nil, false
+		return iss.authorizeCredentialConfigurationID(auth, id, iss.cfg.CredentialConfigurationsSupported[id]) == nil
 	}
-	return id == "" || iss.grantsConfiguration(auth, id, cc), true
+	return false
 }
 
 // pollIntervalSeconds is d as §9.2's "interval": whole seconds, rounded

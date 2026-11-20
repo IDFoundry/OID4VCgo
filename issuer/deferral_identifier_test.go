@@ -127,128 +127,52 @@ func TestDeferral_ByConfigurationIDAuthorizedAsTheCredentialEndpoint(t *testing.
 	}
 }
 
-// TestDeferral_LegacyRecordNeedsTheConfiguration: a record saved
-// before RequestedByConfigurationID existed, with neither it nor a
-// credential_identifier, is collected by any token granting its
-// configuration, as before.
-func TestDeferral_LegacyRecordNeedsTheConfiguration(t *testing.T) {
+// TestDeferral_UnmarkedRecordRefused: a record with neither
+// RequestedByConfigurationID nor a credential_identifier — saved by
+// OID4VCgo v0.81.0 and before, or written by a deployment without them
+// — is refused as an unknown transaction, even to a token granting its
+// configuration: by RequestDeferredCredential, which records only the
+// poll's own outcome, and by DeferredCredentialHandler before Resolve.
+func TestDeferral_UnmarkedRecordRefused(t *testing.T) {
 	ctx := context.Background()
-	f := newDeferralFixture(t)
+	unmark := func(t *testing.T, f deferralFixture, txID string) {
+		t.Helper()
+		if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
+			r.RequestedByConfigurationID = false
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sink := newFakeAuditSink()
+	f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
 	txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
-	if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
-		r.RequestedByConfigurationID = false
-		return nil
-	}); err != nil {
+	unmark(t, f, txID)
+	_, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID})
+	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
+	for _, e := range sink.recorded() {
+		if e.Type == issuer.AuditEventLegacyDeferredAuthorization { //nolint:staticcheck // SA1019: it must never be recorded now
+			t.Errorf("recorded %+v, a legacy deferred authorization event", e)
+		}
+	}
+
+	f = newDeferralFixture(t)
+	txID, _ = f.deferOne(t) // pending, so Resolve would be reached
+	unmark(t, f, txID)
+	resolved := 0
+	dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
+		ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: deferralAuth.Subject, Authorized: deferralAuth}}),
+		Resolve: func(context.Context, issuer.Grant, string, issuer.DeferredTransactionRecord) error {
+			resolved++
+			return nil
+		},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := f.iss.RequestDeferredCredential(ctx, identifierAuth(identifierDetail(testSDJWTConfigID, "dataset-B")), issuer.DeferredCredentialRequest{TransactionID: txID})
-	if err != nil || len(res.Credentials) != 1 {
-		t.Fatalf("poll of a legacy record with a configuration grant = %+v, %v", res, err)
+	postCredentialRequest(t, dh, `{"transaction_id":"`+txID+`"}`)
+	if resolved != 0 {
+		t.Fatalf("Resolve called %d times for an unmarked record, want 0", resolved)
 	}
-}
-
-// TestDeferral_LegacyRecordAudited: each poll checked against the
-// configuration alone, for a record with neither marker, is audited,
-// as a success when the token grants the configuration and a failure
-// when it doesn't; a poll for a marked record isn't.
-func TestDeferral_LegacyRecordAudited(t *testing.T) {
-	ctx := context.Background()
-	setup := func(t *testing.T, legacy bool) (deferralFixture, *fakeAuditSink, string) {
-		sink := newFakeAuditSink()
-		f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
-		txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
-		if legacy {
-			if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
-				r.RequestedByConfigurationID = false
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return f, sink, txID
-	}
-	legacyEvents := func(sink *fakeAuditSink) []issuer.AuditEvent {
-		var events []issuer.AuditEvent
-		for _, e := range sink.recorded() {
-			if e.Type == issuer.AuditEventLegacyDeferredAuthorization {
-				events = append(events, e)
-			}
-		}
-		return events
-	}
-
-	t.Run("marked", func(t *testing.T) {
-		f, sink, txID := setup(t, false)
-		if _, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil {
-			t.Fatalf("poll of a marked record: %v", err)
-		}
-		if got := legacyEvents(sink); len(got) != 0 {
-			t.Fatalf("a marked record's poll recorded %+v, want no legacy event", got)
-		}
-	})
-
-	t.Run("legacy", func(t *testing.T) {
-		f, sink, txID := setup(t, true)
-		notGranted := deferralAuth
-		notGranted.Scopes = nil
-		_, err := f.iss.RequestDeferredCredential(ctx, notGranted, issuer.DeferredCredentialRequest{TransactionID: txID})
-		assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
-		if _, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID}); err != nil {
-			t.Fatalf("poll of a legacy record with a configuration grant: %v", err)
-		}
-		got := legacyEvents(sink)
-		if len(got) != 2 {
-			t.Fatalf("recorded %d legacy events, want 2: %+v", len(got), got)
-		}
-		if got[0].Outcome != issuer.AuditOutcomeFailure || got[0].Description != string(issuer.ErrorInvalidTransactionID) {
-			t.Errorf("refused poll's event = %+v, want a failure, invalid_transaction_id", got[0])
-		}
-		if got[1].Outcome != issuer.AuditOutcomeSuccess || got[1].ClientID != "test-client" {
-			t.Errorf("granted poll's event = %+v, want a success for test-client", got[1])
-		}
-	})
-
-	// DeferredCredentialHandler with Resolve checks the poll before
-	// Resolve too: still one event per poll, whether granted or not.
-	t.Run("legacy, through the handler with Resolve", func(t *testing.T) {
-		for _, tc := range []struct {
-			name    string
-			auth    issuer.AuthorizedRequest
-			outcome issuer.AuditOutcome
-		}{
-			{"granted", deferralAuth, issuer.AuditOutcomeSuccess},
-			{"not granted", func() issuer.AuthorizedRequest { a := deferralAuth; a.Scopes = nil; return a }(), issuer.AuditOutcomeFailure},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				sink := newFakeAuditSink()
-				f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
-				txID, _ := f.deferOne(t) // pending, so Resolve is reached
-				if err := f.store.Update(ctx, txID, func(r *issuer.DeferredTransactionRecord) error {
-					r.RequestedByConfigurationID = false
-					return nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-				resolved := 0
-				dh, err := f.iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
-					ProtectedEndpointConfig: protectedEndpoint(t, &fakeTokens{grant: issuer.Grant{Subject: tc.auth.Subject, Authorized: tc.auth}}),
-					Resolve: func(context.Context, issuer.Grant, string, issuer.DeferredTransactionRecord) error {
-						resolved++
-						return nil
-					},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				postCredentialRequest(t, dh, `{"transaction_id":"`+txID+`"}`)
-				got := legacyEvents(sink)
-				if len(got) != 1 || got[0].Outcome != tc.outcome {
-					t.Fatalf("one poll recorded %+v, want one legacy event with outcome %v", got, tc.outcome)
-				}
-				if want := map[bool]int{true: 1, false: 0}[tc.outcome == issuer.AuditOutcomeSuccess]; resolved != want {
-					t.Fatalf("Resolve called %d times, want %d", resolved, want)
-				}
-			})
-		}
-	})
 }

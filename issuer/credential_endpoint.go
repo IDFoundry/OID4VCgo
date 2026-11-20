@@ -627,18 +627,6 @@ func (iss *Issuer) credentialDetail(d oid4vci.AuthorizationDetail) bool {
 	return slices.Contains(d.Locations, iss.cfg.Issuer.String())
 }
 
-// grantsConfiguration reports whether auth grants configuration id at
-// all: through an authorization detail for this issuer naming it, with
-// or without credential_identifiers, or cc's scope.
-func (iss *Issuer) grantsConfiguration(auth AuthorizedRequest, id string, cc CredentialConfiguration) bool {
-	for _, d := range auth.AuthorizationDetails {
-		if iss.credentialDetail(d) && d.CredentialConfigurationID == id {
-			return true
-		}
-	}
-	return cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope)
-}
-
 // authorizeCredentialConfigurationID checks the access token grants
 // credential_configuration_id id: either an "openid_credential"
 // authorization detail for this issuer names it, or the token carries
