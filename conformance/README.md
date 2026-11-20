@@ -203,8 +203,9 @@ meet them there: production assurance, durable stores (`sqlstore` and
 rather than the binary's session engine, and OID4VCgo's
 `walletprovider.Provider` ([`interop/walletprovider`](../interop/walletprovider),
 over its v1 protocol; only the platform evidence is a stand-in,
-`walletprovidertest.FakeVerifier`) where a Go or Kotlin wallet of the
-run's takes Wallet Attestations. The binaries are built with the
+`walletprovidertest.FakeVerifier`, which production assurance refuses,
+so the provider runs at development assurance) where a Go or Kotlin
+wallet of the run's takes Wallet Attestations. The binaries are built with the
 `conformance_production` tag ([`interop/production.sh`](../interop/production.sh)).
 What stays at development, and why, is beside each case in its README.
 The wallets' own settings are those of their runs.
@@ -228,7 +229,9 @@ Status list fetches stay able to reach loopback in every run
 public addresses only, which a runner has none of to serve from, so
 the binaries run the same status policy where production can't inspect
 its fetcher (the verifier's `Accept`, the issuer's wrapped key
-attestation check) and log that they do.
+attestation check), check the Authorization Server's Wallet
+Attestation status checker under development's rules, and log that
+they do.
 
 ### PostgreSQL, and two instances sharing it
 

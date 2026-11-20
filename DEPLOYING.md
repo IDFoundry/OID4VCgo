@@ -216,6 +216,15 @@ each, not a deployment template" says what it does differently.
   `server.Dependencies.ClientAttestationStatus`,
   `haip.WalletAttestationStatusList`). Give both a `statuslist.Checker`
   sharing one `statuslist.Cache` (below).
+- [ ] **Check the Authorization Server's status checker yourself:**
+  call `CheckConfiguration(server.AssuranceProduction)` on the
+  `haip.WalletAttestationStatusList` before `server.New`, and don't
+  start on its error. `issuer.New` checks the issuer's checker, but
+  fapigo's `server.New` doesn't check this one: without the call, a
+  `Fetcher` that may reach loopback or private addresses, no
+  `Options.Revocation` (the list signers' certificates unchecked) and
+  no `Cache` (the list fetched again on every attestation-authenticated
+  request) go unnoticed.
 - [ ] **Authorization Server stores:** a Credential Issuer's
   Authorization Server keeps its grants and tokens in fapigo/sqlstore,
   on the same `*sql.DB` (see [sqlstore/README.md](sqlstore/README.md)'s
@@ -422,6 +431,21 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   StatusListTokens: db.StatusListTokens(), …}`. `StatusListTokens`
   makes one replica sign each of its status lists' tokens, as for an
   issuer's Publisher.
+- [ ] **`Config.Assurance = walletprovider.AssuranceProduction`**, so
+  `New` refuses what production mustn't run with:
+  - `walletprovidertest.FakeVerifier`, whose evidence anyone can
+    write: a provider built with it registers anyone and attests any
+    key, at whatever security level it was set to report;
+  - stores that don't seal their records (below);
+  - the evidence verifiers' development settings, which each verifier
+    refuses through its `CheckConfiguration`
+    (`walletprovider.ConfigurationCheck`): App Attest's
+    `AllowDevelopment`, and an Android `StatusSource` with
+    `AllowLoopback`. A verifier of your own that wraps one should
+    forward the method, or embed the wrapped verifier.
+
+  It takes `androidkey.EvidenceVerifier.AllowUncheckedLegacyEvidence`,
+  whose upgrade window (below) production needs too.
 - [ ] **Capacity: `Config.StatusListSize`.** A period's lists hold 64
   × `StatusListSize`/2 instance keys used in it, and every issuance
   uses a new one: the default (2^20) holds about 33.5M a week. Size it
@@ -533,11 +557,14 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   retrying for up to 10 seconds while its own requests beat them, so a
   thief's traffic can't hold off a revocation; their `ErrConflict` past
   that is transient: call again.
-- [ ] **Seal the provider's records: `Config.RequireSealedStore`.**
-  With the `DB`'s `Options.Sealer` set, sqlstore's Wallet Provider
-  stores seal each instance's record; set `RequireSealedStore` so `New`
-  refuses to start when they don't (a missing Sealer), rather than
-  keep instances unsealed.
+- [ ] **Seal the provider's records.** With the `DB`'s
+  `Options.Sealer` set, sqlstore's Wallet Provider stores seal each
+  instance's record. Under `AssuranceProduction`, `New` refuses to
+  start when they don't (a missing Sealer), rather than keep instances
+  unsealed. `Config.UnsealedStores` accepts stores that don't, where
+  they're as protected as the provider's signing key (an in-memory
+  store is); `Config.RequireSealedStore` refuses them at any level,
+  `UnsealedStores` or not.
 - [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
   `StatusSource` (Google's list, refreshed daily, ahead of its
   `MaxAge`, in the background). While Google can't be reached, the
@@ -627,6 +654,7 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
 
   Leave the option unset outside the window; set it in development,
   where a provider's stores may outlive its upgrades.
+  `AssuranceProduction` takes it, for the window.
 - [ ] **Hear of recheck refusals: `Config.OnRecheckRefused`.** It's
   called with each refusal and the instance as stored afterwards
   (revoked, suspended or still active), the provider's own `Policy`
@@ -647,7 +675,8 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   (`walletprovider/appattest`). For App Attest, list each app's App ID
   (team ID and bundle ID) in `appattest.Verifier.Apps`, and leave
   `AllowDevelopment` unset in production, so only released builds
-  register. Both are rechecked before each Wallet and Key Attestation:
+  register (`AssuranceProduction` refuses it). Both are rechecked
+  before each Wallet and Key Attestation:
   unsetting `AllowDevelopment` at a production cutover, or removing an
   app from `Apps`, refuses the instances registered before it at their
   next request (a policy refusal: they stay active, and

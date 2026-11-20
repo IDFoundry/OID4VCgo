@@ -5,9 +5,13 @@
 // signed tokens in sealed sqlstore stores in a SQLite file,
 // RequireSealedStore set, and its attestations signed under a CA it
 // makes for the run. Only the platform evidence is a stand-in:
-// walletprovidertest.FakeVerifier, as a run has no device. Its stores
-// are sqlstore's, a module of its own, so it builds only with the
-// conformance_production tag in a workspace holding both modules
+// walletprovidertest.FakeVerifier, as a run has no device.
+// walletprovider.AssuranceProduction refuses FakeVerifier, so the
+// provider runs at development assurance; a deployment verifies
+// devices' evidence instead (walletprovider/androidkey,
+// walletprovider/appattest). Its stores are sqlstore's, a module of its
+// own, so it builds only with the conformance_production tag in a
+// workspace holding both modules
 // (interop/production.sh's build_production).
 //
 //	walletprovider -dir DIR -addr 127.0.0.1:PORT -base-url https://localhost:PORT -client-id ID -admin 127.0.0.1:PORT

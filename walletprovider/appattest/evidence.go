@@ -62,10 +62,24 @@ type EvidenceVerifier struct {
 	Verifier *Verifier
 }
 
-var _ walletprovider.EvidenceRechecker = EvidenceVerifier{}
+var (
+	_ walletprovider.EvidenceRechecker  = EvidenceVerifier{}
+	_ walletprovider.ConfigurationCheck = EvidenceVerifier{}
+)
 
 // Kind implements walletprovider.EvidenceVerifier: EvidenceKind.
 func (EvidenceVerifier) Kind() string { return EvidenceKind }
+
+// CheckConfiguration implements walletprovider.ConfigurationCheck:
+// under walletprovider.AssuranceProduction it refuses, with ErrConfig, a
+// Verifier that sets AllowDevelopment, which registers development
+// builds too.
+func (e EvidenceVerifier) CheckConfiguration(assurance walletprovider.AssuranceLevel) error {
+	if assurance == walletprovider.AssuranceProduction && e.Verifier != nil && e.Verifier.AllowDevelopment {
+		return fail(ErrConfig, "the Verifier sets AllowDevelopment, which walletprovider.AssuranceProduction refuses")
+	}
+	return nil
+}
 
 // Verify implements walletprovider.EvidenceVerifier.
 func (e EvidenceVerifier) Verify(_ context.Context, in walletprovider.EvidenceInput) (walletprovider.VerifiedEvidence, error) {

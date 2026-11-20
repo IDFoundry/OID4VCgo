@@ -23,7 +23,8 @@ func ExampleNew() {
 	var (
 		signer crypto.Signer       // the attestation key, in an HSM or KMS
 		chain  []*x509.Certificate // its certificate, issued by your CA, naming the Identifier as a URI SAN
-		// From sqlstore's DB: WalletProviderInstances, WalletProviderInstanceKeys,
+		// From sqlstore's DB, with an Options.Sealer, as AssuranceProduction
+		// requires: WalletProviderInstances, WalletProviderInstanceKeys,
 		// WalletProviderChallenges, StatusIndices and StatusListTokens.
 		instances    walletprovider.InstanceStore
 		instanceKeys walletprovider.InstanceKeyStore
@@ -33,6 +34,7 @@ func ExampleNew() {
 		android      *androidkey.Verifier // as androidkey's ExampleVerifier configures it
 	)
 	p, err := walletprovider.New(walletprovider.Config{
+		Assurance:  walletprovider.AssuranceProduction,
 		Identifier: "https://wallet-provider.example.com", ClientIDs: []string{"https://wallet.example.com"},
 		StatusListBaseURI: "https://wallet-provider.example.com/statuslists",
 		// StatusListSize's default, 2^20, holds 64 × 2^20/2 ≈ 33.5M

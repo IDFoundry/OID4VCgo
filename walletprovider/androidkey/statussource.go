@@ -64,7 +64,10 @@ type StatusSource struct {
 	// public addresses.
 	HTTP *http.Client
 	// AllowLoopback permits a loopback URL, for tests and local
-	// development only. It doesn't change HTTP's own transport.
+	// development only. It doesn't change HTTP's own transport. A
+	// walletprovider.Provider under AssuranceProduction refuses an
+	// EvidenceVerifier whose Verifier's Revocation sets it
+	// (EvidenceVerifier.CheckConfiguration).
 	AllowLoopback bool
 	// MaxAge is how long a fetched list is current; zero means
 	// DefaultStatusMaxAge.

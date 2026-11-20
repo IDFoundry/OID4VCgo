@@ -24,7 +24,8 @@
 // Attestation verifier, an Apple App Attest verifier, or one of the
 // integrator's own (Play Integrity, a WSCD's attestation, a TPM). Tests
 // and emulators plug in a verifier of their own;
-// walletprovidertest.FakeVerifier is one, never for production.
+// walletprovidertest.FakeVerifier is one, never for production:
+// AssuranceProduction refuses it.
 //
 // Every piece of evidence is bound to a challenge the provider issued
 // (Provider.Challenge): random, used once, short-lived, and bound to its
@@ -74,9 +75,18 @@
 // Attest and Android Key Attestation evidence, and this package's
 // Client the Go one.
 //
+// Set Config.Assurance to AssuranceProduction in production. New then
+// refuses FakeVerifier, whose evidence is a JSON document anyone can
+// write; stores that don't seal their records, unless
+// Config.UnsealedStores; and the evidence verifiers' development
+// settings, which a verifier refuses through its CheckConfiguration
+// (ConfigurationCheck): appattest's AllowDevelopment, and an androidkey
+// StatusSource's AllowLoopback.
+//
 // DEPLOYING.md in the repository is the checklist for running several
-// replicas: sqlstore's stores, Dependencies.StatusListTokens,
-// SweepStatusLists and sizing Config.StatusListSize.
+// replicas: Config.Assurance, sqlstore's stores,
+// Dependencies.StatusListTokens, SweepStatusLists and sizing
+// Config.StatusListSize.
 //
 // # Policy
 //

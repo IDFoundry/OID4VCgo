@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/idfoundry/fapigo/server"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/conformancecert"
@@ -310,6 +313,51 @@ func TestProductionSetup_ChecksKeyAttestationStatusOnLoopback(t *testing.T) {
 			t.Fatalf("key attestation status entry %d: status %d, body %s; want %d with %s", c.idx, status, body, c.status, c.want)
 		}
 		cNonce = nonceReq()
+	}
+}
+
+// server.New doesn't check the Authorization Server's Wallet
+// Attestation status checker, so the production setup checks it as
+// production requires: one without a Cache is refused. Under
+// ProductionConfig.AttestationStatusAllowLoopback, a fetcher production
+// refuses, it's checked under development's rules, with a warning.
+func TestProductionSetup_ChecksWalletAttestationStatusConfiguration(t *testing.T) {
+	_, _, _, kaCAPEM, err := conformancecert.GenerateSignerAndCert("production-test-key-attestation", "production-test-key-attestation-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name     string
+		loopback bool
+		wantErr  string // empty: accepted
+		wantLog  string
+	}{
+		{"production", false, "Cache is required", ""},
+		{"loopback", true, "", "WARNING: attestation status lists are fetched from loopback addresses"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := productionTestConfig(t, kaCAPEM)
+			cfg.Production.AttestationStatusAllowLoopback = c.loopback
+			b, err := newProductionBackend(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.(*productionBackend).statusCache = nil
+			var logged strings.Builder
+			prev := log.Writer()
+			log.SetOutput(&logged)
+			var deps server.Dependencies
+			_, err = b.authorizationServer(&server.Config{}, &deps, nil, nil)
+			log.SetOutput(prev)
+			switch {
+			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+				t.Fatalf("authorizationServer = %v, want an error mentioning %q", err, c.wantErr)
+			case c.wantErr == "" && (err != nil || deps.ClientAttestationStatus == nil):
+				t.Fatalf("authorizationServer = %v, with ClientAttestationStatus %v; want it set", err, deps.ClientAttestationStatus)
+			case !strings.Contains(logged.String(), c.wantLog):
+				t.Fatalf("logged %q, want %q", logged.String(), c.wantLog)
+			}
+		})
 	}
 }
 

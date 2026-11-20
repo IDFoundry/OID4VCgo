@@ -71,6 +71,12 @@
 // for an upgrade window, which logs each record it lets through
 // (EvidenceVerifier.Logger).
 //
+// EvidenceVerifier is a walletprovider.ConfigurationCheck too: a
+// provider under walletprovider.AssuranceProduction refuses one whose
+// Verifier fetches Google's status list through a StatusSource with
+// AllowLoopback. It takes AllowUncheckedLegacyEvidence, whose upgrade
+// window production needs as development does.
+//
 // Keys attested with an app's own attestation key
 // (setAttestKeyAlias) are refused: their chains carry the extension
 // below the leaf.

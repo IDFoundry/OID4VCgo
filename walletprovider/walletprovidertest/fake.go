@@ -1,7 +1,8 @@
 // Package walletprovidertest helps test code built on walletprovider:
 // contract tests any InstanceStore, InstanceKeyStore and ChallengeStore
 // implementation must pass, and FakeVerifier, an EvidenceVerifier for
-// tests and emulators.
+// tests and emulators, which walletprovider.New refuses under
+// walletprovider.AssuranceProduction.
 package walletprovidertest
 
 import (
@@ -15,6 +16,7 @@ import (
 	"slices"
 
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/internal/testonly"
 	"github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
@@ -29,10 +31,15 @@ const FakePlatform walletprovider.Platform = "fake"
 // USE IT IN PRODUCTION: its evidence (FakeEvidence) is a JSON document
 // anyone can write, naming the challenge and the keys, and it reports
 // whatever Result and the key fields say, so a provider configured with
-// it attests any key for anyone. It exists so tests can drive
-// registration and attestation without a device, while the provider
-// itself keeps refusing requests with no evidence.
+// it attests any key for anyone. walletprovider.New refuses it, and a
+// type embedding it, under walletprovider.AssuranceProduction. It
+// exists so tests can drive registration and attestation without a
+// device, while the provider itself keeps refusing requests with no
+// evidence.
 type FakeVerifier struct {
+	// testOnly marks it for walletprovider.New.
+	testOnly
+
 	// KindName is its Kind; empty means FakeKind.
 	KindName string
 
@@ -50,7 +57,16 @@ type FakeVerifier struct {
 	UserAuthentication walletprovider.UserAuthentication
 }
 
-var _ walletprovider.EvidenceVerifier = FakeVerifier{}
+var (
+	_ walletprovider.EvidenceVerifier = FakeVerifier{}
+	// FakeVerifier carries the mark walletprovider.New looks for; the
+	// field is named here, as nothing else names it.
+	_ testonly.Marked = FakeVerifier{testOnly: testOnly{}}
+)
+
+// testOnly, embedded, marks a stand-in that accepts what anyone can
+// forge (testonly.Marker), without a field or method in its API.
+type testOnly = testonly.Marker
 
 // Kind implements walletprovider.EvidenceVerifier.
 func (v FakeVerifier) Kind() string {
