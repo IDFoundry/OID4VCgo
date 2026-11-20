@@ -52,6 +52,25 @@ presentations were bound to it as given. Pass the origin exactly as the
 platform reports it: Chrome's through Credential Manager, and the
 Android library's own for an app, already have this form.
 
+### Claims paths into arrays: the wallet and the verifier agree (`wallet`, `verifier`, `dcql`, `sdjwtvc`)
+
+`sdjwtvc.SelectDisclosuresAt`, which the wallet's `Preview` and
+`Respond` use, no longer depends on the order of the paths: a path
+selecting a value whole, such as `["degrees"]`, now discloses all of
+it even when another path, such as `["degrees", 0, "type"]`, walked
+through one of its elements first. Before, that element's other
+members were left out, so a wallet showing the holder a consent screen
+may now show, and send, those members too: what the query asked for.
+
+`VerifyResponse` now accepts what such a wallet presents in two cases
+it refused: that order of paths, as `ReasonUnrequestedClaims`, and an
+index into an array whose other elements the rest of the path can't
+walk, such as `["c", 1, "p"]` where `c` is `["y", {"p": …}]`, as
+`ReasonNotAnswered`. A presentation's index is evaluated over every
+disclosed element, and an element of another type is now passed over;
+a Wildcard in the query itself still refuses such an array, as
+OpenID4VP 1.0 §7.1.1 says.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

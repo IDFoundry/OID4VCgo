@@ -191,14 +191,57 @@ func selectWildcard(selection []any) ([]any, error) {
 	return next, nil
 }
 
-// withIndicesWidened is p with each index component a Wildcard.
-func (p Path) withIndicesWidened() Path {
-	out := make(Path, len(p))
+// selectPresented is Select for a presentation, which holds only the
+// array elements it discloses and can't say where in the Holder's
+// credential they sat (SatisfiedBySDJWTVCPresentation): each index
+// component selects every element, as a Wildcard does. The index
+// named one element of the credential's array, which the Wallet
+// walked, so an element the next component can't walk — a string
+// where it names a member, say — is dropped from the selection rather
+// than ending the evaluation with §7.1.1's error, which would refuse
+// what the Wallet rightly presented. A Wildcard in p itself still
+// meets that error, as in Select.
+func (p Path) selectPresented(root any) ([]any, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	selection := []any{root}
 	for i, elem := range p {
+		var next []any
+		var err error
 		if elem.IsIndex() {
-			elem = Wildcard
+			next, err = selectWildcard(selection)
+			if err == nil && i+1 < len(p) {
+				next = walkableBy(p[i+1], next)
+			}
+		} else {
+			next, err = elem.selectFrom(selection)
 		}
-		out[i] = elem
+		if err != nil {
+			return nil, err
+		}
+		if len(next) == 0 {
+			return nil, fmt.Errorf("dcql: path: selection is empty")
+		}
+		selection = next
+	}
+	return selection, nil
+}
+
+// walkableBy is the elements of selection elem can walk: the objects,
+// for a key, and the arrays, for an index or a Wildcard.
+func walkableBy(elem PathElement, selection []any) []any {
+	var out []any
+	for _, v := range selection {
+		var ok bool
+		if elem.IsKey() {
+			_, ok = v.(map[string]any)
+		} else {
+			_, ok = v.([]any)
+		}
+		if ok {
+			out = append(out, v)
+		}
 	}
 	return out
 }

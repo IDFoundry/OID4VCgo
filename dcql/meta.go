@@ -164,9 +164,12 @@ func (c CredentialQuery) checkVCT(claims map[string]any) error {
 // disclose (RFC 9901 §7.1) and can't say where the ones it does sat.
 // So each index component is evaluated here as a Wildcard: the claim
 // is present when any disclosed element is, and its Values match when
-// any disclosed element's value does. A Verifier can't learn an
-// element's position in the credential from a presentation, and must
-// not rely on it.
+// any disclosed element's value does. An element the rest of the path
+// can't walk, such as a string beside the object the index named, is
+// skipped rather than refusing the path as §7.1.1 does under a
+// Wildcard: the Wallet's index may have pointed past it. A Verifier
+// can't learn an element's position in the credential from a
+// presentation, and must not rely on it.
 func (c CredentialQuery) SatisfiedBySDJWTVCPresentation(claims map[string]any) error {
 	_, err := c.SatisfiedSDJWTVCPresentationPaths(claims)
 	return err
@@ -185,7 +188,7 @@ func (c CredentialQuery) SatisfiedSDJWTVCPresentationPaths(claims map[string]any
 		return nil, err
 	}
 	return c.satisfiedClaimPaths(func(p Path) ([]any, error) {
-		return p.withIndicesWidened().Select(claims)
+		return p.selectPresented(claims)
 	})
 }
 

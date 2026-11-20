@@ -133,6 +133,38 @@ func TestSatisfiedBySDJWTVCPresentation_IndexIsAnyElement(t *testing.T) {
 	}
 }
 
+// TestSatisfiedBySDJWTVCPresentation_IndexSkipsWhatItCantWalk: the
+// Wallet walks an index to the element it names, so in a presentation,
+// where the index selects every disclosed element, an element the rest
+// of the path can't walk — a string beside the object, an object beside
+// the array — is passed over, not refused as §7.1.1 refuses it under a
+// Wildcard. A Wildcard the query itself has still is.
+func TestSatisfiedBySDJWTVCPresentation_IndexSkipsWhatItCantWalk(t *testing.T) {
+	presented := map[string]any{"vct": "urn:test",
+		"c": []any{"y", map[string]any{"p": "y"}},
+		"d": []any{map[string]any{"p": "x"}, []any{"x", "z"}},
+	}
+	for _, c := range []struct {
+		path dcql.Path
+		ok   bool
+	}{
+		{dcql.Path{dcql.PathKey("c"), dcql.PathIndex(1), dcql.PathKey("p")}, true},
+		{dcql.Path{dcql.PathKey("d"), dcql.PathIndex(1), dcql.PathIndex(1)}, true},
+		{dcql.Path{dcql.PathKey("c"), dcql.Wildcard, dcql.PathKey("p")}, false},
+		{dcql.Path{dcql.PathKey("c"), dcql.PathIndex(0), dcql.PathIndex(0)}, false},
+	} {
+		q := sdjwtQuery(t, []dcql.ClaimsQuery{{Path: c.path, Values: []any{"y", "z"}}}, nil)
+		if err := q.SatisfiedBySDJWTVCPresentation(presented); (err == nil) != c.ok {
+			t.Errorf("%v: %v, want satisfied %v", c.path, err, c.ok)
+		}
+	}
+	// The Wallet's check, of the credential it holds, is by position.
+	held := dcql.Path{dcql.PathKey("c"), dcql.PathIndex(1), dcql.PathKey("p")}
+	if err := sdjwtQuery(t, []dcql.ClaimsQuery{{Path: held}}, nil).SatisfiedBySDJWTVCClaims(presented); err != nil {
+		t.Errorf("held credential: %v", err)
+	}
+}
+
 func TestSatisfiedByMdocClaims_EnforcesValues(t *testing.T) {
 	meta, err := dcql.NewMdocMeta(dcql.MdocMeta{DoctypeValue: "org.test"})
 	if err != nil {
