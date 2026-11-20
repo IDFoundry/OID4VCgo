@@ -643,11 +643,13 @@ func (iss *Issuer) grantsConfiguration(auth AuthorizedRequest, id string, cc Cre
 // credential_configuration_id id: either an "openid_credential"
 // authorization detail for this issuer names it, or the token carries
 // cc's scope. A configuration without a scope is therefore only ever
-// granted through authorization_details — never by default. When the
-// token's authorization detail for id carries credential_identifiers,
-// the Wallet MUST use one of those instead (§8.2:
-// credential_configuration_id "MUST NOT be used otherwise").
+// granted through authorization_details — never by default. When any
+// of the token's authorization details for id carries
+// credential_identifiers, the Wallet MUST use one of those instead
+// (§8.2: credential_configuration_id "MUST NOT be used otherwise"),
+// whatever order the details come in and whatever else grants id.
 func (iss *Issuer) authorizeCredentialConfigurationID(auth AuthorizedRequest, id string, cc CredentialConfiguration) error {
+	detailed := false
 	for _, d := range auth.AuthorizationDetails {
 		if !iss.credentialDetail(d) || d.CredentialConfigurationID != id {
 			continue
@@ -656,9 +658,9 @@ func (iss *Issuer) authorizeCredentialConfigurationID(auth AuthorizedRequest, id
 			return newError(ErrorInvalidCredentialRequest, 400,
 				"the access token grants this credential_configuration_id through credential_identifiers: use credential_identifier", nil)
 		}
-		return nil
+		detailed = true
 	}
-	if cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope) {
+	if detailed || cc.Scope != "" && slices.Contains(auth.Scopes, cc.Scope) {
 		return nil
 	}
 	return newError(ErrorInsufficientScope, 403,
@@ -1002,9 +1004,11 @@ func (iss *Issuer) ResolveAuthorizedClaims(auth AuthorizedRequest, req Credentia
 
 // authorizedClaims are the claims the authorization details granting
 // req, for configuration configID, ask for: those of the detail holding
-// req.CredentialIdentifier, or of every detail for this issuer naming
-// configID. nil, every claim, when one of them names none, or none
-// grants it (a scope does).
+// req.CredentialIdentifier, or, for a request by
+// credential_configuration_id, of every detail for this issuer naming
+// configID without credential_identifiers — those with them grant
+// their identifiers, never that request. nil, every claim, when one of
+// them names none, or none grants it (a scope does).
 func (iss *Issuer) authorizedClaims(auth AuthorizedRequest, req CredentialRequest, configID string) []oid4vci.ClaimsDescription {
 	var claims []oid4vci.ClaimsDescription
 	for _, d := range auth.AuthorizationDetails {
@@ -1012,6 +1016,9 @@ func (iss *Issuer) authorizedClaims(auth AuthorizedRequest, req CredentialReques
 			continue
 		}
 		if req.CredentialIdentifier != "" && !slices.Contains(d.CredentialIdentifiers, req.CredentialIdentifier) {
+			continue
+		}
+		if req.CredentialIdentifier == "" && len(d.CredentialIdentifiers) > 0 {
 			continue
 		}
 		if len(d.Claims) == 0 {

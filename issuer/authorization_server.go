@@ -1,9 +1,13 @@
 package issuer
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/internal/strictjson"
 )
 
 // This file is mostly documentation: its one function,
@@ -114,6 +118,11 @@ import (
 //		})
 //	}
 //
+// A consent step granting openid_credential authorization_details
+// grants, beside them, only the scopes of configurations they don't
+// name (UndetailedScopes): a configuration's scope would grant it whole
+// to a token request that leaves its narrowed object out.
+//
 // Leaving GrantedAuthorization.Resources nil grants every resource the
 // request named: a Wallet whose request names another Credential
 // Issuer, and whose consent step here signs in this Credential Issuer's
@@ -185,9 +194,16 @@ import (
 //   - Bound how often one grant is redeemed: each refresh takes new
 //     status list indices, which are shared by every credential.
 //
-// For the pre-authorized code grant, server.Server.IssueRefreshToken
-// issues one for ExchangePreAuthorizedCodeResult.RefreshToken. Restrict
-// it to this Credential Issuer, as the access token is
+// For the pre-authorized code grant, redeem the code with
+// RedeemPreAuthorizedCode, and issue both tokens with fapigo/server
+// under one GrantID: the access token with server.Server.IssueAccessToken,
+// and the refresh token with server.Server.IssueRefreshToken, so that
+// revoking the grant ends both. ExchangePreAuthorizedCode's access
+// token, minted through Dependencies.AccessTokens, names no grant:
+// revoking the grant ends a refresh token issued for it
+// (ExchangePreAuthorizedCodeResult.RefreshToken), but not that access
+// token, which stays usable until it expires. Restrict the refresh
+// token to this Credential Issuer, as the access token is
 // (RedeemedPreAuthorizedCode.Resource, which is Config.Issuer):
 //
 //	refresh, err := srv.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{
@@ -211,6 +227,43 @@ import (
 // while it serves others, end them before the upgrade goes live:
 // confine the wallet clients as above, which refuses their refresh with
 // invalid_target, or revoke them.
+
+// UndetailedScopes returns scopes without the Scope of each of this
+// Credential Issuer's credential configurations that one of details —
+// the "openid_credential" authorization_details a consent step grants
+// — names: the scopes to grant beside them (server.GrantedAuthorization's
+// Scope and AuthorizationDetails). A Wallet may ask for a configuration
+// by both (OpenID4VCI 1.0 §5.1.2), and the authorization_details object
+// is what holds then: the consent step may narrow it to fewer claims,
+// and to credential_identifiers it mints. Granting the configuration's
+// scope beside it would undo that. A token request may leave a granted
+// object out (authorization_details=[], RFC 9396 §6.1), and
+// fapigo/server then issues a token without it, which the scope alone
+// authorizes for the configuration by credential_configuration_id, and
+// for every claim. A scope several configurations share goes when a
+// detail names any of them: grant the others by authorization_details
+// too. A detail that doesn't parse, or isn't for this Credential
+// Issuer, is passed by.
+//
+// It may leave none of the scope values a request asked for: the Wallet
+// asked for the configuration by its object and its scope alone.
+// fapigo/server's CompleteAuthorization refuses an empty Scope then, as
+// a token response can't say nothing was granted. Grant the object as
+// requested beside the scope, unnarrowed, since the scope grants the
+// configuration whole anyway, or deny the request.
+func (iss *Issuer) UndetailedScopes(scopes []string, details []json.RawMessage) []string {
+	detailed := map[string]bool{}
+	for _, raw := range details {
+		var d oid4vci.AuthorizationDetail
+		if strictjson.Unmarshal(raw, &d) != nil || !iss.credentialDetail(d) {
+			continue
+		}
+		if cc, ok := iss.cfg.CredentialConfigurationsSupported[d.CredentialConfigurationID]; ok && cc.Scope != "" {
+			detailed[cc.Scope] = true
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(scopes), func(s string) bool { return detailed[s] })
+}
 
 // ErrResourceNotThisIssuer is wrapped by AuthorizationResources' error:
 // the authorization request named RFC 8707 resources, none of them this

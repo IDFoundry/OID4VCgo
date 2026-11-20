@@ -73,7 +73,11 @@ const RecommendedClientAttestationAlgorithm = fapi.ES256
 // server.NoClientAttestationStatusCheck{} when they publish no status. To take openid_credential authorization_details,
 // register oid4vci.AuthorizationDetailRARDefinition in Config.RAR: it
 // refuses a Wallet's own credential_identifiers, at the pushed
-// authorization request and at the token endpoint alike. Size the
+// authorization request and at the token endpoint alike. Have the
+// consent step grant no configuration's scope beside an object for it
+// (issuer.Issuer.UndetailedScopes): a token request may leave a
+// granted object out, and the scope would then grant the configuration
+// whole. Size the
 // registry for the configurations one grant names, for example
 // extension.NewRARRegistry(8<<10, 6,
 // oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)) for two objects

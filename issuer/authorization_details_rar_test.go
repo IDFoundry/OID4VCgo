@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,13 +46,22 @@ type credentialASFlow struct {
 }
 
 // pushCredentialAuthorizationDetails pushes an authorization request
-// carrying details as its authorization_details, to a fresh test
+// carrying details as its authorization_details, and asking for
+// extraScopes beside the configuration's scope, to a fresh test
 // Authorization Server taking them.
-func pushCredentialAuthorizationDetails(t *testing.T, details string) (credentialASFlow, server.PushAuthorizationResult, error) {
+func pushCredentialAuthorizationDetails(t *testing.T, details string, extraScopes ...string) (credentialASFlow, server.PushAuthorizationResult, error) {
 	t.Helper()
-	srv, clientKey, now := newTestAuthorizationServer(t, nil, withCredentialAuthorizationDetails(t))
-	params := append(pushedAuthorizationParameters(buildClientAssertion(t, clientKey, now), "state"),
-		server.FormParameter{Name: "authorization_details", Value: details})
+	allowExtra := func(_ *server.Config, _ *server.Dependencies, client *storage.RegisteredClientConfig) {
+		client.AllowedScopes = append(client.AllowedScopes, extraScopes...)
+	}
+	srv, clientKey, now := newTestAuthorizationServer(t, nil, withCredentialAuthorizationDetails(t), allowExtra)
+	params := pushedAuthorizationParameters(buildClientAssertion(t, clientKey, now), "state")
+	for i := range params {
+		if params[i].Name == "scope" {
+			params[i].Value = strings.Join(append([]string{params[i].Value}, extraScopes...), " ")
+		}
+	}
+	params = append(params, server.FormParameter{Name: "authorization_details", Value: details})
 	result, err := srv.PushAuthorizationRequest(context.Background(), server.PushAuthorizationRequest{HTTP: server.FormRequest{Parameters: params}})
 	return credentialASFlow{srv: srv, clientKey: clientKey, now: now}, result, err
 }
@@ -83,8 +93,17 @@ func requireInvalidAuthorizationDetails(t *testing.T, call string, err error) {
 // authorization code issued.
 func authorizeCredentialDetails(t *testing.T, mint []string) (credentialASFlow, string) {
 	t.Helper()
+	return authorizeCredentialDetailsGranting(t, mint, nil)
+}
+
+// authorizeCredentialDetailsGranting is authorizeCredentialDetails for
+// a request asking for extraScopes too, whose consent step grants
+// grantScope(the requested scope, the granted authorization_details),
+// or the requested scope for nil.
+func authorizeCredentialDetailsGranting(t *testing.T, mint []string, grantScope func([]string, []json.RawMessage) []string, extraScopes ...string) (credentialASFlow, string) {
+	t.Helper()
 	flow, result, err := pushCredentialAuthorizationDetails(t,
-		`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential"}]`)
+		`[{"type":"openid_credential","credential_configuration_id":"IdentityCredential"}]`, extraScopes...)
 	if err != nil {
 		t.Fatalf("PushAuthorizationRequest: %v", err)
 	}
@@ -120,10 +139,14 @@ func authorizeCredentialDetails(t *testing.T, mint []string) (credentialASFlow, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope := interaction.Interaction.Scope
+	if grantScope != nil {
+		scope = grantScope(scope, []json.RawMessage{raw})
+	}
 	done, err := flow.srv.CompleteAuthorization(ctx, server.CompleteAuthorizationRequest{
 		Handle: interaction.Handle,
 		Result: server.Authorize(subject, authCtx, server.GrantedAuthorization{
-			Scope: interaction.Interaction.Scope, AuthorizationDetails: []json.RawMessage{raw},
+			Scope: scope, AuthorizationDetails: []json.RawMessage{raw},
 		}),
 	})
 	if err != nil {

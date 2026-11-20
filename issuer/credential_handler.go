@@ -92,8 +92,12 @@ type CredentialHandlerConfig struct {
 	// oid4vci.AuthorizationDetailRARDefinition, which refuses a Wallet's
 	// own credential_identifiers when it starts a grant and lets its
 	// token requests only keep some of the grant's, so each is one the
-	// Authorization Server minted for this grant, and a token for a
-	// grant with identifiers always carries some.
+	// Authorization Server minted for this grant, and a token asking for
+	// a granted object that holds identifiers carries some. A token
+	// request may leave the object out, though, and its token then
+	// grants the configuration only by its scope: have the consent step
+	// grant no configuration's scope beside an object for it
+	// (Issuer.UndetailedScopes).
 	//
 	// The handler calls Prepare only for a request the access token
 	// authorizes, once its proofs are verified and its c_nonce
