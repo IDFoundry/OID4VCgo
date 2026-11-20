@@ -43,6 +43,46 @@ type PendingAuthorization struct {
 	InstanceKeyID       string
 	DPoPKeyID           string
 	CreatedAt           time.Time
+	// OfferedTypes are the kind of credential each of Offer's
+	// configurations issued when the authorization began: what the
+	// holder was shown and agreed to. ResumeIssuance fetches the
+	// issuer's metadata again, and refuses (ErrReissueRequired),
+	// forgetting the authorization, one that now issues another kind.
+	// Empty in one stored before they were kept: not checked then.
+	OfferedTypes []OfferedType
+}
+
+// OfferedType is the kind of credential one of an offer's
+// configurations issues.
+type OfferedType struct {
+	ConfigurationID string `json:"configuration_id"`
+	Format          string `json:"format"`
+	VCT             string `json:"vct,omitempty"`
+	DocType         string `json:"doctype,omitempty"`
+}
+
+// offeredTypes are the kinds of credential metadata says each of
+// offer's configurations issues.
+func offeredTypes(offer oid4vci.CredentialOffer, metadata oid4vci.Metadata) []OfferedType {
+	types := make([]OfferedType, 0, len(offer.CredentialConfigurationIDs))
+	for _, id := range offer.CredentialConfigurationIDs {
+		t := typeOf(metadata.CredentialConfigurationsSupported[id])
+		types = append(types, OfferedType{ConfigurationID: id, Format: t.Format, VCT: t.VCT, DocType: t.DocType})
+	}
+	return types
+}
+
+// checkOfferedTypes refuses metadata whose configuration now issues
+// another kind of credential than types, those the holder was shown,
+// say.
+func checkOfferedTypes(types []OfferedType, metadata oid4vci.Metadata) error {
+	for _, shown := range types {
+		want := credentialType{Format: shown.Format, VCT: shown.VCT, DocType: shown.DocType}
+		if got := typeOf(metadata.CredentialConfigurationsSupported[shown.ConfigurationID]); got != want {
+			return fmt.Errorf("walletflow: configuration %q now issues %s, not the %s the holder was shown: %w", shown.ConfigurationID, got, want, ErrReissueRequired)
+		}
+	}
+	return nil
 }
 
 // AuthorizationStore keeps the authorizations in progress, under the
@@ -155,6 +195,7 @@ type sessionStore struct {
 	authorizationServer string
 	instanceKeyID       string
 	dpopKeyID           string
+	types               []OfferedType
 	// state is the authorization in progress's, once Create has recorded
 	// it (or the one ResumeIssuance resumes).
 	state string
@@ -180,6 +221,7 @@ func (s *sessionStore) Create(ctx context.Context, n storage.NewSession) error {
 		State: n.State, Session: n.Record, ExpiresAt: n.ExpiresAt,
 		Offer: s.offer, AuthorizationServer: s.authorizationServer,
 		InstanceKeyID: s.instanceKeyID, DPoPKeyID: s.dpopKeyID, CreatedAt: s.w.deps.Clock().UTC(),
+		OfferedTypes: s.types,
 	})
 }
 
@@ -286,6 +328,13 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	if err := w.checkOffered(metadata, a.Offer.CredentialConfigurationIDs); err != nil {
 		return nil, err
 	}
+	// Nor may a configuration now issue another kind of credential than
+	// the holder was shown, and agreed to, before the redirect: the
+	// authorization is then of no use, and goes.
+	if err := checkOfferedTypes(a.OfferedTypes, metadata); err != nil {
+		_ = w.forgetAuthorization(ctx, a)
+		return nil, err
+	}
 	plan, err := wallet.PlanAuthorization(a.Offer, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("walletflow: %w", err)
@@ -305,7 +354,7 @@ func (w *Wallet) rebuild(ctx context.Context, a PendingAuthorization) (*Issuance
 	w.holdKey(a.DPoPKeyID)
 	s.sessions = &sessionStore{
 		w: w, offer: a.Offer, authorizationServer: a.AuthorizationServer,
-		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State,
+		instanceKeyID: a.InstanceKeyID, dpopKeyID: a.DPoPKeyID, state: a.State, types: a.OfferedTypes,
 	}
 	s.resumed = true
 	if err := s.newClient(ctx, a.AuthorizationServer, true); err != nil {

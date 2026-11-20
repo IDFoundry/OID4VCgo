@@ -33,7 +33,10 @@ var (
 	// credential can't be refreshed: it came without a refresh token,
 	// the Authorization Server no longer accepts it, or the Wallet
 	// Provider no longer attests its refresh grant's instance key.
-	// Receive it again from a new Credential Offer.
+	// Receive it again from a new Credential Offer. Deferred.Poll and
+	// Wallet.ResumeIssuance wrap it too, when the issuer's configuration
+	// now issues another kind of credential than was requested, or shown
+	// to the holder.
 	ErrReissueRequired = errors.New("walletflow: the credential can't be refreshed: receive it again")
 	// ErrRefreshInProgress is wrapped by Wallet.RefreshCredential when
 	// another Wallet sharing the GrantStore — another process — is

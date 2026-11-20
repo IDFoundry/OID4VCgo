@@ -728,6 +728,7 @@ func (s *Issuance) oauthClient(issuer fapi.URL, endpoints client.Endpoints, asUR
 		s.sessions = &sessionStore{
 			w: s.w, offer: s.offer, authorizationServer: asURL,
 			instanceKeyID: s.instanceKey.ID(), dpopKeyID: s.dpopKey.ID(),
+			types: offeredTypes(s.offer, s.metadata),
 		}
 	}
 	var custody []keys.CustodyOption

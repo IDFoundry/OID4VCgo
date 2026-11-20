@@ -688,6 +688,9 @@ type authorizationRecord struct {
 	InstanceKeyID       string                  `json:"instance_key_id"`
 	DPoPKeyID           string                  `json:"dpop_key_id"`
 	CreatedAt           time.Time               `json:"created_at"`
+	// OfferedTypes are walletflow.PendingAuthorization's: absent from a
+	// record stored before they were kept.
+	OfferedTypes []walletflow.OfferedType `json:"offered_types,omitempty"`
 }
 
 // authorizationStoreID is the CredentialStore ID an authorization is
@@ -714,6 +717,7 @@ func (s authorizationStore) PutAuthorization(_ context.Context, a walletflow.Pen
 	raw, err := json.Marshal(authorizationRecord{ //nolint:gosec // G117: see above
 		Kind: authorizationKind, State: a.State, Session: a.Session, ExpiresAt: a.ExpiresAt, Offer: a.Offer,
 		AuthorizationServer: a.AuthorizationServer, InstanceKeyID: a.InstanceKeyID, DPoPKeyID: a.DPoPKeyID, CreatedAt: a.CreatedAt,
+		OfferedTypes: a.OfferedTypes,
 	})
 	if err != nil {
 		return newError(CodeInternal, err)
@@ -798,6 +802,7 @@ func pendingAuthorization(raw []byte) (walletflow.PendingAuthorization, error) {
 	return walletflow.PendingAuthorization{
 		State: r.State, Session: r.Session, ExpiresAt: r.ExpiresAt, Offer: r.Offer, AuthorizationServer: r.AuthorizationServer,
 		InstanceKeyID: r.InstanceKeyID, DPoPKeyID: r.DPoPKeyID, CreatedAt: r.CreatedAt,
+		OfferedTypes: r.OfferedTypes,
 	}, nil
 }
 
