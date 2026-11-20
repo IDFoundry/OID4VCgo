@@ -62,7 +62,11 @@ import (
 // registered instance, but each request it signs writes to the
 // stores, so limit them per client as well; the provider itself bounds
 // only the status list indices an instance's keys take in a period
-// (Config.MaxInstanceKeysPerPeriod). Don't key a limit on the signed
+// (Config.MaxInstanceKeysPerPeriod). Each such request updates the
+// instance's record, as Suspend, Resume and Revoke do: those retry an
+// update the instance's requests beat for up to 10 seconds, so an
+// instance's own traffic can't hold off its revocation, but a limit
+// keeps them from needing to. Don't key a limit on the signed
 // request's sub before Handler has verified it: anyone can name
 // another instance there.
 func (p *Provider) Handler() http.Handler {

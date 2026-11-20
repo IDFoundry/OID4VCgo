@@ -519,6 +519,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   signed request consumes a challenge and writes the instance's
   record. Don't key the limit on the signed request's `sub` before
   `Handler` has verified it: anyone can name another instance there.
+  `Suspend`, `Resume` and `Revoke` write the instance's record too,
+  retrying for up to 10 seconds while its own requests beat them, so a
+  thief's traffic can't hold off a revocation; their `ErrConflict` past
+  that is transient: call again.
 - [ ] **Seal the provider's records: `Config.RequireSealedStore`.**
   With the `DB`'s `Options.Sealer` set, sqlstore's Wallet Provider
   stores seal each instance's record; set `RequireSealedStore` so `New`
