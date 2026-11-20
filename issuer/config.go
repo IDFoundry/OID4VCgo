@@ -678,15 +678,16 @@ type Dependencies struct {
 	//
 	// Each key is a secret of at least MinNonceKeyBytes random bytes, the
 	// same in every process serving this Credential Issuer; at most
-	// MaxNonceKeys. Setting or removing NonceKeys across replicas one at
-	// a time is safe: a replica without NonceKeys refuses another's
-	// stateless nonce with invalid_nonce, and the Wallet fetches a new
-	// one. To rotate a key under a rolling deploy, in two steps, so no
-	// replica meets a nonce tagged with a key it doesn't hold: first
-	// deploy the new key after the old one ([old, new]) everywhere,
-	// then put it first ([new, old]), and drop the old key once
-	// NonceLifetime has passed since the last replica took the second
-	// step.
+	// MaxNonceKeys. MinNonceKeyBytes says how to make one, and which keys
+	// AssuranceProduction refuses as not random. Setting or removing
+	// NonceKeys across replicas one at a time is safe: a replica without
+	// NonceKeys refuses another's stateless nonce with invalid_nonce, and
+	// the Wallet fetches a new one. To rotate a key under a rolling
+	// deploy, in two steps, so no replica meets a nonce tagged with a key
+	// it doesn't hold: first deploy the new key after the old one
+	// ([old, new]) everywhere, then put it first ([new, old]), and drop
+	// the old key once NonceLifetime has passed since the last replica
+	// took the second step.
 	NonceKeys [][]byte
 
 	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce

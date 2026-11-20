@@ -169,7 +169,11 @@ each, not a deployment template" says what it does differently.
   writes a row. Recommended for every deployment, and especially with
   a Sealer (an anonymous request then seals nothing). Each key is at
   least `issuer.MinNonceKeyBytes` random bytes from your secret
-  manager, the same on every replica. **Rotate in two phases**, so no
+  manager, the same on every replica: make one with `openssl rand 32`,
+  or use the text of `openssl rand -hex 32` or `-base64 32` as its
+  bytes. Never a password: `issuer.New` refuses, under
+  `AssuranceProduction`, a key that plainly isn't random, such as a
+  repeated character or word. **Rotate in two phases**, so no
   replica sees a c_nonce under a key it doesn't hold: first deploy
   `[old, new]` everywhere (new accepted, not yet used), then `[new,
   old]` (new used), then, after `Config.NonceLifetime`, `[new]`.

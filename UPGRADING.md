@@ -58,6 +58,23 @@ reaches the transactions already pending: issue those that should
 still be issued under the old configuration before deploying the new
 one.
 
+### A production issuer refuses a nonce key that isn't random (`issuer`)
+
+Under `AssuranceProduction`, `issuer.New` now refuses a
+`Dependencies.NonceKeys` key with fewer than four distinct byte
+values, or that repeats a pattern shorter than half its length: a key
+left as zero bytes, a repeated character, or a word or phrase repeated
+to `MinNonceKeyBytes`. Whoever guesses the key makes c_nonces the
+issuer accepts. Random bytes, and hex or base64 text of random bytes,
+pass (a random key is refused with a probability below 2^-67).
+`AssuranceDevelopment` is unchanged.
+
+Replace a refused key with a random one, from `openssl rand 32` say.
+The two-phase rotation DEPLOYING.md describes keeps the old key beside
+the new one, which `New` now refuses: deploy the new key alone. The
+c_nonces issued under the old key are then refused with
+`invalid_nonce`, and Wallets fetch new ones.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
