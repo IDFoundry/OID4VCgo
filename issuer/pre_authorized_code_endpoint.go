@@ -43,10 +43,11 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// whose locations, if any, include this Credential Issuer, and whose
 	// claims, if any, are well-formed claims descriptions (Appendix B.1).
 	// The token then carries a credential_identifier for each, with its
-	// claims — CredentialRequest.AuthorizedClaims, so issuance is
-	// narrowed to them as for an authorization code — and the Token
-	// Response echoes them (§6.2: "REQUIRED when the
+	// claims, and the Token Response echoes them (§6.2: "REQUIRED when the
 	// authorization_details parameter is used in ... the Token Request").
+	// Those claims reach Prepare as CredentialRequest.AuthorizedClaims, as
+	// an authorization code's do. The Issuer doesn't narrow issuance to
+	// them itself: it issues what Prepare sets.
 	// Their form, and whether the code grants them, are checked before
 	// the code is consumed — the latter by PreAuthorizedCodeStore.Consume's
 	// accept, in the same atomic step that keeps the code single-use —
@@ -757,9 +758,9 @@ func (iss *Issuer) recordGrants(record PreAuthorizedCodeRecord, id string) bool 
 
 // mintAuthorizationDetails builds one AuthorizationDetail per asked
 // object, each with a single freshly generated credential_identifier
-// (§6.2) and asked's claims, so the token narrows issuance to them
-// (CredentialRequest.AuthorizedClaims) as an Authorization Server's
-// grant of a requested object does. Its locations are this Credential
+// (§6.2) and asked's claims, which Prepare then gets as
+// CredentialRequest.AuthorizedClaims, as for an Authorization Server's
+// grant of a requested object. Its locations are this Credential
 // Issuer's identifier when asked names any — requestedConfigurations
 // has checked they include it, and a pre-authorized code is good here
 // only — or the metadata lists authorization_servers. Every
