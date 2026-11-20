@@ -359,6 +359,14 @@ type TransactionsConfig struct {
 	// nothing else. A production Transactions with RequestURIBase alone
 	// is a redirect-flow one: its BeginDCAPI refuses each request. Under
 	// AssuranceDevelopment, empty allows any.
+	//
+	// Serve each origin listed from this Verifier alone. An SD-JWT VC
+	// presentation over the Digital Credentials API is bound to the
+	// origin and nonce, not to the Verifier, so another Verifier that
+	// can run script on an origin listed here can have the holder
+	// present to it with this one's nonce, and complete this one's
+	// request (SECURITY.md, Known limitations). An mdoc's is bound to
+	// the response encryption key too.
 	Origins []string
 
 	// NoStatusCheck declares that this Verifier deliberately checks no
