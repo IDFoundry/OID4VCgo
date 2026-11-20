@@ -43,7 +43,6 @@
 * **deps:** pin FAPIgo v0.77.0 and fapigo/sqlstore v0.9.1 ([246a1f1](https://github.com/IDFoundry/OID4VCgo/commit/246a1f11a91a36405886c8e077fd77df25e4e531))
 * **deps:** pin FAPIgo v0.77.1 ([f9c78f5](https://github.com/IDFoundry/OID4VCgo/commit/f9c78f51ed62ba8a91794b8651ac59339aad870e))
 * **issuer:** keep a credential_configuration_id request to its grant's narrowing, whatever the details' order ([9cdcc2d](https://github.com/IDFoundry/OID4VCgo/commit/9cdcc2d8e576a5eb8ae85002d991de99e32d8d65))
-* **issuer:** record the legacy deferred check once per poll ([1f2342d](https://github.com/IDFoundry/OID4VCgo/commit/1f2342d2b2b013453feb158cc12baad3226ae8b3))
 * **issuer:** refuse a deferred record with neither marker, removing the legacy fallback ([bff8d97](https://github.com/IDFoundry/OID4VCgo/commit/bff8d97625563001219ae4eddfa051ffbf6b0c8a))
 * **issuer:** refuse a nonce key that isn't random under AssuranceProduction ([8f4ae13](https://github.com/IDFoundry/OID4VCgo/commit/8f4ae13a40012bfe98d9749c2844bea95b048679))
 * **issuer:** refuse an attested key for an algorithm the configuration doesn't list ([430fb8b](https://github.com/IDFoundry/OID4VCgo/commit/430fb8b236ebef9f359808ef30a43c3d7879ce1c))
