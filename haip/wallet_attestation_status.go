@@ -31,6 +31,13 @@ import (
 //	if err := walletStatus.CheckConfiguration(server.AssuranceProduction); err != nil { ... }
 //	deps.ClientAttestationStatus = walletStatus
 //
+// A production Authorization Server must call CheckConfiguration, as
+// above, before server.New. server.New doesn't, and without the call a
+// Checker production's rules refuse runs as configured: a Fetcher that
+// may reach loopback or private addresses, the list signers'
+// certificates unchecked (no Options.Revocation), or, with no Cache, a
+// list fetched again on every attestation-authenticated request.
+//
 // The Status List Token's signer is bound to the attester that signed
 // the attestation, as fapigo/server requires: by default the list must
 // be signed with the attestation's own key (VerifiedClientAttestation's
@@ -126,8 +133,9 @@ func (s WalletAttestationStatusList) CheckClientAttestationStatus(ctx context.Co
 // HardenedForProduction, a nil Options.Revocation
 // (certrevocation.NoCheck{} declines checking the list signers'
 // certificates explicitly) and a nil Cache. server.New doesn't call
-// it: call it with the Authorization Server's Config.Assurance before
-// server.New.
+// it, so a production Authorization Server must: call it with the
+// server's Config.Assurance before server.New, and don't start on its
+// error.
 func (s WalletAttestationStatusList) CheckConfiguration(assurance server.AssuranceLevel) error {
 	level := issuer.AssuranceDevelopment
 	if assurance == server.AssuranceProduction {
