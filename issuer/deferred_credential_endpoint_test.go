@@ -28,7 +28,7 @@ func TestRequestDeferredCredential_ReturnsCredentialsWhenIssued(t *testing.T) {
 	})
 
 	result, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: identityScope},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestRequestDeferredCredential_ReturnsPendingWithInterval(t *testing.T) {
 	store.put("txn-2", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionPending})
 
 	result, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: identityScope},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-2"},
 	)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestRequestDeferredCredential_RejectsDeniedTransaction(t *testing.T) {
 	store.put("txn-3", issuer.DeferredTransactionRecord{Status: issuer.DeferredTransactionDenied})
 
 	_, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client")},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("test-client"), Scopes: identityScope},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-3"},
 	)
 	assertIssuerError(t, err, issuer.ErrorCredentialRequestDenied)
@@ -247,7 +247,7 @@ func TestRequestDeferredCredential_ServesCredentialsOnce(t *testing.T) {
 		ClientID: "client-a", Status: issuer.DeferredTransactionIssued,
 		Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 	})
-	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")}
+	auth := issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: identityScope}
 
 	if _, err := iss.RequestDeferredCredential(context.Background(), auth, issuer.DeferredCredentialRequest{TransactionID: "txn-race"}); err != nil {
 		t.Fatalf("first request: %v", err)

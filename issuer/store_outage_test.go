@@ -65,7 +65,7 @@ func TestStoreOutageIsAServerError(t *testing.T) {
 		deps.DeferredTransactions = store
 		iss := newTestIssuer(t, validConfig(t), deps)
 		_, err := iss.RequestDeferredCredential(context.Background(),
-			issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a")},
+			issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Scopes: identityScope},
 			issuer.DeferredCredentialRequest{TransactionID: "txn-1"})
 		return err
 	}

@@ -353,15 +353,31 @@ was accepted and the first signed request panicked. Pass the value, a
 non-nil pointer, or no `VerifierTrust` (a nil interface) for a Wallet
 that only receives credentials.
 
-### One `AuditEventLegacyDeferredAuthorization` per poll
+### A deferred record with neither marker is refused (`issuer`)
 
-Through `DeferredCredentialHandler` with `Resolve`, a poll for a
-deferred record with neither `CredentialIdentifier` nor
-`RequestedByConfigurationID` recorded two
-`AuditEventLegacyDeferredAuthorization` events, one checked before
-`Resolve` and one in `RequestDeferredCredential`. It now records one,
-as `RequestDeferredCredential` alone does, so counts and alerts on
-the event see half what v0.83.0 recorded for such a deployment.
+A deferred transaction record with neither `CredentialIdentifier` nor
+`RequestedByConfigurationID`, saved by OID4VCgo v0.81.0 and before or
+written by a deployment without them, was checked against the access
+token granting its credential configuration alone. That let a token
+for another dataset of the configuration collect it. v0.83.0 audited
+each such poll (`AuditEventLegacyDeferredAuthorization`) and
+deprecated the fallback. It's now gone:
+- a poll for such a record is refused with `invalid_transaction_id`,
+  as for an unknown transaction;
+- `DeferredCredentialHandler` calls `Resolve` for none;
+- the event is never recorded. The constant stays, deprecated, and
+  will be removed.
+
+Before upgrading, check on v0.83.0 that
+`AuditEventLegacyDeferredAuthorization` has been silent for a full
+`Limits.DeferredTransactionLifetime`. No such record is then left
+pending. One still pending when you upgrade can't be collected: its
+Wallet asks for the credential again.
+
+A deployment that writes `DeferredTransactionRecord`s itself sets
+`CredentialIdentifier` for a request by `credential_identifier`, or
+`RequestedByConfigurationID` for one by `credential_configuration_id`,
+as `RequestCredential` does.
 
 ### An org-iso-mdoc `IssuerAuthorized` hook gets a `CredentialQueryID`
 

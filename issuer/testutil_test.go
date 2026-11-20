@@ -101,11 +101,26 @@ func newFakeDeferredTransactionStore() *fakeDeferredTransactionStore {
 	}
 }
 
+// put stores record under transactionID. A record with neither
+// marker is stored as RequestCredential defers one requested by
+// credential_configuration_id: for IdentityCredential, unless it names
+// a configuration, which a token with identityScope may collect. A
+// test of an unmarked record unmarks it with Update.
 func (f *fakeDeferredTransactionStore) put(transactionID string, record issuer.DeferredTransactionRecord) {
+	if record.CredentialIdentifier == "" && !record.RequestedByConfigurationID {
+		if record.CredentialConfigurationID == "" {
+			record.CredentialConfigurationID = "IdentityCredential"
+		}
+		record.RequestedByConfigurationID = true
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[transactionID] = record
 }
+
+// identityScope grants IdentityCredential, the configuration put marks
+// records for.
+var identityScope = []string{"identity_credential"}
 
 func (f *fakeDeferredTransactionStore) Get(_ context.Context, transactionID string) (issuer.DeferredTransactionRecord, error) {
 	if f.getErr != nil {
@@ -269,15 +284,4 @@ func (f *fakeAuditSink) recorded() []issuer.AuditEvent {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]issuer.AuditEvent(nil), f.events...)
-}
-
-// recordedExcept is recorded without the events of type except.
-func (f *fakeAuditSink) recordedExcept(except issuer.AuditEventType) []issuer.AuditEvent {
-	var events []issuer.AuditEvent
-	for _, e := range f.recorded() {
-		if e.Type != except {
-			events = append(events, e)
-		}
-	}
-	return events
 }

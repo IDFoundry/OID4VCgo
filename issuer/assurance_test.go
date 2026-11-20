@@ -607,7 +607,7 @@ func TestProductionDeferredRecordWithoutExpiryLapsed(t *testing.T) {
 				Credentials: []oid4vci.IssuedCredential{{Credential: "signed-credential"}},
 			})
 			_, err := iss.RequestDeferredCredential(context.Background(),
-				issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{cfg.Issuer.String()}},
+				issuer.AuthorizedRequest{ClientIdentity: issuer.KnownClientID("client-a"), Audience: []string{cfg.Issuer.String()}, Scopes: identityScope},
 				issuer.DeferredCredentialRequest{TransactionID: "txn-1"})
 			if tc.wantErr {
 				assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)

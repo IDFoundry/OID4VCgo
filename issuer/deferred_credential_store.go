@@ -119,11 +119,9 @@ type DeferredTransactionRecord struct {
 	// authorization detail for it carries credential_identifiers, which
 	// §8.2 says must be used instead. A record with neither it nor
 	// CredentialIdentifier, saved before these fields existed or created
-	// by a deployment itself, is checked against the configuration
-	// alone, and audited (AuditEventLegacyDeferredAuthorization); that
-	// fallback is deprecated, so a deployment creating records itself
-	// should set one or the other. A store must persist it like any
-	// other field.
+	// by a deployment itself, is refused as an unknown transaction: a
+	// deployment creating records itself sets one or the other. A store
+	// must persist it like any other field.
 	RequestedByConfigurationID bool
 
 	// KeyAttestations are the compact Key Attestation JWTs (Appendix D)

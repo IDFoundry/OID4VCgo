@@ -72,7 +72,7 @@ func TestRequestDeferredCredential_AcceptsNoClientIdentity(t *testing.T) {
 	iss := newTestIssuer(t, validConfig(t), deps)
 
 	result, err := iss.RequestDeferredCredential(context.Background(),
-		issuer.AuthorizedRequest{ClientIdentity: issuer.NoClientIdentity{}},
+		issuer.AuthorizedRequest{ClientIdentity: issuer.NoClientIdentity{}, Scopes: identityScope},
 		issuer.DeferredCredentialRequest{TransactionID: "txn-1"},
 	)
 	if err != nil {
