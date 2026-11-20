@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -354,6 +355,123 @@ func TestPresentation_RefreshedSinceShown(t *testing.T) {
 	}
 	if _, err := p.Respond(ctx, sel); err != nil {
 		t.Errorf("Respond in a new presentation: %v", err)
+	}
+}
+
+// hookedKeys is a KeyStore that, once armed, runs a change the first
+// time one of a credential's holder keys is loaded: a refresh or a
+// deletion in another thread, process or Wallet sharing the stores,
+// landing as Respond loads the key of the copy it has reserved.
+type hookedKeys struct {
+	*walletflow.MemoryKeyStore
+	mu     sync.Mutex
+	armed  map[string]bool
+	change func()
+}
+
+// beforeLoad has the next load of one of c's holder keys run change
+// first.
+func (k *hookedKeys) beforeLoad(c walletflow.StoredCredential, change func()) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.armed, k.change = map[string]bool{}, change
+	for _, cp := range c.AllCopies() {
+		k.armed[cp.HolderKeyID] = true
+	}
+}
+
+func (k *hookedKeys) Key(ctx context.Context, id string) (walletflow.Key, error) {
+	k.mu.Lock()
+	change := k.change
+	if k.armed[id] {
+		k.armed, k.change = nil, nil
+	} else {
+		change = nil
+	}
+	k.mu.Unlock()
+	if change != nil {
+		change()
+	}
+	return k.MemoryKeyStore.Key(ctx, id)
+}
+
+// A refresh landing after Respond reserved a copy, before it loads the
+// copy's holder key, deletes that key with the copies it replaces:
+// Respond reports the credential changed, as for one refreshed before it
+// reserved, not the key missing. Nothing is sent, and a new presentation
+// presents the refreshed credential. A deletion landing then is an
+// invalid selection, as one before Respond reserved. The same holds for
+// an mdoc's presentation, whose Respond loads the key as in person.
+func TestRespond_ChangedAsTheKeyLoads(t *testing.T) {
+	f := newFixture(t, walletflowtest.Options{})
+	v := f.env.StartVerifier(t)
+	reader := newMdocReader(t)
+	keys := &hookedKeys{MemoryKeyStore: f.keys}
+	w, err := walletflow.New(walletflow.Config{
+		ClientID: walletflowtest.ClientID, RedirectURI: walletflowtest.RedirectURI, CredentialIssuers: []string{f.env.IssuerURL}, IssuerRoots: f.env.IssuerRoots,
+		VerifierTrust: v.Trust, Development: true, RequestRefresh: true,
+	}, walletflow.Dependencies{Keys: keys, Credentials: f.store, Provider: f.env.Provider, HTTP: f.env.HTTP, Grants: walletflow.NewMemoryGrantStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// Each presents credential id in a new presentation, calling started
+	// once it's started.
+	present := map[string]func(t *testing.T, id string, started func()) error{
+		"dc+sd-jwt": func(t *testing.T, id string, started func()) error {
+			tx, link := v.Begin(t, dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}})
+			p, err := w.StartPresentation(ctx, link)
+			if err != nil {
+				t.Fatal(err)
+			}
+			started()
+			_, err = p.Respond(ctx, walletflow.Selection{"pid": {id}})
+			if err != nil && v.Lookup(t, tx).Status != verifier.TransactionPending {
+				t.Errorf("Respond failed with %v, but the Verifier has an answer", err)
+			}
+			return err
+		},
+		"mso_mdoc": func(t *testing.T, id string, started func()) error {
+			data, _ := reader.ask(t, shopOrigin)
+			p, err := w.StartMdocPresentation(ctx, data, shopOrigin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			started()
+			_, err = p.Respond(ctx, 0, id, familyName())
+			return err
+		},
+	}
+	// changeAsTheKeyLoads presents credential id, running change as
+	// Respond loads its holder key.
+	changeAsTheKeyLoads := func(t *testing.T, format, id string, change func() error) error {
+		t.Helper()
+		held, err := f.store.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return present[format](t, id, func() {
+			keys.beforeLoad(held, func() {
+				if err := change(); err != nil {
+					t.Errorf("changing the credential: %v", err)
+				}
+			})
+		})
+	}
+	for _, c := range receive(t, f, w, walletflowtest.SDJWTConfigurationID, walletflowtest.MdocConfigurationID) {
+		t.Run(c.Format, func(t *testing.T) {
+			err := changeAsTheKeyLoads(t, c.Format, c.ID, func() error { _, _, err := w.RefreshCredential(ctx, c.ID); return err })
+			if !errors.Is(err, walletflow.ErrCredentialChanged) || errors.Is(err, walletflow.ErrNotFound) {
+				t.Fatalf("Respond with the credential refreshed as its key loads = %v, want ErrCredentialChanged", err)
+			}
+			if err := present[c.Format](t, c.ID, func() {}); err != nil {
+				t.Errorf("Respond in a new presentation: %v", err)
+			}
+			err = changeAsTheKeyLoads(t, c.Format, c.ID, func() error { return w.DeleteCredential(ctx, c.ID) })
+			if !errors.Is(err, walletflow.ErrInvalidSelection) || errors.Is(err, walletflow.ErrNotFound) {
+				t.Errorf("Respond with the credential deleted as its key loads = %v, want ErrInvalidSelection", err)
+			}
+		})
 	}
 }
 

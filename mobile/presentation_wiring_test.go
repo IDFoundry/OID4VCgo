@@ -4,6 +4,8 @@ package mobile
 
 import (
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/dcql"
@@ -117,6 +119,79 @@ func TestPresentation_LinkableAtAnotherVerifier(t *testing.T) {
 	second := decode[struct{ ID, Link string }](t, mustText(t)(h.env.RegisteredRequest("dc+sd-jwt", "")))
 	if _, c := candidate(second.Link); !c.is(false, true) {
 		t.Errorf("at another Verifier: %+v, want not shown there, linkable", c)
+	}
+}
+
+// keyLoadHook is a KeyStore that runs hook, once it's set, the first
+// time it's asked for a holder key: as Respond loads the key of the copy
+// it has reserved.
+type keyLoadHook struct {
+	*goKeyStore
+	mu   sync.Mutex
+	hook func()
+}
+
+func (k *keyLoadHook) PublicKey(id string) ([]byte, error) {
+	k.mu.Lock()
+	hook := k.hook
+	if strings.HasPrefix(id, PurposeHolder) {
+		k.hook = nil
+	} else {
+		hook = nil
+	}
+	k.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return k.goKeyStore.PublicKey(id)
+}
+
+// A refresh landing as Respond loads the holder key of the copy it
+// reserved — by the app's extension, say, over the same stores — deletes
+// that key: Respond is invalid_selection, the code ABI.md gives a
+// credential refreshed since it was shown, not not_found. Nothing is
+// sent, and the credential is there, refreshed.
+func TestPresentation_RefreshedAsTheKeyLoads(t *testing.T) {
+	env, err := StartBatchTestEnv(false, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	keys := &keyLoadHook{goKeyStore: newGoKeyStore()}
+	h := harness{env: env, keys: keys.goKeyStore, creds: newGoCredentialStore()}
+	if h.w, err = NewWallet(env.ConfigJSON(), keys, h.creds, env.Provider()); err != nil {
+		t.Fatal(err)
+	}
+	extension, err := NewWallet(env.ConfigJSON(), keys, h.creds, env.Provider())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sdjwt string
+	for _, c := range h.receive(t) {
+		if c.Format == "dc+sd-jwt" {
+			sdjwt = c.ID
+		}
+	}
+	req := decode[struct{ ID, Link string }](t, mustText(t)(env.Request("dc+sd-jwt")))
+	p, err := h.w.StartPresentation(NewOperation(0), req.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys.mu.Lock()
+	keys.hook = func() {
+		if _, err := extension.RefreshCredential(NewOperation(0), sdjwt); err != nil {
+			t.Errorf("RefreshCredential: %v", err)
+		}
+	}
+	keys.mu.Unlock()
+	if _, err := p.Respond(NewOperation(0), `{"pid":["`+sdjwt+`"]}`); code(err) != CodeInvalidSelection {
+		t.Fatalf("Respond with the credential refreshed as its key loads = %v, want %s", err, CodeInvalidSelection)
+	}
+	if got := decode[struct{ Status string }](t, mustText(t)(env.RequestResult(req.ID))); got.Status != "pending" {
+		t.Errorf("the Verifier's request is %s, want pending: nothing sent", got.Status)
+	}
+	if _, err := h.w.Credential(sdjwt); err != nil {
+		t.Errorf("Credential after the refresh: %v", err)
 	}
 }
 

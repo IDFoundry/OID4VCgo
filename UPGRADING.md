@@ -28,6 +28,19 @@ Attestation request without evidence is affected, such as a
 or a native provider of your own: the Swift and Kotlin
 `HttpWalletProvider` always send evidence.
 
+### A credential refreshed or deleted as `Respond` runs is reported as changed (`walletflow`, mobile)
+
+A refresh or a deletion that lands after a presentation's `Respond`
+has reserved a credential's copy, and before it loads the copy's
+holder key, deletes that key: one in another goroutine, process or
+`Wallet` sharing the stores. `Respond` (OpenID4VP, org-iso-mdoc and in
+person) now reports it as it does a credential changed before it
+reserved the copy: `ErrCredentialChanged` for one refreshed, and
+`ErrInvalidSelection` for one deleted (`invalid_selection` on mobile),
+where it was the KeyStore's `ErrNotFound` (`not_found`). Nothing is
+sent either way: start the presentation again. A holder key missing
+from a credential that's still as reserved is still `ErrNotFound`.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
