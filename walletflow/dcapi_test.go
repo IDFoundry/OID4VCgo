@@ -224,6 +224,11 @@ func TestDCAPIPresentation_Unsigned(t *testing.T) {
 	if _, err := v.VerifyDCAPIResponse(ctx, r, misbound.DCAPIResponse); err == nil {
 		t.Error("the page accepted a presentation bound to another origin")
 	}
+	// An origin no platform reports, such as an opaque one, is what the
+	// platform handed over gone wrong: the request is malformed.
+	if _, err := w.StartDCAPIPresentation(ctx, unsigned.Protocol, unsigned.Data, "null"); !errors.Is(err, walletflow.ErrMalformedRequest) {
+		t.Errorf("the origin \"null\": %v, want ErrMalformedRequest", err)
+	}
 }
 
 // A wallet requiring signed requests refuses an unsigned one as from an

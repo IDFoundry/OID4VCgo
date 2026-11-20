@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/b64url"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/strictjson"
+	"github.com/idfoundry/oid4vcgo/internal/weborigin"
 )
 
 // dcAPIResponseMode is the only Response Mode a DC API request may ask
@@ -35,6 +37,11 @@ type ParseDCAPIRequestParams struct {
 	// calling origin, for instance. Never take it from the request
 	// itself, or from anything the caller supplies: it's what keeps a
 	// request one Verifier built from being replayed by another site.
+	// It must be a serialized web origin, as a browser gives a page's
+	// (scheme, host and optional port: "https://verifier.example"), or
+	// an Android app's ("android:apk-key-hash:" and the unpadded
+	// base64url SHA-256 of the app's signing certificate). Anything else,
+	// "null" included, is refused.
 	Origin string
 
 	// VerifierTrust decides whether to trust the certificate chain the
@@ -68,9 +75,11 @@ type ParseDCAPIRequestParams struct {
 // refuses it.
 //
 // The origin is checked first, before the signature, the certificate
-// chain or anything else: a request that doesn't name params.Origin in
-// its expected_origins, or names none, is refused with the same plain
-// error whatever else is wrong with it, and never with a
+// chain or anything else. One in neither of the forms
+// ParseDCAPIRequestParams.Origin takes is refused with a plain error.
+// So is a request that doesn't name params.Origin in its
+// expected_origins, or names none, with the same plain error whatever
+// else is wrong with it, and never with a
 // *RequestRejectedError, the refusal a page is answered with. A page
 // replaying another Verifier's request, or its redirect-flow Request
 // Object, learns nothing of whether this Wallet trusts that Verifier,
@@ -102,8 +111,8 @@ func ParseDCAPIRequest(params ParseDCAPIRequestParams) (AuthorizationRequest, er
 // ParseDCAPIRequestContext is ParseDCAPIRequest ended early, with ctx's
 // error, once ctx is done.
 func ParseDCAPIRequestContext(ctx context.Context, params ParseDCAPIRequestParams) (AuthorizationRequest, error) {
-	if params.Origin == "" {
-		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: Origin is required")
+	if err := checkDCAPIOrigin(params.Origin); err != nil {
+		return AuthorizationRequest{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
@@ -130,6 +139,39 @@ func ParseDCAPIRequestContext(ctx context.Context, params ParseDCAPIRequestParam
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: %w", err)
 	}
 	return finishDCAPIRequest(ctx, wire, params.Origin, cert, wire.ClientID, true)
+}
+
+// androidAppOriginPrefix starts an Android app's origin, as a
+// Credential Manager provider names an app that calls it directly, and
+// as passkeys do: then the unpadded base64url SHA-256 of the app's
+// signing certificate.
+const androidAppOriginPrefix = "android:apk-key-hash:"
+
+// checkDCAPIOrigin refuses origin, a Digital Credentials API request's
+// calling origin, unless it has the form a platform reports one in: a
+// serialized web origin, spelled as a browser gives a page's
+// (weborigin.Check), or an Android app's origin. The presentations are
+// bound to it ("origin:" + origin, OpenID4VP 1.0 Appendix A.4) and a
+// copy is recorded as shown to it, so one that isn't — "null", an
+// opaque origin's, or one with a path, user info or a space — is
+// refused rather than bound to as given.
+func checkDCAPIOrigin(origin string) error {
+	if origin == "" {
+		return errors.New("wallet: parse dc api request: Origin is required")
+	}
+	if hash, app := strings.CutPrefix(origin, androidAppOriginPrefix); app {
+		if digest, err := (b64url.Encoding{}).DecodeString(hash); err != nil || len(digest) != sha256.Size {
+			return fmt.Errorf("wallet: parse dc api request: origin %q isn't an Android app's: %q and the unpadded base64url SHA-256 of its signing certificate", origin, androidAppOriginPrefix)
+		}
+		return nil
+	}
+	if origin == "null" {
+		return errors.New(`wallet: parse dc api request: origin "null" is an opaque origin, which a presentation can't be bound to`)
+	}
+	if err := weborigin.Check(origin); err != nil {
+		return fmt.Errorf("wallet: parse dc api request: %w", err)
+	}
+	return nil
 }
 
 // refuseOtherOrigin is checkExpectedOrigins of a signed request's
@@ -301,8 +343,8 @@ type ParseDCAPIRequestDataParams struct {
 	// Data is REQUIRED: the request's "data", as the platform hands it
 	// over.
 	Data json.RawMessage
-	// Origin is REQUIRED: the calling origin the platform reports, as
-	// for ParseDCAPIRequestParams.Origin.
+	// Origin is REQUIRED: the calling origin the platform reports, in
+	// one of the forms ParseDCAPIRequestParams.Origin takes.
 	Origin string
 	// VerifierTrust decides whether to trust a signed request's
 	// certificate chain: REQUIRED for the signed and multi-signed
@@ -345,10 +387,11 @@ type ParseDCAPIRequestDataParams struct {
 //     Origin, which the platform vouches for — show the holder that.
 //
 // Each is then checked as ParseDCAPIRequest checks a signed request,
-// expected_origins excepted for an unsigned one: a signed or
-// multi-signed request is refused with a plain error, before any of its
-// signatures is checked, unless its expected_origins names Origin. Answer it the same
-// way; the presentations are bound to "origin:" + Origin in every form
+// expected_origins excepted for an unsigned one: Origin's form first,
+// in every form, and then a signed or multi-signed request is refused
+// with a plain error, before any of its signatures is checked, unless
+// its expected_origins names Origin. Answer it the same way; the
+// presentations are bound to "origin:" + Origin in every form
 // (Appendix A.4).
 func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
 	return ParseDCAPIRequestDataContext(context.Background(), params)
@@ -358,8 +401,8 @@ func ParseDCAPIRequestData(params ParseDCAPIRequestDataParams) (AuthorizationReq
 // ctx's error, once ctx is done: it's checked between a multi-signed
 // request's signatures and before the request's query is prepared.
 func ParseDCAPIRequestDataContext(ctx context.Context, params ParseDCAPIRequestDataParams) (AuthorizationRequest, error) {
-	if params.Origin == "" {
-		return AuthorizationRequest{}, errors.New("wallet: parse dc api request: Origin is required")
+	if err := checkDCAPIOrigin(params.Origin); err != nil {
+		return AuthorizationRequest{}, err
 	}
 	if len(params.Data) > MaxDCAPIRequestBytes {
 		return AuthorizationRequest{}, fmt.Errorf("wallet: parse dc api request: data is %d bytes, more than %d", len(params.Data), MaxDCAPIRequestBytes)

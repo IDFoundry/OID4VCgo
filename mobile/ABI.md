@@ -1150,10 +1150,13 @@ returns a `Presentation`, answered with the same steps, except:
   the origin alone, over a signed request by an earlier release,
   counts as another Verifier's: it's `linkable_here`, not
   `shown_to_verifier`.
-- A request that can't be parsed, or comes with no origin, is
-  `invalid_input`: what the platform handed over, not a service's
-  refusal. `StartMdocPresentation`'s is too. (Before OID4VCWallet 0.9.0
-  both were `protocol`.)
+- A request that can't be parsed, or comes with no origin or one that
+  is neither a serialized web origin nor an Android app's
+  (`android:apk-key-hash:` and the unpadded base64url SHA-256 of its
+  signing certificate) — `null` included — is `invalid_input`: what
+  the platform handed over, not a service's refusal.
+  `StartMdocPresentation`'s is too. (Before OID4VCWallet 0.9.0 both
+  were `protocol`.)
 
 `StartDCAPIPresentation` and these fields were added within ABI version
 12, without changing anything there.

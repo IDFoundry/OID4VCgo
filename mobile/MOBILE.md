@@ -1385,7 +1385,8 @@ answer, bound to the page's origin.
 - **The origin** is Chrome's, which Credential Manager hands over only
   for a browser on the app's privileged list (Chrome's entries from
   Google's published list); an app calling directly is named by its
-  signing certificate.
+  signing certificate. Go refuses an origin in any other form, `null`
+  included.
 - **Only Credential Manager may start the provider activity.** It's
   exported, so any app can start it, and androidx reads the request,
   the calling app's package and certificate, and the origin from the

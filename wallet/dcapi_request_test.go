@@ -100,7 +100,7 @@ func TestParseDCAPIRequest_Refusals(t *testing.T) {
 		invalidRequest bool
 	}{
 		"another origin":        {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: "https://attacker.example", VerifierTrust: trust}, "expected_origins", false},
-		"origin with a path":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin + "/", VerifierTrust: trust}, "expected_origins", false},
+		"origin with a path":    {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, Origin: testDCAPIOrigin + "/", VerifierTrust: trust}, "scheme, host and optional port only", false},
 		"no origin":             {wallet.ParseDCAPIRequestParams{Request: built.RequestObject, VerifierTrust: trust}, "Origin is required", false},
 		"redirect-flow request": {wallet.ParseDCAPIRequestParams{Request: redirect.RequestObject, Origin: testDCAPIOrigin, VerifierTrust: trust}, "expected_origins is required", false},
 		"redirect-flow, origin": {wallet.ParseDCAPIRequestParams{Request: redirectNamingOrigin, Origin: testDCAPIOrigin, VerifierTrust: trust}, "response_mode", true},

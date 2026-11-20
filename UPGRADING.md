@@ -36,6 +36,22 @@ synchronized. `BuildAuthorizationRequest` and
 `BuildDCAPIAuthorizationRequest`, which know no lifetime, are
 unchanged.
 
+### A Digital Credentials API origin must be one a platform reports (`wallet`, `walletflow`, `mobile`)
+
+`wallet.ParseDCAPIRequest` and `ParseDCAPIRequestData`, and so
+`walletflow`'s and the mobile libraries' `StartDCAPIPresentation`, now
+refuse a calling origin unless it is a serialized web origin, spelled
+as a browser gives a page's (`https://verifier.example`, with no path,
+trailing slash, user info, default port or uppercase), or an Android
+app's (`android:apk-key-hash:` and the unpadded base64url SHA-256 of
+its signing certificate). Anything else, an opaque origin's `null`
+included, is refused with a plain error before the request is read:
+`walletflow.ErrMalformedRequest`, and `invalid_input` across the
+mobile boundary. Before, any non-empty origin was accepted and the
+presentations were bound to it as given. Pass the origin exactly as the
+platform reports it: Chrome's through Credential Manager, and the
+Android library's own for an app, already have this form.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

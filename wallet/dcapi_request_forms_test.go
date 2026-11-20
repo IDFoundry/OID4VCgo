@@ -263,6 +263,52 @@ func TestParseDCAPIRequestData_Refusals(t *testing.T) {
 	}
 }
 
+// TestParseDCAPIRequestData_OriginForm: the presentations are bound to
+// the calling origin, and a copy is recorded as shown to it, so it must
+// have the form a platform reports one in: a serialized web origin, as
+// a browser gives a page's, or an Android app's origin,
+// "android:apk-key-hash:" and the unpadded base64url SHA-256 of its
+// signing certificate. Any other origin — "null", one with a path, user
+// info, a space or another spelling — is refused with a plain error,
+// in every request form, whatever the request's expected_origins name.
+func TestParseDCAPIRequestData_OriginForm(t *testing.T) {
+	f := newDCAPIForms(t)
+	certHash := sha256.Sum256([]byte("an app's signing certificate"))
+	appOrigin := "android:apk-key-hash:" + base64.RawURLEncoding.EncodeToString(certHash[:])
+	for _, origin := range []string{testDCAPIOrigin, "http://localhost:8080", "https://[::1]:8443", "https://xn--bcher-kva.example", appOrigin} {
+		req, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{Protocol: wallet.DCAPIProtocolUnsigned, Data: f.unsigned(t, nil), Origin: origin})
+		if err != nil || req.Origin != origin {
+			t.Errorf("origin %q: %v (origin %q), want it accepted", origin, err, req.Origin)
+		}
+	}
+	for _, origin := range []string{
+		"null",
+		"https://rp.example client_id:x509_hash:AAAA",
+		"https://rp.example/path?q#frag",
+		"https://user@rp.example",
+		"https://RP.example",
+		"https://rp.example:443",
+		"rp.example",
+		"android:apk-key-hash:",
+		"android:apk-key-hash:" + base64.URLEncoding.EncodeToString(certHash[:]),
+		"android:apk-key-hash:" + base64.RawURLEncoding.EncodeToString(certHash[:16]),
+		appOrigin[:30] + "\n" + appOrigin[30:],
+	} {
+		named := func(c map[string]any) { c["expected_origins"] = []string{origin} }
+		signed := mustJSON(t, map[string]string{"request": resign(t, f.key, f.built.RequestObject, named)})
+		for protocol, data := range map[string]json.RawMessage{
+			wallet.DCAPIProtocolUnsigned:    f.unsigned(t, nil),
+			wallet.DCAPIProtocolSigned:      signed,
+			wallet.DCAPIProtocolMultiSigned: f.multiSigned(t, named, signer{key: f.key, cert: f.cert}),
+		} {
+			_, err := wallet.ParseDCAPIRequestData(wallet.ParseDCAPIRequestDataParams{Protocol: protocol, Data: data, Origin: origin, VerifierTrust: f.trust})
+			if err == nil || !strings.Contains(err.Error(), "origin") || errors.As(err, new(*wallet.RequestRejectedError)) {
+				t.Errorf("%s from %q: %v, want a plain error about the origin", protocol, origin, err)
+			}
+		}
+	}
+}
+
 // A DC API request whose JSON another parser would read differently —
 // a member twice, or a member named like a known one in another case —
 // is refused in every form: the platform's credential matcher reads the

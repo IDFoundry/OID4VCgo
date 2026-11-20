@@ -85,15 +85,19 @@ func TestDCAPIPresentation(t *testing.T) {
 	}
 }
 
-// A request that isn't one, or comes with no origin, is refused as
-// invalid_input: what the platform handed over, not a service's refusal.
+// A request that isn't one, or comes with no origin or one no platform
+// reports, is refused as invalid_input: what the platform handed over,
+// not a service's refusal.
 func TestDCAPIPresentation_Garbled(t *testing.T) {
 	h := newHarness(t, false)
 	if _, err := h.w.StartDCAPIPresentation(NewOperation(0), "openid4vp-v1-signed", []byte(`{"request":"not.a.jws"}`), dcapiOrigin); code(err) != CodeInvalidInput {
 		t.Errorf("a garbled request: %v, want %s", err, CodeInvalidInput)
 	}
-	if _, err := h.w.StartDCAPIPresentation(NewOperation(0), "openid4vp-v1-signed", []byte(`{}`), ""); code(err) != CodeInvalidInput {
-		t.Errorf("no origin: %v, want %s", err, CodeInvalidInput)
+	r := decode[dcapiRequest](t, mustText(t)(h.env.DCAPIRequest("dc+sd-jwt", dcapiOrigin, false)))
+	for _, origin := range []string{"", "null", dcapiOrigin + "/"} {
+		if _, err := h.w.StartDCAPIPresentation(NewOperation(0), r.Protocol, []byte(r.Data), origin); code(err) != CodeInvalidInput {
+			t.Errorf("origin %q: %v, want %s", origin, err, CodeInvalidInput)
+		}
 	}
 	if _, err := h.w.StartMdocPresentation(NewOperation(0), []byte("not a request"), dcapiOrigin); code(err) != CodeInvalidInput {
 		t.Errorf("a garbled mdoc request: %v, want %s", err, CodeInvalidInput)
