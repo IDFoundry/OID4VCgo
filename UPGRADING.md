@@ -34,6 +34,25 @@ names a controller ID with a variation selector now stands without
 that information (`RequestInfoError`), as one with a format character
 already did.
 
+### A logo whose host isn't ASCII in its last label is dropped (`walletflow`, mobile)
+
+`walletflow` now drops a logo URI whose host isn't ASCII in its last
+label (or, under `arpa`, in the label before it), as it drops one
+naming an IP address or a local name. An image loader maps such a host
+(IDNA, UTS #46) before resolving it, and full-width or other
+compatibility forms of digits, letters and full stops can spell an IP
+address or a local name there: `https://１２７.０.０.１/l.png` loads
+from 127.0.0.1. An internationalized name in its A-labels (`xn--…`), as
+RFC 3986 §3.2.2 asks a URI to carry it, is judged as before, and so is
+one whose last label is ASCII, such as `bücher.example`; an issuer
+whose logo URI names a host under an internationalized top-level
+domain in its U-labels loses its logo until it writes the A-labels.
+
+The filter judges names only. If your app loads logos with a client
+that connects to any address, have it refuse loopback, private and
+link-local addresses, as the demo apps' `LogoStore` does: a public name
+can resolve to one.
+
 ### A status list address that embeds a non-public IPv4 address is refused, however written (`statuslist`)
 
 `statuslist.Fetcher`, which every status and identifier list check

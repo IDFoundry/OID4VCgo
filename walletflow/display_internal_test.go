@@ -1,7 +1,11 @@
 package walletflow
 
 import (
+	"net/netip"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 )
@@ -47,6 +51,50 @@ func TestLogoOf(t *testing.T) {
 		"https://issuer.lan.example/l.png":    true,
 		"https://internal.issuer.example/l.p": true,
 	} {
+		if got := logoOf(&oid4vci.Logo{URI: uri}) != nil; got != keep {
+			t.Errorf("logoOf(%q) kept = %v, want %v", uri, got, keep)
+		}
+	}
+}
+
+// A host that isn't ASCII is dropped unless its last label is, and
+// under arpa the label before it too: a URL parser maps it first (IDNA,
+// UTS #46), where full-width and other compatibility forms of digits,
+// letters and full stops may make an IP address or a local name of it.
+// A name whose deciding labels are ASCII is judged by them.
+func TestLogoOf_MappedHosts(t *testing.T) {
+	loopback := netip.AddrFrom4([4]byte{127, 0, 0, 1}).String()
+	private := netip.AddrFrom4([4]byte{192, 168, 1, 1}).String()
+	// wide is s with its ASCII letters and digits in their full-width
+	// forms.
+	wide := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r)) {
+				return r + 0xfee0
+			}
+			return r
+		}, s)
+	}
+	// last is s with what follows its last full stop replaced by tail.
+	last := func(s, tail string) string { return s[:strings.LastIndex(s, ".")] + tail }
+	for host, keep := range map[string]bool{
+		wide(loopback):                                      false,
+		last(private, "."+wide("1")):                        false,
+		last(loopback, "\u30021"):                           false, // IDEOGRAPHIC FULL STOP
+		last(loopback, ".\U0001d7cf"):                       false, // MATHEMATICAL BOLD DIGIT ONE
+		last(private, ".\u2460"):                            false, // CIRCLED DIGIT ONE
+		"printer.local\uff61":                               false, // HALFWIDTH IDEOGRAPHIC FULL STOP
+		"nas." + wide("local"):                              false,
+		"issuer.loc\u00adal":                                false, // a soft hyphen, which IDNA drops
+		wide("home") + ".arpa":                              false,
+		"b\u00fccher.local":                                 false,
+		"\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444": false, // in its A-labels below
+		"xn--e1afmkfd.xn--p1ai":                             true,
+		"b\u00fccher.example":                               true,
+		"\u043f\u0440\u0438\u043c\u0435\u0440.example":      true,
+		wide("2130706433") + ".example":                     true,
+	} {
+		uri := "https://" + host + "/logo.png"
 		if got := logoOf(&oid4vci.Logo{URI: uri}) != nil; got != keep {
 			t.Errorf("logoOf(%q) kept = %v, want %v", uri, got, keep)
 		}

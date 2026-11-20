@@ -467,7 +467,9 @@ ecosystem, and record why:
   thumbnail and screenshots show no claims or portraits.
 - Fetch an issuer's `Logo` once, when the holder accepts the credential,
   and keep it: loading it on the offer's preview tells whoever serves it
-  that the offer was opened.
+  that the offer was opened. Fetch it through a client that refuses to
+  connect to a loopback, private or link-local address: the library
+  judges its host by name only.
 
 ## The build
 
