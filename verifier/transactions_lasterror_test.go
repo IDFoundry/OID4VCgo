@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -93,5 +95,59 @@ func TestTransactions_LastErrorCarriesNoSenderText(t *testing.T) {
 	}
 	if view, _ := f.txs.Lookup(ctx, begun.ID, "browser-binding-A"); view.LastError != "the answer was refused: a credential's holder binding failed (holder_binding)" {
 		t.Errorf("wrong nonce: LastError = %q", view.LastError)
+	}
+}
+
+// TestTransactions_ErrorCodeKeptOnlyWhenDefined: an error response is
+// unauthenticated — anyone holding the request's QR code has its state
+// and response key — so its code reaches LastError, and a same-device
+// request's redirect_uri, as sent only when RFC 6749, RFC 9101 or
+// OpenID4VP 1.0 §8.5 defines it for an error response. Any other code,
+// however plain a token, is recorded and redirected as
+// unrecognized_error, whether the error response is encrypted, sent
+// unencrypted, or answers a Digital Credentials API request.
+func TestTransactions_ErrorCodeKeptOnlyWhenDefined(t *testing.T) {
+	ctx := context.Background()
+	f := newTxFixture(t, nil)
+	srv := httptest.NewServer(f.txs.ResponseHandler())
+	defer srv.Close()
+	for _, c := range []struct{ code, want string }{
+		{"access_denied", "access_denied"},
+		{"invalid_request_object", "invalid_request_object"},
+		{"wallet_unavailable", "wallet_unavailable"},
+		{"identity_check_failed_reply_to_our_sms_with_your_pin_now", "unrecognized_error"},
+		{"processing_error", "unrecognized_error"},
+		{"Call +1 555 0100 <b>now</b>", "unrecognized_error"},
+	} {
+		wantLastError := "an error response arrived: " + c.want
+		for name, form := range map[string]func(verifier.Begun) url.Values{
+			"encrypted":   func(b verifier.Begun) url.Values { return url.Values{"response": {f.errorAnswer(b, c.code, "")}} },
+			"unencrypted": func(b verifier.Begun) url.Values { return url.Values{"error": {c.code}, "state": {f.stateOf(b)}} },
+		} {
+			begun := f.begin(testBinding, true)
+			got := postResponse(t, srv.URL, form(begun))
+			var body struct {
+				RedirectURI string `json:"redirect_uri"`
+			}
+			_ = json.Unmarshal([]byte(got.body), &body)
+			redirect, err := url.Parse(body.RedirectURI)
+			if got.status != http.StatusOK || err != nil || redirect.Query().Get("error") != c.want {
+				t.Errorf("%s %q: %d %s, want 200 with a redirect_uri carrying error=%s", name, c.code, got.status, got.body, c.want)
+			}
+			if view, err := f.txs.Lookup(ctx, begun.ID, testBinding); err != nil || view.LastError != wantLastError {
+				t.Errorf("%s %q: LastError = %q (%v), want %q", name, c.code, view.LastError, err, wantLastError)
+			}
+		}
+		dcapi := f.beginDCAPI(testBinding)
+		answer, err := json.Marshal(map[string]string{"error": c.code})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.txs.HandleDCAPIResponse(ctx, dcapi.ID, testBinding, answer); err == nil {
+			t.Fatalf("DC API %q: an error answer was accepted", c.code)
+		}
+		if view, err := f.txs.Lookup(ctx, dcapi.ID, testBinding); err != nil || view.LastError != wantLastError {
+			t.Errorf("DC API %q: LastError = %q (%v), want %q", c.code, view.LastError, err, wantLastError)
+		}
 	}
 }

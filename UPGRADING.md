@@ -7,6 +7,22 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### A Wallet's error code is kept only when a specification defines it (`verifier`)
+
+`Transactions` records a Wallet's error response as the request's
+`LastError`, and sends a same-device request's browser back to
+`RedirectURI` with its code as `error`. Anyone holding the request's
+QR code or link can send one, so the code is now kept as sent only when
+RFC 6749 §4.1.2.1, RFC 9101 §7 or OpenID4VP 1.0 §8.5 defines it, and
+any other code is recorded and redirected as `unrecognized_error`.
+Before, any code that was a plain token of up to 64 characters was
+kept, and another was recorded without a code and redirected as
+`invalid_request`. A page that reads `error` at its `RedirectURI`, or
+`LastError`, sees `unrecognized_error` for those codes. `OnRefused`
+still gets an encrypted error response's own code.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

@@ -639,14 +639,14 @@ func TestTransactions_LookupNeedsTheBinding(t *testing.T) {
 
 // TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly: an error
 // response's description is the sender's text, so LastError keeps only
-// a plain error code.
+// its error code, and only one a specification defines.
 func TestTransactions_LastErrorFromAWalletErrorIsItsCodeOnly(t *testing.T) {
 	ctx := context.Background()
 	f := newTxFixture(t, nil)
 	begun := f.begin("browser-binding-A", false)
 	for _, c := range []struct{ code, want string }{
 		{"access_denied", "an error response arrived: access_denied"},
-		{"Call +1 555 0100 <b>now</b>", "an error response arrived"},
+		{"Call +1 555 0100 <b>now</b>", "an error response arrived: unrecognized_error"},
 	} {
 		if _, err := f.txs.HandleResponse(ctx, f.errorAnswer(begun, c.code, "Your account is locked, call +1 555 0100")); err == nil {
 			t.Fatal("an error response was accepted")
@@ -751,8 +751,8 @@ func TestTransactions_ErrorResponses(t *testing.T) {
 		t.Errorf("same-device decline: %d %v, want 200 with a redirect_uri carrying error=access_denied", status, body)
 	}
 	odd := f.begin("browser-binding-A", true)
-	if _, body := post(url.Values{"response": {f.errorAnswer(odd, "Not-A-Code", "")}}); !strings.Contains(body["redirect_uri"], "error=invalid_request") {
-		t.Errorf("an error code that isn't a plain token: %v, want error=invalid_request", body)
+	if _, body := post(url.Values{"response": {f.errorAnswer(odd, "Not-A-Code", "")}}); !strings.Contains(body["redirect_uri"], "error=unrecognized_error") {
+		t.Errorf("an error code no specification defines: %v, want error=unrecognized_error", body)
 	}
 
 	cross := f.begin("browser-binding-A", false)

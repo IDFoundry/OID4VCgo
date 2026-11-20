@@ -1620,7 +1620,8 @@ changes whether *every* bullet below is `(done)`.
   browser binding — a secret the caller keeps, as a cookie or
   server-side — since its ID is public in the `request_uri`, and a
   refused answer's `LastError` is kept short and printable, with a
-  Wallet's own error response reduced to its error code. The store's capabilities
+  Wallet's own error response reduced to its error code, and a code no
+  specification defines to `unrecognized_error`. The store's capabilities
   (`Durable`, `AtomicUpdate`) are checked against the assurance level,
   as for `issuer`'s stores. `TransactionCodec` encodes a transaction,
   every field with its types, for a store that keeps it outside the
