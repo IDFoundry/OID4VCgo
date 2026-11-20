@@ -20,6 +20,7 @@ import (
 	"time"
 	"weak"
 
+	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
 	"github.com/idfoundry/oid4vcgo/internal/statuscache"
 )
 
@@ -54,7 +55,10 @@ type Fetcher struct {
 	// Transport is used under each address policy and reused after, so
 	// fetches keep connections and TLS sessions alive between them:
 	// don't change the Transport once it's in use. Any other
-	// RoundTripper is refused unless UncheckedTransport is set.
+	// RoundTripper is refused unless UncheckedTransport is set. A nil
+	// Transport means http.DefaultTransport's, copied, or, should the
+	// program have replaced it with another RoundTripper (one tracing
+	// its requests, say), Go's default settings without that wrapper.
 	HTTP *http.Client
 
 	// MaxBytes bounds a token's size; zero means DefaultMaxTokenBytes
@@ -392,16 +396,20 @@ func (p addressPolicy) apply(base *http.Transport) *http.Transport {
 }
 
 // defaultTransports are the transports for a Fetcher whose HTTP client
-// has no Transport, one per policy, each built from
-// http.DefaultTransport on first use and shared by every such Fetcher.
-var defaultTransports [8]struct {
+// has no Transport, one per policy, each built on first use from
+// http.DefaultTransport (defaulttransport.Clone) and shared by every
+// such Fetcher.
+var defaultTransports [8]defaultTransportSlot
+
+// defaultTransportSlot is one of defaultTransports.
+type defaultTransportSlot struct {
 	once sync.Once
 	t    *http.Transport
 }
 
 func (p addressPolicy) defaultTransport() *http.Transport {
 	slot := &defaultTransports[p.index()]
-	slot.once.Do(func() { slot.t = p.apply(http.DefaultTransport.(*http.Transport)) })
+	slot.once.Do(func() { slot.t = p.apply(defaulttransport.Clone()) })
 	return slot.t
 }
 

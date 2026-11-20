@@ -17,6 +17,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -728,7 +729,7 @@ func developmentClient(pemText string) (*http.Client, error) {
 	if !pool.AppendCertsFromPEM([]byte(pemText)) {
 		return nil, errors.New("no PEM certificates")
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := defaulttransport.Clone()
 	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	return &http.Client{Transport: transport, Timeout: developmentTimeout}, nil
 }

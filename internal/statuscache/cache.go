@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -413,7 +414,7 @@ func (c *Cache) fly(ctx context.Context, fk flightKey, f *flight, fetch Fetch, h
 			held = f.stored.validators()
 		}
 	}
-	res, err := fetch(ctx, held)
+	res, err := callFetch(ctx, fetch, held)
 	at := c.opts.Now()
 	res, digest, fromStore, err := settleFetched(res, err, f.stored, f.prior, held)
 	c.mu.Lock()
@@ -427,6 +428,18 @@ func (c *Cache) fly(ctx context.Context, fk flightKey, f *flight, fetch Fetch, h
 	}
 	c.mu.Unlock()
 	close(f.done)
+}
+
+// callFetch is fetch(ctx, held), a panic returned as its error: fly
+// runs on a goroutine of its own, where a panic would end the process,
+// rather than fail the checks waiting on the flight.
+func callFetch(ctx context.Context, fetch Fetch, held Validators) (res Fetched, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			res, err = Fetched{}, fmt.Errorf("statuscache: the fetch panicked: %v", r)
+		}
+	}()
+	return fetch(ctx, held)
 }
 
 // settleFetched makes what fetch answered, with held the validators it
@@ -480,6 +493,17 @@ func (c *Cache) settle(ctx context.Context, k key, fk flightKey, f *flight, veri
 		}
 		return nil
 	}
+	// This caller verifies f. However that ends, a panic in verify or
+	// recheck included, f ends with it, so later callers fetch afresh,
+	// and the turn passes to the next caller waiting on f, which
+	// verifies it again if this one didn't pass it, rather than wait for
+	// a turn that's never given back.
+	defer func() {
+		c.mu.Lock()
+		c.endFlight(fk, f)
+		c.mu.Unlock()
+		<-f.turn
+	}()
 	if f.notModified {
 		return c.settleNotModified(k, fk, f, recheck)
 	}
@@ -503,18 +527,15 @@ func (c *Cache) settle(ctx context.Context, k key, fk flightKey, f *flight, veri
 	} else {
 		c.refuse(fk, f)
 	}
-	c.mu.Lock()
-	c.endFlight(fk, f)
-	c.mu.Unlock()
-	<-f.turn
 	return err
 }
 
 // settleNotModified is settle of a flight whose fetch found its prior
-// entry unchanged: the caller holds f.turn. The entry's memo is checked
-// again, as a cached one would be, and kept for as long as the
-// response allows once a check passes it. One no check passes is
-// dropped, so that the next check fetches the token in full.
+// entry unchanged: the caller holds f.turn, which settle gives back.
+// The entry's memo is checked again, as a cached one would be, and
+// kept for as long as the response allows once a check passes it. One
+// no check passes is dropped, so that the next check fetches the token
+// in full.
 func (c *Cache) settleNotModified(k key, fk flightKey, f *flight, recheck Recheck) error {
 	prior := f.prior
 	err := recheck(prior.memo)
@@ -533,10 +554,6 @@ func (c *Cache) settleNotModified(k key, fk flightKey, f *flight, recheck Rechec
 		}
 		c.mu.Unlock()
 	}
-	c.mu.Lock()
-	c.endFlight(fk, f)
-	c.mu.Unlock()
-	<-f.turn
 	return err
 }
 
