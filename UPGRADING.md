@@ -41,6 +41,19 @@ where it was the KeyStore's `ErrNotFound` (`not_found`). Nothing is
 sent either way: start the presentation again. A holder key missing
 from a credential that's still as reserved is still `ErrNotFound`.
 
+### A mobile configuration naming a member twice is refused (mobile)
+
+`NewWallet` and `NewProximityReader` now refuse, as `invalid_input`, a
+configuration in which an object, at any depth, names a member twice,
+and `RespondDocuments` an answer in `answersJSON` that does. Only the
+last of the two counted, so a check of the configuration's text that
+reads the first `"development": false` passed one that went on to set
+`"development": true`. Like the library's other JSON parsing, they
+also refuse text that isn't UTF-8 or escapes a lone surrogate. The
+Swift and Kotlin libraries encode their configurations from typed
+values, which can't name a member twice: only JSON written or
+assembled as text is affected.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

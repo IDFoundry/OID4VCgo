@@ -614,7 +614,10 @@ combination is `invalid_input`. Added within ABI version 12.
 `NewWallet`, and `NewProximityReader`, refuse a configuration with a key
 they don't know, one that matches a key only in case, or anything after
 the JSON object, so a misspelled option is never silently left at its
-default.
+default. They refuse an object, at any depth, that names a member twice
+too (within ABI 16): only the last would count, so a check of the
+configuration's text that reads the first `"development"` could pass
+one that sets the second.
 `mdoc_reader_require_eku`
 recognizes only reader certificates with the ISO/IEC 18013-5 reader
 authentication extended key usage (1.0.18013.5.1.6), and
@@ -1173,7 +1176,8 @@ sent to the reader.
 `elementsJSON` is a JSON array of `[namespace, identifier]` pairs, each
 one the document requested (`invalid_selection` otherwise); an element
 that isn't a pair of strings, or anything after the array, is
-`invalid_input` (in `answersJSON` too), and
+`invalid_input` (in `answersJSON` too, as is an answer naming a member
+twice, within ABI 16), and
 `document` an index into `documents`. The credential's next unused copy
 is presented, recorded as shown to `"origin:" + origin`. Its holder key
 signs during `Respond`. A malformed request is `protocol`.
