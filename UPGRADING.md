@@ -7,66 +7,6 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
-## v0.84.0 → v0.85.0
-
-### A holder takes a reader's kid and alg only as RFC 9052 types them, and short (`proximity`, `walletflow`, mobile)
-
-A holder now refuses a SessionEstablishment whose EReaderKey carries a
-kid that isn't a byte string of at most 64 bytes, or an alg that isn't
-an integer or a text string of at most 64 bytes: its device key signs
-the EReaderKeyBytes as sent, and a reader could put close to 1 KiB of
-its own choosing there as a kid, or anything at all as an alg. An
-ephemeral key needs neither, and ISO/IEC 18013-5's Annex D, Multipaz
-and this package's own readers send neither. Such a message is
-refused as one that doesn't decode: `TrySessionEstablishment`
-rejects it, and `HandleSessionEstablishment` ends the session.
-
-### Text shown to the holder loses its variation selectors (`walletflow`, `proximity`, mobile)
-
-Text from another party that the holder is shown (an issuer's display
-metadata, a reader's names, an error's text) now has every variation
-selector dropped, U+FE0F, which asks for an emoji's colour
-presentation, among them. Each shows as nothing, so a run of them can
-carry text no one sees, or set apart a name that looks the same as
-another. An emoji in an issuer's name then shows in its default
-presentation. A proximity request whose second-edition information
-names a controller ID with a variation selector now stands without
-that information (`RequestInfoError`), as one with a format character
-already did.
-
-### A logo whose host isn't ASCII in its last label is dropped (`walletflow`, mobile)
-
-`walletflow` now drops a logo URI whose host isn't ASCII in its last
-label (or, under `arpa`, in the label before it), as it drops one
-naming an IP address or a local name. An image loader maps such a host
-(IDNA, UTS #46) before resolving it, and full-width or other
-compatibility forms of digits, letters and full stops can spell an IP
-address or a local name there: `https://１２７.０.０.１/l.png` loads
-from 127.0.0.1. An internationalized name in its A-labels (`xn--…`), as
-RFC 3986 §3.2.2 asks a URI to carry it, is judged as before, and so is
-one whose last label is ASCII, such as `bücher.example`; an issuer
-whose logo URI names a host under an internationalized top-level
-domain in its U-labels loses its logo until it writes the A-labels.
-
-The filter judges names only. If your app loads logos with a client
-that connects to any address, have it refuse loopback, private and
-link-local addresses, as the demo apps' `LogoStore` does: a public name
-can resolve to one.
-
-### A status list address that embeds a non-public IPv4 address is refused, however written (`statuslist`)
-
-`statuslist.Fetcher`, which every status and identifier list check
-uses, now decodes two more IPv6 forms that embed an IPv4 address, as
-FAPIgo's fapihttp does: SIIT's IPv4-translated `::ffff:0:a.b.c.d` and
-an ISATAP interface identifier (`…:0:5efe:a.b.c.d` or
-`…:200:5efe:a.b.c.d`, under any prefix). A translator or router on the
-path delivers such an address to the IPv4 one, so it's refused when
-that IPv4 address is: loopback unless `AllowLoopback`, private or
-link-local unless `AllowPrivate`. A zone in an IPv6 literal
-(`[…%25eth0]`) no longer hides an address from the policy's ranges and
-embeddings. A status list served at such an address needs the same
-setting as one served at its IPv4 address.
-
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values
@@ -723,6 +663,64 @@ Set it in production, with your stores sealed (sqlstore's `DB` with an
 `Options.Sealer`). `New` calls `CheckConfiguration` at every level,
 with the provider's level; the two verifiers refuse only under
 production, so other levels are unchanged.
+
+### A holder takes a reader's kid and alg only as RFC 9052 types them, and short (`proximity`, `walletflow`, mobile)
+
+A holder now refuses a SessionEstablishment whose EReaderKey carries a
+kid that isn't a byte string of at most 64 bytes, or an alg that isn't
+an integer or a text string of at most 64 bytes: its device key signs
+the EReaderKeyBytes as sent, and a reader could put close to 1 KiB of
+its own choosing there as a kid, or anything at all as an alg. An
+ephemeral key needs neither, and ISO/IEC 18013-5's Annex D, Multipaz
+and this package's own readers send neither. Such a message is
+refused as one that doesn't decode: `TrySessionEstablishment`
+rejects it, and `HandleSessionEstablishment` ends the session.
+
+### Text shown to the holder loses its variation selectors (`walletflow`, `proximity`, mobile)
+
+Text from another party that the holder is shown (an issuer's display
+metadata, a reader's names, an error's text) now has every variation
+selector dropped, U+FE0F, which asks for an emoji's colour
+presentation, among them. Each shows as nothing, so a run of them can
+carry text no one sees, or set apart a name that looks the same as
+another. An emoji in an issuer's name then shows in its default
+presentation. A proximity request whose second-edition information
+names a controller ID with a variation selector now stands without
+that information (`RequestInfoError`), as one with a format character
+already did.
+
+### A logo whose host isn't ASCII in its last label is dropped (`walletflow`, mobile)
+
+`walletflow` now drops a logo URI whose host isn't ASCII in its last
+label (or, under `arpa`, in the label before it), as it drops one
+naming an IP address or a local name. An image loader maps such a host
+(IDNA, UTS #46) before resolving it, and full-width or other
+compatibility forms of digits, letters and full stops can spell an IP
+address or a local name there: `https://１２７.０.０.１/l.png` loads
+from 127.0.0.1. An internationalized name in its A-labels (`xn--…`), as
+RFC 3986 §3.2.2 asks a URI to carry it, is judged as before, and so is
+one whose last label is ASCII, such as `bücher.example`; an issuer
+whose logo URI names a host under an internationalized top-level
+domain in its U-labels loses its logo until it writes the A-labels.
+
+The filter judges names only. If your app loads logos with a client
+that connects to any address, have it refuse loopback, private and
+link-local addresses, as the demo apps' `LogoStore` does: a public name
+can resolve to one.
+
+### A status list address that embeds a non-public IPv4 address is refused, however written (`statuslist`)
+
+`statuslist.Fetcher`, which every status and identifier list check
+uses, now decodes two more IPv6 forms that embed an IPv4 address, as
+FAPIgo's fapihttp does: SIIT's IPv4-translated `::ffff:0:a.b.c.d` and
+an ISATAP interface identifier (`…:0:5efe:a.b.c.d` or
+`…:200:5efe:a.b.c.d`, under any prefix). A translator or router on the
+path delivers such an address to the IPv4 one, so it's refused when
+that IPv4 address is: loopback unless `AllowLoopback`, private or
+link-local unless `AllowPrivate`. A zone in an IPv6 literal
+(`[…%25eth0]`) no longer hides an address from the policy's ranges and
+embeddings. A status list served at such an address needs the same
+setting as one served at its IPv4 address.
 
 ## v0.82.0 → v0.83.0
 
