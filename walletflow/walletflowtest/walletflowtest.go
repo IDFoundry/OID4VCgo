@@ -966,7 +966,7 @@ func (e *Env) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	result := server.Deny("the request names a resource other than this Credential Issuer")
 	if resources, err := e.iss.AuthorizationResources(interaction.Interaction.Resources); err == nil {
 		result = server.Authorize(subject, authCtx, server.GrantedAuthorization{
-			Scope: interaction.Interaction.Scope, GrantID: grantID, AuthorizationDetails: details, Resources: resources,
+			Scope: e.iss.UndetailedScopes(interaction.Interaction.Scope, details), GrantID: grantID, AuthorizationDetails: details, Resources: resources,
 		})
 	}
 	done, err := e.srv.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{Handle: interaction.Handle, Result: result})

@@ -127,7 +127,10 @@ type ExchangePreAuthorizedCodeResult struct {
 	// RefreshToken, set by the caller before WriteJSON, is the Token
 	// Response's refresh_token: one the Authorization Server issued for
 	// this grant, so the Wallet can refresh its credentials (OpenID4VCI
-	// 1.0 §13.5). Issue it with server.IssueRefreshTokenRequest.Resources
+	// 1.0 §13.5). Revoking its grant ends it, but not this response's
+	// access token, which names no grant, until that expires: for a
+	// grant that may be revoked, prefer RedeemPreAuthorizedCode and
+	// server.Server.IssueAccessToken (see VerifiedPreAuthorizedCode). Issue it with server.IssueRefreshTokenRequest.Resources
 	// set to Config.Issuer alone: without them, the access tokens it
 	// refreshes into are addressed to the Authorization Server, and a
 	// Credential Issuer sharing that identifier takes them for its own
@@ -243,8 +246,20 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 // the proof was checked under the Authorization Server's own DPoP replay
 // record and nonce policy, so the endpoint has one of each whichever
 // grant a request uses. ExchangePreAuthorizedCode then verifies neither
-// itself. With fapigo/server, the Token Endpoint handler reads the
-// request once and does both checks first:
+// itself.
+//
+// Where the grant gets a refresh token, or may otherwise be revoked,
+// redeem the code with RedeemPreAuthorizedCode instead, and issue the
+// access token with fapigo/server's Server.IssueAccessToken, naming the
+// grant's GrantID, as its refresh token does: revoking the grant (RFC
+// 7009, server.Server.RevokeGrant) then ends both. An access token
+// ExchangePreAuthorizedCode mints through Dependencies.AccessTokens
+// names no grant, so it stays usable until it expires
+// (Config.Limits.AccessTokenLifetime) whatever happens to the grant:
+// keep that lifetime short, if it's used for such a grant at all.
+//
+// With fapigo/server, the Token Endpoint handler reads the request once
+// and does both checks first:
 //
 //	tr, err := server.TokenEndpointRequestFromHTTP(r)
 //	if err != nil {

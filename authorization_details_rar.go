@@ -51,7 +51,7 @@ import (
 //     the granted object may add where the requested one has none —
 //     the Authorization Server minting them at consent — and otherwise
 //     may only narrow.
-//   - ValidateNarrowing, on the object a token request asks for
+//   - ValidateNarrowing, on each object a token request asks for
 //     (exchanging a code or a CIBA auth_req_id, or refreshing) against
 //     the granted one it narrows: the same checks — so it keeps some
 //     or all of the grant's locations and claims, never none of them —
@@ -62,8 +62,18 @@ import (
 //     by credential_configuration_id, for whatever dataset the
 //     Credential Endpoint picks. A grant that holds none admits none. A
 //     token request naming an identifier the grant doesn't hold, or
-//     leaving out all of the grant's, is refused with
-//     invalid_authorization_details.
+//     leaving out all of the grant's from an object it asks for, is
+//     refused with invalid_authorization_details.
+//
+// Those checks hold for the objects a token request asks for: one
+// that leaves a granted object out altogether — authorization_details
+// set to [], or naming another of the grant's objects only — gets a
+// token without it, which fapigo/server allows (RFC 9396 §6.1) and
+// gives a definition no say in. The token then grants that
+// configuration only if the grant holds its scope too, and then for
+// every claim, by credential_configuration_id. So never grant a
+// configuration's scope beside an object for it: the consent step
+// grants one or the other (issuer.Issuer.UndetailedScopes).
 //
 // The binding rule for the Credential Issuer: a credential_identifier
 // is a handle the Authorization Server minted for one grant, not an
