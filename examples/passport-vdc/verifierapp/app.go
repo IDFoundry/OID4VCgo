@@ -700,14 +700,18 @@ func (a *App) otherAnswered(ctx context.Context, s *session, txID string) bool {
 }
 
 // people checks each presented credential, its revocation status
-// already checked (statusPolicy): one person at most once, and, for a
-// scenario re-verifying it, its passport file.
+// already checked (statusPolicy): for a scenario re-verifying it, its
+// passport file, and one person, or passport, at most once.
 func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.VerifiedCredential) ([]Person, error) {
 	seen := map[[sha256.Size]byte]bool{}
 	var out []Person
 	for _, vc := range vcs {
 		claims := flatten(vc.CredentialQueryID, vc.Claims)
-		sum, err := personKey(claims, info.Evidence)
+		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: statusOf(vc)}
+		if info.Evidence {
+			p.ICAO = a.checkICAO(claims)
+		}
+		sum, err := personKey(claims, p.ICAO)
 		if err != nil {
 			return nil, err
 		}
@@ -715,10 +719,6 @@ func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.Veri
 			return nil, errors.New("the same passport was presented twice")
 		}
 		seen[sum] = true
-		p := Person{Format: formatOf(vc.CredentialQueryID), Claims: claims, Status: statusOf(vc)}
-		if info.Evidence {
-			p.ICAO = a.checkICAO(claims)
-		}
 		out = append(out, p)
 	}
 	return out, nil
@@ -727,16 +727,25 @@ func (a *App) people(ctx context.Context, info ScenarioInfo, vcs []verifier.Veri
 // personKey identifies whose credential claims is, so one person shown
 // twice isn't taken for two: the same credential, or another copy of
 // it, discloses the same identity (each copy's own key, dates and status
-// entry aside), or the same passport file.
-func personKey(claims map[string]any, evidence bool) ([sha256.Size]byte, error) {
-	if evidence {
+// entry aside). For a scenario re-verifying the passport file, icao,
+// it's the passport the file verified as, its issuing country and
+// document number: one passport has many files, since each read of the
+// chip differs, and so does a file re-encoded, which Passive
+// Authentication can't tell apart. A file that didn't verify, which the
+// scenario's decision refuses anyway, is keyed by its bytes.
+func personKey(claims map[string]any, icao *ICAOResult) ([sha256.Size]byte, error) {
+	var identity any = identityOf(claims)
+	switch {
+	case icao != nil && icao.Verified:
+		identity = [2]string{icao.Identity.IssuingCountry, icao.Identity.DocumentNumber}
+	case icao != nil:
 		file, err := rawBytes(claims[credential.PassportFile])
 		if err != nil {
 			return [sha256.Size]byte{}, errors.New("the credential didn't disclose a usable passport file")
 		}
 		return sha256.Sum256(file), nil
 	}
-	raw, err := json.Marshal(identityOf(claims))
+	raw, err := json.Marshal(identity)
 	if err != nil {
 		return [sha256.Size]byte{}, errors.New("the credential's claims can't be compared")
 	}

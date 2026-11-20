@@ -2,6 +2,7 @@ package walletapp
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -62,6 +63,18 @@ func (s *softwareKeys) DeleteKey(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.keys, id)
+	return nil
+}
+
+// signerOf returns the key whose public half is pub, or nil.
+func (s *softwareKeys) signerOf(pub crypto.PublicKey) crypto.Signer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range s.keys {
+		if k.PublicKey.Equal(pub) {
+			return k
+		}
+	}
 	return nil
 }
 

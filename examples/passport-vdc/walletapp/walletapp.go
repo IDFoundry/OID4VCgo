@@ -14,6 +14,7 @@ package walletapp
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"errors"
@@ -58,6 +59,31 @@ type Config struct {
 // Attester is the Wallet Provider, as the wallet asks it for
 // attestations. walletprovider.Client implements it.
 type Attester = walletflow.WalletProvider
+
+// instanceProver is an Attester that takes proof of the issuance's
+// instance key with a Key Attestation request, as walletprovider.Client
+// does, so the Key Attestation carries the instance's status.
+type instanceProver interface {
+	ProvenKeyAttestation(ctx context.Context, instance crypto.Signer, keys []*ecdsa.PublicKey, nonce string) (string, error)
+}
+
+// provingProvider asks its Attester for Key Attestations proving the
+// issuance's instance key, which the wallet holds in keys, when it takes
+// the proof.
+type provingProvider struct {
+	Attester
+	keys *softwareKeys
+}
+
+// KeyAttestation implements walletflow.WalletProvider.
+func (p provingProvider) KeyAttestation(ctx context.Context, instanceKey crypto.PublicKey, keys []*ecdsa.PublicKey, nonce string) (string, error) {
+	if prover, ok := p.Attester.(instanceProver); ok {
+		if instance := p.keys.signerOf(instanceKey); instance != nil {
+			return prover.ProvenKeyAttestation(ctx, instance, keys, nonce)
+		}
+	}
+	return p.Attester.KeyAttestation(ctx, instanceKey, keys, nonce)
+}
 
 // Approver completes the authorization step: it sends the holder's user
 // agent to authorizationURL and returns the redirect back to
@@ -146,7 +172,7 @@ func ReceiveDeferrable(ctx context.Context, cfg Config, offerURI string, approve
 		// with one software key.
 		BatchSize: 1,
 	}, walletflow.Dependencies{
-		Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), Provider: cfg.Provider, HTTP: httpClient(cfg.HTTP),
+		Keys: keys, Credentials: walletflow.NewMemoryCredentialStore(), Provider: provingProvider{cfg.Provider, keys}, HTTP: httpClient(cfg.HTTP),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("walletapp: %w", err)

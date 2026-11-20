@@ -64,8 +64,10 @@ class HTTPWalletProvider(
     }
 
     override suspend fun keyAttestation(request: KeyAttestationRequest): String {
-        // The issuance's instance key, whose status the Key Attestation
-        // carries: its chain went with its Wallet Attestation.
+        // The issuance's instance key, its chain sent with its Wallet
+        // Attestation. Without instance_key_proof, which this app can't
+        // make (it's given no instance key signer), the demo provider
+        // issues the Key Attestation under its shared holder instance.
         val body = mutableMapOf<String, JsonElement>(
             "instance_key" to parse(request.instanceKey.jwk),
             "keys" to JsonArray(request.keys.map { parse(it.jwk) }),

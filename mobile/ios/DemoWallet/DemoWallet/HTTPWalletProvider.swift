@@ -32,8 +32,10 @@ struct HTTPWalletProvider: WalletProvider {
         try await post("wallet-attestation", ["client_id": clientID, "instance_key": try JSONSerialization.jsonObject(with: instanceKey)])
     }
 
-    // instanceKey is the issuance's, whose status the Key Attestation
-    // carries: walletAttestation sent it first.
+    // instanceKey is the issuance's: walletAttestation sent it first.
+    // Without instance_key_proof, which this app can't make (it's given
+    // no instance key signer), the demo provider issues the Key
+    // Attestation under its shared holder instance.
     func keyAttestation(instanceKey: Data, keys: [Data], nonce: String) async throws -> String {
         try await post("key-attestation", [
             "instance_key": try JSONSerialization.jsonObject(with: instanceKey),
