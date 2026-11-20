@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -74,6 +75,42 @@ func TestService_KeyAttestationProvesTheInstanceKey(t *testing.T) {
 	}
 	if err := send(proof(victim, "n", &attacker.PublicKey)); err != nil {
 		t.Errorf("the instance key's own proof: %v", err)
+	}
+}
+
+// The instance key proof's message, as a vector the mobile demo apps'
+// tests share (InstanceKeyProofTests.swift in
+// mobile/ios/DemoWallet/DemoWalletTests, InstanceKeyProofTest.kt in
+// mobile/android/DemoWallet/src/test): they build the message and sign
+// it themselves, so changing it changes them too. RFC 7515 Appendix
+// A.3's key, whose private key is published, signed the proof over the
+// keys of RFC 6979 Appendix A.2.5 and RFC 7517 Appendix A.1.
+func TestInstanceKeyProofVector(t *testing.T) {
+	const (
+		instanceJWK = `{"kty":"EC","crv":"P-256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}`
+		nonce       = "c_nonce-1"
+		message     = "passport-vdc instance key proof\nc_nonce-1\nDOvxvJiAdIqVWIkFt5hDtCunXLF0BV4-JGv4f-ALSm0\ncn-I_WNMClehiVp51i_0VpOENW1upEerA8sEam5hn-s"
+		proof       = "MEYCIQD3hKubHciPPGC2x6WZLtuhc58iY5pssh591RVz9e33KAIhANKO1vLKLem_45EFQHIa2Hpz3xmKQM62tQKv-7HWgMqU"
+	)
+	keys := []string{
+		`{"kty":"EC","crv":"P-256","x":"YP7UuiVanTHJYet0xjVtaMBJuJI7Yfps5mliLmDyn7Y","y":"eQP-EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk"}`,
+		`{"kty":"EC","crv":"P-256","x":"MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4","y":"4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM"}`,
+	}
+	instance, _, err := parseP256Key(json.RawMessage(instanceJWK))
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumbprints := make([]string, len(keys))
+	for i, raw := range keys {
+		if _, thumbprints[i], err = parseP256Key(json.RawMessage(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if instanceKeyProofDigest(nonce, thumbprints) != sha256.Sum256([]byte(message)) {
+		t.Errorf("the proof isn't over %q (the keys' thumbprints are %q)", message, thumbprints)
+	}
+	if !verifyInstanceKeyProof(instance, proof, nonce, thumbprints) {
+		t.Error("the vector's proof doesn't verify")
 	}
 }
 

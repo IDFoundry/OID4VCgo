@@ -3,6 +3,7 @@ package dev.idfoundry.oid4vcgo.demowallet
 import dev.idfoundry.oid4vcwallet.KeyAttestationRequest
 import dev.idfoundry.oid4vcwallet.KeyEvidence
 import dev.idfoundry.oid4vcwallet.KeyPurpose
+import dev.idfoundry.oid4vcwallet.KeyStore
 import dev.idfoundry.oid4vcwallet.StoreException
 import dev.idfoundry.oid4vcwallet.WalletAttestationRequest
 import dev.idfoundry.oid4vcwallet.WalletProvider
@@ -20,6 +21,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
+import java.security.MessageDigest
 import java.util.Base64
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLSocketFactory
@@ -35,7 +37,9 @@ import javax.net.ssl.SSLSocketFactory
  * goes to the provider with it, which verifies it before attesting the
  * key. A provider without the challenge endpoint (an older passport-vdc,
  * or mobile/cmd/testservices) gives no challenge, and the keys go
- * without chains, attested unverified.
+ * without chains, attested unverified. A Key Attestation request proves
+ * the app holds the issuance's instance key, signed with it in
+ * [instanceKeys], the wallet's key store ([InstanceKeyProof]).
  *
  * As the library's own HttpWalletProvider does, it follows no redirect
  * (a 3xx is a refusal) and reads at most [MAX_ANSWER_BYTES] of an
@@ -45,6 +49,7 @@ import javax.net.ssl.SSLSocketFactory
  */
 class HTTPWalletProvider(
     private val baseURL: String,
+    private val instanceKeys: KeyStore,
     private val socketFactory: SSLSocketFactory? = null,
 ) : WalletProvider {
     override suspend fun attestationChallenge(purpose: KeyPurpose): ByteArray? {
@@ -65,11 +70,12 @@ class HTTPWalletProvider(
 
     override suspend fun keyAttestation(request: KeyAttestationRequest): String {
         // The issuance's instance key, its chain sent with its Wallet
-        // Attestation. Without instance_key_proof, which this app can't
-        // make (it's given no instance key signer), the demo provider
-        // issues the Key Attestation under its shared holder instance.
+        // Attestation. With instance_key_proof, the demo provider issues
+        // the Key Attestation under its instance, so suspending or
+        // revoking the instance withdraws it too.
         val body = mutableMapOf<String, JsonElement>(
             "instance_key" to parse(request.instanceKey.jwk),
+            "instance_key_proof" to JsonPrimitive(InstanceKeyProof.sign(request, instanceKeys)),
             "keys" to JsonArray(request.keys.map { parse(it.jwk) }),
             "nonce" to JsonPrimitive(request.nonce),
         )
@@ -133,5 +139,53 @@ class HTTPWalletProvider(
 
     private companion object {
         const val MAX_ANSWER_BYTES = 256 * 1024
+    }
+}
+
+/**
+ * The passport-vdc demo provider's `instance_key_proof`: the issuance's
+ * instance key's ECDSA P-256 signature, DER, base64url without padding,
+ * over "passport-vdc instance key proof", the nonce, then each attested
+ * key's RFC 7638 thumbprint, each on a line of its own (its
+ * walletprovider's `instanceKeyProofDigest`).
+ */
+internal object InstanceKeyProof {
+    private val base64URL = Base64.getUrlEncoder().withoutPadding()
+
+    /**
+     * The proof for [request], signed in [store] by the instance key the
+     * library names ([KeyEvidence.keyID]): Go made it there, and it signs
+     * without asking the holder, as it does at PAR and the token
+     * endpoint. A key the wallet can't name, or can't sign with, fails
+     * the Key Attestation: sent without the proof, it would come back
+     * under the provider's shared instance instead, with nothing to show
+     * it.
+     */
+    fun sign(request: KeyAttestationRequest, store: KeyStore): String {
+        val id = request.instanceKey.keyID ?: throw StoreException("the wallet's key store doesn't hold the issuance's instance key")
+        // KeyStore.sign signs the message's SHA-256 digest and answers
+        // DER, as SHA256withECDSA over the message would. Keystore
+        // refuses SHA256withECDSA for a key made with DIGEST_NONE alone,
+        // which AndroidKeystoreKeyStore falls back to on a device that
+        // won't make one with both digests.
+        val digest = MessageDigest.getInstance("SHA-256").digest(message(request.nonce, request.keys.map { it.jwk }))
+        return base64URL.encodeToString(store.sign(id, digest))
+    }
+
+    /** What the proof signs. */
+    fun message(nonce: String, keys: List<ByteArray>): ByteArray =
+        (listOf("passport-vdc instance key proof", nonce) + keys.map(::thumbprint)).joinToString("\n").toByteArray()
+
+    /** A P-256 public JWK's RFC 7638 thumbprint, over its required members as the provider writes them from its point. */
+    fun thumbprint(jwk: ByteArray): String {
+        val members = runCatching { Json.parseToJsonElement(jwk.decodeToString()).jsonObject }.getOrNull()
+        fun member(name: String): String? = (members?.get(name) as? JsonPrimitive)?.takeIf { it.isString }?.content
+        val coordinates = listOf("x", "y").mapNotNull { name ->
+            member(name)?.let { runCatching { Base64.getUrlDecoder().decode(it) }.getOrNull() }?.takeIf { it.size == 32 }
+        }
+        if (member("kty") != "EC" || member("crv") != "P-256" || coordinates.size != 2) throw StoreException("a key to attest isn't a P-256 JWK")
+        val (x, y) = coordinates.map(base64URL::encodeToString)
+        val required = """{"crv":"P-256","kty":"EC","x":"$x","y":"$y"}"""
+        return base64URL.encodeToString(MessageDigest.getInstance("SHA-256").digest(required.toByteArray()))
     }
 }
