@@ -490,7 +490,8 @@ changes whether *every* bullet below is `(done)`.
     production). Under `Config.Assurance = AssuranceProduction`, `New`
     refuses `FakeVerifier`, or a type embedding it, by a mark it
     embeds (`internal/testonly`), so no exported interface gains a
-    method for it.
+    method for it. Production also requires sealed stores, unless
+    `Config.UnsealedStores`, as the issuer's does.
   - **Evidence is pluggable, by `Kind`.** An `EvidenceVerifier` is
     given the evidence, the consumed challenge (one-use, short-lived,
     bound to a `Purpose`), the keys the request names and, after

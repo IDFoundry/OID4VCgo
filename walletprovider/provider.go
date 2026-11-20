@@ -297,17 +297,34 @@ type Config struct {
 	// Assurance is how strict New is about what the provider is built
 	// from; zero means AssuranceDevelopment. Set AssuranceProduction in
 	// production: New then refuses walletprovidertest.FakeVerifier,
-	// which attests any key for anyone.
+	// which attests any key for anyone, and stores that don't seal their
+	// records (unless UnsealedStores).
 	Assurance AssuranceLevel
+
+	// UnsealedStores accepts, under AssuranceProduction, Instances,
+	// InstanceKeys and Challenges stores that don't declare they seal
+	// their records (sealing.Store): an instance's record holds its
+	// keys, its registration evidence's facts and its App Attest
+	// counter, and the records say which instance keys are whose.
+	// Whoever can write such a store, or its backups, can then alter
+	// those unnoticed, and whoever can read it learns which instance
+	// keys belong to one instance. Set it only where the stores are as
+	// protected as the provider's own signing key (an in-memory store,
+	// which nothing else can read or write, is); otherwise give them a
+	// Sealer (github.com/idfoundry/oid4vcgo/sqlstore's Options.Sealer,
+	// from sealing.AESGCMSealer). RequireSealedStore refuses them all
+	// the same.
+	UnsealedStores bool
 
 	// RequireSealedStore makes New refuse Instances, InstanceKeys and
 	// Challenges stores that don't seal their records at rest
-	// (sealing.Store): an instance's record holds its keys, its
-	// registration evidence's facts and its App Attest counter, which
-	// sealing keeps a database writer from altering unnoticed. sqlstore's
-	// stores seal when their DB has an Options.Sealer. Set it in
-	// production, where the stores are a shared database; an in-memory
-	// store, which nothing else can write, doesn't seal.
+	// (sealing.Store), at any assurance level: an instance's record
+	// holds its keys, its registration evidence's facts and its App
+	// Attest counter, which sealing keeps a database writer from
+	// altering unnoticed. sqlstore's stores seal when their DB has an
+	// Options.Sealer. AssuranceProduction refuses such stores too,
+	// unless UnsealedStores; an in-memory store, which nothing else can
+	// write, doesn't seal.
 	RequireSealedStore bool
 }
 
@@ -392,13 +409,13 @@ func New(cfg Config, deps Dependencies) (*Provider, error) {
 	if err := deps.validate(); err != nil {
 		return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
 	}
-	if cfg.Assurance == AssuranceProduction {
-		if err := deps.checkProduction(); err != nil {
+	if cfg.RequireSealedStore {
+		if err := deps.checkSealed("RequireSealedStore is set", ""); err != nil {
 			return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
 		}
 	}
-	if cfg.RequireSealedStore {
-		if err := deps.checkSealed(); err != nil {
+	if cfg.Assurance == AssuranceProduction {
+		if err := deps.checkProduction(cfg.UnsealedStores); err != nil {
 			return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
 		}
 	}
@@ -576,15 +593,16 @@ func (d Dependencies) validate() error {
 	return nil
 }
 
-// checkSealed refuses stores that don't seal their records
-// (Config.RequireSealedStore).
-func (d Dependencies) checkSealed() error {
+// checkSealed refuses stores that don't seal their records, which rule
+// requires (Config.RequireSealedStore, AssuranceProduction), its
+// message ending with hint.
+func (d Dependencies) checkSealed(rule, hint string) error {
 	for _, s := range []struct {
 		name  string
 		store any
 	}{{"Instances", d.Instances}, {"InstanceKeys", d.InstanceKeys}, {"Challenges", d.Challenges}} {
 		if sealed, ok := s.store.(sealing.Store); !ok || !sealed.SealsRecords() {
-			return fmt.Errorf("RequireSealedStore is set, and %s doesn't seal its records (sealing.Store: sqlstore's stores do with an Options.Sealer)", s.name)
+			return fmt.Errorf("%s, and %s doesn't seal its records (sealing.Store: sqlstore's stores do with an Options.Sealer%s)", rule, s.name, hint)
 		}
 	}
 	return nil

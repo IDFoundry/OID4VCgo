@@ -9,20 +9,26 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.84.0 → v0.85.0
 
-### A production Wallet Provider refuses `walletprovidertest.FakeVerifier` (`walletprovider`)
+### A Wallet Provider has a production assurance level (`walletprovider`)
 
 `walletprovider.Config` has a new `Assurance` field, an
 `AssuranceLevel` as the issuer and the verifier have. Zero keeps
 today's behaviour (`AssuranceDevelopment`). Under the new
-`walletprovider.AssuranceProduction`, `New` refuses
-`walletprovidertest.FakeVerifier`, or a type embedding it, among
-`Dependencies.Evidence`: its evidence is a JSON document anyone can
-write, so a provider built with it registers anyone and attests any
-key, at whatever security level it was set to report.
+`walletprovider.AssuranceProduction`, `New` refuses:
 
-Set it in production. It changes nothing else: `RequireSealedStore`
-and the evidence verifiers' own settings stay as DEPLOYING.md's Wallet
-Provider checklist has them.
+- `walletprovidertest.FakeVerifier`, or a type embedding it, among
+  `Dependencies.Evidence`: its evidence is a JSON document anyone can
+  write, so a provider built with it registers anyone and attests any
+  key, at whatever security level it was set to report.
+- `Instances`, `InstanceKeys` and `Challenges` stores that don't seal
+  their records (`sealing.Store`), as `RequireSealedStore` does, unless
+  the new `Config.UnsealedStores` accepts them, as the issuer's
+  `Config.UnsealedStores` does: only where they're as protected as the
+  provider's signing key. `RequireSealedStore` refuses them at any
+  level, `UnsealedStores` or not.
+
+Set it in production, with your stores sealed (sqlstore's `DB` with an
+`Options.Sealer`).
 
 ## v0.83.0 → v0.84.0
 

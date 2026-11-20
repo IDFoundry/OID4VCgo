@@ -23,7 +23,8 @@ func ExampleNew() {
 	var (
 		signer crypto.Signer       // the attestation key, in an HSM or KMS
 		chain  []*x509.Certificate // its certificate, issued by your CA, naming the Identifier as a URI SAN
-		// From sqlstore's DB: WalletProviderInstances, WalletProviderInstanceKeys,
+		// From sqlstore's DB, with an Options.Sealer, as AssuranceProduction
+		// requires: WalletProviderInstances, WalletProviderInstanceKeys,
 		// WalletProviderChallenges, StatusIndices and StatusListTokens.
 		instances    walletprovider.InstanceStore
 		instanceKeys walletprovider.InstanceKeyStore

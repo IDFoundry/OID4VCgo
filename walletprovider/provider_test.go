@@ -167,6 +167,14 @@ func TestNewRefuses(t *testing.T) {
 			c.Assurance = walletprovider.AssuranceProduction
 			d.Evidence = []walletprovider.EvidenceVerifier{embeddedFake{iosVerifier()}}
 		}, `Evidence[0] (Kind "ios-app-attest") is, or embeds, walletprovidertest.FakeVerifier`},
+		{"unsealed stores under production", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction
+			d.Evidence = withoutFakes(d.Evidence)
+		}, "AssuranceProduction requires sealed stores, and Instances doesn't seal"},
+		{"unsealed stores required sealed, UnsealedStores or not", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.Assurance, c.UnsealedStores, c.RequireSealedStore = walletprovider.AssuranceProduction, true, true
+			d.Evidence = withoutFakes(d.Evidence)
+		}, "RequireSealedStore is set, and Instances doesn't seal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -187,27 +195,42 @@ type embeddedFake struct {
 	walletprovidertest.FakeVerifier
 }
 
+// withoutFakes is evidence without the harness's FakeVerifiers, which
+// AssuranceProduction refuses.
+func withoutFakes(evidence []walletprovider.EvidenceVerifier) []walletprovider.EvidenceVerifier {
+	return slices.DeleteFunc(slices.Clone(evidence), func(v walletprovider.EvidenceVerifier) bool {
+		_, fake := v.(walletprovidertest.FakeVerifier)
+		return fake
+	})
+}
+
 // TestNewAssurance: AssuranceDevelopment, like a zero Assurance, takes
-// FakeVerifier, and AssuranceProduction takes evidence verifiers that
-// aren't walletprovidertest's stand-ins.
+// FakeVerifier and unsealed stores; AssuranceProduction takes the other
+// verifiers, with sealed stores, or unsealed ones under UnsealedStores.
 func TestNewAssurance(t *testing.T) {
 	for _, c := range []struct {
-		level walletprovider.AssuranceLevel
-		kind  string // a registration's evidence
+		name   string
+		level  walletprovider.AssuranceLevel
+		kind   string // a registration's evidence
+		mutate func(*walletprovider.Config, *walletprovider.Dependencies)
 	}{
-		{walletprovider.AssuranceDevelopment, kindFake},
-		{walletprovider.AssuranceProduction, kindTEE},
+		{"zero", 0, kindFake, nil},
+		{"development", walletprovider.AssuranceDevelopment, kindFake, nil},
+		{"production, sealed", walletprovider.AssuranceProduction, kindTEE, func(_ *walletprovider.Config, d *walletprovider.Dependencies) { sealAll(d) }},
+		{"production, UnsealedStores", walletprovider.AssuranceProduction, kindTEE, func(c *walletprovider.Config, _ *walletprovider.Dependencies) { c.UnsealedStores = true }},
 	} {
-		h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
-			cfg.Assurance = c.level
-			if c.level == walletprovider.AssuranceProduction {
-				d.Evidence = slices.DeleteFunc(d.Evidence, func(v walletprovider.EvidenceVerifier) bool {
-					_, fake := v.(walletprovidertest.FakeVerifier)
-					return fake
-				})
-			}
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+				cfg.Assurance = c.level
+				if c.level == walletprovider.AssuranceProduction {
+					d.Evidence = withoutFakes(d.Evidence)
+				}
+				if c.mutate != nil {
+					c.mutate(cfg, d)
+				}
+			})
+			h.register(c.kind)
 		})
-		h.register(c.kind)
 	}
 }
 

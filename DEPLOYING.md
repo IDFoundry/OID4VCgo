@@ -432,11 +432,13 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   makes one replica sign each of its status lists' tokens, as for an
   issuer's Publisher.
 - [ ] **`Config.Assurance = walletprovider.AssuranceProduction`**, so
-  `New` refuses `walletprovidertest.FakeVerifier`, whose evidence
-  anyone can write: a provider built with it registers anyone and
-  attests any key, at whatever security level it was set to report.
-  It changes nothing else: set `RequireSealedStore` (below) and the
-  evidence verifiers' own settings as their items say.
+  `New` refuses what production mustn't run with:
+  - `walletprovidertest.FakeVerifier`, whose evidence anyone can
+    write: a provider built with it registers anyone and attests any
+    key, at whatever security level it was set to report;
+  - stores that don't seal their records (below).
+
+  It leaves the evidence verifiers' own settings to their items.
 - [ ] **Capacity: `Config.StatusListSize`.** A period's lists hold 64
   × `StatusListSize`/2 instance keys used in it, and every issuance
   uses a new one: the default (2^20) holds about 33.5M a week. Size it
@@ -548,11 +550,14 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   retrying for up to 10 seconds while its own requests beat them, so a
   thief's traffic can't hold off a revocation; their `ErrConflict` past
   that is transient: call again.
-- [ ] **Seal the provider's records: `Config.RequireSealedStore`.**
-  With the `DB`'s `Options.Sealer` set, sqlstore's Wallet Provider
-  stores seal each instance's record; set `RequireSealedStore` so `New`
-  refuses to start when they don't (a missing Sealer), rather than
-  keep instances unsealed.
+- [ ] **Seal the provider's records.** With the `DB`'s
+  `Options.Sealer` set, sqlstore's Wallet Provider stores seal each
+  instance's record. Under `AssuranceProduction`, `New` refuses to
+  start when they don't (a missing Sealer), rather than keep instances
+  unsealed. `Config.UnsealedStores` accepts stores that don't, where
+  they're as protected as the provider's signing key (an in-memory
+  store is); `Config.RequireSealedStore` refuses them at any level,
+  `UnsealedStores` or not.
 - [ ] **Android revocation:** keep `androidkey.Verifier.Revocation` a
   `StatusSource` (Google's list, refreshed daily, ahead of its
   `MaxAge`, in the background). While Google can't be reached, the
