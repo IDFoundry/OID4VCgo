@@ -86,7 +86,10 @@
 // postgres://…/db?search_path=tenant_a, or
 // options=-csearch_path=tenant_a in a key/value one — or a role whose
 // default search_path is that schema. Migrate creates the tables in the
-// connection's current schema. On SQLite, use a file each.
+// connection's current schema. On SQLite, use a file each. Schemas and
+// files keep tenants' stores apart, not their records from a database
+// writer: where tenants' DBs share a Sealer key, give each its own
+// Options.SealContext (see Secrets at rest).
 //
 // # A whole issuer deployment
 //
@@ -221,8 +224,9 @@
 // each response_code. Give Options a Sealer — sealing.AESGCMSealer,
 // with a 32-byte key kept outside the database, in a secret manager or
 // KMS — and every issuer and walletflow record is sealed too, bound to
-// its table and key: a deferred transaction's issued Credentials, a
-// wallet's credentials, refresh tokens and access tokens. The columns
+// its table and key, and to the DB's Options.SealContext: a deferred
+// transaction's issued Credentials, a wallet's credentials, refresh
+// tokens and access tokens. The columns
 // the stores look records up and sweep them by stay readable: keys,
 // Owners, the Transaction Code hash and expiry times. The verifier's
 // transactions aren't sealed whole: their TransactionCodec's own
@@ -252,18 +256,30 @@
 // Referenced Tokens carry, aren't secret either.
 //
 // Sealing keeps a record's contents from whoever can read the
-// database, and makes one altered, or moved to another row or table,
-// unreadable (ErrRecordFormat). It doesn't stop whoever can write the
-// database from deleting a record, or putting back an older copy of
-// one sealed under the same key. The readable columns aren't sealed: a
+// database, and makes one altered, or moved to another row or table of
+// its schema or file, unreadable (ErrRecordFormat). Nothing in a record
+// names its schema or file: one copied into the table of the same name
+// in another schema or file, read by a DB with the same Sealer key,
+// opens there, unless the two DBs' SealContexts differ. So give each
+// tenant's DB a SealContext of its own — a stable tenant ID, never the
+// schema's or file's name — where tenants share a key, as a server
+// keeping many users' wallets in a schema each does: without one, a
+// database writer can copy one user's holder keys, credentials and
+// refresh tokens into another's wallet, which then uses them. A key per
+// tenant keeps them apart too. Sealing doesn't stop whoever can write
+// the database from deleting a record, or putting back an older copy
+// of one sealed under the same key and SealContext. The readable columns aren't sealed: a
 // pre-authorized code's Transaction Code hash column is checked
 // against its sealed record before the code is accepted, refused as
 // ErrRecordFormat if they differ, but its count of wrong Transaction
 // Codes isn't sealed, so a database writer can reset it.
 //
 // A DB reads only records written as it would write them, sealed under
-// its key or not sealed at all (ErrRecordFormat otherwise): to start
-// sealing, start from empty tables. To change the key, use
+// its key, in its SealContext or without one, or not sealed at all
+// (ErrRecordFormat otherwise): to start sealing, start from empty
+// tables. To give a sealed database a SealContext, read the records
+// sealed without one with Options.ReadWithoutSealContext while
+// BindRecords seals them in it. To change the key, use
 // fapigo/sqlstore's RotatingSealer, which takes this package's Sealer:
 // it seals with the first sealer it's given and opens with any. Under
 // a rolling deploy, rotate in two phases: first RotatingSealer(old,
@@ -328,6 +344,9 @@
 //     reference alone.
 //   - Don't share a wallet's tables between users: walletflow's
 //     ResumeIssuance finds an authorization by its state alone.
+//   - Where several tenants' schemas or files share a Sealer key, give
+//     each DB its own Options.SealContext: a stable tenant ID, never
+//     the schema's or file's name.
 //   - SQLite takes one writer at a time: use it for a single process,
 //     such as a wallet or a single-instance server, not for a
 //     deployment scaled out across machines.

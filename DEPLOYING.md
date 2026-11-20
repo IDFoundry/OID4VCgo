@@ -38,7 +38,16 @@ each, not a deployment template" says what it does differently.
   the record is written again or deleted, and some are kept for long —
   a Wallet Provider's registered instances, a wallet's credentials and
   keys never expire — so keep the old key in the `RotatingSealer`
-  until no record needs it.
+  until no record needs it. **Several tenants under one key** (a
+  schema or SQLite file each, as a server keeping many users' wallets
+  does): give each tenant's `DB` its own `Options.SealContext`, a
+  stable tenant ID, never the schema's or file's name, or each tenant
+  a key of its own. Without one, a record copied into the same table
+  of another tenant's schema opens there: a database writer can move
+  one user's holder keys, credentials and refresh tokens into another
+  user's wallet. To add a `SealContext` to a sealed database, deploy
+  it with `Options.ReadWithoutSealContext`, run `db.BindRecords(ctx)`,
+  then deploy without it.
   sqlstore's doc ("Secrets at rest") has the details.
 - [ ] **Size the connection pool.** On every replica set
   `sqlDB.SetMaxOpenConns(n)` and `sqlDB.SetMaxIdleConns(n)` to the same
