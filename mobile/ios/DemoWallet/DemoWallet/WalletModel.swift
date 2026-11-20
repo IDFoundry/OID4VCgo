@@ -59,10 +59,11 @@ final class WalletModel {
 
     /// The Wallet Provider client `config` names: the library's
     /// protocol with App Attest (`provider_protocol` `v1`), its
-    /// registration kept in Application Support, or the demo's own API.
-    private static func walletProvider(_ config: DemoConfiguration) throws -> (any WalletProvider)? {
+    /// registration kept in Application Support, or the demo's own API,
+    /// proving the instance keys in `keys`.
+    private static func walletProvider(_ config: DemoConfiguration, keys: KeychainKeyStore) throws -> (any WalletProvider)? {
         guard let url = config.providerURL else { return nil }
-        guard config.providerProtocol == "v1" else { return HTTPWalletProvider(baseURL: url) }
+        guard config.providerProtocol == "v1" else { return HTTPWalletProvider(baseURL: url, keyStore: keys) }
         return try HttpWalletProvider(baseURL: url, instances: FileInstanceRegistry.standard())
     }
 
@@ -71,7 +72,7 @@ final class WalletModel {
         // With the revocation lists last fetched (SharedWallet.crlsKey).
         var configuration = SharedWallet.applyingHolderChoices(to: config.wallet)
         configuration.presentation.copyPolicy = copyPolicy
-        let provider = try Self.walletProvider(config)
+        let provider = try Self.walletProvider(config, keys: keys)
         let make = {
             try Wallet(configuration: configuration, keyStore: keys, credentialStore: try SharedWallet.credentialStore(),
                        provider: provider)
