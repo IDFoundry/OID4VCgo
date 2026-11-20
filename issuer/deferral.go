@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo"
+	"github.com/idfoundry/oid4vcgo/attestation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
@@ -70,6 +71,17 @@ var ErrDeferredProofKey = errors.New("issuer: a proof key behind the deferred tr
 // see ProofBindingKeyResolver), and none is known not to be. The
 // transaction stays pending, as for ErrDeferredAttestationStatusUnknown.
 var ErrDeferredProofKeyTrustUnknown = errors.New("issuer: the trust of a proof key behind the deferred transaction can't be decided now")
+
+// ErrDeferredProofPolicy is returned, wrapped with the reason, by
+// IssueDeferredCredential when the transaction's binding keys don't
+// meet what its credential configuration requires of them now, after
+// the configuration has changed: a key is for an algorithm the proof
+// type it arrived under no longer takes, that proof type now has
+// key_attestations_required the transaction's key attestations don't
+// meet, or keys that arrived by jwt proofs without a key attestation
+// find the jwt proof type no longer supported. The transaction is
+// denied instead of issued, as for ErrDeferredKeyAttestation.
+var ErrDeferredProofPolicy = errors.New("issuer: the deferred transaction's keys don't meet what its credential configuration requires now")
 
 // ErrDeferredTransactionResolved is returned by IssueDeferredCredential
 // and DenyDeferredCredential for a transaction that isn't pending any
@@ -189,6 +201,19 @@ type DeferredIssuance struct {
 // whose trust can't be decided now leaves it pending, with
 // ErrDeferredProofKeyTrustUnknown, unless another check denies it.
 //
+// The binding keys are also held to the credential configuration as it
+// is now, as a Credential Request's would be, so a configuration
+// changed since the request was deferred applies to the transaction:
+// each key must be for an algorithm the proof type it arrived under
+// takes, and, where that proof type now has key_attestations_required,
+// be attested by one of the transaction's key attestations, each
+// asserting a level it accepts. The proof type is the key attestations'
+// (DeferredTransactionRecord.KeyAttestationProofType), or jwt for keys
+// that arrived without one, which the configuration must still take. A
+// transaction that doesn't meet them is denied, with
+// ErrDeferredProofPolicy, so tightening a proof type, to require
+// hardware-backed keys say, reaches the transactions already pending.
+//
 // Concurrent calls for one transaction may each build Credentials, and
 // run content.PerCredential and PerBatch for them, but only the first
 // to finish saves them; the others return
@@ -255,7 +280,7 @@ func (iss *Issuer) recheckOrDeny(ctx context.Context, transactionID string, cc C
 	if err == nil {
 		return nil
 	}
-	if !errors.Is(err, ErrDeferredKeyAttestation) && !errors.Is(err, ErrDeferredProofKey) {
+	if !errors.Is(err, ErrDeferredKeyAttestation) && !errors.Is(err, ErrDeferredProofKey) && !errors.Is(err, ErrDeferredProofPolicy) {
 		return fmt.Errorf("issuer: issue deferred credential: %w", err)
 	}
 	if _, denyErr := iss.denyPending(ctx, transactionID); denyErr != nil {
@@ -313,17 +338,22 @@ func (iss *Issuer) denyPending(ctx context.Context, transactionID string) (strin
 // recheckDeferredTrust checks again, as of now, what record's binding
 // keys were trusted through: its key attestations
 // (recheckKeyAttestations) and the keys Dependencies.ProofBindingKeys
-// resolved (recheckProofKeys). keys are record's BindingKeys, parsed. A
-// key no longer trusted returns an error wrapping
-// ErrDeferredKeyAttestation or ErrDeferredProofKey, which denies the
-// transaction, even when another check couldn't be decided; only when
-// none is untrusted does one that couldn't be decided return an error
-// wrapping ErrDeferredAttestationStatusUnknown or
-// ErrDeferredProofKeyTrustUnknown, leaving the transaction pending.
+// resolved (recheckProofKeys), and that the keys meet cc as it is now
+// (checkDeferredProofPolicy). keys are record's BindingKeys, parsed. A
+// key no longer trusted, or no longer meeting cc, returns an error
+// wrapping ErrDeferredKeyAttestation, ErrDeferredProofPolicy or
+// ErrDeferredProofKey, which denies the transaction, even when another
+// check couldn't be decided; only when none is untrusted does one that
+// couldn't be decided return an error wrapping
+// ErrDeferredAttestationStatusUnknown or ErrDeferredProofKeyTrustUnknown,
+// leaving the transaction pending.
 func (iss *Issuer) recheckDeferredTrust(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord, keys []resolvedKey) error {
-	attestations := iss.recheckKeyAttestations(ctx, cc, record)
+	verified, attestations := iss.recheckKeyAttestations(ctx, cc, record)
 	if attestations != nil && !errors.Is(attestations, ErrDeferredAttestationStatusUnknown) {
 		return fmt.Errorf("%w: %w", ErrDeferredKeyAttestation, attestations)
+	}
+	if err := checkDeferredProofPolicy(cc, record, keys, verified); err != nil {
+		return fmt.Errorf("%w: %w", ErrDeferredProofPolicy, err)
 	}
 	proofKeys := iss.recheckProofKeys(ctx, record, keys)
 	if proofKeys != nil && !errors.Is(proofKeys, ErrDeferredProofKeyTrustUnknown) {
@@ -410,33 +440,123 @@ func sameKey(a, b crypto.PublicKey) bool {
 // transaction even after another whose status, or signer's trust,
 // can't be decided now (trustUndecided), which alone wraps
 // ErrDeferredAttestationStatusUnknown.
-func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord) error {
+//
+// It returns each attestation's claims, at its index in
+// record.KeyAttestations, once its signature and status check out, and
+// nil for one that couldn't be decided.
+func (iss *Issuer) recheckKeyAttestations(ctx context.Context, cc CredentialConfiguration, record DeferredTransactionRecord) ([]*attestation.VerifiedClaims, error) {
 	if len(record.KeyAttestations) == 0 {
-		return nil
+		return nil, nil
 	}
 	if iss.deps.AttestationVerifier == nil {
-		return fmt.Errorf("this issuer has no Dependencies.AttestationVerifier to verify them with")
+		return nil, fmt.Errorf("this issuer has no Dependencies.AttestationVerifier to verify them with")
 	}
 	algs, err := attestationAlgs(cc, record.KeyAttestationProofType)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	now := iss.deps.Clock.Now()
+	claims := make([]*attestation.VerifiedClaims, len(record.KeyAttestations))
 	var unknown error
 	for i, compact := range record.KeyAttestations {
 		verified, err := iss.verifyOneAttestation(ctx, compact, i, now, algs)
 		if err == nil {
 			if err = iss.checkAttestationStatus(ctx, verified); errors.Is(err, ErrKeyAttestationRevoked) {
-				return fmt.Errorf("attestation %d: status: %w", i, err)
+				return nil, fmt.Errorf("attestation %d: status: %w", i, err)
 			}
 		} else if !trustUndecided(err) {
-			return err
+			return nil, err
 		}
-		if err != nil && unknown == nil {
+		if err == nil {
+			claims[i] = &verified.Claims
+		} else if unknown == nil {
 			unknown = fmt.Errorf("%w: attestation %d: %w", ErrDeferredAttestationStatusUnknown, i, err)
 		}
 	}
-	return unknown
+	return claims, unknown
+}
+
+// deferredProofType is the proof type record's binding keys arrived
+// under: its KeyAttestationProofType, or jwt for a record without key
+// attestations, the one proof type that binds a key without one; ""
+// for a record whose key attestations name none, saved before
+// KeyAttestationProofType existed.
+func deferredProofType(record DeferredTransactionRecord) string {
+	if record.KeyAttestationProofType == "" && len(record.KeyAttestations) == 0 {
+		return oid4vci.ProofTypeJWT
+	}
+	return record.KeyAttestationProofType
+}
+
+// checkDeferredProofPolicy checks keys, record's binding keys, against
+// what cc's proof type for them (deferredProofType) requires now, as a
+// Credential Request's keys are checked (checkProofTypePolicy).
+// attestations are record's key attestations as recheckKeyAttestations
+// returns them. A record naming no proof type meets it if it meets cc's
+// jwt or attestation proof type, as its key attestations' signatures are
+// checked against either one's algorithms (attestationAlgs).
+func checkDeferredProofPolicy(cc CredentialConfiguration, record DeferredTransactionRecord, keys []resolvedKey, attestations []*attestation.VerifiedClaims) error {
+	if proofType := deferredProofType(record); proofType != "" {
+		return checkProofTypePolicy(cc, proofType, keys, attestations)
+	}
+	err := checkProofTypePolicy(cc, oid4vci.ProofTypeJWT, keys, attestations)
+	if err != nil && checkProofTypePolicy(cc, oid4vci.ProofTypeAttestation, keys, attestations) == nil {
+		return nil
+	}
+	return err
+}
+
+// checkProofTypePolicy checks keys, bound under proofType, against what
+// cc's proofType requires of them: that cc still supports it, that each
+// key is of an algorithm it takes (bindingKeyAlgs), and, under its
+// key_attestations_required, checkAttestedKeys.
+func checkProofTypePolicy(cc CredentialConfiguration, proofType string, keys []resolvedKey, attestations []*attestation.VerifiedClaims) error {
+	ptc, ok := cc.ProofTypesSupported[proofType]
+	if !ok {
+		return fmt.Errorf("the %q proof type the keys arrived under is no longer supported for this credential configuration", proofType)
+	}
+	algs := bindingKeyAlgs(cc, proofType)
+	for i, k := range keys {
+		if alg, ok := keyAlgListed(k.Public, algs); !ok {
+			return fmt.Errorf("binding key %d is a key for alg %q, which the %q proof type no longer takes", i, alg, proofType)
+		}
+	}
+	if ptc.KeyAttestationsRequired == nil {
+		return nil
+	}
+	return checkAttestedKeys(proofType, *ptc.KeyAttestationsRequired, keys, attestations)
+}
+
+// checkAttestedKeys checks keys, bound under proofType, meet req, its
+// key_attestations_required: each of attestations asserts a level req
+// accepts, and each key is attested by one of them, as
+// RequestCredential requires of a request under req. A nil entry in
+// attestations is one whose trust couldn't be decided now, and could
+// attest any key: a key none attests is refused only once every one
+// was decided.
+func checkAttestedKeys(proofType string, req oid4vci.KeyAttestationRequirement, keys []resolvedKey, attestations []*attestation.VerifiedClaims) error {
+	decided := true
+	for i, claims := range attestations {
+		if claims == nil {
+			decided = false
+			continue
+		}
+		if err := meetsKeyAttestationRequirement(*claims, &req, i); err != nil {
+			return err
+		}
+	}
+	if !decided {
+		return nil
+	}
+	for i, k := range keys {
+		if !slices.ContainsFunc(attestations, func(claims *attestation.VerifiedClaims) bool {
+			attested, err := claims.KeyAttested(k.Public)
+			return err == nil && attested
+		}) {
+			return fmt.Errorf("binding key %d has no key attestation, which the %q proof type now requires", i, proofType)
+		}
+	}
+	return nil
 }
 
 // attestationAlgs are the algorithms a deferred transaction's key

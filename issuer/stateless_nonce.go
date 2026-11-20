@@ -1,6 +1,7 @@
 package issuer
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -26,7 +27,10 @@ type NonceSpender interface {
 	// issuance.ExpiresAt. It returns an error wrapping ErrNonceUnknown
 	// if the nonce is recorded already, under any Owner, and any other
 	// error only when it couldn't answer. A store may forget the record
-	// after ExpiresAt: the nonce has expired by then. The Issuer spends
+	// after ExpiresAt, by its own clock or the time a sweep is given:
+	// ExpiresAt is 5 minutes past the nonce's own expiry, so the nonce
+	// has expired by then on every replica whose clock is no more than
+	// that behind (see Dependencies.NonceKeys). The Issuer spends
 	// under an Owner its Consume never asks for, so Consume, which
 	// returns only a nonce recorded under the Owner it's given, never
 	// takes a spent nonce for an issued one.
@@ -34,6 +38,22 @@ type NonceSpender interface {
 }
 
 // MinNonceKeyBytes and MaxNonceKeys bound Dependencies.NonceKeys.
+//
+// Each key is a secret of at least MinNonceKeyBytes bytes from a
+// cryptographically secure random source, kept in a secret manager and
+// the same on every replica: crypto/rand's Read into a
+// MinNonceKeyBytes slice, or `openssl rand 32`. Hex or base64 text of
+// MinNonceKeyBytes random bytes works too, its characters taken as the
+// key's bytes (`openssl rand -hex 32` is 64 bytes, `openssl rand
+// -base64 32` 44). Never a password or passphrase, nor anything derived
+// from one: whoever learns or guesses a key can make c_nonces this
+// issuer accepts, with any expiry within Limits.NonceLifetime, and so
+// proofs ahead of time. Under AssuranceProduction, New refuses a key
+// that plainly isn't random: one with fewer than four distinct byte
+// values, or that repeats a pattern shorter than half its length, as an
+// unset key, a repeated character or a word repeated to length does. A
+// random key, in any of the three forms, is refused with a probability
+// below 2^-67. Passing the check doesn't make a key random.
 const (
 	MinNonceKeyBytes = 32
 	MaxNonceKeys     = 8
@@ -75,6 +95,80 @@ func validateNonceKeys(deps Dependencies) error {
 		return fmt.Errorf("issuer: dependencies: nonces must be an issuer.NonceSpender when nonce_keys is set")
 	}
 	return nil
+}
+
+// minNonceKeyDistinctBytes is the fewest distinct byte values
+// checkProductionNonceKeys takes in a nonce key.
+const minNonceKeyDistinctBytes = 4
+
+// checkProductionNonceKeys refuses, under AssuranceProduction, a key in
+// keys that plainly isn't random: one with fewer than
+// minNonceKeyDistinctBytes distinct byte values, or one that repeats a
+// pattern shorter than half its length (key[i] == key[i-p] for every
+// i >= p, for some p with 2p < len(key)). An unset key (all zero bytes),
+// a repeated character and a word repeated to length are refused.
+//
+// Neither test refuses a random key but with negligible probability,
+// whether the key is raw random bytes, or hex or base64 text of random
+// bytes taken as its bytes. In each form a byte is uniform over an
+// alphabet of A values, independently of the others: 256 for raw
+// bytes, 16 for hex, 64 for base64. For a key of n >= MinNonceKeyBytes
+// bytes:
+//   - Fewer than 4 distinct values: every byte falls within some 3
+//     values, with a probability of at most C(A,3)·(3/A)^n. At n = 32
+//     that is 2^-68.1 for hex, 2^-125.9 for base64 and 2^-183.9 for raw
+//     bytes, and it falls as n grows.
+//   - A period p: each of the n-p bytes after the first p must equal
+//     the byte p before it, with a probability of A^-(n-p). With
+//     2p < n, n-p >= 17 for every n >= 32, so the sum over p is below
+//     A^-17·A/(A-1): 2^-67.9 for hex, 2^-102.0 for base64 and 2^-136.0
+//     for raw bytes, at any n.
+//
+// So a random key is refused with a probability below 2^-67 in each
+// form, whatever its length. Base64's last character can take fewer
+// values when the random bytes aren't a multiple of three; counting it
+// as matching anything leaves both base64 rates below 2^-95. Padding
+// lowers them: "=" is outside the alphabet, so a padded key repeats no
+// pattern, and it adds a distinct value. A tighter test refuses random
+// hex keys first: requiring 5 distinct values would refuse a
+// 32-character one with a probability of 2^-53.2 (8 values, 2^-24.7),
+// and a period of half the key alone, 2^-64.
+func checkProductionNonceKeys(keys [][]byte) error {
+	const want = "under AssuranceProduction each key must be random bytes, as issuer.MinNonceKeyBytes says"
+	for i, key := range keys {
+		if distinctBytes(key) < minNonceKeyDistinctBytes {
+			return fmt.Errorf("dependencies.nonce_keys[%d] isn't random: it has fewer than %d distinct byte values; %s", i, minNonceKeyDistinctBytes, want)
+		}
+		if p := repeatedPattern(key); p > 0 {
+			return fmt.Errorf("dependencies.nonce_keys[%d] isn't random: it repeats a pattern of %d bytes; %s", i, p, want)
+		}
+	}
+	return nil
+}
+
+// distinctBytes is the number of distinct byte values in key.
+func distinctBytes(key []byte) int {
+	var seen [256]bool
+	n := 0
+	for _, b := range key {
+		if !seen[b] {
+			seen[b] = true
+			n++
+		}
+	}
+	return n
+}
+
+// repeatedPattern is the length of the shortest pattern shorter than
+// half of key that key repeats (key[i] == key[i-p] for every i >= p),
+// or 0 when it repeats none.
+func repeatedPattern(key []byte) int {
+	for p := 1; 2*p < len(key); p++ {
+		if bytes.Equal(key[p:], key[:len(key)-p]) {
+			return p
+		}
+	}
+	return 0
 }
 
 // statelessNonce is a c_nonce for owner expiring at exp, tagged with
@@ -169,7 +263,12 @@ func spentNonceOwner(owner string) string {
 
 // spentNonceMargin keeps a spent c_nonce's record past the nonce's
 // expiry, so that a store swept by a clock running ahead of this
-// replica's doesn't forget a nonce this replica still accepts.
+// replica's doesn't forget a nonce this replica still accepts. It is
+// the clock difference a deployment may have between the clock that
+// expires records (a sweep's now, or a store's own) and any replica's:
+// forgotten by a clock further ahead, the record no longer stops a
+// replica accepting the nonce again. Dependencies.NonceKeys,
+// NonceSpender and DEPLOYING.md state it; change them with it.
 const spentNonceMargin = 5 * time.Minute
 
 // isStatelessNonce reports whether nonce has a stateless c_nonce's

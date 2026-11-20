@@ -3,6 +3,10 @@ package issuer_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -270,6 +274,57 @@ func TestStatelessNonce_ValidatesKeys(t *testing.T) {
 		if _, err := tryCredentialEndpointFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { mutate(deps) }); err == nil {
 			t.Errorf("%s: New accepted it", name)
 		}
+	}
+}
+
+// assuredNonceSpender is a NonceSpender declaring what
+// AssuranceProduction requires of Nonces.
+type assuredNonceSpender struct{ *storage.NonceStore }
+
+func (assuredNonceSpender) Capabilities() issuer.StoreCapabilities {
+	return issuer.StoreCapabilities{Durable: true, AtomicConsume: true}
+}
+
+// Under AssuranceProduction, New refuses a nonce key that plainly isn't
+// random — one with fewer than four distinct byte values, or that
+// repeats a pattern shorter than half its length — and takes random
+// bytes, and hex or base64 text of them, at MinNonceKeyBytes.
+// AssuranceDevelopment takes every key.
+func TestStatelessNonce_ProductionRefusesDegenerateKeys(t *testing.T) {
+	random := make([]byte, issuer.MinNonceKeyBytes)
+	if _, err := rand.Read(random); err != nil {
+		t.Fatal(err)
+	}
+	runs := func(s string, n int) []byte { return bytes.Repeat([]byte(s), n) }
+	for name, tc := range map[string]struct {
+		key     []byte
+		refused bool
+	}{
+		"random bytes":       {random, false},
+		"hex text":           {[]byte(hex.EncodeToString(random[:issuer.MinNonceKeyBytes/2])), false},
+		"base64 text":        {[]byte(base64.RawURLEncoding.EncodeToString(random[:issuer.MinNonceKeyBytes*3/4])), false},
+		"padded base64 text": {[]byte(base64.StdEncoding.EncodeToString(random[:issuer.MinNonceKeyBytes*3/4-2])), false},
+		"zero bytes":         {make([]byte, issuer.MinNonceKeyBytes), true},
+		"one character":      {runs("k", issuer.MinNonceKeyBytes), true},
+		"three characters":   {slices.Concat(runs("a", 11), runs("b", 11), runs("c", 10)), true},
+		"a word repeated":    {runs("password", 4), true},
+		"a phrase repeated":  {[]byte("secret-key-secret-key-secret-key"), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, deps := productionIssuer(t)
+			deps.Nonces, deps.NonceKeys = assuredNonceSpender{storage.NewNonceStore()}, [][]byte{tc.key}
+			_, err := issuer.New(cfg, deps)
+			switch {
+			case tc.refused && (err == nil || !strings.Contains(err.Error(), "nonce_keys[0] isn't random")):
+				t.Errorf("New = %v, want nonce_keys[0] refused", err)
+			case !tc.refused && err != nil:
+				t.Errorf("New: %v", err)
+			}
+			cfg.Assurance = issuer.AssuranceDevelopment
+			if _, err := issuer.New(cfg, deps); err != nil {
+				t.Errorf("New under AssuranceDevelopment: %v", err)
+			}
+		})
 	}
 }
 

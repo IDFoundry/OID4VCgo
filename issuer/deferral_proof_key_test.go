@@ -30,13 +30,20 @@ func x5cProof(t *testing.T, a *attesterCRLs, nonce string) string {
 	return proof
 }
 
-// deferProofs defers a request with proofs, returning the
+// deferProofs defers a request with jwt proofs, returning the
 // transaction_id.
 func deferProofs(t *testing.T, f deferralFixture, proofs ...string) string {
 	t.Helper()
+	return deferProofsOf(t, f, oid4vci.ProofTypeJWT, proofs...)
+}
+
+// deferProofsOf defers a request with proofs of proofType, returning
+// the transaction_id.
+func deferProofsOf(t *testing.T, f deferralFixture, proofType string, proofs ...string) string {
+	t.Helper()
 	resp, err := f.iss.RequestCredential(context.Background(), deferralAuth, issuer.CredentialRequest{
 		CredentialConfigurationID: testSDJWTConfigID,
-		Proofs:                    map[string][]string{oid4vci.ProofTypeJWT: proofs},
+		Proofs:                    map[string][]string{proofType: proofs},
 		Defer:                     &issuer.Deferral{},
 	})
 	if err != nil {

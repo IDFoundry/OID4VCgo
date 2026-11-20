@@ -74,7 +74,10 @@ const (
 	// Also requires Dependencies.Audit to be configured — the same
 	// requirement FAPIgo's own server.AssuranceProduction places on
 	// server.Dependencies.Audit — and Dependencies.Clock to be nil, the
-	// system clock, or a Clock declaring ClockAssurance.
+	// system clock, or a Clock declaring ClockAssurance. Each
+	// Dependencies.NonceKeys key must not be plainly degenerate: fewer
+	// than four distinct byte values, or a pattern repeated over it (see
+	// MinNonceKeyBytes).
 	AssuranceProduction
 )
 
@@ -215,6 +218,7 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 		checkProductionHTTPS(cfg),
 		checkProductionAttestationProofType(cfg),
 		checkProductionProofFreshness(cfg),
+		checkProductionNonceKeys(deps.NonceKeys),
 	)
 	errs = append(errs, checkProductionKeySources(cfg, deps)...)
 	return append(errs, checkProductionStores(cfg, deps)...)

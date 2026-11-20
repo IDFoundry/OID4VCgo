@@ -505,7 +505,7 @@ func (iss *Issuer) requestProofKeys(ctx context.Context, auth AuthorizedRequest,
 		return "", nil, newError(ErrorInvalidCredentialRequest, 400,
 			fmt.Sprintf("proof type %q is not supported for this credential_configuration_id", proofType), nil)
 	}
-	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc)
+	keys, err := iss.resolveProofKeys(ctx, auth, proofType, values, ptc, bindingKeyAlgs(cc, proofType))
 	if err != nil {
 		return "", nil, err
 	}
@@ -699,16 +699,20 @@ func singleProofType(proofs map[string][]string, cc CredentialConfiguration) (pr
 	return proofType, values, nil
 }
 
+// resolveProofKeys verifies values, proofs of proofType configured by
+// ptc, and returns the binding keys they establish. keyAlgs are the
+// algorithms a key a key attestation attests may be of
+// (bindingKeyAlgs).
 func (iss *Issuer) resolveProofKeys(
-	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc oid4vci.ProofTypeConfiguration,
+	ctx context.Context, auth AuthorizedRequest, proofType string, values []string, ptc oid4vci.ProofTypeConfiguration, keyAlgs []string,
 ) ([]resolvedKey, error) {
 	var keys []resolvedKey
 	var err error
 	switch proofType {
 	case oid4vci.ProofTypeJWT:
-		keys, err = iss.resolveJWTProofKeys(ctx, auth, values, ptc)
+		keys, err = iss.resolveJWTProofKeys(ctx, auth, values, ptc, keyAlgs)
 	case oid4vci.ProofTypeAttestation:
-		keys, err = iss.resolveAttestationProofKeys(ctx, values, ptc)
+		keys, err = iss.resolveAttestationProofKeys(ctx, values, ptc, keyAlgs)
 	default:
 		return nil, newError(ErrorInvalidProof, 400, fmt.Sprintf("proof type %q is not supported", proofType), nil)
 	}

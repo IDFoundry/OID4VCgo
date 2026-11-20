@@ -678,15 +678,25 @@ type Dependencies struct {
 	//
 	// Each key is a secret of at least MinNonceKeyBytes random bytes, the
 	// same in every process serving this Credential Issuer; at most
-	// MaxNonceKeys. Setting or removing NonceKeys across replicas one at
-	// a time is safe: a replica without NonceKeys refuses another's
-	// stateless nonce with invalid_nonce, and the Wallet fetches a new
-	// one. To rotate a key under a rolling deploy, in two steps, so no
-	// replica meets a nonce tagged with a key it doesn't hold: first
-	// deploy the new key after the old one ([old, new]) everywhere,
-	// then put it first ([new, old]), and drop the old key once
-	// NonceLifetime has passed since the last replica took the second
-	// step.
+	// MaxNonceKeys. MinNonceKeyBytes says how to make one, and which keys
+	// AssuranceProduction refuses as not random. Setting or removing
+	// NonceKeys across replicas one at a time is safe: a replica without
+	// NonceKeys refuses another's stateless nonce with invalid_nonce, and
+	// the Wallet fetches a new one. To rotate a key under a rolling
+	// deploy, in two steps, so no replica meets a nonce tagged with a key
+	// it doesn't hold: first deploy the new key after the old one
+	// ([old, new]) everywhere, then put it first ([new, old]), and drop
+	// the old key once NonceLifetime has passed since the last replica
+	// took the second step.
+	//
+	// A spent c_nonce's record outlives the nonce by 5 minutes, and a
+	// store may forget it then. That margin is how far the clock that
+	// expires records may run ahead of any replica's Clock: the now each
+	// sqlstore.DB.Sweep is given, on every host that runs it, or a
+	// store's own expiry. One further ahead deletes the record while a
+	// replica still takes the nonce as unexpired, and that replica
+	// accepts it again. Keep the hosts' clocks synchronized (NTP), and
+	// alert on their offset.
 	NonceKeys [][]byte
 
 	// CredentialDPoPNonces, if set, issues the DPoP nonce RequestNonce

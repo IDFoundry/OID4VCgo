@@ -169,13 +169,22 @@ each, not a deployment template" says what it does differently.
   writes a row. Recommended for every deployment, and especially with
   a Sealer (an anonymous request then seals nothing). Each key is at
   least `issuer.MinNonceKeyBytes` random bytes from your secret
-  manager, the same on every replica. **Rotate in two phases**, so no
+  manager, the same on every replica: make one with `openssl rand 32`,
+  or use the text of `openssl rand -hex 32` or `-base64 32` as its
+  bytes. Never a password: `issuer.New` refuses, under
+  `AssuranceProduction`, a key that plainly isn't random, such as a
+  repeated character or word. **Rotate in two phases**, so no
   replica sees a c_nonce under a key it doesn't hold: first deploy
   `[old, new]` everywhere (new accepted, not yet used), then `[new,
   old]` (new used), then, after `Config.NonceLifetime`, `[new]`.
   Enable `NonceKeys` itself the same way: every replica must have it
   before any issues a stateless c_nonce, as a replica without it
-  refuses one.
+  refuses one. **Keep the clocks within 5 minutes of each other**, on
+  every replica and every instance running `db.Sweep` (NTP, with an
+  alert on clock offset): a spent c_nonce's row is kept 5 minutes past
+  the nonce's expiry, so a `db.Sweep` on a clock further ahead of a
+  replica's deletes it while that replica still takes the c_nonce as
+  unexpired, and it accepts it again.
 - [ ] **Status lists: one `statuslist.Allocator` per process**, with
   `Store: db.StatusIndices()` and several `Lists` (each `Size` indices,
   filled to `FillLimit`, half by default): add lists before they fill,
