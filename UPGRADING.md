@@ -7,6 +7,23 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### A production Wallet Provider refuses `walletprovidertest.FakeVerifier` (`walletprovider`)
+
+`walletprovider.Config` has a new `Assurance` field, an
+`AssuranceLevel` as the issuer and the verifier have. Zero keeps
+today's behaviour (`AssuranceDevelopment`). Under the new
+`walletprovider.AssuranceProduction`, `New` refuses
+`walletprovidertest.FakeVerifier`, or a type embedding it, among
+`Dependencies.Evidence`: its evidence is a JSON document anyone can
+write, so a provider built with it registers anyone and attests any
+key, at whatever security level it was set to report.
+
+Set it in production. It changes nothing else: `RequireSealedStore`
+and the evidence verifiers' own settings stay as DEPLOYING.md's Wallet
+Provider checklist has them.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

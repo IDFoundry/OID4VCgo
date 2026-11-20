@@ -33,6 +33,7 @@ func ExampleNew() {
 		android      *androidkey.Verifier // as androidkey's ExampleVerifier configures it
 	)
 	p, err := walletprovider.New(walletprovider.Config{
+		Assurance:  walletprovider.AssuranceProduction,
 		Identifier: "https://wallet-provider.example.com", ClientIDs: []string{"https://wallet.example.com"},
 		StatusListBaseURI: "https://wallet-provider.example.com/statuslists",
 		// StatusListSize's default, 2^20, holds 64 × 2^20/2 ≈ 33.5M

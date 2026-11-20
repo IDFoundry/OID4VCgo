@@ -203,8 +203,9 @@ meet them there: production assurance, durable stores (`sqlstore` and
 rather than the binary's session engine, and OID4VCgo's
 `walletprovider.Provider` ([`interop/walletprovider`](../interop/walletprovider),
 over its v1 protocol; only the platform evidence is a stand-in,
-`walletprovidertest.FakeVerifier`) where a Go or Kotlin wallet of the
-run's takes Wallet Attestations. The binaries are built with the
+`walletprovidertest.FakeVerifier`, which production assurance refuses,
+so the provider runs at development assurance) where a Go or Kotlin
+wallet of the run's takes Wallet Attestations. The binaries are built with the
 `conformance_production` tag ([`interop/production.sh`](../interop/production.sh)).
 What stays at development, and why, is beside each case in its README.
 The wallets' own settings are those of their runs.

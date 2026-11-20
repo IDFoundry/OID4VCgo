@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,20 @@ func TestNewRefuses(t *testing.T) {
 			sealAll(d)
 			d.InstanceKeys = sealedInstanceKeys{d.InstanceKeys, false}
 		}, "InstanceKeys doesn't seal"},
+		{"an unknown assurance level", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction + 1
+		}, "Assurance"},
+		{"FakeVerifier under production", func(_ *testing.T, c *walletprovider.Config, _ *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction
+		}, `Evidence[0] (Kind "fake") is, or embeds, walletprovidertest.FakeVerifier`},
+		{"a pointer to FakeVerifier under production", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction
+			d.Evidence = []walletprovider.EvidenceVerifier{&walletprovidertest.FakeVerifier{}}
+		}, "walletprovidertest.FakeVerifier"},
+		{"a type embedding FakeVerifier under production", func(_ *testing.T, c *walletprovider.Config, d *walletprovider.Dependencies) {
+			c.Assurance = walletprovider.AssuranceProduction
+			d.Evidence = []walletprovider.EvidenceVerifier{embeddedFake{iosVerifier()}}
+		}, `Evidence[0] (Kind "ios-app-attest") is, or embeds, walletprovidertest.FakeVerifier`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,6 +178,36 @@ func TestNewRefuses(t *testing.T) {
 				t.Fatalf("New = %v, want an error mentioning %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// embeddedFake is a verifier of the integrator's own built on
+// FakeVerifier.
+type embeddedFake struct {
+	walletprovidertest.FakeVerifier
+}
+
+// TestNewAssurance: AssuranceDevelopment, like a zero Assurance, takes
+// FakeVerifier, and AssuranceProduction takes evidence verifiers that
+// aren't walletprovidertest's stand-ins.
+func TestNewAssurance(t *testing.T) {
+	for _, c := range []struct {
+		level walletprovider.AssuranceLevel
+		kind  string // a registration's evidence
+	}{
+		{walletprovider.AssuranceDevelopment, kindFake},
+		{walletprovider.AssuranceProduction, kindTEE},
+	} {
+		h := newHarness(t, func(cfg *walletprovider.Config, d *walletprovider.Dependencies) {
+			cfg.Assurance = c.level
+			if c.level == walletprovider.AssuranceProduction {
+				d.Evidence = slices.DeleteFunc(d.Evidence, func(v walletprovider.EvidenceVerifier) bool {
+					_, fake := v.(walletprovidertest.FakeVerifier)
+					return fake
+				})
+			}
+		})
+		h.register(c.kind)
 	}
 }
 

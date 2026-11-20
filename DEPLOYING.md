@@ -422,6 +422,12 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   StatusListTokens: db.StatusListTokens(), …}`. `StatusListTokens`
   makes one replica sign each of its status lists' tokens, as for an
   issuer's Publisher.
+- [ ] **`Config.Assurance = walletprovider.AssuranceProduction`**, so
+  `New` refuses `walletprovidertest.FakeVerifier`, whose evidence
+  anyone can write: a provider built with it registers anyone and
+  attests any key, at whatever security level it was set to report.
+  It changes nothing else: set `RequireSealedStore` (below) and the
+  evidence verifiers' own settings as their items say.
 - [ ] **Capacity: `Config.StatusListSize`.** A period's lists hold 64
   × `StatusListSize`/2 instance keys used in it, and every issuance
   uses a new one: the default (2^20) holds about 33.5M a week. Size it

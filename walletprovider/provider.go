@@ -294,6 +294,12 @@ type Config struct {
 	// at once.
 	OnRecheckRefused func(ctx context.Context, in Instance, err error)
 
+	// Assurance is how strict New is about what the provider is built
+	// from; zero means AssuranceDevelopment. Set AssuranceProduction in
+	// production: New then refuses walletprovidertest.FakeVerifier,
+	// which attests any key for anyone.
+	Assurance AssuranceLevel
+
 	// RequireSealedStore makes New refuse Instances, InstanceKeys and
 	// Challenges stores that don't seal their records at rest
 	// (sealing.Store): an instance's record holds its keys, its
@@ -386,6 +392,11 @@ func New(cfg Config, deps Dependencies) (*Provider, error) {
 	if err := deps.validate(); err != nil {
 		return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
 	}
+	if cfg.Assurance == AssuranceProduction {
+		if err := deps.checkProduction(); err != nil {
+			return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
+		}
+	}
 	if cfg.RequireSealedStore {
 		if err := deps.checkSealed(); err != nil {
 			return nil, fmt.Errorf("walletprovider: dependencies: %w", err)
@@ -436,6 +447,9 @@ func (c Config) withDefaults() Config {
 }
 
 func (c Config) validate() error {
+	if err := c.Assurance.validate(); err != nil {
+		return err
+	}
 	if err := c.validateIdentifiers(); err != nil {
 		return err
 	}
