@@ -285,3 +285,37 @@ func TestSelectDisclosuresAtArrays(t *testing.T) {
 		t.Error("indexed into a value that isn't an array")
 	}
 }
+
+// TestSelectDisclosuresAtOrderIndependent: a path through an array
+// element selects its Disclosure but not its other members, and a path
+// to the whole array, before or after it, still discloses all of it:
+// the paths' order doesn't change what is selected, with an index or a
+// wildcard (OpenID4VP §7.1).
+func TestSelectDisclosuresAtOrderIndependent(t *testing.T) {
+	tree := map[string]any{
+		"c": []any{
+			SDElement(map[string]any{"p": SD(2), "q": SD(2)}),
+			SDElement(map[string]any{"p": SD(1)}),
+		},
+		"other": SD("hidden"),
+	}
+	sealed, disclosures, err := sealMap(tree, SHA256)
+	if err != nil {
+		t.Fatalf("sealMap: %v", err)
+	}
+	for _, narrow := range [][]any{{"c", 0, "q"}, {"c", nil, "q"}} {
+		for _, paths := range [][][]any{{narrow, {"c"}}, {{"c"}, narrow}} {
+			selected, err := SelectDisclosuresAt(sealed, SHA256, disclosures, paths)
+			if err != nil {
+				t.Fatalf("SelectDisclosuresAt(%v): %v", paths, err)
+			}
+			resolved, err := ResolveDisclosures(sealed, SHA256, selected)
+			if err != nil {
+				t.Fatalf("ResolveDisclosures: %v", err)
+			}
+			if got := fmt.Sprint(resolved["c"]); len(selected) != 5 || got != "[map[p:2 q:2] map[p:1]]" {
+				t.Errorf("%v: %d disclosures, c = %s; want all 5 under c, c whole", paths, len(selected), got)
+			}
+		}
+	}
+}
