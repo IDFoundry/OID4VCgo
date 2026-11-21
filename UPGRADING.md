@@ -44,6 +44,47 @@ its roots need the `issuer` and `status` revocation choice, and are
 kept apart from the other roles' with `issuers.requireEKU`, as
 `issuers.roots` are.
 
+### Key stores sweep only the keys they make (Swift, Kotlin)
+
+`KeychainKeyStore` and `AndroidKeystoreKeyStore` list (`keyIDs()`)
+and sweep (`deleteKeys(except:)`, which `Wallet.sweepOrphanedKeys`
+calls) only the keys whose tag or alias is the store's prefix and a
+UUID, as `createKey` makes them. A store whose prefix extends another's
+no longer loses its keys to the other's sweep, which on Android failed
+instead, with `malformed key ID`, when the longer prefix added a `.`.
+
+Two stores under the same prefix still sweep each other's keys, and on
+iOS a store lists its prefix's keys in every Keychain access group the
+app can read, with `holderAccessGroup` or without. Give each key
+store — each wallet's, each Wallet Provider's registration keys', and
+those of apps that share an access group — a prefix where neither
+extends another's. A document provider extension's store is its app's
+wallet's, and keeps the app's prefix.
+
+### The wallet's and the registration key sweeps refuse each other's stores (Swift, Kotlin)
+
+`HttpWalletProvider.sweepOrphanedRegistrationKeys()` throws, deleting
+nothing (`IllegalArgumentException` in Kotlin, `StoreError` in Swift),
+when its registration key store's prefix is, covers or falls under the
+prefix of the key store of a `Wallet` made with a provider over the
+same registry: it would delete that wallet's keys. The other way round,
+`Wallet.sweepOrphanedKeys` throws, deleting nothing, for a store whose
+prefix is, covers or falls under the prefix of the registration key
+store of any `HttpWalletProvider` made over the same registry as the
+wallet's own provider, as it did for the default registration prefix:
+it would delete the registration key. Keep registration keys under a
+prefix of their own, as `registrationKeyStore()` does.
+
+### The Android Wallet Provider's timeout bounds the whole request (Kotlin)
+
+`HttpWalletProvider`'s `timeoutMillis` now bounds each request from
+connecting to the last byte of its answer, as the Swift library's
+`timeout` does: a request still unanswered then is ended, and fails as
+`network`, as a timeout did. It bounded only the connect and each
+read, so an answer trickled a byte at a time held the call, and every
+Wallet Attestation waiting for a registration under way, as long as
+its sender liked.
+
 ## v0.85.0 → v0.86.0
 
 ### A Verifier's redirect to a system app is refused (wallet, walletflow)
