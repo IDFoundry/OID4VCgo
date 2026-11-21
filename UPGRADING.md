@@ -28,6 +28,21 @@ looking like the wallet's next step, on a refusal before the holder
 had done anything but open the link. An honest Verifier redirects to
 its page or its own app's scheme, which are still followed.
 
+### Follow only the redirect schemes your Verifiers' apps use (wallet, walletflow)
+
+The new `wallet.Config.VerifierRedirectSchemes` and
+`walletflow.Config.VerifierRedirectSchemes` name the URI schemes,
+besides https, a Verifier's `redirect_uri` may have: the schemes of
+the Verifier apps the wallet returns holders to, or `"https"` alone.
+A redirect with any other is then refused as one with a scheme the
+wallet never follows is (above). Unset, as before, a trusted Verifier
+can send the holder to whichever app handles the scheme it names: set
+it where you know your Verifiers' apps. `New` refuses a scheme that
+isn't one (RFC 3986 §3.1), one the wallet never follows, and, in
+walletflow, `Config.RedirectURI`'s. In `wallet`, the `*Wallet` methods
+apply it; the package-level `SubmitDirectPostResponse`, `Respond` and
+`RespondSelection`, which take no `Config`, don't.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration

@@ -174,7 +174,10 @@ type RequestRefusedError struct {
 	Description string
 
 	// RedirectURI is where the Verifier asked to take the holder after
-	// receiving the error (same-device), "" for none.
+	// receiving the error (same-device), "" for none and for one the
+	// wallet doesn't follow (Config.VerifierRedirectSchemes). The holder
+	// has done no more than open the link: ask them before opening one
+	// that isn't https.
 	RedirectURI string
 
 	// DCAPIResponse is a DC API request's error response. It's only

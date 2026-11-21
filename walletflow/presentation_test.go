@@ -567,6 +567,28 @@ func TestPresentation_RefusedRequestRedirectToASystemHandler(t *testing.T) {
 	}
 }
 
+// With VerifierRedirectSchemes set, a refused request's redirect_uri is
+// handed back only with https or one of them: another is dropped, the
+// Verifier having the error all the same.
+func TestPresentation_RefusedRequestRedirectSchemes(t *testing.T) {
+	f, v, _ := presentationFixture(t)
+	w, err := walletflow.New(walletflow.Config{VerifierTrust: v.Trust, Development: true, VerifierRedirectSchemes: []string{"com.example.verifier"}},
+		walletflow.Dependencies{Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(), HTTP: f.env.HTTP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for redirect, kept := range map[string]bool{
+		"https://verifier.walletflowtest.example/done": true,
+		"com.example.verifier:/done":                   true,
+		"com.other.app:/done":                          false,
+	} {
+		refused, err := refusedWith(t, f, v, w, redirect)
+		if kept && refused.RedirectURI != redirect || !kept && (refused.RedirectURI != "" || !errors.Is(err, wallet.ErrResponseDelivered)) {
+			t.Errorf("%s: StartPresentation = %v, redirect %q; want it kept %v", redirect, err, refused.RedirectURI, kept)
+		}
+	}
+}
+
 // refusedWith has w start a request v refuses, whose response_uri
 // answers the error response with redirect, and returns its
 // RequestRefusedError and StartPresentation's error.

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -277,6 +278,22 @@ type Config struct {
 	// refuses it without a VerifierTrust that verifies one
 	// (wallet.NoVerifierTrust, or none). Off by default.
 	AcceptX509SANDNS bool
+
+	// VerifierRedirectSchemes, if set, are the only URI schemes besides
+	// https a Verifier's redirect_uri may have (OpenID4VP 1.0 §8.2): the
+	// schemes of the Verifier apps the wallet returns holders to, or
+	// "https" alone to allow no other (wallet.Config.VerifierRedirectSchemes).
+	// A redirect with another scheme is dropped as one the wallet never
+	// follows is: Respond and Decline return an error wrapping
+	// wallet.ErrResponseDelivered, the presentation answered, and a
+	// refused request's RequestRefusedError has no RedirectURI. Unset,
+	// a trusted Verifier can send the holder to whichever app handles
+	// the scheme it names, but for those the wallet never follows:
+	// plain http, schemes that run code or read local data, invoke a
+	// Wallet or open a system handler (an app store, a call, a
+	// message), and RedirectURI's. New refuses one that isn't a URI
+	// scheme (RFC 3986 §3.1), and one the wallet never follows.
+	VerifierRedirectSchemes []string
 
 	// RegistrarRoots, if set, are the registrars whose registrations of
 	// Verifiers the wallet checks (the registration package): a
@@ -617,6 +634,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.checkRedirectURIForm(); err != nil {
 		return nil, err
 	}
+	if err := cfg.checkVerifierRedirectSchemes(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateRevocation(); err != nil {
 		return nil, err
 	}
@@ -643,6 +663,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	// The caller's slice stays theirs: changing it later changes nothing.
 	cfg.AllowedPrivateHosts = slices.Clone(cfg.AllowedPrivateHosts)
 	cfg.CredentialIssuers = slices.Clone(cfg.CredentialIssuers)
+	cfg.VerifierRedirectSchemes = slices.Clone(cfg.VerifierRedirectSchemes)
 	systemClock := deps.Clock == nil
 	deps, err := withDefaultDependencies(cfg, deps)
 	if err != nil {
@@ -651,7 +672,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		AcceptX509SANDNS: cfg.AcceptX509SANDNS, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
-		IssuerMetadataRoots: cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		VerifierRedirectSchemes: cfg.VerifierRedirectSchemes, IssuerMetadataRoots: cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
 		IssuerMetadataRevocation:    cfg.IssuerMetadataRevocation,
 		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
 		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
@@ -763,6 +784,23 @@ func (c Config) checkRedirectURIForm() error {
 	}
 	if u, err := url.Parse(c.RedirectURI); err == nil && !c.Development && u.Scheme == "http" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
 		return errors.New("walletflow: outside Development, a loopback Config.RedirectURI names the IP literal 127.0.0.1 or [::1], not a host name (RFC 8252 §8.3)")
+	}
+	return nil
+}
+
+// checkVerifierRedirectSchemes refuses a VerifierRedirectSchemes entry
+// naming RedirectURI's private-use scheme, a redirect with which
+// checkRedirect never follows; wallet.New refuses the other schemes
+// never followed.
+func (c Config) checkVerifierRedirectSchemes() error {
+	own, err := url.Parse(c.RedirectURI)
+	if c.RedirectURI == "" || err != nil || own.Scheme == "http" || own.Scheme == "https" {
+		return nil
+	}
+	for _, scheme := range c.VerifierRedirectSchemes {
+		if strings.EqualFold(scheme, own.Scheme) {
+			return fmt.Errorf("walletflow: Config.VerifierRedirectSchemes names %q, Config.RedirectURI's scheme, which a Verifier's redirect is never followed with", scheme)
+		}
 	}
 	return nil
 }
