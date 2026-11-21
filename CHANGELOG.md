@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.86.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.85.0...v0.86.0) (2026-11-21)
+
+
+### Features
+
+* **mobile:** add issuer_roots_by_vct ([19dcc02](https://github.com/IDFoundry/OID4VCgo/commit/19dcc02f7d94e0a5bfd345c5cdfec32776df663c))
+* **mobile:** add verifier_redirect_schemes, and ask before a non-https refusal redirect ([be81480](https://github.com/IDFoundry/OID4VCgo/commit/be81480ce9616e4a3e9d99ca804ec42979aa931b))
+* **walletflow:** add Config.VerifierRedirectSchemes ([d57f6e4](https://github.com/IDFoundry/OID4VCgo/commit/d57f6e4cca585149af6f1330d555db532477fbb8))
+* **walletflow:** scope SD-JWT VC issuer trust per vct with IssuerRootsByVCT ([770abfd](https://github.com/IDFoundry/OID4VCgo/commit/770abfdc3bde10832cae8985134cf3374761fca3))
+* **wallet:** let a Wallet follow only the redirect schemes it names ([b6cd318](https://github.com/IDFoundry/OID4VCgo/commit/b6cd3186ea5f3fb85c0293ba197bbfb81d556d75))
+
+
+### Bug Fixes
+
+* **mobile:** end an Android Wallet Provider request at its timeout ([6614b6b](https://github.com/IDFoundry/OID4VCgo/commit/6614b6b3b2a4246c3113e6cba7e5ba58bbd61cbf))
+* **mobile:** refuse a wallet key sweep over a Wallet Provider's registration keys ([fdd562a](https://github.com/IDFoundry/OID4VCgo/commit/fdd562a04fa30c1d5d81a76e51bf82b08e16dbe6))
+* **mobile:** sweep only the keys a key store makes ([0237619](https://github.com/IDFoundry/OID4VCgo/commit/02376198c084a10815e3b8c41d9190193e414ff7))
+* **wallet:** refuse a Verifier's redirect to a system app ([9ea677b](https://github.com/IDFoundry/OID4VCgo/commit/9ea677b607a31d3cd0a6185a2233e90b6cc94b7b))
+
 ## [0.85.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.84.0...v0.85.0) (2026-11-21)
 
 
