@@ -1806,6 +1806,18 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   `testReaderReportsADeclineOnceNoOtherDeviceAdvertises`; Kotlin
   `ReaderExchangeTest`), and Go's `TestTryVerifyDocuments_RejectsRepliesNotFromTheHolder`;
   not yet tried against a second device over the radio.
+- **A decline reaches the reader in central client mode:** on two
+  iPhones (2026-11-21, OID4VCWallet 0.41.0), a holder declining as the
+  GATT client showed on the reader as "The connection to the other
+  device was lost." The holder wrote its status 20, without response,
+  and disconnected at once, so the write could go down with the link,
+  and the reader, seeing only the disconnection, couldn't tell a decline
+  from a lost link. Peripheral server mode reported it as declined.
+  `decline()` now keeps the transport open, as after a response, until
+  the reader disconnects or 5 seconds pass; the reader, given the status
+  20, reports the decline and disconnects. `cancel()` still closes at
+  once. Covered by `testDeclineWaitsForTheReaderToEnd` (Swift) and
+  `aDeclineWaitsForTheReaderToEnd` (Kotlin, instrumented).
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,

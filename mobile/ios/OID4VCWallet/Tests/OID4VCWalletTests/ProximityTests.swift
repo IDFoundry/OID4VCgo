@@ -430,6 +430,25 @@ final class ProximityTests: XCTestCase {
         XCTAssertTrue(s.pipes[0].closed)
     }
 
+    /// A decline, too, leaves the transport open until the reader
+    /// disconnects or `readerEndSeconds` pass, so the termination isn't
+    /// dropped with the link. In mdoc central client mode the reader
+    /// then reports a decline at once, not a lost connection.
+    func testDeclineWaitsForTheReaderToEnd() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let (holder, reader) = try start(&s, modes: [.centralClient])
+        s.pipes[1].closingEndsPeer = false
+        _ = try await request(holder)
+        await holder.decline()
+        guard case .declined = holder.state else { return XCTFail("holder: \(holder.state)") }
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .declined = result else { return XCTFail("reader: \(result)") }
+        XCTAssertFalse(s.pipes[0].closed, "closed before the reader could end")
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+    }
+
     /// After a response, the state is final at once, but the transport
     /// stays open until the reader disconnects or `readerEndSeconds`
     /// pass: `awaitClosed` returns only after it closed.
