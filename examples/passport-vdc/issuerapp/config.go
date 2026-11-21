@@ -20,9 +20,12 @@
 // approval with the right code claims the transaction, so no other
 // authorization can reach it. That authorization's DPoP-bound access
 // token can fetch each offered credential once; the transaction, and
-// its passport data, is dropped once all are issued. Five wrong codes
-// void it. The holder still isn't authenticated — whoever sees the
-// offer page can redeem it first; a production issuer would
+// its passport data, is dropped once all are issued. Three wrong codes
+// end an approval page, and ten, on any pages, void the transaction:
+// the offer link alone opens approval pages, so it can void an offer,
+// though not redeem it. A deny shows on the offer page only when it
+// came with the code. The holder still isn't authenticated — whoever
+// sees the offer page can redeem it first; a production issuer would
 // authenticate the holder at the approval step.
 //
 // # One process

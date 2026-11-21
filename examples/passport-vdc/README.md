@@ -795,7 +795,7 @@ demo verifier's `response_uri`, though, must be `https`.
 |---|---|---|
 | Upload | `POST /demo/passport` | gmrtd verification → a transaction T holding the `Evidence` (in memory, 10 minutes, at most 100 at once) → a credential offer with `issuer_state` = T, as a link and a QR code, and a six-digit confirmation code |
 | PAR | `POST /par` | fapigo verifies the Wallet Attestation (its `x5c` chain to the Wallet Provider CA) + PoP and DPoP; the Wallet sends the offer's `issuer_state` (T) |
-| Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, seals the interaction (handle and request) into an encrypted cookie on this browser (fapigo's `interactioncookie`), then asks for the confirmation code (the page shows no passport data). The decision is read back from that cookie, so it can't name another offer, and only that browser can submit it; a cross-origin post is refused. Approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested |
+| Approve | `GET /authorize`, `POST /authorize/decision` | reads T back from the interaction request's `issuer_state`, seals the interaction (handle and request) into an encrypted cookie on this browser (fapigo's `interactioncookie`), then asks for the confirmation code (the page shows no passport data). The decision is read back from that cookie, so it can't name another offer, and only that browser can submit it; a cross-origin post is refused. Approval with the right code **claims T** — no other authorization can reach it — and authorizes **subject = T**, granting the scopes the wallet requested. Three wrong codes end the page, its interaction ending without a redirect (fapigo's `DenyLocally`), and ten, on any pages, void T. **Deny** sends the wallet `access_denied` whatever the code, and the offer page shows it only when it came with the right one |
 | Token | `POST /token` | DPoP-bound access token with `sub` = T; for a passport kept for refresh whose wallet asked for `offline_access`, a refresh token too (grant ID T, lasting 24 hours), which the `refresh_token` grant redeems for another access token for T |
 | Credential | `POST /nonce`, `POST /credential` | the request and response are both encrypted (OID4VCI 1.0 §10, required by the issuer's metadata: the credential carries passport data); the token's `sub` finds T's `Evidence`; the requested configuration (`passport_mdoc` or `passport_sdjwt`), if not already issued for T, is encoded, bound to the key the Key Attestation attests, given its own random index in the issuer's Token Status List, and signed; once both are issued, T and its passport data are dropped — or, kept for refresh, T is issued again on each request until 24 hours after its first credential, or until the wallet revokes its refresh token at `POST /revoke` or T is forgotten on `/demo/kept`. The wallet checks each credential before keeping it: issuer signature chaining to `issuer-ca.pem`, bound to its own holder key, and the offered vct or doctype |
 | Notify | `POST /notification` | the wallet reports each credential it kept as `credential_accepted`, or one that failed its checks as `credential_failure` (OID4VCI 1.0 §11); the status page lists what the wallets reported |
@@ -816,7 +816,7 @@ needs only the PIN, given separately.
 | Step | Endpoint | What happens |
 |---|---|---|
 | Offer | `POST /demo/passport` | the transaction T is claimed at once; a pre-authorized code is stored with T as its subject and the six-digit PIN as its `tx_code` |
-| Token | `POST /token` | fapigo/server reads the request once (`TokenEndpointRequestFromHTTP`), and `grant_type` routes it. fapigo/server authenticates the wallet by its Wallet Attestation and PoP (`AuthenticateAttestedClient`, HAIP 1.0 §4.4.1), refuses a `client_id` naming another client, and verifies the DPoP proof with the same replay record and nonce policy as its own grants (`VerifyTokenRequestBinding`). Only then does `issuer.ExchangePreAuthorizedCode` (`issuer.VerifiedPreAuthorizedCode`) redeem the code and PIN (five wrong PINs void it). The token is signed with the Authorization Server's keys, names T as its subject and the wallet as its client, and is DPoP-bound |
+| Token | `POST /token` | fapigo/server reads the request once (`TokenEndpointRequestFromHTTP`), and `grant_type` routes it. fapigo/server authenticates the wallet by its Wallet Attestation and PoP (`AuthenticateAttestedClient`, HAIP 1.0 §4.4.1), refuses a `client_id` naming another client, and verifies the DPoP proof with the same replay record and nonce policy as its own grants (`VerifyTokenRequestBinding`). Only then does `issuer.ExchangePreAuthorizedCode` (`issuer.VerifiedPreAuthorizedCode`) redeem the code and PIN (ten wrong PINs void it, counted per code, whichever wallets send them). The token is signed with the Authorization Server's keys, names T as its subject and the wallet as its client, and is DPoP-bound |
 | Credential | `POST /nonce`, `POST /credential` | as for the authorization code flow, the wallet presenting the token with `wallet.DPoPResourceClient` |
 
 The Authorization Server's metadata lists the grant in
@@ -951,8 +951,7 @@ longer verify.
 
 - **The holder isn't authenticated.** An offer is redeemed once, by one
   wallet: the first approval with the right confirmation code claims
-  it, its DPoP-bound access token can fetch each format once, and five
-  wrong codes void it. So a leaked offer link on its own is useless. The
+  it, and its DPoP-bound access token can fetch each format once. The
   code (or the pre-authorized offer's PIN) stays hidden on the offer
   page until it's revealed, to show once the holder's wallet has
   scanned the offer: whoever sees both — over a shoulder, in a
@@ -960,6 +959,18 @@ longer verify.
   Provider attests, and get the passport's data in a credential bound
   to *their* key. And since the stand-in Wallet Provider attests
   anyone who asks, "any wallet" is any HTTP client.
+- **The offer link alone can void an offer, though not redeem it.**
+  Wrong codes count against the approval page they're entered on,
+  which three end, and against the offer, which ten void, on any pages:
+  ten guesses at a six-digit code succeed once in 100,000. The offer's
+  count is shared, though, and the QR code is on screen: whoever scans
+  it can open page after page until the ten are spent, in moments with
+  a script, as the stand-in Wallet Provider attests any caller. The
+  holder then uploads the passport again, for a new link and code. A
+  pre-authorized offer's PIN is counted per offer alone, by the
+  library: ten wrong PINs, from any wallets, void it. A **Deny**
+  without the code ends only its own page: the offer page shows the
+  offer declined only when the deny came with the code.
 - **Passports kept for refresh** answer at most 50 Credential Requests
   each, so that refreshing in a loop can't use up the shared status
   list. Expired passport data, whether offers never redeemed, kept

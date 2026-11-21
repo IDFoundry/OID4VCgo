@@ -23,7 +23,7 @@ func TestTransactions_KeptPassportCapCountsReservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.claim(id, code); err != nil {
+	if err := tx.claim(id, "", code); err != nil {
 		t.Fatal(err)
 	}
 	for i := range maxIssuancesPerPassport {

@@ -2,6 +2,7 @@ package issuerapp
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,40 +46,88 @@ func TestTransactions_ClaimedOnce(t *testing.T) {
 	tx := newTestTransactions(&now, 10)
 	id, code := mustPut(t, tx)
 
-	if err := tx.claim(id, "000000"+"x"); !errors.Is(err, errWrongCode) {
+	if err := tx.claim(id, "page", "000000"+"x"); !errors.Is(err, errWrongCode) {
 		t.Fatalf("claim with a wrong code: error = %v, want errWrongCode", err)
 	}
 	if _, err := tx.unclaimed(id); err != nil {
 		t.Fatalf("a wrong code claimed the transaction: %v", err)
 	}
-	if err := tx.claim(id, code); err != nil {
+	if err := tx.claim(id, "page", code); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	if _, err := tx.unclaimed(id); !errors.Is(err, errAlreadyRedeemed) {
 		t.Errorf("unclaimed after claim: error = %v, want errAlreadyRedeemed", err)
 	}
-	if err := tx.claim(id, code); !errors.Is(err, errAlreadyRedeemed) {
+	if err := tx.claim(id, "", code); !errors.Is(err, errAlreadyRedeemed) {
 		t.Errorf("second claim: error = %v, want errAlreadyRedeemed", err)
 	}
 }
 
-// TestTransactions_WrongCodesVoid checks maxCodeFailures wrong codes
-// drop the transaction, so the code can't be guessed.
+// TestTransactions_WrongCodesEndTheirPage checks
+// maxCodeFailuresPerApproval wrong codes end the approval page they're
+// entered on, which then has no code compared, the right one included,
+// while another page still claims the transaction with the right code.
+func TestTransactions_WrongCodesEndTheirPage(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tx := newTestTransactions(&now, 10)
+	id, code := mustPut(t, tx)
+	wrong := "x" + code[1:]
+	for i := 1; i < maxCodeFailuresPerApproval; i++ {
+		if err := tx.claim(id, "a", wrong); !errors.Is(err, errWrongCode) {
+			t.Fatalf("wrong code %d on page a: error = %v, want errWrongCode", i, err)
+		}
+	}
+	for _, c := range []string{wrong, code} {
+		if err := tx.claim(id, "a", c); !errors.Is(err, errApprovalWrongCodes) {
+			t.Fatalf("page a, its wrong codes spent: error = %v, want errApprovalWrongCodes", err)
+		}
+	}
+	if err := tx.claim(id, "b", code); err != nil {
+		t.Fatalf("the right code on page b: %v", err)
+	}
+}
+
+// TestTransactions_WrongCodesVoid checks maxCodeFailures wrong codes, on
+// any approval pages, drop the transaction, so the code can't be
+// guessed by opening page after page.
 func TestTransactions_WrongCodesVoid(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	tx := newTestTransactions(&now, 10)
 	id, code := mustPut(t, tx)
 	wrong := "x" + code[1:]
 	for i := 1; i < maxCodeFailures; i++ {
-		if err := tx.claim(id, wrong); !errors.Is(err, errWrongCode) {
-			t.Fatalf("wrong code %d: error = %v, want errWrongCode", i, err)
+		if err := tx.claim(id, strconv.Itoa(i), wrong); !errors.Is(err, errWrongCode) {
+			t.Fatalf("wrong code %d, on a page of its own: error = %v, want errWrongCode", i, err)
 		}
 	}
-	if err := tx.claim(id, wrong); !errors.Is(err, errTooManyWrongCodes) {
+	if err := tx.claim(id, "last", wrong); !errors.Is(err, errTooManyWrongCodes) {
 		t.Fatalf("wrong code %d: error = %v, want errTooManyWrongCodes", maxCodeFailures, err)
 	}
-	if err := tx.claim(id, code); !errors.Is(err, errNoTransaction) {
+	if err := tx.claim(id, "", code); !errors.Is(err, errNoTransaction) {
 		t.Errorf("right code after voiding: error = %v, want errNoTransaction", err)
+	}
+}
+
+// TestTransactions_Confirms checks confirms, which a deny asks, counts no
+// wrong code, and confirms only a held transaction's code.
+func TestTransactions_Confirms(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tx := newTestTransactions(&now, 10)
+	id, code := mustPut(t, tx)
+	for range maxCodeFailures {
+		if tx.confirms(id, "x"+code[1:]) {
+			t.Fatal("confirms a wrong code")
+		}
+	}
+	if !tx.confirms(id, code) {
+		t.Error("doesn't confirm the code")
+	}
+	if err := tx.claim(id, "", code); err != nil {
+		t.Errorf("claim after wrong codes were asked about: %v", err)
+	}
+	now = now.Add(time.Minute)
+	if tx.confirms(id, code) {
+		t.Error("confirms an expired transaction's code")
 	}
 }
 
@@ -93,7 +142,7 @@ func TestTransactions_IssuesEachCredentialOnce(t *testing.T) {
 	if _, _, err := tx.reserve(id, MdocConfigurationID); !errors.Is(err, errNoTransaction) {
 		t.Fatalf("reserve before claim: error = %v, want errNoTransaction", err)
 	}
-	if err := tx.claim(id, code); err != nil {
+	if err := tx.claim(id, "", code); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
@@ -135,7 +184,7 @@ func TestTransactions_KeepForRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.claim(id, code); err != nil {
+	if err := tx.claim(id, "", code); err != nil {
 		t.Fatal(err)
 	}
 	if len(tx.kept()) != 0 {
@@ -177,7 +226,7 @@ func TestTransactions_KeepForRefresh(t *testing.T) {
 	}
 
 	id, code, _ = tx.put(passport.Evidence{}, testConfigIDs, false, true)
-	_ = tx.claim(id, code)
+	_ = tx.claim(id, "", code)
 	if _, _, err := tx.reserve(id, MdocConfigurationID); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +237,7 @@ func TestTransactions_KeepForRefresh(t *testing.T) {
 	}
 
 	id, code, _ = tx.put(passport.Evidence{}, testConfigIDs, false, true)
-	_ = tx.claim(id, code)
+	_ = tx.claim(id, "", code)
 	tx.dontKeep(id)
 	if tx.keeps(id) {
 		t.Error("keeps after dontKeep")
@@ -232,7 +281,7 @@ func TestTransactions_KeptPassportIssuanceLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.claim(id, code); err != nil {
+	if err := tx.claim(id, "", code); err != nil {
 		t.Fatal(err)
 	}
 	for i := range maxIssuancesPerPassport {
