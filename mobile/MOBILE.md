@@ -2190,14 +2190,23 @@ Go stopped waiting for ran on in the app.
   `CancellationSignal` on its coroutine's cancellation, which dismisses
   the prompt. The provider adapter cancels the provider's coroutine;
   `HttpWalletProvider`'s `HttpURLConnection` can't be interrupted, so
-  its request ends when it does, Go long since returned.
+  its request ends when it does, Go long since returned, and at its
+  timeout at the latest, when a watchdog disconnects it.
+  (`HttpURLConnection`'s own timeouts bound only the connect and each
+  read: until OID4VCWallet 0.43.0 an answer trickled a byte at a time
+  held the request, and the `registering` lock every Wallet Attestation
+  waits for, as long as its sender liked.) A call waiting for that
+  lock, a coroutine `Mutex`, stops when cancelled.
 - **Swift:** `KeychainKeyStore` gives each use an `LAContext` of its
   own (or the presentation's shared one) through
   `kSecUseAuthenticationContext`, and `cancelKeyUse` invalidates it,
   which dismisses the sheet. Keys kept only in memory
   (`persistent: false`) are used without one and can't be cancelled.
   The provider adapter cancels the provider's Task, which ends a
-  `URLSession` request.
+  `URLSession` request, and a wait for another call's registration or
+  assertion (`HttpWalletProvider`'s `registering` and `asserting`
+  locks), which until OID4VCWallet 0.43.0 waited for that call to
+  finish.
 - **Not cancelled:** `KeyStore.CreateKey`, which in the Kotlin library
   waits for the provider's attestation challenge, and a proximity
   session's `Terminate`, which ends a `Respond` between keys but not

@@ -387,6 +387,30 @@ final class HttpWalletProviderTests: XCTestCase {
         XCTAssertEqual(env.keys.count, 1)
     }
 
+    /// A call waiting for a registration that stalls — the provider slow
+    /// to answer it — stops waiting when it's cancelled, as Go's
+    /// cancelling the call cancels it, not when the registration ends.
+    func testCancelledWaitForAStalledRegistrationEnds() async throws {
+        let env = try Env()
+        let server = env.server
+        let provider = env.provider
+        server.state.withLock { $0.registrationDelay = 10_000_000_000 }
+        let first = try env.instanceKey().json
+        let next = try env.instanceKey().json
+        let stalled = Task { try await provider.walletAttestation(clientID: "wallet", instanceKey: first) }
+        await until("the registration is sent") { server.state.withLock { $0.requests } >= 2 }
+        let waiting = Task { try await provider.walletAttestation(clientID: "wallet", instanceKey: next) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let cancelled = Date()
+        waiting.cancel()
+        let result = await waiting.result
+        XCTAssertLessThan(Date().timeIntervalSince(cancelled), 2, "the cancelled call waited for the registration")
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+        stalled.cancel()
+        _ = await stalled.result
+        XCTAssertEqual(server.state.withLock { $0.registrations }, 0)
+    }
+
     /// An App Attest key a transient failure left unregistered — App
     /// Attest's server, or the provider, unavailable — is tried again by
     /// the next registration; a refusal needs a new one.

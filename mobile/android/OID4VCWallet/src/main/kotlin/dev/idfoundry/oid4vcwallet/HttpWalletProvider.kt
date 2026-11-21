@@ -12,10 +12,14 @@ import kotlinx.serialization.json.longOrNull
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URISyntaxException
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * A [WalletProvider] over the Wallet Provider HTTP protocol, version 1,
@@ -49,8 +53,8 @@ import java.util.Base64
  *   recorded.
  *
  * It sends nothing but to its base URL, over https, following no
- * redirect, with its timeout for connecting and for reading, and reads at most
- * 256 KiB of an answer. It checks a Wallet Attestation is for the client
+ * redirect, ends a request still unanswered at its timeout, and reads at
+ * most 256 KiB of an answer. It checks a Wallet Attestation is for the client
  * and the instance key, and a Key Attestation is over the nonce sent and
  * attests only keys sent; their signatures are the issuer's to verify.
  *
@@ -146,7 +150,9 @@ public class HttpWalletProvider internal constructor(
      *   store: [Wallet.sweepOrphanedKeys] deletes every key there that no
      *   credential is bound to (and refuses a store under
      *   [REGISTRATION_KEY_ALIAS_PREFIX]).
-     * @param timeoutMillis The connect and the read timeout of each request.
+     * @param timeoutMillis How long each request may take, from
+     *   connecting to the last byte of its answer: one that takes longer
+     *   is ended, and fails as a timeout, a network failure.
      * @throws IllegalArgumentException when [baseURL] isn't an absolute
      *   https URL without user info, query or fragment, or
      *   [timeoutMillis] isn't positive.
@@ -170,7 +176,13 @@ public class HttpWalletProvider internal constructor(
     /** Guards the challenges below. */
     private val lock: Mutex get() = state.lock
 
-    /** Held while the installation registers or forgets its registration, so it registers once. */
+    /**
+     * Held while the installation registers or forgets its registration,
+     * so it registers once. A call waiting for it stops waiting when it's
+     * cancelled, and each request made while it's held ends at the
+     * timeout, so a registration that stalls holds up the calls after it
+     * only until its requests time out.
+     */
     private val registering: Mutex get() = state.registering
 
     /** `instance` challenges handed out, most recent last, until they expire. */
@@ -562,7 +574,7 @@ public class HttpWalletProvider internal constructor(
             AndroidKeystoreKeyStore.Options(strongBox = strongBox, holderUserAuthentication = false, aliasPrefix = REGISTRATION_KEY_ALIAS_PREFIX),
         )
 
-        /** The default connect and read timeout, as the Go client's. */
+        /** The default timeout of each request, as the Go client's. */
         internal const val DEFAULT_TIMEOUT_MILLIS = 30_000
 
         internal const val CHALLENGE_PATH = "/v1/challenge"
@@ -737,10 +749,19 @@ internal fun interface WalletProviderTransport {
     fun post(url: URI, headers: Map<String, String>, body: ByteArray): WalletProviderAnswer
 }
 
-/** The transport over [HttpURLConnection]: no redirects, no caching, bounded answers. */
+/**
+ * The transport over [HttpURLConnection]: no redirects, no caching,
+ * bounded answers, and [timeoutMillis] for the whole of each request,
+ * from connecting to the answer's last byte, as Swift's
+ * `timeoutIntervalForResource` and the Go client's timeout are.
+ * [HttpURLConnection]'s own timeouts, set to it too, bound only the
+ * connect and each read, which an answer trickled a byte at a time
+ * outlasts.
+ */
 internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletProviderTransport {
     override fun post(url: URI, headers: Map<String, String>, body: ByteArray): WalletProviderAnswer {
         val connection = url.toURL().openConnection() as HttpURLConnection
+        val deadline = RequestDeadline(timeoutMillis, connection::disconnect)
         try {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
@@ -752,21 +773,33 @@ internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletPr
             // body for a streamed request answered 401 with WWW-Authenticate,
             // as invalid_signed_request is.
             headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+            // A disconnect before the connection exists ends nothing:
+            // the deadline is checked once it does.
+            connection.connect()
+            deadline.check()
             connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
-            val data = stream?.use { readBounded(it) } ?: ByteArray(0)
+            val data = stream?.use { readBounded(it, deadline) } ?: ByteArray(0)
+            // The disconnect at the deadline may have cut the answer short.
+            deadline.check()
             return WalletProviderAnswer(status, connection.contentType, data)
+        } catch (e: Exception) {
+            throw deadline.failure(e)
         } finally {
+            deadline.finish()
             connection.disconnect()
         }
     }
 
-    private fun readBounded(input: java.io.InputStream): ByteArray {
+    private fun readBounded(input: java.io.InputStream, deadline: RequestDeadline): ByteArray {
         val out = ByteArrayOutputStream()
         val buf = ByteArray(8192)
         while (true) {
             val n = input.read(buf)
+            // Where a disconnect waits for the read in progress (the
+            // JDK's), the read after the deadline ends the request.
+            deadline.check()
             if (n < 0) break
             out.write(buf, 0, n)
             if (out.size() > HttpWalletProvider.MAX_RESPONSE_BYTES) {
@@ -775,6 +808,45 @@ internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletPr
         }
         return out.toByteArray()
     }
+}
+
+/**
+ * A request's deadline, [millis] after it's made: unless [finish] comes
+ * first, [end] — the connection's disconnect — runs then, on a thread of
+ * its own, ending a connect, a write or a read in progress, and the
+ * request fails as a timeout ([check], [failure]).
+ */
+internal class RequestDeadline(private val millis: Int, end: () -> Unit) {
+    private val finished = CountDownLatch(1)
+
+    // Set before end runs: a failure the disconnect causes sees it.
+    @Volatile
+    private var passed = false
+
+    init {
+        thread(isDaemon = true, name = "OID4VCWallet request deadline") {
+            if (!finished.await(millis.toLong(), TimeUnit.MILLISECONDS)) {
+                passed = true
+                end()
+            }
+        }
+    }
+
+    /** Throws the timeout once the deadline has passed. */
+    fun check() {
+        if (passed) throw timeout(null)
+    }
+
+    /** What a request failing with [e] throws: once the deadline has passed, a timeout, [e] if it's one; else [e]. */
+    fun failure(e: Exception): Exception = if (passed && e !is SocketTimeoutException) timeout(e) else e
+
+    /** The request is over: the deadline ends nothing. */
+    fun finish() = finished.countDown()
+
+    // As HttpURLConnection's own timeouts fail, so the wallet reports a
+    // network failure, as before.
+    private fun timeout(cause: Exception?) =
+        SocketTimeoutException("the Wallet Provider didn't answer within $millis ms").apply { cause?.let(::initCause) }
 }
 
 private val base64URL: Base64.Encoder = Base64.getUrlEncoder().withoutPadding()

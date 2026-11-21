@@ -444,7 +444,8 @@ internal class WalletProviderAdapter(
      * Cancels the calls in progress for the issuance whose instance key
      * is [instanceKeyJWK], which Go no longer waits for: a provider
      * suspended cancellably stops there; one blocked in a request (as
-     * [HttpWalletProvider]'s `HttpURLConnection` is) ends when it does.
+     * [HttpWalletProvider]'s `HttpURLConnection` is) ends when it does,
+     * by its timeout at the latest.
      */
     fun cancel(instanceKeyJWK: ByteArray) {
         calls.cancel(instanceKeyJWK.decodeToString())
