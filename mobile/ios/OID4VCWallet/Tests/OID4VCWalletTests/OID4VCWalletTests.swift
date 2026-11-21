@@ -298,6 +298,12 @@ final class OID4VCWalletTests: XCTestCase {
         for prefix in [KeychainKeyStore.Options().tagPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test."] {
             XCTAssertNil(Wallet.sweepRefusal(tagPrefix: prefix), "prefix \(prefix) refused")
         }
+        // A Wallet Provider's registration key store under a prefix of its own.
+        let registrationStores: Set = ["com.example.wallet.keys."]
+        for prefix in ["com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.b-"] {
+            XCTAssertNotNil(Wallet.sweepRefusal(tagPrefix: prefix, registrationPrefixes: registrationStores), "prefix \(prefix) accepted")
+        }
+        XCTAssertNil(Wallet.sweepRefusal(tagPrefix: "com.example.wallet.other.", registrationPrefixes: registrationStores))
         let empty = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: ""))
         _ = try empty.createKey(purpose: .dpop)
         XCTAssertThrowsError(try empty.deleteKeys(except: []))

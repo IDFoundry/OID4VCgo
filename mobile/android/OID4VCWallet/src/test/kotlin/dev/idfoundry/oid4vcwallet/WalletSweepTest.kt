@@ -16,6 +16,21 @@ class WalletSweepTest {
         }
     }
 
+    /**
+     * The wallet's sweep refuses a store whose prefix is, covers or falls
+     * under a registration key store's, as it does the default
+     * registration prefix.
+     */
+    @Test
+    fun refusesPrefixesOverlappingARegistrationKeyStore() {
+        val registration = setOf("com.example.wallet.keys.")
+        for (prefix in listOf("com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.b-")) {
+            assertNotNull("prefix $prefix accepted", Wallet.walletSweepRefusal(prefix, registration))
+            assertNull("prefix $prefix refused for the default registration prefix", Wallet.walletSweepRefusal(prefix))
+        }
+        assertNull(Wallet.walletSweepRefusal("com.example.wallet.other.", registration))
+    }
+
     @Test
     fun acceptsTheWalletsOwnPrefixes() {
         for (prefix in listOf(AndroidKeystoreKeyStore.Options().aliasPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test.")) {

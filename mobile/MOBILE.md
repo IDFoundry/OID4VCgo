@@ -398,8 +398,11 @@ but its registration's, and every provider made with
 Wallet Provider, or with each provider's keys under a prefix of its
 own. It refuses a store whose prefix is, covers or falls under the
 key store's of a `Wallet` made with a provider over the same registry,
-which tells the provider its prefix: the wallet's sweep refuses the
-registration prefix likewise. The Kotlin client has the same call.
+which tells the provider its prefix; the wallet's sweep refuses a
+store overlapping the registration key store's of any provider made
+over that registry, which each provider records when it's made, or
+the default registration prefix. The Kotlin client has the same
+calls.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against

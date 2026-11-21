@@ -149,7 +149,8 @@ public class HttpWalletProvider internal constructor(
      *   Keystore under an alias prefix of its own. Not the wallet's key
      *   store: [Wallet.sweepOrphanedKeys] deletes every key there that no
      *   credential is bound to (and refuses a store under
-     *   [REGISTRATION_KEY_ALIAS_PREFIX]).
+     *   [REGISTRATION_KEY_ALIAS_PREFIX], or overlapping this one's
+     *   prefix).
      * @param timeoutMillis How long each request may take, from
      *   connecting to the last byte of its answer: one that takes longer
      *   is ended, and fails as a timeout, a network failure.
@@ -171,6 +172,12 @@ public class HttpWalletProvider internal constructor(
         is FileInstanceRegistry -> instances.walletProviderState
         is InMemoryInstanceRegistry -> instances.walletProviderState
         else -> WalletProviderState()
+    }
+
+    init {
+        // A wallet's sweep refuses a store over the registration keys,
+        // before any registration as after.
+        (registrationKeys as? AndroidKeystoreKeyStore)?.let { state.addRegistrationPrefix(it.options.aliasPrefix) }
     }
 
     /** Guards the challenges below. */
@@ -379,6 +386,14 @@ public class HttpWalletProvider internal constructor(
      * overlapping it.
      */
     internal fun addWalletKeys(aliasPrefix: String) = state.addWalletPrefix(aliasPrefix)
+
+    /**
+     * The alias prefixes of the registration key stores, where they're
+     * [AndroidKeystoreKeyStore]s, of every provider made over the
+     * registry: [Wallet.sweepOrphanedKeys] refuses a store overlapping
+     * one.
+     */
+    internal fun registrationKeyPrefixes(): Set<String> = state.registrationPrefixes()
 
     /**
      * Registers the installation with a new registration key — and with
@@ -723,8 +738,10 @@ internal class WalletProviderState {
     var holderChallenge: IssuedChallenge? = null
 
     // The alias prefixes of the key stores of the wallets built with a
-    // provider over the registry.
+    // provider over the registry, and of those providers' registration
+    // key stores.
     private val walletPrefixes = mutableSetOf<String>()
+    private val registrationPrefixes = mutableSetOf<String>()
 
     @Synchronized
     fun addWalletPrefix(aliasPrefix: String) {
@@ -733,6 +750,14 @@ internal class WalletProviderState {
 
     @Synchronized
     fun walletPrefixes(): Set<String> = walletPrefixes.toSet()
+
+    @Synchronized
+    fun addRegistrationPrefix(aliasPrefix: String) {
+        registrationPrefixes += aliasPrefix
+    }
+
+    @Synchronized
+    fun registrationPrefixes(): Set<String> = registrationPrefixes.toSet()
 }
 
 /** A challenge the provider issued. */

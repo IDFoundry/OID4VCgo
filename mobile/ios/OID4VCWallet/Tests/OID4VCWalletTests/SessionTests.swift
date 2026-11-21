@@ -593,26 +593,37 @@ final class SessionTests: XCTestCase {
         XCTAssertNotNil(try registration.publicKey(id: registrationKey))
     }
 
-    /// A Wallet Provider's registration key sweep refuses a store whose
-    /// prefix is, covers or falls under the key store's of a wallet made
-    /// with it, deleting nothing: it would delete the wallet's keys.
-    func testRegistrationSweepRefusesTheWalletsKeys() async throws {
+    /// Neither sweep deletes the other's keys: a Wallet Provider's
+    /// registration key sweep refuses a store whose prefix is, covers or
+    /// falls under the key store's of a wallet made with it, and the
+    /// wallet's sweep a store overlapping the provider's registration key
+    /// store, deleting nothing.
+    func testSweepsRefuseEachOthersStores() async throws {
         let env = try TestEnv()
         defer { env.close() }
         let prefix = "org.idfoundry.oid4vcgo.session.\(UUID())."
         let keys = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: prefix))
+        let walletKey = try keys.createKey(purpose: .dpop)
+        func refused(_ sweep: () async throws -> Int) async -> Bool {
+            do {
+                _ = try await sweep()
+                return false
+            } catch {
+                return error is StoreError
+            }
+        }
         for registrationPrefix in [prefix, prefix + "wp.", String(prefix.dropLast())] {
             let registration = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: registrationPrefix))
             let left = try registration.createKey(purpose: .instance)
             let provider = try HttpWalletProvider(baseURL: URL(string: "https://wp.example")!, instances: InMemoryInstanceRegistry(),
                                                   registrationKeys: registration)
-            _ = try Wallet(configuration: try env.configuration, keyStore: keys, credentialStore: InMemoryCredentialStore(), provider: provider)
-            do {
-                _ = try await provider.sweepOrphanedRegistrationKeys()
-                XCTFail("swept \(registrationPrefix)")
-            } catch is StoreError {
-                XCTAssertNotNil(try registration.publicKey(id: left), registrationPrefix)
-            }
+            let w = try Wallet(configuration: try env.configuration, keyStore: keys, credentialStore: InMemoryCredentialStore(), provider: provider)
+            let providerRefused = await refused { try await provider.sweepOrphanedRegistrationKeys() }
+            XCTAssertTrue(providerRefused, "the provider swept \(registrationPrefix)")
+            let walletRefused = await refused { try await w.sweepOrphanedKeys(in: keys) }
+            XCTAssertTrue(walletRefused, "the wallet swept \(prefix) over \(registrationPrefix)")
+            XCTAssertNotNil(try registration.publicKey(id: left), registrationPrefix)
+            XCTAssertNotNil(try keys.publicKey(id: walletKey), registrationPrefix)
         }
     }
 
