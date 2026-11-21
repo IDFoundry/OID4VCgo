@@ -107,7 +107,7 @@ func (a *App) CreateOffer(ctx context.Context, e passport.Evidence, opts OfferOp
 		// The PIN stands in for the approval step: the transaction is
 		// claimed now, and only the pre-authorized code, with the PIN,
 		// reaches it.
-		if err := a.transactions.claim(txID, code); err != nil {
+		if err := a.transactions.claim(txID, "", code); err != nil {
 			return Offer{}, err
 		}
 		uri, err := a.preAuthorizedOffer(ctx, txID, code, configIDs)
