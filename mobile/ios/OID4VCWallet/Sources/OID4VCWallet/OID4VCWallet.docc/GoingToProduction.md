@@ -422,6 +422,13 @@ ecosystem, and record why:
   answers: set it only where those roots certify Verifiers alone, or
   with ``WalletConfiguration/VerifierTrust/requireEKU``. It needs
   ``WalletConfiguration/VerifierTrust/roots``.
+- ``WalletConfiguration/PresentationOptions/verifierRedirectSchemes``:
+  the only schemes besides `https` a Verifier's redirect may have, the
+  schemes of your Verifiers' apps, or `["https"]` for none. Without it,
+  a Verifier under ``WalletConfiguration/VerifierTrust/roots`` can send
+  the holder to whichever app handles a scheme, but for those the
+  wallet never follows (`http`, schemes that run code or read local
+  data, invoke a wallet or open a system app).
 - ``WalletConfiguration/IssuerTrust/acceptMDLSignerWithoutEKU`` and
   ``ProximityReaderConfiguration/IssuerTrust/acceptMDLSignerWithoutEKU``: also
   accept a document signer certificate with no extended key usage,

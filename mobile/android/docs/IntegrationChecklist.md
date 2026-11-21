@@ -120,9 +120,10 @@ is a complete, working app on this library to compare against.
 - [ ] Open `redirectURI`, when there is one, in the browser the request
   came from.
 - [ ] `requestRefused` from `startPresentation`: open the exception's
-  `refusalRedirect` when it has one, and tell the holder the request
-  wasn't answered. Over the DC API, return a failure
-  to the page. ([Handling errors](HandlingErrors.md))
+  `refusalRedirect` when it has one, asking the holder first when it
+  isn't `https`, and tell the holder the request wasn't answered. Over
+  the DC API, return a failure to the page.
+  ([Handling errors](HandlingErrors.md))
 - [ ] `deliveryUnknown` isn't retried: tell the holder to check with the
   Verifier.
 - [ ] *Check:* a Verifier outside `verifiers.roots` is refused before

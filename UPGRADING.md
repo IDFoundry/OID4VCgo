@@ -7,6 +7,33 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.42.0 → 0.43.0
+
+Built from OID4VCgo v0.86.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### Ask before opening a refused request's redirect that isn't https (Swift, Kotlin)
+
+A refused request's `refusalRedirect`, and `takeRefusalRedirect()`,
+arrive before the holder has done anything but open the link: the
+wallet sends the Verifier its error itself. Ask the holder before
+opening one that isn't `https`, which opens another app and can look
+like the wallet's next step. The library now refuses a redirect that
+opens a system app (an app's install prompt or store page, a call, a
+message, the settings, a Shortcut or a map), as it refused `http`:
+`refusalRedirect` is then nil, and `respond` and `decline` fail with
+`protocol`, the presentation answered.
+
+### Name your Verifiers' app schemes (Swift, Kotlin)
+
+The new `presentation.verifierRedirectSchemes` (`verifier_redirect_schemes`)
+names the only schemes besides `https` a Verifier's redirect may have:
+set it to the schemes of your Verifiers' apps where you know them, or
+to `["https"]` (`listOf("https")`). A redirect with another scheme is
+then refused as above. Empty, the default, follows any scheme the
+library doesn't refuse. A scheme that isn't one, or one never
+followed, is `invalidInput`.
+
 ## v0.85.0 → v0.86.0
 
 ### A Verifier's redirect to a system app is refused (wallet, walletflow)

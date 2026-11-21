@@ -99,6 +99,11 @@ type config struct {
 	// x509_san_dns prefix, besides x509_hash; it needs VerifierRoots
 	// (walletflow.Config.AcceptX509SANDNS).
 	AcceptX509SANDNS bool `json:"accept_x509_san_dns,omitempty"`
+	// VerifierRedirectSchemes, if set, are the only URI schemes besides
+	// https a Verifier's redirect_uri may have: the schemes of the
+	// Verifier apps the wallet returns holders to, or "https" alone
+	// (walletflow.Config.VerifierRedirectSchemes).
+	VerifierRedirectSchemes []string `json:"verifier_redirect_schemes,omitempty"`
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name (walletflow.Config.RequireIssuerName).
 	RequireIssuerName bool `json:"require_issuer_name,omitempty"`
@@ -526,7 +531,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
 		ProofKeyByJWK: cfg.ProofKeyByJWK, RequireTrustedMdocReader: cfg.RequireTrustedMdocReader,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
-		AllowedPrivateHosts: cfg.AllowedPrivateHosts,
+		VerifierRedirectSchemes: cfg.VerifierRedirectSchemes, AllowedPrivateHosts: cfg.AllowedPrivateHosts,
 	}
 	if cfg.AcceptX509SANDNS && cfg.VerifierRoots == "" {
 		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("accept_x509_san_dns needs verifier_roots: an x509_san_dns name is the Verifier's only through a chain to them"))

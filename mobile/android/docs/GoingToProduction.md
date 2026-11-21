@@ -447,6 +447,12 @@ ecosystem, and record why:
   Every name in a certificate under `verifiers.roots` is then a Verifier
   the wallet answers: set it only where those roots certify Verifiers
   alone, or with `verifiers.requireEKU`. It needs `verifiers.roots`.
+- `presentation.verifierRedirectSchemes`: the only schemes besides
+  `https` a Verifier's redirect may have, the schemes of your Verifiers'
+  apps, or `listOf("https")` for none. Without it, a Verifier under
+  `verifiers.roots` can send the holder to whichever app handles a
+  scheme, but for those the wallet never follows (`http`, schemes that
+  run code or read local data, invoke a wallet or open a system app).
 - `issuers.acceptMDLSignerWithoutEKU`, on a `WalletConfiguration` and a
   `ProximityReaderConfiguration`: also accepts a document signer
   certificate with no extended key usage, which the default check

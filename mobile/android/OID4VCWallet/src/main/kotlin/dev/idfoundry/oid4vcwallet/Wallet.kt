@@ -394,6 +394,21 @@ public data class WalletConfiguration(
          * needs a key store that is also a [KeyAgreement].
          */
         val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
+        /**
+         * The only URI schemes besides `https` a Verifier's redirect may
+         * have, when set: the schemes of the Verifier apps the wallet
+         * returns holders to, or `listOf("https")` to allow no other. A
+         * redirect with another scheme isn't returned: [Presentation.respond]
+         * and [Presentation.decline] throw [WalletException.Code.protocol],
+         * the presentation answered, and a refusal has no
+         * [WalletException.refusalRedirect]. Empty, the default, allows any
+         * scheme but those the wallet never follows: `http`, schemes that
+         * run code or read local data, invoke a wallet or open a system app
+         * (`market`, `tel`, `sms`, `mailto` and their like), and
+         * [WalletConfiguration.redirectURI]'s. A scheme that isn't one, or
+         * one never followed, is `invalidInput` (from OID4VCWallet 0.43.0).
+         */
+        val verifierRedirectSchemes: List<String> = emptyList(),
     )
 
     /** A trust role whose certificates can be checked for revocation. */
@@ -556,6 +571,7 @@ internal data class WalletConfigurationJSON(
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    @SerialName("verifier_redirect_schemes") val verifierRedirectSchemes: List<String> = emptyList(),
 )
 
 /** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
@@ -621,6 +637,7 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         identifierListMaxBytes = c.status.identifierListMaxBytes,
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
+        verifierRedirectSchemes = c.presentation.verifierRedirectSchemes,
     )
 
     private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
@@ -676,7 +693,11 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             proofKeyByJWK = j.proofKeyByJWK,
             proofKeyByIndex = j.proofKeyByIndex,
         ),
-        presentation = WalletConfiguration.PresentationOptions(copyPolicy = j.copyPolicy, proximityDeviceAuth = j.proximityDeviceAuth),
+        presentation = WalletConfiguration.PresentationOptions(
+            copyPolicy = j.copyPolicy,
+            proximityDeviceAuth = j.proximityDeviceAuth,
+            verifierRedirectSchemes = j.verifierRedirectSchemes,
+        ),
         development = Development.decoded(j.development, j.developmentRoots),
     )
 }
@@ -1218,7 +1239,9 @@ public class Wallet(
      * Where the Verifier asked to take the holder after the wallet
      * refused its request: when [startPresentation] throws
      * [WalletException.Code.requestRefused], open this URL, if any, as
-     * OpenID4VP §8.2 has a wallet do. It's returned once. It holds the
+     * OpenID4VP §8.2 has a wallet do. The holder has done no more than
+     * open the link, so ask them before opening one that isn't `https`:
+     * it opens another app. It's returned once. It holds the
      * latest refusal of any call: with presentations started
      * concurrently, open the exception's own
      * [WalletException.refusalRedirect] instead, or one Verifier's

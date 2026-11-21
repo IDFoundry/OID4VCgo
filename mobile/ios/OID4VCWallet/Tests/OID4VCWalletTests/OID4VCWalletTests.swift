@@ -36,7 +36,8 @@ final class OID4VCWalletTests: XCTestCase {
          "mdoc_reader_roots":"MR","mdoc_reader_require_eku":true,"require_trusted_mdoc_reader":true,
          "development":true,"development_roots":"DR","locales":["de","en"],"batch_size":3,"request_refresh":true,
          "copy_policy":"per_verifier","issuance_profile":"haip","proof_key_by_jwk":true,"proof_key_by_index":true,
-         "accept_x509_san_dns":true,"tls_pins":{"a.example":["pin"]},"allowed_private_hosts":["h.example"],
+         "accept_x509_san_dns":true,"verifier_redirect_schemes":["com.example.verifier"],
+         "tls_pins":{"a.example":["pin"]},"allowed_private_hosts":["h.example"],
          "proximity_device_auth":"mac_preferred","verifier_require_eku":"1.1","registrar_require_eku":"1.2",
          "issuer_require_eku":"1.3","issuer_metadata_require_eku":"1.4",
          "status_issuers":{"https://i.example":["https://s.example"]},"require_issuer_name":true,
@@ -68,6 +69,7 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.issuance.locales, ["de", "en"])
         XCTAssertEqual(config.presentation.copyPolicy, .perVerifier)
         XCTAssertEqual(config.presentation.proximityDeviceAuth, .macPreferred)
+        XCTAssertEqual(config.presentation.verifierRedirectSchemes, ["com.example.verifier"])
         XCTAssertEqual(config.development?.roots, "DR")
         try assertSameJSON(JSONEncoder().encode(config), Data(full.utf8))
 
