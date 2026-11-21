@@ -77,11 +77,13 @@ agrees.
 
 Open ``Presentation/Presented/redirectURI``, when the Verifier sends
 one, in the browser the request came from: it's how a same-device
-flow returns to the Verifier's page. The library refuses http and
-schemes that run code or read local data, but lets through a scheme the
-Verifier's own app may have registered: open an https URL in the
-browser, any other only through `UIApplication.open`, never in a web
-view, and never one in the wallet's own schemes (`openid4vp`,
+flow returns to the Verifier's page. The library refuses http, schemes
+that run code or read local data, and schemes that open a system app
+rather than the Verifier's page or app (`itms-services:`, `tel:`,
+`sms:`, `mailto:`, `shortcuts:` and their like), but lets through a
+scheme the Verifier's own app may have registered: open an https URL
+in the browser, any other only through `UIApplication.open`, never in
+a web view, and never one in the wallet's own schemes (`openid4vp`,
 `openid-credential-offer`, its redirect URI's), which would start
 another flow in the wallet.
 

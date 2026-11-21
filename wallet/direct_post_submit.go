@@ -31,10 +31,14 @@ type DirectPostResult struct {
 	// MUST now send the user agent — the same-device flow's way back to
 	// the Verifier (§8.2; HAIP 1.0 §5.1 requires Wallets to follow it).
 	// It is an absolute URI: an https page, or a scheme the Verifier's
-	// own app registered. Plain http, and one that runs code or reads
-	// local data (javascript:, data:, file:, Android's intent:, content:
-	// and android-app:), are refused. Open a non-https one only
-	// through the platform's handling of app links, never in a web view.
+	// own app registered. Plain http, one that runs code or reads local
+	// data (javascript:, data:, file:, Android's intent:, content: and
+	// android-app:), and one that opens a system handler rather than
+	// the Verifier's page or app (an app install or store, a call, a
+	// message, the settings, a Shortcut or a map: itms-services:,
+	// market:, tel:, sms:, mailto:, ms-settings:, shortcuts:, geo: and
+	// their like) are refused. Open a non-https one only through the
+	// platform's handling of app links, never in a web view.
 	RedirectURI string
 }
 
@@ -224,9 +228,25 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 // app, and one to a Wallet's scheme would start another presentation
 // or issuance straight after the holder consented to this one.
 // walletflow refuses the Wallet's own redirect URI's scheme too.
+//
+// And the schemes that open a system handler rather than a Verifier's
+// page or app, where an honest Verifier never sends the holder after a
+// presentation, but where a redirect straight after the holder opened a
+// link, or consented, looks like the Wallet's own next step: an app's
+// install prompt or store page (iOS's itms-services:, itms-apps: and
+// itms-appss:, Android's market:, Windows's ms-appinstaller: and
+// ms-windows-store:), a call (tel:, and iOS's facetime: and
+// facetime-audio:), a message (sms:, and Android's smsto:, mms: and
+// mmsto:; mailto:), the settings (Windows's ms-settings:), a Shortcut
+// run (iOS's shortcuts:) or a map (geo:, and iOS's maps:). A Verifier's
+// own app's scheme is still followed.
 var unsafeRedirectSchemes = map[string]bool{
 	"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true,
 	"intent": true, "android-app": true, "content": true,
 	"openid4vp": true, "haip-vp": true, "openid-credential-offer": true, "haip-vci": true,
 	"mdoc-openid4vp": true, "eudi-openid4vp": true,
+	"itms-services": true, "itms-apps": true, "itms-appss": true, "market": true, "ms-appinstaller": true, "ms-windows-store": true,
+	"tel": true, "facetime": true, "facetime-audio": true,
+	"sms": true, "smsto": true, "mms": true, "mmsto": true, "mailto": true,
+	"ms-settings": true, "shortcuts": true, "geo": true, "maps": true,
 }

@@ -81,6 +81,28 @@ func TestSubmitDirectPostResponse(t *testing.T) {
 	}
 }
 
+// A redirect_uri that opens a system handler rather than the
+// Verifier's page or app — an app's install prompt or store page, a
+// call, a message, the settings, a Shortcut, a map — is refused, though
+// the response reached the Verifier.
+func TestSubmitDirectPostResponse_RefusesSystemHandlers(t *testing.T) {
+	for _, uri := range []string{
+		"itms-services://?action=download-manifest&url=https://attacker.example/app.plist",
+		"itms-apps://apps.apple.com/app/id1", "ITMS-APPSS://apps.apple.com/app/id1", "market://details?id=com.attacker.app",
+		"ms-appinstaller:?source=https://attacker.example/app.msix", "ms-windows-store://pdp/?productid=x",
+		"tel:+15555550100", "facetime:+15555550100", "facetime-audio:+15555550100",
+		"sms:+15555550100?body=hello", "smsto:+15555550100", "mms:+15555550100", "mmsto:+15555550100",
+		"mailto:victim@example.com?body=x", "ms-settings:privacy", "shortcuts://run-shortcut?name=Export",
+		"geo:0,0?q=x", "maps://?q=x",
+	} {
+		srv := verifierReply(t, http.StatusOK, "application/json", `{"redirect_uri":"`+uri+`"}`)
+		got, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")
+		if !errors.Is(err, wallet.ErrResponseDelivered) || got.RedirectURI != "" {
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want it refused, the response delivered", uri, got, err)
+		}
+	}
+}
+
 func TestSubmitDirectPostResponse_Rejected(t *testing.T) {
 	srv := verifierReply(t, http.StatusBadRequest, "application/json", `{"error":"invalid_request","error_description":"nonce mismatch"}`)
 	_, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")

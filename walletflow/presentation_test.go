@@ -10,6 +10,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/verifier"
+	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 	"github.com/idfoundry/oid4vcgo/walletflow/walletflowtest"
 )
@@ -545,4 +546,40 @@ func TestPresentation_RefusedRequestGivesTheRedirect(t *testing.T) {
 	if strings.Contains(err.Error(), "wasn't told") {
 		t.Errorf("the Verifier wasn't told: %v", err)
 	}
+}
+
+// A refused request's redirect_uri to a system handler rather than the
+// Verifier's page or app — an app install, a store, a Shortcut, a
+// message, a call, the settings, a map, mail — isn't handed back to
+// open: the holder did no more than open the link. The Verifier has the
+// error all the same.
+func TestPresentation_RefusedRequestRedirectToASystemHandler(t *testing.T) {
+	f, v, w := presentationFixture(t)
+	for _, redirect := range []string{
+		"itms-services://?action=download-manifest&url=https://attacker.example/app.plist",
+		"market://details?id=com.attacker.app", "shortcuts://run-shortcut?name=Export", "sms:+15555550100?body=hello",
+		"tel:+15555550100", "ms-settings:privacy", "geo:0,0?q=x", "mailto:victim@example.com?body=x",
+	} {
+		refused, err := refusedWith(t, f, v, w, redirect)
+		if refused.RedirectURI != "" || !errors.Is(err, wallet.ErrResponseDelivered) {
+			t.Errorf("%s: StartPresentation = %v, redirect %q; want no redirect, the error delivered", redirect, err, refused.RedirectURI)
+		}
+	}
+}
+
+// refusedWith has w start a request v refuses, whose response_uri
+// answers the error response with redirect, and returns its
+// RequestRefusedError and StartPresentation's error.
+func refusedWith(t *testing.T, f fixture, v testVerifier, w *walletflow.Wallet, redirect string) (*walletflow.RequestRefusedError, error) {
+	t.Helper()
+	link, err := v.BeginRefused(dcql.Query{Credentials: []dcql.CredentialQuery{f.env.SDJWTQuery(t, "pid", "given_name")}}, redirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.StartPresentation(context.Background(), link)
+	var refused *walletflow.RequestRefusedError
+	if !errors.As(err, &refused) || refused.Code != "invalid_transaction_data" {
+		t.Fatalf("StartPresentation = %v, want a RequestRefusedError", err)
+	}
+	return refused, err
 }

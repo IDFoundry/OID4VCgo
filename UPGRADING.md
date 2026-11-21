@@ -7,6 +7,27 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.85.0 → v0.86.0
+
+### A Verifier's redirect to a system app is refused (wallet, walletflow)
+
+A Verifier's `redirect_uri` (OpenID4VP 1.0 §8.2) that opens a system
+handler rather than the Verifier's page or app is now refused, as
+`http:` and `javascript:` were: an app's install prompt or store page
+(`itms-services`, `itms-apps`, `itms-appss`, `market`,
+`ms-appinstaller`, `ms-windows-store`), a call (`tel`, `facetime`,
+`facetime-audio`), a message (`sms`, `smsto`, `mms`, `mmsto`,
+`mailto`), the settings (`ms-settings`), a Shortcut (`shortcuts`) or a
+map (`geo`, `maps`). `wallet.SubmitDirectPostResponse`, `Respond` and
+`RespondSelection` return an error wrapping `ErrResponseDelivered`
+instead of the redirect. walletflow's `Respond` and `Decline` return
+that error, the presentation answered, and a refused request's
+`RequestRefusedError.RedirectURI` is empty. A trusted Verifier could
+otherwise send the holder from the wallet straight to one of them,
+looking like the wallet's next step, on a refusal before the holder
+had done anything but open the link. An honest Verifier redirects to
+its page or its own app's scheme, which are still followed.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration
