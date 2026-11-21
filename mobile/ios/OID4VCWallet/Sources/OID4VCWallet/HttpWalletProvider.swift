@@ -700,11 +700,15 @@ private func isTransient(_ error: Error) -> Bool {
 /// process: its locks, and what it remembers of the registration.
 final class WalletProviderState: @unchecked Sendable {
     /// Held while the installation registers or forgets its
-    /// registration, so it registers once.
-    let registering = AsyncMutex()
+    /// registration, so it registers once. Held across requests, each
+    /// ending at the timeout; a call waiting for it stops waiting when
+    /// its Task is cancelled, as Go's cancelling the call cancels it.
+    let registering = AsyncMutex(cancellable: true)
     /// Held from making an assertion until the request carrying it is
-    /// answered, so assertions reach the provider in the order made.
-    let asserting = AsyncMutex()
+    /// answered, so assertions reach the provider in the order made. A
+    /// call waiting for it stops waiting when cancelled, as for
+    /// `registering`.
+    let asserting = AsyncMutex(cancellable: true)
     /// Thumbprints of the instance keys the provider recorded for the
     /// registration, in this process.
     let recorded = Locked<Set<String>>(initialState: [])

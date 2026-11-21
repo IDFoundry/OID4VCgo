@@ -70,6 +70,16 @@ prefix of the key store of a `Wallet` made with a provider over the
 same registry: it would delete that wallet's keys. Keep registration
 keys under a prefix of their own, as `registrationKeyStore()` does.
 
+### The Android Wallet Provider's timeout bounds the whole request (Kotlin)
+
+`HttpWalletProvider`'s `timeoutMillis` now bounds each request from
+connecting to the last byte of its answer, as the Swift library's
+`timeout` does: a request still unanswered then is ended, and fails as
+`network`, as a timeout did. It bounded only the connect and each
+read, so an answer trickled a byte at a time held the call, and every
+Wallet Attestation waiting for a registration under way, as long as
+its sender liked.
+
 ## v0.85.0 → v0.86.0
 
 ### A Verifier's redirect to a system app is refused (wallet, walletflow)

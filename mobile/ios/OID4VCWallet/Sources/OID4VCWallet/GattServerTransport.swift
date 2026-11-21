@@ -334,29 +334,55 @@ final class GattServerTransport: NSObject, ProximityTransport, CBPeripheralManag
 }
 
 /// A mutual exclusion lock for async code: one `locked` body at a time.
+/// Made `cancellable`, a call waiting its turn stops waiting when its
+/// Task is cancelled, and throws `CancellationError`; otherwise it waits
+/// on.
 final class AsyncMutex: @unchecked Sendable {
     private let lock = NSLock()
+    private let cancellable: Bool
     private var held = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UUID, turn: CheckedContinuation<Void, Error>)] = []
+
+    init(cancellable: Bool = false) {
+        self.cancellable = cancellable
+    }
 
     func locked<T: Sendable>(_ body: () async throws -> T) async throws -> T {
-        await acquire()
+        try await acquire()
         defer { release() }
         return try await body()
     }
 
-    private func acquire() async {
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            if held {
-                waiters.append(c)
-                lock.unlock()
-            } else {
-                held = true
-                lock.unlock()
-                c.resume()
+    private func acquire() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                lock.lock()
+                if !held {
+                    held = true
+                    lock.unlock()
+                    c.resume()
+                } else if cancellable && Task.isCancelled {
+                    lock.unlock()
+                    c.resume(throwing: CancellationError())
+                } else {
+                    waiters.append((id, c))
+                    lock.unlock()
+                }
             }
+        } onCancel: {
+            stopWaiting(id)
         }
+    }
+
+    /// Ends the wait of the call waiting as `id`, if it still is and the
+    /// lock is cancellable: it throws `CancellationError`.
+    private func stopWaiting(_ id: UUID) {
+        guard cancellable else { return }
+        lock.lock()
+        let waiter = waiters.firstIndex { $0.id == id }.map { waiters.remove(at: $0) }
+        lock.unlock()
+        waiter?.turn.resume(throwing: CancellationError())
     }
 
     private func release() {
@@ -367,7 +393,7 @@ final class AsyncMutex: @unchecked Sendable {
         } else {
             let next = waiters.removeFirst()
             lock.unlock()
-            next.resume()
+            next.turn.resume()
         }
     }
 }
