@@ -300,6 +300,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # macOS's /bin/sh and /bin/bash are bash 3.2, which misparses some
+      # scripts bash 5 takes: a here-document inside $(...) whose text
+      # holds an odd number of apostrophes, say. The iOS scripts run
+      # under them. A file without #!/bin/sh is a bash script or library.
+      - name: check the shell scripts parse under macOS's shells
+        run: |
+          failed=0
+          for f in $(git ls-files '*.sh'); do
+            case "$(head -n 1 "$f")" in
+            '#!/bin/sh'* | '#!/usr/bin/env sh'*) /bin/sh -n "$f" || failed=1 ;;
+            *) /bin/bash -n "$f" || failed=1 ;;
+            esac
+          done
+          exit "$failed"
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: mobile/go.mod
