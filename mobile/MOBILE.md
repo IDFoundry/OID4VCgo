@@ -396,7 +396,13 @@ calls at launch. It isn't automatic: it deletes every key in its store
 but its registration's, and every provider made with
 `registrationKeyStore()` shares that store, so it's safe only with one
 Wallet Provider, or with each provider's keys under a prefix of its
-own. The Kotlin client has the same call.
+own. It refuses a store whose prefix is, covers or falls under the
+key store's of a `Wallet` made with a provider over the same registry,
+which tells the provider its prefix; the wallet's sweep refuses a
+store overlapping the registration key store's of any provider made
+over that registry, which each provider records when it's made, or
+the default registration prefix. The Kotlin client has the same
+calls.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against
@@ -1189,8 +1195,11 @@ on an emulator, in CI too (`mobile-android`).
   every background refresh. The demo shows a BiometricPrompt, without a
   CryptoObject, before each presentation instead.
 - **Instance and DPoP keys** sign silently, as on iOS.
-- **IDs:** a key's ID is its alias after a prefix; the store lists and
-  sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **IDs:** a key's ID, a UUID, is its alias after a prefix; the store
+  lists and sweeps only aliases that are its prefix and a UUID
+  (`keyIDs()`, `deleteKeys(except:)`), so a store under a prefix that
+  extends another's keeps its keys from the other's sweep, which until
+  OID4VCWallet 0.43.0 deleted them, or failed on an ID with a `.`.
 - **Locked means locked:** with the screen locked, every key's signature
   fails ("Keystore operation failed"), as `setUnlockedDeviceRequired`
   says — so CI unlocks the emulator with its PIN before the tests.
@@ -2184,14 +2193,23 @@ Go stopped waiting for ran on in the app.
   `CancellationSignal` on its coroutine's cancellation, which dismisses
   the prompt. The provider adapter cancels the provider's coroutine;
   `HttpWalletProvider`'s `HttpURLConnection` can't be interrupted, so
-  its request ends when it does, Go long since returned.
+  its request ends when it does, Go long since returned, and at its
+  timeout at the latest, when a watchdog disconnects it.
+  (`HttpURLConnection`'s own timeouts bound only the connect and each
+  read: until OID4VCWallet 0.43.0 an answer trickled a byte at a time
+  held the request, and the `registering` lock every Wallet Attestation
+  waits for, as long as its sender liked.) A call waiting for that
+  lock, a coroutine `Mutex`, stops when cancelled.
 - **Swift:** `KeychainKeyStore` gives each use an `LAContext` of its
   own (or the presentation's shared one) through
   `kSecUseAuthenticationContext`, and `cancelKeyUse` invalidates it,
   which dismisses the sheet. Keys kept only in memory
   (`persistent: false`) are used without one and can't be cancelled.
   The provider adapter cancels the provider's Task, which ends a
-  `URLSession` request.
+  `URLSession` request, and a wait for another call's registration or
+  assertion (`HttpWalletProvider`'s `registering` and `asserting`
+  locks), which until OID4VCWallet 0.43.0 waited for that call to
+  finish.
 - **Not cancelled:** `KeyStore.CreateKey`, which in the Kotlin library
   waits for the provider's attestation challenge, and a proximity
   session's `Terminate`, which ends a `Respond` between keys but not

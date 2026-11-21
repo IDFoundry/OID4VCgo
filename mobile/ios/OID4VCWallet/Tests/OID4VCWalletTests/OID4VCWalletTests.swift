@@ -263,6 +263,31 @@ final class OID4VCWalletTests: XCTestCase {
         #endif
     }
 
+    /// Stores whose prefixes extend another's, with a separator or
+    /// without, keep their keys from its sweep, and it keeps its own from
+    /// theirs: each lists and sweeps only its prefix and a UUID.
+    func testNestedPrefixesKeepEachOthersKeys() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
+        #else
+        let prefix = "org.idfoundry.oid4vcgo.test.\(UUID())."
+        func store(_ prefix: String) -> KeychainKeyStore {
+            KeychainKeyStore(options: .init(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: prefix))
+        }
+        let keys = store(prefix)
+        let longer = ["b.", "b-", "b"].map { store(prefix + $0) }
+        defer { for s in longer + [keys] { _ = try? s.deleteKeys(except: []) } }
+        let theirs = try longer.map { try $0.createKey(purpose: .dpop) }
+        _ = try keys.createKey(purpose: .dpop)
+        XCTAssertEqual(try keys.deleteKeys(except: []), 1)
+        for (s, id) in zip(longer, theirs) { XCTAssertEqual(try s.keyIDs(), [id]) }
+        let mine = try keys.createKey(purpose: .dpop)
+        for s in longer { XCTAssertEqual(try s.deleteKeys(except: []), 1) }
+        XCTAssertEqual(try keys.keyIDs(), [mine])
+        XCTAssertFalse(KeychainKeyStore.isKeyID(mine.lowercased()))
+        #endif
+    }
+
     /// A sweep refuses a store whose tag prefix is empty, or overlaps the
     /// Wallet Provider registration key's.
     func testSweepRefusesReservedPrefixes() throws {
@@ -273,6 +298,12 @@ final class OID4VCWalletTests: XCTestCase {
         for prefix in [KeychainKeyStore.Options().tagPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test."] {
             XCTAssertNil(Wallet.sweepRefusal(tagPrefix: prefix), "prefix \(prefix) refused")
         }
+        // A Wallet Provider's registration key store under a prefix of its own.
+        let registrationStores: Set = ["com.example.wallet.keys."]
+        for prefix in ["com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.b-"] {
+            XCTAssertNotNil(Wallet.sweepRefusal(tagPrefix: prefix, registrationPrefixes: registrationStores), "prefix \(prefix) accepted")
+        }
+        XCTAssertNil(Wallet.sweepRefusal(tagPrefix: "com.example.wallet.other.", registrationPrefixes: registrationStores))
         let empty = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: ""))
         _ = try empty.createKey(purpose: .dpop)
         XCTAssertThrowsError(try empty.deleteKeys(except: []))

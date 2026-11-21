@@ -155,7 +155,8 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     ///     ``registrationKeyStore()``. Not the wallet's key store:
     ///     ``Wallet/sweepOrphanedKeys(in:)`` deletes every key there
     ///     that no credential is bound to (and refuses a store under
-    ///     ``registrationKeyTagPrefix``).
+    ///     ``registrationKeyTagPrefix``, or overlapping this one's
+    ///     prefix).
     ///   - appAttest: App Attest: by default the device's.
     ///   - timeout: The timeout of each request.
     /// - Throws: `StoreError` when `baseURL` isn't an absolute https URL
@@ -181,6 +182,11 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         self.appAttest = appAttest
         self.transport = transport
         self.clock = clock
+        // A wallet's sweep refuses a store over the registration keys,
+        // before any registration as after.
+        if let store = registrationKeys as? KeychainKeyStore {
+            state.registrationPrefixes.withLock { _ = $0.insert(store.options.tagPrefix) }
+        }
     }
 
     /// A Wallet Attestation for `clientID` and `instanceKey`, registering
@@ -314,15 +320,52 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// provider made with the default ``registrationKeyStore()`` shares
     /// it, so an app with more than one Wallet Provider gives each a
     /// ``KeychainKeyStore`` of its own tag prefix (under
-    /// ``registrationKeyTagPrefix``, which the wallet's mustn't cover)
-    /// before sweeping either.
+    /// ``registrationKeyTagPrefix``, which the wallet's mustn't cover),
+    /// where neither prefix extends the other, before sweeping either.
+    ///
+    /// It throws a `StoreError`, deleting nothing, for a registration key
+    /// store whose prefix is, covers or falls under the
+    /// ``KeychainKeyStore/Options/tagPrefix`` of the store of a ``Wallet``
+    /// made with a provider over the same registry: that would delete the
+    /// wallet's keys, which ``Wallet/sweepOrphanedKeys(in:)`` sweeps
+    /// instead.
     @discardableResult
     public func sweepOrphanedRegistrationKeys() async throws -> Int {
         guard let store = registrationKeys as? KeychainKeyStore else { return 0 }
+        if let refusal = Self.registrationSweepRefusal(tagPrefix: store.options.tagPrefix,
+                                                       walletPrefixes: state.walletPrefixes.withLock { $0 }) {
+            throw StoreError(refusal)
+        }
         return try await state.registering.locked {
             let keep = try self.kept().map { Set([$0.keyID]) } ?? []
             return try store.deleteKeys(except: keep)
         }
+    }
+
+    /// Why ``sweepOrphanedRegistrationKeys()`` refuses a registration key
+    /// store under `tagPrefix`, or nil: one that is, covers or falls under
+    /// one of `walletPrefixes`, the prefixes of the wallets' key stores,
+    /// would delete those wallets' keys.
+    static func registrationSweepRefusal(tagPrefix: String, walletPrefixes: Set<String>) -> String? {
+        guard let wallet = walletPrefixes.sorted().first(where: { tagPrefix.hasPrefix($0) || $0.hasPrefix(tagPrefix) }) else {
+            return nil
+        }
+        return "sweep registration keys: the key store's tagPrefix \(tagPrefix) overlaps a wallet key store's, \(wallet)"
+    }
+
+    /// Notes that a ``Wallet`` made with this provider keeps its keys in a
+    /// ``KeychainKeyStore`` under `tagPrefix`, for every provider over the
+    /// registry: ``sweepOrphanedRegistrationKeys()`` refuses a store
+    /// overlapping it.
+    func addWalletKeys(tagPrefix: String) {
+        state.walletPrefixes.withLock { _ = $0.insert(tagPrefix) }
+    }
+
+    /// The tag prefixes of the registration key stores, where they're
+    /// ``KeychainKeyStore``s, of every provider made over the registry:
+    /// ``Wallet/sweepOrphanedKeys(in:)`` refuses a store overlapping one.
+    var registrationKeyPrefixes: Set<String> {
+        state.registrationPrefixes.withLock { $0 }
     }
 
     /// Registers the installation with a new registration key — and with
@@ -670,17 +713,27 @@ private func isTransient(_ error: Error) -> Bool {
 /// process: its locks, and what it remembers of the registration.
 final class WalletProviderState: @unchecked Sendable {
     /// Held while the installation registers or forgets its
-    /// registration, so it registers once.
-    let registering = AsyncMutex()
+    /// registration, so it registers once. Held across requests, each
+    /// ending at the timeout; a call waiting for it stops waiting when
+    /// its Task is cancelled, as Go's cancelling the call cancels it.
+    let registering = AsyncMutex(cancellable: true)
     /// Held from making an assertion until the request carrying it is
-    /// answered, so assertions reach the provider in the order made.
-    let asserting = AsyncMutex()
+    /// answered, so assertions reach the provider in the order made. A
+    /// call waiting for it stops waiting when cancelled, as for
+    /// `registering`.
+    let asserting = AsyncMutex(cancellable: true)
     /// Thumbprints of the instance keys the provider recorded for the
     /// registration, in this process.
     let recorded = Locked<Set<String>>(initialState: [])
     /// The App Attest key a registration made but a transient failure
     /// left unregistered: the next registration tries it again.
     let unregisteredAppAttestKeyID = Locked<String?>(initialState: nil)
+    /// The tag prefixes of the key stores of the wallets made with a
+    /// provider over the registry.
+    let walletPrefixes = Locked<Set<String>>(initialState: [])
+    /// The tag prefixes of the registration key stores of the providers
+    /// made over the registry.
+    let registrationPrefixes = Locked<Set<String>>(initialState: [])
 }
 
 /// A registry whose providers share a ``WalletProviderState``.

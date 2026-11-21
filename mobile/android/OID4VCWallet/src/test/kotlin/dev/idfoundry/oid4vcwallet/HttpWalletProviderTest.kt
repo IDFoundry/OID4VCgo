@@ -273,6 +273,13 @@ class HttpWalletProviderTest {
 
         suspend fun keyAttestation(instanceKey: String, holders: List<String>, nonce: String = NONCE): String =
             wp.keyAttestation(KeyAttestationRequest(keys.evidence(instanceKey), holders.map(keys::evidence), nonce))
+
+        /** Deletes the registration keys but [keep], as a sweep of their store does: how many. */
+        fun deleteRegistrationKeysExcept(keep: Set<String>): Int {
+            val gone = registrationKeys.pairs.keys - keep
+            gone.forEach(registrationKeys::deleteKey)
+            return gone.size
+        }
     }
 
     @Test
@@ -550,20 +557,16 @@ class HttpWalletProviderTest {
     @Test
     fun theSweepKeepsOnlyTheRegistrationsKey() = runBlocking {
         val s = Setup()
-        val deleteExcept = { keep: Set<String> ->
-            val gone = s.registrationKeys.pairs.keys - keep
-            gone.forEach(s.registrationKeys::deleteKey)
-            gone.size
-        }
+        val prefix = HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX
         // Left by a registration that never finished; nothing registered.
         val left = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
-        assertEquals(1, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertEquals(1, s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept))
         assertNull(s.registrationKeys.publicKey(left))
 
         s.walletAttestation(s.newInstanceKey())
         val kept = s.registry.instance()!!
         repeat(2) { s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32)) }
-        assertEquals(2, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertEquals(2, s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept))
         assertEquals(setOf(kept.keyID), s.registrationKeys.pairs.keys)
         // The registration still signs: no new one.
         s.walletAttestation(s.newInstanceKey())
@@ -573,6 +576,25 @@ class HttpWalletProviderTest {
         s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
         assertEquals(0, s.wp.sweepOrphanedRegistrationKeys())
         assertEquals(2, s.registrationKeys.pairs.size)
+    }
+
+    /**
+     * The sweep refuses a registration key store whose prefix overlaps the
+     * key store of a wallet built with any provider over the registry,
+     * deleting nothing: it would delete the wallet's keys.
+     */
+    @Test
+    fun theSweepRefusesAStoreOverAWalletsKeys() = runBlocking {
+        val s = Setup()
+        val left = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
+        val wallet = "com.example.wallet."
+        s.client().addWalletKeys(wallet)
+        for (prefix in listOf(wallet, wallet + "registration.", "com.example.")) {
+            val e = runCatching { s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept) }.exceptionOrNull()
+            assertTrue("$prefix: $e", e is IllegalArgumentException)
+        }
+        assertTrue(s.registrationKeys.publicKey(left) != null)
+        assertEquals(1, s.wp.sweepRegistrationKeys(HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX, s::deleteRegistrationKeysExcept))
     }
 
     @Test
@@ -1026,9 +1048,12 @@ class HttpWalletProviderTest {
     }
 
     // The HTTP transport, against a socket server answering one request
-    // per connection with [answer], recording what it was sent.
+    // per connection with [answer], recording what it was sent. From byte
+    // [trickleFrom] of the answer on, it sends one byte at a time, each
+    // within a 500 ms read timeout of the last, until the client leaves.
     private class SocketServer(
         val socket: ServerSocket = ServerSocket(0, 8, InetAddress.getLoopbackAddress()),
+        private val trickleFrom: Int = Int.MAX_VALUE,
         private val answer: (String) -> ByteArray,
     ) : AutoCloseable by socket {
         val requests = mutableListOf<String>()
@@ -1043,10 +1068,18 @@ class HttpWalletProviderTest {
                         val length = head.firstOrNull { it.lowercase().startsWith("content-length:") }?.substringAfter(':')?.trim()?.toInt() ?: 0
                         val body = CharArray(length).also { var n = 0; while (n < length) n += input.read(it, n, length - n) }
                         synchronized(requests) { requests += head.joinToString("\n") + "\n\n" + String(body) }
-                        c.getOutputStream().write(answer(head.first()))
-                        c.getOutputStream().flush()
+                        send(c.getOutputStream(), answer(head.first()))
                     }
                 }
+            }
+        }
+
+        private fun send(out: java.io.OutputStream, bytes: ByteArray) {
+            out.write(bytes, 0, minOf(trickleFrom, bytes.size))
+            out.flush()
+            for (i in trickleFrom until bytes.size) {
+                Thread.sleep(400)
+                if (socket.isClosed || runCatching { out.write(bytes[i].toInt()); out.flush() }.isFailure) return
             }
         }
 
@@ -1056,8 +1089,70 @@ class HttpWalletProviderTest {
     private fun http(status: String, type: String, body: ByteArray, extra: String = ""): ByteArray =
         ("HTTP/1.1 $status\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n$extra\r\n").toByteArray() + body
 
-    private fun overHTTP(server: SocketServer) =
-        HttpWalletProvider(server.base, InMemoryInstanceRegistry(), FakeKeyStore(), UrlConnectionTransport(5_000), { 0L }, true)
+    private fun overHTTP(server: SocketServer, timeoutMillis: Int = 5_000) =
+        HttpWalletProvider(server.base, InMemoryInstanceRegistry(), FakeKeyStore(), UrlConnectionTransport(timeoutMillis), { 0L }, true)
+
+    /**
+     * An answer trickled a byte at a time, each within the read timeout of
+     * the last — from its status line, or from its body on — fails at the
+     * request's timeout, as a network failure, not when its sender stops.
+     */
+    @Test
+    fun transportEndsARequestAtItsTimeout() {
+        val body = ByteArray(200_000) { ' '.code.toByte() }
+        val answer = http(OK, JSON, body)
+        for (trickleFrom in listOf(0, answer.size - body.size)) {
+            SocketServer(trickleFrom = trickleFrom) { answer }.use { server ->
+                val failure = endsWithin(5_000) { waitForProvider { overHTTP(server, 500).attestationChallenge(KeyPurpose.INSTANCE) } }
+                assertTrue("trickled from byte $trickleFrom: $failure", failure is StoreException && failure.message == "$NETWORK the Wallet Provider didn't answer within 500 ms")
+            }
+        }
+    }
+
+    /**
+     * A registration whose answer trickles in fails at its timeout, and
+     * the Wallet Attestation waiting for it to finish then registers the
+     * installation itself, rather than waiting as long as the sender
+     * likes.
+     */
+    @Test
+    fun aStalledRegistrationHoldsUpTheNextCallOnlyUntilItsTimeout() = runBlocking {
+        SocketServer(trickleFrom = 0) { http(OK, JSON, ByteArray(200_000)) }.use { server ->
+            val provider = FakeProvider()
+            val stalls = java.util.concurrent.atomic.AtomicBoolean(true)
+            // The first registration goes to the trickling server.
+            val transport = WalletProviderTransport { url, headers, body ->
+                if (url.rawPath.endsWith(INSTANCES) && stalls.getAndSet(false)) {
+                    UrlConnectionTransport(500).post(URI(server.base + INSTANCES), headers, body)
+                } else {
+                    provider.post(url, headers, body)
+                }
+            }
+            val s = Setup(provider)
+            val wp = HttpWalletProvider("https://wp.example${provider.prefix}/", s.registry, s.registrationKeys, transport, { provider.now }, false)
+            val first = s.keys.createKey(KeyPurpose.INSTANCE, wp.attestationChallenge(KeyPurpose.INSTANCE))
+            val next = s.keys.createKey(KeyPurpose.INSTANCE, wp.attestationChallenge(KeyPurpose.INSTANCE))
+            // On a thread of its own: without a timeout, it never ends.
+            var stalled: Throwable? = null
+            val registering = thread(isDaemon = true) { stalled = runCatching { runBlocking { s.walletAttestation(first, wp) } }.exceptionOrNull() }
+            while (synchronized(server.requests) { server.requests.isEmpty() }) Thread.sleep(10)
+            val attested = kotlinx.coroutines.withTimeoutOrNull(5_000) { async(Dispatchers.IO) { s.walletAttestation(next, wp) }.await() }
+            assertTrue("the next Wallet Attestation waited for the stalled registration", attested != null)
+            registering.join(5_000)
+            assertTrue("$stalled", stalled is java.net.SocketTimeoutException)
+            assertEquals(1, provider.count(INSTANCES))
+            assertEquals(setOf(s.registry.instance()!!.keyID), s.registrationKeys.pairs.keys)
+        }
+    }
+
+    /** Runs [call] on a thread of its own, failing unless it ends within [millis]: what it threw, or null. */
+    private fun endsWithin(millis: Long, call: () -> Unit): Throwable? {
+        var failure: Throwable? = null
+        val t = thread(isDaemon = true) { failure = runCatching(call).exceptionOrNull() }
+        t.join(millis)
+        assertFalse("still running after $millis ms", t.isAlive)
+        return failure
+    }
 
     @Test
     fun transportPostsJSON() = runBlocking {

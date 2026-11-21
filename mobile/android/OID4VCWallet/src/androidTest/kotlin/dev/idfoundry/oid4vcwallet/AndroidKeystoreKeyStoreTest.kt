@@ -215,6 +215,30 @@ class AndroidKeystoreKeyStoreTest {
         other.deleteKeys(emptySet())
     }
 
+    /**
+     * Stores whose prefixes extend this one's, with a separator or
+     * without, keep their keys from its sweep, and it keeps its own from
+     * theirs: each lists and sweeps only its prefix and a UUID.
+     */
+    @Test
+    fun nestedPrefixesKeepEachOthersKeys() {
+        val keys = store()
+        val longer = listOf("b.", "b-", "b").map {
+            AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = prefix + it))
+        }
+        try {
+            val theirs = longer.map { it.createKey(KeyPurpose.DPOP) }
+            keys.createKey(KeyPurpose.DPOP)
+            assertEquals(1, keys.deleteKeys(emptySet()))
+            longer.zip(theirs).forEach { (store, id) -> assertEquals(listOf(id), store.keyIDs()) }
+            val mine = keys.createKey(KeyPurpose.DPOP)
+            longer.forEach { assertEquals(1, it.deleteKeys(emptySet())) }
+            assertEquals(listOf(mine), keys.keyIDs())
+        } finally {
+            longer.forEach { it.deleteKeys(emptySet()) }
+        }
+    }
+
     /** From API 31, a holder key made to agree keys agrees the secret the peer computes, and still signs. */
     @Test
     @SdkSuppress(minSdkVersion = Build.VERSION_CODES.S)

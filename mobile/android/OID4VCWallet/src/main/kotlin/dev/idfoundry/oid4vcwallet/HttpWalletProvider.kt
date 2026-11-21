@@ -12,10 +12,14 @@ import kotlinx.serialization.json.longOrNull
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URISyntaxException
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * A [WalletProvider] over the Wallet Provider HTTP protocol, version 1,
@@ -49,8 +53,8 @@ import java.util.Base64
  *   recorded.
  *
  * It sends nothing but to its base URL, over https, following no
- * redirect, with its timeout for connecting and for reading, and reads at most
- * 256 KiB of an answer. It checks a Wallet Attestation is for the client
+ * redirect, ends a request still unanswered at its timeout, and reads at
+ * most 256 KiB of an answer. It checks a Wallet Attestation is for the client
  * and the instance key, and a Key Attestation is over the nonce sent and
  * attests only keys sent; their signatures are the issuer's to verify.
  *
@@ -145,8 +149,11 @@ public class HttpWalletProvider internal constructor(
      *   Keystore under an alias prefix of its own. Not the wallet's key
      *   store: [Wallet.sweepOrphanedKeys] deletes every key there that no
      *   credential is bound to (and refuses a store under
-     *   [REGISTRATION_KEY_ALIAS_PREFIX]).
-     * @param timeoutMillis The connect and the read timeout of each request.
+     *   [REGISTRATION_KEY_ALIAS_PREFIX], or overlapping this one's
+     *   prefix).
+     * @param timeoutMillis How long each request may take, from
+     *   connecting to the last byte of its answer: one that takes longer
+     *   is ended, and fails as a timeout, a network failure.
      * @throws IllegalArgumentException when [baseURL] isn't an absolute
      *   https URL without user info, query or fragment, or
      *   [timeoutMillis] isn't positive.
@@ -167,10 +174,22 @@ public class HttpWalletProvider internal constructor(
         else -> WalletProviderState()
     }
 
+    init {
+        // A wallet's sweep refuses a store over the registration keys,
+        // before any registration as after.
+        (registrationKeys as? AndroidKeystoreKeyStore)?.let { state.addRegistrationPrefix(it.options.aliasPrefix) }
+    }
+
     /** Guards the challenges below. */
     private val lock: Mutex get() = state.lock
 
-    /** Held while the installation registers or forgets its registration, so it registers once. */
+    /**
+     * Held while the installation registers or forgets its registration,
+     * so it registers once. A call waiting for it stops waiting when it's
+     * cancelled, and each request made while it's held ends at the
+     * timeout, so a registration that stalls holds up the calls after it
+     * only until its requests time out.
+     */
     private val registering: Mutex get() = state.registering
 
     /** `instance` challenges handed out, most recent last, until they expire. */
@@ -335,18 +354,46 @@ public class HttpWalletProvider internal constructor(
      * every provider made with the default [registrationKeyStore] shares
      * it, so an app with more than one Wallet Provider gives each an
      * [AndroidKeystoreKeyStore] of its own alias prefix (under
-     * [REGISTRATION_KEY_ALIAS_PREFIX], which the wallet's mustn't cover)
-     * before sweeping either.
+     * [REGISTRATION_KEY_ALIAS_PREFIX], which the wallet's mustn't cover),
+     * where neither prefix extends the other, before sweeping either.
+     *
+     * @throws IllegalArgumentException, deleting nothing, for a
+     *   registration key store whose prefix is, covers or falls under the
+     *   alias prefix of the [AndroidKeystoreKeyStore] of a [Wallet] built
+     *   with a provider over the same registry: that would delete the
+     *   wallet's keys, which [Wallet.sweepOrphanedKeys] sweeps instead.
      */
     public suspend fun sweepOrphanedRegistrationKeys(): Int {
         val store = registrationKeys as? AndroidKeystoreKeyStore ?: return 0
-        return sweepRegistrationKeys(store::deleteKeys)
+        return sweepRegistrationKeys(store.options.aliasPrefix, store::deleteKeys)
     }
 
-    /** [sweepOrphanedRegistrationKeys] over a store that deletes its keys but those given with [deleteKeysExcept]. */
-    internal suspend fun sweepRegistrationKeys(deleteKeysExcept: (Set<String>) -> Int): Int = registering.withLock {
-        withContext(Dispatchers.IO) { deleteKeysExcept(kept()?.let { setOf(it.keyID) }.orEmpty()) }
+    /**
+     * [sweepOrphanedRegistrationKeys] over a store under [aliasPrefix]
+     * that deletes its keys but those given with [deleteKeysExcept].
+     */
+    internal suspend fun sweepRegistrationKeys(aliasPrefix: String, deleteKeysExcept: (Set<String>) -> Int): Int {
+        registrationSweepRefusal(aliasPrefix, state.walletPrefixes())?.let { throw IllegalArgumentException(it) }
+        return registering.withLock {
+            withContext(Dispatchers.IO) { deleteKeysExcept(kept()?.let { setOf(it.keyID) }.orEmpty()) }
+        }
     }
+
+    /**
+     * Notes that a [Wallet] built with this provider keeps its keys in an
+     * [AndroidKeystoreKeyStore] under [aliasPrefix], for every provider
+     * over the registry: [sweepOrphanedRegistrationKeys] refuses a store
+     * overlapping it.
+     */
+    internal fun addWalletKeys(aliasPrefix: String) = state.addWalletPrefix(aliasPrefix)
+
+    /**
+     * The alias prefixes of the registration key stores, where they're
+     * [AndroidKeystoreKeyStore]s, of every provider made over the
+     * registry: [Wallet.sweepOrphanedKeys] refuses a store overlapping
+     * one.
+     */
+    internal fun registrationKeyPrefixes(): Set<String> = state.registrationPrefixes()
 
     /**
      * Registers the installation with a new registration key — and with
@@ -542,7 +589,7 @@ public class HttpWalletProvider internal constructor(
             AndroidKeystoreKeyStore.Options(strongBox = strongBox, holderUserAuthentication = false, aliasPrefix = REGISTRATION_KEY_ALIAS_PREFIX),
         )
 
-        /** The default connect and read timeout, as the Go client's. */
+        /** The default timeout of each request, as the Go client's. */
         internal const val DEFAULT_TIMEOUT_MILLIS = 30_000
 
         internal const val CHALLENGE_PATH = "/v1/challenge"
@@ -589,6 +636,17 @@ public class HttpWalletProvider internal constructor(
         internal const val MAX_REMEMBERED_CHALLENGES = 8
 
         private const val INSTANCE_KEY_NOT_P256 = "the instance key isn't a P-256 JWK"
+
+        /**
+         * Why [sweepOrphanedRegistrationKeys] refuses a registration key
+         * store under [aliasPrefix], or null: one that is, covers or falls
+         * under one of [walletPrefixes], the prefixes of the wallets' key
+         * stores, would delete those wallets' keys.
+         */
+        internal fun registrationSweepRefusal(aliasPrefix: String, walletPrefixes: Set<String>): String? =
+            walletPrefixes.sorted().firstOrNull { aliasPrefix.startsWith(it) || it.startsWith(aliasPrefix) }?.let {
+                "sweep registration keys: the key store's aliasPrefix $aliasPrefix overlaps a wallet key store's, $it"
+            }
 
         internal fun checkTimeout(millis: Int): Int {
             require(millis > 0) { "the timeout must be positive" }
@@ -678,6 +736,28 @@ internal class WalletProviderState {
     val instanceChallenges = ArrayDeque<IssuedChallenge>()
     val holderChallenges = ArrayDeque<IssuedChallenge>()
     var holderChallenge: IssuedChallenge? = null
+
+    // The alias prefixes of the key stores of the wallets built with a
+    // provider over the registry, and of those providers' registration
+    // key stores.
+    private val walletPrefixes = mutableSetOf<String>()
+    private val registrationPrefixes = mutableSetOf<String>()
+
+    @Synchronized
+    fun addWalletPrefix(aliasPrefix: String) {
+        walletPrefixes += aliasPrefix
+    }
+
+    @Synchronized
+    fun walletPrefixes(): Set<String> = walletPrefixes.toSet()
+
+    @Synchronized
+    fun addRegistrationPrefix(aliasPrefix: String) {
+        registrationPrefixes += aliasPrefix
+    }
+
+    @Synchronized
+    fun registrationPrefixes(): Set<String> = registrationPrefixes.toSet()
 }
 
 /** A challenge the provider issued. */
@@ -694,10 +774,19 @@ internal fun interface WalletProviderTransport {
     fun post(url: URI, headers: Map<String, String>, body: ByteArray): WalletProviderAnswer
 }
 
-/** The transport over [HttpURLConnection]: no redirects, no caching, bounded answers. */
+/**
+ * The transport over [HttpURLConnection]: no redirects, no caching,
+ * bounded answers, and [timeoutMillis] for the whole of each request,
+ * from connecting to the answer's last byte, as Swift's
+ * `timeoutIntervalForResource` and the Go client's timeout are.
+ * [HttpURLConnection]'s own timeouts, set to it too, bound only the
+ * connect and each read, which an answer trickled a byte at a time
+ * outlasts.
+ */
 internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletProviderTransport {
     override fun post(url: URI, headers: Map<String, String>, body: ByteArray): WalletProviderAnswer {
         val connection = url.toURL().openConnection() as HttpURLConnection
+        val deadline = RequestDeadline(timeoutMillis, connection::disconnect)
         try {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
@@ -709,21 +798,33 @@ internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletPr
             // body for a streamed request answered 401 with WWW-Authenticate,
             // as invalid_signed_request is.
             headers.forEach { (k, v) -> connection.setRequestProperty(k, v) }
+            // A disconnect before the connection exists ends nothing:
+            // the deadline is checked once it does.
+            connection.connect()
+            deadline.check()
             connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
-            val data = stream?.use { readBounded(it) } ?: ByteArray(0)
+            val data = stream?.use { readBounded(it, deadline) } ?: ByteArray(0)
+            // The disconnect at the deadline may have cut the answer short.
+            deadline.check()
             return WalletProviderAnswer(status, connection.contentType, data)
+        } catch (e: Exception) {
+            throw deadline.failure(e)
         } finally {
+            deadline.finish()
             connection.disconnect()
         }
     }
 
-    private fun readBounded(input: java.io.InputStream): ByteArray {
+    private fun readBounded(input: java.io.InputStream, deadline: RequestDeadline): ByteArray {
         val out = ByteArrayOutputStream()
         val buf = ByteArray(8192)
         while (true) {
             val n = input.read(buf)
+            // Where a disconnect waits for the read in progress (the
+            // JDK's), the read after the deadline ends the request.
+            deadline.check()
             if (n < 0) break
             out.write(buf, 0, n)
             if (out.size() > HttpWalletProvider.MAX_RESPONSE_BYTES) {
@@ -732,6 +833,45 @@ internal class UrlConnectionTransport(private val timeoutMillis: Int) : WalletPr
         }
         return out.toByteArray()
     }
+}
+
+/**
+ * A request's deadline, [millis] after it's made: unless [finish] comes
+ * first, [end] — the connection's disconnect — runs then, on a thread of
+ * its own, ending a connect, a write or a read in progress, and the
+ * request fails as a timeout ([check], [failure]).
+ */
+internal class RequestDeadline(private val millis: Int, end: () -> Unit) {
+    private val finished = CountDownLatch(1)
+
+    // Set before end runs: a failure the disconnect causes sees it.
+    @Volatile
+    private var passed = false
+
+    init {
+        thread(isDaemon = true, name = "OID4VCWallet request deadline") {
+            if (!finished.await(millis.toLong(), TimeUnit.MILLISECONDS)) {
+                passed = true
+                end()
+            }
+        }
+    }
+
+    /** Throws the timeout once the deadline has passed. */
+    fun check() {
+        if (passed) throw timeout(null)
+    }
+
+    /** What a request failing with [e] throws: once the deadline has passed, a timeout, [e] if it's one; else [e]. */
+    fun failure(e: Exception): Exception = if (passed && e !is SocketTimeoutException) timeout(e) else e
+
+    /** The request is over: the deadline ends nothing. */
+    fun finish() = finished.countDown()
+
+    // As HttpURLConnection's own timeouts fail, so the wallet reports a
+    // network failure, as before.
+    private fun timeout(cause: Exception?) =
+        SocketTimeoutException("the Wallet Provider didn't answer within $millis ms").apply { cause?.let(::initCause) }
 }
 
 private val base64URL: Base64.Encoder = Base64.getUrlEncoder().withoutPadding()
