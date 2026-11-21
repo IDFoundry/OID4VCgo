@@ -45,8 +45,8 @@ import (
 // .github/workflows/polaris-vectors.yml to the new commit. The hash is
 // sha256sum lab/interop/negative-vectors/mdoc-vectors.json in that checkout.
 const (
-	polarisMdocVectorsCommit = "781c879fa83d92132f7cc25f7468cad890bbb13b"
-	polarisMdocVectorsSHA256 = "2525e629f92adad0a4a44649f7868eb9ecab84bc60135a126862f118a28857de"
+	polarisMdocVectorsCommit = "afa39e9d753a354c8158bf3f34edc9fa41ca8d8d"
+	polarisMdocVectorsSHA256 = "60b57015b8643e7d30455c33f5c9eac3f5d9bfeb51099fa3906a1e75cf2af67c"
 )
 
 // polarisMdocKnownGaps are the refusals this package does not make at the
@@ -347,11 +347,6 @@ func polarisMdocJudge(t *testing.T, name string, v polarisMdocVector, in polaris
 		// production decisions are declared, not made.
 		AnyIssuerForAnyType: true,
 		NoStatusCheck:       true,
-		// The vectors' requests name no claims, yet their presentations
-		// disclose some (OpenID4VP 1.0 §6.4.1 would have a Wallet disclose
-		// none): they test the presentation's verification, not its fit
-		// to the query, so unrequested claims are let through.
-		AllowUnrequestedClaims: true,
 	})
 	if err != nil {
 		var refused *Error
