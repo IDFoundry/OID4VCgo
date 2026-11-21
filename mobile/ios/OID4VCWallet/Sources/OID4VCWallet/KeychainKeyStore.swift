@@ -52,10 +52,11 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         /// extension's store is the app's wallet's, and shares its
         /// prefix. A sweep refuses an empty one; and the wallet's
         /// mustn't cover, or fall under,
-        /// ``HttpWalletProvider/registrationKeyTagPrefix``, which
-        /// ``Wallet/sweepOrphanedKeys(in:)`` refuses, nor the prefix of
-        /// its Wallet Provider's registration key store, which
-        /// ``HttpWalletProvider/sweepOrphanedRegistrationKeys()`` refuses.
+        /// ``HttpWalletProvider/registrationKeyTagPrefix``, nor the prefix
+        /// of its Wallet Provider's registration key store:
+        /// ``Wallet/sweepOrphanedKeys(in:)`` refuses such a store, and
+        /// ``HttpWalletProvider/sweepOrphanedRegistrationKeys()`` a
+        /// registration key store over the wallet's.
         public var tagPrefix: String
         /// The Keychain access group holder keys are made in, when the
         /// app shares them with an extension — a document provider

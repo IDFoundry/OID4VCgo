@@ -61,14 +61,19 @@ those of apps that share an access group — a prefix where neither
 extends another's. A document provider extension's store is its app's
 wallet's, and keeps the app's prefix.
 
-### The registration key sweep refuses a store over a wallet's keys (Swift, Kotlin)
+### The wallet's and the registration key sweeps refuse each other's stores (Swift, Kotlin)
 
 `HttpWalletProvider.sweepOrphanedRegistrationKeys()` throws, deleting
 nothing (`IllegalArgumentException` in Kotlin, `StoreError` in Swift),
 when its registration key store's prefix is, covers or falls under the
 prefix of the key store of a `Wallet` made with a provider over the
-same registry: it would delete that wallet's keys. Keep registration
-keys under a prefix of their own, as `registrationKeyStore()` does.
+same registry: it would delete that wallet's keys. The other way round,
+`Wallet.sweepOrphanedKeys` throws, deleting nothing, for a store whose
+prefix is, covers or falls under the prefix of the registration key
+store of any `HttpWalletProvider` made over the same registry as the
+wallet's own provider, as it did for the default registration prefix:
+it would delete the registration key. Keep registration keys under a
+prefix of their own, as `registrationKeyStore()` does.
 
 ### The Android Wallet Provider's timeout bounds the whole request (Kotlin)
 

@@ -251,10 +251,11 @@ public class AndroidKeystoreKeyStore(
          * prefix where neither extends the other. It must be non-empty,
          * and must not cover [FileCredentialStore]'s default key alias.
          * The wallet's mustn't cover, or fall under,
-         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX], which
-         * [Wallet.sweepOrphanedKeys] refuses, nor the prefix of its Wallet
-         * Provider's registration key store, which
-         * [HttpWalletProvider.sweepOrphanedRegistrationKeys] refuses.
+         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX], nor the
+         * prefix of its Wallet Provider's registration key store:
+         * [Wallet.sweepOrphanedKeys] refuses such a store, and
+         * [HttpWalletProvider.sweepOrphanedRegistrationKeys] a
+         * registration key store over the wallet's.
          */
         val aliasPrefix: String = "org.idfoundry.oid4vcgo.key.",
         /**

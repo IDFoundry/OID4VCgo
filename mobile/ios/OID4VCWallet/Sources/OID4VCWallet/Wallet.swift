@@ -845,6 +845,9 @@ public final class Wallet: @unchecked Sendable {
     let handle: MobileWallet
     // Go holds these too; the wallet keeps them alive with it.
     private let adapters: [AnyObject]
+    // Its registration key stores' prefixes, which sweepOrphanedKeys(in:)
+    // refuses a store over.
+    private let walletProvider: HttpWalletProvider?
 
     /// A wallet over `keyStore`, `credentialStore` and `provider` (which
     /// receiving credentials needs; presenting doesn't). Creating it
@@ -868,6 +871,7 @@ public final class Wallet: @unchecked Sendable {
                               message: "the linked framework has ABI \(OID4VC.abiVersion), these sources ABI \(OID4VC.expectedABIVersion): rebuild it")
         }
         try OID4VC.checkDevelopment(configuration.development != nil)
+        walletProvider = (provider as? WalletProviderAdapter)?.provider as? HttpWalletProvider
         let json = try StatusCacheKey.configuration(try JSONEncoder().encode(configuration), cacheDir: configuration.status.cacheDir)
         handle = try OID4VC.call { MobileNewWallet(json, keys, credentials, provider, $0) }!
         // A key store that also agrees keys answers in person with deviceMac
@@ -892,16 +896,19 @@ public final class Wallet: @unchecked Sendable {
     /// makes them, that no credential is bound to. Pass the wallet's own
     /// key store, under a prefix of its own: another store's keys under
     /// the same prefix would be deleted too. It throws a ``StoreError``,
-    /// deleting nothing, for a store
-    /// whose prefix is empty, or covers or falls under
-    /// ``HttpWalletProvider/registrationKeyTagPrefix``: that would
-    /// delete the Wallet Provider registration key, which
+    /// deleting nothing, for a store whose prefix is empty, or is,
+    /// covers or falls under ``HttpWalletProvider/registrationKeyTagPrefix``
+    /// or the prefix of the registration key store, a ``KeychainKeyStore``,
+    /// of any ``HttpWalletProvider`` made over the registry of the one
+    /// the wallet was made with: that would delete the Wallet Provider
+    /// registration key, which
     /// ``HttpWalletProvider/sweepOrphanedRegistrationKeys()`` sweeps
     /// instead. The credential store's files and the status cache's key
     /// aren't Keychain keys, and are never touched.
     @discardableResult
     public func sweepOrphanedKeys(in keyStore: KeychainKeyStore) async throws -> Int {
-        if let refusal = Self.sweepRefusal(tagPrefix: keyStore.options.tagPrefix) {
+        if let refusal = Self.sweepRefusal(tagPrefix: keyStore.options.tagPrefix,
+                                           registrationPrefixes: walletProvider?.registrationKeyPrefixes ?? []) {
             throw StoreError(refusal)
         }
         struct Keys: Decodable {
@@ -916,16 +923,18 @@ public final class Wallet: @unchecked Sendable {
 
     /// Why ``sweepOrphanedKeys(in:)`` refuses a key store under
     /// `tagPrefix`, or nil: an empty prefix covers every tagged key, and
-    /// one overlapping the registration key's prefix covers that key.
-    static func sweepRefusal(tagPrefix: String) -> String? {
-        let registration = HttpWalletProvider.registrationKeyTagPrefix
+    /// one overlapping the registration key's prefix — the default, or
+    /// one of `registrationPrefixes`, the Wallet Provider's registration
+    /// key stores' — covers that key.
+    static func sweepRefusal(tagPrefix: String, registrationPrefixes: Set<String> = []) -> String? {
         if tagPrefix.isEmpty {
             return "sweep keys: the key store's tagPrefix is empty, which covers every tagged key"
         }
-        if tagPrefix.hasPrefix(registration) || registration.hasPrefix(tagPrefix) {
-            return "sweep keys: the key store's tagPrefix \(tagPrefix) overlaps the Wallet Provider registration key's, \(registration)"
+        let prefixes = [HttpWalletProvider.registrationKeyTagPrefix] + registrationPrefixes.sorted()
+        guard let registration = prefixes.first(where: { tagPrefix.hasPrefix($0) || $0.hasPrefix(tagPrefix) }) else {
+            return nil
         }
-        return nil
+        return "sweep keys: the key store's tagPrefix \(tagPrefix) overlaps the Wallet Provider registration key's, \(registration)"
     }
 
     /// Every credential the wallet holds.

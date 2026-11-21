@@ -148,9 +148,10 @@ protocol, version 1
   with one Wallet Provider, or with each provider's registration keys
   under an alias prefix of its own, since it deletes every key in its
   store but its registration's. Give each wallet's key store and each
-  provider's a prefix where neither extends another's. The sweep
-  refuses a store whose prefix overlaps the key store's of a `Wallet`
-  built with the provider.
+  provider's a prefix where neither extends another's. Each sweep
+  refuses a store whose prefix overlaps the other's: this one a
+  wallet's key store, `Wallet.sweepOrphanedKeys` the registration key
+  store of a provider over its provider's registry.
 - Every request after registration is signed with the registration key.
 - Each issuance's instance key is made over an `instance` challenge.
   Its first Wallet Attestation sends its chain; the provider records the

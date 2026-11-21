@@ -530,22 +530,32 @@ class SessionTest {
     }
 
     /**
-     * A Wallet Provider's registration key sweep refuses a store whose
-     * prefix is, covers or falls under the key store's of a wallet built
-     * with it, deleting nothing: it would delete the wallet's keys.
+     * Neither sweep deletes the other's keys: a Wallet Provider's
+     * registration key sweep refuses a store whose prefix is, covers or
+     * falls under the key store's of a wallet built with it, and the
+     * wallet's sweep a store overlapping the provider's registration key
+     * store, deleting nothing.
      */
     @Test
-    fun registrationSweepRefusesTheWalletsKeys(): Unit = runBlocking {
+    fun sweepsRefuseEachOthersStores(): Unit = runBlocking {
         val env = env()
         val keys = keyStore()
         val walletKey = keys.createKey(KeyPurpose.HOLDER)
         for (registrationPrefix in listOf(prefix, prefix + "wp.", prefix.dropLast(1))) {
             val registration = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = registrationPrefix))
-            val provider = HttpWalletProvider("https://wp.example", InMemoryInstanceRegistry(), registration)
-            Wallet(env.configuration, keys, InMemoryCredentialStore(), provider)
-            val refused = runCatching { provider.sweepOrphanedRegistrationKeys() }.exceptionOrNull()
-            assertTrue("swept $registrationPrefix: $refused", refused is IllegalArgumentException)
-            assertNotNull("the sweep deleted the wallet's key", keys.publicKey(walletKey))
+            val registrationKey = registration.createKey(KeyPurpose.INSTANCE)
+            try {
+                val provider = HttpWalletProvider("https://wp.example", InMemoryInstanceRegistry(), registration)
+                val w = Wallet(env.configuration, keys, InMemoryCredentialStore(), provider)
+                val refused = runCatching { provider.sweepOrphanedRegistrationKeys() }.exceptionOrNull()
+                assertTrue("the provider swept $registrationPrefix: $refused", refused is IllegalArgumentException)
+                val walletRefused = runCatching { w.sweepOrphanedKeys(keys) }.exceptionOrNull()
+                assertTrue("the wallet swept $prefix over $registrationPrefix: $walletRefused", walletRefused is IllegalArgumentException)
+                assertNotNull("a sweep deleted the wallet's key", keys.publicKey(walletKey))
+                assertNotNull("a sweep deleted the registration key", registration.publicKey(registrationKey))
+            } finally {
+                registration.deleteKey(registrationKey)
+            }
         }
     }
 }

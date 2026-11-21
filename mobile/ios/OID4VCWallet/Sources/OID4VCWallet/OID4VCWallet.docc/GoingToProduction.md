@@ -89,9 +89,10 @@ its store but its registration's. Give each wallet's key store and
 each provider's a prefix where neither extends another's, across the
 apps sharing a Keychain access group too: a store lists its prefix's
 keys in every group the app can read
-(``KeychainKeyStore/Options/tagPrefix``). The sweep refuses a store
-whose prefix overlaps the key store's of a ``Wallet`` made with the
-provider.
+(``KeychainKeyStore/Options/tagPrefix``). Each sweep refuses a store
+whose prefix overlaps the other's: this one a wallet's key store,
+``Wallet/sweepOrphanedKeys(in:)`` the registration key store of a
+provider over its provider's registry.
 
 Add the App Attest capability to the app, whose
 `com.apple.developer.devicecheck.appattest-environment` entitlement

@@ -155,7 +155,8 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     ///     ``registrationKeyStore()``. Not the wallet's key store:
     ///     ``Wallet/sweepOrphanedKeys(in:)`` deletes every key there
     ///     that no credential is bound to (and refuses a store under
-    ///     ``registrationKeyTagPrefix``).
+    ///     ``registrationKeyTagPrefix``, or overlapping this one's
+    ///     prefix).
     ///   - appAttest: App Attest: by default the device's.
     ///   - timeout: The timeout of each request.
     /// - Throws: `StoreError` when `baseURL` isn't an absolute https URL
@@ -181,6 +182,11 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
         self.appAttest = appAttest
         self.transport = transport
         self.clock = clock
+        // A wallet's sweep refuses a store over the registration keys,
+        // before any registration as after.
+        if let store = registrationKeys as? KeychainKeyStore {
+            state.registrationPrefixes.withLock { _ = $0.insert(store.options.tagPrefix) }
+        }
     }
 
     /// A Wallet Attestation for `clientID` and `instanceKey`, registering
@@ -353,6 +359,13 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     /// overlapping it.
     func addWalletKeys(tagPrefix: String) {
         state.walletPrefixes.withLock { _ = $0.insert(tagPrefix) }
+    }
+
+    /// The tag prefixes of the registration key stores, where they're
+    /// ``KeychainKeyStore``s, of every provider made over the registry:
+    /// ``Wallet/sweepOrphanedKeys(in:)`` refuses a store overlapping one.
+    var registrationKeyPrefixes: Set<String> {
+        state.registrationPrefixes.withLock { $0 }
     }
 
     /// Registers the installation with a new registration key — and with
@@ -718,6 +731,9 @@ final class WalletProviderState: @unchecked Sendable {
     /// The tag prefixes of the key stores of the wallets made with a
     /// provider over the registry.
     let walletPrefixes = Locked<Set<String>>(initialState: [])
+    /// The tag prefixes of the registration key stores of the providers
+    /// made over the registry.
+    let registrationPrefixes = Locked<Set<String>>(initialState: [])
 }
 
 /// A registry whose providers share a ``WalletProviderState``.
