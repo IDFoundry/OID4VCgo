@@ -1797,6 +1797,11 @@ changes whether *every* bullet below is `(done)`.
   redirect from it — the Verifier's reply is a 200 carrying JSON
   (§8.2), and following one would resend the response, and take the
   `redirect_uri` the user agent is sent to, from wherever it pointed.
+  That `redirect_uri` is refused when its scheme is plain http, runs
+  code or reads local data, invokes a Wallet, or opens a system handler
+  (an app's install prompt or store page, a call, a message, the
+  settings); `Config.VerifierRedirectSchemes` narrows the rest to https
+  and the Verifier apps' schemes it names, in the `*Wallet` forms.
   Every parser binds the `client_id` to the chain-verified signing
   leaf in one place (`bindClientID`): its `x509_hash`, or, with
   `Config.AcceptX509SANDNS`, an `x509_san_dns` one of its dNSNames

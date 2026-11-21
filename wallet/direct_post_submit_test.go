@@ -200,6 +200,45 @@ func TestWalletSubmitDirectPostResponse(t *testing.T) {
 	}
 }
 
+// With Config.VerifierRedirectSchemes set, (*Wallet).SubmitDirectPostResponse
+// follows a redirect_uri only with https or one of them, compared
+// without case: another is refused, though the response reached the
+// Verifier. The package-level form, with no Config, follows any scheme
+// it doesn't always refuse.
+func TestWalletSubmitDirectPostResponse_VerifierRedirectSchemes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		schemes  []string
+		redirect string
+		followed bool
+	}{
+		"https":                  {[]string{"com.example.verifier"}, "https://verifier.example/done", true},
+		"a scheme named":         {[]string{"com.example.verifier"}, "com.example.verifier:/done", true},
+		"named in another case":  {[]string{"COM.Example.Verifier"}, "com.example.VERIFIER:/done", true},
+		"a scheme not named":     {[]string{"com.example.verifier"}, "com.other.app:/done?response_code=x", false},
+		"https alone":            {[]string{"https"}, "com.example.verifier:/done", false},
+		"https alone, for https": {[]string{"https"}, "https://verifier.example/done", true},
+		"none named":             {nil, "com.other.app:/done", true},
+	} {
+		srv := verifierReply(t, http.StatusOK, "application/json", `{"redirect_uri":"`+tc.redirect+`"}`)
+		cfg, deps := validConfig(), validDependencies()
+		cfg.VerifierRedirectSchemes, deps.HTTP = tc.schemes, srv.Client()
+		w, err := wallet.New(cfg, deps)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := w.SubmitDirectPostResponse(context.Background(), srv.URL, "the-jwe")
+		switch {
+		case tc.followed && (err != nil || got.RedirectURI != tc.redirect):
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want the redirect followed", name, got, err)
+		case !tc.followed && (!errors.Is(err, wallet.ErrResponseDelivered) || got.RedirectURI != ""):
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want it refused, the response delivered", name, got, err)
+		}
+		if got, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe"); err != nil || got.RedirectURI != tc.redirect {
+			t.Errorf("%s: package-level SubmitDirectPostResponse = %+v, %v; want the redirect followed", name, got, err)
+		}
+	}
+}
+
 func TestSubmitDirectPostResponse_RefusesReplyFromElsewhere(t *testing.T) {
 	_, err := wallet.SubmitDirectPostResponse(context.Background(), redirectingClient{from: "http://elsewhere.example/r"}, "https://verifier.example/response", "the-jwe")
 	if err == nil || !strings.Contains(err.Error(), "not response_uri") {
