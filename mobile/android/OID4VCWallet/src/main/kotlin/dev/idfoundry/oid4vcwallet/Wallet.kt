@@ -1042,6 +1042,9 @@ public class Wallet(
         val wp = provider?.let { WalletProviderAdapter(it, keyStore, created) }
         val config = StatusCacheKey.configuration(json.encodeToString(WalletConfiguration.serializer(), configuration), configuration.status.cacheDir)
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
+        // The provider's registration key sweep refuses a store over this
+        // wallet's keys.
+        if (provider is HttpWalletProvider && keyStore is AndroidKeystoreKeyStore) provider.addWalletKeys(keyStore.options.aliasPrefix)
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)
         agreement?.let(handle::setKeyAgreement)
         // A call cancelled while it waits for the holder or the provider
@@ -1058,12 +1061,13 @@ public class Wallet(
      * — and returns how many. Call it at launch, before any issuance or
      * refresh: one in progress holds keys of its own.
      *
-     * What it may delete: key pairs under [keyStore]'s
-     * [AndroidKeystoreKeyStore.Options.aliasPrefix] — holder, instance
-     * and DPoP keys — that no credential is bound to. Pass the wallet's
-     * own key store, under a prefix of its own: another key pair of the
-     * app's under that prefix would be deleted too. Secret keys — the
-     * credential store's and the status cache's — are never deleted.
+     * What it may delete: key pairs whose alias is [keyStore]'s
+     * [AndroidKeystoreKeyStore.Options.aliasPrefix] and a UUID, as the
+     * store makes them — holder, instance and DPoP keys — that no
+     * credential is bound to. Pass the wallet's own key store, under a
+     * prefix of its own: another store's keys under the same prefix
+     * would be deleted too. Secret keys — the credential store's and the
+     * status cache's — are never deleted.
      *
      * @throws IllegalArgumentException, deleting nothing, for a store
      *   whose prefix covers or falls under

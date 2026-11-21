@@ -273,6 +273,13 @@ class HttpWalletProviderTest {
 
         suspend fun keyAttestation(instanceKey: String, holders: List<String>, nonce: String = NONCE): String =
             wp.keyAttestation(KeyAttestationRequest(keys.evidence(instanceKey), holders.map(keys::evidence), nonce))
+
+        /** Deletes the registration keys but [keep], as a sweep of their store does: how many. */
+        fun deleteRegistrationKeysExcept(keep: Set<String>): Int {
+            val gone = registrationKeys.pairs.keys - keep
+            gone.forEach(registrationKeys::deleteKey)
+            return gone.size
+        }
     }
 
     @Test
@@ -550,20 +557,16 @@ class HttpWalletProviderTest {
     @Test
     fun theSweepKeepsOnlyTheRegistrationsKey() = runBlocking {
         val s = Setup()
-        val deleteExcept = { keep: Set<String> ->
-            val gone = s.registrationKeys.pairs.keys - keep
-            gone.forEach(s.registrationKeys::deleteKey)
-            gone.size
-        }
+        val prefix = HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX
         // Left by a registration that never finished; nothing registered.
         val left = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
-        assertEquals(1, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertEquals(1, s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept))
         assertNull(s.registrationKeys.publicKey(left))
 
         s.walletAttestation(s.newInstanceKey())
         val kept = s.registry.instance()!!
         repeat(2) { s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32)) }
-        assertEquals(2, s.wp.sweepRegistrationKeys(deleteExcept))
+        assertEquals(2, s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept))
         assertEquals(setOf(kept.keyID), s.registrationKeys.pairs.keys)
         // The registration still signs: no new one.
         s.walletAttestation(s.newInstanceKey())
@@ -573,6 +576,25 @@ class HttpWalletProviderTest {
         s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
         assertEquals(0, s.wp.sweepOrphanedRegistrationKeys())
         assertEquals(2, s.registrationKeys.pairs.size)
+    }
+
+    /**
+     * The sweep refuses a registration key store whose prefix overlaps the
+     * key store of a wallet built with any provider over the registry,
+     * deleting nothing: it would delete the wallet's keys.
+     */
+    @Test
+    fun theSweepRefusesAStoreOverAWalletsKeys() = runBlocking {
+        val s = Setup()
+        val left = s.registrationKeys.createKey(KeyPurpose.INSTANCE, ByteArray(32))
+        val wallet = "com.example.wallet."
+        s.client().addWalletKeys(wallet)
+        for (prefix in listOf(wallet, wallet + "registration.", "com.example.")) {
+            val e = runCatching { s.wp.sweepRegistrationKeys(prefix, s::deleteRegistrationKeysExcept) }.exceptionOrNull()
+            assertTrue("$prefix: $e", e is IllegalArgumentException)
+        }
+        assertTrue(s.registrationKeys.publicKey(left) != null)
+        assertEquals(1, s.wp.sweepRegistrationKeys(HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX, s::deleteRegistrationKeysExcept))
     }
 
     @Test

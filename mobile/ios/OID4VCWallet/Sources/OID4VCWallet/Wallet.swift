@@ -854,6 +854,11 @@ public final class Wallet: @unchecked Sendable {
         try self.init(configuration: configuration, keys: KeyStoreAdapter(keyStore), credentials: CredentialStoreAdapter(credentialStore),
                       provider: provider.map(WalletProviderAdapter.init),
                       agreement: (keyStore as? any KeyAgreement).map(KeyAgreementAdapter.init))
+        // The provider's registration key sweep refuses a store over this
+        // wallet's keys.
+        if let provider = provider as? HttpWalletProvider, let keys = keyStore as? KeychainKeyStore {
+            provider.addWalletKeys(tagPrefix: keys.options.tagPrefix)
+        }
     }
 
     init(configuration: WalletConfiguration, keys: KeyStoreAdapter, credentials: CredentialStoreAdapter,
@@ -882,10 +887,12 @@ public final class Wallet: @unchecked Sendable {
     /// own.
     ///
     /// What it may delete: keys a ``KeychainKeyStore`` made — holder,
-    /// instance and DPoP keys — under `keyStore`'s
-    /// ``KeychainKeyStore/Options/tagPrefix``, that no credential is
-    /// bound to. Pass the wallet's own key store, under a prefix of its
-    /// own. It throws a ``StoreError``, deleting nothing, for a store
+    /// instance and DPoP keys — whose tag is `keyStore`'s
+    /// ``KeychainKeyStore/Options/tagPrefix`` and a UUID, as the store
+    /// makes them, that no credential is bound to. Pass the wallet's own
+    /// key store, under a prefix of its own: another store's keys under
+    /// the same prefix would be deleted too. It throws a ``StoreError``,
+    /// deleting nothing, for a store
     /// whose prefix is empty, or covers or falls under
     /// ``HttpWalletProvider/registrationKeyTagPrefix``: that would
     /// delete the Wallet Provider registration key, which

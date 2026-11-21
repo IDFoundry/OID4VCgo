@@ -396,7 +396,10 @@ calls at launch. It isn't automatic: it deletes every key in its store
 but its registration's, and every provider made with
 `registrationKeyStore()` shares that store, so it's safe only with one
 Wallet Provider, or with each provider's keys under a prefix of its
-own. The Kotlin client has the same call.
+own. It refuses a store whose prefix is, covers or falls under the
+key store's of a `Wallet` made with a provider over the same registry,
+which tells the provider its prefix: the wallet's sweep refuses the
+registration prefix likewise. The Kotlin client has the same call.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against
@@ -1189,8 +1192,11 @@ on an emulator, in CI too (`mobile-android`).
   every background refresh. The demo shows a BiometricPrompt, without a
   CryptoObject, before each presentation instead.
 - **Instance and DPoP keys** sign silently, as on iOS.
-- **IDs:** a key's ID is its alias after a prefix; the store lists and
-  sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **IDs:** a key's ID, a UUID, is its alias after a prefix; the store
+  lists and sweeps only aliases that are its prefix and a UUID
+  (`keyIDs()`, `deleteKeys(except:)`), so a store under a prefix that
+  extends another's keeps its keys from the other's sweep, which until
+  OID4VCWallet 0.43.0 deleted them, or failed on an ID with a `.`.
 - **Locked means locked:** with the screen locked, every key's signature
   fails ("Keystore operation failed"), as `setUnlockedDeviceRequired`
   says — so CI unlocks the emulator with its PIN before the tests.

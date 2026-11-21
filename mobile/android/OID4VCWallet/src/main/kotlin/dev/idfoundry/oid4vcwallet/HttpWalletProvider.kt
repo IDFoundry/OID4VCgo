@@ -335,18 +335,38 @@ public class HttpWalletProvider internal constructor(
      * every provider made with the default [registrationKeyStore] shares
      * it, so an app with more than one Wallet Provider gives each an
      * [AndroidKeystoreKeyStore] of its own alias prefix (under
-     * [REGISTRATION_KEY_ALIAS_PREFIX], which the wallet's mustn't cover)
-     * before sweeping either.
+     * [REGISTRATION_KEY_ALIAS_PREFIX], which the wallet's mustn't cover),
+     * where neither prefix extends the other, before sweeping either.
+     *
+     * @throws IllegalArgumentException, deleting nothing, for a
+     *   registration key store whose prefix is, covers or falls under the
+     *   alias prefix of the [AndroidKeystoreKeyStore] of a [Wallet] built
+     *   with a provider over the same registry: that would delete the
+     *   wallet's keys, which [Wallet.sweepOrphanedKeys] sweeps instead.
      */
     public suspend fun sweepOrphanedRegistrationKeys(): Int {
         val store = registrationKeys as? AndroidKeystoreKeyStore ?: return 0
-        return sweepRegistrationKeys(store::deleteKeys)
+        return sweepRegistrationKeys(store.options.aliasPrefix, store::deleteKeys)
     }
 
-    /** [sweepOrphanedRegistrationKeys] over a store that deletes its keys but those given with [deleteKeysExcept]. */
-    internal suspend fun sweepRegistrationKeys(deleteKeysExcept: (Set<String>) -> Int): Int = registering.withLock {
-        withContext(Dispatchers.IO) { deleteKeysExcept(kept()?.let { setOf(it.keyID) }.orEmpty()) }
+    /**
+     * [sweepOrphanedRegistrationKeys] over a store under [aliasPrefix]
+     * that deletes its keys but those given with [deleteKeysExcept].
+     */
+    internal suspend fun sweepRegistrationKeys(aliasPrefix: String, deleteKeysExcept: (Set<String>) -> Int): Int {
+        registrationSweepRefusal(aliasPrefix, state.walletPrefixes())?.let { throw IllegalArgumentException(it) }
+        return registering.withLock {
+            withContext(Dispatchers.IO) { deleteKeysExcept(kept()?.let { setOf(it.keyID) }.orEmpty()) }
+        }
     }
+
+    /**
+     * Notes that a [Wallet] built with this provider keeps its keys in an
+     * [AndroidKeystoreKeyStore] under [aliasPrefix], for every provider
+     * over the registry: [sweepOrphanedRegistrationKeys] refuses a store
+     * overlapping it.
+     */
+    internal fun addWalletKeys(aliasPrefix: String) = state.addWalletPrefix(aliasPrefix)
 
     /**
      * Registers the installation with a new registration key — and with
@@ -590,6 +610,17 @@ public class HttpWalletProvider internal constructor(
 
         private const val INSTANCE_KEY_NOT_P256 = "the instance key isn't a P-256 JWK"
 
+        /**
+         * Why [sweepOrphanedRegistrationKeys] refuses a registration key
+         * store under [aliasPrefix], or null: one that is, covers or falls
+         * under one of [walletPrefixes], the prefixes of the wallets' key
+         * stores, would delete those wallets' keys.
+         */
+        internal fun registrationSweepRefusal(aliasPrefix: String, walletPrefixes: Set<String>): String? =
+            walletPrefixes.sorted().firstOrNull { aliasPrefix.startsWith(it) || it.startsWith(aliasPrefix) }?.let {
+                "sweep registration keys: the key store's aliasPrefix $aliasPrefix overlaps a wallet key store's, $it"
+            }
+
         internal fun checkTimeout(millis: Int): Int {
             require(millis > 0) { "the timeout must be positive" }
             return millis
@@ -678,6 +709,18 @@ internal class WalletProviderState {
     val instanceChallenges = ArrayDeque<IssuedChallenge>()
     val holderChallenges = ArrayDeque<IssuedChallenge>()
     var holderChallenge: IssuedChallenge? = null
+
+    // The alias prefixes of the key stores of the wallets built with a
+    // provider over the registry.
+    private val walletPrefixes = mutableSetOf<String>()
+
+    @Synchronized
+    fun addWalletPrefix(aliasPrefix: String) {
+        walletPrefixes += aliasPrefix
+    }
+
+    @Synchronized
+    fun walletPrefixes(): Set<String> = walletPrefixes.toSet()
 }
 
 /** A challenge the provider issued. */

@@ -267,6 +267,31 @@ final class OID4VCWalletTests: XCTestCase {
         #endif
     }
 
+    /// Stores whose prefixes extend another's, with a separator or
+    /// without, keep their keys from its sweep, and it keeps its own from
+    /// theirs: each lists and sweeps only its prefix and a UUID.
+    func testNestedPrefixesKeepEachOthersKeys() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
+        #else
+        let prefix = "org.idfoundry.oid4vcgo.test.\(UUID())."
+        func store(_ prefix: String) -> KeychainKeyStore {
+            KeychainKeyStore(options: .init(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: prefix))
+        }
+        let keys = store(prefix)
+        let longer = ["b.", "b-", "b"].map { store(prefix + $0) }
+        defer { for s in longer + [keys] { _ = try? s.deleteKeys(except: []) } }
+        let theirs = try longer.map { try $0.createKey(purpose: .dpop) }
+        _ = try keys.createKey(purpose: .dpop)
+        XCTAssertEqual(try keys.deleteKeys(except: []), 1)
+        for (s, id) in zip(longer, theirs) { XCTAssertEqual(try s.keyIDs(), [id]) }
+        let mine = try keys.createKey(purpose: .dpop)
+        for s in longer { XCTAssertEqual(try s.deleteKeys(except: []), 1) }
+        XCTAssertEqual(try keys.keyIDs(), [mine])
+        XCTAssertFalse(KeychainKeyStore.isKeyID(mine.lowercased()))
+        #endif
+    }
+
     /// A sweep refuses a store whose tag prefix is empty, or overlaps the
     /// Wallet Provider registration key's.
     func testSweepRefusesReservedPrefixes() throws {

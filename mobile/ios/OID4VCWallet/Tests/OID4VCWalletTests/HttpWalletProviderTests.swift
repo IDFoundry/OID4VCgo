@@ -291,6 +291,33 @@ final class HttpWalletProviderTests: XCTestCase {
         XCTAssertEqual(memory.keys.count, 1)
     }
 
+    /// The sweep refuses a registration key store whose prefix is, covers
+    /// or falls under the key store's of a wallet made with any provider
+    /// over the registry, deleting nothing: it would delete the wallet's
+    /// keys. With no wallet made, it can't tell.
+    func testSweepRefusesAStoreOverAWalletsKeys() async throws {
+        let wallets: Set = ["com.example.wallet.keys.", KeychainKeyStore.Options().tagPrefix]
+        for prefix in ["com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.wp.", "org.idfoundry.", ""] {
+            XCTAssertNotNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: prefix, walletPrefixes: wallets), "prefix \(prefix) accepted")
+        }
+        for prefix in [HttpWalletProvider.registrationKeyTagPrefix, "com.example.wallet.wp.", "com.example.wallet.keysx"] {
+            XCTAssertNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: prefix, walletPrefixes: wallets), "prefix \(prefix) refused")
+        }
+        XCTAssertNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: KeychainKeyStore.Options().tagPrefix, walletPrefixes: []))
+
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: "com.example.wallet.wp."))
+        let env = try Env(registrationKeys: store)
+        let left = try store.createKey(purpose: .instance)
+        // A wallet made with another provider over the registry.
+        try env.provider(over: env.registry).addWalletKeys(tagPrefix: "com.example.")
+        do {
+            _ = try await env.provider.sweepOrphanedRegistrationKeys()
+            XCTFail("swept a store over a wallet's keys")
+        } catch is StoreError {
+            XCTAssertNotNil(try store.publicKey(id: left))
+        }
+    }
+
     /// A registration key the provider has seen is replaced by another,
     /// once; the refused one is deleted.
     func testInstanceKeyRegisteredRetries() async throws {

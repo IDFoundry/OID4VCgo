@@ -593,6 +593,29 @@ final class SessionTests: XCTestCase {
         XCTAssertNotNil(try registration.publicKey(id: registrationKey))
     }
 
+    /// A Wallet Provider's registration key sweep refuses a store whose
+    /// prefix is, covers or falls under the key store's of a wallet made
+    /// with it, deleting nothing: it would delete the wallet's keys.
+    func testRegistrationSweepRefusesTheWalletsKeys() async throws {
+        let env = try TestEnv()
+        defer { env.close() }
+        let prefix = "org.idfoundry.oid4vcgo.session.\(UUID())."
+        let keys = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: prefix))
+        for registrationPrefix in [prefix, prefix + "wp.", String(prefix.dropLast())] {
+            let registration = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: registrationPrefix))
+            let left = try registration.createKey(purpose: .instance)
+            let provider = try HttpWalletProvider(baseURL: URL(string: "https://wp.example")!, instances: InMemoryInstanceRegistry(),
+                                                  registrationKeys: registration)
+            _ = try Wallet(configuration: try env.configuration, keyStore: keys, credentialStore: InMemoryCredentialStore(), provider: provider)
+            do {
+                _ = try await provider.sweepOrphanedRegistrationKeys()
+                XCTFail("swept \(registrationPrefix)")
+            } catch is StoreError {
+                XCTAssertNotNil(try registration.publicKey(id: left), registrationPrefix)
+            }
+        }
+    }
+
     /// An issuance dropped without close() still deletes its keys.
     func testDroppedIssuanceClosesItself() async throws {
         let env = try TestEnv()
