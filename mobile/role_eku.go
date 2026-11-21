@@ -95,10 +95,10 @@ const mdocReaderAuthEKU = "1.0.18013.5.1.6"
 // intermediate: where that chains to can't be known from the roots
 // alone, so it may be the other's.
 //
-// The credential issuers' roots, issuer_roots and the mdoc ones, are
-// one role: an ecosystem's CA may certify both its SD-JWT VC issuers
-// and its document signers, told apart by their extended key usages,
-// so they aren't checked against each other.
+// The credential issuers' roots, issuer_roots, issuer_roots_by_vct's
+// and the mdoc ones, are one role: an ecosystem's CA may certify both
+// its SD-JWT VC issuers and its document signers, told apart by their
+// extended key usages, so they aren't checked against each other.
 func checkRoleRoots(cfg config) error {
 	if cfg.Development {
 		return nil
@@ -120,6 +120,12 @@ func checkRoleRoots(cfg config) error {
 		// mdoc_issuer_require_eku: that pair must be told apart from the
 		// other roles too, beside issuer_roots' own.
 		roles = append(roles, roleRoots{name: "issuer_roots", roots: cfg.IssuerRoots, eku: cfg.MdocIssuerRequireEKU, ekuName: "mdoc_issuer_require_eku", family: roleIssuer})
+	}
+	for _, vct := range slices.Sorted(maps.Keys(cfg.IssuerRootsByVCT)) {
+		roles = append(roles, roleRoots{
+			name: fmt.Sprintf("issuer_roots_by_vct[%q]", vct), roots: cfg.IssuerRootsByVCT[vct],
+			eku: cfg.IssuerRequireEKU, ekuName: "issuer_require_eku", family: roleIssuer,
+		})
 	}
 	for _, docType := range slices.Sorted(maps.Keys(cfg.MdocIssuerRootsByDocType)) {
 		roles = append(roles, roleRoots{

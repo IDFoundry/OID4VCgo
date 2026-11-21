@@ -393,6 +393,12 @@ ecosystem, and record why:
   comes to the foreground. Set a directory of the app's own to keep them elsewhere,
   with the protection you give it (a failure to get its key, or to make
   it, then fails the wallet), or `""` to keep them in memory only.
+- ``WalletConfiguration/IssuerTrust/rootsByVCT``: each SD-JWT VC type's
+  own issuers' CAs, instead of ``WalletConfiguration/IssuerTrust/roots``,
+  where those hold several providers' CAs (a PID provider's and an
+  attestation provider's, say): otherwise any of them can issue a
+  credential of another's type, which the wallet shows and offers as
+  that type.
 - ``WalletConfiguration/IssuerTrust/mdocRoots`` and
   ``WalletConfiguration/IssuerTrust/mdocRootsByDocType``: the IACAs mdocs, or
   each document type, must chain to, instead of

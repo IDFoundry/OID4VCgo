@@ -424,6 +424,11 @@ ecosystem, and record why:
   whoever can read it which status lists the wallet checks (their URIs,
   so the issuers of its credentials, not which entries), the lists, and
   when each was last checked. Use `""` if that's too much.
+- `issuers.rootsByVCT`: each SD-JWT VC type's own issuers' CAs,
+  instead of `issuers.roots`, where those hold several providers' CAs
+  (a PID provider's and an attestation provider's, say): otherwise any
+  of them can issue a credential of another's type, which the wallet
+  shows and offers as that type.
 - `issuers.mdocRoots` and `issuers.mdocRootsByDocType`: the IACAs
   mdocs, or each document type, must chain to, instead of
   `issuers.roots`, so an SD-JWT VC issuer's CA can't sign an mDL.

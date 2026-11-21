@@ -21,8 +21,8 @@ opening one that isn't `https`, which opens another app and can look
 like the wallet's next step. The library now refuses a redirect that
 opens a system app (an app's install prompt or store page, a call, a
 message, the settings, a Shortcut or a map), as it refused `http`:
-`refusalRedirect` is then nil, and `respond` and `decline` fail with
-`protocol`, the presentation answered.
+`refusalRedirect` is then nil (null), and `respond` and `decline` fail
+with `protocolError` (Kotlin's `protocol`), the presentation answered.
 
 ### Name your Verifiers' app schemes (Swift, Kotlin)
 
@@ -33,6 +33,16 @@ to `["https"]` (`listOf("https")`). A redirect with another scheme is
 then refused as above. Empty, the default, follows any scheme the
 library doesn't refuse. A scheme that isn't one, or one never
 followed, is `invalidInput`.
+
+### Hold each SD-JWT VC type to its own issuers (Swift, Kotlin)
+
+The new `issuers.rootsByVCT` (`issuer_roots_by_vct`) is walletflow's
+`IssuerRootsByVCT` (see v0.86.0 below): each SD-JWT VC type's own
+issuers' CAs, by `vct`, in place of `issuers.roots`. Set it where
+`issuers.roots` hold several providers' CAs. Outside `development`,
+its roots need the `issuer` and `status` revocation choice, and are
+kept apart from the other roles' with `issuers.requireEKU`, as
+`issuers.roots` are.
 
 ## v0.85.0 → v0.86.0
 

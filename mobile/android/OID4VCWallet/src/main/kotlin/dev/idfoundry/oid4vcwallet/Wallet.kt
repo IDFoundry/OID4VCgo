@@ -152,12 +152,12 @@ public data class WalletConfiguration(
          * credential refuse an issuer the list no longer names the same
          * way, keeping what the wallet holds from it.
          *
-         * A wallet with [roots] (or the mdoc ones) must decide which
-         * issuers' offers it takes, or the [Wallet] constructor throws
-         * `invalidInput`: this list; signed issuer metadata naming its
-         * issuer ([IssuerMetadataTrust] with `roots`, `requireSigned` and
-         * `requireName`), which may be combined with it; or
-         * [allowAnyCredentialIssuer], alone.
+         * A wallet with [roots] (or [rootsByVCT], or the mdoc ones) must
+         * decide which issuers' offers it takes, or the [Wallet]
+         * constructor throws `invalidInput`: this list; signed issuer
+         * metadata naming its issuer ([IssuerMetadataTrust] with `roots`,
+         * `requireSigned` and `requireName`), which may be combined with
+         * it; or [allowAnyCredentialIssuer], alone.
          */
         val credentialIssuers: List<String> = emptyList(),
         /**
@@ -169,6 +169,18 @@ public data class WalletConfiguration(
          * whose issuers can't be told apart in advance.
          */
         val allowAnyCredentialIssuer: Boolean = false,
+        /**
+         * Each SD-JWT VC type's own issuers, as PEM certificates by `vct`:
+         * a credential of a type named here must chain to them, not to
+         * [roots], so where [roots] hold several providers' CAs one can't
+         * issue a credential of another's type, which the wallet would show
+         * and offer as that type. A type named with an empty string is
+         * refused. With it set, the types a credential says it's of too
+         * (`aka_vcts`) must be its issuer's: its chain must verify under
+         * each one's roots here, else [roots]. [requireEKU] applies under
+         * them (from OID4VCWallet 0.43.0).
+         */
+        val rootsByVCT: Map<String, String> = emptyMap(),
     )
 
     /** Which signed Credential Issuer Metadata the wallet trusts. */
@@ -414,7 +426,7 @@ public data class WalletConfiguration(
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable
     public enum class RevocationRole {
-        /** The issuers' signing certificates ([IssuerTrust.roots] and the mdoc roots), on receipt, deferral and refresh. */
+        /** The issuers' signing certificates ([IssuerTrust.roots], [IssuerTrust.rootsByVCT] and the mdoc roots), on receipt, deferral and refresh. */
         @SerialName("issuer") ISSUER,
 
         /** The signers of Credential Issuer Metadata ([IssuerMetadataTrust.roots]). */
@@ -572,6 +584,7 @@ internal data class WalletConfigurationJSON(
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
     @SerialName("verifier_redirect_schemes") val verifierRedirectSchemes: List<String> = emptyList(),
+    @SerialName("issuer_roots_by_vct") val issuerRootsByVCT: Map<String, String> = emptyMap(),
 )
 
 /** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
@@ -638,6 +651,7 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
         verifierRedirectSchemes = c.presentation.verifierRedirectSchemes,
+        issuerRootsByVCT = c.issuers.rootsByVCT,
     )
 
     private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
@@ -655,6 +669,7 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             statusIssuers = j.statusIssuers,
             credentialIssuers = j.credentialIssuers,
             allowAnyCredentialIssuer = j.allowAnyCredentialIssuer,
+            rootsByVCT = j.issuerRootsByVCT,
         ),
         issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
             roots = j.issuerMetadataRoots,

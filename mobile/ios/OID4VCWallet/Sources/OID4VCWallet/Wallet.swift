@@ -108,11 +108,12 @@ public struct WalletConfiguration: Codable, Sendable {
         /// deferred credential refuse an issuer the list no longer names
         /// the same way, keeping what the wallet holds from it.
         ///
-        /// A wallet with `roots` (or the mdoc ones) must decide which
-        /// issuers' offers it takes, or `Wallet(configuration:)` throws
-        /// `invalidInput`: this list; signed issuer metadata naming its
-        /// issuer (``IssuerMetadataTrust`` with `roots`, `requireSigned`
-        /// and `requireName`), which may be combined with it; or
+        /// A wallet with `roots` (or `rootsByVCT`, or the mdoc ones) must
+        /// decide which issuers' offers it takes, or
+        /// `Wallet(configuration:)` throws `invalidInput`: this list;
+        /// signed issuer metadata naming its issuer
+        /// (``IssuerMetadataTrust`` with `roots`, `requireSigned` and
+        /// `requireName`), which may be combined with it; or
         /// `allowAnyCredentialIssuer`, alone.
         public var credentialIssuers: [String]
         /// Takes offers from any issuer, in place of `credentialIssuers` or
@@ -122,13 +123,24 @@ public struct WalletConfiguration: Codable, Sendable {
         /// it: guarding against that is the app's. Set it only for a
         /// wallet whose issuers can't be told apart in advance.
         public var allowAnyCredentialIssuer: Bool
+        /// Each SD-JWT VC type's own issuers, as PEM certificates by `vct`:
+        /// a credential of a type named here must chain to them, not to
+        /// `roots`, so where `roots` hold several providers' CAs one can't
+        /// issue a credential of another's type, which the wallet would show
+        /// and offer as that type. A type named with an empty string is
+        /// refused. With it set, the types a credential says it's of too
+        /// (`aka_vcts`) must be its issuer's: its chain must verify under
+        /// each one's roots here, else `roots`. `requireEKU` applies under
+        /// them (from OID4VCWallet 0.43.0).
+        public var rootsByVCT: [String: String]
 
         /// Issuer trust: every field has a default.
         public init(roots: String = "", requireEKU: String = "", mdocRoots: String = "",
                     mdocRootsByDocType: [String: String] = [:], mdocRequireEKU: String = "",
                     acceptMDLSignerWithoutEKU: Bool = false, requireIssuerName: Bool = false,
                     allowForeignIss: Bool = false, statusIssuers: [String: [String]] = [:],
-                    credentialIssuers: [String] = [], allowAnyCredentialIssuer: Bool = false) {
+                    credentialIssuers: [String] = [], allowAnyCredentialIssuer: Bool = false,
+                    rootsByVCT: [String: String] = [:]) {
             self.roots = roots
             self.requireEKU = requireEKU
             self.mdocRoots = mdocRoots
@@ -140,6 +152,7 @@ public struct WalletConfiguration: Codable, Sendable {
             self.statusIssuers = statusIssuers
             self.credentialIssuers = credentialIssuers
             self.allowAnyCredentialIssuer = allowAnyCredentialIssuer
+            self.rootsByVCT = rootsByVCT
         }
     }
 
@@ -341,8 +354,9 @@ public struct WalletConfiguration: Codable, Sendable {
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
-        /// The issuers' signing certificates (`issuers.roots` and the mdoc
-        /// roots), on receipt, deferral and refresh.
+        /// The issuers' signing certificates (`issuers.roots`,
+        /// `issuers.rootsByVCT` and the mdoc roots), on receipt, deferral
+        /// and refresh.
         case issuer
         /// The signers of Credential Issuer Metadata (`issuerMetadata.roots`).
         case issuerMetadata = "issuer_metadata"
@@ -420,6 +434,7 @@ public struct WalletConfiguration: Codable, Sendable {
     // The flat JSON keys, one per option, as NewWallet reads them.
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
+        case issuerRootsByVCT = "issuer_roots_by_vct"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, developmentRoots = "development_roots", locales, batchSize = "batch_size"
@@ -470,7 +485,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 allowForeignIss: try value(.allowForeignIss, false),
                 statusIssuers: try value(.statusIssuers, [:]),
                 credentialIssuers: try value(.credentialIssuers, []),
-                allowAnyCredentialIssuer: try value(.allowAnyCredentialIssuer, false)),
+                allowAnyCredentialIssuer: try value(.allowAnyCredentialIssuer, false),
+                rootsByVCT: try value(.issuerRootsByVCT, [:])),
             issuerMetadata: IssuerMetadataTrust(
                 roots: try value(.issuerMetadataRoots, ""),
                 requireEKU: try value(.issuerMetadataRequireEKU, ""),
@@ -522,6 +538,7 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(issuers.statusIssuers, forKey: .statusIssuers)
         try c.encode(issuers.credentialIssuers, forKey: .credentialIssuers)
         try c.encode(issuers.allowAnyCredentialIssuer, forKey: .allowAnyCredentialIssuer)
+        try c.encode(issuers.rootsByVCT, forKey: .issuerRootsByVCT)
         try c.encode(issuerMetadata.roots, forKey: .issuerMetadataRoots)
         try c.encode(issuerMetadata.requireEKU, forKey: .issuerMetadataRequireEKU)
         try c.encode(issuerMetadata.requireSigned, forKey: .requireSignedIssuerMetadata)

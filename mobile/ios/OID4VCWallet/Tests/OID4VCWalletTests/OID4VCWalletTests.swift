@@ -32,7 +32,8 @@ final class OID4VCWalletTests: XCTestCase {
     /// configuration encodes the same keys as before.
     func testWalletConfigurationJSONRoundTrip() throws {
         let full = #"""
-        {"client_id":"c","redirect_uri":"app:/cb","issuer_roots":"IR","verifier_roots":"VR","registrar_roots":"RR",
+        {"client_id":"c","redirect_uri":"app:/cb","issuer_roots":"IR","issuer_roots_by_vct":{"urn:eudi:pid:1":"PID"},
+         "verifier_roots":"VR","registrar_roots":"RR",
          "mdoc_reader_roots":"MR","mdoc_reader_require_eku":true,"require_trusted_mdoc_reader":true,
          "development":true,"development_roots":"DR","locales":["de","en"],"batch_size":3,"request_refresh":true,
          "copy_policy":"per_verifier","issuance_profile":"haip","proof_key_by_jwk":true,"proof_key_by_index":true,
@@ -53,6 +54,7 @@ final class OID4VCWalletTests: XCTestCase {
         let config = try JSONDecoder().decode(WalletConfiguration.self, from: Data(full.utf8))
         XCTAssertEqual(config.issuers.roots, "IR")
         XCTAssertEqual(config.issuers.mdocRoots, "MIR")
+        XCTAssertEqual(config.issuers.rootsByVCT, ["urn:eudi:pid:1": "PID"])
         XCTAssertEqual(config.issuers.statusIssuers, ["https://i.example": ["https://s.example"]])
         XCTAssertEqual(config.issuers.credentialIssuers, ["https://i.example"])
         XCTAssertTrue(config.issuers.allowAnyCredentialIssuer)
