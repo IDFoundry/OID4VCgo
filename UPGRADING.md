@@ -70,6 +70,22 @@ walletflow, `Config.RedirectURI`'s. In `wallet`, the `*Wallet` methods
 apply it; the package-level `SubmitDirectPostResponse`, `Respond` and
 `RespondSelection`, which take no `Config`, don't.
 
+### Hold each SD-JWT VC type to its own issuers (walletflow)
+
+The new `walletflow.Config.IssuerRootsByVCT` gives each SD-JWT VC type
+its own trust anchors, as `MdocIssuerRootsByDocType` does for mdocs and
+the verifier's `X5CIssuerKeyResolver.RootsByVCT` for presentations: a
+received credential whose `vct` it names must chain to that type's
+anchors, not to `IssuerRoots`, and with it set, to each of its
+`aka_vcts` types' too; `CheckStatus` checks a held one again so, and
+its status list's signer under its type's. Where `IssuerRoots` hold
+several providers' CAs (a PID provider's and an attestation provider's,
+say), any of them can otherwise issue a credential of another's type,
+which the wallet stores, shows and offers as that type. Outside
+`Development` its pools need `IssuerRevocation` and `StatusRevocation`,
+and are kept apart from the other roles', as `IssuerRoots` are. Unset,
+nothing changes.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration

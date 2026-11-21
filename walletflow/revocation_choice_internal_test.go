@@ -107,6 +107,15 @@ func TestNew_RevocationChosen(t *testing.T) {
 	if _, err := New(mdocOnly, deps); err != nil {
 		t.Errorf("mdoc-only wallet, issuer roles declined: %v", err)
 	}
+	// So do a wallet's whose only issuer roots are a vct's.
+	vctOnly := Config{IssuerRootsByVCT: map[string]*x509.CertPool{"urn:example:pid": pool("PID provider CA")}, CredentialIssuers: []string{testIssuer}}
+	if _, err := New(vctOnly, deps); err == nil || !strings.Contains(err.Error(), "Config.IssuerRevocation") {
+		t.Errorf("vct-only wallet without IssuerRevocation: New = %v", err)
+	}
+	vctOnly.IssuerRevocation, vctOnly.StatusRevocation = certrevocation.NoCheck{}, certrevocation.NoCheck{}
+	if _, err := New(vctOnly, deps); err != nil {
+		t.Errorf("vct-only wallet, issuer roles declined: %v", err)
+	}
 	// A wallet with no roots has no role to choose for.
 	if _, err := New(Config{}, deps); err != nil {
 		t.Errorf("a wallet with no roots: %v", err)

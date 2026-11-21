@@ -394,6 +394,14 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   `uniformResourceIdentifier` constraints apply to URIs (RFC 5280
   §4.2.1.10), so `RequireIssuerName` tells such members apart only
   under URI constraints, or for `dns:` issuers.
+
+  A wallet (walletflow) has the same choice for what it receives: with
+  one pool of every provider's roots in `Config.IssuerRoots`, any of
+  them can issue a credential of another's type, which the wallet
+  stores, shows and offers as that type. `Config.IssuerRootsByVCT` and
+  `MdocIssuerRootsByDocType` hold each type to its own providers'
+  anchors, an SD-JWT VC's `aka_vcts` types too, on receipt and in
+  `CheckStatus`. A Verifier still decides for itself.
 - [ ] **Certificate revocation:** a `certrevocation.Refresher` per
   process (`certrevocation.NewRefresher`), run in the background with
   `Run(ctx)` after one `Refresh(ctx)` before serving, and its

@@ -3,8 +3,10 @@ package walletflow
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -75,15 +77,22 @@ type issuerChecks map[string]issuerOutcome
 // at now carries (an SD-JWT VC's x5c, an mdoc's IssuerAuth x5chain)
 // against the issuer roots and leaf policy configured for c now and
 // Config.IssuerRevocation, at now, as on receipt: so a signer revoked
-// since, or an issuer no longer trusted, is seen. A copy carrying no
-// chain, or a wallet configured with no issuer roots for c, has nothing
-// to check and is left out. Revocation that can't be decided for
-// another reason than a missing CRL (a Checker's own failure) is an
-// error, as a status list that can't be fetched is.
+// since, or an issuer no longer trusted, is seen. An SD-JWT VC's chain
+// is checked under its aka_vcts' types' roots too (Config.akaRoots). A
+// copy carrying no chain, or a wallet configured with no issuer roots
+// for c, has nothing to check and is left out. Revocation that can't be
+// decided for another reason than a missing CRL (a Checker's own
+// failure) is an error, as a status list that can't be fetched is.
 func (w *Wallet) checkIssuers(ctx context.Context, c StoredCredential, now time.Time) (issuerChecks, error) {
-	roots, policy := w.cfg.issuerTrust(c.Format, c.DocType)
+	roots, policy := w.cfg.issuerTrust(c.Format, c.VCT, c.DocType)
 	if roots == nil {
 		return nil, nil
+	}
+	var aka []*x509.CertPool
+	var akaErr error
+	if c.Format == sdjwtvc.CredentialFormat {
+		// A type with no anchors now leaves every chain untrusted.
+		aka, akaErr = w.cfg.akaRoots(c.VCT, akaVCTs(c.Claims))
 	}
 	checks := issuerChecks{}
 	// A batch's copies usually carry one chain: each chain is verified
@@ -106,6 +115,12 @@ func (w *Wallet) checkIssuers(ctx context.Context, c StoredCredential, now time.
 			continue
 		}
 		_, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, roots, policy, w.cfg.IssuerRevocation, now)
+		if err == nil {
+			err = akaErr
+		}
+		if err == nil {
+			err = w.verifyUnderEach(ctx, chain, aka, policy, now)
+		}
 		var check issuerOutcome
 		switch {
 		case err == nil:
@@ -168,6 +183,33 @@ func issuerChain(format, credential string) [][]byte {
 			ders[i] = cert.Raw
 		}
 		return ders
+	}
+	return nil
+}
+
+// akaVCTs is the aka_vcts of an SD-JWT VC whose claims are claims: the
+// types it says it's of besides its vct (SD-JWT VC draft-19 §2.2.2.2),
+// which sdjwtvc.Verify has checked are strings.
+func akaVCTs(claims map[string]any) []string {
+	raw, _ := claims["aka_vcts"].([]any)
+	types := make([]string, 0, len(raw))
+	for _, t := range raw {
+		if s, ok := t.(string); ok {
+			types = append(types, s)
+		}
+	}
+	return types
+}
+
+// verifyUnderEach verifies chain, an issuer chain verified under its
+// credential's own type's anchors, under each of pools too, with policy
+// and Config.IssuerRevocation at now, as receipt does: an SD-JWT VC's
+// aka_vcts' types' anchors (Config.akaRoots).
+func (w *Wallet) verifyUnderEach(ctx context.Context, chain [][]byte, pools []*x509.CertPool, policy func(*x509.Certificate, [][]*x509.Certificate) error, now time.Time) error {
+	for _, pool := range pools {
+		if _, _, err := certchain.VerifyTrustedChainsAt(ctx, chain, pool, policy, w.cfg.IssuerRevocation, now); err != nil {
+			return fmt.Errorf("aka_vcts: issuer certificate: %w", err)
+		}
 	}
 	return nil
 }

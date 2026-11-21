@@ -24,6 +24,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
@@ -58,21 +59,37 @@ type Config struct {
 
 	// IssuerRoots are the trust anchors for issuers: every received
 	// credential must be signed by a certificate chaining to one of
-	// them, or it's refused — an mdoc only when MdocIssuerRoots and
+	// them, or it's refused — an SD-JWT VC only when IssuerRootsByVCT
+	// doesn't name its type, and an mdoc only when MdocIssuerRoots and
 	// MdocIssuerRootsByDocType don't apply to it. REQUIRED for
-	// StartIssuance, unless the wallet receives only mdocs and those
-	// are set.
+	// StartIssuance, unless the wallet receives only credentials those
+	// apply to and they're set.
 	//
 	// Use the issuers' own CAs, never x509.SystemCertPool or a pool
 	// built from it: that anchors every public CA, a TLS server's
 	// certificate among them. New doesn't refuse one (the verifier's
 	// resolvers do under production), and on macOS, iOS and Windows a
 	// system pool with certificates appended to it can't be told from
-	// any other pool. The same goes for MdocIssuerRoots,
-	// MdocIssuerRootsByDocType, IssuerMetadataRoots and RegistrarRoots.
+	// any other pool. The same goes for IssuerRootsByVCT,
+	// MdocIssuerRoots, MdocIssuerRootsByDocType, IssuerMetadataRoots and
+	// RegistrarRoots.
 	IssuerRoots *x509.CertPool
+	// IssuerRootsByVCT, if set, are each SD-JWT VC type's own trust
+	// anchors, as verifier.X5CIssuerKeyResolver's RootsByVCT: an SD-JWT
+	// VC whose vct it names must chain to that type's anchors, not to
+	// IssuerRoots, so where IssuerRoots are an ecosystem's providers of
+	// every kind, an attestation provider's CA can't sign a PID, say. A
+	// type named with a nil pool is refused. A credential's aka_vcts are
+	// types it says it is of too, and can answer a presentation's query
+	// through, but they're its issuer's own claim (SD-JWT VC draft-19
+	// §7.7): so with IssuerRootsByVCT set, its chain must verify under
+	// each of their types' anchors as well, IssuerRootsByVCT's for a
+	// type it names, else IssuerRoots, else it's refused. CheckStatus
+	// checks a held credential against the anchors configured then, and
+	// its status list's signer against its vct's.
+	IssuerRootsByVCT map[string]*x509.CertPool
 	// IssuerLeafPolicy, if set, decides whether a certificate under
-	// IssuerRoots may sign credentials
+	// IssuerRoots, or IssuerRootsByVCT's, may sign credentials
 	// (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy): set it
 	// where IssuerRoots also anchor another role, such as Verifiers.
 	// It applies to an mdoc too unless MdocIssuerLeafPolicy is set or
@@ -112,8 +129,9 @@ type Config struct {
 	// MdocIssuerRootsByDocType mdoc.DefaultDocumentSignerPolicy.
 	MdocIssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// IssuerRevocation checks a received credential's issuer
-	// certificate chain for revocation, under IssuerRoots and the mdoc
-	// roots alike (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
+	// certificate chain for revocation, under IssuerRoots,
+	// IssuerRootsByVCT's and the mdoc roots alike
+	// (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
 	// a credential whose signer, or a CA above it, is revoked is refused
 	// on receipt, deferred or refreshed alike, with an error wrapping
 	// certrevocation.ErrRevoked. CheckStatus checks a held credential's
@@ -124,9 +142,10 @@ type Config struct {
 	// a CA it has no current list from, so use one only where the
 	// issuers' CAs publish CRLs; each role has its own field for that
 	// reason. Outside Development, New requires it, and StatusRevocation,
-	// whenever IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType
-	// is set: certrevocation.NoCheck{} declines. In Development, nil
-	// checks no revocation; see certrevocation.
+	// whenever IssuerRoots, IssuerRootsByVCT, MdocIssuerRoots or
+	// MdocIssuerRootsByDocType is set: certrevocation.NoCheck{}
+	// declines. In Development, nil checks no revocation; see
+	// certrevocation.
 	IssuerRevocation certrevocation.Checker
 
 	// StatusRevocation checks the certificate chain of a status list's
@@ -143,12 +162,13 @@ type Config struct {
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):
 	// credential issuer (an SD-JWT VC's iss) → the identifiers of its
-	// Status Issuers, each recognized by a certificate under IssuerRoots
-	// naming it (a uniformResourceIdentifier, or for a "dns:" one a
-	// dNSName). CheckStatus otherwise accepts only a status list the
-	// credential's issuer signed itself, with the credential's own key
-	// or a certificate naming its iss, so another issuer under the same
-	// roots can't decide its status. An mdoc's is bound as ISO/IEC
+	// Status Issuers, each recognized by a certificate under IssuerRoots,
+	// or the credential's type's IssuerRootsByVCT, naming it (a
+	// uniformResourceIdentifier, or for a "dns:" one a dNSName).
+	// CheckStatus otherwise accepts only a status list the credential's
+	// issuer signed itself, with the credential's own key or a
+	// certificate naming its iss, so another issuer under the same roots
+	// can't decide its status. An mdoc's is bound as ISO/IEC
 	// 18013-5 §12.3.6 says instead: under the Certificate its MSO's
 	// status names, or else the CA that signed its document signer;
 	// StatusIssuers, keyed by iss, doesn't apply to it.
@@ -227,10 +247,10 @@ type Config struct {
 	// matters to the holder still presenting it. Each fetch tells the
 	// list's host only that some credential on it is being checked.
 	//
-	// A wallet that receives credentials (IssuerRoots, MdocIssuerRoots
-	// or MdocIssuerRootsByDocType set) must decide which issuers' offers
-	// it takes, in development too, in one of three ways, or New refuses
-	// it:
+	// A wallet that receives credentials (IssuerRoots, IssuerRootsByVCT,
+	// MdocIssuerRoots or MdocIssuerRootsByDocType set) must decide which
+	// issuers' offers it takes, in development too, in one of three
+	// ways, or New refuses it:
 	//   - CredentialIssuers;
 	//   - signed issuer metadata naming its issuer: IssuerMetadataRoots,
 	//     holding a certificate, with RequireSignedIssuerMetadata and
@@ -921,7 +941,7 @@ func (c Config) validateStatusMaxBytes() error {
 // IssuerRevocation, since any credential received may name a status
 // list, signed under the same roots, that CheckStatus fetches.
 func (c Config) checkRevocationChosen() error {
-	const issuerRoots = "IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType"
+	const issuerRoots = "IssuerRoots, IssuerRootsByVCT, MdocIssuerRoots or MdocIssuerRootsByDocType"
 	receives := c.receivesCredentials()
 	verifier, hasVerifier := x5cVerifierRoots(c.VerifierTrust)
 	for _, r := range []struct {
@@ -974,10 +994,10 @@ func (c Config) checkRevocationChosen() error {
 // separates roles, so don't set one on a pool that shares an anchor
 // with another role's.
 //
-// The credential issuers' pools, IssuerRoots and the mdoc ones, are
-// one role: an ecosystem's CA may certify both its SD-JWT VC issuers
-// and its document signers, and what tells those apart is their leaf
-// policies, not their anchors. With MdocIssuerRoots unset and
+// The credential issuers' pools, IssuerRoots, IssuerRootsByVCT's and
+// the mdoc ones, are one role: an ecosystem's CA may certify both its
+// SD-JWT VC issuers and its document signers, and what tells those
+// apart is their leaf policies, not their anchors. With MdocIssuerRoots unset and
 // MdocIssuerLeafPolicy set, mdocs are received under IssuerRoots with
 // MdocIssuerLeafPolicy, so that pair is checked against the other
 // roles as well as IssuerRoots with IssuerLeafPolicy.
@@ -994,6 +1014,9 @@ func checkRoleSeparation(c Config) error {
 		// MdocIssuerLeafPolicy (issuerTrust): that pair must be told
 		// apart from the other roles too, beside IssuerRoots' own.
 		roles = append(roles, trustRole{"IssuerRoots for mdocs (MdocIssuerLeafPolicy)", c.IssuerRoots, certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
+	}
+	for _, vct := range slices.Sorted(maps.Keys(c.IssuerRootsByVCT)) {
+		roles = append(roles, trustRole{fmt.Sprintf("IssuerRootsByVCT[%q]", vct), c.IssuerRootsByVCT[vct], certchain.SeparatesRoles(c.IssuerLeafPolicy), roleIssuer})
 	}
 	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
 		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
@@ -1171,21 +1194,28 @@ func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredent
 
 // receivesCredentials reports whether c trusts any credential issuer.
 func (c Config) receivesCredentials() bool {
-	return c.IssuerRoots != nil || c.MdocIssuerRoots != nil || len(c.MdocIssuerRootsByDocType) > 0
+	return c.IssuerRoots != nil || len(c.IssuerRootsByVCT) > 0 || c.MdocIssuerRoots != nil || len(c.MdocIssuerRootsByDocType) > 0
 }
 
 // issuerTrust is the trust anchors and leaf policy a received
-// credential of format, and for an mdoc docType, is checked against:
-// for an mdoc, MdocIssuerRootsByDocType's for a type it names, else
-// MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
-// IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
+// credential of format, and for an SD-JWT VC vct or for an mdoc
+// docType, is checked against: for an SD-JWT VC, IssuerRootsByVCT's for
+// a type it names, else IssuerRoots, with IssuerLeafPolicy; for an mdoc,
+// MdocIssuerRootsByDocType's for a type it names, else MdocIssuerRoots,
+// else IssuerRoots, with MdocIssuerLeafPolicy, else IssuerLeafPolicy
+// under IssuerRoots alone. A nil pool is refused by
 // wallet.VerifyIssuedCredential. With no policy set, the policy is the
 // format's default (wallet.IssuerLeafPolicyFor): never nil, so receipt
 // and every later re-check of a held credential's chain (checkIssuers)
-// apply the same one.
-func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
+// apply the same one. An SD-JWT VC's aka_vcts add anchors of their own
+// (akaRoots).
+func (c Config) issuerTrust(format, vct, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
 	if format != mdoc.CredentialFormat {
-		return c.IssuerRoots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
+		roots := c.IssuerRoots
+		if byType, ok := c.IssuerRootsByVCT[vct]; ok {
+			roots = byType
+		}
+		return roots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
 	}
 	roots, policy := c.IssuerRoots, c.IssuerLeafPolicy
 	if byType, ok := c.MdocIssuerRootsByDocType[docType]; ok {
@@ -1197,6 +1227,30 @@ func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.
 		policy = c.MdocIssuerLeafPolicy
 	}
 	return roots, wallet.IssuerLeafPolicyFor(format, policy)
+}
+
+// akaRoots are the trust anchors, beside its vct's (issuerTrust), an
+// SD-JWT VC of type vct whose aka_vcts are aka must chain to: with
+// IssuerRootsByVCT set, each pool its aka_vcts' types have, once each,
+// IssuerRootsByVCT's for a type it names, else IssuerRoots. A type with
+// no anchors, named with a nil pool or under no IssuerRoots, is an
+// error. Without IssuerRootsByVCT, every type has IssuerRoots: none.
+func (c Config) akaRoots(vct string, aka []string) ([]*x509.CertPool, error) {
+	if len(c.IssuerRootsByVCT) == 0 {
+		return nil, nil
+	}
+	own, _ := c.issuerTrust(sdjwtvc.CredentialFormat, vct, "")
+	var pools []*x509.CertPool
+	for _, t := range aka {
+		roots, _ := c.issuerTrust(sdjwtvc.CredentialFormat, t, "")
+		switch {
+		case roots == nil:
+			return nil, fmt.Errorf("aka_vcts: no trust anchors for credential type %q", t)
+		case roots != own && !slices.Contains(pools, roots):
+			pools = append(pools, roots)
+		}
+	}
+	return pools, nil
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks, whatever
