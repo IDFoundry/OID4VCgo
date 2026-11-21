@@ -559,12 +559,18 @@ public class ProximityPresentation internal constructor(
         }
     }
 
-    /** Declines the request, or ends the session before one: the reader is told, and nothing is disclosed. */
+    /**
+     * Declines the request, or ends the session before one: the reader is
+     * told, and nothing is disclosed. The state is final at once; the
+     * transport stays open until the reader disconnects or a few seconds
+     * pass, as after a response, so the termination reaches it rather
+     * than being dropped with the link (the reader would then report a
+     * lost connection, not a decline).
+     */
     public suspend fun decline() {
         if (_state.value.isFinal || _state.value is State.Responding) return
         ending = State.Declined
-        sendTermination()
-        finish(State.Declined)
+        finish(State.Declined, letReaderEnd = sendTermination())
     }
 
     /** Ends the session now, from any state. */
@@ -578,9 +584,11 @@ public class ProximityPresentation internal constructor(
     }
 
     /** Sends status 20, if a reader is connected. */
-    private suspend fun sendTermination() {
+    /** Sends the session termination, once a reader is connected, and reports whether it was sent. */
+    private suspend fun sendTermination(): Boolean {
         val message = decode<SendJSON>(handle.terminate()).send
-        if (_state.value !is State.WaitingForReader) runCatching { transport.send(message) }
+        if (_state.value is State.WaitingForReader) return false
+        return runCatching { transport.send(message) }.isSuccess
     }
 
     private fun advance(from: State, to: State): Boolean = _state.compareAndSet(from, to)
