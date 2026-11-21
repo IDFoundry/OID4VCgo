@@ -87,11 +87,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: EgorKhaklin/polaris-id
-          # mdoc-vectors.json version 0.1.0. Move it only after reading
+          # mdoc-vectors.json version 0.3.0. Move it only after reading
           # the change to the vectors, and set polarisMdocVectorsCommit
           # and polarisMdocVectorsSHA256 in
           # verifier/polaris_mdoc_vectors_test.go to match.
-          ref: 781c879fa83d92132f7cc25f7468cad890bbb13b
+          ref: afa39e9d753a354c8158bf3f34edc9fa41ca8d8d
           path: polaris-id
           sparse-checkout: lab/interop/negative-vectors/mdoc-vectors.json
           sparse-checkout-cone-mode: false
