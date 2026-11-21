@@ -48,11 +48,14 @@ for f in issuer-ca.pem credential-issuers verifier-ca.pem mdoc-reader-ca.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 
-DEVICE="${1:-}"
-if [ -z "$DEVICE" ]; then
-	LIST="$(mktemp)"
-	xcrun devicectl list devices --json-output "$LIST" >/dev/null
-	DEVICE="$(python3 - "$LIST" <<'PY'
+# The Python below runs from functions, called in $(...), rather than
+# as here-documents inside $(...): macOS's /bin/sh, bash 3.2, misreads
+# a here-document there, taking apostrophes in it for quotes.
+
+# first_connected_iphone prints the identifier of the first iPhone that
+# devicectl's device list, the JSON file $1, shows connected.
+first_connected_iphone() {
+	python3 - "$1" <<'PY'
 import json, sys
 devices = json.load(open(sys.argv[1]))["result"]["devices"]
 for d in devices:
@@ -60,7 +63,13 @@ for d in devices:
     if hw.get("deviceType") == "iPhone" and conn.get("tunnelState") == "connected":
         print(d["identifier"]); break
 PY
-)"
+}
+
+DEVICE="${1:-}"
+if [ -z "$DEVICE" ]; then
+	LIST="$(mktemp)"
+	xcrun devicectl list devices --json-output "$LIST" >/dev/null
+	DEVICE="$(first_connected_iphone "$LIST")"
 	rm -f "$LIST"
 	[ -n "$DEVICE" ] || { echo "no connected iPhone: connect one, or name it" >&2; exit 1; }
 fi
@@ -73,10 +82,12 @@ xcodebuild build -project DemoWallet.xcodeproj -scheme DemoWallet -destination '
 	DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic DEMO_BUNDLE_ID="$BUNDLE_ID"
 xcrun devicectl device install app --device "$DEVICE" "$BUILD/Build/Products/Debug-iphoneos/DemoWallet.app"
 
-# The demo's registration of its wallet (examples/passport-vdc/cmd/demo),
-# with the Wallet Provider at its public URL. The issuer and verifier
-# are found from the offer and request links.
-ENVIRONMENT="$(python3 - "$STATE" "$PROVIDER_URL" "$PROVIDER_PROTOCOL" <<'PY'
+# demo_environment prints the app's launch environment: the demo's
+# registration of its wallet (examples/passport-vdc/cmd/demo), with the
+# Wallet Provider at its public URL. The issuer and verifier are found
+# from the offer and request links.
+demo_environment() {
+	python3 - "$STATE" "$PROVIDER_URL" "$PROVIDER_PROTOCOL" <<'PY'
 import json, pathlib, sys
 state, provider, protocol = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 # The trust roles checked against the demo's CRLs: the issuer CA's
@@ -140,5 +151,6 @@ if reader_file.exists():
     }
 print(json.dumps({"OID4VC_DEMO_CONFIG": json.dumps(config)}))
 PY
-)"
+}
+ENVIRONMENT="$(demo_environment)"
 xcrun devicectl device process launch --device "$DEVICE" --terminate-existing -e "$ENVIRONMENT" "$BUNDLE_ID"
