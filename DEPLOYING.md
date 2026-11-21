@@ -229,15 +229,17 @@ each, not a deployment template" says what it does differently.
   `server.Dependencies.ClientAttestationStatus`,
   `haip.WalletAttestationStatusList`). Give both a `statuslist.Checker`
   sharing one `statuslist.Cache` (below).
-- [ ] **Check the Authorization Server's status checker yourself:**
-  call `CheckConfiguration(server.AssuranceProduction)` on the
-  `haip.WalletAttestationStatusList` before `server.New`, and don't
-  start on its error. `issuer.New` checks the issuer's checker, but
-  fapigo's `server.New` doesn't check this one: without the call, a
-  `Fetcher` that may reach loopback or private addresses, no
+- [ ] **A status checker that checks its own configuration:**
+  `issuer.New` checks the issuer's checker, and fapigo's `server.New`
+  the Authorization Server's, through its `CheckConfiguration`
+  (`server.ClientAttestationStatusAssurance`). Under
+  `AssuranceProduction`, `haip.WalletAttestationStatusList`'s refuses
+  a `Fetcher` that may reach loopback or private addresses, no
   `Options.Revocation` (the list signers' certificates unchecked) and
   no `Cache` (the list fetched again on every attestation-authenticated
-  request) go unnoticed.
+  request). A checker of your own must implement that method under
+  production, and a wrapper around `WalletAttestationStatusList` that
+  fetches some other way must override it.
 - [ ] **Authorization Server stores:** a Credential Issuer's
   Authorization Server keeps its grants and tokens in fapigo/sqlstore,
   on the same `*sql.DB` (see [sqlstore/README.md](sqlstore/README.md)'s

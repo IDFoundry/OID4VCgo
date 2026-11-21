@@ -229,9 +229,9 @@ Status list fetches stay able to reach loopback in every run
 public addresses only, which a runner has none of to serve from, so
 the binaries run the same status policy where production can't inspect
 its fetcher (the verifier's `Accept`, the issuer's wrapped key
-attestation check), check the Authorization Server's Wallet
-Attestation status checker under development's rules, and log that
-they do.
+attestation check), have the Authorization Server's Wallet
+Attestation status checker checked under development's rules, through
+a wrapper `server.New` calls, and log that they do.
 
 ### PostgreSQL, and two instances sharing it
 

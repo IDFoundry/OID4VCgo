@@ -7,6 +7,64 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.84.0 → v0.85.0
+
+### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration
+
+OID4VCgo now requires FAPIgo v0.78.0; see FAPIgo's UPGRADING.md,
+section v0.78.0. With attestation-based client authentication,
+`server.New` calls the status checker's `CheckConfiguration`
+(`server.ClientAttestationStatusAssurance`) with `Config.Assurance`,
+at every level, and doesn't start on its error.
+
+- **`haip.WalletAttestationStatusList`:** under `AssuranceProduction`,
+  a server whose checker has a `Fetcher` that may reach loopback or
+  private addresses, no `Options.Revocation` or no `Cache` no longer
+  starts. A deployment that called `CheckConfiguration` before
+  `server.New`, as DEPLOYING.md asked, sees no change, and can drop
+  the call.
+- **A checker of your own:** under `AssuranceProduction` it must
+  implement `CheckConfiguration`, refusing what your production rules
+  don't allow. `server.NoClientAttestationStatusCheck{}` needs nothing.
+  A wrapper embedding `WalletAttestationStatusList` inherits its check:
+  override it if the wrapper fetches some other way.
+- **`extension.RARRegistry.ValidateNarrowing`** takes the access
+  token's scope as a third argument: code calling it itself passes the
+  scope, or nil. A token request whose `authorization_details` is `[]`
+  now has the grant's stored details checked, so a grant holding a
+  type `Config.RAR` no longer registers is refused with
+  `invalid_authorization_details`.
+
+### Refuse a token request leaving out an object its scope still grants (issuer)
+
+The new `issuer.AuthorizationDetailRARDefinition` is
+`oid4vci.AuthorizationDetailRARDefinition` with FAPIgo v0.78.0's
+`ValidateOmission` hook. A token request (a code exchange, CIBA or a
+refresh) that leaves out a granted `openid_credential` object for this
+Credential Issuer, with `authorization_details=[]` or by naming only
+the grant's other objects, is refused with
+`invalid_authorization_details` while the access token keeps the scope
+of the object's configuration. The object governs then (OpenID4VCI 1.0
+§5.1.2). Without it, the scope alone authorized the configuration by
+`credential_configuration_id`, for every claim, whatever claims consent
+kept or `credential_identifiers` it minted.
+
+**What to change:** register it in the Authorization Server's
+`Config.RAR` in place of `oid4vci.AuthorizationDetailRARDefinition`,
+built from the `issuer.Config` you give `issuer.New`. It reads only
+`Issuer`, `AuthorizationServers` and the configurations' scopes, so it
+can be built before the Authorization Server:
+
+```go
+registry, err := extension.NewRARRegistry(8<<10, 6,
+	issuer.AuthorizationDetailRARDefinition(issuerConfig, 2, 4<<10))
+```
+
+A consent step using `issuer.Issuer.UndetailedScopes` grants no
+configuration's scope beside its object, so nothing it grants is
+refused. One that does grant both now has a token request leaving the
+object out refused, where before the token kept the scope.
+
 ## v0.83.0 → v0.84.0
 
 ### FAPIgo v0.77.0: a claim may be requested with at most 64 values

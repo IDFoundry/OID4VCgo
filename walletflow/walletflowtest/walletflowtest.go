@@ -323,7 +323,7 @@ func New(opts Options) (env *Env, err error) {
 	clientCfg.AllowedScopes = []string{SDJWTConfigurationID, MdocConfigurationID, MdocConfigurationID2, MdocConfigurationID3, "offline_access"}
 	if opts.CredentialAuthorizationDetails {
 		asCfg.RAR, err = extension.NewRARRegistry(credentialAuthorizationDetailsBytes, credentialAuthorizationDetailsDepth,
-			credentialAuthorizationDetail)
+			issuer.AuthorizationDetailRARDefinition(e.configurationScopes(opts), 2, 4<<10))
 		must(err)
 		clientCfg.AuthorizationDetailsTypes = []string{oid4vci.AuthorizationDetailsTypeOpenIDCredential}
 		e.minted = map[string][]string{}
@@ -1421,8 +1421,20 @@ const (
 )
 
 // credentialAuthorizationDetail is the openid_credential type, under
-// Options.CredentialAuthorizationDetails.
+// Options.CredentialAuthorizationDetails, for reading objects. The
+// Authorization Server registers issuer.AuthorizationDetailRARDefinition,
+// over configurationScopes.
 var credentialAuthorizationDetail = oid4vci.AuthorizationDetailRARDefinition(2, 4<<10)
+
+// configurationScopes is the Credential Issuer's identifier and its
+// configurations' scopes, as New configures them, for
+// issuer.AuthorizationDetailRARDefinition.
+func (e *Env) configurationScopes(opts Options) issuer.Config {
+	return issuer.Config{Issuer: e.issuerURL(), CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+		SDJWTConfigurationID: {Scope: SDJWTConfigurationID}, MdocConfigurationID: {Scope: mdocScope(opts)},
+		MdocConfigurationID2: {Scope: MdocConfigurationID2}, MdocConfigurationID3: {Scope: MdocConfigurationID3},
+	}}
+}
 
 // grantCredentialAuthorizationDetails grants each openid_credential
 // object the interaction requested, with a credential_identifier minted

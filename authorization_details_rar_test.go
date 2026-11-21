@@ -159,7 +159,7 @@ func TestAuthorizationDetailRARDefinition_ValidateNarrowing(t *testing.T) {
 		"another location": {minted, `[{"type":"openid_credential","credential_configuration_id":"pid",` +
 			`"locations":["https://other.example"],"claims":[{"path":["given_name"]}]}]`, false},
 	} {
-		err := registry.ValidateNarrowing(parseCredentialDetails(t, registry, tc.granted), parseCredentialDetails(t, registry, tc.narrowed))
+		err := registry.ValidateNarrowing(parseCredentialDetails(t, registry, tc.granted), parseCredentialDetails(t, registry, tc.narrowed), nil)
 		if (err == nil) != tc.ok {
 			t.Errorf("%s: ValidateNarrowing = %v, want ok %v", name, err, tc.ok)
 		}

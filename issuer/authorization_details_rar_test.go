@@ -18,15 +18,23 @@ import (
 	"github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
+	"github.com/idfoundry/oid4vcgo/issuer"
 )
 
 // withCredentialAuthorizationDetails has the test Authorization Server
 // take openid_credential authorization_details at PAR, as
-// oid4vci.AuthorizationDetailRARDefinition declares them, from a client
-// registered for the type.
+// issuer.AuthorizationDetailRARDefinition declares them for the
+// fixture's identity credential (scope identity_credential), from a
+// client registered for the type.
 func withCredentialAuthorizationDetails(t *testing.T) func(*server.Config, *server.Dependencies, *storage.RegisteredClientConfig) {
 	t.Helper()
-	registry, err := extension.NewRARRegistry(8<<10, 6, oid4vci.AuthorizationDetailRARDefinition(2, 4<<10))
+	credentialIssuer := issuer.Config{
+		Issuer: mustIssuerURL(t, testIssuer),
+		CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+			testSDJWTConfigID: {Scope: "identity_credential"},
+		},
+	}
+	registry, err := extension.NewRARRegistry(8<<10, 6, issuer.AuthorizationDetailRARDefinition(credentialIssuer, 2, 4<<10))
 	if err != nil {
 		t.Fatalf("NewRARRegistry: %v", err)
 	}

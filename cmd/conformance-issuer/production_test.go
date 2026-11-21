@@ -316,9 +316,10 @@ func TestProductionSetup_ChecksKeyAttestationStatusOnLoopback(t *testing.T) {
 	}
 }
 
-// server.New doesn't check the Authorization Server's Wallet
-// Attestation status checker, so the production setup checks it as
-// production requires: one without a Cache is refused. Under
+// server.New checks the Authorization Server's Wallet Attestation
+// status checker's configuration at the server's assurance
+// (server.ClientAttestationStatusAssurance), and under production
+// refuses one without a Cache. Under
 // ProductionConfig.AttestationStatusAllowLoopback, a fetcher production
 // refuses, it's checked under development's rules, with a warning.
 func TestProductionSetup_ChecksWalletAttestationStatusConfiguration(t *testing.T) {
@@ -349,11 +350,19 @@ func TestProductionSetup_ChecksWalletAttestationStatusConfiguration(t *testing.T
 			var deps server.Dependencies
 			_, err = b.authorizationServer(&server.Config{}, &deps, nil, nil)
 			log.SetOutput(prev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checker, ok := deps.ClientAttestationStatus.(server.ClientAttestationStatusAssurance)
+			if !ok {
+				t.Fatalf("ClientAttestationStatus %T doesn't check its own configuration, which server.New requires under production", deps.ClientAttestationStatus)
+			}
+			err = checker.CheckConfiguration(server.AssuranceProduction)
 			switch {
 			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
-				t.Fatalf("authorizationServer = %v, want an error mentioning %q", err, c.wantErr)
-			case c.wantErr == "" && (err != nil || deps.ClientAttestationStatus == nil):
-				t.Fatalf("authorizationServer = %v, with ClientAttestationStatus %v; want it set", err, deps.ClientAttestationStatus)
+				t.Fatalf("CheckConfiguration = %v, want an error mentioning %q", err, c.wantErr)
+			case c.wantErr == "" && err != nil:
+				t.Fatalf("CheckConfiguration = %v, want nil", err)
 			case !strings.Contains(logged.String(), c.wantLog):
 				t.Fatalf("logged %q, want %q", logged.String(), c.wantLog)
 			}

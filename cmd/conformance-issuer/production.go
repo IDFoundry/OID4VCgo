@@ -168,19 +168,15 @@ func (b *productionBackend) authorizationServer(srvCfg *server.Config, deps *ser
 	deps.Keys, deps.AccessTokens = b.signingKeys, accessTokens
 	deps.Audit = auditLog{}
 	// The attestations the suite's emulated Wallet presents carry no
-	// status claim; one that did would be checked. server.New doesn't
-	// check the checker's configuration, so it's checked here, as a
-	// production Authorization Server must.
+	// status claim; one that did would be checked. server.New checks
+	// the checker's configuration under production's rules
+	// (server.ClientAttestationStatusAssurance).
 	walletStatus := haip.WalletAttestationStatusList{Checker: b.statusChecker(attesterRoots(b.cfg))}
-	statusAssurance := server.AssuranceProduction
+	deps.ClientAttestationStatus = walletStatus
 	if b.cfg.Production.AttestationStatusAllowLoopback {
 		log.Print("WARNING: attestation status lists are fetched from loopback addresses, which WalletAttestationStatusList.CheckConfiguration refuses under production assurance: the Wallet Attestation status check's configuration is checked under development assurance")
-		statusAssurance = server.AssuranceDevelopment
+		deps.ClientAttestationStatus = loopbackWalletAttestationStatus{walletStatus}
 	}
-	if err := walletStatus.CheckConfiguration(statusAssurance); err != nil {
-		return nil, err
-	}
-	deps.ClientAttestationStatus = walletStatus
 
 	var resourceNonces storage.NonceStore
 	if b.cfg.DPoPNonces {
@@ -236,6 +232,26 @@ type uninspectedAttestationStatus struct {
 // CheckAttestationStatus implements issuer.AttestationStatusChecker.
 func (u uninspectedAttestationStatus) CheckAttestationStatus(ctx context.Context, a issuer.VerifiedKeyAttestation) error {
 	return u.inner.CheckAttestationStatus(ctx, a)
+}
+
+// loopbackWalletAttestationStatus runs a WalletAttestationStatusList's
+// check, and checks its configuration under development's rules,
+// whatever the level server.New asks for: production's refuse a Fetcher
+// that may reach loopback (ProductionConfig.AttestationStatusAllowLoopback).
+type loopbackWalletAttestationStatus struct {
+	inner haip.WalletAttestationStatusList
+}
+
+// CheckClientAttestationStatus implements
+// server.ClientAttestationStatusChecker.
+func (l loopbackWalletAttestationStatus) CheckClientAttestationStatus(ctx context.Context, a server.VerifiedClientAttestation) error {
+	return l.inner.CheckClientAttestationStatus(ctx, a)
+}
+
+// CheckConfiguration implements server.ClientAttestationStatusAssurance,
+// under development's rules.
+func (l loopbackWalletAttestationStatus) CheckConfiguration(server.AssuranceLevel) error {
+	return l.inner.CheckConfiguration(server.AssuranceDevelopment)
 }
 
 // statusIndices keeps Config.StatusLists' reservations and statuses in

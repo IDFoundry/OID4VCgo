@@ -1897,8 +1897,9 @@ changes whether *every* bullet below is `(done)`.
   `issuer.StatusListAttestationStatus`, so the two "attestation" status
   checks — client authentication's and the key proof's — share one set
   of rules, and wraps `server.ErrClientAttestationRevoked` (invalid_client)
-  for a refusal. `server.New` doesn't call its `CheckConfiguration`;
-  the caller does, with the server's assurance level.
+  for a refusal. Its `CheckConfiguration` implements
+  `server.ClientAttestationStatusAssurance`, which `server.New` calls
+  with the server's assurance level.
 - **`sealing`** (done) — sealing records at rest, for every role: the
   `Sealer` interface (`sqlstore.Options.Sealer`,
   `verifier.TransactionCodec.Sealer`), `AESGCMSealer` (AES-256-GCM,

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	fapi "github.com/idfoundry/fapigo"
 	"github.com/idfoundry/fapigo/extension"
 	"github.com/idfoundry/fapigo/server"
 	"github.com/idfoundry/fapigo/storage"
@@ -54,7 +55,7 @@ const (
 )
 
 // credentialAuthorizationDetail is the openid_credential
-// authorization_details type (§5.1.1).
+// authorization_details type (§5.1.1), for reading objects.
 var credentialAuthorizationDetail = oid4vci.AuthorizationDetailRARDefinition(maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes)
 
 // credentialAuthorizationDetails registers openid_credential
@@ -64,9 +65,19 @@ var credentialAuthorizationDetail = oid4vci.AuthorizationDetailRARDefinition(max
 // configurations in authorization_details (§6.1.1), and, under
 // Config.AuthorizationDetails, an authorization code's whose PAR
 // requested them (§5.1.1). fapigo/server issues no token carrying a
-// type Config.RAR doesn't register.
-func credentialAuthorizationDetails() (*extension.RARRegistry, error) {
-	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth, credentialAuthorizationDetail)
+// type Config.RAR doesn't register. A token request leaving out a
+// granted object while the token keeps its configuration's scope is
+// refused (issuer.AuthorizationDetailRARDefinition): the configurations'
+// scopes are cfg's, as the Credential Issuer's are.
+func credentialAuthorizationDetails(cfg Config, issuerURL fapi.URL) (*extension.RARRegistry, error) {
+	scopes := issuer.Config{Issuer: issuerURL, CredentialConfigurationsSupported: map[string]issuer.CredentialConfiguration{
+		cfg.CredentialConfigurationID: {Scope: cfg.Scope},
+	}}
+	if cfg.Mdoc != nil {
+		scopes.CredentialConfigurationsSupported[cfg.Mdoc.CredentialConfigurationID] = issuer.CredentialConfiguration{Scope: cfg.Mdoc.Scope}
+	}
+	return extension.NewRARRegistry(maxAuthorizationDetailsBytes, maxAuthorizationDetailsDepth,
+		issuer.AuthorizationDetailRARDefinition(scopes, maxCredentialAuthorizationDetails, maxAuthorizationDetailBytes))
 }
 
 // grantCredentialAuthorizationDetails grants each openid_credential

@@ -619,13 +619,20 @@ func (iss *Issuer) resolveCredentialConfiguration(auth AuthorizedRequest, req Cr
 // grant one issuer's configuration at every issuer with a configuration
 // of that ID.
 func (iss *Issuer) credentialDetail(d oid4vci.AuthorizationDetail) bool {
+	return detailForIssuer(d, iss.cfg.Issuer.String(), len(iss.cfg.AuthorizationServers) > 0)
+}
+
+// detailForIssuer is credentialDetail for the Credential Issuer
+// identified by issuerID, which lists authorization_servers when
+// listsAuthorizationServers.
+func detailForIssuer(d oid4vci.AuthorizationDetail, issuerID string, listsAuthorizationServers bool) bool {
 	if d.Type != oid4vci.AuthorizationDetailsTypeOpenIDCredential {
 		return false
 	}
 	if len(d.Locations) == 0 {
-		return len(iss.cfg.AuthorizationServers) == 0
+		return !listsAuthorizationServers
 	}
-	return slices.Contains(d.Locations, iss.cfg.Issuer.String())
+	return slices.Contains(d.Locations, issuerID)
 }
 
 // authorizeCredentialConfigurationID checks the access token grants
