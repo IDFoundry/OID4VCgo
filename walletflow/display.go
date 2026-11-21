@@ -257,7 +257,8 @@ type CredentialStatus struct {
 // First, the certificate chain that signed each copy (an SD-JWT VC's
 // x5c, an mdoc's IssuerAuth x5chain) is verified again, as on receipt:
 // under the issuer roots and leaf policy configured for it now
-// (IssuerRoots, or the mdoc roots for its doctype) and, with
+// (IssuerRoots, IssuerRootsByVCT's for its vct and its aka_vcts', or
+// the mdoc roots for its doctype) and, with
 // Config.IssuerRevocation, against the revocation lists held now. A
 // copy whose signer, or a CA above it, has been revoked since
 // (certrevocation.ErrRevoked), or whose chain no longer verifies, is
@@ -507,7 +508,7 @@ func revokedCopies(c StoredCredential, now time.Time, refs []statuslist.StatusLi
 func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live []statuslist.StatusListRef) (statuslist.StatusType, []statuslist.StatusListRef, error) {
 	// The roots configured for the credential, which it was checked
 	// against on receipt unless they've changed since.
-	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
+	roots, _ := w.cfg.issuerTrust(c.Format, c.VCT, c.DocType)
 	checker := statuslist.Checker{
 		Fetcher: w.statusFetcher(w.cfg.StatusMaxBytes),
 		Roots:   roots,

@@ -32,7 +32,8 @@ class ConfigurationJSONTest {
         """"crl_issuers":"CI","no_revocation_check":["registrar","status"],"accept_mdl_signer_without_eku":true,""" +
         """"crl_distribution_points":[{"url":"https://ca.example/ca.crl","issuer":"CA"}],""" +
         """"crl_distribution_points_from_roots":true,"crl_require_https":true,"status_max_bytes":2048,""" +
-        """"identifier_list_max_bytes":4096,"status_cache_max_age_seconds":600,"status_cache_dir":"/data/cache"}"""
+        """"identifier_list_max_bytes":4096,"status_cache_max_age_seconds":600,"status_cache_dir":"/data/cache",""" +
+        """"verifier_redirect_schemes":["com.example.verifier"],"issuer_roots_by_vct":{"urn:eudi:pid:1":"PID"}}"""
 
     private val readerJSON = """{"issuer_roots":"IR","reader_key_id":"reader","reader_chain":"CHAIN",""" +
         """"max_clock_skew_seconds":300,"issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":"MDL"},"crls":"CRLS",""" +
@@ -56,6 +57,7 @@ class ConfigurationJSONTest {
                     acceptMDLSignerWithoutEKU = true, requireIssuerName = true, allowForeignIss = true,
                     statusIssuers = mapOf("https://issuer.example" to listOf("https://status.example")),
                     credentialIssuers = listOf("https://issuer.example"), allowAnyCredentialIssuer = true,
+                    rootsByVCT = mapOf("urn:eudi:pid:1" to "PID"),
                 ),
                 issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
                     roots = "IMR", requireEKU = "1.2.6", requireSigned = true, requireName = true, maxAgeSeconds = 3600,
@@ -83,6 +85,7 @@ class ConfigurationJSONTest {
                 presentation = WalletConfiguration.PresentationOptions(
                     copyPolicy = WalletConfiguration.CopyPolicy.PER_VERIFIER,
                     proximityDeviceAuth = WalletConfiguration.ProximityDeviceAuth.MAC_PREFERRED,
+                    verifierRedirectSchemes = listOf("com.example.verifier"),
                 ),
                 development = Development(roots = "DR"),
             ),

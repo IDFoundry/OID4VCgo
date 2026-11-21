@@ -108,11 +108,12 @@ public struct WalletConfiguration: Codable, Sendable {
         /// deferred credential refuse an issuer the list no longer names
         /// the same way, keeping what the wallet holds from it.
         ///
-        /// A wallet with `roots` (or the mdoc ones) must decide which
-        /// issuers' offers it takes, or `Wallet(configuration:)` throws
-        /// `invalidInput`: this list; signed issuer metadata naming its
-        /// issuer (``IssuerMetadataTrust`` with `roots`, `requireSigned`
-        /// and `requireName`), which may be combined with it; or
+        /// A wallet with `roots` (or `rootsByVCT`, or the mdoc ones) must
+        /// decide which issuers' offers it takes, or
+        /// `Wallet(configuration:)` throws `invalidInput`: this list;
+        /// signed issuer metadata naming its issuer
+        /// (``IssuerMetadataTrust`` with `roots`, `requireSigned` and
+        /// `requireName`), which may be combined with it; or
         /// `allowAnyCredentialIssuer`, alone.
         public var credentialIssuers: [String]
         /// Takes offers from any issuer, in place of `credentialIssuers` or
@@ -122,13 +123,24 @@ public struct WalletConfiguration: Codable, Sendable {
         /// it: guarding against that is the app's. Set it only for a
         /// wallet whose issuers can't be told apart in advance.
         public var allowAnyCredentialIssuer: Bool
+        /// Each SD-JWT VC type's own issuers, as PEM certificates by `vct`:
+        /// a credential of a type named here must chain to them, not to
+        /// `roots`, so where `roots` hold several providers' CAs one can't
+        /// issue a credential of another's type, which the wallet would show
+        /// and offer as that type. A type named with an empty string is
+        /// refused. With it set, the types a credential says it's of too
+        /// (`aka_vcts`) must be its issuer's: its chain must verify under
+        /// each one's roots here, else `roots`. `requireEKU` applies under
+        /// them (from OID4VCWallet 0.43.0).
+        public var rootsByVCT: [String: String]
 
         /// Issuer trust: every field has a default.
         public init(roots: String = "", requireEKU: String = "", mdocRoots: String = "",
                     mdocRootsByDocType: [String: String] = [:], mdocRequireEKU: String = "",
                     acceptMDLSignerWithoutEKU: Bool = false, requireIssuerName: Bool = false,
                     allowForeignIss: Bool = false, statusIssuers: [String: [String]] = [:],
-                    credentialIssuers: [String] = [], allowAnyCredentialIssuer: Bool = false) {
+                    credentialIssuers: [String] = [], allowAnyCredentialIssuer: Bool = false,
+                    rootsByVCT: [String: String] = [:]) {
             self.roots = roots
             self.requireEKU = requireEKU
             self.mdocRoots = mdocRoots
@@ -140,6 +152,7 @@ public struct WalletConfiguration: Codable, Sendable {
             self.statusIssuers = statusIssuers
             self.credentialIssuers = credentialIssuers
             self.allowAnyCredentialIssuer = allowAnyCredentialIssuer
+            self.rootsByVCT = rootsByVCT
         }
     }
 
@@ -315,18 +328,35 @@ public struct WalletConfiguration: Codable, Sendable {
         /// How an in-person response authenticates the mdoc. `.macPreferred`
         /// needs a key store that is also a `KeyAgreement`.
         public var proximityDeviceAuth: ProximityDeviceAuth
+        /// The only URI schemes besides `https` a Verifier's redirect may
+        /// have, when set: the schemes of the Verifier apps the wallet
+        /// returns holders to, or `["https"]` to allow no other. A redirect
+        /// with another scheme isn't returned: ``Presentation/respond(selection:)``
+        /// and ``Presentation/decline()`` throw
+        /// ``WalletError/Code/protocolError``, the presentation answered,
+        /// and a refusal has no ``WalletError/refusalRedirect``. Empty, the
+        /// default, allows any
+        /// scheme but those the wallet never follows: `http`, schemes that
+        /// run code or read local data, invoke a wallet or open a system
+        /// app (`itms-services`, `tel`, `sms`, `mailto` and their like), and
+        /// ``WalletConfiguration/redirectURI``'s. A scheme that isn't one, or
+        /// one never followed, is `invalidInput` (from OID4VCWallet 0.43.0).
+        public var verifierRedirectSchemes: [String]
 
         /// Presentation options: every field has a default.
-        public init(copyPolicy: CopyPolicy = .perPresentation, proximityDeviceAuth: ProximityDeviceAuth = .signature) {
+        public init(copyPolicy: CopyPolicy = .perPresentation, proximityDeviceAuth: ProximityDeviceAuth = .signature,
+                    verifierRedirectSchemes: [String] = []) {
             self.copyPolicy = copyPolicy
             self.proximityDeviceAuth = proximityDeviceAuth
+            self.verifierRedirectSchemes = verifierRedirectSchemes
         }
     }
 
     /// A trust role whose certificates can be checked for revocation.
     public enum RevocationRole: String, Codable, Sendable, CaseIterable {
-        /// The issuers' signing certificates (`issuers.roots` and the mdoc
-        /// roots), on receipt, deferral and refresh.
+        /// The issuers' signing certificates (`issuers.roots`,
+        /// `issuers.rootsByVCT` and the mdoc roots), on receipt, deferral
+        /// and refresh.
         case issuer
         /// The signers of Credential Issuer Metadata (`issuerMetadata.roots`).
         case issuerMetadata = "issuer_metadata"
@@ -404,12 +434,13 @@ public struct WalletConfiguration: Codable, Sendable {
     // The flat JSON keys, one per option, as NewWallet reads them.
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id", redirectURI = "redirect_uri", issuerRoots = "issuer_roots"
+        case issuerRootsByVCT = "issuer_roots_by_vct"
         case verifierRoots = "verifier_roots", registrarRoots = "registrar_roots", mdocReaderRoots = "mdoc_reader_roots"
         case mdocReaderRequireEKU = "mdoc_reader_require_eku", requireTrustedMdocReader = "require_trusted_mdoc_reader"
         case development, developmentRoots = "development_roots", locales, batchSize = "batch_size"
         case requestRefresh = "request_refresh", copyPolicy = "copy_policy", issuanceProfile = "issuance_profile"
         case proofKeyByJWK = "proof_key_by_jwk", proofKeyByIndex = "proof_key_by_index"
-        case acceptX509SANDNS = "accept_x509_san_dns"
+        case acceptX509SANDNS = "accept_x509_san_dns", verifierRedirectSchemes = "verifier_redirect_schemes"
         case tlsPins = "tls_pins", allowedPrivateHosts = "allowed_private_hosts", proximityDeviceAuth = "proximity_device_auth"
         case verifierRequireEKU = "verifier_require_eku", registrarRequireEKU = "registrar_require_eku"
         case issuerRequireEKU = "issuer_require_eku", issuerMetadataRequireEKU = "issuer_metadata_require_eku"
@@ -454,7 +485,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 allowForeignIss: try value(.allowForeignIss, false),
                 statusIssuers: try value(.statusIssuers, [:]),
                 credentialIssuers: try value(.credentialIssuers, []),
-                allowAnyCredentialIssuer: try value(.allowAnyCredentialIssuer, false)),
+                allowAnyCredentialIssuer: try value(.allowAnyCredentialIssuer, false),
+                rootsByVCT: try value(.issuerRootsByVCT, [:])),
             issuerMetadata: IssuerMetadataTrust(
                 roots: try value(.issuerMetadataRoots, ""),
                 requireEKU: try value(.issuerMetadataRequireEKU, ""),
@@ -484,7 +516,8 @@ public struct WalletConfiguration: Codable, Sendable {
                 proofKeyByIndex: try value(.proofKeyByIndex, false)),
             presentation: PresentationOptions(
                 copyPolicy: try value(.copyPolicy, CopyPolicy.perPresentation),
-                proximityDeviceAuth: try value(.proximityDeviceAuth, ProximityDeviceAuth.signature)),
+                proximityDeviceAuth: try value(.proximityDeviceAuth, ProximityDeviceAuth.signature),
+                verifierRedirectSchemes: try value(.verifierRedirectSchemes, [])),
             development: try Development.decode(c))
     }
 
@@ -505,6 +538,7 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(issuers.statusIssuers, forKey: .statusIssuers)
         try c.encode(issuers.credentialIssuers, forKey: .credentialIssuers)
         try c.encode(issuers.allowAnyCredentialIssuer, forKey: .allowAnyCredentialIssuer)
+        try c.encode(issuers.rootsByVCT, forKey: .issuerRootsByVCT)
         try c.encode(issuerMetadata.roots, forKey: .issuerMetadataRoots)
         try c.encode(issuerMetadata.requireEKU, forKey: .issuerMetadataRequireEKU)
         try c.encode(issuerMetadata.requireSigned, forKey: .requireSignedIssuerMetadata)
@@ -530,6 +564,7 @@ public struct WalletConfiguration: Codable, Sendable {
         try c.encode(issuance.proofKeyByIndex, forKey: .proofKeyByIndex)
         try c.encode(presentation.copyPolicy, forKey: .copyPolicy)
         try c.encode(presentation.proximityDeviceAuth, forKey: .proximityDeviceAuth)
+        try c.encode(presentation.verifierRedirectSchemes, forKey: .verifierRedirectSchemes)
         try Development.encode(development, into: &c)
     }
 
@@ -1054,7 +1089,9 @@ public final class Wallet: @unchecked Sendable {
     /// Where the Verifier asked to take the holder after the wallet
     /// refused its request: when `startPresentation` throws
     /// `requestRefused`, open this URL, if any, as OpenID4VP §8.2 has a
-    /// wallet do. It's returned once. It holds the latest refusal of
+    /// wallet do. The holder has done no more than open the link, so ask
+    /// them before opening one that isn't `https`: it opens another app.
+    /// It's returned once. It holds the latest refusal of
     /// any call: with presentations started concurrently, open the
     /// error's own ``WalletError/refusalRedirect`` instead, or one
     /// Verifier's redirect may be opened for another's refusal.

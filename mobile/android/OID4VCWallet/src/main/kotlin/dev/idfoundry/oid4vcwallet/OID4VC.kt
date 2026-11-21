@@ -44,9 +44,10 @@ public class WalletException internal constructor(
      * Where the Verifier asked to take the holder after the wallet refused its request: for
      * a [Code.requestRefused] from [Wallet.startPresentation], the `redirect_uri` it answered
      * the wallet's error with, null for none. Open it, as OpenID4VP §8.2 has a wallet do for a
-     * same-device request. It's this call's own, so presentations started concurrently each
-     * get their Verifier's, unlike [Wallet.takeRefusalRedirect]. Never in [message]. From
-     * OID4VCWallet 0.41.0.
+     * same-device request; the holder has done no more than open the link, so ask them before
+     * opening one that isn't `https`: it opens another app. It's this call's own, so
+     * presentations started concurrently each get their Verifier's, unlike
+     * [Wallet.takeRefusalRedirect]. Never in [message]. From OID4VCWallet 0.41.0.
      */
     public var refusalRedirect: String? = null
         internal set

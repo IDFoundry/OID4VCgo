@@ -55,6 +55,7 @@ func FuzzNewWalletConfig(f *testing.F) {
 		`{"development":true} {}`,
 		`{"development":false,"issuer_roots":"x","revocation":["issuer"],"tls_pins":{"*.a":["AAAA"]}}`,
 		`{"development":true,"mdoc_issuer_roots_by_doctype":{"a":""},"copy_policy":"per_verifier","proximity_device_auth":"mac_preferred"}`,
+		`{"development":true,"issuer_roots_by_vct":{"a":"","b":"x"},"verifier_redirect_schemes":["com.example.verifier","http"]}`,
 		`{"development":true,"batch_size":-1,"locales":["fr",""],"max_issuer_metadata_age_seconds":1e99}`,
 		`{"development":true,"status_issuers":{"x":"y"},"crls":"-----BEGIN X509 CRL-----\n"}`,
 	} {

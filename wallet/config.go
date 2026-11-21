@@ -84,6 +84,23 @@ type Config struct {
 	// set it only where every Verifier must be one VerifierTrust accepts.
 	RequireSignedDCAPIRequests bool
 
+	// VerifierRedirectSchemes, if set, are the only URI schemes besides
+	// https a Verifier's redirect_uri may have (OpenID4VP 1.0 §8.2: the
+	// same-device flow's way back, which HAIP 1.0 §5.1 has the Wallet
+	// follow): the schemes of the Verifier apps the Wallet returns
+	// holders to, or "https" alone to allow no other. A redirect_uri
+	// with another scheme is refused as one with a scheme the Wallet
+	// never follows is (DirectPostResult.RedirectURI): with an error
+	// wrapping ErrResponseDelivered, the response having reached the
+	// Verifier. Unset, it may have any scheme but those, so a trusted
+	// Verifier can send the holder to whichever app handles the scheme
+	// it names. Schemes compare without case. New refuses one that
+	// isn't a URI scheme (RFC 3986 §3.1), and one the Wallet never
+	// follows. (*Wallet).SubmitDirectPostResponse, Respond and
+	// RespondSelection apply it; the package-level forms, which have no
+	// Config, don't.
+	VerifierRedirectSchemes []string
+
 	// IssuerMetadataRoots are the trust anchors for signed Credential
 	// Issuer Metadata (OpenID4VCI §12.2.3, HAIP 1.0 §4.1). When set,
 	// FetchCredentialIssuerMetadata asks for the signed form, and uses
@@ -231,6 +248,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		return nil, err
 	}
 	if err := checkAcceptX509SANDNS(cfg); err != nil {
+		return nil, err
+	}
+	if cfg.VerifierRedirectSchemes, err = checkVerifierRedirectSchemes(cfg.VerifierRedirectSchemes); err != nil {
 		return nil, err
 	}
 

@@ -236,7 +236,7 @@ func (w *Wallet) refuse(ctx context.Context, r *wallet.RequestRejectedError) err
 		refused.sendErr = err
 		return refused
 	}
-	reply, err := wallet.SubmitDirectPostResponse(ctx, w.deps.HTTP, r.ResponseURI, responseJWE)
+	reply, err := w.core.SubmitDirectPostResponse(ctx, r.ResponseURI, responseJWE)
 	if err == nil {
 		err = w.checkRedirect(reply.RedirectURI)
 	}
@@ -252,7 +252,8 @@ func (w *Wallet) refuse(ctx context.Context, r *wallet.RequestRejectedError) err
 // response it has, when its scheme is the Wallet's own redirect URI's
 // (Config.RedirectURI): following it would hand the Wallet's callback
 // whatever the Verifier put there, straight after the holder consented.
-// wallet refuses the schemes that invoke any Wallet.
+// wallet refuses the schemes that invoke any Wallet, and those
+// Config.VerifierRedirectSchemes doesn't allow.
 func (w *Wallet) checkRedirect(redirectURI string) error {
 	if redirectURI == "" || w.cfg.RedirectURI == "" {
 		return nil
@@ -478,7 +479,7 @@ func (p *Presentation) Respond(ctx context.Context, sel Selection) (Presented, e
 		presented.Linkable = linkableOf(reserved)
 		return presented, nil
 	}
-	responded, err := wallet.RespondSelection(ctx, p.w.deps.HTTP, p.req, held, trustedAuthorities)
+	responded, err := p.w.core.RespondSelection(ctx, p.req, held, trustedAuthorities)
 	if err != nil && deliveryUnknown(err) {
 		// The Verifier may have it: sending again could present twice,
 		// with the same nonce. Its copies stay presented.
@@ -551,7 +552,7 @@ func (p *Presentation) Decline(ctx context.Context) (Presented, error) {
 		}
 		p.declined = responseJWE
 	}
-	reply, err := wallet.SubmitDirectPostResponse(ctx, p.w.deps.HTTP, p.req.ResponseURI, p.declined)
+	reply, err := p.w.core.SubmitDirectPostResponse(ctx, p.req.ResponseURI, p.declined)
 	if err == nil {
 		err = p.w.checkRedirect(reply.RedirectURI)
 	}

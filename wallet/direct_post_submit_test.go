@@ -81,6 +81,28 @@ func TestSubmitDirectPostResponse(t *testing.T) {
 	}
 }
 
+// A redirect_uri that opens a system handler rather than the
+// Verifier's page or app — an app's install prompt or store page, a
+// call, a message, the settings, a Shortcut, a map — is refused, though
+// the response reached the Verifier.
+func TestSubmitDirectPostResponse_RefusesSystemHandlers(t *testing.T) {
+	for _, uri := range []string{
+		"itms-services://?action=download-manifest&url=https://attacker.example/app.plist",
+		"itms-apps://apps.apple.com/app/id1", "ITMS-APPSS://apps.apple.com/app/id1", "market://details?id=com.attacker.app",
+		"ms-appinstaller:?source=https://attacker.example/app.msix", "ms-windows-store://pdp/?productid=x",
+		"tel:+15555550100", "facetime:+15555550100", "facetime-audio:+15555550100",
+		"sms:+15555550100?body=hello", "smsto:+15555550100", "mms:+15555550100", "mmsto:+15555550100",
+		"mailto:victim@example.com?body=x", "ms-settings:privacy", "shortcuts://run-shortcut?name=Export",
+		"geo:0,0?q=x", "maps://?q=x",
+	} {
+		srv := verifierReply(t, http.StatusOK, "application/json", `{"redirect_uri":"`+uri+`"}`)
+		got, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")
+		if !errors.Is(err, wallet.ErrResponseDelivered) || got.RedirectURI != "" {
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want it refused, the response delivered", uri, got, err)
+		}
+	}
+}
+
 func TestSubmitDirectPostResponse_Rejected(t *testing.T) {
 	srv := verifierReply(t, http.StatusBadRequest, "application/json", `{"error":"invalid_request","error_description":"nonce mismatch"}`)
 	_, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe")
@@ -175,6 +197,45 @@ func TestWalletSubmitDirectPostResponse(t *testing.T) {
 	}
 	if _, err := hardened.SubmitDirectPostResponse(context.Background(), internal.URL, "the-jwe"); !errors.Is(err, fapihttp.ErrSSRFBlocked) || hit.Load() {
 		t.Fatalf("posted to a loopback response_uri: %v, want fapihttp.ErrSSRFBlocked", err)
+	}
+}
+
+// With Config.VerifierRedirectSchemes set, (*Wallet).SubmitDirectPostResponse
+// follows a redirect_uri only with https or one of them, compared
+// without case: another is refused, though the response reached the
+// Verifier. The package-level form, with no Config, follows any scheme
+// it doesn't always refuse.
+func TestWalletSubmitDirectPostResponse_VerifierRedirectSchemes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		schemes  []string
+		redirect string
+		followed bool
+	}{
+		"https":                  {[]string{"com.example.verifier"}, "https://verifier.example/done", true},
+		"a scheme named":         {[]string{"com.example.verifier"}, "com.example.verifier:/done", true},
+		"named in another case":  {[]string{"COM.Example.Verifier"}, "com.example.VERIFIER:/done", true},
+		"a scheme not named":     {[]string{"com.example.verifier"}, "com.other.app:/done?response_code=x", false},
+		"https alone":            {[]string{"https"}, "com.example.verifier:/done", false},
+		"https alone, for https": {[]string{"https"}, "https://verifier.example/done", true},
+		"none named":             {nil, "com.other.app:/done", true},
+	} {
+		srv := verifierReply(t, http.StatusOK, "application/json", `{"redirect_uri":"`+tc.redirect+`"}`)
+		cfg, deps := validConfig(), validDependencies()
+		cfg.VerifierRedirectSchemes, deps.HTTP = tc.schemes, srv.Client()
+		w, err := wallet.New(cfg, deps)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := w.SubmitDirectPostResponse(context.Background(), srv.URL, "the-jwe")
+		switch {
+		case tc.followed && (err != nil || got.RedirectURI != tc.redirect):
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want the redirect followed", name, got, err)
+		case !tc.followed && (!errors.Is(err, wallet.ErrResponseDelivered) || got.RedirectURI != ""):
+			t.Errorf("%s: SubmitDirectPostResponse = %+v, %v; want it refused, the response delivered", name, got, err)
+		}
+		if got, err := wallet.SubmitDirectPostResponse(context.Background(), srv.Client(), srv.URL, "the-jwe"); err != nil || got.RedirectURI != tc.redirect {
+			t.Errorf("%s: package-level SubmitDirectPostResponse = %+v, %v; want the redirect followed", name, got, err)
+		}
 	}
 }
 

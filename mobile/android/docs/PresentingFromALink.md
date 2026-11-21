@@ -42,7 +42,8 @@ suspend fun present(
         wallet.startPresentation(requestLink)
     } catch (e: WalletException) {
         // A refused request: the Verifier was told, and may say where to
-        // take the holder next (OpenID4VP §8.2).
+        // take the holder next (OpenID4VP §8.2). Ask the holder before
+        // opening one that isn't https.
         if (e.code == WalletException.Code.requestRefused) return e.refusalRedirect
         throw e
     }
@@ -72,14 +73,21 @@ anything: show that before the holder agrees.
 
 Open `Presented.redirectURI`, when the Verifier sends one, in the
 browser the request came from: it's how a same-device flow returns to
-the Verifier's page. The library refuses http and schemes that run code
+the Verifier's page. The library refuses http, schemes that run code
 or read local data (`javascript:`, `data:`, `file:`, and Android's
-`intent:`, `content:` and `android-app:`), but lets through a scheme
+`intent:`, `content:` and `android-app:`), and schemes that open a
+system app rather than the Verifier's page or app (`market:`, `tel:`,
+`sms:`, `mailto:`, `geo:` and their like), but lets through a scheme
 the Verifier's own app may have registered: open an https URL in the
 browser, any other only
 through an `ACTION_VIEW` intent, never in a WebView, and never one in
 the wallet's own schemes (`openid4vp`, `openid-credential-offer`, its
-redirect URI's), which would start another flow in the wallet.
+redirect URI's), which would start another flow in the wallet. Where
+you know the schemes of your Verifiers' apps, name them in
+`presentation.verifierRedirectSchemes`, or `listOf("https")` for none:
+a redirect with any other scheme is then refused too, and `respond` or
+`decline` throws `WalletException.Code.protocol`, the presentation
+answered.
 
 ## When the wallet refuses a request
 
@@ -91,10 +99,12 @@ doesn't support, or a parameter OpenID4VP forbids — makes
 is presented. The Verifier may answer the refusal with a redirect: the
 exception's `refusalRedirect` is it, and you open it in the browser the
 request came from, as a `redirectURI`, so the holder isn't left
-stranded. It's that call's own, so presentations started at once each
-get their Verifier's; `Wallet.takeRefusalRedirect()` returns the latest
-refusal's, of whichever call, once. Tell the holder the request wasn't
-answered.
+stranded. The holder has done no more than open the link, so ask them
+before opening one that isn't `https`: it opens another app, which can
+look like the wallet's next step. It's that call's own, so
+presentations started at once each get their Verifier's;
+`Wallet.takeRefusalRedirect()` returns the latest refusal's, of
+whichever call, once. Tell the holder the request wasn't answered.
 
 ## Show what's being asked beyond a registration
 

@@ -20,6 +20,17 @@ outside `credential_issuers` with the new `untrusted_issuer` code. A
 version-15 configuration that receives credentials adds one of them;
 the wrappers refuse a framework of another version, as before.
 
+Within version 16, without bumping it (optional configuration keys,
+so an older wrapper is unaffected), a Wallet's
+`verifier_redirect_schemes` names the only schemes besides https a
+Verifier's `redirect_uri` may have, and its `issuer_roots_by_vct` each
+SD-JWT VC type's own issuers' roots; the Swift and Kotlin libraries
+have them from OID4VCWallet 0.43.0, as
+`presentation.verifierRedirectSchemes` and `issuers.rootsByVCT`. From
+the same release, a `redirect_uri` that opens a system app (an app
+store, a call, a message, the settings, a Shortcut or a map) is
+refused, as an `http` one is (see the configuration below).
+
 Version 15 (OID4VCWallet 0.28.0) gives the `WalletProvider`'s
 `KeyAttestation` the issuance's instance key: it's
 `KeyAttestation(instanceKeyJWK, keysJWK, nonce)`, `instanceKeyJWK`
@@ -187,7 +198,9 @@ format or error code below changes incompatibly.
   like a request's own, returns `network`. When `StartPresentation`
   fails with `request_refused`, the Operation's `TakeRefusalRedirect()`
   returns, once, the `redirect_uri` the Verifier answered that call
-  with, `""` for none (added within ABI 16). A call waiting in a callback
+  with, `""` for none (added within ABI 16): ask the holder before
+  opening one that isn't https (see the Wallet's `TakeRefusalRedirect`).
+  A call waiting in a callback
   — a holder key's prompt in `KeyStore.Sign` — ends at once only with a
   CallbackCanceller (see below), which ends the callback's wait;
   without one, it returns once the callback does.
@@ -215,7 +228,7 @@ format or error code below changes incompatibly.
 | `profile_violation` | under `"issuance_profile": "haip"`, the issuer doesn't follow HAIP 1.0: it's refused |
 | `client_auth_unsupported` | the offer's Authorization Server takes no client authentication the wallet can give: a Wallet Attestation needs a provider and `client_id` |
 | `proof_unsupported` | the wallet can't hold an offered credential, or the issuer takes no proof it can give: one bound to no key (which the wallet doesn't receive) or by a method other than `jwk`/`cose_key`, both refused before the holder sees the offer; or, when the credentials are requested, no proof type signed with ES256, or a key attestation without a provider |
-| `request_refused` | the wallet refused an authentic presentation request it must not answer (`transaction_data` it doesn't support, or a parameter OpenID4VP forbids), and sent the Verifier the error OpenID4VP requires: the detail is that error code, such as `invalid_transaction_data`. For a DC API request, the start call's error is what goes back to the platform. For a redirect request, the start call's Operation's `TakeRefusalRedirect` returns the `redirect_uri` the Verifier answered with, to open |
+| `request_refused` | the wallet refused an authentic presentation request it must not answer (`transaction_data` it doesn't support, or a parameter OpenID4VP forbids), and sent the Verifier the error OpenID4VP requires: the detail is that error code, such as `invalid_transaction_data`. For a DC API request, the start call's error is what goes back to the platform. For a redirect request, the start call's Operation's `TakeRefusalRedirect` returns the `redirect_uri` the Verifier answered with, to open, asking the holder first when it isn't https |
 | `protocol` | an issuer, Authorization Server or Verifier answered with an error, or with something the wallet refuses |
 | `document_not_valid` | a reader configured with `"status": "check"` verified a document whose revocation status isn't valid; the detail is the status (`invalid`, `suspended`, `unknown` or `0x…`). The Swift and Kotlin reader sessions end with it; the Go side doesn't return it (ABI 14) |
 | `internal` | a bug |
@@ -483,12 +496,14 @@ gives such a code only at its status.
 
 ```json
 {"client_id": "…", "redirect_uri": "…",
- "issuer_roots": "<PEM>", "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
+ "issuer_roots": "<PEM>", "issuer_roots_by_vct": {"urn:eudi:pid:1": "<PEM>"},
+ "verifier_roots": "<PEM>", "registrar_roots": "<PEM>",
  "mdoc_reader_roots": "<PEM>", "mdoc_reader_require_eku": false, "require_trusted_mdoc_reader": false,
  "verifier_require_eku": "", "registrar_require_eku": "", "issuer_require_eku": "", "issuer_metadata_require_eku": "",
  "mdoc_issuer_roots": "<PEM>", "mdoc_issuer_roots_by_doctype": {"org.iso.18013.5.1.mDL": "<PEM>"}, "mdoc_issuer_require_eku": "",
  "accept_mdl_signer_without_eku": false,
  "require_signed_dcapi_requests": false, "accept_x509_san_dns": false,
+ "verifier_redirect_schemes": ["com.example.verifier"],
  "development": false, "development_roots": "<PEM>", "locales": ["en-AU", "en"], "batch_size": 0,
  "request_refresh": false, "copy_policy": "per_presentation", "issuance_profile": "openid4vci",
  "proof_key_by_jwk": false,
@@ -601,6 +616,21 @@ and aren't checked against each other; the mdoc ones are checked
 against the other roles with `mdoc_issuer_require_eku`. Added within
 ABI version 12.
 
+`issuer_roots_by_vct` (an object of vct to PEM) gives each SD-JWT VC
+type its own issuers' trust anchors: a credential of a type it names
+must chain to them, not to `issuer_roots`, so where `issuer_roots` hold
+several providers' CAs (a PID provider's and an attestation
+provider's, say) one can't issue a credential of another's type, which
+the wallet would show and offer as that type; a type named with an
+empty string is refused. With it set, a credential's `aka_vcts`, the
+types it says it's of too and can answer a query through, must be its
+issuer's too: its chain must verify under each one's anchors,
+`issuer_roots_by_vct`'s for a type it names, else `issuer_roots`.
+`issuer_require_eku` applies under them. `CheckStatus` checks a held
+credential's chain against them again, and its status list's signer
+against its vct's. In the role check above they're the issuers' role,
+with `issuer_roots`. Added within ABI version 16.
+
 `accept_mdl_signer_without_eku` (default false) also accepts a document
 signer certificate with no extended key usage extension, which the
 default check refuses, for issuers whose document signers have none.
@@ -642,6 +672,25 @@ needs `verifier_roots` (`invalid_input` without), and is off by default:
 every name in a certificate under `verifier_roots` is then a Verifier
 the wallet answers, so set it only where those roots certify Verifiers
 alone, or with `verifier_require_eku`.
+`verifier_redirect_schemes`, if set, are the only URI schemes besides
+https a Verifier's `redirect_uri` may have (OpenID4VP 1.0 §8.2): the
+schemes of the Verifier apps the wallet returns holders to, or
+`["https"]` to allow no other. A redirect with another scheme is
+dropped, as one the wallet never follows always is: plain `http`, a
+scheme that runs code or reads local data (`javascript`, `data`,
+`file`, `intent`, `content`, `android-app` and their like), invokes a
+wallet (`openid4vp`, `openid-credential-offer` and their like) or
+opens a system app rather than the Verifier's page or app (an app's
+install prompt or store page, a call, a message, the settings, a
+Shortcut or a map: `itms-services`, `market`, `tel`, `sms`, `mailto`,
+`ms-settings`, `shortcuts`, `geo` and their like), and the scheme of
+the wallet's own `redirect_uri`. `Respond` and `Decline` then fail
+with `protocol`, the presentation answered, and `TakeRefusalRedirect`
+returns `""`. Unset, a Verifier under `verifier_roots` can send the
+holder to whichever app handles the scheme it names. Schemes compare
+without case; one that isn't a URI scheme (RFC 3986 §3.1), or that is
+never followed, is `invalid_input`. Added within ABI 16; the system
+apps' schemes are refused from OID4VCWallet 0.43.0.
 `status_issuers` names, for each credential issuer (an SD-JWT VC's
 `iss`), the Status Issuers that may sign its status lists on its behalf,
 each recognized by a certificate under `issuer_roots` naming it (a URI,
@@ -715,10 +764,10 @@ names, before `issuer_roots` decide anything about it, when its
 credential arrives: an attacker can send an offer for its own issuer
 beside a genuine service's PIN, and so phish the PIN (OpenID4VCI 1.0's
 Security Considerations, "Transaction Code Phishing"). So a Wallet
-that receives credentials (`issuer_roots`, `mdoc_issuer_roots` or
-`mdoc_issuer_roots_by_doctype`) must decide which issuers' offers it
-takes, in development too, in one of three ways, or `NewWallet` refuses
-it with `invalid_input`:
+that receives credentials (`issuer_roots`, `issuer_roots_by_vct`,
+`mdoc_issuer_roots` or `mdoc_issuer_roots_by_doctype`) must decide
+which issuers' offers it takes, in development too, in one of three
+ways, or `NewWallet` refuses it with `invalid_input`:
 
 - `credential_issuers`, the only Credential Issuer Identifiers it takes
   offers from, each compared exactly with an offer's
@@ -826,19 +875,19 @@ addresses anyway.
 check against Certificate Revocation Lists (RFC 5280), and `crls` holds
 those lists as PEM `X509 CRL` blocks. The roles are `issuer` (a
 received, deferred or refreshed credential's signer, under
-`issuer_roots` and the mdoc roots alike), `issuer_metadata` (the signer
-of signed issuer metadata), `registrar`, `mdoc_reader` (org-iso-mdoc and
-in-person readers), `verifier` (a Verifier's request-signing
-certificate, under `verifier_roots`) and `status` (a status list's
-signer, in `CheckStatus`). `no_revocation_check` names the roles that
+`issuer_roots`, `issuer_roots_by_vct` and the mdoc roots alike),
+`issuer_metadata` (the signer of signed issuer metadata), `registrar`,
+`mdoc_reader` (org-iso-mdoc and in-person readers), `verifier` (a
+Verifier's request-signing certificate, under `verifier_roots`) and
+`status` (a status list's signer, in `CheckStatus`). `no_revocation_check` names the roles that
 decline checking revocation, an explicit choice for where something
 else stands in for it (certificates too short-lived to be worth
 revoking, say). Outside `development`, each role whose roots are set —
-`issuer` and `status` for `issuer_roots`, `mdoc_issuer_roots` or
-`mdoc_issuer_roots_by_doctype`, `issuer_metadata` for
-`issuer_metadata_roots`, `registrar` for `registrar_roots`,
-`mdoc_reader` for `mdoc_reader_roots` and `verifier` for
-`verifier_roots` — must be named in one of the two, or `NewWallet` is
+`issuer` and `status` for `issuer_roots`, `issuer_roots_by_vct`,
+`mdoc_issuer_roots` or `mdoc_issuer_roots_by_doctype`,
+`issuer_metadata` for `issuer_metadata_roots`, `registrar` for
+`registrar_roots`, `mdoc_reader` for `mdoc_reader_roots` and
+`verifier` for `verifier_roots` — must be named in one of the two, or `NewWallet` is
 `invalid_input`, its message naming the roots' key; a role named in
 both is `invalid_input` too. In `development`, a role in neither checks
 no revocation. `no_revocation_check`, and the refusal, were added within
@@ -968,12 +1017,12 @@ run. Added within ABI 14.
 | `Credential(id)` | summary with `"claims"`: an SD-JWT VC's claims, or an mdoc's namespace → element → value, byte strings in base64 |
 | `DeleteCredential(id)` | deletes it and its holder keys, and its refresh grant with the grant's instance key once no other credential uses it. The refresh token is first revoked at the Authorization Server (RFC 7009), best effort, when it has a revocation endpoint: a network request, so call it off the main thread |
 | `RefreshCredential(op, credentialID)` | `{"credential": summary, "deferred": pending or null}`: replaces a `refreshable` credential's copies with a fresh batch, each bound to a new holder key, under the same ID, without the holder signing in; the new holder keys sign the Credential Request's proof, so a KeyStore requiring user presence asks then. If the issuer defers it, the credential is returned as it was, with the deferred one to poll, which replaces it under the same ID once issued (don't delete it meanwhile: the refreshed copies would be discarded). One that can't be refreshed (no refresh token was kept, the Authorization Server no longer accepts it, the Wallet Provider no longer attests its grant's instance key, or its grant issued several datasets of its configuration and the wallet can't ask for the one it holds again) is `reissue_required`: receive it again from a new offer. While its issuer has 64 deferred credentials pending, or the wallet 256 in all, it's `unavailable` with the detail `too_many_deferred` (within ABI 16) |
-| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It verifies each live copy's issuer certificate chain again (an SD-JWT VC's `x5c`, an mdoc's `x5chain`) under the issuer roots configured now and, with `issuer` in `revocation`, against the CRLs held now: a copy whose signer, or a CA above it, has been revoked since, or whose chain no longer verifies, isn't presented ahead of one that passes, and once none is left the credential is `invalid` (`reason` `issuer_certificate_revoked` or `issuer_untrusted`). That isn't final: a later check with a CRL that no longer names the certificate makes it valid again. With no current CRL for a CA on the chain it's `unknown` (`reason` `no_current_crl`), not an error; refresh the lists and check again. A credential with no status or identifier list is checked so too, when it carries a chain and the wallet has roots for it (from OID4VCWallet 0.27.0; before, it was returned unchecked). It also fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 (P-256), ES384 (P-384), ES512 (P-521) or EdDSA (Ed25519) is a `protocol` error (and so, until OID4VCWallet 0.36.0, was an SD-JWT VC's JWT list signed ES384 or ES512). Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A list whose signer's CA has no current CRL under `status` in `revocation` is `unknown` (`no_current_crl`) too (before OID4VCWallet 0.27.0, `protocol`). A credential with neither a list nor a chain to check is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
+| `CheckStatus(op, credentialID)` | the summary, with `"status"` checked now. It verifies each live copy's issuer certificate chain again (an SD-JWT VC's `x5c`, an mdoc's `x5chain`) under the issuer roots configured now and, with `issuer` in `revocation`, against the CRLs held now: a copy whose signer, or a CA above it, has been revoked since, or whose chain no longer verifies, isn't presented ahead of one that passes, and once none is left the credential is `invalid` (`reason` `issuer_certificate_revoked` or `issuer_untrusted`). That isn't final: a later check with a CRL that no longer names the certificate makes it valid again. With no current CRL for a CA on the chain it's `unknown` (`reason` `no_current_crl`), not an error; refresh the lists and check again. A credential with no status or identifier list is checked so too, when it carries a chain and the wallet has roots for it (from OID4VCWallet 0.27.0; before, it was returned unchecked). It also fetches the issuer's status list, and an mdoc's identifier list, and checks each list's signature against the roots configured now: `issuer_roots`, or its vct's `issuer_roots_by_vct`, or for an mdoc the `certificate` its MSO names, if any, and otherwise the mdoc roots for its doctype, through its document signer's CA as ISO/IEC 18013-5 §12.3.6.2 requires. A list signed other than with ES256 (P-256), ES384 (P-384), ES512 (P-521) or EdDSA (Ed25519) is a `protocol` error (and so, until OID4VCWallet 0.36.0, was an SD-JWT VC's JWT list signed ES384 or ES512). Each list covers many credentials, so fetching it doesn't tell the issuer which one is checked. A list whose signer's CA has no current CRL under `status` in `revocation` is `unknown` (`no_current_crl`) too (before OID4VCWallet 0.27.0, `protocol`). A credential with neither a list nor a chain to check is returned as it is, as is an expired one: it isn't valid whatever its status, so its lists aren't fetched (draft-ietf-oauth-status-list §8.3). Revocation is final (§12.3.6.1): a copy found revoked is marked so, and while it hasn't expired the credential stays `invalid` without its lists fetched again, so an older list can't make it valid; a refresh replaces it. (Before OID4VCWallet 0.24.0, a later check could record it valid again.) |
 | `StartIssuance(op, offerURI)` | an `Issuance`; `unavailable` with the detail `too_many_deferred` while the offer's issuer has 64 deferred credentials pending, or the wallet 256 in all (within ABI 16) |
 | `ResumeIssuance(op, redirect)` | an `Issuance` ready for `RequestCredentials`: completes the authorization in progress that the redirect's `state` names, after the app was killed during the browser step. One that matches nothing, has already been used, or has expired is `not_found`. One whose offered configuration the issuer's metadata now maps to another kind of credential (format, `vct` or doctype) than the holder was shown is `reissue_required`, and is forgotten |
 | `StartPresentation(op, requestLink)` | a `Presentation`. The `request_uri` is fetched by GET, or, for a link with `request_uri_method=post`, by POST with a fresh `wallet_nonce` and the wallet's metadata (OpenID4VP 1.0 §5.10), the Request Object then having to carry that `wallet_nonce` |
 | `SetCallbackCanceller(c)` | gives the wallet a CallbackCanceller (see above), so a call cancelled while it waits for the holder or the Wallet Provider ends that wait; `nil` removes it. Added within ABI 15 |
-| `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none: open it (OpenID4VP §8.2). It holds the latest `StartPresentation`'s, whichever call that was, so with presentations started concurrently one Verifier's redirect can be taken for another's refusal: take the call's own from its `Operation` instead (`Operation.TakeRefusalRedirect()`). Added within ABI 12 |
+| `TakeRefusalRedirect()` | once, the `redirect_uri` the Verifier answered the latest `request_refused` with, `""` for none and for one the wallet doesn't follow (see `verifier_redirect_schemes`): open it (OpenID4VP §8.2). The holder has done no more than open the link, so ask them before opening one that isn't https: it opens another app, which can look like the wallet's next step. It holds the latest `StartPresentation`'s, whichever call that was, so with presentations started concurrently one Verifier's redirect can be taken for another's refusal: take the call's own from its `Operation` instead (`Operation.TakeRefusalRedirect()`). Added within ABI 12 |
 | `RefreshCRLs(op)` | `{"abi", "results", "crls", "next_refresh"}`: fetches the configured CRL distribution points and keeps each current list its CA signed that isn't older than the one held (see Refreshing CRLs). Network requests. Added within ABI 14 |
 | `SetCRLs(pem)` | replaces the lists the `revocation` roles check against, for every check from then on, with `pem`'s `X509 CRL` blocks. Anything but CRLs is `invalid_input`, and the lists are left as they were; so, from OID4VCWallet 0.25.0, is a CA's list older than the one held for it (a lower CRL number, or an earlier thisUpdate where either has none), so a replayed list can't un-revoke a certificate; `""` removes them all, so every role named then refuses. From OID4VCWallet 0.29.0 (within ABI 15), a list naming a CA the configuration has — in `crl_issuers`, a distribution point's `issuer`, or a CA certificate in the roots of a role `revocation` names — that the CA didn't sign is `invalid_input` too, and is dropped from `crls` when a Wallet or ProximityReader is made (an earlier version may have held, and the app persisted, one); and only lists such a CA signed hold later ones to the older-list rule. Before, a forged list with a CA's name and a huge CRL number, from a plain `http` distribution point say, was taken and refused every genuine list after it. A list from a CA the configuration doesn't have (an intermediate CA met only on a chain) is still taken, verified when a certificate is checked, but neither refused as older nor a floor for a later one: give its CA in `crl_issuers` to have it checked. No network calls. Added within ABI 12 |
 
@@ -1098,7 +1147,9 @@ option (§6.4.2). Each credential's next
 unused copy is presented. A claim **path** is a JSON array of keys,
 indexes, and `null` for every element. Holder keys sign during
 `Respond`, so a key store requiring user presence prompts then. When
-`redirect_uri` is set, open it in the browser.
+`redirect_uri` is set, open it in the browser. One the wallet doesn't
+follow (see `verifier_redirect_schemes`) fails `Respond` and `Decline`
+with `protocol` instead, the presentation answered.
 
 ABI version 12 added `registrar_roots`, the Verifier's `registration`,
 and each query's `unregistered` and `unregistered_all`. Within it,

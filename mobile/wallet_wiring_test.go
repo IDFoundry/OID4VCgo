@@ -258,6 +258,7 @@ func forgedCRL(t *testing.T, ca *x509.Certificate) *x509.RevocationList {
 func TestSetCRLs_RootsOfCheckedRolesAreKnown(t *testing.T) {
 	for _, tc := range []struct{ key, role string }{
 		{"issuer_roots", "issuer"},
+		{"issuer_roots_by_vct", "issuer"},
 		{"mdoc_issuer_roots", "status"},
 		{"verifier_roots", "verifier"},
 		{"registrar_roots", "registrar"},
@@ -265,8 +266,12 @@ func TestSetCRLs_RootsOfCheckedRolesAreKnown(t *testing.T) {
 		{"issuer_metadata_roots", "issuer_metadata"},
 	} {
 		ca, caKey := testcert.CA(t, tc.role+" root")
+		var roots any = pemOf("CERTIFICATE", ca.Raw)
+		if tc.key == "issuer_roots_by_vct" {
+			roots = map[string]any{"urn:eudi:pid:1": roots}
+		}
 		cfg, _ := json.Marshal(map[string]any{
-			"development": true, tc.key: pemOf("CERTIFICATE", ca.Raw), "revocation": []string{tc.role},
+			"development": true, tc.key: roots, "revocation": []string{tc.role},
 			"credential_issuers": []string{"https://issuer.example"},
 		})
 		w, err := NewWallet(string(cfg), newGoKeyStore(), newGoCredentialStore(), nil)

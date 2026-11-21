@@ -1444,7 +1444,7 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 		// one ID.
 		return wallet.VerifiedIssuedCredential{}, nil, errors.New("no holder key is left to bind this copy to")
 	}
-	roots, policy := w.cfg.issuerTrust(conf.Format, conf.DocType)
+	roots, policy := w.cfg.issuerTrust(conf.Format, conf.VCT, conf.DocType)
 	// The issuer's chain and signature are verified once, for every
 	// candidate key.
 	pubs := make([]crypto.PublicKey, len(keys))
@@ -1458,6 +1458,16 @@ func (w *Wallet) verifyCopy(ctx context.Context, issuer string, conf oid4vci.Cre
 	})
 	if err != nil {
 		return wallet.VerifiedIssuedCredential{}, nil, err
+	}
+	if conf.Format == sdjwtvc.CredentialFormat {
+		// The types it says it's of too must be its issuer's to issue.
+		aka, err := w.cfg.akaRoots(conf.VCT, akaVCTs(verified.Claims))
+		if err == nil {
+			err = w.verifyUnderEach(ctx, issuerChain(conf.Format, credential), aka, policy, now)
+		}
+		if err != nil {
+			return wallet.VerifiedIssuedCredential{}, nil, fmt.Errorf("wallet: verify issued credential: %w", err)
+		}
 	}
 	bound, _ := verified.HolderKey.(interface{ Equal(crypto.PublicKey) bool })
 	for i, k := range keys {

@@ -131,7 +131,7 @@ func PreviewSelection(ctx context.Context, query dcql.Query, selection map[strin
 // Query's chosen credentials — after ValidateSelection: the wallet
 // presents what was chosen, never another match.
 func RespondSelection(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, selection map[string][]HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
-	return respond(ctx, client, req, PresentationRequest{Selection: selection}, trustedAuthorities)
+	return respond(ctx, client, req, PresentationRequest{Selection: selection}, trustedAuthorities, nil)
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -107,7 +107,7 @@ func sameIdentifierLists(a, b StoredCredential) bool {
 // document signer (identifierlist.Check). A list several copies share
 // is fetched and verified once.
 func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, entries []identifierListEntry) ([]identifierListEntry, error) {
-	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
+	roots, _ := w.cfg.issuerTrust(c.Format, c.VCT, c.DocType)
 	checker := identifierlist.Checker{
 		Fetcher: w.statusFetcher(w.cfg.IdentifierListMaxBytes),
 		Roots:   roots,
