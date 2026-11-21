@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,7 +47,17 @@ func TestRespond(t *testing.T) {
 	held := wallet.HeldCredential{Format: sdjwtvc.CredentialFormat, Credential: cred, HolderKey: holderKey, HolderKeyAlg: jose.ES256}
 
 	var txs *verifier.Transactions
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { txs.ResponseHandler().ServeHTTP(w, r) }))
+	// reply, once set, is what the response endpoint answers instead of
+	// the Verifier: a redirect_uri the Verifier names.
+	var reply atomic.Pointer[string]
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if redirect := reply.Load(); redirect != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"redirect_uri":"` + *redirect + `"}`))
+			return
+		}
+		txs.ResponseHandler().ServeHTTP(w, r)
+	}))
 	defer srv.Close()
 	responseURI, err := fapi.ParseEndpointURL(srv.URL + "/response")
 	if err != nil {
@@ -128,5 +139,27 @@ func TestRespond(t *testing.T) {
 	}
 	if _, err := w.RespondSelection(ctx, req, map[string][]wallet.HeldCredential{"cred": {held}}, nil); !errors.Is(err, wallet.ErrResponseDelivered) {
 		t.Errorf("(*Wallet).RespondSelection to a completed request: %v, want it delivered and refused", err)
+	}
+
+	// They refuse a redirect_uri the Wallet's VerifierRedirectSchemes
+	// don't allow, the presentation delivered, and follow one they do.
+	cfg := validConfig()
+	cfg.VerifierRedirectSchemes = []string{"com.example.verifier"}
+	narrowed, err := wallet.New(cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for redirect, followed := range map[string]bool{"com.other.app:/done": false, "com.example.verifier:/done": true} {
+		reply.Store(&redirect)
+		one, errOne := narrowed.Respond(ctx, req, []wallet.HeldCredential{held}, nil)
+		selected, errSelected := narrowed.RespondSelection(ctx, req, map[string][]wallet.HeldCredential{"cred": {held}}, nil)
+		for method, got := range map[string]struct {
+			responded wallet.Responded
+			err       error
+		}{"Respond": {one, errOne}, "RespondSelection": {selected, errSelected}} {
+			if followed && (got.err != nil || got.responded.Reply.RedirectURI != redirect) || !followed && !errors.Is(got.err, wallet.ErrResponseDelivered) {
+				t.Errorf("(*Wallet).%s, redirected to %s: %+v, %v; want followed %v, else refused as delivered", method, redirect, got.responded.Reply, got.err, followed)
+			}
+		}
 	}
 }

@@ -221,6 +221,9 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool for mdoc issuers and Verifiers":  {Config{IssuerRoots: verifiers, MdocIssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
 		"one pool for mdoc issuers, both narrowed": {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 		"a document type's pool and readers":       {Config{IssuerRoots: verifiers, MdocIssuerRootsByDocType: map[string]*x509.CertPool{"a": issuers}, MdocReaderRoots: shared, MdocReaderLeafPolicy: policy}, false},
+		"one pool for issuers and a vct's":         {Config{IssuerRoots: shared, IssuerRootsByVCT: map[string]*x509.CertPool{"a": shared}}, true},
+		"a vct's pool and Verifiers":               {Config{IssuerRoots: verifiers, IssuerRootsByVCT: map[string]*x509.CertPool{"a": issuers}, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
+		"a vct's pool, both narrowed":              {Config{IssuerRootsByVCT: map[string]*x509.CertPool{"a": shared}, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 	} {
 		_, err := New(declined(tc.cfg), deps)
 		refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")

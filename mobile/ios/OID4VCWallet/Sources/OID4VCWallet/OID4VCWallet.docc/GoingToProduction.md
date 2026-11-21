@@ -393,6 +393,12 @@ ecosystem, and record why:
   comes to the foreground. Set a directory of the app's own to keep them elsewhere,
   with the protection you give it (a failure to get its key, or to make
   it, then fails the wallet), or `""` to keep them in memory only.
+- ``WalletConfiguration/IssuerTrust/rootsByVCT``: each SD-JWT VC type's
+  own issuers' CAs, instead of ``WalletConfiguration/IssuerTrust/roots``,
+  where those hold several providers' CAs (a PID provider's and an
+  attestation provider's, say): otherwise any of them can issue a
+  credential of another's type, which the wallet shows and offers as
+  that type.
 - ``WalletConfiguration/IssuerTrust/mdocRoots`` and
   ``WalletConfiguration/IssuerTrust/mdocRootsByDocType``: the IACAs mdocs, or
   each document type, must chain to, instead of
@@ -422,6 +428,13 @@ ecosystem, and record why:
   answers: set it only where those roots certify Verifiers alone, or
   with ``WalletConfiguration/VerifierTrust/requireEKU``. It needs
   ``WalletConfiguration/VerifierTrust/roots``.
+- ``WalletConfiguration/PresentationOptions/verifierRedirectSchemes``:
+  the only schemes besides `https` a Verifier's redirect may have, the
+  schemes of your Verifiers' apps, or `["https"]` for none. Without it,
+  a Verifier under ``WalletConfiguration/VerifierTrust/roots`` can send
+  the holder to whichever app handles a scheme, but for those the
+  wallet never follows (`http`, schemes that run code or read local
+  data, invoke a wallet or open a system app).
 - ``WalletConfiguration/IssuerTrust/acceptMDLSignerWithoutEKU`` and
   ``ProximityReaderConfiguration/IssuerTrust/acceptMDLSignerWithoutEKU``: also
   accept a document signer certificate with no extended key usage,

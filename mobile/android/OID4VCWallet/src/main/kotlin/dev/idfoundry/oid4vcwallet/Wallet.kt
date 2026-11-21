@@ -152,12 +152,12 @@ public data class WalletConfiguration(
          * credential refuse an issuer the list no longer names the same
          * way, keeping what the wallet holds from it.
          *
-         * A wallet with [roots] (or the mdoc ones) must decide which
-         * issuers' offers it takes, or the [Wallet] constructor throws
-         * `invalidInput`: this list; signed issuer metadata naming its
-         * issuer ([IssuerMetadataTrust] with `roots`, `requireSigned` and
-         * `requireName`), which may be combined with it; or
-         * [allowAnyCredentialIssuer], alone.
+         * A wallet with [roots] (or [rootsByVCT], or the mdoc ones) must
+         * decide which issuers' offers it takes, or the [Wallet]
+         * constructor throws `invalidInput`: this list; signed issuer
+         * metadata naming its issuer ([IssuerMetadataTrust] with `roots`,
+         * `requireSigned` and `requireName`), which may be combined with
+         * it; or [allowAnyCredentialIssuer], alone.
          */
         val credentialIssuers: List<String> = emptyList(),
         /**
@@ -169,6 +169,18 @@ public data class WalletConfiguration(
          * whose issuers can't be told apart in advance.
          */
         val allowAnyCredentialIssuer: Boolean = false,
+        /**
+         * Each SD-JWT VC type's own issuers, as PEM certificates by `vct`:
+         * a credential of a type named here must chain to them, not to
+         * [roots], so where [roots] hold several providers' CAs one can't
+         * issue a credential of another's type, which the wallet would show
+         * and offer as that type. A type named with an empty string is
+         * refused. With it set, the types a credential says it's of too
+         * (`aka_vcts`) must be its issuer's: its chain must verify under
+         * each one's roots here, else [roots]. [requireEKU] applies under
+         * them (from OID4VCWallet 0.43.0).
+         */
+        val rootsByVCT: Map<String, String> = emptyMap(),
     )
 
     /** Which signed Credential Issuer Metadata the wallet trusts. */
@@ -394,12 +406,27 @@ public data class WalletConfiguration(
          * needs a key store that is also a [KeyAgreement].
          */
         val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
+        /**
+         * The only URI schemes besides `https` a Verifier's redirect may
+         * have, when set: the schemes of the Verifier apps the wallet
+         * returns holders to, or `listOf("https")` to allow no other. A
+         * redirect with another scheme isn't returned: [Presentation.respond]
+         * and [Presentation.decline] throw [WalletException.Code.protocol],
+         * the presentation answered, and a refusal has no
+         * [WalletException.refusalRedirect]. Empty, the default, allows any
+         * scheme but those the wallet never follows: `http`, schemes that
+         * run code or read local data, invoke a wallet or open a system app
+         * (`market`, `tel`, `sms`, `mailto` and their like), and
+         * [WalletConfiguration.redirectURI]'s. A scheme that isn't one, or
+         * one never followed, is `invalidInput` (from OID4VCWallet 0.43.0).
+         */
+        val verifierRedirectSchemes: List<String> = emptyList(),
     )
 
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable
     public enum class RevocationRole {
-        /** The issuers' signing certificates ([IssuerTrust.roots] and the mdoc roots), on receipt, deferral and refresh. */
+        /** The issuers' signing certificates ([IssuerTrust.roots], [IssuerTrust.rootsByVCT] and the mdoc roots), on receipt, deferral and refresh. */
         @SerialName("issuer") ISSUER,
 
         /** The signers of Credential Issuer Metadata ([IssuerMetadataTrust.roots]). */
@@ -556,6 +583,8 @@ internal data class WalletConfigurationJSON(
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    @SerialName("verifier_redirect_schemes") val verifierRedirectSchemes: List<String> = emptyList(),
+    @SerialName("issuer_roots_by_vct") val issuerRootsByVCT: Map<String, String> = emptyMap(),
 )
 
 /** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
@@ -621,6 +650,8 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         identifierListMaxBytes = c.status.identifierListMaxBytes,
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
+        verifierRedirectSchemes = c.presentation.verifierRedirectSchemes,
+        issuerRootsByVCT = c.issuers.rootsByVCT,
     )
 
     private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
@@ -638,6 +669,7 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             statusIssuers = j.statusIssuers,
             credentialIssuers = j.credentialIssuers,
             allowAnyCredentialIssuer = j.allowAnyCredentialIssuer,
+            rootsByVCT = j.issuerRootsByVCT,
         ),
         issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
             roots = j.issuerMetadataRoots,
@@ -676,7 +708,11 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             proofKeyByJWK = j.proofKeyByJWK,
             proofKeyByIndex = j.proofKeyByIndex,
         ),
-        presentation = WalletConfiguration.PresentationOptions(copyPolicy = j.copyPolicy, proximityDeviceAuth = j.proximityDeviceAuth),
+        presentation = WalletConfiguration.PresentationOptions(
+            copyPolicy = j.copyPolicy,
+            proximityDeviceAuth = j.proximityDeviceAuth,
+            verifierRedirectSchemes = j.verifierRedirectSchemes,
+        ),
         development = Development.decoded(j.development, j.developmentRoots),
     )
 }
@@ -1218,7 +1254,9 @@ public class Wallet(
      * Where the Verifier asked to take the holder after the wallet
      * refused its request: when [startPresentation] throws
      * [WalletException.Code.requestRefused], open this URL, if any, as
-     * OpenID4VP §8.2 has a wallet do. It's returned once. It holds the
+     * OpenID4VP §8.2 has a wallet do. The holder has done no more than
+     * open the link, so ask them before opening one that isn't `https`:
+     * it opens another app. It's returned once. It holds the
      * latest refusal of any call: with presentations started
      * concurrently, open the exception's own
      * [WalletException.refusalRedirect] instead, or one Verifier's

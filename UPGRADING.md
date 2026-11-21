@@ -7,6 +7,95 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.42.0 → 0.43.0
+
+Built from OID4VCgo v0.86.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### Ask before opening a refused request's redirect that isn't https (Swift, Kotlin)
+
+A refused request's `refusalRedirect`, and `takeRefusalRedirect()`,
+arrive before the holder has done anything but open the link: the
+wallet sends the Verifier its error itself. Ask the holder before
+opening one that isn't `https`, which opens another app and can look
+like the wallet's next step. The library now refuses a redirect that
+opens a system app (an app's install prompt or store page, a call, a
+message, the settings, a Shortcut or a map), as it refused `http`:
+`refusalRedirect` is then nil (null), and `respond` and `decline` fail
+with `protocolError` (Kotlin's `protocol`), the presentation answered.
+
+### Name your Verifiers' app schemes (Swift, Kotlin)
+
+The new `presentation.verifierRedirectSchemes` (`verifier_redirect_schemes`)
+names the only schemes besides `https` a Verifier's redirect may have:
+set it to the schemes of your Verifiers' apps where you know them, or
+to `["https"]` (`listOf("https")`). A redirect with another scheme is
+then refused as above. Empty, the default, follows any scheme the
+library doesn't refuse. A scheme that isn't one, or one never
+followed, is `invalidInput`.
+
+### Hold each SD-JWT VC type to its own issuers (Swift, Kotlin)
+
+The new `issuers.rootsByVCT` (`issuer_roots_by_vct`) is walletflow's
+`IssuerRootsByVCT` (see v0.86.0 below): each SD-JWT VC type's own
+issuers' CAs, by `vct`, in place of `issuers.roots`. Set it where
+`issuers.roots` hold several providers' CAs. Outside `development`,
+its roots need the `issuer` and `status` revocation choice, and are
+kept apart from the other roles' with `issuers.requireEKU`, as
+`issuers.roots` are.
+
+## v0.85.0 → v0.86.0
+
+### A Verifier's redirect to a system app is refused (wallet, walletflow)
+
+A Verifier's `redirect_uri` (OpenID4VP 1.0 §8.2) that opens a system
+handler rather than the Verifier's page or app is now refused, as
+`http:` and `javascript:` were: an app's install prompt or store page
+(`itms-services`, `itms-apps`, `itms-appss`, `market`,
+`ms-appinstaller`, `ms-windows-store`), a call (`tel`, `facetime`,
+`facetime-audio`), a message (`sms`, `smsto`, `mms`, `mmsto`,
+`mailto`), the settings (`ms-settings`), a Shortcut (`shortcuts`) or a
+map (`geo`, `maps`). `wallet.SubmitDirectPostResponse`, `Respond` and
+`RespondSelection` return an error wrapping `ErrResponseDelivered`
+instead of the redirect. walletflow's `Respond` and `Decline` return
+that error, the presentation answered, and a refused request's
+`RequestRefusedError.RedirectURI` is empty. A trusted Verifier could
+otherwise send the holder from the wallet straight to one of them,
+looking like the wallet's next step, on a refusal before the holder
+had done anything but open the link. An honest Verifier redirects to
+its page or its own app's scheme, which are still followed.
+
+### Follow only the redirect schemes your Verifiers' apps use (wallet, walletflow)
+
+The new `wallet.Config.VerifierRedirectSchemes` and
+`walletflow.Config.VerifierRedirectSchemes` name the URI schemes,
+besides https, a Verifier's `redirect_uri` may have: the schemes of
+the Verifier apps the wallet returns holders to, or `"https"` alone.
+A redirect with any other is then refused as one with a scheme the
+wallet never follows is (above). Unset, as before, a trusted Verifier
+can send the holder to whichever app handles the scheme it names: set
+it where you know your Verifiers' apps. `New` refuses a scheme that
+isn't one (RFC 3986 §3.1), one the wallet never follows, and, in
+walletflow, `Config.RedirectURI`'s. In `wallet`, the `*Wallet` methods
+apply it; the package-level `SubmitDirectPostResponse`, `Respond` and
+`RespondSelection`, which take no `Config`, don't.
+
+### Hold each SD-JWT VC type to its own issuers (walletflow)
+
+The new `walletflow.Config.IssuerRootsByVCT` gives each SD-JWT VC type
+its own trust anchors, as `MdocIssuerRootsByDocType` does for mdocs and
+the verifier's `X5CIssuerKeyResolver.RootsByVCT` for presentations: a
+received credential whose `vct` it names must chain to that type's
+anchors, not to `IssuerRoots`, and with it set, to each of its
+`aka_vcts` types' too; `CheckStatus` checks a held one again so, and
+its status list's signer under its type's. Where `IssuerRoots` hold
+several providers' CAs (a PID provider's and an attestation provider's,
+say), any of them can otherwise issue a credential of another's type,
+which the wallet stores, shows and offers as that type. Outside
+`Development` its pools need `IssuerRevocation` and `StatusRevocation`,
+and are kept apart from the other roles', as `IssuerRoots` are. Unset,
+nothing changes.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration

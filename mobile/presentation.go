@@ -49,14 +49,16 @@ func (w *Wallet) recordRefusal(op *Operation, err error) {
 }
 
 // TakeRefusalRedirect returns, once, the redirect_uri the Verifier
-// answered the latest refused request with, "" for none. When
+// answered the latest refused request with, "" for none and for one the
+// wallet doesn't follow (verifier_redirect_schemes). When
 // StartPresentation fails with request_refused, open it, as OpenID4VP
 // §8.2 has the wallet do for a same-device request: the error itself
-// carries no URL. It holds the latest StartPresentation's, whichever
-// call that was: with presentations started concurrently, take the
-// call's own from its Operation (Operation.TakeRefusalRedirect)
-// instead, or one Verifier's redirect may be opened for another's
-// refusal.
+// carries no URL. The holder has done no more than open the link, so
+// ask them before opening one that isn't https: it opens another app.
+// It holds the latest StartPresentation's, whichever call that was:
+// with presentations started concurrently, take the call's own from its
+// Operation (Operation.TakeRefusalRedirect) instead, or one Verifier's
+// redirect may be opened for another's refusal.
 func (w *Wallet) TakeRefusalRedirect() string {
 	w.refusalMu.Lock()
 	defer w.refusalMu.Unlock()

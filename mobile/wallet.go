@@ -68,6 +68,13 @@ type config struct {
 	VerifierRequireEKU  string `json:"verifier_require_eku,omitempty"`
 	RegistrarRequireEKU string `json:"registrar_require_eku,omitempty"`
 	IssuerRequireEKU    string `json:"issuer_require_eku,omitempty"`
+	// IssuerRootsByVCT are each SD-JWT VC type's own trust anchors, PEM
+	// certificates by vct: a credential of a type it names must chain to
+	// them, not to IssuerRoots, and, with it set, to the roots of each
+	// type its aka_vcts name too (walletflow.Config.IssuerRootsByVCT). A
+	// type named with an empty string is refused. IssuerRequireEKU
+	// applies under them.
+	IssuerRootsByVCT map[string]string `json:"issuer_roots_by_vct,omitempty"`
 	// MdocIssuerRoots are PEM certificates: the IACAs whose mdocs the
 	// wallet receives, in place of IssuerRoots
 	// (walletflow.Config.MdocIssuerRoots), and MdocIssuerRootsByDocType
@@ -99,6 +106,11 @@ type config struct {
 	// x509_san_dns prefix, besides x509_hash; it needs VerifierRoots
 	// (walletflow.Config.AcceptX509SANDNS).
 	AcceptX509SANDNS bool `json:"accept_x509_san_dns,omitempty"`
+	// VerifierRedirectSchemes, if set, are the only URI schemes besides
+	// https a Verifier's redirect_uri may have: the schemes of the
+	// Verifier apps the wallet returns holders to, or "https" alone
+	// (walletflow.Config.VerifierRedirectSchemes).
+	VerifierRedirectSchemes []string `json:"verifier_redirect_schemes,omitempty"`
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name (walletflow.Config.RequireIssuerName).
 	RequireIssuerName bool `json:"require_issuer_name,omitempty"`
@@ -113,11 +125,11 @@ type config struct {
 	// it would send there (walletflow.Config.CredentialIssuers).
 	// AllowAnyCredentialIssuer takes any issuer's offer instead
 	// (walletflow.Config.AllowAnyCredentialIssuer). A wallet receiving
-	// credentials (issuer_roots or the mdoc ones) decides which issuers'
-	// offers it takes, in development too: CredentialIssuers;
-	// IssuerMetadataRoots with RequireSignedIssuerMetadata and
-	// RequireIssuerMetadataName; or AllowAnyCredentialIssuer, alone
-	// (checkCredentialIssuerTrust).
+	// credentials (issuer_roots, issuer_roots_by_vct or the mdoc ones)
+	// decides which issuers' offers it takes, in development too:
+	// CredentialIssuers; IssuerMetadataRoots with
+	// RequireSignedIssuerMetadata and RequireIssuerMetadataName; or
+	// AllowAnyCredentialIssuer, alone (checkCredentialIssuerTrust).
 	CredentialIssuers        []string `json:"credential_issuers,omitempty"`
 	AllowAnyCredentialIssuer bool     `json:"allow_any_credential_issuer,omitempty"`
 	// IssuerMetadataRoots are PEM certificates: the trust anchors for
@@ -418,8 +430,8 @@ func walletRevocation(cfg config, wcfg *walletflow.Config) (*crlSet, error) {
 		return nil, err
 	}
 	vt, isX5C := wcfg.VerifierTrust.(wallet.X5CVerifierRoots)
-	issuerKeys := "issuer_roots, mdoc_issuer_roots or mdoc_issuer_roots_by_doctype"
-	receives := wcfg.IssuerRoots != nil || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
+	issuerKeys := "issuer_roots, issuer_roots_by_vct, mdoc_issuer_roots or mdoc_issuer_roots_by_doctype"
+	receives := receivesCredentials(*wcfg)
 	for _, r := range []struct {
 		role  string
 		keys  string
@@ -458,6 +470,9 @@ func walletRevocationRoots(cfg config, named map[string]bool) []string {
 	roots := []string{cfg.CRLIssuers}
 	if named[revocationIssuer] || named[revocationStatus] {
 		roots = append(roots, cfg.IssuerRoots, cfg.MdocIssuerRoots)
+		for _, vct := range slices.Sorted(maps.Keys(cfg.IssuerRootsByVCT)) {
+			roots = append(roots, cfg.IssuerRootsByVCT[vct])
+		}
 		for _, docType := range slices.Sorted(maps.Keys(cfg.MdocIssuerRootsByDocType)) {
 			roots = append(roots, cfg.MdocIssuerRootsByDocType[docType])
 		}
@@ -526,7 +541,7 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 		BatchSize: cfg.BatchSize, RequestRefresh: cfg.RequestRefresh,
 		ProofKeyByJWK: cfg.ProofKeyByJWK, RequireTrustedMdocReader: cfg.RequireTrustedMdocReader,
 		RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests, AcceptX509SANDNS: cfg.AcceptX509SANDNS,
-		AllowedPrivateHosts: cfg.AllowedPrivateHosts,
+		VerifierRedirectSchemes: cfg.VerifierRedirectSchemes, AllowedPrivateHosts: cfg.AllowedPrivateHosts,
 	}
 	if cfg.AcceptX509SANDNS && cfg.VerifierRoots == "" {
 		return walletflow.Config{}, newError(CodeInvalidInput, errors.New("accept_x509_san_dns needs verifier_roots: an x509_san_dns name is the Verifier's only through a chain to them"))
@@ -547,6 +562,9 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	}
 	wcfg.CopyPolicy = policy
 	if wcfg.IssuerRoots, err = optionalCertPool("issuer_roots", cfg.IssuerRoots); err != nil {
+		return walletflow.Config{}, err
+	}
+	if wcfg.IssuerRootsByVCT, err = optionalCertPoolsByType("issuer_roots_by_vct", cfg.IssuerRootsByVCT); err != nil {
 		return walletflow.Config{}, err
 	}
 	wcfg.StatusIssuers = cfg.StatusIssuers
@@ -621,7 +639,7 @@ func checkCredentialIssuerTrust(wcfg walletflow.Config) error {
 	listed := len(wcfg.CredentialIssuers) > 0
 	named := wcfg.RequireSignedIssuerMetadata && wcfg.RequireIssuerMetadataName &&
 		wcfg.IssuerMetadataRoots != nil && !wcfg.IssuerMetadataRoots.Equal(x509.NewCertPool())
-	receives := wcfg.IssuerRoots != nil || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
+	receives := receivesCredentials(wcfg)
 	switch {
 	case wcfg.AllowAnyCredentialIssuer && (listed || named):
 		return newError(CodeInvalidInput, errors.New("allow_any_credential_issuer takes any issuer's offer, but credential_issuers "+
@@ -634,6 +652,13 @@ func checkCredentialIssuerTrust(wcfg walletflow.Config) error {
 	return nil
 }
 
+// receivesCredentials reports whether wcfg trusts any credential
+// issuer, as walletflow decides it: issuer_roots, issuer_roots_by_vct,
+// mdoc_issuer_roots or mdoc_issuer_roots_by_doctype.
+func receivesCredentials(wcfg walletflow.Config) bool {
+	return wcfg.IssuerRoots != nil || len(wcfg.IssuerRootsByVCT) > 0 || wcfg.MdocIssuerRoots != nil || len(wcfg.MdocIssuerRootsByDocType) > 0
+}
+
 // mdocIssuerTrust sets wcfg's mdoc-specific issuer trust from cfg's
 // mdoc_issuer_roots, mdoc_issuer_roots_by_doctype and
 // mdoc_issuer_require_eku.
@@ -642,17 +667,8 @@ func mdocIssuerTrust(cfg config, wcfg *walletflow.Config) error {
 	if wcfg.MdocIssuerRoots, err = optionalCertPool("mdoc_issuer_roots", cfg.MdocIssuerRoots); err != nil {
 		return err
 	}
-	if len(cfg.MdocIssuerRootsByDocType) > 0 {
-		wcfg.MdocIssuerRootsByDocType = make(map[string]*x509.CertPool, len(cfg.MdocIssuerRootsByDocType))
-		for docType, pemText := range cfg.MdocIssuerRootsByDocType {
-			// Unlike an unset key, an empty entry names its type with no
-			// roots: none of its documents are accepted.
-			pool, err := optionalCertPool(fmt.Sprintf("mdoc_issuer_roots_by_doctype[%q]", docType), pemText)
-			if err != nil {
-				return err
-			}
-			wcfg.MdocIssuerRootsByDocType[docType] = pool
-		}
+	if wcfg.MdocIssuerRootsByDocType, err = optionalCertPoolsByType("mdoc_issuer_roots_by_doctype", cfg.MdocIssuerRootsByDocType); err != nil {
+		return err
 	}
 	if !cfg.AcceptMDLSignerWithoutEKU {
 		wcfg.MdocIssuerLeafPolicy, err = roleEKU("mdoc_issuer_require_eku", cfg.MdocIssuerRequireEKU)
@@ -668,6 +684,25 @@ func mdocIssuerTrust(cfg config, wcfg *walletflow.Config) error {
 	}
 	wcfg.MdocIssuerLeafPolicy = mdoc.LenientDocumentSignerPolicy
 	return nil
+}
+
+// optionalCertPoolsByType is the PEM certificates of each type the
+// config key name gives roots, as a pool, by type; nil when it names
+// none. Unlike an unset key, an empty entry names its type with no
+// roots: none of its credentials are accepted.
+func optionalCertPoolsByType(name string, pems map[string]string) (map[string]*x509.CertPool, error) {
+	if len(pems) == 0 {
+		return nil, nil
+	}
+	pools := make(map[string]*x509.CertPool, len(pems))
+	for typ, pemText := range pems {
+		pool, err := optionalCertPool(fmt.Sprintf("%s[%q]", name, typ), pemText)
+		if err != nil {
+			return nil, err
+		}
+		pools[typ] = pool
+	}
+	return pools, nil
 }
 
 // optionalCertPool is the PEM certificates of the config key name as a

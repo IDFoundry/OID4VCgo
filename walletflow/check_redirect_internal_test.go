@@ -2,6 +2,7 @@ package walletflow
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -31,5 +32,25 @@ func TestCheckRedirect_RefusesTheWalletsOwnScheme(t *testing.T) {
 		if err := (&Wallet{cfg: Config{RedirectURI: own}}).checkRedirect("https://wallet.example/cb"); err != nil {
 			t.Errorf("RedirectURI %q: %v, want an https redirect followed", own, err)
 		}
+	}
+}
+
+// New refuses a VerifierRedirectSchemes entry a Verifier's redirect is
+// never followed with — the Wallet's own redirect URI's scheme, which
+// checkRedirect refuses, and those wallet refuses — and one that isn't
+// a URI scheme.
+func TestNew_VerifierRedirectSchemes(t *testing.T) {
+	deps := Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore()}
+	cfg := func(schemes ...string) Config {
+		return Config{RedirectURI: "com.example.wallet:/callback", Development: true, VerifierRedirectSchemes: schemes}
+	}
+	for _, schemes := range [][]string{{"COM.Example.Wallet"}, {"https", "http"}, {"market"}, {"com example"}} {
+		_, err := New(cfg(schemes...), deps)
+		if err == nil || !strings.Contains(err.Error(), "VerifierRedirectSchemes") && !strings.Contains(err.Error(), "verifier_redirect_schemes") {
+			t.Errorf("%q: New = %v, want it refused", schemes, err)
+		}
+	}
+	if _, err := New(cfg("https", "com.example.verifier"), deps); err != nil {
+		t.Errorf("New = %v", err)
 	}
 }
