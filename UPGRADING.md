@@ -7,6 +7,36 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.42.0 → 0.43.0
+
+The gomobile ABI is still 16.
+
+### Key stores sweep only the keys they make (Swift, Kotlin)
+
+`KeychainKeyStore` and `AndroidKeystoreKeyStore` list (`keyIDs()`)
+and sweep (`deleteKeys(except:)`, which `Wallet.sweepOrphanedKeys`
+calls) only the keys whose tag or alias is the store's prefix and a
+UUID, as `createKey` makes them. A store whose prefix extends another's
+no longer loses its keys to the other's sweep, which on Android failed
+instead, with `malformed key ID`, when the longer prefix added a `.`.
+
+Two stores under the same prefix still sweep each other's keys, and on
+iOS a store lists its prefix's keys in every Keychain access group the
+app can read, with `holderAccessGroup` or without. Give each key
+store — each wallet's, each Wallet Provider's registration keys', and
+those of apps that share an access group — a prefix where neither
+extends another's. A document provider extension's store is its app's
+wallet's, and keeps the app's prefix.
+
+### The registration key sweep refuses a store over a wallet's keys (Swift, Kotlin)
+
+`HttpWalletProvider.sweepOrphanedRegistrationKeys()` throws, deleting
+nothing (`IllegalArgumentException` in Kotlin, `StoreError` in Swift),
+when its registration key store's prefix is, covers or falls under the
+prefix of the key store of a `Wallet` made with a provider over the
+same registry: it would delete that wallet's keys. Keep registration
+keys under a prefix of their own, as `registrationKeyStore()` does.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration

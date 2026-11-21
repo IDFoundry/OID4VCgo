@@ -528,6 +528,26 @@ class SessionTest {
             registration.deleteKey(registrationKey)
         }
     }
+
+    /**
+     * A Wallet Provider's registration key sweep refuses a store whose
+     * prefix is, covers or falls under the key store's of a wallet built
+     * with it, deleting nothing: it would delete the wallet's keys.
+     */
+    @Test
+    fun registrationSweepRefusesTheWalletsKeys(): Unit = runBlocking {
+        val env = env()
+        val keys = keyStore()
+        val walletKey = keys.createKey(KeyPurpose.HOLDER)
+        for (registrationPrefix in listOf(prefix, prefix + "wp.", prefix.dropLast(1))) {
+            val registration = AndroidKeystoreKeyStore(AndroidKeystoreKeyStore.Options(holderUserAuthentication = false, aliasPrefix = registrationPrefix))
+            val provider = HttpWalletProvider("https://wp.example", InMemoryInstanceRegistry(), registration)
+            Wallet(env.configuration, keys, InMemoryCredentialStore(), provider)
+            val refused = runCatching { provider.sweepOrphanedRegistrationKeys() }.exceptionOrNull()
+            assertTrue("swept $registrationPrefix: $refused", refused is IllegalArgumentException)
+            assertNotNull("the sweep deleted the wallet's key", keys.publicKey(walletKey))
+        }
+    }
 }
 
 /** The SD-JWT VC format. */
