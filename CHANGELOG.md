@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.85.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.84.0...v0.85.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** with attestation-based client authentication under AssuranceProduction, fapigo's server.New now runs the status checker's own CheckConfiguration and doesn't start on its error: a haip.WalletAttestationStatusList whose Fetcher may reach loopback or private addresses, or that has no Options.Revocation or no Cache, is refused, as is a checker of your own without a CheckConfiguration method. RARRegistry.ValidateNarrowing takes the access token's scope as a third argument. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.78.0.
+
+### Features
+
+* **issuer:** refuse a token request leaving out an object its scope still grants ([bd4cee1](https://github.com/IDFoundry/OID4VCgo/commit/bd4cee1eec1640c26aee00f61f6154ae1fa43484))
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.78.0 ([452c73e](https://github.com/IDFoundry/OID4VCgo/commit/452c73ebe649e99aa956d54005a511032a3e6bfc))
+
 ## [0.84.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.83.0...v0.84.0) (2026-11-20)
 
 
