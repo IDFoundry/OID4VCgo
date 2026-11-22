@@ -616,9 +616,11 @@ func lostFields(tx, saved Transaction) []string {
 	return lost
 }
 
-// sameQuery reports whether a and b are the same query once read back
-// through JSON: numbers compared as float64, as a query decoded from
-// JSON holds them (see dcql.ClaimsQuery's Values).
+// sameQuery reports whether a and b are the same query once encoded as
+// JSON, numbers compared as written. A copy read back through JSON is
+// written alike: dcql.Query.Validate, which Begin applies, refuses a
+// values integer a float64 doesn't hold, and meta is kept as JSON. A
+// number the copy holds otherwise, by however little, differs.
 func sameQuery(a, b dcql.Query) bool {
 	ha, errA := queryHash(a)
 	hb, errB := queryHash(b)
@@ -630,7 +632,7 @@ func queryHash(q dcql.Query) ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	return canonicalQueryHash(raw, false)
+	return canonicalQueryHash(raw)
 }
 
 func sameKey(a, b *ecdsa.PrivateKey) bool {

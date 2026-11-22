@@ -7,6 +7,21 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.43.0 → 0.44.0
+
+Built from OID4VCgo v0.87.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### `refreshCRLs` reads at most 1 MiB of a list (Swift, Kotlin)
+
+`Wallet.refreshCRLs()` and `ProximityReader.refreshCRLs()` now refuse
+a distribution point's answer larger than 1 MiB, rather than 8 MiB:
+that point's outcome is failed, and the list held for its CA, if any,
+is kept until its nextUpdate. An IACA's list is a few kilobytes. Where
+a CA's lists are larger, fetch them yourself and hand them over with
+`setCRLs`, or as `revocation.crls` at launch, which have no such
+bound.
+
 ## v0.86.0 → v0.87.0
 
 ### A wallet's stores must seal their records outside Development (walletflow, sqlstore)
@@ -91,6 +106,55 @@ and `AnyAttestationLeaf` can't tell the two apart, and count as unset.
 
 Never recorded since v0.84.0, which deprecated it: drop any reference
 to it, such as a case in an `AuditSink`'s switch.
+
+### A DCQL `values` integer beyond ±(2^53 − 1) is refused (`dcql`, `verifier`, `wallet`, `walletflow`, mobile)
+
+A DCQL query read from JSON holds its numbers as float64s, and no
+float64 holds every integer beyond ±(2^53 − 1) exactly: a `values`
+filter on 9007199254740993 read back as 9007199254740992. A Wallet
+reading the Request Object, and `verifier.Transactions` reading the
+query back from its store to check the answer, then matched an
+integer the Verifier hadn't asked for, and refused the one it had.
+`dcql.Query.Validate` now refuses a `values` integer beyond
+±(2^53 − 1) (I-JSON, RFC 7493 §2.2), and a float32 one beyond ±2^24,
+which encoding/json can write as another integer. So the Verifier's
+request builders, `Transactions.Begin` and `VerifyResponse` refuse a
+query with one, and a wallet or walletflow refuses a request carrying
+one as `invalid_request`.
+
+To filter on such an identifier, have it issued as a string. An mdoc
+element holding one can't be filtered on: request it without `values`
+and compare the value `VerifyResponse` returns. A request begun before
+the upgrade with such a filter fails when it's answered.
+
+### See which of a query's types fall back to `Roots` (`verifier`)
+
+The new `X5CIssuerKeyResolver.FallbackTypes` reports, by credential
+query ID, each type a query's `vct_values` name that `RootsByVCT`
+doesn't, while `Roots` is set too: a credential of that type is
+trusted under `Roots`, so every anchor there may sign one. Where you
+set both, run it on your queries at startup or in a test, and name
+what it reports in `RootsByVCT` (each of a PID type's `vct` values,
+say), or check those types' issuers in `IssuerAuthorized`. It's a
+warning only: nothing calls it, and nothing is refused.
+
+### `certrevocation.DefaultCRLMaxBytes` is 1 MiB (`certrevocation`, mobile)
+
+A `Refresher` refuses a CRL larger than its `RefresherConfig.MaxBytes`,
+`DefaultCRLMaxBytes` when that's zero: now 1 MiB, rather than 8 MiB.
+The bound is also what anyone answering a plain `http` distribution
+point can make the process read and parse before the list's signature
+is checked, which allocates several dozen times its size: about
+360 MiB a fetch at 8 MiB, 45 MiB at 1 MiB. At about 50 bytes a
+revocation, 1 MiB holds some 20,000, hundreds of times what an IACA's,
+an issuer CA's, a Wallet Provider's CA's or a status list signer's
+CA's list holds. A list beyond it is refused (`the response exceeds
+1048576 bytes`): a `Refresher` holding no list for its CA, as after a
+restart, has that CA's certificates refused with `ErrNoCurrentCRL`,
+and one holding an older list does once its nextUpdate passes. For a
+CA whose lists are larger, set `MaxBytes` on its `Refresher`. The
+mobile libraries' `refreshCRLs` reads at most 1 MiB a list too (see
+OID4VCWallet 0.43.0 → 0.44.0 above).
 
 ## OID4VCWallet 0.42.0 → 0.43.0
 

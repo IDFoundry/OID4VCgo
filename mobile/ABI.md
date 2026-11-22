@@ -966,9 +966,9 @@ refuses; the lists held, from `crls`, `SetCRLs` or an earlier refresh,
 are the floor — those a CA the configuration has signed, from
 OID4VCWallet 0.29.0 (see below). Fetches are a GET, over `http` or `https` (a CRL is
 signed, so distribution points are usually plain `http`), at most
-8 MiB, DER or one PEM block, following at most three redirects on the
-same host only, from public addresses only outside `development`, and
-the private ones of `allowed_private_hosts`
+1 MiB (8 MiB before OID4VCWallet 0.44.0), DER or one PEM block,
+following at most three redirects on the same host only, from public
+addresses only outside `development`, and the private ones of `allowed_private_hosts`
 (the hardened client of `certrevocation.Refresher`), over one client
 whose connections every refresh of the Wallet or ProximityReader
 reuses. Once a list has been fetched from a point, later fetches are

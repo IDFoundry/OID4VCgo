@@ -30,6 +30,10 @@ func TestValidateStrictShapes(t *testing.T) {
 		"mdoc path of one":        {query: mdoc + `"claims":[{"path":["org.iso.18013.5.1"]}]}`, refused: "two strings"},
 		"mdoc path with index":    {query: mdoc + `"claims":[{"path":["org.iso.18013.5.1",0]}]}`, refused: "two strings"},
 		"intent_to_retain sd-jwt": {query: sdjwt + `"claims":[{"path":["a"],"intent_to_retain":true}]}`, refused: "intent_to_retain"},
+		// A values integer must be one a float64 holds exactly: 2^53 + 1
+		// decodes as 2^53, as 2^53 itself does.
+		"value of ±(2^53 − 1)":  {query: sdjwt + `"claims":[{"path":["a"],"values":[9007199254740991,-9007199254740991]}]}`},
+		"value beyond 2^53 − 1": {query: sdjwt + `"claims":[{"path":["a"],"values":[1,9007199254740993]}]}`, refused: "values[1] is an integer beyond"},
 		// meta is read as the format's type, and another parser reads
 		// vct_values or doctype_value exactly: neither may hide behind a
 		// member that differs only in case, or appear twice.

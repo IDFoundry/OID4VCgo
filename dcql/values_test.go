@@ -91,6 +91,31 @@ func TestSatisfiedBySDJWTVCClaims_ValuesOfEveryGoNumericKind(t *testing.T) {
 	}
 }
 
+// Validate refuses a values integer of any Go numeric kind JSON doesn't
+// carry exactly: beyond ±(2^53 − 1), or, for a float32, ±2^24. Read back
+// as a float64, by the Wallet or the Verifier's store, it would be
+// another integer: 2^53 + 1 reads back as 2^53, and float32(1 << 30),
+// written 1073741800, as that.
+func TestValidate_ValuesIntegersJSONCarriesExactly(t *testing.T) {
+	const safe = 1<<53 - 1
+	for _, c := range []struct {
+		value any
+		ok    bool
+	}{
+		{int64(safe), true}, {int64(-safe), true}, {uint64(safe), true}, {float64(-safe), true},
+		{json.Number("9007199254740991"), true}, {float32(1 << 24), true},
+		{int64(safe + 1), false}, {int64(-safe - 1), false}, {uint64(safe + 1), false},
+		{float64(safe + 1), false}, {1e300, false}, {json.Number("-9007199254740993"), false},
+		{float32(1 << 30), false},
+	} {
+		q := sdjwtQuery(t, []dcql.ClaimsQuery{{Path: key("n"), Values: []any{c.value}}}, nil)
+		err := (dcql.Query{Credentials: []dcql.CredentialQuery{q}}).Validate()
+		if (err == nil) != c.ok {
+			t.Errorf("%T(%v): Validate = %v, want ok = %v", c.value, c.value, err, c.ok)
+		}
+	}
+}
+
 // TestSelectedSDJWTVCClaimPaths_ValuesSelectClaimSetOption: an option
 // whose value doesn't match is skipped for the next one.
 func TestSelectedSDJWTVCClaimPaths_ValuesSelectClaimSetOption(t *testing.T) {

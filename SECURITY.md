@@ -252,15 +252,20 @@ they're not yet closed in the library.
   allows (ISO/IEC 18013-5 Annex B allows long ones for an IACA). Set
   `RequireHTTPS` where the distribution points serve https; otherwise
   seed `Floors` with a list obtained over a trusted channel.
-- **DCQL integers above 2^53.** A DCQL query decoded from JSON holds its
-  numbers as float64, so a `values` filter on an integer larger than
-  2^53 in magnitude is rounded: it can match a claim one off it, and
-  miss its own. This applies to the wallet's filter and the verifier's
-  check alike. An SD-JWT VC's claims can't hold such a number:
-  `sdjwtvc.Issue` won't sign one beyond ±(2^53 − 1)
-  (`sdjwtvc.MaxSafeInteger`), and `Verify` refuses one signed anyway,
-  so that two values an issuer signed apart never verify as one. Carry
-  identifiers as strings.
+- **Integers beyond 2^53 − 1.** A JSON number decodes to a float64,
+  which holds every integer exactly only up to 2^53 − 1: 2^53 + 1
+  reads back as 2^53. So none reaches a DCQL `values` filter or an
+  SD-JWT VC claim. `dcql.Query.Validate` refuses a `values` integer
+  beyond ±(2^53 − 1): a Verifier can't build a filter that would match
+  another integer than the one it asked for, a wallet refuses a request
+  carrying one, and the query `verifier.Transactions` stores reads back
+  as it was built. `sdjwtvc.Issue` won't sign a claim beyond
+  ±(2^53 − 1) (`sdjwtvc.MaxSafeInteger`), and `Verify` refuses one
+  signed anyway, so that two values an issuer signed apart never verify
+  as one. An mdoc element can hold a larger integer, CBOR being exact,
+  but no `values` filter can match it: request the element without one
+  and compare the value `VerifyResponse` returns. Carry identifiers as
+  strings.
 - **Relayed cross-device requests.** In the cross-device flow nothing
   ties the device that shows a QR code to the one that started the
   Verifier's session (OpenID4VP 1.0 §14.2). An attacker can start a

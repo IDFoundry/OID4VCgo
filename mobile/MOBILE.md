@@ -478,7 +478,7 @@ CRLs it holds, through `certrevocation.CRLs`.
   and a ProximityReader, over one `crlSet` helper) does one pass over
   the configured distribution points with a `certrevocation.Refresher`
   per point, so the hardening is the server side's (public addresses
-  only outside development, 8 MiB cap, same-host redirects, signature
+  only outside development, 1 MiB cap, same-host redirects, signature
   and currency checks, the never-older floor taken from the lists held
   now), and merges what it accepted into the set under the existing
   rule. It runs no loop and starts no goroutine: an app's process is
