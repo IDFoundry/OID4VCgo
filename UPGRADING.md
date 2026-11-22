@@ -7,6 +7,38 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.86.0 → v0.87.0
+
+### A wallet's stores must seal their records outside Development (walletflow, sqlstore)
+
+Outside `Development`, `walletflow.New` refuses a `Credentials`,
+`Deferred`, `Grants` or `Authorizations` store that doesn't implement
+`sealing.Store` with `SealsRecords` true, as the issuer and the Wallet
+Provider refuse theirs under production, whether the wallet receives
+credentials or only presents them. They hold the holder's credentials,
+the access tokens of pending deferred credentials, refresh tokens, and
+the Credential Offers and PKCE verifiers of authorizations in
+progress: a copy of an unsealed database reveals the credentials, and
+any token not bound to a key outside it, a Bearer access token say.
+The error names the store and `Config.UnsealedStores`. walletflow's
+memory stores, the defaults, keep nothing at rest and are still taken.
+
+With `sqlstore`, give the DB a Sealer (`sqlstore.Options{Sealer:
+sealer}`, `sealer` from `sealing.AESGCMSealer` with a 32-byte key kept
+outside the database) and upgrade to sqlstore v0.17.0, whose wallet
+stores declare it: an earlier release's are refused, Sealer or not. A
+DB with a Sealer can't read records written without one, and a
+wallet's never expire: to seal them, list each store's records from
+the DB without the Sealer and put them into one with it, over empty
+tables in another schema or file. A store of your own implements
+`SealsRecords`.
+
+The new `Config.UnsealedStores` accepts the stores unsealed: set it
+only where something else protects the records at rest as sealing
+would, as a phone's data protection does. The mobile package sets it
+for the app's `CredentialStore`, so the Swift and Kotlin libraries
+need no change.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

@@ -86,7 +86,10 @@ type PendingDeferred struct {
 // DeferredStore keeps the wallet's pending deferred credentials, so they
 // can be polled after the wallet restarts: under the platform's data
 // protection, like the CredentialStore, since each holds an access
-// token. MemoryDeferredStore keeps them only for the process's life.
+// token, and sealed as it is (sealing.Store): outside Development, New
+// refuses one that doesn't declare it seals its records, unless
+// Config.UnsealedStores accepts it. MemoryDeferredStore keeps them only
+// for the process's life, and nothing at rest.
 type DeferredStore interface {
 	// PutDeferred stores p, replacing any with its ID.
 	PutDeferred(ctx context.Context, p PendingDeferred) error
