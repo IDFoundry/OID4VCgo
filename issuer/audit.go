@@ -42,15 +42,9 @@ const (
 	// RedeemPreAuthorizedCode call.
 	AuditEventRedeemPreAuthorizedCode
 
-	// AuditEventLegacyDeferredAuthorization recorded, in OID4VCgo
-	// v0.83.0, a poll for a deferred transaction whose record carries
-	// neither DeferredTransactionRecord.CredentialIdentifier nor
-	// RequestedByConfigurationID, checked against its credential
-	// configuration alone. Such a poll is now refused as an unknown
-	// transaction, and this event is never recorded.
-	//
-	// Deprecated: never recorded since v0.84.0; it will be removed.
-	AuditEventLegacyDeferredAuthorization
+	// Reserved: an event type OID4VCgo v0.83.0 alone recorded, so that
+	// no other takes its value in a log kept from then.
+	_
 )
 
 // AuditOutcome is a closed set of outcomes for an AuditEvent.

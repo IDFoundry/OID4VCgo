@@ -39,6 +39,11 @@ would, as a phone's data protection does. The mobile package sets it
 for the app's `CredentialStore`, so the Swift and Kotlin libraries
 need no change.
 
+### `AuditEventLegacyDeferredAuthorization` is removed (`issuer`)
+
+Never recorded since v0.84.0, which deprecated it: drop any reference
+to it, such as a case in an `AuditSink`'s switch.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet
