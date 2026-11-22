@@ -324,7 +324,8 @@ class SessionTest {
     fun refusedRequestCarriesItsRedirect(): Unit = runBlocking {
         val env = env()
         val w = wallet(env)
-        val errors = listOf("https://verifier.example/first", "https://verifier.example/second").map { redirect ->
+        val redirects = listOf("https://verifier.example/first", "https://verifier.example/second")
+        val errors = redirects.map { redirect ->
             try {
                 w.startPresentation(env.refusedRequest(redirect))
                 fail("a request carrying transaction_data was answered")
@@ -335,9 +336,9 @@ class SessionTest {
         }
         assertEquals(listOf(WalletException.Code.requestRefused, WalletException.Code.requestRefused), errors.map { it.code })
         assertEquals(listOf("invalid_transaction_data", "invalid_transaction_data"), errors.map { it.protocolError })
-        assertEquals(listOf("https://verifier.example/first", "https://verifier.example/second"), errors.map { it.refusalRedirect })
+        assertEquals(redirects, errors.map { it.refusalRedirect })
         assertFalse("the redirect stays out of logs", errors.any { it.message!!.contains("verifier.example") })
-        assertEquals("https://verifier.example/second", w.takeRefusalRedirect())
+        assertEquals(redirects.last(), w.takeRefusalRedirect())
         assertNull(w.takeRefusalRedirect())
     }
 

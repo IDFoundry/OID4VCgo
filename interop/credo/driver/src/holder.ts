@@ -276,11 +276,22 @@ function errorText(error: unknown): string {
       if (extra.errorResponse) parts.push(JSON.stringify(extra.errorResponse))
       e = e.cause
     } else {
-      parts.push(String(e))
+      // A thrown value that isn't an Error, such as an error
+      // response: its fields, not "[object Object]".
+      parts.push(typeof e === 'object' ? jsonText(e) : String(e))
       e = undefined
     }
   }
   return parts.join(' | ')
+}
+
+// jsonText is v as JSON, or its tag when it has none, as for a cycle.
+function jsonText(v: unknown): string {
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return Object.prototype.toString.call(v)
+  }
 }
 
 function sleep(ms: number) {

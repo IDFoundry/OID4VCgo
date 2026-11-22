@@ -287,8 +287,7 @@ func ComputeDeviceMAC(
 // (Keystore ECDH, SecKeyCopyKeyExchangeResult) returns it. The result
 // is byte for byte ComputeDeviceMAC's for the same inputs.
 func ComputeDeviceMACFromSharedSecret(
-	sharedSecret []byte,
-	sessionTranscriptBytes []byte, docType string,
+	sharedSecret, sessionTranscriptBytes []byte, docType string,
 	nameSpaces map[string]map[string]interface{},
 ) (DeviceSigned, error) {
 	switch len(sharedSecret) {

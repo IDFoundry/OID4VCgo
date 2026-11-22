@@ -237,7 +237,7 @@ func parseCWTClaims(decoded map[int]interface{}) (TokenClaims, error) {
 // a generic map/slice rather than a concrete Go type — and decodes the
 // result into out, to reuse fxamacker/cbor's own struct-tag matching
 // rather than hand-walking the generic value.
-func decodeCBORValue(v interface{}, out interface{}) error {
+func decodeCBORValue(v, out interface{}) error {
 	raw, err := cbor.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("statuslist: re-marshal CBOR value: %w", err)

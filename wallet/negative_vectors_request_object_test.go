@@ -80,7 +80,7 @@ func leafUnder(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, pub 
 
 // sign is the fixture's Request Object with header and payload changed
 // by the given functions, signed by key.
-func (f requestFixture) sign(t *testing.T, key *ecdsa.PrivateKey, header func(map[string]any), payload func(map[string]any)) string {
+func (f requestFixture) sign(t *testing.T, key *ecdsa.PrivateKey, header, payload func(map[string]any)) string {
 	t.Helper()
 	h, p := map[string]any{}, map[string]any{}
 	for k, v := range f.header {

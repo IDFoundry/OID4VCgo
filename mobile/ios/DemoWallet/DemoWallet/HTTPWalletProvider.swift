@@ -106,7 +106,8 @@ enum InstanceKeyProof {
     /// members as the provider writes them from its point.
     static func thumbprint(_ jwk: Data) throws -> String {
         let point = try uncompressedPoint(jwk)
-        let x = base64URL(point[1...32]), y = base64URL(point[33...])
+        let x = base64URL(point[1...32])
+        let y = base64URL(point[33...])
         return base64URL(Data(SHA256.hash(data: Data(#"{"crv":"P-256","kty":"EC","x":"\#(x)","y":"\#(y)"}"#.utf8))))
     }
 

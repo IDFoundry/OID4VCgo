@@ -308,7 +308,7 @@ func TestStatusListsEmptyCached(t *testing.T) {
 	idx := &countingIndices{}
 	h := newHarness(t, func(_ *walletprovider.Config, d *walletprovider.Dependencies) { d.StatusIndices = idx })
 	start := h.periodStart()
-	get := func(n int, want, wantCalls int) {
+	get := func(n, want, wantCalls int) {
 		t.Helper()
 		path := strings.TrimPrefix(listURI(start, n), statusBase)
 		if code, body := h.getStatusList(path, ""); code != want || idx.calls() != wantCalls {

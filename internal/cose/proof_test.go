@@ -59,17 +59,17 @@ func TestProof(t *testing.T) {
 		}
 	}
 
-	if got := proof.For(&other.PublicKey, ES256); got != &other.PublicKey {
+	if proof.For(&other.PublicKey, ES256) != &other.PublicKey {
 		t.Error("For handed the proof over for another key")
 	}
-	if got := proof.For(&key.PublicKey, ES384); got != &key.PublicKey {
+	if proof.For(&key.PublicKey, ES384) != &key.PublicKey {
 		t.Error("For handed the proof over for another algorithm")
 	}
-	if got := proof.For(&key.PublicKey, ES256); got != proof {
+	if proof.For(&key.PublicKey, ES256) != proof {
 		t.Error("For didn't hand the proof over for its own key")
 	}
 	var none *Proof
-	if got := none.For(&key.PublicKey, ES256); got != &key.PublicKey {
+	if none.For(&key.PublicKey, ES256) != &key.PublicKey {
 		t.Error("a nil proof's For isn't the key")
 	}
 	if _, _, _, err := Verify(ES256, none, sign1, nil); err == nil {

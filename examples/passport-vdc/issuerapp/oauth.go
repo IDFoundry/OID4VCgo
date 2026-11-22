@@ -307,7 +307,7 @@ func (a *App) claimTransaction(w http.ResponseWriter, r *http.Request, pending p
 	return false
 }
 
-func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, message string) {
+func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID, message string) {
 	wallet := "A wallet"
 	if clientID == a.cfg.Wallet.ClientID {
 		wallet = "The passport demo wallet"

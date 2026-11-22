@@ -19,7 +19,7 @@ import (
 // current time.
 func TestX5C_SignerCertificateCheckedAtNow(t *testing.T) {
 	then := time.Now().Add(-30 * 24 * time.Hour).Truncate(time.Second)
-	cert := func(tmpl *x509.Certificate, parent *x509.Certificate, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) *x509.Certificate {
+	cert := func(tmpl, parent *x509.Certificate, pub *ecdsa.PublicKey, signer *ecdsa.PrivateKey) *x509.Certificate {
 		t.Helper()
 		tmpl.SerialNumber = big.NewInt(time.Now().UnixNano())
 		tmpl.NotBefore, tmpl.NotAfter = then.Add(-time.Hour), then.Add(time.Hour)
