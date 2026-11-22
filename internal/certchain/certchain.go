@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/internal/jose"
 	"github.com/idfoundry/oid4vcgo/internal/jwk"
 )
 
@@ -387,10 +388,13 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 // CheckIssuerName checks that iss, an SD-JWT VC's issuer claim, names
 // the end-entity certificate leaf its key came from (SD-JWT VC, the
 // x5c header): a "dns:" URI's DNS name must be one of leaf's dNSName
-// subject alternative names, and any other iss one of its
-// uniformResourceIdentifier names, compared exactly. A certificate a
-// trusted root issued to another issuer can then sign nothing in this
-// issuer's name, nor can one that shares only its host.
+// subject alternative names, compared in ASCII case only, as those are
+// IA5Strings (RFC 5280 §4.2.1.6), so that no Unicode case fold, such
+// as the Kelvin sign's onto "k", turns another name into one of them;
+// and any other iss one of its uniformResourceIdentifier names,
+// compared exactly. A certificate a trusted root issued to another
+// issuer can then sign nothing in this issuer's name, nor can one that
+// shares only its host.
 //
 // That holds only as far as no trusted CA can certify the name for
 // another party. Name constraints confine each name type separately
@@ -403,7 +407,7 @@ func CheckPresentedChain(leaf *x509.Certificate, intermediates []*x509.Certifica
 func CheckIssuerName(leaf *x509.Certificate, iss string) error {
 	if strings.HasPrefix(iss, "dns:") {
 		name := strings.TrimPrefix(strings.TrimPrefix(iss, "dns:"), "//")
-		if name != "" && slices.ContainsFunc(leaf.DNSNames, func(d string) bool { return strings.EqualFold(d, name) }) {
+		if name != "" && slices.ContainsFunc(leaf.DNSNames, func(d string) bool { return jose.EqualFoldASCII(d, name) }) {
 			return nil
 		}
 		return fmt.Errorf("certchain: iss %q isn't a DNS name of the signing certificate", iss)
