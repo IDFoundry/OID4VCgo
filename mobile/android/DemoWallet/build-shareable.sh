@@ -28,7 +28,7 @@ cd "$(dirname "$0")"
 : "${PROVIDER_URL:?set PROVIDER_URL to the Wallet Provider public https URL, cmd/demo -provider-url}"
 STATE="${STATE:-../../../examples/passport-vdc/.demo-state}"
 OUT="${1:-build/shareable}"
-for f in issuer-ca.pem verifier-ca.pem mdoc-reader-ca.pem mdoc-reader.pem; do
+for f in issuer-ca.pem credential-issuers verifier-ca.pem mdoc-reader-ca.pem mdoc-reader.pem; do
 	[ -s "$STATE/$f" ] || { echo "no $STATE/$f: run the passport-vdc demo first" >&2; exit 1; }
 done
 WORK="$(mktemp -d)"
@@ -54,6 +54,10 @@ config = {
         "client_id": "passport-vdc-wallet",
         "redirect_uri": "dev.idfoundry.oid4vcgo.demowallet:/callback",
         "issuer_roots": (state / "issuer-ca.pem").read_text(),
+        # The demo's issuer, the only one whose offers the app takes: an
+        # offer naming another is refused before the holder is asked for
+        # a PIN. cmd/demo writes it, with the issuer's public URL.
+        "credential_issuers": (state / "credential-issuers").read_text().split(),
         "verifier_roots": (state / "verifier-ca.pem").read_text(),
         "registrar_roots": (state / "registrar-ca.pem").read_text() if (state / "registrar-ca.pem").exists() else "",
         # Readers are recognized by the mdoc reader CA of the demo.
@@ -67,6 +71,10 @@ config = {
         "revocation": REVOCATION,
         "crl_distribution_points_from_roots": True,
         "crl_require_https": True,
+        # A status list signed over a day ago is refused, as production
+        # requires a bound: the demo's issuer signs its lists every
+        # minute.
+        "status_max_age_seconds": 86400,
     },
     "provider_url": provider,
 }
