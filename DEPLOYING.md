@@ -469,6 +469,18 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   across restarts needs a `StoreKey` (at least 32 random bytes, kept
   apart from the store, the same on every process sharing it), or a
   kept token is reused only within `MaxAge` of its iat.
+- [ ] **Bound a status list's age:** `statuslist.VerifyOptions.MaxAge`
+  on every status `Checker` (under `AssuranceProduction` a
+  `verifier.StatusPolicy` needs it, or `AnyListAge` to decline it). A
+  list signed before a revocation stays valid until its exp, which an
+  issuer may put months ahead, and anyone who can serve bytes at its
+  URI (a CDN, a mirror, a former owner of the domain) can replay it
+  until then. `MaxAge` refuses a list signed longer ago, wherever it
+  came from, so a revocation takes effect within `MaxAge` whatever is
+  served. Set it above the longest interval your issuers sign their
+  lists at: 24 hours for issuers that sign them at least daily. It
+  isn't `CacheOptions.MaxAge`, which bounds how long a list fetched is
+  used before it's fetched again.
 
 ```go
 crls, _ := certrevocation.NewRefresher(certrevocation.RefresherConfig{
@@ -486,10 +498,11 @@ go crls.Run(ctx)
 
 cache := statuslist.NewCache(statuslist.CacheOptions{MaxEntries: 1024})
 checker := statuslist.Checker{Fetcher: fetcher, Roots: roots, Cache: cache,
-	// Required under production: the list signers' certificates too.
-	// Leave Issuer, IssuerKey and UnboundSigner unset: a StatusPolicy
-	// binds each list's signer to its own credential's issuer.
-	Options: statuslist.VerifyOptions{Revocation: crls.Checker()}}
+	// Required under production: the list signers' certificates too,
+	// and how long ago a list may have been signed. Leave Issuer,
+	// IssuerKey and UnboundSigner unset: a StatusPolicy binds each
+	// list's signer to its own credential's issuer.
+	Options: statuslist.VerifyOptions{Revocation: crls.Checker(), MaxAge: 24 * time.Hour}}
 txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```
 

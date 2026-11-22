@@ -156,6 +156,26 @@ CA whose lists are larger, set `MaxBytes` on its `Refresher`. The
 mobile libraries' `refreshCRLs` reads at most 1 MiB a list too (see
 OID4VCWallet 0.43.0 → 0.44.0 above).
 
+### Bound a status list's age under production (verifier)
+
+Under `AssuranceProduction`, a `verifier.StatusPolicy`
+(`TransactionsConfig.Status`, `VerifyResponseRequest.Status`,
+`mdocdcapi.VerifyParams.Status`, `proximity.WithStatus`) is refused
+unless its `Checker.Options.MaxAge` is set: how long ago a status or
+identifier list may have been signed (its iat). A list signed before a
+revocation otherwise stays acceptable until its exp, however far ahead
+the issuer put it, and anyone who can serve bytes at the list's URI (a
+CDN, a mirror, a former owner of the domain) can replay it until then.
+Set `MaxAge` above the longest interval your issuers sign their lists
+at: 24 hours for issuers that sign them at least daily, as
+`statuslist.Publisher` does by default. A list older is refused, so a
+bound shorter than that fails the status check of every credential the
+issuer's list covers. Where your issuers' lists expire soon after
+they're signed, or whoever serves them is trusted not to serve an old
+one, set the new `StatusPolicy.AnyListAge` instead, which declines the
+bound explicitly. A policy setting both is refused, at every assurance
+level; under `AssuranceDevelopment` nothing else changes.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

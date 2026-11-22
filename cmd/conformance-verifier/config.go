@@ -400,6 +400,10 @@ func (c *Config) startIssuerCRL(ctx context.Context) error {
 // statusListFetchTimeout bounds one status list fetch.
 const statusListFetchTimeout = 30 * time.Second
 
+// statusListMaxAge is how long ago a status or identifier list may have
+// been signed (statuslist.VerifyOptions.MaxAge).
+const statusListMaxAge = 24 * time.Hour
+
 // statusPolicy is the Token Status List check StatusListTrustAnchorsPEM
 // turns on: nil when it's unset. Its Cache is the process's one, as
 // production requires; each suite module serves its list at a URI no
@@ -430,8 +434,10 @@ func (c Config) statusPolicy() (*verifier.StatusPolicy, error) {
 			// The list signers' certificates' revocation, against
 			// IssuerCRL's CRLs when it's set: a "dc+sd-jwt" list is
 			// signed under the credential issuer's CA, an mdoc's
-			// under the IACA.
-			Options: statuslist.VerifyOptions{Revocation: c.revocation()},
+			// under the IACA. A list signed over a day ago is
+			// refused, as production requires a bound: the suite and
+			// the interop runs sign theirs during the run.
+			Options: statuslist.VerifyOptions{Revocation: c.revocation(), MaxAge: statusListMaxAge},
 			Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
 		},
 		RequireReference: !c.StatusReferenceOptional,

@@ -69,8 +69,9 @@ const (
 	// proximity.WithAssurance(AssuranceProduction) requires
 	// proximity.WithStatus or proximity.WithNoStatusCheck
 	// (CheckStatusDecision, for all of them). A StatusPolicy is refused
-	// unless its Checker's Fetcher is HardenedForProduction and its
-	// Options.Revocation is set. A status check run inside an Accept
+	// unless its Checker's Fetcher is HardenedForProduction, its
+	// Options.Revocation is set, and its Options.MaxAge bounds a list's
+	// age (or AnyListAge declines that). A status check run inside an Accept
 	// instead — RequireValidStatus beside NoStatusCheck — isn't
 	// checked: its statuslist.Checker is the caller's to harden.
 	AssuranceProduction
