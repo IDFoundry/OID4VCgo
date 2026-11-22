@@ -149,12 +149,11 @@ func TestDeferral_UnmarkedRecordRefused(t *testing.T) {
 	f := newDeferralFixture(t, func(_ *issuer.Config, deps *issuer.Dependencies) { deps.Audit = sink })
 	txID := f.deferIssued(t, deferralAuth, issuer.CredentialRequest{CredentialConfigurationID: testSDJWTConfigID})
 	unmark(t, f, txID)
+	before := len(sink.recorded())
 	_, err := f.iss.RequestDeferredCredential(ctx, deferralAuth, issuer.DeferredCredentialRequest{TransactionID: txID})
 	assertIssuerError(t, err, issuer.ErrorInvalidTransactionID)
-	for _, e := range sink.recorded() {
-		if e.Type == issuer.AuditEventLegacyDeferredAuthorization { //nolint:staticcheck // SA1019: it must never be recorded now
-			t.Errorf("recorded %+v, a legacy deferred authorization event", e)
-		}
+	if polled := sink.recorded()[before:]; len(polled) != 1 || polled[0].Type != issuer.AuditEventRequestDeferredCredential || polled[0].Outcome != issuer.AuditOutcomeFailure {
+		t.Errorf("the refused poll recorded %+v, want its own failure alone", polled)
 	}
 
 	f = newDeferralFixture(t)

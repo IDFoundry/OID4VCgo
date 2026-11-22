@@ -39,6 +39,59 @@ would, as a phone's data protection does. The mobile package sets it
 for the app's `CredentialStore`, so the Swift and Kotlin libraries
 need no change.
 
+### Production bounds three more lifetimes (`issuer`)
+
+Under `AssuranceProduction`, `issuer.New` now refuses:
+- with `Dependencies.AccessTokens` set, a `Limits.AccessTokenLifetime`
+  over `issuer.MaxProductionAccessTokenLifetime`, 10 minutes. An access
+  token `ExchangePreAuthorizedCode` mints through it names no grant,
+  so revoking the grant (fapigo's `server.Server.RevokeGrant`, or the
+  Wallet revoking its refresh token) left it usable for as long as it
+  was set to live. There's no opt-out: for longer-lived tokens, redeem
+  codes with `RedeemPreAuthorizedCode` (under
+  `VerifiedPreAuthorizedCode`) and issue each token with
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it. Under `AnonymousPreAuthorizedCode`
+  the Wallet gets no refresh token, so it also has to collect a
+  deferred credential within that time;
+- with `CredentialOfferEndpoint` set, a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime`, a week: the longest a
+  pre-authorized code lives (`MaxProductionPreAuthorizedLifetime`).
+  Send an offer for the authorization code grant that must stay usable
+  longer by value;
+- with `Endpoints.DeferredCredential` set, a
+  `Limits.DeferredTransactionLifetime` over
+  `issuer.MaxProductionDeferredTransactionLifetime`, 30 days. Where a
+  review takes longer, deny the transaction and issue with a new
+  Credential Offer once it's done.
+
+**What to change:** lower each to its bound.
+
+### Key attestation signers and proof keys under one anchor are refused (`issuer`)
+
+`issuer.New` now refuses, at every assurance level, an
+`X5CAttestationVerifier` whose `Roots`, or under
+`AttestationIssuerBoundToAnchor` whose `Anchors`, may anchor the
+certificates of an `X5CProofBindingKeyResolver` set as
+`Dependencies.ProofBindingKeys`: the two pools both hold a certificate
+with one subject, or either is a system pool, which lists none of its
+roots. Wallets hold the keys of the certificates that resolver takes,
+so under a shared anchor a Wallet's own proof-key certificate could
+sign key attestations, claiming any `key_storage` for any key.
+
+**What to change:** give the two roots with no certificate subject in
+common, or set `X5CAttestationVerifier.LeafPolicy` to one requiring
+what only a Wallet Provider's signing certificates carry (an extended
+key usage or a certificate policy), calling
+`DefaultAttestationLeafPolicy` first. `DefaultAttestationLeafPolicy`
+and `AnyAttestationLeaf` can't tell the two apart, and count as unset.
+
+### `AuditEventLegacyDeferredAuthorization` is removed (`issuer`)
+
+Never recorded since v0.84.0, which deprecated it: drop any reference
+to it, such as a case in an `AuditSink`'s switch.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

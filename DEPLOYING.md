@@ -113,6 +113,39 @@ each, not a deployment template" says what it does differently.
   (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Deploying as HAIP: `Config.Profile = haip.IssuerProfile{}`.**
+  Production assurance enforces what binds every deployment, not HAIP
+  1.0: it takes a key-bound configuration without a Nonce Endpoint
+  (each jwt proof is then good for any number of Credentials within
+  `Limits.MaxProofAge`), a configuration without a `scope`, a proof
+  type that doesn't accept ES256, and pre-authorized codes redeemed
+  with `issuer.AnonymousPreAuthorizedCode{}`, which authenticates no
+  client. With the profile, `New` also runs `haip.ValidateIssuerConfig`,
+  at either assurance level, and refuses each of those (HAIP 1.0 §4.1,
+  §7, §4.4.1), and a scope that configurations of different Credential
+  Types, or with different key attestation requirements, share (§4.3,
+  §4.5.1). A HAIP deployment sets it. Its errors start
+  `issuer: profile: haip:` and name what to change: `endpoints.nonce`,
+  a configuration's `scope` or `proof_signing_alg_values_supported`, or
+  `pre_authorized_code_client_authentication`. Take the proof types
+  from `haip.RecommendedIssuerConfig` (jwt proofs carrying a key
+  attestation) and the Authorization Server's settings from
+  `haip.RecommendedAuthorizationServerConfig`.
+- [ ] **Lifetimes within production's bounds.** Under
+  `AssuranceProduction`, `New` refuses a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime` (a week, the longest a
+  pre-authorized code lives) and a `Limits.DeferredTransactionLifetime`
+  over `issuer.MaxProductionDeferredTransactionLifetime` (30 days).
+  With `Dependencies.AccessTokens` set, it refuses a
+  `Limits.AccessTokenLifetime` over
+  `issuer.MaxProductionAccessTokenLifetime` (10 minutes): an access
+  token `ExchangePreAuthorizedCode` mints names no grant, so revoking
+  the grant leaves it usable until it expires. There's no opt-out: to
+  issue longer-lived tokens, redeem codes with
+  `RedeemPreAuthorizedCode` and issue each token with fapigo's
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it.
 - [ ] **Access tokens for this Credential Issuer alone.** List
   `Config.Issuer` in the Authorization Server's `server.Config.Resources`,
   and set `serverresource.Options.Resource` to it, so the Credential
@@ -223,6 +256,12 @@ each, not a deployment template" says what it does differently.
   `iss` to a URI in the certificate, which any provider's CA can write
   unless it carries `uniformResourceIdentifier` name constraints:
   `dNSName` constraints don't apply to URIs (RFC 5280 §4.2.1.10).
+  Keep those roots and anchors apart from
+  `X5CProofBindingKeyResolver.Roots`, which certify keys Wallets hold:
+  `New` refuses any they may share unless the verifier's `LeafPolicy`
+  requires what only a Wallet Provider's signing certificates carry
+  (an extended key usage or a certificate policy), as a Wallet could
+  otherwise sign its own key attestations.
 - [ ] **Key Attestation and Wallet Attestation status:** the issuer
   checks key attestations' status (`Dependencies.AttestationStatus`,
   `issuer.StatusListAttestationStatus`; required under

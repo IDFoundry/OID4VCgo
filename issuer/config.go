@@ -64,7 +64,9 @@ type Limits struct {
 
 	// CredentialOfferLifetime bounds how long a by-reference Credential
 	// Offer (§4.1.3) remains fetchable. Required only when
-	// CredentialOfferEndpoint is set.
+	// CredentialOfferEndpoint is set; at most
+	// MaxProductionCredentialOfferLifetime (a week) under
+	// AssuranceProduction.
 	CredentialOfferLifetime time.Duration
 
 	// DeferredIssuancePollInterval is the minimum time this issuer asks
@@ -76,12 +78,22 @@ type Limits struct {
 
 	// DeferredTransactionLifetime bounds how long a transaction
 	// RequestCredential defers stays answerable (§9). Required only
-	// when Endpoints.DeferredCredential is set.
+	// when Endpoints.DeferredCredential is set; at most
+	// MaxProductionDeferredTransactionLifetime (30 days) under
+	// AssuranceProduction.
 	DeferredTransactionLifetime time.Duration
 
 	// AccessTokenLifetime bounds how long an access token
 	// ExchangePreAuthorizedCode issues remains valid. Required only
-	// when Dependencies.PreAuthorizedCodes is set.
+	// when Dependencies.PreAuthorizedCodes is set. Such a token names no
+	// grant, so revoking the grant doesn't end it: with
+	// Dependencies.AccessTokens set, AssuranceProduction takes at most
+	// MaxProductionAccessTokenLifetime (10 minutes), with no opt-out.
+	// The Wallet also polls the Deferred Credential Endpoint (§9) and
+	// notifies (§11) with it. Under AnonymousPreAuthorizedCode no client
+	// is authenticated for fapigo/server to bind a refresh token to, so
+	// a deferred transaction has to be issued and collected before the
+	// token expires.
 	AccessTokenLifetime time.Duration
 
 	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code
@@ -634,10 +646,17 @@ func checkConfiguration(dep any, assurance AssuranceLevel) error {
 	if !ok {
 		return nil
 	}
-	if v := reflect.ValueOf(dep); v.Kind() == reflect.Pointer && v.IsNil() {
+	if isNilPointer(dep) {
 		return fmt.Errorf("is a nil %T", dep)
 	}
 	return checked.CheckConfiguration(assurance)
+}
+
+// isNilPointer reports whether dep is a nil pointer, whose value
+// methods can't be called.
+func isNilPointer(dep any) bool {
+	v := reflect.ValueOf(dep)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
@@ -734,6 +753,10 @@ type Dependencies struct {
 	// "attestation" proof type. X5CAttestationVerifier verifies HAIP's
 	// x5c; with anchors that certify more than one Wallet Provider, set
 	// its IssuerBinding, or any of them can attest in another's name.
+	// Keep its anchors apart from those of an X5CProofBindingKeyResolver
+	// as ProofBindingKeys, which certify keys Wallets hold: New refuses
+	// anchors they may share unless the verifier's LeafPolicy tells a
+	// Wallet Provider's certificates apart.
 	//
 	// An attestation-type proof is signed by the attester, not by the
 	// keys it attests, and carries no audience: its only freshness is
@@ -857,6 +880,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		prefixError(dependenciesPrefix+"attestation_verifier: ", checkConfiguration(deps.AttestationVerifier, cfg.Assurance)),
 		prefixError(dependenciesPrefix+"proof_binding_keys: ", checkConfiguration(deps.ProofBindingKeys, cfg.Assurance)),
 		prefixError(dependenciesPrefix+"attestation_status: ", checkConfiguration(deps.AttestationStatus, cfg.Assurance)),
+		prefixError(dependenciesPrefix, checkAttestationRolesSeparate(deps)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))

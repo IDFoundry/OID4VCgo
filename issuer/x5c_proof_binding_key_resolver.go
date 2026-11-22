@@ -30,7 +30,11 @@ import (
 // back to their own kid lookup when x5c is absent.
 type X5CProofBindingKeyResolver struct {
 	// Roots is the trust anchor set a presented x5c chain must
-	// validate against. REQUIRED.
+	// validate against. REQUIRED. A Wallet holds the key of each
+	// certificate under them, so New refuses an X5CAttestationVerifier
+	// as Dependencies.AttestationVerifier whose roots or anchors may
+	// anchor them too, unless its LeafPolicy tells a Wallet Provider's
+	// signing certificates apart (see X5CAttestationVerifier.LeafPolicy).
 	Roots *x509.CertPool
 	// LeafPolicy, if set, is run on the chain-verified leaf and its
 	// verified paths, and can refuse it. Chain validation accepts a
@@ -92,6 +96,16 @@ func (r X5CProofBindingKeyResolver) CheckConfiguration(assurance AssuranceLevel)
 		return fmt.Errorf("X5CProofBindingKeyResolver.Revocation is required under AssuranceProduction: %s", revocationChoices)
 	}
 	return nil
+}
+
+// proofKeyAnchors implements proofKeyTrust.
+func (r X5CProofBindingKeyResolver) proofKeyAnchors() *x509.CertPool { return r.Roots }
+
+// proofKeyTrust is implemented by X5CProofBindingKeyResolver, by value
+// or pointer, and so by a type embedding one: the anchors a proof key's
+// certificate chains to.
+type proofKeyTrust interface {
+	proofKeyAnchors() *x509.CertPool
 }
 
 // revocationChoices is what an X5C verifier or resolver's Revocation

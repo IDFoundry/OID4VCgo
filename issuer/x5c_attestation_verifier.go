@@ -1,6 +1,7 @@
 package issuer
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/x509"
@@ -166,6 +167,16 @@ type X5CAttestationVerifier struct {
 	// refusals, and AnyAttestationLeaf opts out of them explicitly.
 	// Under AttestationIssuerBoundToAnchor only a path LeafPolicy
 	// approves on its own can end at the bound anchor.
+	//
+	// Wallets hold the keys of the certificates an
+	// X5CProofBindingKeyResolver takes, so New refuses, at every
+	// assurance level, Roots or Anchors that may anchor the certificates
+	// of an X5CProofBindingKeyResolver as Dependencies.ProofBindingKeys
+	// too, unless LeafPolicy tells a Wallet Provider's signing
+	// certificates apart: a Wallet could otherwise sign its own key
+	// attestations, claiming any key_storage for any key. Nil,
+	// DefaultAttestationLeafPolicy and AnyAttestationLeaf can't tell
+	// them apart, so they don't count.
 	LeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 
 	// Revocation, if set, checks the attestation's certificate chain
@@ -362,14 +373,7 @@ func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any,
 	if iss == "" {
 		return nil, errors.New("issuer: key attestation has no iss to bind its signing certificate to")
 	}
-	roots := v.Roots
-	if v.IssuerBinding == AttestationIssuerBoundToAnchor {
-		roots = x509.NewCertPool()
-		for _, anchor := range v.Anchors {
-			roots.AddCert(anchor.Certificate)
-		}
-	}
-	leaf, approved, err := resolveX5CLeaf(ctx, x5c, roots, attestationLeafPolicy(v.LeafPolicy), v.Revocation)
+	leaf, approved, err := resolveX5CLeaf(ctx, x5c, v.anchorPool(), attestationLeafPolicy(v.LeafPolicy), v.Revocation)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +384,87 @@ func (v X5CAttestationVerifier) resolveBoundLeaf(ctx context.Context, x5c []any,
 		return nil, fmt.Errorf("issuer: key attestation signing certificate chain doesn't end at a trust anchor bound to iss %q", iss)
 	}
 	return leaf, nil
+}
+
+// anchorPool is the trust anchors a signing certificate's chain ends
+// at: Roots, or under AttestationIssuerBoundToAnchor, Anchors'
+// certificates.
+func (v X5CAttestationVerifier) anchorPool() *x509.CertPool {
+	if v.IssuerBinding != AttestationIssuerBoundToAnchor {
+		return v.Roots
+	}
+	roots := x509.NewCertPool()
+	for _, anchor := range v.Anchors {
+		if anchor.Certificate != nil {
+			roots.AddCert(anchor.Certificate)
+		}
+	}
+	return roots
+}
+
+// signerTrust implements attestationSignerTrust.
+func (v X5CAttestationVerifier) signerTrust() (*x509.CertPool, certchain.LeafPolicy) {
+	return v.anchorPool(), v.LeafPolicy
+}
+
+// attestationSignerTrust is implemented by X5CAttestationVerifier, by
+// value or pointer, and so by a type embedding one: the anchors its
+// signing certificates chain to, and its LeafPolicy.
+type attestationSignerTrust interface {
+	signerTrust() (*x509.CertPool, certchain.LeafPolicy)
+}
+
+// checkAttestationRolesSeparate refuses an X5CAttestationVerifier as
+// deps.AttestationVerifier whose anchors may also anchor the
+// certificates of an X5CProofBindingKeyResolver as deps.ProofBindingKeys,
+// unless its LeafPolicy tells a Wallet Provider's signing certificates
+// apart (certchain.SeparatesRoles). A Wallet holds the key of each
+// certificate the resolver takes, so it could otherwise sign key
+// attestations itself, claiming any key_storage for any key.
+func checkAttestationRolesSeparate(deps Dependencies) error {
+	if isNilPointer(deps.AttestationVerifier) || isNilPointer(deps.ProofBindingKeys) {
+		return nil // CheckConfiguration's error says so
+	}
+	attester, ok := deps.AttestationVerifier.(attestationSignerTrust)
+	if !ok {
+		return nil
+	}
+	proofKeys, ok := deps.ProofBindingKeys.(proofKeyTrust)
+	if !ok {
+		return nil
+	}
+	anchors, policy := attester.signerTrust()
+	if certchain.SeparatesRoles(policy) || !mayShareAnchor(anchors, proofKeys.proofKeyAnchors()) {
+		return nil
+	}
+	return errors.New("attestation_verifier and proof_binding_keys may share a trust anchor, so a certificate a Wallet holds for its own proof key could sign key attestations, claiming any key_storage for any key: set X5CAttestationVerifier.LeafPolicy to one requiring what only a Wallet Provider's signing certificates carry (an extended key usage or a certificate policy), or give it roots or anchors with no certificate subject in common with X5CProofBindingKeyResolver.Roots")
+}
+
+// mayShareAnchor reports whether pools a and b may anchor the same
+// certificates. A CertPool lists only its certificates' subjects, so
+// they may when both hold a certificate with one subject (the same
+// anchor, a reissue of it, or another CA that a certificate naming that
+// subject as its issuer may chain to), or when either is a system pool
+// whose roots the platform keeps and doesn't list (x509.SystemCertPool
+// on macOS, iOS and Windows). A nil or empty pool anchors nothing. An
+// intermediate or cross-certificate in one of them, which an anchor of
+// the other certified under another subject, isn't seen.
+func mayShareAnchor(a, b *x509.CertPool) bool {
+	none := x509.NewCertPool()
+	if a == nil || b == nil || a.Equal(none) || b.Equal(none) {
+		return false
+	}
+	//nolint:staticcheck // SA1019: deprecated only for a system pool's own roots, which a pool listing none stands for
+	listedA, listedB := a.Subjects(), b.Subjects()
+	if len(listedA) == 0 || len(listedB) == 0 {
+		return true
+	}
+	for _, subject := range listedA {
+		if slices.ContainsFunc(listedB, func(s []byte) bool { return bytes.Equal(s, subject) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // chainEndsAtAnchorFor reports whether one of chains — each leaf first,
@@ -429,10 +514,10 @@ var attestationRole = certchain.LeafRole{
 // to require it, after calling this.
 //
 // Without an extended key usage to require, it can't tell this role's
-// certificates from another's that carry none, so walletflow.New
-// doesn't count it as a leaf policy separating a trust pool from
-// another role's that shares an anchor with it (walletflow.Config):
-// there it's as if unset.
+// certificates from another's that carry none, so neither walletflow.New
+// nor New counts it as a leaf policy separating a trust pool from
+// another role's that shares an anchor with it (walletflow.Config,
+// X5CAttestationVerifier.LeafPolicy): there it's as if unset.
 func DefaultAttestationLeafPolicy(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
 	return attestationRole.Check(leaf, chains)
 }
@@ -444,10 +529,10 @@ func init() { certchain.RegisterNonSeparating(DefaultAttestationLeafPolicy) }
 // X5CAttestationVerifier or X5CProofBindingKeyResolver whose Roots
 // anchor only that role's certificates.
 //
-// It tells no role's certificates apart, so walletflow.New doesn't
-// count it as a leaf policy separating a trust pool from another
-// role's that shares an anchor with it (walletflow.Config): there
-// it's as if unset.
+// It tells no role's certificates apart, so neither walletflow.New nor
+// New counts it as a leaf policy separating a trust pool from another
+// role's that shares an anchor with it (walletflow.Config,
+// X5CAttestationVerifier.LeafPolicy): there it's as if unset.
 func AnyAttestationLeaf(*x509.Certificate, [][]*x509.Certificate) error { return nil }
 
 func init() { certchain.RegisterNonSeparating(AnyAttestationLeaf) }
