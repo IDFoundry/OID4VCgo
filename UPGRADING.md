@@ -92,6 +92,26 @@ and `AnyAttestationLeaf` can't tell the two apart, and count as unset.
 Never recorded since v0.84.0, which deprecated it: drop any reference
 to it, such as a case in an `AuditSink`'s switch.
 
+### A DCQL `values` integer beyond ±(2^53 − 1) is refused (`dcql`, `verifier`, `wallet`, `walletflow`, mobile)
+
+A DCQL query read from JSON holds its numbers as float64s, and no
+float64 holds every integer beyond ±(2^53 − 1) exactly: a `values`
+filter on 9007199254740993 read back as 9007199254740992. A Wallet
+reading the Request Object, and `verifier.Transactions` reading the
+query back from its store to check the answer, then matched an
+integer the Verifier hadn't asked for, and refused the one it had.
+`dcql.Query.Validate` now refuses a `values` integer beyond
+±(2^53 − 1) (I-JSON, RFC 7493 §2.2), and a float32 one beyond ±2^24,
+which encoding/json can write as another integer. So the Verifier's
+request builders, `Transactions.Begin` and `VerifyResponse` refuse a
+query with one, and a wallet or walletflow refuses a request carrying
+one as `invalid_request`.
+
+To filter on such an identifier, have it issued as a string. An mdoc
+element holding one can't be filtered on: request it without `values`
+and compare the value `VerifyResponse` returns. A request begun before
+the upgrade with such a filter fails when it's answered.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

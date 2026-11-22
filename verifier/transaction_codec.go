@@ -261,7 +261,8 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 	var bound []byte
 	if c.Sealer != nil {
 		// The query as the record holds it, not as dcql.Query decodes
-		// it: a number among a claim's values needn't survive float64.
+		// it: one written before dcql.Query.Validate refused them can
+		// hold a values integer a float64 doesn't.
 		var raw struct {
 			Query json.RawMessage `json:"query"`
 		}
@@ -340,7 +341,7 @@ func (c TransactionCodec) Unmarshal(data []byte) (Transaction, error) {
 // Object served at its request_uri. A version 1 record's is the array
 // alone.
 func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
-	queryHash, err := canonicalQueryHash(query, true)
+	queryHash, err := canonicalQueryHash(query)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -381,16 +382,12 @@ func sealBinding(w *wireTransaction, query []byte) ([]byte, error) {
 }
 
 // canonicalQueryHash is SHA-256 of query, a DCQL query's JSON, in a
-// canonical form: decoded and encoded again with its object members
-// sorted, so JSON a store reformats hashes alike. With exactNumbers,
-// numbers are kept as written; without, they're decoded as float64, as
-// dcql.Query decodes a values filter's, so a query and its copy read
-// back through JSON hash alike.
-func canonicalQueryHash(query []byte, exactNumbers bool) ([32]byte, error) {
+// canonical form: decoded, numbers kept as written, and encoded again
+// with its object members sorted, so JSON a store reformats hashes
+// alike.
+func canonicalQueryHash(query []byte) ([32]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(query))
-	if exactNumbers {
-		dec.UseNumber()
-	}
+	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
 		return [32]byte{}, err

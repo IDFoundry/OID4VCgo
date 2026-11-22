@@ -383,10 +383,13 @@ func TestTransactions_StoreDroppingQueryValues(t *testing.T) {
 	if _, err := codecTxs.Begin(ctx, query, binding, false); err != nil {
 		t.Errorf("Begin with a store that keeps the query: %v", err)
 	}
-	// An integer past 2^53 comes back from JSON rounded, as dcql.Query
-	// documents: not taken as lost.
-	query.Credentials[0].Claims = []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}, Values: []any{int64(1<<60 + 1)}}}
-	if _, err := codecTxs.Begin(ctx, query, binding, false); err != nil {
-		t.Errorf("Begin with a large integer value: %v", err)
+	// An integer up to 2^53 − 1 comes back from JSON as itself. One
+	// past it would come back as another, so Begin refuses it before
+	// storing anything.
+	for value, ok := range map[int64]bool{1<<53 - 1: true, 1 << 53: false, 1<<60 + 1: false} {
+		query.Credentials[0].Claims = []dcql.ClaimsQuery{{Path: dcql.Path{dcql.PathKey("given_name")}, Values: []any{value}}}
+		if _, err := codecTxs.Begin(ctx, query, binding, false); (err == nil) != ok {
+			t.Errorf("Begin with the integer value %d: %v, want accepted %v", value, err, ok)
+		}
 	}
 }
