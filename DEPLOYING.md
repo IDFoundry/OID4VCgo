@@ -113,6 +113,24 @@ each, not a deployment template" says what it does differently.
   (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Deploying as HAIP: `Config.Profile = haip.IssuerProfile{}`.**
+  Production assurance enforces what binds every deployment, not HAIP
+  1.0: it takes a key-bound configuration without a Nonce Endpoint
+  (each jwt proof is then good for any number of Credentials within
+  `Limits.MaxProofAge`), a configuration without a `scope`, a proof
+  type that doesn't accept ES256, and pre-authorized codes redeemed
+  with `issuer.AnonymousPreAuthorizedCode{}`, which authenticates no
+  client. With the profile, `New` also runs `haip.ValidateIssuerConfig`,
+  at either assurance level, and refuses each of those (HAIP 1.0 §4.1,
+  §7, §4.4.1), and a scope that configurations of different Credential
+  Types, or with different key attestation requirements, share (§4.3,
+  §4.5.1). A HAIP deployment sets it. Its errors start
+  `issuer: profile: haip:` and name what to change: `endpoints.nonce`,
+  a configuration's `scope` or `proof_signing_alg_values_supported`, or
+  `pre_authorized_code_client_authentication`. Take the proof types
+  from `haip.RecommendedIssuerConfig` (jwt proofs carrying a key
+  attestation) and the Authorization Server's settings from
+  `haip.RecommendedAuthorizationServerConfig`.
 - [ ] **Lifetimes within production's bounds.** Under
   `AssuranceProduction`, `New` refuses a
   `Limits.CredentialOfferLifetime` over
