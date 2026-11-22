@@ -193,7 +193,7 @@ func TestEstablishedTakeRecentShareLast(t *testing.T) {
 	for i := range capacity {
 		key := h.newInstanceKey(in.ID, kindTEE)
 		n := h.listNumber(h.instanceKey(&key.PublicKey).Status)
-		if want := i < capacity-recentShare; want != (n >= establishedList) {
+		if (i < capacity-recentShare) != (n >= establishedList) {
 			t.Fatalf("established key %d took list %d", i, n)
 		}
 	}
