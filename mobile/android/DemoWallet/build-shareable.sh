@@ -19,6 +19,15 @@
 # its SHA-256 to out-dir (default build/shareable). The tester installs it
 # by opening the file on the phone (allowing installs from that app).
 #
+# It also writes out-dir/android-app.txt, the app's package and signing
+# certificate's SHA-256 as -android-app takes them. Restart the demo with
+#
+#   -android-app "$(cat build/shareable/android-app.txt)"
+#
+# added: its Wallet Provider refuses an app's Android key attestations
+# unless the demo was started with that app. Every build signed with
+# this machine's debug key has the same value.
+#
 # The configuration carries the demo verifier's in-person reader identity,
 # its key included, so reader mode works: a demo shortcut (a real reader
 # keeps its key on the device). Anyone holding the APK holds that key, which
@@ -101,4 +110,17 @@ PY
 mkdir -p "$OUT"
 cp build/outputs/apk/debug/DemoWallet-debug.apk "$OUT/oid4vcgo-demowallet.apk"
 (cd "$OUT" && shasum -a 256 oid4vcgo-demowallet.apk > oid4vcgo-demowallet.apk.sha256)
+
+# The app as cmd/demo's -android-app names it: its package
+# (build.gradle.kts's applicationId) and each of its signing
+# certificates' SHA-256, in hex. The demo's Wallet Provider refuses the
+# Android key attestations of an app it isn't started with.
+BUILD_TOOLS="${ANDROID_HOME:-$HOME/Library/Android/sdk}/build-tools"
+APKSIGNER="$BUILD_TOOLS/$(ls "$BUILD_TOOLS" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)/apksigner"
+[ -x "$APKSIGNER" ] || { echo "no apksigner under $BUILD_TOOLS: install the Android SDK Build-Tools" >&2; exit 1; }
+DIGESTS="$("$APKSIGNER" verify --print-certs "$OUT/oid4vcgo-demowallet.apk" |
+	sed -n 's/^Signer #[0-9]* certificate SHA-256 digest: //p' | paste -s -d, -)"
+[ -n "$DIGESTS" ] || { echo "apksigner printed no signing certificate's SHA-256" >&2; exit 1; }
+echo "dev.idfoundry.oid4vcgo.demowallet:$DIGESTS" > "$OUT/android-app.txt"
+echo "start the demo with -android-app $(cat "$OUT/android-app.txt")" >&2
 echo "$OUT/oid4vcgo-demowallet.apk"

@@ -402,3 +402,15 @@ verifier's in-person reader key, so reader mode works: anyone with
 the APK holds that key, which only this demo's wallets trust. The
 tester also needs the demo's pages behind Cloudflare Access to upload
 a passport and get an offer.
+
+It also writes `android-app.txt` there: the app's package and its
+signing certificate's SHA-256, as `cmd/demo -android-app` takes them.
+Start the demo with it, from `examples/passport-vdc`, or its Wallet
+Provider refuses the app's Android key attestations and issuance
+fails:
+
+```sh
+go run ./cmd/demo … -android-app "$(cat ../../mobile/android/DemoWallet/build/shareable/android-app.txt)"
+```
+
+Every build signed with this machine's debug key has the same value.
