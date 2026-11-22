@@ -230,7 +230,7 @@ func sharedASJWK(t *testing.T, pub *ecdsa.PublicKey) map[string]any {
 	return m
 }
 
-func sharedASSign(t *testing.T, key *ecdsa.PrivateKey, header map[string]any, claims map[string]any) string {
+func sharedASSign(t *testing.T, key *ecdsa.PrivateKey, header, claims map[string]any) string {
 	t.Helper()
 	payload, err := json.Marshal(claims)
 	if err != nil {
