@@ -234,7 +234,10 @@ func (r X5CIssuerKeyResolver) ResolveIssuerChains(ctx context.Context, header ma
 	return chains, err
 }
 
-// BindsIssuerName implements IssuerNameBinding.
+// BindsIssuerName implements IssuerNameBinding: RequireIssuerName. A
+// type embedding X5CIssuerKeyResolver whose own ResolveIssuerKey checks
+// no name inherits it all the same: override it too (see
+// IssuerNameBinding).
 func (r X5CIssuerKeyResolver) BindsIssuerName() bool { return r.RequireIssuerName }
 
 // ResolveIssuerKey implements SDJWTVCIssuerKeyResolver.
