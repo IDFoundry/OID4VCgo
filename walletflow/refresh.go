@@ -88,7 +88,10 @@ func (g RefreshGrant) keyIDs() []string {
 // GrantStore keeps refresh grants. Several Wallets — in several
 // processes — may share one: walletflow changes a stored grant only
 // through UpdateGrant, which the store makes atomic across all of them,
-// so a refresh token is never redeemed twice.
+// so a refresh token is never redeemed twice. A refresh token is a
+// secret: outside Development, New refuses a store that doesn't declare
+// it seals its records (sealing.Store), as for the CredentialStore,
+// unless Config.UnsealedStores accepts it.
 type GrantStore interface {
 	// PutGrant stores g, replacing any with its ID.
 	PutGrant(ctx context.Context, g RefreshGrant) error

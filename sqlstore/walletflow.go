@@ -7,7 +7,15 @@ import (
 
 	fapi "github.com/idfoundry/fapigo"
 
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/walletflow"
+)
+
+var (
+	_ sealing.Store = (*CredentialStore)(nil)
+	_ sealing.Store = (*AuthorizationStore)(nil)
+	_ sealing.Store = (*GrantStore)(nil)
+	_ sealing.Store = (*DeferredStore)(nil)
 )
 
 // notFound turns errNoRow into walletflow.ErrNotFound.
@@ -124,6 +132,11 @@ func (s *CredentialStore) Delete(ctx context.Context, id string) error {
 	return notFound("delete credential", id, err)
 }
 
+// SealsRecords implements sealing.Store, which walletflow requires
+// outside Development: whether the DB has a Sealer, which seals every
+// record the store writes.
+func (s *CredentialStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
 // AuthorizationStore is a walletflow.AuthorizationStore:
 // Dependencies.Authorizations. ResumeIssuance needs one holding only
 // one wallet's authorizations: don't share its tables between users.
@@ -177,6 +190,9 @@ func (s *AuthorizationStore) DeleteAuthorization(ctx context.Context, state stri
 
 // Durable implements walletflow.AuthorizationStore: true.
 func (s *AuthorizationStore) Durable() bool { return true }
+
+// SealsRecords implements sealing.Store, as CredentialStore's does.
+func (s *AuthorizationStore) SealsRecords() bool { return s.t.d.sealer != nil }
 
 // withEncoding has t encode each record as to gives it, and decode it
 // back with from: for a record holding a fapi.Secret, which refuses to
@@ -258,6 +274,9 @@ func (s *GrantStore) DeleteGrant(ctx context.Context, id string) error {
 // Durable implements walletflow.GrantStore: true.
 func (s *GrantStore) Durable() bool { return true }
 
+// SealsRecords implements sealing.Store, as CredentialStore's does.
+func (s *GrantStore) SealsRecords() bool { return s.t.d.sealer != nil }
+
 // deferredRecord is a PendingDeferred as a DeferredStore encodes it,
 // its access token a field of its own (see grantRecord).
 type deferredRecord struct {
@@ -304,3 +323,6 @@ func (s *DeferredStore) DeleteDeferred(ctx context.Context, id string) error {
 	_, err := s.t.remove(ctx, id)
 	return notFound("delete deferred credential", id, err)
 }
+
+// SealsRecords implements sealing.Store, as CredentialStore's does.
+func (s *DeferredStore) SealsRecords() bool { return s.t.d.sealer != nil }

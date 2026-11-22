@@ -22,8 +22,8 @@ uses `wallet` and `fapigo/client` directly, under development assurance
 software keys held in memory, and trusts the suite's TLS certificate
 as it first finds it (below). A
 wallet app uses `walletflow` (or the mobile libraries over it), whose
-zero `Config` is production: durable stores, a revocation choice per
-trust role and a hardened HTTP client.
+zero `Config` is production: durable, sealed stores, a revocation
+choice per trust role and a hardened HTTP client.
 
 None of this role's legs runs at production assurance: the locally run
 suite is on loopback, which production's client never dials, and its

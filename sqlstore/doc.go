@@ -28,7 +28,9 @@
 //     (verifier.SealingStore), as AssuranceProduction requires.
 //   - walletflow.Dependencies: Credentials, Authorizations, Grants,
 //     Deferred and, with a Sealer, Keys. Authorizations and Grants
-//     report Durable, Keys declares durable custody.
+//     report Durable, Keys declares durable custody, and the other four
+//     say whether they seal their records (sealing.Store: with the
+//     DB's Sealer), as walletflow outside Development requires.
 //   - statuslist.Allocator's Store: StatusIndices, which records the
 //     Status List indices handed out to Referenced Tokens, and each
 //     one's status, durably and shared between every process using

@@ -27,8 +27,10 @@ each, not a deployment template" says what it does differently.
 - [ ] **Seal records at rest.** `Options.Sealer` encrypts every issuer,
   verifier transaction, walletflow and Wallet Provider record
   (`sealing.AESGCMSealer` makes one from a 32-byte key; the verifier's
-  `TransactionCodec` takes the same Sealer). Keep the key in a secret
-  manager or KMS, never in the database. An AES-GCM key seals about
+  `TransactionCodec` takes the same Sealer). A wallet on a server
+  needs it too: outside `Development`, `walletflow.New` refuses its
+  stores unsealed, unless `Config.UnsealedStores`. Keep the key in a
+  secret manager or KMS, never in the database. An AES-GCM key seals about
   2^32 records safely: rotate before then with fapigo/sqlstore's
   `RotatingSealer`, which seals with its first sealer and opens with
   any. **Rotate in two phases**, so no replica reads a record sealed

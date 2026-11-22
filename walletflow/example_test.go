@@ -13,17 +13,20 @@ import (
 // A wallet: its registration, the issuers and Verifiers it trusts, and
 // where it keeps keys and credentials. A wallet holders use keeps them
 // durably, and its keys in hardware (the mobile libraries' Keychain and
-// Keystore stores): New refuses memory stores in production. Give each
-// role its own trust anchors; where they share one, a leaf policy (an
-// extended key usage) on each. Each role in use also needs a revocation
-// check in production: a certrevocation.Refresher's Checker over its
-// CAs' CRLs, or certrevocation.NoCheck{} to decline.
+// Keystore stores): New refuses memory stores in production. Its stores
+// seal their records (sealing.Store), as sqlstore's do with a Sealer;
+// on a phone, whose data protection keeps them instead, set
+// Config.UnsealedStores. Give each role its own trust anchors; where
+// they share one, a leaf policy (an extended key usage) on each. Each
+// role in use also needs a revocation check in production: a
+// certrevocation.Refresher's Checker over its CAs' CRLs, or
+// certrevocation.NoCheck{} to decline.
 func ExampleNew() {
 	var (
 		issuerRoots, verifierRoots *x509.CertPool                // the ecosystem's trust anchors, one pool per role
 		keys                       walletflow.KeyStore           // hardware-backed, declaring durable custody
-		credentials                walletflow.CredentialStore    // durable, under the platform's data protection
-		authorizations             walletflow.AuthorizationStore // durable, so an authorization survives a suspension
+		credentials                walletflow.CredentialStore    // durable, sealing its records
+		authorizations             walletflow.AuthorizationStore // durable and sealed, so an authorization survives a suspension
 		provider                   walletflow.WalletProvider     // attests the wallet and its keys, for issuers that require it
 		issuerCRLs, verifierCRLs   *certrevocation.Refresher     // each role's CAs' CRLs (certrevocation.NewRefresher)
 	)

@@ -28,6 +28,7 @@ import (
 	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -465,10 +466,29 @@ type Config struct {
 	//     may reach);
 	//   - skips the checks New makes at production assurance: Durable
 	//     Authorizations (and Grants, with RequestRefresh), Keys
-	//     declaring durable custody, Random crypto/rand, roles' pools
-	//     sharing no anchor (or leaf policies), a revocation Checker for
-	//     each role in use — and fapigo/client's own production checks.
+	//     declaring durable custody, stores that seal their records
+	//     (UnsealedStores), Random crypto/rand, roles' pools sharing no
+	//     anchor (or leaf policies), a revocation Checker for each role
+	//     in use — and fapigo/client's own production checks.
 	Development bool
+
+	// UnsealedStores accepts, outside Development, a
+	// Dependencies.Credentials, Deferred, Grants or Authorizations store
+	// that doesn't declare it seals its records (sealing.Store), which
+	// New otherwise refuses. They hold the holder's credentials and
+	// their claims, the access tokens of pending deferred credentials,
+	// refresh tokens, and the Credential Offers (with any pre-authorized
+	// code) and PKCE verifiers of authorizations in progress: whoever can
+	// read such a store, or its backups, reads the credentials, and can
+	// use a token that isn't bound to a key outside it, a Bearer access
+	// token say. Set it only where something else protects the records
+	// at rest as sealing would: on a phone, the platform's data
+	// protection, under which the mobile package's CredentialStore keeps
+	// them. Otherwise give the stores a Sealer
+	// (github.com/idfoundry/oid4vcgo/sqlstore's Options.Sealer, from
+	// sealing.AESGCMSealer). walletflow's memory stores, the defaults,
+	// keep nothing at rest, so New takes them without it.
+	UnsealedStores bool
 
 	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
 	// HTTP client New builds when Dependencies.HTTP is nil, in
@@ -513,8 +533,13 @@ type Dependencies struct {
 	// A wallet's holder keys belong in secure hardware that won't
 	// export them (the Secure Enclave, StrongBox), needing the holder's
 	// presence to present; that's the KeyStore's to provide.
-	Keys        KeyStore
-	Credentials CredentialStore // REQUIRED
+	Keys KeyStore
+	// Credentials holds the wallet's credentials. REQUIRED. Outside
+	// Development it must declare it seals its records (sealing.Store),
+	// as Deferred, Grants and Authorizations must, unless
+	// Config.UnsealedStores accepts them; walletflow's memory stores
+	// needn't.
+	Credentials CredentialStore
 	// Provider attests the wallet (Wallet Attestations) and its keys
 	// (Key Attestations), for issuers that require them: HAIP 1.0's,
 	// and any whose Authorization Server takes only a Wallet Attestation
@@ -716,6 +741,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := w.checkReceivingAtNew(); err != nil {
 		return nil, err
 	}
+	if err := w.checkSealedStores(); err != nil {
+		return nil, err
+	}
 	return w, nil
 }
 
@@ -779,6 +807,48 @@ func (w *Wallet) checkReceivingAtNew() error {
 		return errors.New("walletflow: in production, Config.RedirectURI must be a private-use URI scheme, such as com.example.wallet:/callback, or loopback http to 127.0.0.1 or [::1] (RFC 8252 §7.1, §7.3): ResumeIssuance can't complete an authorization that redirects anywhere else once the app is relaunched")
 	}
 	return nil
+}
+
+// checkSealedStores refuses, outside Development, a store holding the
+// holder's credentials or tokens that doesn't declare it seals its
+// records, unless Config.UnsealedStores accepts it. Each is checked
+// whatever the Config, as each may hold records an earlier one stored:
+// Wallet.Deferred, RefreshCredential, DeleteCredential and KeysInUse
+// read them all the same. Keys isn't one: what a KeyStore holds is its
+// custody's to protect (keys.KeyCustodyAssurance), and a hardware one
+// holds nothing it could seal.
+func (w *Wallet) checkSealedStores() error {
+	if w.cfg.Development || w.cfg.UnsealedStores {
+		return nil
+	}
+	for _, s := range []struct {
+		name, holds string
+		store       any
+	}{
+		{"Credentials", "the holder's credentials", w.deps.Credentials},
+		{"Deferred", "the access tokens of pending deferred credentials", w.deps.Deferred},
+		{"Grants", "refresh tokens", w.deps.Grants},
+		{"Authorizations", "the Credential Offers and PKCE verifiers of authorizations in progress", w.deps.Authorizations},
+	} {
+		if !sealsRecords(s.store) {
+			return fmt.Errorf("walletflow: Dependencies.%s holds %s: outside Development it must seal its records (implement sealing.Store and declare SealsRecords: sqlstore's stores do when their DB has Options.Sealer, such as sealing.AESGCMSealer), or set Config.UnsealedStores where something else protects them at rest, as a phone's data protection does", s.name, s.holds)
+		}
+	}
+	return nil
+}
+
+// sealsRecords reports whether store declares it seals its records
+// (sealing.Store), or is one of walletflow's memory stores, which keep
+// their records only in the process's memory: nothing at rest to seal.
+// A type wrapping one is a store of its own, which declares for itself.
+func sealsRecords(store any) bool {
+	switch s := store.(type) {
+	case *MemoryCredentialStore, *MemoryDeferredStore, *MemoryGrantStore, *MemoryAuthorizationStore:
+		return true
+	case sealing.Store:
+		return s.SealsRecords()
+	}
+	return false
 }
 
 // checkRedirectURIForm refuses, at every assurance level, a

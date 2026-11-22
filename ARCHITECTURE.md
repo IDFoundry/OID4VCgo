@@ -1908,8 +1908,10 @@ changes whether *every* bullet below is `(done)`.
 - **`sealing`** (done) — sealing records at rest, for every role: the
   `Sealer` interface (`sqlstore.Options.Sealer`,
   `verifier.TransactionCodec.Sealer`), `AESGCMSealer` (AES-256-GCM,
-  refusing a key that isn't 32 random bytes), and `Store`, by which an
-  issuer store declares whether it seals what it holds. It moved out of
+  refusing a key that isn't 32 random bytes), and `Store`, by which a
+  store declares whether it seals what it holds: the issuer's, the
+  Wallet Provider's and walletflow's, which production refuses
+  unsealed unless their `UnsealedStores` is set. It moved out of
   `verifier`, which keeps `AESGCMSealer` and `TransactionSealer` as
   deprecated forwards, since it was always the sealer for every store.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
@@ -1990,7 +1992,10 @@ changes whether *every* bullet below is `(done)`.
 - **`walletflow`** (done) — a holder's wallet as sessions, over a
   `KeyStore` and `CredentialStore` the app supplies, an optional
   `WalletProvider`, and optional stores so deferred credentials, an
-  authorization in progress and refresh tokens survive a restart:
+  authorization in progress and refresh tokens survive a restart
+  (outside `Development`, the `CredentialStore` and these must seal
+  their records, unless `Config.UnsealedStores`, which the mobile
+  façade sets, its records kept by the platform's data protection):
   `StartIssuance` (both grants, deferred and batch issuance),
   `RefreshCredential`,
   `StartPresentation` (OpenID4VP links), and over the

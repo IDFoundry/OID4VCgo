@@ -52,7 +52,9 @@ walletflow's stores are `db.Credentials()`, `db.Authorizations()`,
 `db.Grants()`, `db.Deferred()` and, with a Sealer, `db.Keys()`. Unlike
 the others, `db.Keys()` returns `(*sqlstore.KeyStore, error)`: it fails
 without a Sealer, as a wallet's private keys are never kept in the
-clear.
+clear. With a Sealer, the other four declare they seal their records
+(`sealing.Store`), which walletflow outside `Development` requires of
+them.
 
 A `statuslist.Allocator`'s `Store` is `db.StatusIndices()`: the Status
 List indices handed out, and their statuses, kept durably and shared
