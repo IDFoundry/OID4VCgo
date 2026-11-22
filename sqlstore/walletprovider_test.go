@@ -28,13 +28,14 @@ func TestWalletProviderInstanceStoreContract(t *testing.T) {
 	})
 }
 
-// The stores say they seal their records (sealing.Store)
-// when the DB has a Sealer, and only then.
-func TestWalletProviderStoresSayTheySeal(t *testing.T) {
+// The Wallet Provider's and walletflow's stores say they seal their
+// records (sealing.Store) when the DB has a Sealer, and only then.
+func TestWalletStoresSayTheySeal(t *testing.T) {
 	forEachSealing(t, func(t *testing.T, e *env) {
 		db, want := e.db(), e.opts.Sealer != nil
 		for name, s := range map[string]sealing.Store{
 			"Instances": db.WalletProviderInstances(), "InstanceKeys": db.WalletProviderInstanceKeys(), "Challenges": db.WalletProviderChallenges(),
+			"Credentials": db.Credentials(), "Authorizations": db.Authorizations(), "Grants": db.Grants(), "Deferred": db.Deferred(),
 		} {
 			if got := s.SealsRecords(); got != want {
 				t.Errorf("%s.SealsRecords() = %t, want %t", name, got, want)
