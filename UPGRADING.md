@@ -68,6 +68,25 @@ Under `AssuranceProduction`, `issuer.New` now refuses:
 
 **What to change:** lower each to its bound.
 
+### Key attestation signers and proof keys under one anchor are refused (`issuer`)
+
+`issuer.New` now refuses, at every assurance level, an
+`X5CAttestationVerifier` whose `Roots`, or under
+`AttestationIssuerBoundToAnchor` whose `Anchors`, may anchor the
+certificates of an `X5CProofBindingKeyResolver` set as
+`Dependencies.ProofBindingKeys`: the two pools both hold a certificate
+with one subject, or either is a system pool, which lists none of its
+roots. Wallets hold the keys of the certificates that resolver takes,
+so under a shared anchor a Wallet's own proof-key certificate could
+sign key attestations, claiming any `key_storage` for any key.
+
+**What to change:** give the two roots with no certificate subject in
+common, or set `X5CAttestationVerifier.LeafPolicy` to one requiring
+what only a Wallet Provider's signing certificates carry (an extended
+key usage or a certificate policy), calling
+`DefaultAttestationLeafPolicy` first. `DefaultAttestationLeafPolicy`
+and `AnyAttestationLeaf` can't tell the two apart, and count as unset.
+
 ### `AuditEventLegacyDeferredAuthorization` is removed (`issuer`)
 
 Never recorded since v0.84.0, which deprecated it: drop any reference

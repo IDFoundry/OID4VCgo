@@ -8,7 +8,9 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -198,4 +200,90 @@ func TestNewProductionRequiresAttestationBinding(t *testing.T) {
 func withAttestationVerifier(deps issuer.Dependencies, av issuer.AttestationVerifier) issuer.Dependencies {
 	deps.AttestationVerifier = av
 	return deps
+}
+
+// TestNew_RefusesAttestationAnchorsSharedWithProofKeys: Wallets hold
+// the keys of the certificates an X5CProofBindingKeyResolver takes, so
+// New refuses, at either assurance level, an X5CAttestationVerifier
+// whose roots or anchors may anchor them too, as one CA certifying
+// both a Wallet Provider and its Wallets' proof keys would: a Wallet
+// could sign its own key attestations. Only a LeafPolicy telling a
+// Wallet Provider's certificates apart lets them share an anchor; the
+// library's policies that can't, count as unset.
+func TestNew_RefusesAttestationAnchorsSharedWithProofKeys(t *testing.T) {
+	poolOf := func(certs ...*x509.Certificate) *x509.CertPool {
+		pool := x509.NewCertPool()
+		for _, c := range certs {
+			pool.AddCert(c)
+		}
+		return pool
+	}
+	root, _ := testcert.CA(t, "wallet ecosystem root")
+	reissued, _ := testcert.CAWithSubject(t, root.Subject)
+	other, _ := testcert.CA(t, "another root")
+	shared := poolOf(root)
+	proofKeys := func(roots *x509.CertPool) issuer.X5CProofBindingKeyResolver {
+		return issuer.X5CProofBindingKeyResolver{Roots: roots, Revocation: certrevocation.NoCheck{}}
+	}
+	// A Wallet Provider's signing certificates carry an extended key
+	// usage of their own, which its Wallets' certificates don't.
+	providerEKU := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 2}
+	requireProviderEKU := func(leaf *x509.Certificate, chains [][]*x509.Certificate) error {
+		if err := issuer.DefaultAttestationLeafPolicy(leaf, chains); err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(leaf.UnknownExtKeyUsage, providerEKU.Equal) {
+			return errors.New("not a Wallet Provider's signing certificate")
+		}
+		return nil
+	}
+	withPolicy := func(v issuer.X5CAttestationVerifier, policy func(*x509.Certificate, [][]*x509.Certificate) error) issuer.X5CAttestationVerifier {
+		v.LeafPolicy = policy
+		return v
+	}
+	unbound := issuer.X5CAttestationVerifier{Roots: shared, Revocation: certrevocation.NoCheck{}, SingleWalletProvider: true}
+	bound := issuer.X5CAttestationVerifier{
+		IssuerBinding: issuer.AttestationIssuerBoundToAnchor, Revocation: certrevocation.NoCheck{},
+		Anchors: []issuer.AttestationAnchor{{Certificate: root, Issuers: []string{attestationProviderURL.String()}}},
+	}
+	sharedProofKeys := proofKeys(shared)
+	for name, tc := range map[string]struct {
+		verifier  issuer.AttestationVerifier
+		proofKeys issuer.ProofBindingKeyResolver
+		refused   bool
+	}{
+		"one pool":                         {unbound, sharedProofKeys, true},
+		"pools of one root":                {unbound, proofKeys(poolOf(root)), true},
+		"a reissue of the root":            {unbound, proofKeys(poolOf(reissued)), true},
+		"anchors":                          {bound, sharedProofKeys, true},
+		"by pointer":                       {&unbound, &sharedProofKeys, true},
+		"wrapped":                          {meteredAttestationVerifier{bound}, &meteredProofBindingKeys{sharedProofKeys}, true},
+		"DefaultAttestationLeafPolicy":     {withPolicy(unbound, issuer.DefaultAttestationLeafPolicy), sharedProofKeys, true},
+		"AnyAttestationLeaf":               {withPolicy(bound, issuer.AnyAttestationLeaf), sharedProofKeys, true},
+		"a leaf policy telling them apart": {withPolicy(unbound, requireProviderEKU), sharedProofKeys, false},
+		"anchors and that leaf policy":     {withPolicy(bound, requireProviderEKU), sharedProofKeys, false},
+		"roots apart":                      {unbound, proofKeys(poolOf(other)), false},
+		"anchors apart":                    {bound, proofKeys(poolOf(other)), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prodCfg, prodDeps := productionIssuer(t)
+			for _, level := range []struct {
+				cfg  issuer.Config
+				deps issuer.Dependencies
+			}{{validConfig(t), validDependencies(t)}, {prodCfg, prodDeps}} {
+				level.deps.AttestationVerifier, level.deps.ProofBindingKeys = tc.verifier, tc.proofKeys
+				_, err := issuer.New(level.cfg, level.deps)
+				if refused := err != nil && strings.Contains(err.Error(), "X5CAttestationVerifier.LeafPolicy"); refused != tc.refused || !tc.refused && err != nil {
+					t.Errorf("assurance %d: New = %v, want refused %v", level.cfg.Assurance, err, tc.refused)
+				}
+			}
+		})
+	}
+
+	// A nil pointer is reported as one, not dereferenced.
+	deps := validDependencies(t)
+	deps.AttestationVerifier, deps.ProofBindingKeys = (*issuer.X5CAttestationVerifier)(nil), sharedProofKeys
+	if _, err := issuer.New(validConfig(t), deps); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Errorf("New with a nil *X5CAttestationVerifier = %v, want it refused as nil", err)
+	}
 }

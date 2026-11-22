@@ -238,6 +238,12 @@ each, not a deployment template" says what it does differently.
   `iss` to a URI in the certificate, which any provider's CA can write
   unless it carries `uniformResourceIdentifier` name constraints:
   `dNSName` constraints don't apply to URIs (RFC 5280 §4.2.1.10).
+  Keep those roots and anchors apart from
+  `X5CProofBindingKeyResolver.Roots`, which certify keys Wallets hold:
+  `New` refuses any they may share unless the verifier's `LeafPolicy`
+  requires what only a Wallet Provider's signing certificates carry
+  (an extended key usage or a certificate policy), as a Wallet could
+  otherwise sign its own key attestations.
 - [ ] **Key Attestation and Wallet Attestation status:** the issuer
   checks key attestations' status (`Dependencies.AttestationStatus`,
   `issuer.StatusListAttestationStatus`; required under

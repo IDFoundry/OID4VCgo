@@ -646,10 +646,17 @@ func checkConfiguration(dep any, assurance AssuranceLevel) error {
 	if !ok {
 		return nil
 	}
-	if v := reflect.ValueOf(dep); v.Kind() == reflect.Pointer && v.IsNil() {
+	if isNilPointer(dep) {
 		return fmt.Errorf("is a nil %T", dep)
 	}
 	return checked.CheckConfiguration(assurance)
+}
+
+// isNilPointer reports whether dep is a nil pointer, whose value
+// methods can't be called.
+func isNilPointer(dep any) bool {
+	v := reflect.ValueOf(dep)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // CredentialDPoPNonceIssuer issues a DPoP nonce the Credential Endpoint
@@ -746,6 +753,10 @@ type Dependencies struct {
 	// "attestation" proof type. X5CAttestationVerifier verifies HAIP's
 	// x5c; with anchors that certify more than one Wallet Provider, set
 	// its IssuerBinding, or any of them can attest in another's name.
+	// Keep its anchors apart from those of an X5CProofBindingKeyResolver
+	// as ProofBindingKeys, which certify keys Wallets hold: New refuses
+	// anchors they may share unless the verifier's LeafPolicy tells a
+	// Wallet Provider's certificates apart.
 	//
 	// An attestation-type proof is signed by the attester, not by the
 	// keys it attests, and carries no audience: its only freshness is
@@ -869,6 +880,7 @@ func New(cfg Config, deps Dependencies) (*Issuer, error) {
 		prefixError(dependenciesPrefix+"attestation_verifier: ", checkConfiguration(deps.AttestationVerifier, cfg.Assurance)),
 		prefixError(dependenciesPrefix+"proof_binding_keys: ", checkConfiguration(deps.ProofBindingKeys, cfg.Assurance)),
 		prefixError(dependenciesPrefix+"attestation_status: ", checkConfiguration(deps.AttestationStatus, cfg.Assurance)),
+		prefixError(dependenciesPrefix, checkAttestationRolesSeparate(deps)),
 	)
 	if deps.Random == nil {
 		errs = append(errs, fmt.Errorf("issuer: dependencies: random is required"))
