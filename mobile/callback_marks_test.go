@@ -29,8 +29,10 @@ func providerDetail(err error) string {
 
 // A Wallet Provider's refusal marked with its error code, as the Swift
 // and Kotlin adapters mark one, is platform with that code as the
-// detail, through classify too; a code that isn't a plain token is
-// dropped, the refusal still platform.
+// detail, through classify too; a mark that isn't the whole
+// "[refused:<code>] ", code a plain token, is no mark: the refusal is
+// still platform, without a detail, and matches no walletprovider error,
+// however the code it was cut from began.
 func TestProviderError_Refused(t *testing.T) {
 	got := providerError("wallet attestation", errors.New("[refused:instance_revoked] the Wallet Provider refused /v1/wallet-attestation: HTTP 403 instance_revoked"))
 	if code(got) != CodePlatform || providerDetail(got) != "instance_revoked" || !strings.HasPrefix(got.Error(), "[platform:instance_revoked] wallet attestation: the Wallet Provider refused") {
@@ -39,8 +41,19 @@ func TestProviderError_Refused(t *testing.T) {
 	if c := classify(fmt.Errorf("walletflow: %w", got)); code(c) != CodePlatform || providerDetail(c) != "instance_revoked" {
 		t.Errorf("classify = %v, want the provider's code kept", c)
 	}
-	for _, msg := range []string{"[refused:not a code] x", "[refused:a\"b] x", "[refused:] x", "[refused:unterminated"} {
-		if got := providerError("key attestation", errors.New(msg)); code(got) != CodePlatform || providerDetail(got) != "" {
+	if alone := providerError("wallet attestation", errors.New("[refused:instance_revoked]")); providerDetail(alone) != "instance_revoked" {
+		t.Errorf("a mark with no message after it: %v", alone)
+	}
+	for _, msg := range []string{
+		"[refused:not a code] x", "[refused:a\"b] x", "[refused:] x", "[refused:unterminated",
+		// A "]" in the code the provider answered, at a status the
+		// native adapter drops a discarding code at: it would otherwise
+		// be read as the code before the "]".
+		"[refused:instance_key_expired]] the Wallet Provider refused /v1/wallet-attestation: HTTP 302 instance_key_expired]",
+		"[refused:instance_key_expired]x", "[refused:instance_key_expired]\tx", "[refused:instance_key_expired]\n",
+	} {
+		got := providerError("key attestation", errors.New(msg))
+		if code(got) != CodePlatform || providerDetail(got) != "" || errors.Is(got, walletprovider.ErrInstanceKeyExpired) {
 			t.Errorf("%q: %v, want platform without a detail", msg, got)
 		}
 	}

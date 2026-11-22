@@ -289,8 +289,9 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
     /// Runs `body` and blocks this (Go's) thread until it finishes. A
     /// URLError is marked as a network failure, which Go reports as
     /// `.network` (retryable) rather than `.platform`, and a
-    /// ``WalletProviderRefusedError`` with an error code as a refusal,
-    /// which Go reports as `.platform` with that code as `protocolError`.
+    /// ``WalletProviderRefusedError`` with an error code, a plain token, as
+    /// a refusal, which Go reports as `.platform` with that code as
+    /// `protocolError`.
     /// With `waits`, it
     /// runs as the wait for `instanceKey` there, so cancelling that
     /// cancels its Task.
@@ -305,9 +306,10 @@ final class WalletProviderAdapter: NSObject, MobileWalletProviderProtocol, @unch
                 box.set(.failure(StoreError("[network] " + e.localizedDescription)))
             } catch let e as WalletProviderRefusedError {
                 // The protocol's error code, for Go to carry as the
-                // error's detail (protocolError).
+                // error's detail (protocolError): a plain token only, so
+                // the code can't end the mark early and name another.
                 let message = e.errorDescription ?? ""
-                box.set(.failure(StoreError(e.error.map { "[refused:\($0)] " + message } ?? message)))
+                box.set(.failure(StoreError(e.error.flatMap { isPlainErrorCode($0) ? $0 : nil }.map { "[refused:\($0)] " + message } ?? message)))
             } catch {
                 box.set(.failure(error))
             }

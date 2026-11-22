@@ -15,8 +15,9 @@ Every failure from the wallet is a `WalletException`:
   authorization again;
 - `description`: a sentence fit to show the holder;
 - `message`: detail for logs. It never carries personal data, a remote
-  party's own description, or a URL's path or query, so it's safe to
-  log;
+  party's own description, a URL's path or query, or what follows the
+  scheme of a URI without `//` (an app's redirect with its `code`, a
+  `mailto:` or `urn:` URI), so it's safe to log;
 - `refusalRedirect`: for `requestRefused`, where the Verifier asked to
   take the holder. It's a URL, so it isn't in `message`.
 

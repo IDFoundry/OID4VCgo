@@ -160,7 +160,7 @@ func TestNewWallet_ProductionNeedsEachStoreDurable(t *testing.T) {
 		cfg, _ := json.Marshal(map[string]any{
 			"client_id": "wallet", "redirect_uri": "com.example.wallet:/callback", "issuer_roots": pemOf("CERTIFICATE", ca.Raw),
 			"no_revocation_check": []string{"issuer", "status"}, "request_refresh": tc.refresh,
-			"credential_issuers": []string{"https://issuer.example"},
+			"credential_issuers": []string{"https://issuer.example"}, "status_max_age_seconds": 86400,
 		})
 		_, err := NewWallet(string(cfg), tc.keys, tc.creds, nil)
 		switch {

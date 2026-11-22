@@ -49,7 +49,8 @@ final class OID4VCWalletTests: XCTestCase {
          "accept_mdl_signer_without_eku":true,"crls":"C","revocation":["issuer","verifier"],"crl_issuers":"CI",
          "no_revocation_check":["status"],"crl_distribution_points":[{"url":"http://ca.example/ca.crl","issuer":"P"}],
          "crl_distribution_points_from_roots":true,"crl_require_https":true,"status_max_bytes":10,
-         "identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d"}
+         "identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d",
+         "status_max_age_seconds":13,"status_any_age":true}
         """#
         let config = try JSONDecoder().decode(WalletConfiguration.self, from: Data(full.utf8))
         XCTAssertEqual(config.issuers.roots, "IR")
@@ -66,6 +67,8 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.revocation.declined, [.status])
         XCTAssertEqual(config.status.cacheMaxAgeSeconds, 12)
         XCTAssertEqual(config.status.cacheDir, "/d")
+        XCTAssertEqual(config.status.maxAgeSeconds, 13)
+        XCTAssertTrue(config.status.anyAge)
         XCTAssertEqual(config.network.allowedPrivateHosts, ["h.example"])
         XCTAssertEqual(config.issuance.profile, .haip)
         XCTAssertEqual(config.issuance.locales, ["de", "en"])
@@ -92,7 +95,8 @@ final class OID4VCWalletTests: XCTestCase {
          "revocation":["issuer"],"crl_issuers":"CI","no_revocation_check":["status"],"any_issuer_for_any_type":true,
          "development":true,"status":"check","crl_distribution_points":[{"url":"http://ca.example/ca.crl","issuer":"P"}],
          "crl_distribution_points_from_roots":true,"crl_require_https":true,"development_roots":"DR",
-         "status_max_bytes":10,"identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d"}
+         "status_max_bytes":10,"identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d",
+         "status_max_age_seconds":13,"status_any_age":true}
         """#
         let config = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(full.utf8))
         XCTAssertEqual(config.issuers.roots, "IR")
@@ -106,6 +110,8 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.revocation.declined, [.status])
         XCTAssertTrue(config.revocation.requireHTTPS)
         XCTAssertEqual(config.status.maxBytes, 10)
+        XCTAssertEqual(config.status.maxAgeSeconds, 13)
+        XCTAssertTrue(config.status.anyAge)
         XCTAssertEqual(config.statusCheck, .check)
         XCTAssertEqual(config.development?.roots, "DR")
         try assertSameJSON(JSONEncoder().encode(config), Data(full.utf8))
@@ -440,6 +446,13 @@ final class OID4VCWalletTests: XCTestCase {
         }
         XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: nil)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertEqual(error.localizedDescription, "the Wallet Provider refused /v1/wallet-attestation: HTTP 403")
+        }
+        // A code that isn't a plain token isn't the protocol's: unmarked,
+        // so a "]" in it can't end the mark early and name another.
+        for code in ["instance_key_expired]", "instance_key_expired] x", "instance key expired"] {
+            XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: code)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+                XCTAssertFalse(error.localizedDescription.hasPrefix("[refused:"), error.localizedDescription)
+            }
         }
     }
 

@@ -25,7 +25,9 @@ import (
 // "mdoc_reader_roots"}: reader_config is a NewProximityReader
 // configuration accepting the TestEnv's mdocs and signing with that key,
 // and mdoc_reader_roots the CA's PEM, for a wallet to recognize the
-// reader by. The reader's name is "Test Reader".
+// reader by. The reader's name is "Test Reader". Its status is
+// "decline", with a day's status_max_age_seconds for a test that sets it
+// to "check".
 func (e *TestEnv) ProximityReader(keys KeyStore) (string, error) {
 	if keys == nil {
 		return "", newError(CodeInvalidInput, errors.New("no KeyStore"))
@@ -67,6 +69,7 @@ func (e *TestEnv) ProximityReader(keys KeyStore) (string, error) {
 	cfg, _ := marshal(proximityReaderConfig{
 		IssuerRoots: pemOf(e.env.IssuerCA.Raw), ReaderKeyID: id, ReaderChain: pemOf(leafDER) + pemOf(caDER),
 		AnyIssuerForAnyType: true, NoRevocationCheck: []string{revocationIssuer, revocationStatus}, Status: statusDecline,
+		StatusMaxAgeSeconds: 86400,
 	})
 	return marshal(struct {
 		result

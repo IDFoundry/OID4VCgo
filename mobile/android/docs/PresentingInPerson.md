@@ -70,6 +70,7 @@ import dev.idfoundry.oid4vcwallet.ProximityReader
 import dev.idfoundry.oid4vcwallet.ProximityReaderConfiguration
 import dev.idfoundry.oid4vcwallet.ProximityReaderIdentity
 import dev.idfoundry.oid4vcwallet.ProximityReaderSession
+import dev.idfoundry.oid4vcwallet.StatusLists
 import dev.idfoundry.oid4vcwallet.VerifiedMdoc
 import dev.idfoundry.oid4vcwallet.Wallet
 import java.security.cert.X509Certificate
@@ -216,8 +217,9 @@ reader is a production one: it refuses (`invalid_input`) a
 configuration that leaves a decision open: which IACAs issue which
 document types (`issuers.anyIssuerForAnyType`, or
 `issuers.rootsByDocType`), each role's revocation (`revocation.roles`
-with `revocation.crls`, or `revocation.declined` to decline), and whether a document's revocation
-status is checked (`statusCheck`). `development` relaxes this, for trying
+with `revocation.crls`, or `revocation.declined` to decline), whether a document's revocation
+status is checked (`statusCheck`) and, when it is, how long ago its status list may have been
+signed (`status.maxAgeSeconds`, or `status.anyAge`). `development` relaxes this, for trying
 out a development issuer's documents; never ship an app with it set. `start` takes the holder's QR code and what to ask for.
 
 ```kotlin
@@ -240,6 +242,8 @@ suspend fun readInPerson(
                 roles = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
                 crls = crls,
             ),
+            // A status list signed over a day ago is refused.
+            status = StatusLists(maxAgeSeconds = 86_400),
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
         ),
     )

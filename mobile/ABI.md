@@ -31,6 +31,19 @@ the same release, a `redirect_uri` that opens a system app (an app
 store, a call, a message, the settings, a Shortcut or a map) is
 refused, as an `http` one is (see the configuration below).
 
+Also within version 16, without bumping it (new configuration keys,
+and a production configuration refused without them, as one leaving a
+trust role's revocation undecided came to be within version 12), a
+Wallet's and a ProximityReader's `status_max_age_seconds` bounds how
+long ago a status or identifier list `CheckStatus` accepts may have
+been signed, and `status_any_age` accepts one of any age instead; the
+Swift and Kotlin libraries have them from OID4VCWallet 0.44.0, as
+`status.maxAgeSeconds` and `status.anyAge`. Outside `development`, a
+Wallet receiving credentials and a reader with `"status": "check"`
+need one of the two: `NewWallet` and `NewProximityReader` are
+otherwise `invalid_input`, naming the key (see the configuration
+below).
+
 Version 15 (OID4VCWallet 0.28.0) gives the `WalletProvider`'s
 `KeyAttestation` the issuance's instance key: it's
 `KeyAttestation(instanceKeyJWK, keysJWK, nonce)`, `instanceKeyJWK`
@@ -252,10 +265,12 @@ An older library gives the last two errors no detail.
 An error's message is fit for an app's logs. It never carries a remote
 party's own description (`error_description`, an error body), a URL's
 path or query (which can carry a pre-authorized code, a `request_uri` or
-a `response_code`), credential claims, control characters, line or
-paragraph separators, or invisible format characters. It's at most 300
-characters. The remote party's OAuth error code is the
-`detail`.
+a `response_code`), what follows the scheme of a URI without `//` (a
+`mailto:`, `urn:` or `data:` URI, an `openid4vp:` link, an app's
+`com.example.wallet:/cb?code=…` redirect: from OID4VCWallet 0.44.0),
+credential claims, control characters, line or paragraph separators,
+or invisible format characters. It's at most 300 characters. The
+remote party's OAuth error code is the `detail`.
 
 ## Callbacks the app implements
 
@@ -484,11 +499,18 @@ carries no HTTP status, so mark these codes, and `instance_revoked`,
 only for an answer with the status the provider gives them (403; 409
 for `instance_key_registered`, 400 for `evidence_required`): the same
 code in a redirect, or a proxy's answer in front of the provider,
-isn't the provider's refusal. The Swift package's adapter marks a `URLError` as
-network and a `WalletProviderRefusedError` with an error code as
-refused, and the Kotlin library's an `IOException` and a
+isn't the provider's refusal. The mark is the whole `[refused:code] `
+(or `[refused:code]` ending the message), `code` a plain token, 1 to 64
+ASCII letters, digits and underscores, as the protocol's codes are:
+anything else starting `[refused:`, a code with a `]` or a space in it
+say, is `platform` without a detail, so mark only a plain-token code
+(within ABI 16, from OID4VCWallet 0.44.0: before, the code was read up
+to its first `]`). The Swift package's adapter marks a `URLError` as
+network and a `WalletProviderRefusedError` with a plain-token error
+code as refused, and the Kotlin library's an `IOException` and a
 `WalletProviderRefusedException` likewise; their `HttpWalletProvider`
-gives such a code only at its status.
+gives such a code only at its status, and never one that isn't a plain
+token.
 
 ## Wallet
 
@@ -510,7 +532,8 @@ gives such a code only at its status.
  "tls_pins": {"issuer.example": ["<base64 SHA-256 of an SPKI>"]}, "allowed_private_hosts": ["issuer.corp.example"],
  "proximity_device_auth": "signature",
  "status_issuers": {"https://issuer.example": ["https://status.example"]},
- "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_cache_max_age_seconds": 0,
+ "status_max_bytes": 0, "identifier_list_max_bytes": 0, "status_max_age_seconds": 86400, "status_any_age": false,
+ "status_cache_max_age_seconds": 0,
  "status_cache_dir": "/absolute/path", "status_cache_key": "<base64 of 32 random bytes>",
  "require_issuer_name": false, "issuer_metadata_roots": "<PEM>", "require_signed_issuer_metadata": false,
  "require_issuer_metadata_name": false, "max_issuer_metadata_age_seconds": 0, "allow_foreign_iss": false,
@@ -707,6 +730,21 @@ status list and mdoc identifier list `CheckStatus` reads, in bytes: 0
 keeps 1 MiB and 4 MiB, and each may be at most 32 MiB
 (`invalid_input` otherwise). A larger list fails the check, so raise
 them only for issuers whose lists are larger. Added within ABI 15.
+`status_max_age_seconds` bounds how long ago a status or identifier
+list `CheckStatus` accepts may have been signed (its `iat`), at most
+31622400 (366 days): a list older, fetched or kept, fails the check
+(`protocol`). A list signed before a revocation stays valid until its
+`exp`, which an issuer may put months ahead, so anyone who can serve
+bytes at the list's URI (a CDN, a mirror, a former owner of the
+domain) could replay it until then; with the bound, only for that long
+after the revocation. Set it above the longest interval the issuers
+sign their lists at: 86400, a day, for issuers that sign them at
+least daily. `status_any_age` accepts a list of any age instead,
+until its `exp`, and can't be set with `status_max_age_seconds`.
+Outside `development`, a wallet receiving credentials (`issuer_roots`,
+`issuer_roots_by_vct` or the mdoc ones) needs one of the two; without
+either, or with both, or a bound out of range, `NewWallet` is
+`invalid_input`. Added within ABI 16, from OID4VCWallet 0.44.0.
 `status_cache_max_age_seconds` is how long `CheckStatus` uses a status
 or identifier list it fetched before asking its server again: 0 means
 5 minutes, and it may be at most 86400 (`invalid_input` otherwise). A
@@ -715,7 +753,9 @@ list is never used past its own `ttl` or `exp`, nor past the
 list's `ETag` and `Last-Modified` back, so a list its server still
 serves costs a `304 Not Modified`, not the list. Longer means fewer
 requests, and a revocation seen that much later. Wallets and readers
-configured with the same value share their lists. Added within ABI 15.
+configured with the same value share their lists. It bounds nothing a
+server answers with: a list asked for again may be as old as its server
+makes it, which `status_max_age_seconds` bounds. Added within ABI 15.
 `status_cache_dir`, an absolute path the app owns (its cache
 directory, say), keeps the lists `CheckStatus` verified across
 launches, at most 64 MiB of them: a launch then asks each list's
@@ -1426,7 +1466,7 @@ added within ABI 14: before, they were refused.
 
 The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
 "reader_key_id", "reader_chain", "max_clock_skew_seconds",
-"status_max_bytes", "identifier_list_max_bytes", "status_cache_max_age_seconds", "status_cache_dir", "status_cache_key", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
+"status_max_bytes", "identifier_list_max_bytes", "status_max_age_seconds", "status_any_age", "status_cache_max_age_seconds", "status_cache_dir", "status_cache_key", "require_mdl_signer_eku", "accept_mdl_signer_without_eku", "crls",
 "revocation", "crl_issuers", "no_revocation_check",
 "crl_distribution_points", "crl_distribution_points_from_roots",
 "crl_require_https", "development_roots", "any_issuer_for_any_type",
@@ -1447,6 +1487,11 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   that far off.
 - `status_max_bytes` and `identifier_list_max_bytes` bound the lists
   `CheckStatus` reads, as a Wallet's. Added within ABI 15.
+- `status_max_age_seconds` bounds how long ago a list `CheckStatus`
+  accepts may have been signed, and `status_any_age` accepts one of any
+  age instead, as a Wallet's; outside `development`, `"status":
+  "check"` needs one of the two. Added within ABI 16, from OID4VCWallet
+  0.44.0.
 - `status_cache_max_age_seconds` is how long `CheckStatus` uses a list
   it fetched, `status_cache_dir` where it keeps lists across launches,
   and `status_cache_key` what authenticates them there, as a Wallet's.
@@ -1505,14 +1550,16 @@ The configuration is `{"issuer_roots", "issuer_roots_by_doctype",
   `revocation` nor `no_revocation_check`, its message naming the roots'
   key, that sets `issuer_roots` without `any_issuer_for_any_type`
   (name each document type's IACAs in `issuer_roots_by_doctype`
-  instead), or that leaves `status` unset.
+  instead), that leaves `status` unset, or that sets it to `"check"`
+  without `status_max_age_seconds` or `status_any_age`.
 - `development` relaxes what production requires, for a reader trying
   out a development issuer's documents. Never ship an app with it set.
   With it, the reader runs at development assurance: a role in neither
   `revocation` nor `no_revocation_check` checks no revocation, any
-  IACA in `issuer_roots` may issue any document type, and an unset
-  `status` is `"decline"`. A role named in both is `invalid_input` in
-  development too.
+  IACA in `issuer_roots` may issue any document type, an unset
+  `status` is `"decline"`, and a list of any age is accepted unless
+  `status_max_age_seconds` bounds it. A role named in both is
+  `invalid_input` in development too.
 
   `HandleMessage` checks no document status either way: `CheckStatus`
   does, called by the wrappers under `"status": "check"`. Within ABI 12, these decisions were an opt-in, `production`;

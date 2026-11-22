@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/wallet"
@@ -20,7 +21,8 @@ import (
 // they share one, a leaf policy (an extended key usage) on each. Each
 // role in use also needs a revocation check in production: a
 // certrevocation.Refresher's Checker over its CAs' CRLs, or
-// certrevocation.NoCheck{} to decline.
+// certrevocation.NoCheck{} to decline. So does a status list's age:
+// how long ago a list CheckStatus accepts may have been signed.
 func ExampleNew() {
 	var (
 		issuerRoots, verifierRoots *x509.CertPool                // the ecosystem's trust anchors, one pool per role
@@ -39,6 +41,10 @@ func ExampleNew() {
 	w, err := walletflow.New(walletflow.Config{
 		ClientID: "https://wallet.example.com", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: issuerRoots, IssuerRevocation: issuerCRLs.Checker(), StatusRevocation: issuerCRLs.Checker(),
+		// A status list signed a day ago or more is refused, so one
+		// from before a revocation, served again, isn't accepted until
+		// its exp.
+		StatusMaxAge: 24 * time.Hour,
 		// The issuers whose offers the wallet takes, so a transaction
 		// code never goes to another.
 		CredentialIssuers: []string{"https://issuer.example.com"},

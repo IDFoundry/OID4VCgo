@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/statuslist"
@@ -13,20 +14,20 @@ import (
 )
 
 // productionStatus is a StatusPolicy AssuranceProduction accepts: a
-// hardened Fetcher (the zero one), a Cache and an explicit revocation
-// choice.
+// hardened Fetcher (the zero one), a Cache, an explicit revocation
+// choice and a bound on a list's age.
 func productionStatus() *verifier.StatusPolicy {
 	return &verifier.StatusPolicy{Checker: statuslist.Checker{
 		Roots:   x509.NewCertPool(),
-		Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}, MaxAge: 24 * time.Hour},
 		Cache:   statuslist.NewCache(statuslist.CacheOptions{}),
 	}}
 }
 
 // The status decision is Status or NoStatusCheck, never both; under
 // AssuranceProduction one of them is required, and Status's Fetcher
-// must be hardened, have a Cache, and its list signers' revocation
-// decided.
+// must be hardened, have a Cache, its list signers' revocation decided
+// and a list's age bounded, or AnyListAge set, never both.
 func TestCheckStatusDecision(t *testing.T) {
 	loopback := productionStatus()
 	loopback.Checker.Fetcher.AllowLoopback = true
@@ -36,6 +37,15 @@ func TestCheckStatusDecision(t *testing.T) {
 	noRoots.Checker.Roots = nil
 	noCache := productionStatus()
 	noCache.Checker.Cache = nil
+	anyAge := productionStatus()
+	anyAge.Checker.Options.MaxAge = 0
+	anyAge.AnyListAge = true
+	noMaxAge := productionStatus()
+	noMaxAge.Checker.Options.MaxAge = 0
+	negativeMaxAge := productionStatus()
+	negativeMaxAge.Checker.Options.MaxAge = -time.Hour
+	maxAgeAndAnyAge := productionStatus()
+	maxAgeAndAnyAge.AnyListAge = true
 	for name, tc := range map[string]struct {
 		assurance     verifier.AssuranceLevel
 		status        *verifier.StatusPolicy
@@ -50,6 +60,12 @@ func TestCheckStatusDecision(t *testing.T) {
 		"production, no revocation decision": {verifier.AssuranceProduction, noRevocation, false, "Revocation is required"},
 		"production, no roots":               {verifier.AssuranceProduction, noRoots, false, "Roots"},
 		"production, no cache":               {verifier.AssuranceProduction, noCache, false, "Cache is required"},
+		"production, any list age":           {verifier.AssuranceProduction, anyAge, false, ""},
+		"production, no max age":             {verifier.AssuranceProduction, noMaxAge, false, "Status.Checker.Options.MaxAge is required"},
+		"production, negative max age":       {verifier.AssuranceProduction, negativeMaxAge, false, "must be positive"},
+		"production, max age and any age":    {verifier.AssuranceProduction, maxAgeAndAnyAge, false, "not both"},
+		"development, no max age":            {verifier.AssuranceDevelopment, noMaxAge, false, ""},
+		"development, max age and any age":   {verifier.AssuranceDevelopment, maxAgeAndAnyAge, false, "not both"},
 		"development, no cache":              {verifier.AssuranceDevelopment, noCache, false, ""},
 		"development, neither":               {verifier.AssuranceDevelopment, nil, false, ""},
 		"development, loopback fetcher":      {verifier.AssuranceDevelopment, loopback, false, ""},

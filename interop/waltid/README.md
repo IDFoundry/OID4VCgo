@@ -310,6 +310,7 @@ deployment runs it (`scripts/wallet -assurance production`):
 | Stores | in memory | sqlstore's sealed SQLite stores (`internal/prodwallet`), which receiving credentials at production requires |
 | Trust | `IssuerRoots` and `X5CVerifierRoots`, both the run's CA | the same, each with a leaf policy, as production requires of two roles whose roots share an anchor: Issuer2's certificates by their common name, Verifier2's by its own (setup's CA, trusted for nothing else, marks no role an extended key usage could tell) |
 | Revocation | Issuer2's and Verifier2's certificates against the CA's CRL | the same, and `StatusRevocation`, which production requires too |
+| Status list age | unbounded | at most a day (`StatusMaxAge`), which production requires too |
 | Attestations | none: Issuer2 redeems its pre-authorized codes anonymously and asks for no Key Attestation | the same |
 
 Where it runs, as [`../prodnet.sh`](../prodnet.sh) sets it up:

@@ -1,6 +1,8 @@
 package verifierapp
 
 import (
+	"time"
+
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/verifier"
 )
@@ -26,8 +28,11 @@ func (a *App) statusPolicy() *verifier.StatusPolicy {
 		Fetcher: statuslist.Fetcher{HTTP: a.cfg.HTTP, AllowLoopback: true},
 		Roots:   a.issuerRoots,
 		// The list's signer, the issuer's document signer, is checked
-		// against its CA's CRL as the credential's is.
-		Options: statuslist.VerifyOptions{Now: a.now, Revocation: a.issuerCRLs},
+		// against its CA's CRL as the credential's is, and a list
+		// signed over a day ago is refused, so one served from before a
+		// revocation is accepted for a day at most (the demo issuer
+		// signs a new one every minute).
+		Options: statuslist.VerifyOptions{Now: a.now, Revocation: a.issuerCRLs, MaxAge: 24 * time.Hour},
 		Cache:   a.statusCache,
 	}}
 }

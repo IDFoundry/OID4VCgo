@@ -70,7 +70,7 @@ final class CRLRefreshTests: XCTestCase {
             issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true),
             revocation: .init(roles: [.issuer, .status],
                               distributionPoints: [CRLDistributionPoint(url: "http://127.0.0.1:9/ca.crl", issuer: issuerRoots)]),
-            statusCheck: .check), keys: nil)
+            status: .init(maxAgeSeconds: 86_400), statusCheck: .check), keys: nil)
         let r = try await reader.refreshCRLs()
         XCTAssertEqual(r.results.map(\.outcome), [.failed])
         XCTAssertTrue(r.results[0].error?.hasPrefix("[network]") ?? false, r.results[0].error ?? "")

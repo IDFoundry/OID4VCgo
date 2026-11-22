@@ -101,7 +101,9 @@ is a complete, working app on this library to compare against.
 - [ ] `Wallet.checkStatus(id)` before relying on a held credential;
   show `CredentialStatus.Value.Unknown` as not checked, not as valid,
   and `CredentialStatus.reason` to say why (an issuer certificate
-  revoked since receipt, revocation lists out of date).
+  revoked since receipt, revocation lists out of date). Outside
+  development, `status.maxAgeSeconds` (`86_400` where issuers sign their
+  lists daily), or `status.anyAge`, decides how old a list may be.
 - [ ] *Check:* both grants against your issuer, including a killed
   process during sign-in; an offer from an issuer outside `issuers.roots`
   is refused. ([Receiving credentials](ReceivingCredentials.md))
@@ -255,7 +257,9 @@ is a complete, working app on this library to compare against.
   or `setCRLs`) or `revocation.declined`, `issuers.anyIssuerForAnyType`
   or `issuers.rootsByDocType` deciding which IACAs issue which document type,
   and `statusCheck = StatusCheck.CHECK`, so a session is `Verified` only
-  for a document that isn't revoked or suspended.
+  for a document that isn't revoked or suspended, with
+  `status.maxAgeSeconds` (`86_400` where issuers sign their lists daily)
+  so an old list served again isn't taken for a current one.
 - [ ] QR: `reader.start(context, qrCode, docType, elements)` after
   `ProximityPermissions.reader` is granted.
 - [ ] NFC: reader mode on the resumed reader screen with

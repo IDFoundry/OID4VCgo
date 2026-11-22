@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -22,8 +23,10 @@ import (
 // fit for an app's logs: it never carries what the issuer,
 // Authorization Server or Verifier said in its own words (an
 // error_description, an error body), a URL's path or query (which can
-// carry a pre-authorized code, a request_uri or a response_code), or
-// control characters. The remote party's OAuth error code, checked to be
+// carry a pre-authorized code, a request_uri or a response_code), what
+// follows the scheme of a URI without an authority (an app's redirect
+// with its code, a mailto: or urn: URI), or control characters. The
+// remote party's OAuth error code, checked to be
 // a plain token, is the Detail. An error the remote party gave no code
 // for, caused by a certificate revocation check, has the wallet's own
 // (revocationDetail).
@@ -247,10 +250,22 @@ const maxMessage = 300
 // urlPattern matches a URL, to cut it to its scheme and host.
 var urlPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]*`)
 
+// uriPattern matches a URI whose scheme starts a word, and what follows
+// its colon up to a space, quote or angle bracket: group 1 is what's
+// before it, 2 the scheme and 3 the rest. Not a name with a colon after
+// it inside another (invalid_request:, x509_hash:), whose underscore
+// isn't a scheme's, nor a bracketed [code:detail], nor a colon followed
+// by a space (key: value).
+var uriPattern = regexp.MustCompile(`(^|[^A-Za-z0-9+.\-_\[])([A-Za-z][A-Za-z0-9+.\-]*):([^\s"'<>]+)`)
+
+// urlStart matches the start of a URL, scheme://.
+var urlStart = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
 // cleanText is s fit for an app's logs: each URL cut to its scheme and
-// host, then fit as displaytext.Shorten does to at most maxMessage
-// runes, control characters and line or paragraph separators made
-// spaces and invisible format characters dropped.
+// host, and each other URI to its scheme (cutURIs), then fit as
+// displaytext.Shorten does to at most maxMessage runes, control
+// characters and line or paragraph separators made spaces and invisible
+// format characters dropped.
 func cleanText(s string) string {
 	s = urlPattern.ReplaceAllStringFunc(s, func(raw string) string {
 		u, err := url.Parse(raw)
@@ -259,7 +274,62 @@ func cleanText(s string) string {
 		}
 		return u.Scheme + "://" + u.Host
 	})
-	return displaytext.Shorten(s, maxMessage)
+	return displaytext.Shorten(cutURIs(s), maxMessage)
+}
+
+// cutURIs is s with each URI that has no authority cut to its scheme:
+// what follows the colon of a mailto:, urn:, data: or tel: URI, an
+// openid4vp: or openid-credential-offer: link, or an app's redirect
+// (com.example.wallet:/cb?code=…) can carry an identifier or a token.
+// Punctuation ending a sentence after one stays. What only looks like
+// one is kept: a host and port (issuer.example:443, or :443: as a dial
+// error writes it), an IPv6 address, and a URL cleanText cut already,
+// alone or after another scheme (origin:https://verifier.example). So
+// is an IETF protocol parameter's URN (isIETFParamsURN), such as a
+// grant type the wallet names in its own errors.
+func cutURIs(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range uriPattern.FindAllStringSubmatchIndex(s, -1) {
+		end := m[1]
+		for end > m[6] && strings.IndexByte(".,;!?)", s[end-1]) >= 0 {
+			end--
+		}
+		uri, scheme, rest := s[m[4]:end], s[m[4]:m[5]], s[m[6]:end]
+		if rest == "" || strings.HasPrefix(rest, "//") || urlStart.MatchString(rest) || isPort(strings.TrimSuffix(rest, ":")) || isIETFParamsURN(scheme, rest) {
+			continue
+		}
+		if _, err := netip.ParseAddr(uri); err == nil {
+			continue
+		}
+		b.WriteString(s[last:m[4]])
+		b.WriteString(scheme + ":")
+		last = end
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// isIETFParamsURN reports whether scheme:rest is a URN in the IETF's
+// namespace for registered protocol parameters (urn:ietf:params:, RFC
+// 3553), such as a grant type: a protocol's own name, never an
+// identifier or a token, so an error naming one keeps it whole. The NID
+// is case-insensitive (RFC 8141 §3.1).
+func isIETFParamsURN(scheme, rest string) bool {
+	return strings.EqualFold(scheme, "urn") && len(rest) > len("ietf:params:") && strings.EqualFold(rest[:len("ietf:params:")], "ietf:params:")
+}
+
+// isPort reports whether s is a port number: 1 to 5 ASCII digits.
+func isPort(s string) bool {
+	if s == "" || len(s) > 5 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // errorCode is code if it's a plausible OAuth error code (RFC 6749

@@ -252,6 +252,22 @@ they're not yet closed in the library.
   allows (ISO/IEC 18013-5 Annex B allows long ones for an IACA). Set
   `RequireHTTPS` where the distribution points serve https; otherwise
   seed `Floors` with a list obtained over a trusted channel.
+- **A status list replayed within its age bound.** A status list or
+  mdoc identifier list signed before a revocation verifies until its
+  exp, which an issuer may put months ahead (ISO/IEC 18013-5 §12.3.6.3
+  requires only that there is one), so anyone who can serve bytes at
+  its URI (a CDN, a mirror, a former owner of the domain, a
+  compromised status host) can answer a check with it. Only a bound on
+  a list's age closes that: `statuslist.VerifyOptions.MaxAge` (and
+  `identifierlist.VerifyOptions.MaxAge`) refuses a list signed longer
+  ago, and under production assurance a `verifier.StatusPolicy`
+  requires it, or `AnyListAge` to decline it; so does a wallet
+  receiving credentials outside development, as
+  `walletflow.Config.StatusMaxAge` or `StatusAnyAge`, and the mobile
+  libraries' wallet and reader as `status_max_age_seconds` or
+  `status_any_age`. A revocation then takes effect within that bound
+  whatever is served, or within the old list's exp where the bound is
+  declined.
 - **Integers beyond 2^53 − 1.** A JSON number decodes to a float64,
   which holds every integer exactly only up to 2^53 − 1: 2^53 + 1
   reads back as 2^53. So none reaches a DCQL `values` filter or an

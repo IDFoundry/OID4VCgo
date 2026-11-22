@@ -341,6 +341,33 @@ Either way, lead the PIN prompt with the offer's
 ``Offer/credentialIssuer``, not its issuer name alone: unsigned
 metadata lets an issuer choose its name.
 
+### How old a status list may be
+
+A status or identifier list signed before a revocation verifies until
+its `exp`, which an issuer may put months ahead, so anyone who can
+serve bytes at the list's URI (a CDN, a mirror, a former owner of the
+domain) can hand `checkStatus` an old list that still says valid. A
+wallet with issuer roots, and a ``ProximityReader`` with
+``ProximityReaderConfiguration/StatusCheck/check``, decide how long ago
+a list may have been signed, or `Wallet(configuration:)` and
+`ProximityReader(configuration:)` throw
+``WalletError/Code/invalidInput``:
+
+- ``StatusLists/maxAgeSeconds`` refuses a list signed longer ago,
+  fetched or kept: a revocation takes effect within that long, whatever
+  is served. Set it above the longest interval your issuers sign their
+  lists at: `86_400`, a day, for issuers that sign them at least daily.
+  A shorter one fails the check of every credential on a list signed
+  less often.
+- ``StatusLists/anyAge`` accepts a list of any age, until its `exp`.
+  Set it only where your issuers' lists expire soon after they're
+  signed, or where whoever serves them is trusted not to serve an old
+  one.
+
+``StatusLists/cacheMaxAgeSeconds`` is another setting: how long a list
+fetched is used before it's asked for again. It bounds nothing a list's
+server answers with.
+
 ### Settings to decide
 
 Each of these is off or open by default. Decide each for your

@@ -41,6 +41,12 @@ class CallbackMarksTest {
             "the Wallet Provider refused /v1/wallet-attestation: HTTP 403",
             failure { refusing(null).walletAttestation("c", "{}".toByteArray()) }.message,
         )
+        // A code that isn't a plain token isn't the protocol's: unmarked, so a "]" in it
+        // can't end the mark early and name another.
+        for (code in listOf("instance_key_expired]", "instance_key_expired] x", "instance key expired")) {
+            val message = failure { refusing(code).walletAttestation("c", "{}".toByteArray()) }.message!!
+            assertFalse(message, message.startsWith("[refused:"))
+        }
     }
 
     private class CancellingStore(private val failure: Exception) : KeyStore {

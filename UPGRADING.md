@@ -12,6 +12,25 @@ CHANGELOG.md's BREAKING CHANGES sections.
 Built from OID4VCgo v0.87.0 (see its entry below, whose wallet
 changes reach the mobile libraries); the gomobile ABI is still 16.
 
+### Bound a status list's age outside development (Swift, Kotlin)
+
+Outside `development`, a `Wallet` with issuer roots (`issuers.roots`,
+`issuers.rootsByVCT` or the mdoc ones) and a `ProximityReader` with
+`statusCheck` `.check` (`StatusCheck.CHECK`) need the new
+`status.maxAgeSeconds` (`status_max_age_seconds`): how long ago a status
+or identifier list `checkStatus` accepts may have been signed. Without
+it, the constructor throws `invalidInput`. Set it above the longest
+interval your issuers sign their lists at, `86_400` (a day) for issuers
+that sign them at least daily: a list from before a revocation, served
+again by whoever can serve bytes at its URI, is then refused once it's
+that old, rather than accepted until its `exp`, which an issuer may put
+months ahead. A list older fails the check: `checkStatus` throws, and a
+reader session fails. Where your issuers' lists expire soon after
+they're signed, set `status.anyAge` (`status_any_age`) instead, which
+accepts a list of any age; setting both, or a bound over a year, is
+`invalidInput`. `status.cacheMaxAgeSeconds`, how long a list fetched is
+used before it's asked for again, is a separate setting and unchanged.
+
 ### `refreshCRLs` reads at most 1 MiB of a list (Swift, Kotlin)
 
 `Wallet.refreshCRLs()` and `ProximityReader.refreshCRLs()` now refuse
@@ -155,6 +174,41 @@ and one holding an older list does once its nextUpdate passes. For a
 CA whose lists are larger, set `MaxBytes` on its `Refresher`. The
 mobile libraries' `refreshCRLs` reads at most 1 MiB a list too (see
 OID4VCWallet 0.43.0 → 0.44.0 above).
+
+### Bound a status list's age under production (verifier)
+
+Under `AssuranceProduction`, a `verifier.StatusPolicy`
+(`TransactionsConfig.Status`, `VerifyResponseRequest.Status`,
+`mdocdcapi.VerifyParams.Status`, `proximity.WithStatus`) is refused
+unless its `Checker.Options.MaxAge` is set: how long ago a status or
+identifier list may have been signed (its iat). A list signed before a
+revocation otherwise stays acceptable until its exp, however far ahead
+the issuer put it, and anyone who can serve bytes at the list's URI (a
+CDN, a mirror, a former owner of the domain) can replay it until then.
+Set `MaxAge` above the longest interval your issuers sign their lists
+at: 24 hours for issuers that sign them at least daily, as
+`statuslist.Publisher` does by default. A list older is refused, so a
+bound shorter than that fails the status check of every credential the
+issuer's list covers. Where your issuers' lists expire soon after
+they're signed, or whoever serves them is trusted not to serve an old
+one, set the new `StatusPolicy.AnyListAge` instead, which declines the
+bound explicitly. A policy setting both is refused, at every assurance
+level; under `AssuranceDevelopment` nothing else changes.
+
+### Bound a status list's age outside Development (walletflow)
+
+The new `walletflow.Config.StatusMaxAge` bounds how long ago a status
+list or identifier list `CheckStatus` accepts may have been signed: a
+list older, fetched or kept, fails the check with an error. Outside
+`Development`, `New` refuses a `Config` that receives credentials
+(`IssuerRoots`, `IssuerRootsByVCT`, `MdocIssuerRoots` or
+`MdocIssuerRootsByDocType`) without it, unless the new `StatusAnyAge`
+declines the bound, for the same reason as the verifier's above. Set it
+above the longest interval your issuers sign their lists at: 24 hours
+for issuers that sign them at least daily. A `Config` setting both, or
+a negative `StatusMaxAge`, is refused in `Development` too. It isn't
+`Dependencies.StatusCache`'s `CacheOptions.MaxAge`, which bounds how
+long a list fetched is kept before it's fetched again.
 
 ## OID4VCWallet 0.42.0 → 0.43.0
 

@@ -633,6 +633,38 @@ class HttpWalletProviderTest {
         }
     }
 
+    /**
+     * A code that isn't a plain token is no code at all, at any status: the protocol's
+     * are, and a `]` or a space in one would let an answer choose the code Go reads from
+     * the mark. Nothing is discarded.
+     */
+    @Test
+    fun codesThatArentPlainTokensAreDropped() = runBlocking {
+        val codes = listOf(
+            "instance_key_expired]", "instance_key_expired] x", "instance key expired",
+            "instance_key_expired\\u0000", "instance_key_expir\\u00e9", "a".repeat(65),
+        )
+        for (status in listOf(302, 403)) {
+            for (code in codes) {
+                val s = Setup()
+                val key = s.newInstanceKey()
+                s.walletAttestation(key)
+                val kept = s.registry.instance()!!
+                s.provider.refuse[WALLET_ATTESTATION] = status to code
+                val e = runCatching { s.walletAttestation(key) }.exceptionOrNull()
+                assertTrue("$code at $status: $e", e is WalletProviderRefusedException)
+                e as WalletProviderRefusedException
+                assertEquals(status, e.status)
+                assertNull("$code at $status", e.error)
+                assertNull("$code at $status", e.description)
+                assertEquals("$code at $status", kept.instanceID, s.registry.instance()?.instanceID)
+            }
+        }
+        assertTrue(isPlainErrorCode("instance_key_expired"))
+        assertTrue(isPlainErrorCode("a".repeat(64)))
+        assertFalse(isPlainErrorCode(""))
+    }
+
     @Test
     fun holderKeysOverNoRememberedChallengeFailWithoutARequest() = runBlocking {
         val s = Setup()

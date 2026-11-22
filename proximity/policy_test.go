@@ -19,7 +19,7 @@ import (
 // fetches: its documents in these tests name no status list.
 func noStatusList() *verifier.StatusPolicy {
 	return &verifier.StatusPolicy{Checker: statuslist.Checker{
-		Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}},
+		Roots: x509.NewCertPool(), Options: statuslist.VerifyOptions{Revocation: certrevocation.NoCheck{}, MaxAge: 24 * time.Hour},
 		Cache: statuslist.NewCache(statuslist.CacheOptions{}),
 	}}
 }

@@ -1566,9 +1566,10 @@ changes whether *every* bullet below is `(done)`.
   Verifier's business checks, composed with `Chain`): a `StatusPolicy`,
   as `TransactionsConfig.Status`, `VerifyResponseRequest.Status` or
   `mdocdcapi.VerifyParams.Status`, runs before `Accept`, and
-  `AssuranceProduction` requires it, with a hardened fetcher and a
-  status-list signer revocation choice, or an explicit `NoStatusCheck`
-  (`CheckStatusDecision`). It passes a credential with no status
+  `AssuranceProduction` requires it, with a hardened fetcher, a
+  status-list signer revocation choice and a bound on how long ago a
+  list may have been signed (`Options.MaxAge`, or `AnyListAge` to
+  decline it), or an explicit `NoStatusCheck` (`CheckStatusDecision`). It passes a credential with no status
   reference unless `RequireReference` is set; `RequireValidStatus` and
   `RequireStatusReference` are the same checks as `Accept`s. Certificate
   revocation is checked for a credential's issuer: `X5CIssuerKeyResolver`

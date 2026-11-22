@@ -15,7 +15,8 @@ public data class StatusLists(
     /**
      * How long a status or identifier list fetched is used before it's revalidated, in
      * seconds: 0 means 5 minutes, at most a day, and never past the list's own `ttl` or
-     * `exp`. Longer means fewer requests, and a revocation seen that much later.
+     * `exp`. Longer means fewer requests, and a revocation seen that much later. It bounds
+     * nothing a list's server answers with: for that, see [maxAgeSeconds].
      */
     val cacheMaxAgeSeconds: Long = 0,
     /**
@@ -33,6 +34,26 @@ public data class StatusLists(
      * each was last checked.
      */
     val cacheDir: String? = null,
+    /**
+     * How long ago a status or identifier list may have been signed, in seconds, at most a
+     * year; 0 sets no bound. A list signed before a revocation stays valid until its `exp`,
+     * which an issuer may put months ahead, so anyone who can serve bytes at the list's URI
+     * (a CDN, a mirror, a former owner of the domain) could replay it until then; with
+     * this, only for this long after the revocation. A list older, fetched or kept, fails
+     * the check, so set it above the longest interval your issuers sign their lists at:
+     * `86_400`, a day, for issuers that sign them at least daily. Outside `development`, a
+     * [Wallet] with issuer roots and a [ProximityReader] with
+     * [ProximityReaderConfiguration.StatusCheck.CHECK] need it, or [anyAge]; without either,
+     * the constructor throws `invalidInput` (from OID4VCWallet 0.44.0).
+     */
+    val maxAgeSeconds: Long = 0,
+    /**
+     * Accepts a status or identifier list of any age, until its `exp`, in place of
+     * [maxAgeSeconds]: set it only where your issuers' lists expire soon after they're
+     * signed, or where whoever serves them is trusted not to serve an old one. It can't be
+     * set with [maxAgeSeconds] (from OID4VCWallet 0.44.0).
+     */
+    val anyAge: Boolean = false,
 )
 
 /**

@@ -193,10 +193,22 @@ type config struct {
 	// 4 MiB (walletflow.Config.StatusMaxBytes, IdentifierListMaxBytes).
 	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
 	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
+	// StatusMaxAgeSeconds bounds how long ago a status or identifier
+	// list CheckStatus accepts may have been signed, at most a year
+	// (walletflow.Config.StatusMaxAge): a list older, fetched or kept,
+	// fails the check, so one served from before a revocation isn't
+	// accepted until its exp. StatusAnyAge accepts a list of any age
+	// instead (walletflow.Config.StatusAnyAge); it can't be set with
+	// StatusMaxAgeSeconds. Outside development, a wallet receiving
+	// credentials needs one of them.
+	StatusMaxAgeSeconds int64 `json:"status_max_age_seconds,omitempty"`
+	StatusAnyAge        bool  `json:"status_any_age,omitempty"`
 	// StatusCacheMaxAgeSeconds is how long CheckStatus uses a status or
 	// identifier list it fetched before revalidating it: zero means
 	// statuslist.DefaultCacheMaxAge, at most a day; never past the
-	// list's own ttl or exp.
+	// list's own ttl or exp. Unlike StatusMaxAgeSeconds, it bounds
+	// nothing a server answers with: a list fetched again may be as old
+	// as its server makes it.
 	StatusCacheMaxAgeSeconds int64 `json:"status_cache_max_age_seconds,omitempty"`
 	// StatusCacheDir, an absolute path, keeps the lists CheckStatus
 	// verified across launches (statuslist.DirCacheStore): the app's
@@ -634,6 +646,12 @@ func walletConfig(cfg config) (walletflow.Config, error) {
 	if err := checkCredentialIssuerTrust(wcfg); err != nil {
 		return walletflow.Config{}, err
 	}
+	// As walletflow requires them, with the configuration's own keys in
+	// its errors.
+	if wcfg.StatusMaxAge, err = statusMaxAge(cfg.StatusMaxAgeSeconds, cfg.StatusAnyAge, !cfg.Development && receivesCredentials(wcfg)); err != nil {
+		return walletflow.Config{}, err
+	}
+	wcfg.StatusAnyAge = cfg.StatusAnyAge
 	return wcfg, nil
 }
 

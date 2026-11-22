@@ -107,6 +107,7 @@ import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
 import dev.idfoundry.oid4vcwallet.FileInstanceRegistry
 import dev.idfoundry.oid4vcwallet.HttpWalletProvider
+import dev.idfoundry.oid4vcwallet.StatusLists
 import dev.idfoundry.oid4vcwallet.Wallet
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
 
@@ -161,7 +162,9 @@ anything else, sweep the Keystore of keys no credential uses: an
 issuance the app quit in the middle of leaves its keys behind. Each
 trust role whose roots you set needs a revocation choice: checked against
 the CRLs your app fetches (`revocation.roles`), or declined
-(`revocation.declined`); see [Going to production](GoingToProduction.md).
+(`revocation.declined`); and a wallet with issuer roots, how old a
+status list may be (`status.maxAgeSeconds`); see
+[Going to production](GoingToProduction.md).
 
 ```kotlin
 /** The app's wallet, created once. `currentActivity` is the activity the holder sees, for the biometric prompt. */
@@ -189,6 +192,9 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
                 ),
                 crls = crls,
             ),
+            // A status list signed over a day ago is refused, so one
+            // from before a revocation isn't accepted until its exp.
+            status = StatusLists(maxAgeSeconds = 86_400),
         ),
         keys,
         FileCredentialStore.standard(context),

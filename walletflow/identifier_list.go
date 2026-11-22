@@ -111,7 +111,7 @@ func (w *Wallet) checkIdentifierLists(ctx context.Context, c StoredCredential, e
 	checker := identifierlist.Checker{
 		Fetcher: w.statusFetcher(w.cfg.IdentifierListMaxBytes),
 		Roots:   roots,
-		Options: identifierlist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+		Options: identifierlist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation, MaxAge: w.cfg.StatusMaxAge},
 		Cache:   w.statusCache,
 	}
 	var listed []identifierListEntry

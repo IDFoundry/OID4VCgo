@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/x509"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/prodwallet"
@@ -49,7 +50,7 @@ func TestOpenIsDurable(t *testing.T) {
 	cfg := walletflow.Config{
 		ClientID: "wallet", RedirectURI: "com.example.wallet:/callback",
 		IssuerRoots: roots, IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{},
-		CredentialIssuers: []string{"https://issuer.example"},
+		CredentialIssuers: []string{"https://issuer.example"}, StatusMaxAge: 24 * time.Hour,
 	}
 	if _, err := walletflow.New(cfg, s.Dependencies(walletflow.Dependencies{})); err != nil {
 		t.Fatalf("walletflow at production assurance: %v", err)

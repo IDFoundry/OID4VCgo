@@ -104,10 +104,11 @@ func ExampleBuildRequest() {
 		// Every issuer under the IACA may issue the doctype.
 		Assurance: verifier.AssuranceProduction, AnyIssuerForAnyType: true,
 		// Revocation, checked before any Accept: the document's status
-		// list, signed under the IACA (the example document carries no
-		// status reference, so there's nothing to fetch).
+		// list, signed under the IACA within the last day (the example
+		// document carries no status reference, so there's nothing to
+		// fetch).
 		Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
-			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation}, Cache: statusCache,
+			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation, MaxAge: 24 * time.Hour}, Cache: statusCache,
 		}},
 		Origins: []string{origin},
 	}))
