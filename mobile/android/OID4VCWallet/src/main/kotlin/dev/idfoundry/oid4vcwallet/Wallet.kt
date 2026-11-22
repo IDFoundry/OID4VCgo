@@ -72,10 +72,12 @@ public data class WalletConfiguration(
      * private network addresses, instead of the hardened one (trusting
      * [Development.roots] too, when set); requires no revocation choice
      * for a trust role, so a role in neither [Revocation.roles] nor
-     * [Revocation.declined] is checked for nothing; skips the check that
-     * different roles' roots share no anchor; and skips the production
-     * checks on receiving credentials: durable stores and keys, and the
-     * random source. Refused (`invalid_input`) unless the app called
+     * [Revocation.declined] is checked for nothing; requires no bound on a
+     * status list's age ([StatusLists.maxAgeSeconds] or
+     * [StatusLists.anyAge]); skips the check that different roles' roots
+     * share no anchor; and skips the production checks on receiving
+     * credentials: durable stores and keys, and the random source.
+     * Refused (`invalid_input`) unless the app called
      * [OID4VC.allowDevelopment], from a debuggable build only.
      */
     val development: Development? = null,
@@ -585,6 +587,8 @@ internal data class WalletConfigurationJSON(
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
     @SerialName("verifier_redirect_schemes") val verifierRedirectSchemes: List<String> = emptyList(),
     @SerialName("issuer_roots_by_vct") val issuerRootsByVCT: Map<String, String> = emptyMap(),
+    @SerialName("status_max_age_seconds") val statusMaxAgeSeconds: Long = 0,
+    @SerialName("status_any_age") val statusAnyAge: Boolean = false,
 )
 
 /** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
@@ -652,6 +656,8 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         statusCacheDir = c.status.cacheDir,
         verifierRedirectSchemes = c.presentation.verifierRedirectSchemes,
         issuerRootsByVCT = c.issuers.rootsByVCT,
+        statusMaxAgeSeconds = c.status.maxAgeSeconds,
+        statusAnyAge = c.status.anyAge,
     )
 
     private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
@@ -698,7 +704,9 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
             requireHTTPS = j.crlRequireHTTPS,
         ),
-        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        status = StatusLists(
+            j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir, j.statusMaxAgeSeconds, j.statusAnyAge,
+        ),
         network = WalletConfiguration.Network(tlsPins = j.tlsPins, allowedPrivateHosts = j.allowedPrivateHosts),
         issuance = WalletConfiguration.IssuanceOptions(
             locales = j.locales,

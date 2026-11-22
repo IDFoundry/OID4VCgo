@@ -33,7 +33,8 @@ class ConfigurationJSONTest {
         """"crl_distribution_points":[{"url":"https://ca.example/ca.crl","issuer":"CA"}],""" +
         """"crl_distribution_points_from_roots":true,"crl_require_https":true,"status_max_bytes":2048,""" +
         """"identifier_list_max_bytes":4096,"status_cache_max_age_seconds":600,"status_cache_dir":"/data/cache",""" +
-        """"verifier_redirect_schemes":["com.example.verifier"],"issuer_roots_by_vct":{"urn:eudi:pid:1":"PID"}}"""
+        """"verifier_redirect_schemes":["com.example.verifier"],"issuer_roots_by_vct":{"urn:eudi:pid:1":"PID"},""" +
+        """"status_max_age_seconds":86400,"status_any_age":true}"""
 
     private val readerJSON = """{"issuer_roots":"IR","reader_key_id":"reader","reader_chain":"CHAIN",""" +
         """"max_clock_skew_seconds":300,"issuer_roots_by_doctype":{"org.iso.18013.5.1.mDL":"MDL"},"crls":"CRLS",""" +
@@ -41,7 +42,7 @@ class ConfigurationJSONTest {
         """"crl_distribution_points_from_roots":true,"crl_require_https":true,"accept_mdl_signer_without_eku":true,""" +
         """"no_revocation_check":["status"],"any_issuer_for_any_type":true,"status":"check","development":true,""" +
         """"development_roots":"DR","status_max_bytes":2048,"identifier_list_max_bytes":4096,""" +
-        """"status_cache_max_age_seconds":600,"status_cache_dir":"/data/cache"}"""
+        """"status_cache_max_age_seconds":600,"status_cache_dir":"/data/cache","status_max_age_seconds":86400,"status_any_age":true}"""
 
     @Test
     fun walletRoundTrips() {
@@ -74,7 +75,10 @@ class ConfigurationJSONTest {
                     distributionPoints = listOf(CRLDistributionPoint("https://ca.example/ca.crl", "CA")),
                     distributionPointsFromRoots = true, requireHTTPS = true,
                 ),
-                status = StatusLists(maxBytes = 2048, identifierListMaxBytes = 4096, cacheMaxAgeSeconds = 600, cacheDir = "/data/cache"),
+                status = StatusLists(
+                    maxBytes = 2048, identifierListMaxBytes = 4096, cacheMaxAgeSeconds = 600, cacheDir = "/data/cache",
+                    maxAgeSeconds = 86_400, anyAge = true,
+                ),
                 network = WalletConfiguration.Network(
                     tlsPins = mapOf("issuer.example" to listOf("pin1", "pin2")), allowedPrivateHosts = listOf("internal.example"),
                 ),
@@ -112,7 +116,10 @@ class ConfigurationJSONTest {
                     distributionPoints = listOf(CRLDistributionPoint("https://ca.example/ca.crl", "CA")),
                     distributionPointsFromRoots = true, requireHTTPS = true,
                 ),
-                status = StatusLists(maxBytes = 2048, identifierListMaxBytes = 4096, cacheMaxAgeSeconds = 600, cacheDir = "/data/cache"),
+                status = StatusLists(
+                    maxBytes = 2048, identifierListMaxBytes = 4096, cacheMaxAgeSeconds = 600, cacheDir = "/data/cache",
+                    maxAgeSeconds = 86_400, anyAge = true,
+                ),
                 statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
                 development = Development(roots = "DR"),
             ),

@@ -325,8 +325,17 @@ final class ProximityTests: XCTestCase {
             issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status])), keys: nil)) {
             XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
         }
+        // So is, when it checks status, how old a list may be.
+        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]), statusCheck: .check), keys: nil)) {
+            XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
+        }
         XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]), statusCheck: .check), keys: nil))
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]),
+            status: .init(maxAgeSeconds: 86_400), statusCheck: .check), keys: nil))
+        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]),
+            status: .init(anyAge: true), statusCheck: .check), keys: nil))
     }
 
     /// A reader configuration with a key it doesn't know — a misspelled

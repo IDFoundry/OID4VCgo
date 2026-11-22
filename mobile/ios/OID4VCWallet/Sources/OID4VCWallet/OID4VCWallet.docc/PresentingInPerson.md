@@ -185,8 +185,10 @@ reader authentication extended key usage
 refuses (`invalidInput`) a configuration that leaves a decision open:
 which IACAs issue which document types (`issuers.anyIssuerForAnyType`,
 or `issuers.rootsByDocType`), each role's revocation (`revocation.roles`
-with `revocation.crls`, or `revocation.declined` to decline), and whether
-a document's revocation status is checked (`statusCheck`). `development` relaxes
+with `revocation.crls`, or `revocation.declined` to decline), whether
+a document's revocation status is checked (`statusCheck`) and, when it
+is, how long ago its status list may have been signed
+(`status.maxAgeSeconds`, or `status.anyAge`). `development` relaxes
 this, for trying out a development issuer's documents; never ship an
 app with it set. ``ProximityReader/start(qrCode:docType:elements:timeouts:)``
 takes the holder's QR code and what to ask for.
@@ -204,7 +206,9 @@ func readInPerson(qrCode: String, mdlIACAs: String, crls: String,
                   accepts: ([SecCertificate]) -> Bool) async throws -> VerifiedMdoc? {
     let reader = try ProximityReader(configuration: ProximityReaderConfiguration(
         issuers: .init(roots: "", rootsByDocType: ["org.iso.18013.5.1.mDL": mdlIACAs]),
-        revocation: .init(roles: [.issuer, .status], crls: crls), statusCheck: .check))
+        revocation: .init(roles: [.issuer, .status], crls: crls),
+        // A status list signed over a day ago is refused.
+        status: .init(maxAgeSeconds: 86_400), statusCheck: .check))
     let session = try reader.start(qrCode: qrCode, docType: "org.iso.18013.5.1.mDL",
                                    elements: ["org.iso.18013.5.1": ["given_name", "family_name", "portrait"]])
     for await state in session.states {

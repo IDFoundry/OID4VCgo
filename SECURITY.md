@@ -263,9 +263,11 @@ they're not yet closed in the library.
   ago, and under production assurance a `verifier.StatusPolicy`
   requires it, or `AnyListAge` to decline it; so does a wallet
   receiving credentials outside development, as
-  `walletflow.Config.StatusMaxAge` or `StatusAnyAge`. A revocation then
-  takes effect within that bound whatever is served, or within the old
-  list's exp where the bound is declined.
+  `walletflow.Config.StatusMaxAge` or `StatusAnyAge`, and the mobile
+  libraries' wallet and reader as `status_max_age_seconds` or
+  `status_any_age`. A revocation then takes effect within that bound
+  whatever is served, or within the old list's exp where the bound is
+  declined.
 - **Integers beyond 2^53 − 1.** A JSON number decodes to a float64,
   which holds every integer exactly only up to 2^53 − 1: 2^53 + 1
   reads back as 2^53. So none reaches a DCQL `values` filter or an

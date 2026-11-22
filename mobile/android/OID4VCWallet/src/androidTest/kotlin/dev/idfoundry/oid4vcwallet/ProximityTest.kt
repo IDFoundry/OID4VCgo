@@ -210,14 +210,19 @@ class ProximityTest {
                 declined = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
             ),
         )
-        // The status decision is one of a production reader's.
-        try {
-            ProximityReader(decided)
-            throw AssertionError("a production reader without a status decision was configured")
-        } catch (e: WalletException) {
-            assertEquals(WalletException.Code.invalidInput, e.code)
+        // The status decision is one of a production reader's, and so is,
+        // when it checks status, how old a list may be.
+        val checking = decided.copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK)
+        for (undecided in listOf(decided, checking)) {
+            try {
+                ProximityReader(undecided)
+                throw AssertionError("a production reader without its status decisions was configured: $undecided")
+            } catch (e: WalletException) {
+                assertEquals(WalletException.Code.invalidInput, e.code)
+            }
         }
-        ProximityReader(decided.copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK))
+        ProximityReader(checking.copy(status = StatusLists(maxAgeSeconds = 86_400)))
+        ProximityReader(checking.copy(status = StatusLists(anyAge = true)))
     }
 
     @Test

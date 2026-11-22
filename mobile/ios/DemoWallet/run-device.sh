@@ -127,6 +127,10 @@ config = {
         "revocation": REVOCATION,
         "crl_distribution_points_from_roots": True,
         "crl_require_https": True,
+        # A status list signed over a day ago is refused, as production
+        # requires a bound: the demo's issuer signs its lists every
+        # minute.
+        "status_max_age_seconds": 86400,
     },
     "provider_url": provider,
     # v1: the library's protocol with App Attest; demo: the demo's own API.

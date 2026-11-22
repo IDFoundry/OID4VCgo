@@ -772,6 +772,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// has none (`VerifiedMdoc.status`), and fails with `.documentNotValid`
     /// otherwise; with `.decline`, nothing checks it, for a reader where
     /// something else stands in. In development, nil is `.decline`.
+    /// Outside `development`, `.check` needs `status.maxAgeSeconds`, or
+    /// `status.anyAge`: how old a list may be.
     public var statusCheck: StatusCheck?
     /// Relaxes what production requires, for a reader trying out a
     /// development issuer's documents; nil, the default, is production.
@@ -887,6 +889,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case developmentRoots = "development_roots"
         case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
+        case statusMaxAgeSeconds = "status_max_age_seconds", statusAnyAge = "status_any_age"
     }
 
     /// Decodes a configuration from its flat JSON, refusing a key it

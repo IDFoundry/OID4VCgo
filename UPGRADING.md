@@ -12,6 +12,25 @@ CHANGELOG.md's BREAKING CHANGES sections.
 Built from OID4VCgo v0.87.0 (see its entry below, whose wallet
 changes reach the mobile libraries); the gomobile ABI is still 16.
 
+### Bound a status list's age outside development (Swift, Kotlin)
+
+Outside `development`, a `Wallet` with issuer roots (`issuers.roots`,
+`issuers.rootsByVCT` or the mdoc ones) and a `ProximityReader` with
+`statusCheck` `.check` (`StatusCheck.CHECK`) need the new
+`status.maxAgeSeconds` (`status_max_age_seconds`): how long ago a status
+or identifier list `checkStatus` accepts may have been signed. Without
+it, the constructor throws `invalidInput`. Set it above the longest
+interval your issuers sign their lists at, `86_400` (a day) for issuers
+that sign them at least daily: a list from before a revocation, served
+again by whoever can serve bytes at its URI, is then refused once it's
+that old, rather than accepted until its `exp`, which an issuer may put
+months ahead. A list older fails the check: `checkStatus` throws, and a
+reader session fails. Where your issuers' lists expire soon after
+they're signed, set `status.anyAge` (`status_any_age`) instead, which
+accepts a list of any age; setting both, or a bound over a year, is
+`invalidInput`. `status.cacheMaxAgeSeconds`, how long a list fetched is
+used before it's asked for again, is a separate setting and unchanged.
+
 ### `refreshCRLs` reads at most 1 MiB of a list (Swift, Kotlin)
 
 `Wallet.refreshCRLs()` and `ProximityReader.refreshCRLs()` now refuse

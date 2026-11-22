@@ -75,7 +75,7 @@ func TestWalletflowConfig_IssuerTrustByType(t *testing.T) {
 		}
 	}
 
-	cfg := config{IssuerRootsByVCT: map[string]string{"urn:eudi:pid:1": roots}, CredentialIssuers: []string{"https://issuer.example"}}
+	cfg := config{IssuerRootsByVCT: map[string]string{"urn:eudi:pid:1": roots}, CredentialIssuers: []string{"https://issuer.example"}, StatusMaxAgeSeconds: 86400}
 	if wcfg, err = walletConfig(cfg); err != nil {
 		t.Fatal(err)
 	}

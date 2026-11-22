@@ -199,7 +199,7 @@ func TestWalletRevocation_ExplicitChoice(t *testing.T) {
 	base := config{
 		IssuerRoots: pool("issuer root"), VerifierRoots: pool("verifier root"), RegistrarRoots: pool("registrar root"),
 		MdocReaderRoots: pool("reader root"), IssuerMetadataRoots: pool("metadata root"),
-		CredentialIssuers: []string{"https://issuer.example"},
+		CredentialIssuers: []string{"https://issuer.example"}, StatusMaxAgeSeconds: 86400,
 	}
 	all := []string{"issuer", "issuer_metadata", "registrar", "mdoc_reader", "verifier", "status"}
 	keys := map[string]string{
@@ -279,7 +279,7 @@ type revocationCheckers [6]certrevocation.Checker
 func TestNewProximityReader_Revocation(t *testing.T) {
 	ca, caKey := testcert.CA(t, "IACA")
 	roots := pemOf("CERTIFICATE", ca.Raw)
-	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true, "status": "check"}`, nil)
+	r, err := NewProximityReader(`{"issuer_roots": `+jsonString(roots)+`, "revocation": ["issuer", "status"], "any_issuer_for_any_type": true, "status": "check", "status_max_age_seconds": 86400}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

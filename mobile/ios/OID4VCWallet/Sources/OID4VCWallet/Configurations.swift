@@ -98,7 +98,9 @@ public struct StatusLists: Sendable {
     /// How long `checkStatus` uses a status or identifier list it fetched
     /// before revalidating it, in seconds: 0 means 5 minutes, at most a
     /// day, and never past the list's own `ttl` or `exp`. Longer means
-    /// fewer requests, and a revocation seen that much later.
+    /// fewer requests, and a revocation seen that much later. It bounds
+    /// nothing a list's server answers with: for that, see
+    /// `maxAgeSeconds`.
     public var cacheMaxAgeSeconds: Int
     /// Where `checkStatus` keeps the lists it verified across launches: a
     /// launch then asks each list's server whether the list it kept is
@@ -119,13 +121,36 @@ public struct StatusLists: Sendable {
     /// protection it can't read the credential either: it fails as
     /// `.platform`. Check status when the app comes to the foreground.
     public var cacheDir: String?
+    /// How long ago a status or identifier list `checkStatus` accepts may
+    /// have been signed, in seconds, at most a year; 0 sets no bound. A
+    /// list signed before a revocation stays valid until its `exp`, which
+    /// an issuer may put months ahead, so anyone who can serve bytes at
+    /// the list's URI (a CDN, a mirror, a former owner of the domain)
+    /// could replay it until then; with this, only for this long after
+    /// the revocation. A list older, fetched or kept, fails the check, so
+    /// set it above the longest interval your issuers sign their lists
+    /// at: `86_400`, a day, for issuers that sign them at least daily.
+    /// Outside `development`, a wallet with issuer roots and a reader
+    /// with `statusCheck` `.check` need it, or `anyAge`; without either,
+    /// the wallet or reader isn't made (`invalidInput`) (from
+    /// OID4VCWallet 0.44.0).
+    public var maxAgeSeconds: Int
+    /// Accepts a status or identifier list of any age, until its `exp`,
+    /// in place of `maxAgeSeconds`: set it only where your issuers' lists
+    /// expire soon after they're signed, or where whoever serves them is
+    /// trusted not to serve an old one. It can't be set with
+    /// `maxAgeSeconds` (from OID4VCWallet 0.44.0).
+    public var anyAge: Bool
 
     /// Status list options: every field has a default.
-    public init(maxBytes: Int = 0, identifierListMaxBytes: Int = 0, cacheMaxAgeSeconds: Int = 0, cacheDir: String? = nil) {
+    public init(maxBytes: Int = 0, identifierListMaxBytes: Int = 0, cacheMaxAgeSeconds: Int = 0, cacheDir: String? = nil,
+                maxAgeSeconds: Int = 0, anyAge: Bool = false) {
         self.maxBytes = maxBytes
         self.identifierListMaxBytes = identifierListMaxBytes
         self.cacheMaxAgeSeconds = cacheMaxAgeSeconds
         self.cacheDir = cacheDir
+        self.maxAgeSeconds = maxAgeSeconds
+        self.anyAge = anyAge
     }
 
     /// The group from its flat keys in `c`.
@@ -133,7 +158,9 @@ public struct StatusLists: Sendable {
         self.init(maxBytes: try c.flat("status_max_bytes", 0),
                   identifierListMaxBytes: try c.flat("identifier_list_max_bytes", 0),
                   cacheMaxAgeSeconds: try c.flat("status_cache_max_age_seconds", 0),
-                  cacheDir: try c.decodeIfPresent(String.self, forKey: flatKey("status_cache_dir")))
+                  cacheDir: try c.decodeIfPresent(String.self, forKey: flatKey("status_cache_dir")),
+                  maxAgeSeconds: try c.flat("status_max_age_seconds", 0),
+                  anyAge: try c.flat("status_any_age", false))
     }
 
     /// Writes the group's flat keys to `c`: `status_cache_dir` only when
@@ -143,6 +170,8 @@ public struct StatusLists: Sendable {
         try c.encode(identifierListMaxBytes, forKey: flatKey("identifier_list_max_bytes"))
         try c.encode(cacheMaxAgeSeconds, forKey: flatKey("status_cache_max_age_seconds"))
         try c.encodeIfPresent(cacheDir, forKey: flatKey("status_cache_dir"))
+        try c.encode(maxAgeSeconds, forKey: flatKey("status_max_age_seconds"))
+        try c.encode(anyAge, forKey: flatKey("status_any_age"))
     }
 }
 

@@ -780,7 +780,9 @@ public data class ProximityReaderConfiguration(
      * status is valid, or that has none ([VerifiedMdoc.status]), and fails
      * with `document_not_valid` otherwise; with [StatusCheck.DECLINE],
      * nothing checks it, for a reader where something else stands in. In
-     * development, null is [StatusCheck.DECLINE].
+     * development, null is [StatusCheck.DECLINE]. Outside [development],
+     * [StatusCheck.CHECK] needs [StatusLists.maxAgeSeconds] in [status], or
+     * [StatusLists.anyAge]: how old a list may be.
      */
     val statusCheck: StatusCheck? = null,
     /**
@@ -931,6 +933,8 @@ internal data class ProximityReaderConfigurationJSON(
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    @SerialName("status_max_age_seconds") val statusMaxAgeSeconds: Long = 0,
+    @SerialName("status_any_age") val statusAnyAge: Boolean = false,
 )
 
 /** Encodes a [ProximityReaderConfiguration] as its flat [ProximityReaderConfigurationJSON], and decodes one from it. */
@@ -967,6 +971,8 @@ internal object ProximityReaderConfigurationSerializer : KSerializer<ProximityRe
         identifierListMaxBytes = c.status.identifierListMaxBytes,
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
+        statusMaxAgeSeconds = c.status.maxAgeSeconds,
+        statusAnyAge = c.status.anyAge,
     )
 
     // One of reader_key_id and reader_chain without the other is kept,
@@ -998,7 +1004,9 @@ internal object ProximityReaderConfigurationSerializer : KSerializer<ProximityRe
             distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
             requireHTTPS = j.crlRequireHTTPS,
         ),
-        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        status = StatusLists(
+            j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir, j.statusMaxAgeSeconds, j.statusAnyAge,
+        ),
         statusCheck = j.statusCheck,
         development = Development.decoded(j.development, j.developmentRoots),
     )

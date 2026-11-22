@@ -43,6 +43,10 @@ type ProximityReader struct {
 	// statusMaxBytes and identifierListMaxBytes are the configuration's
 	// "status_max_bytes" and "identifier_list_max_bytes".
 	statusMaxBytes, identifierListMaxBytes int
+	// statusMaxAge is the configuration's "status_max_age_seconds": how
+	// long ago a list CheckStatus accepts may have been signed, zero for
+	// any age.
+	statusMaxAge time.Duration
 	// statusCache keeps the lists it checks, for the configuration's
 	// "status_cache_max_age_seconds".
 	statusCache *statuslist.Cache
@@ -80,6 +84,12 @@ type proximityReaderConfig struct {
 	// list and identifier list CheckStatus reads, as a Wallet's.
 	StatusMaxBytes         int `json:"status_max_bytes,omitempty"`
 	IdentifierListMaxBytes int `json:"identifier_list_max_bytes,omitempty"`
+	// StatusMaxAgeSeconds bounds how long ago a status or identifier
+	// list CheckStatus accepts may have been signed, and StatusAnyAge
+	// accepts a list of any age instead, as a Wallet's. Outside
+	// development, Status "check" needs one of them.
+	StatusMaxAgeSeconds int64 `json:"status_max_age_seconds,omitempty"`
+	StatusAnyAge        bool  `json:"status_any_age,omitempty"`
 	// StatusCacheMaxAgeSeconds is how long a status or identifier list
 	// fetched is used, StatusCacheDir where lists are kept across
 	// launches, and StatusCacheKey what authenticates them there, as a
@@ -202,7 +212,8 @@ func (r *ProximityReader) configureIssuerTrust(cfg proximityReaderConfig) error 
 // NewProximityReader configures a reader from configJSON:
 // {"issuer_roots", "issuer_roots_by_doctype", "reader_key_id",
 // "reader_chain", "max_clock_skew_seconds", "status_max_bytes",
-// "identifier_list_max_bytes", "status_cache_max_age_seconds",
+// "identifier_list_max_bytes", "status_max_age_seconds",
+// "status_any_age", "status_cache_max_age_seconds",
 // "status_cache_dir", "require_mdl_signer_eku",
 // "accept_mdl_signer_without_eku", "crls", "crl_issuers",
 // "crl_distribution_points", "crl_distribution_points_from_roots",
@@ -211,7 +222,8 @@ func (r *ProximityReader) configureIssuerTrust(cfg proximityReaderConfig) error 
 // refusing any other key, so a misspelled option isn't silently left
 // at its default. Outside "development", it refuses a configuration
 // that leaves a production reader's decisions open: the revocation of
-// each role, and which IACAs may issue which document types. keys holds the
+// each role, which IACAs may issue which document types, whether status
+// is checked and, when it is, how old a list may be. keys holds the
 // reader's key, reader_key_id; it may be nil for a reader that doesn't
 // sign.
 func NewProximityReader(configJSON string, keys KeyStore) (*ProximityReader, error) {
@@ -302,6 +314,8 @@ func (r *ProximityReader) configureDecisions(cfg proximityReaderConfig) error {
 // development, a configuration that leaves it open: the Go session
 // checks no status itself (HandleMessage runs no network request), so
 // without it a document is reported verified whatever its revocation.
+// With "check", outside development, it refuses one that leaves a
+// list's age open too (statusMaxAge).
 func (r *ProximityReader) configureStatus(cfg proximityReaderConfig) error {
 	switch cfg.Status {
 	case statusCheck:
@@ -314,7 +328,9 @@ func (r *ProximityReader) configureStatus(cfg proximityReaderConfig) error {
 	default:
 		return newError(CodeInvalidInput, fmt.Errorf(`status is %q, not "check" or "decline"`, cfg.Status))
 	}
-	return nil
+	var err error
+	r.statusMaxAge, err = statusMaxAge(cfg.StatusMaxAgeSeconds, cfg.StatusAnyAge, r.checksStatus && !cfg.Development)
+	return err
 }
 
 // configureRevocation sets the revocation check of each role, as cfg's
@@ -817,7 +833,7 @@ func (r *ProximityReader) checkStatus(ctx context.Context, v proximity.Verified)
 		checker := identifierlist.Checker{
 			Fetcher: statusFetcher(r.identifierListMaxBytes),
 			Roots:   anchor,
-			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation},
+			Options: identifierlist.VerifyOptions{Now: r.clock, Revocation: r.statusRevocation, MaxAge: r.statusMaxAge},
 			Cache:   r.statusCache,
 		}
 		switch err := checker.RequireNotRevoked(ctx, identifierlist.Ref(*ref), v.IssuerChain); {
@@ -848,7 +864,7 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 		Fetcher: statusFetcher(r.statusMaxBytes),
 		Roots:   roots,
 		Options: statuslist.VerifyOptions{
-			Now: r.clock, UnboundSigner: signer, Revocation: r.statusRevocation,
+			Now: r.clock, UnboundSigner: signer, Revocation: r.statusRevocation, MaxAge: r.statusMaxAge,
 			RequireExp: true, X5ChainProtectedOnly: true,
 		},
 		Cache: r.statusCache,
@@ -859,6 +875,29 @@ func (r *ProximityReader) checkStatusList(ctx context.Context, ref *mdoc.StatusL
 
 // maxStatusCacheMaxAge bounds "status_cache_max_age_seconds".
 const maxStatusCacheMaxAge = 24 * time.Hour
+
+// maxStatusMaxAge bounds "status_max_age_seconds": a list older than a
+// year is one whose age "status_any_age" accepts.
+const maxStatusMaxAge = 366 * 24 * time.Hour
+
+// statusMaxAge is a Wallet's or reader's "status_max_age_seconds", as a
+// duration (zero for any age): refused outside 0 to a year, with
+// "status_any_age", and, when required (outside development, for a
+// wallet receiving credentials or a reader checking status), unset
+// without "status_any_age".
+func statusMaxAge(seconds int64, anyAge, required bool) (time.Duration, error) {
+	limit := int64(maxStatusMaxAge / time.Second)
+	switch {
+	case seconds < 0 || seconds > limit:
+		return 0, newError(CodeInvalidInput, fmt.Errorf("status_max_age_seconds is %d, not between 0 and %d: status_any_age accepts a list of any age", seconds, limit))
+	case seconds > 0 && anyAge:
+		return 0, newError(CodeInvalidInput, errors.New("set status_max_age_seconds or status_any_age, not both"))
+	case seconds == 0 && !anyAge && required:
+		return 0, newError(CodeInvalidInput, errors.New("status_max_age_seconds is unset: outside development, set how long ago a status or identifier list may have been signed, "+
+			"so a list from before a revocation isn't accepted until its exp (86400, a day, where issuers sign their lists daily); or status_any_age to accept a list of any age"))
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
 
 // statusCaches keep the status and identifier lists every reader and
 // Wallet in the process fetched, one Cache for each

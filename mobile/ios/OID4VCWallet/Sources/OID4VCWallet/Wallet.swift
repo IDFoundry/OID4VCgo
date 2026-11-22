@@ -39,9 +39,11 @@ public struct WalletConfiguration: Codable, Sendable {
     /// reaches private network addresses, instead of the hardened one;
     /// requires no revocation choice for a trust role, so a role in
     /// neither `revocation.roles` nor `revocation.declined` is checked for
-    /// nothing; skips the check that different roles' roots share no
-    /// anchor; and skips the production checks on receiving credentials:
-    /// durable stores and keys, and the random source. A release build
+    /// nothing; requires no bound on a status list's age
+    /// (`status.maxAgeSeconds` or `status.anyAge`); skips the check that
+    /// different roles' roots share no anchor; and skips the production
+    /// checks on receiving credentials: durable stores and keys, and the
+    /// random source. A release build
     /// refuses it (`invalidInput`) unless the app called
     /// `OID4VC.allowDevelopmentInRelease()`. Its ``Development/roots``
     /// are PEM certificates the wallet's HTTPS requests, and
@@ -456,6 +458,7 @@ public struct WalletConfiguration: Codable, Sendable {
         case crlDistributionPointsFromRoots = "crl_distribution_points_from_roots", crlRequireHTTPS = "crl_require_https"
         case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
+        case statusMaxAgeSeconds = "status_max_age_seconds", statusAnyAge = "status_any_age"
     }
 
     /// Decodes a configuration from its flat JSON, refusing a key it

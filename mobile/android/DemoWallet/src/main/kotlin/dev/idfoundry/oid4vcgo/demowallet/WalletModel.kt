@@ -44,6 +44,7 @@ import dev.idfoundry.oid4vcwallet.OID4VC
 import dev.idfoundry.oid4vcwallet.Offer
 import dev.idfoundry.oid4vcwallet.Presentation
 import dev.idfoundry.oid4vcwallet.Selection
+import dev.idfoundry.oid4vcwallet.StatusLists
 import dev.idfoundry.oid4vcwallet.Wallet
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
 import dev.idfoundry.oid4vcwallet.WalletException
@@ -1227,6 +1228,9 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
      * signer's chain, and a status list signer's — with [crls] the lists
      * last fetched, refreshed by [refreshCRLs]; the others decline it, as
      * for services that publish no CRLs. A shipping reader checks both.
+     * A status list signed over a day ago is refused, so one from before
+     * a revocation, served again, isn't accepted until its exp: the
+     * demo's issuers sign theirs every minute.
      */
     private fun readerConfiguration(r: DemoConfiguration.Reader, crls: String): ProximityReaderConfiguration {
         val checked = r.revocation.orEmpty()
@@ -1242,6 +1246,7 @@ class WalletModel(application: Application) : AndroidViewModel(application) {
                 distributionPointsFromRoots = r.crlDistributionPointsFromRoots,
                 requireHTTPS = r.crlRequireHTTPS,
             ),
+            status = StatusLists(maxAgeSeconds = 86_400),
             statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK,
             // With the development CA the wallet trusts (DevelopmentTLS),
             // for refreshCRLs's https fetches.
