@@ -184,7 +184,7 @@ class ReaderAuthAllCases(private val peer: Peer, private val pki: Pki) : Checks(
             saw != c.wantReader -> return "the holder took the reader as $saw, want ${c.wantReader}"
             info != want -> return "the holder's request information was '$info', want '$want'"
         }
-        reason = "reader $saw, ${info!!.substringBefore(" use_cases")}"
+        reason = "reader $saw, ${want.substringBefore(" use_cases")}"
         // The holder answered the mDL request: the session completes.
         val (plaintext, _) = session.decryptMessage(answer.string("send")!!.fromBase64Url())
         plaintext ?: return "the holder sent no DeviceResponse"

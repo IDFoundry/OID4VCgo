@@ -664,7 +664,9 @@ final class ProximityTests: XCTestCase {
         do {
             _ = try await responding.value
             XCTFail("a cancelled response was reported presented")
-        } catch is CancellationError {}
+        } catch is CancellationError {
+            // Expected: the response was cancelled.
+        }
         guard case .cancelled = holder.state else { return XCTFail("holder: \(holder.state)") }
         reader.cancel()
     }

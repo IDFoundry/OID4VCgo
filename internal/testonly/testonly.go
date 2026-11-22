@@ -10,7 +10,9 @@ package testonly
 // the stand-in, and on any type that embeds the stand-in.
 type Marker struct{}
 
-func (Marker) acceptsForgeries() {}
+func (Marker) acceptsForgeries() {
+	// Empty: having the method is the mark.
+}
 
 // Marked is implemented only by a marked stand-in, or by a type
 // embedding one. The stand-in's package asserts it (var _ Marked =

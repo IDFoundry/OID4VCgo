@@ -31,6 +31,7 @@ class PendingAuthorizationTest {
             pending.await()
             fail("a closed Auth Tab gave a redirect")
         } catch (_: WalletModel.AuthorizationCancelled) {
+            // Expected: a closed Auth Tab cancels the authorization.
         }
     }
 

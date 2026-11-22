@@ -53,7 +53,8 @@ final class InstanceKeyProofTests: XCTestCase {
     }
 
     private func jwk(_ point: Data) -> Data {
-        let x = InstanceKeyProof.base64URL(point[1...32]), y = InstanceKeyProof.base64URL(point[33...])
+        let x = InstanceKeyProof.base64URL(point[1...32])
+        let y = InstanceKeyProof.base64URL(point[33...])
         return Data(#"{"kty":"EC","crv":"P-256","x":"\#(x)","y":"\#(y)"}"#.utf8)
     }
 
