@@ -31,7 +31,8 @@ type Sealer interface {
 // records it holds where they're kept (a database's rows, its
 // backups). Under production assurance the issuer refuses a durable
 // store holding holders' data that doesn't declare it seals them, as
-// the verifier refuses an unsealed TransactionStore.
+// the verifier refuses an unsealed TransactionStore, and walletflow,
+// outside Development, an unsealed wallet store.
 type Store interface {
 	// SealsRecords reports whether the store seals its records with a
 	// Sealer.
