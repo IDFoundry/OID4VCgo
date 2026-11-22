@@ -511,7 +511,7 @@ func walletRevocationRoots(cfg config, named map[string]bool) []string {
 // from now to the earliest nextUpdate, at most an hour away, or within
 // minutes after a failure. Fetches go over http or https (https only
 // with "crl_require_https": the lists are signed) to public addresses
-// only, outside development, at most 8 MiB each, following redirects
+// only, outside development, at most 1 MiB each, following redirects
 // only on the same host (certrevocation.Refresher). With no
 // distribution points configured it's invalid_input with detail
 // not_configured; cancelling op is cancelled. Safe to call while

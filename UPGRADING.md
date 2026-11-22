@@ -7,6 +7,21 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.43.0 → 0.44.0
+
+Built from OID4VCgo v0.87.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### `refreshCRLs` reads at most 1 MiB of a list (Swift, Kotlin)
+
+`Wallet.refreshCRLs()` and `ProximityReader.refreshCRLs()` now refuse
+a distribution point's answer larger than 1 MiB, rather than 8 MiB:
+that point's outcome is failed, and the list held for its CA, if any,
+is kept until its nextUpdate. An IACA's list is a few kilobytes. Where
+a CA's lists are larger, fetch them yourself and hand them over with
+`setCRLs`, or as `revocation.crls` at launch, which have no such
+bound.
+
 ## v0.86.0 → v0.87.0
 
 ### A wallet's stores must seal their records outside Development (walletflow, sqlstore)
@@ -122,6 +137,24 @@ set both, run it on your queries at startup or in a test, and name
 what it reports in `RootsByVCT` (each of a PID type's `vct` values,
 say), or check those types' issuers in `IssuerAuthorized`. It's a
 warning only: nothing calls it, and nothing is refused.
+
+### `certrevocation.DefaultCRLMaxBytes` is 1 MiB (`certrevocation`, mobile)
+
+A `Refresher` refuses a CRL larger than its `RefresherConfig.MaxBytes`,
+`DefaultCRLMaxBytes` when that's zero: now 1 MiB, rather than 8 MiB.
+The bound is also what anyone answering a plain `http` distribution
+point can make the process read and parse before the list's signature
+is checked, which allocates several dozen times its size: about
+360 MiB a fetch at 8 MiB, 45 MiB at 1 MiB. At about 50 bytes a
+revocation, 1 MiB holds some 20,000, hundreds of times what an IACA's,
+an issuer CA's, a Wallet Provider's CA's or a status list signer's
+CA's list holds. A list beyond it is refused (`the response exceeds
+1048576 bytes`): a `Refresher` holding no list for its CA, as after a
+restart, has that CA's certificates refused with `ErrNoCurrentCRL`,
+and one holding an older list does once its nextUpdate passes. For a
+CA whose lists are larger, set `MaxBytes` on its `Refresher`. The
+mobile libraries' `refreshCRLs` reads at most 1 MiB a list too (see
+OID4VCWallet 0.43.0 → 0.44.0 above).
 
 ## OID4VCWallet 0.42.0 → 0.43.0
 

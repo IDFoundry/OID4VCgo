@@ -454,7 +454,9 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   `Checker()` as every chain's `Revocation`. The Refresher fetches off
   the request path, conditionally, with jitter; a verifier that
   fetches CRLs on the request path stalls presentations whenever a list
-  expires.
+  expires. It reads at most `MaxBytes` of a list, 1 MiB by default,
+  hundreds of times an IACA's or an issuer CA's: raise it for a CA
+  whose lists are larger.
 - [ ] **Status checks: one `statuslist.Cache` per process**, shared by
   every `statuslist.Checker` (`Checker.Cache`; a `verifier.StatusPolicy`
   without one is refused under `AssuranceProduction`). Size `CacheOptions`:
