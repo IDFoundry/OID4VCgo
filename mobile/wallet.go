@@ -380,6 +380,14 @@ func NewWallet(configJSON string, keys KeyStore, credentials CredentialStore, pr
 		Deferred: deferredStore{credentials}, Authorizations: authorizationStore{credentials}, Grants: grantStore{credentials},
 		HTTP: testHTTP.Load(), // nil: walletflow's own client
 	}
+	// Every record goes to the app's CredentialStore, which keeps them
+	// under the platform's data protection (the libraries' own
+	// FileCredentialStore: iOS's file protection, or encryption under an
+	// Android Keystore key). That protection is the platform's, not a
+	// Sealer's, and an app's own store can't declare it across the ABI,
+	// so walletflow's check that the stores seal (sealing.Store) is
+	// declined rather than claimed for them.
+	wcfg.UnsealedStores = true
 	// The process's, which readers share too.
 	if deps.StatusCache, err = statusCacheFor(cfg.StatusCacheMaxAgeSeconds, cfg.StatusCacheDir, cfg.StatusCacheKey); err != nil {
 		return nil, err
