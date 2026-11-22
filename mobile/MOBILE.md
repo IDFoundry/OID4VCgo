@@ -930,7 +930,10 @@ the gomobile boundary is cleaned in one place, `classify`:
   to be a plain token, is the `detail`.
 - **URLs:** network errors drop their URL, which can carry a
   `request_uri`, a pre-authorized code or a `response_code`. Any other
-  URL in a message is cut to its scheme and host.
+  URL in a message is cut to its scheme and host, and a URI without
+  `//` (`mailto:`, `urn:`, `data:`, an `openid4vp:` link, an app's
+  redirect with its `code`) to its scheme; a host and port, an IPv6
+  address and a bracketed `[code:detail]` aren't URIs, and are kept.
 - **Control characters and length:** control characters and line and
   paragraph separators become spaces and invisible format characters
   are dropped, so a message can't forge log lines, and it's capped at

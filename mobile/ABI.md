@@ -265,10 +265,12 @@ An older library gives the last two errors no detail.
 An error's message is fit for an app's logs. It never carries a remote
 party's own description (`error_description`, an error body), a URL's
 path or query (which can carry a pre-authorized code, a `request_uri` or
-a `response_code`), credential claims, control characters, line or
-paragraph separators, or invisible format characters. It's at most 300
-characters. The remote party's OAuth error code is the
-`detail`.
+a `response_code`), what follows the scheme of a URI without `//` (a
+`mailto:`, `urn:` or `data:` URI, an `openid4vp:` link, an app's
+`com.example.wallet:/cb?code=…` redirect: from OID4VCWallet 0.44.0),
+credential claims, control characters, line or paragraph separators,
+or invisible format characters. It's at most 300 characters. The
+remote party's OAuth error code is the `detail`.
 
 ## Callbacks the app implements
 
