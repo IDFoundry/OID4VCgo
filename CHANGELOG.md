@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.87.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.86.0...v0.87.0) (2026-11-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mobile:** outside development, a Wallet configuration with issuer roots, and a ProximityReader configuration with "status": "check", must set status_max_age_seconds (status.maxAgeSeconds; 86400 where issuers sign their lists daily), or status_any_age (status.anyAge) to accept a list of any age.
+* **walletflow:** outside Development, a walletflow.Config that receives credentials must set StatusMaxAge (24 hours where your issuers sign their lists daily), or StatusAnyAge to accept a list of any age.
+* **verifier:** under AssuranceProduction, set a StatusPolicy's Checker.Options.MaxAge to how long ago a status or identifier list may have been signed (24 hours where your issuers sign their lists daily), or set StatusPolicy.AnyListAge to accept a list of any age.
+* **certrevocation:** a certrevocation.Refresher without MaxBytes refuses a CRL larger than 1 MiB, where it took up to 8 MiB, and the mobile libraries' RefreshCRLs does too. Set RefresherConfig.MaxBytes for a CA whose lists are larger; in the mobile libraries, fetch such lists yourself and pass them to SetCRLs. See UPGRADING.md.
+* **dcql:** dcql.Query.Validate, and so the verifier's request builders, Transactions.Begin, VerifyResponse and the wallet and walletflow request parsers, refuse a DCQL values integer beyond ±(2^53 − 1), or a float32 one beyond ±2^24. To filter on such an identifier, have it issued as a string; request an mdoc element holding one without values and compare the value VerifyResponse returns. See UPGRADING.md.
+* **issuer:** issuer.New refuses an X5CAttestationVerifier whose Roots or Anchors may anchor the certificates of an X5CProofBindingKeyResolver set as Dependencies.ProofBindingKeys, unless X5CAttestationVerifier.LeafPolicy is a policy telling a Wallet Provider's signing certificates apart, such as one requiring their extended key usage after DefaultAttestationLeafPolicy. Give the two roots with no certificate subject in common, or set such a LeafPolicy. See UPGRADING.md.
+* **issuer:** under AssuranceProduction, issuer.New refuses a Limits.AccessTokenLifetime over issuer.MaxProductionAccessTokenLifetime (10 minutes) when Dependencies.AccessTokens is set, a Limits.CredentialOfferLifetime over issuer.MaxProductionCredentialOfferLifetime (a week) when CredentialOfferEndpoint is set, and a Limits.DeferredTransactionLifetime over issuer.MaxProductionDeferredTransactionLifetime (30 days) when Endpoints.DeferredCredential is set. Lower each to its bound; issue longer-lived access tokens with the Authorization Server. See UPGRADING.md.
+* **issuer:** issuer.AuditEventLegacyDeferredAuthorization is removed. Drop any reference to it, such as a case in an AuditSink's switch over AuditEventType.
+* **walletflow:** outside Development, walletflow.New refuses a Credentials, Deferred, Grants or Authorizations store that doesn't implement sealing.Store with SealsRecords true. With sqlstore, give the DB a Sealer (sqlstore.Options{Sealer: sealer}, the sealer from sealing.AESGCMSealer with a 32-byte key kept outside the database) and use sqlstore v0.17.0, whose wallet stores declare it; a store of your own implements SealsRecords. Set Config.UnsealedStores only where something else protects the records at rest, as a phone's data protection does. See UPGRADING.md.
+
+### Features
+
+* **mobile:** bound how old a status list a wallet or reader accepts may be ([92c8421](https://github.com/IDFoundry/OID4VCgo/commit/92c842188de2ed8a3b993577afc7e1f4d94b1a8e))
+* **verifier:** report a query's types that fall back to X5CIssuerKeyResolver.Roots ([3217775](https://github.com/IDFoundry/OID4VCgo/commit/3217775c8fa71db226c9f7abeed507f45216d632))
+* **verifier:** require a bound on a status list's age under production assurance ([1aecd88](https://github.com/IDFoundry/OID4VCgo/commit/1aecd88868398fd6995ef7331a0052ab9c5d0c5e))
+* **walletflow:** bound how old a status list CheckStatus accepts may be ([951cef9](https://github.com/IDFoundry/OID4VCgo/commit/951cef9af5f79c1a22ef309c4cfadd7263b8d64c))
+
+
+### Bug Fixes
+
+* **certchain:** compare a dns: issuer name with a certificate's in ASCII case only ([a397855](https://github.com/IDFoundry/OID4VCgo/commit/a397855f48e448acc23b366b916abc1835159ded))
+* **certrevocation:** lower DefaultCRLMaxBytes to 1 MiB ([853a12a](https://github.com/IDFoundry/OID4VCgo/commit/853a12a38affca3f109fc3e4893e254033010bbd))
+* **dcql:** refuse a values integer beyond 2^53 - 1, which JSON reads back as another ([f2b3f26](https://github.com/IDFoundry/OID4VCgo/commit/f2b3f26016bfefcc9dee3bd6dbcd5e4aaebd518b))
+* **issuer:** bound the issuer's own access tokens, offers and deferrals under production ([9390563](https://github.com/IDFoundry/OID4VCgo/commit/9390563ee163f125873886fc9ef08eca8160ec57))
+* **issuer:** refuse key attestation signers anchored with the proof keys Wallets hold ([1aff093](https://github.com/IDFoundry/OID4VCgo/commit/1aff0937d7a9aec2920a175331ddd644151d8023))
+* **issuer:** remove AuditEventLegacyDeferredAuthorization ([4fdb6e6](https://github.com/IDFoundry/OID4VCgo/commit/4fdb6e6555ff98a6700f9426a3951044da36a7c9))
+* **sdjwtvc:** refuse an SD-JWT VC whose vct is empty ([f7471b5](https://github.com/IDFoundry/OID4VCgo/commit/f7471b571d1b797e0befec9f4dee31f492965974))
+* **verifier:** report an iss as checked only when the verified certificate names it ([8041abb](https://github.com/IDFoundry/OID4VCgo/commit/8041abb67532f40562b16fd0cbbe472ae5621e83))
+* **walletflow:** refuse unsealed wallet stores outside Development ([e8a8891](https://github.com/IDFoundry/OID4VCgo/commit/e8a88919ec68bd385f06729a9d68a0f3fde37035))
+
 ## [0.86.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.85.0...v0.86.0) (2026-11-21)
 
 

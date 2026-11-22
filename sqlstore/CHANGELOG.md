@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.16.0...sqlstore/v0.17.0) (2026-11-22)
+
+
+### Features
+
+* **sqlstore:** say whether the wallet stores seal their records ([89db3ca](https://github.com/IDFoundry/OID4VCgo/commit/89db3ca5b67daed7d34799b5783b8abb287701b8))
+
 ## [0.16.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.15.0...sqlstore/v0.16.0) (2026-11-21)
 
 
