@@ -6,6 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.UUID
 
+private const val APP_KEYS_PREFIX = "com.example.wallet.keys."
+
 /** Which key stores the sweeps refuse to sweep, and which keys a store lists and sweeps. */
 class WalletSweepTest {
     @Test
@@ -23,8 +25,8 @@ class WalletSweepTest {
      */
     @Test
     fun refusesPrefixesOverlappingARegistrationKeyStore() {
-        val registration = setOf("com.example.wallet.keys.")
-        for (prefix in listOf("com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.b-")) {
+        val registration = setOf(APP_KEYS_PREFIX)
+        for (prefix in listOf(APP_KEYS_PREFIX, "com.example.wallet.", "${APP_KEYS_PREFIX}b-")) {
             assertNotNull("prefix $prefix accepted", Wallet.walletSweepRefusal(prefix, registration))
             assertNull("prefix $prefix refused for the default registration prefix", Wallet.walletSweepRefusal(prefix))
         }
@@ -33,7 +35,7 @@ class WalletSweepTest {
 
     @Test
     fun acceptsTheWalletsOwnPrefixes() {
-        for (prefix in listOf(AndroidKeystoreKeyStore.Options().aliasPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test.")) {
+        for (prefix in listOf(AndroidKeystoreKeyStore.Options().aliasPrefix, APP_KEYS_PREFIX, "org.idfoundry.oid4vcgo.key.test.")) {
             assertNull("prefix $prefix refused", Wallet.walletSweepRefusal(prefix))
         }
     }
@@ -45,8 +47,8 @@ class WalletSweepTest {
      */
     @Test
     fun registrationSweepRefusesPrefixesOverlappingAWallets() {
-        val wallets = setOf("com.example.wallet.keys.", AndroidKeystoreKeyStore.Options().aliasPrefix)
-        for (prefix in listOf("com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.wp.", "org.idfoundry.", "")) {
+        val wallets = setOf(APP_KEYS_PREFIX, AndroidKeystoreKeyStore.Options().aliasPrefix)
+        for (prefix in listOf(APP_KEYS_PREFIX, "com.example.wallet.", "${APP_KEYS_PREFIX}wp.", "org.idfoundry.", "")) {
             assertNotNull("prefix $prefix accepted", HttpWalletProvider.registrationSweepRefusal(prefix, wallets))
         }
         for (prefix in listOf(HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX, "com.example.wallet.wp.", "com.example.wallet.keysx")) {
