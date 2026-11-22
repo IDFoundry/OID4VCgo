@@ -54,7 +54,7 @@ func TestProductionNeedsRevocationAndStores(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = stores.Close() })
 	roots, _ := cfg.VerifierTrust.(wallet.X5CVerifierRoots)
-	if cfg.Development || cfg.StatusRevocation == nil || cfg.IssuerLeafPolicy == nil || roots.LeafPolicy == nil || deps.Keys == nil || deps.HTTP != nil ||
+	if cfg.Development || cfg.StatusRevocation == nil || cfg.StatusMaxAge == 0 || cfg.IssuerLeafPolicy == nil || roots.LeafPolicy == nil || deps.Keys == nil || deps.HTTP != nil ||
 		len(cfg.AllowedPrivateHosts) != 1 || cfg.AllowedPrivateHosts[0] != "issuer2.example" {
 		t.Fatalf("production left %+v, %+v", cfg, deps)
 	}

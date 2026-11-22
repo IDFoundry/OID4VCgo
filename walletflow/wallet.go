@@ -184,6 +184,29 @@ type Config struct {
 	StatusMaxBytes         int
 	IdentifierListMaxBytes int
 
+	// StatusMaxAge bounds how long ago a status list or identifier list
+	// CheckStatus accepts may have been signed (its iat;
+	// statuslist.VerifyOptions.MaxAge). A list signed before a
+	// revocation verifies until its exp, which an issuer may put months
+	// ahead, so anyone who can serve bytes at the list's uri — a CDN, a
+	// mirror, a former owner of the domain — could replay it until then;
+	// with StatusMaxAge, only for StatusMaxAge after the revocation. A
+	// list older, fetched or kept, fails the check, an error rather than
+	// a status: set it above the longest interval the issuers sign their
+	// lists at, 24 hours for issuers that sign them at least daily. It
+	// isn't how long a list fetched is kept before it's fetched again
+	// (Dependencies.StatusCache's CacheOptions.MaxAge). Negative is
+	// refused.
+	//
+	// Outside Development, New requires it whenever the wallet receives
+	// credentials, as StatusRevocation, unless StatusAnyAge is set.
+	// StatusAnyAge accepts a list of any age, until its exp: it declines
+	// the bound as a visible choice, never a StatusMaxAge left unset by
+	// mistake, for issuers whose lists expire soon after they're signed.
+	// It can't be set with StatusMaxAge.
+	StatusMaxAge time.Duration
+	StatusAnyAge bool
+
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name
 	// (wallet.VerifyIssuedCredentialParams.RequireIssuerName). SD-JWT VC
@@ -469,7 +492,8 @@ type Config struct {
 	//     declaring durable custody, stores that seal their records
 	//     (UnsealedStores), Random crypto/rand, roles' pools sharing no
 	//     anchor (or leaf policies), a revocation Checker for each role
-	//     in use — and fapigo/client's own production checks.
+	//     in use, a bound on a status list's age (StatusMaxAge) — and
+	//     fapigo/client's own production checks.
 	Development bool
 
 	// UnsealedStores accepts, outside Development, a
@@ -688,8 +712,14 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.validateStatusMaxBytes(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateStatusMaxAge(); err != nil {
+		return nil, err
+	}
 	if !cfg.Development {
 		if err := cfg.checkRevocationChosen(); err != nil {
+			return nil, err
+		}
+		if err := cfg.checkStatusMaxAgeChosen(); err != nil {
 			return nil, err
 		}
 		if err := checkRoleSeparation(cfg); err != nil {
@@ -998,6 +1028,32 @@ func (c Config) validateStatusMaxBytes() error {
 		return fmt.Errorf("walletflow: Config.StatusMaxBytes is %d, not between 0 and %d", c.StatusMaxBytes, statuslist.MaxTokenBytesLimit)
 	case c.IdentifierListMaxBytes < 0 || c.IdentifierListMaxBytes > identifierlist.MaxTokenBytesLimit:
 		return fmt.Errorf("walletflow: Config.IdentifierListMaxBytes is %d, not between 0 and %d", c.IdentifierListMaxBytes, identifierlist.MaxTokenBytesLimit)
+	}
+	return nil
+}
+
+// validateStatusMaxAge refuses a negative StatusMaxAge, which every
+// status check would refuse, and one set with StatusAnyAge.
+func (c Config) validateStatusMaxAge() error {
+	switch {
+	case c.StatusMaxAge < 0:
+		return fmt.Errorf("walletflow: Config.StatusMaxAge is %s: it must be positive", c.StatusMaxAge)
+	case c.StatusMaxAge > 0 && c.StatusAnyAge:
+		return errors.New("walletflow: set Config.StatusMaxAge or StatusAnyAge, not both")
+	}
+	return nil
+}
+
+// checkStatusMaxAgeChosen refuses, in production, a wallet receiving
+// credentials that leaves a status list's age unbounded without
+// StatusAnyAge saying so: any credential received may name a list,
+// which CheckStatus would otherwise accept until its exp, however long
+// before a revocation it was signed.
+func (c Config) checkStatusMaxAgeChosen() error {
+	if c.receivesCredentials() && c.StatusMaxAge == 0 && !c.StatusAnyAge {
+		return errors.New("walletflow: Config.StatusMaxAge is required outside Development when the wallet receives credentials: " +
+			"how long ago a status or identifier list may have been signed, so a list from before a revocation isn't accepted until its exp " +
+			"(24 hours where issuers sign their lists daily); or set StatusAnyAge to accept a list of any age")
 	}
 	return nil
 }

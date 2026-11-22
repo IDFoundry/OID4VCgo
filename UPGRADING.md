@@ -176,6 +176,21 @@ one, set the new `StatusPolicy.AnyListAge` instead, which declines the
 bound explicitly. A policy setting both is refused, at every assurance
 level; under `AssuranceDevelopment` nothing else changes.
 
+### Bound a status list's age outside Development (walletflow)
+
+The new `walletflow.Config.StatusMaxAge` bounds how long ago a status
+list or identifier list `CheckStatus` accepts may have been signed: a
+list older, fetched or kept, fails the check with an error. Outside
+`Development`, `New` refuses a `Config` that receives credentials
+(`IssuerRoots`, `IssuerRootsByVCT`, `MdocIssuerRoots` or
+`MdocIssuerRootsByDocType`) without it, unless the new `StatusAnyAge`
+declines the bound, for the same reason as the verifier's above. Set it
+above the longest interval your issuers sign their lists at: 24 hours
+for issuers that sign them at least daily. A `Config` setting both, or
+a negative `StatusMaxAge`, is refused in `Development` too. It isn't
+`Dependencies.StatusCache`'s `CacheOptions.MaxAge`, which bounds how
+long a list fetched is kept before it's fetched again.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

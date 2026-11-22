@@ -281,7 +281,10 @@ type CredentialStatus struct {
 // ttl and exp allow and statuslist.DefaultCacheMaxAge at most (unless
 // that Cache says otherwise), so a status changed at its issuer may be
 // seen that much later; each check still verifies the kept list for its
-// own credential. A list whose signer's chain has no current CRL under
+// own credential. A list signed longer ago than Config.StatusMaxAge,
+// fetched or kept, fails the check: an error, not a status, so a list
+// from before a revocation, served again, can't make the credential
+// valid. A list whose signer's chain has no current CRL under
 // StatusRevocation leaves the credential StatusUnknown,
 // ReasonNoCurrentCRL, too. A credential without a status or identifier
 // list or a chain to check has nothing to check, and is returned as it
@@ -512,7 +515,7 @@ func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live 
 	checker := statuslist.Checker{
 		Fetcher: w.statusFetcher(w.cfg.StatusMaxBytes),
 		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation, MaxAge: w.cfg.StatusMaxAge},
 		Cache:   w.statusCache,
 	}
 	// Its status is its issuer's to sign, or one of its Status Issuers',

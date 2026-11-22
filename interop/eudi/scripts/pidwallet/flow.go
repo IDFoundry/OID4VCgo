@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -71,6 +72,10 @@ func (env *environment) newWalletflow() (*walletflow.Wallet, error) {
 		IssuerRevocation:         env.revocation,
 		StatusRevocation:         env.revocation,
 		IssuerMetadataRevocation: env.revocation,
+		// A status list signed a day ago or more is refused, as
+		// production requires a bound: the stack signs its lists
+		// during the run.
+		StatusMaxAge: 24 * time.Hour,
 	}
 	deps := walletflow.Dependencies{
 		Keys: walletflow.NewMemoryKeyStore(), Credentials: walletflow.NewMemoryCredentialStore(),

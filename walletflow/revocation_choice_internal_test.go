@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/testcert"
@@ -14,10 +15,14 @@ import (
 // Checker it leaves nil, VerifierTrust's included: the explicit choice
 // New requires outside Development of a configuration testing something
 // else. A c that receives credentials without deciding which issuers'
-// offers it takes, which New requires too, takes testIssuer's.
+// offers it takes, or how old a status list may be, which New requires
+// too, takes testIssuer's and testStatusMaxAge.
 func declined(c Config) Config {
 	if c.checkCredentialIssuerTrust() != nil && !c.AllowAnyCredentialIssuer {
 		c.CredentialIssuers = []string{testIssuer}
+	}
+	if c.StatusMaxAge == 0 && !c.StatusAnyAge {
+		c.StatusMaxAge = testStatusMaxAge
 	}
 	for _, field := range []*certrevocation.Checker{
 		&c.IssuerRevocation, &c.StatusRevocation, &c.IssuerMetadataRevocation, &c.RegistrarRevocation, &c.MdocReaderRevocation,
@@ -49,6 +54,10 @@ func declined(c Config) Config {
 // testIssuer is the Credential Issuer whose offers declined has a
 // configuration take.
 const testIssuer = "https://issuer.example"
+
+// testStatusMaxAge is the bound on a status list's age declined gives a
+// configuration.
+const testStatusMaxAge = 24 * time.Hour
 
 func TestNew_RevocationChosen(t *testing.T) {
 	deps := redirectDeps()
@@ -99,7 +108,7 @@ func TestNew_RevocationChosen(t *testing.T) {
 	}
 	// Only the roles in use need one: an mdoc-only wallet's issuer roles
 	// and nothing else.
-	mdocOnly := Config{MdocIssuerRoots: pool("IACA"), CredentialIssuers: []string{testIssuer}}
+	mdocOnly := Config{MdocIssuerRoots: pool("IACA"), CredentialIssuers: []string{testIssuer}, StatusMaxAge: testStatusMaxAge}
 	if _, err := New(mdocOnly, deps); err == nil || !strings.Contains(err.Error(), "Config.IssuerRevocation") {
 		t.Errorf("mdoc-only wallet without IssuerRevocation: New = %v", err)
 	}
@@ -108,7 +117,7 @@ func TestNew_RevocationChosen(t *testing.T) {
 		t.Errorf("mdoc-only wallet, issuer roles declined: %v", err)
 	}
 	// So do a wallet's whose only issuer roots are a vct's.
-	vctOnly := Config{IssuerRootsByVCT: map[string]*x509.CertPool{"urn:example:pid": pool("PID provider CA")}, CredentialIssuers: []string{testIssuer}}
+	vctOnly := Config{IssuerRootsByVCT: map[string]*x509.CertPool{"urn:example:pid": pool("PID provider CA")}, CredentialIssuers: []string{testIssuer}, StatusMaxAge: testStatusMaxAge}
 	if _, err := New(vctOnly, deps); err == nil || !strings.Contains(err.Error(), "Config.IssuerRevocation") {
 		t.Errorf("vct-only wallet without IssuerRevocation: New = %v", err)
 	}
@@ -119,5 +128,40 @@ func TestNew_RevocationChosen(t *testing.T) {
 	// A wallet with no roots has no role to choose for.
 	if _, err := New(Config{}, deps); err != nil {
 		t.Errorf("a wallet with no roots: %v", err)
+	}
+}
+
+// Outside Development, a wallet receiving credentials bounds a status
+// list's age (StatusMaxAge) or declines that (StatusAnyAge): neither is
+// refused, naming the field, rather than accepting a list until its
+// exp. Both, or a negative bound, are refused at every level. A wallet
+// that receives nothing, and Development, need neither.
+func TestNew_StatusMaxAgeChosen(t *testing.T) {
+	receiving := func(development bool, maxAge time.Duration, anyAge bool) Config {
+		c := declined(Config{IssuerRoots: x509.NewCertPool(), Development: development})
+		c.StatusMaxAge, c.StatusAnyAge = maxAge, anyAge
+		return c
+	}
+	for name, tc := range map[string]struct {
+		cfg    Config
+		refuse string
+	}{
+		"bounded":               {receiving(false, time.Hour, false), ""},
+		"any age":               {receiving(false, 0, true), ""},
+		"neither":               {receiving(false, 0, false), "Config.StatusMaxAge is required outside Development"},
+		"both":                  {receiving(false, time.Hour, true), "not both"},
+		"negative":              {receiving(false, -time.Hour, false), "must be positive"},
+		"neither, Development":  {receiving(true, 0, false), ""},
+		"both, Development":     {receiving(true, time.Hour, true), "not both"},
+		"negative, Development": {receiving(true, -time.Hour, false), "must be positive"},
+		"receiving nothing":     {Config{}, ""},
+	} {
+		_, err := New(tc.cfg, redirectDeps())
+		switch {
+		case tc.refuse == "" && err != nil:
+			t.Errorf("%s: New = %v, want it taken", name, err)
+		case tc.refuse != "" && (err == nil || !strings.Contains(err.Error(), tc.refuse)):
+			t.Errorf("%s: New = %v, want it refused naming %q", name, err, tc.refuse)
+		}
 	}
 }

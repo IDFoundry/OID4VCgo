@@ -85,7 +85,7 @@ func TestNew_RedirectURIForm(t *testing.T) {
 		for _, dev := range []bool{false, true} {
 			w, err := New(Config{
 				ClientID: "wallet", RedirectURI: uri, CredentialIssuers: []string{"https://issuer.example"}, IssuerRoots: x509.NewCertPool(), Development: dev,
-				IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{},
+				IssuerRevocation: certrevocation.NoCheck{}, StatusRevocation: certrevocation.NoCheck{}, StatusMaxAge: testStatusMaxAge,
 			}, redirectDeps())
 			if err != nil {
 				t.Errorf("New(RedirectURI %q, Development %v) = %v, want it taken", uri, dev, err)

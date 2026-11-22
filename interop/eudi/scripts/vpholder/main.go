@@ -264,6 +264,10 @@ func newWallet(o options, stores *prodwallet.Stores, provider walletflow.WalletP
 		ClientID:    o.clientID,
 		IssuerRoots: issuerRoots, MdocIssuerRoots: iaca, CredentialIssuers: o.credentialIssuers,
 		IssuerRevocation: revocation, StatusRevocation: revocation,
+		// A status list signed a day ago or more is refused, as
+		// production requires a bound: the issuer's are signed during
+		// the run.
+		StatusMaxAge:  24 * time.Hour,
 		VerifierTrust: wallet.X5CVerifierRoots{Roots: verifierRoots, Revocation: revocation},
 		Development:   o.assurance == assuranceDevelopment,
 	}
