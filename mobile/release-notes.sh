@@ -25,7 +25,9 @@
 #
 # Both libraries compile the same Go code, but NFC engagement is
 # Android's alone: iOS's list leaves out commits whose header names NFC,
-# TNEP or Android, and says how many.
+# TNEP or Android and that change nothing in the Swift package, and says
+# how many. One that changes the Swift package too is listed: its header
+# names only the Android side of a change both libraries ship.
 set -eu
 [ $# -eq 3 ] || { echo "usage: $0 <previous-commit> <this-commit> android|ios" >&2; exit 2; }
 PREV=$1 THIS=$2 PLATFORM=$3
@@ -49,10 +51,16 @@ PACKAGES=$(cd mobile && go list -deps . | sed -n 's|^github\.com/idfoundry/oid4v
 git log --reverse --no-merges --name-only --format='%x1e%h%x1f%s%x1f%B%x1f' "$PREV..$THIS" -- \
 	$PACKAGES go.mod go.sum mobile/go.mod mobile/go.sum "$LIB" "$BUILD" ':!*_test.go' |
 	awk -v RS='\036' -v FS='\037' -v lib="$LIB/" -v platform="$PLATFORM" '
+	# Whether one of files, newline-separated paths, is under dir.
+	function touches(files, dir,    n, i, changed) {
+		n = split(files, changed, "\n")
+		for (i = 1; i <= n; i++) if (index(changed[i], dir) == 1) return 1
+		return 0
+	}
 	NF < 4 { next }
 	{ hash = $1; header = $2; body = $3; files = $4 }
 	header !~ /^(feat|fix|perf)(\([^)]*\))?!?: / { next }
-	platform == "ios" && header ~ /(NFC|TNEP|Android)/ { if (!(header in left)) { left[header]; nl++ } next }
+	platform == "ios" && header ~ /(NFC|TNEP|Android)/ && !touches(files, lib) { if (!(header in left)) { left[header]; nl++ } next }
 	seen[header]++ { next }
 	{
 		breaking = header ~ /^[a-z]+(\([^)]*\))?!: /
@@ -71,5 +79,5 @@ git log --reverse --no-merges --name-only --format='%x1e%h%x1f%s%x1f%B%x1f' "$PR
 		if (nb) { print "### Breaking changes\n"; for (i = 0; i < nb; i++) print b[i]; print "" }
 		if (nf) { print "### Features\n"; for (i = 0; i < nf; i++) print f[i]; print "" }
 		if (nx) { print "### Fixes\n"; for (i = 0; i < nx; i++) print x[i]; print "" }
-		if (nl) print "Left out: " nl " NFC change(s), which reach only the Kotlin library.\n"
+		if (nl) print "Left out: " nl " change(s) to NFC or Android alone, which reach only the Kotlin library.\n"
 	}'
