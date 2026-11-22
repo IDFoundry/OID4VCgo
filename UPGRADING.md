@@ -112,6 +112,17 @@ element holding one can't be filtered on: request it without `values`
 and compare the value `VerifyResponse` returns. A request begun before
 the upgrade with such a filter fails when it's answered.
 
+### See which of a query's types fall back to `Roots` (`verifier`)
+
+The new `X5CIssuerKeyResolver.FallbackTypes` reports, by credential
+query ID, each type a query's `vct_values` name that `RootsByVCT`
+doesn't, while `Roots` is set too: a credential of that type is
+trusted under `Roots`, so every anchor there may sign one. Where you
+set both, run it on your queries at startup or in a test, and name
+what it reports in `RootsByVCT` (each of a PID type's `vct` values,
+say), or check those types' issuers in `IssuerAuthorized`. It's a
+warning only: nothing calls it, and nothing is refused.
+
 ## OID4VCWallet 0.42.0 → 0.43.0
 
 Built from OID4VCgo v0.86.0 (see its entry below, whose wallet

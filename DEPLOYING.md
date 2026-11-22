@@ -416,7 +416,10 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   - per-type roots: `X5CIssuerKeyResolver.RootsByVCT` and
     `X5ChainIssuerKeyResolver.RootsByDocType` (`WithIssuerRootsByDocType`
     on a proximity reader), each type held to its own providers'
-    anchors;
+    anchors. With `Roots` set too, a type `RootsByVCT` doesn't name
+    falls back to them: `X5CIssuerKeyResolver.FallbackTypes`, run on
+    your queries at startup or in a test, reports which of their
+    `vct_values` do;
   - `IssuerAuthorized` (`WithIssuerAuthorization`) deciding by
     `IssuerAuthorization.IssuerAnchor`, the root that verified the
     chain, compared by key with the anchors you assign to each type

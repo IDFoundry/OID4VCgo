@@ -10,6 +10,8 @@ import (
 
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
@@ -65,7 +67,8 @@ type X5CIssuerKeyResolver struct {
 	// Without it, every anchor in Roots may sign every type — a loyalty
 	// club's CA a PID, say — so where the anchors are different
 	// providers', name each one's types here. A type named with nil
-	// anchors is refused.
+	// anchors is refused. A type it doesn't name falls back to Roots,
+	// when set: FallbackTypes reports which of a query's types do.
 	//
 	// A credential's aka_vcts are types it says it is of too, and can
 	// answer a query through (dcql.CredentialQuery), but they're its
@@ -348,6 +351,43 @@ func (r X5CIssuerKeyResolver) typeRoots(vct string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("verifier: no trust anchors for credential type %q", vct)
 	}
 	return r.Roots, nil
+}
+
+// FallbackTypes is what q asks for that falls back to Roots, by
+// credential query ID: each vct in a "dc+sd-jwt" credential query's
+// vct_values that RootsByVCT doesn't name, in query order, when both
+// RootsByVCT and Roots are set. Every anchor in Roots may sign a
+// credential of such a type. Where Roots hold other providers' anchors
+// than the type's issuers', name the type in RootsByVCT, each of a
+// PID's vct values say, or check its issuers in
+// VerifyResponseRequest.IssuerAuthorized.
+//
+// It's a warning, not a refusal: nothing calls it, and VerifyResponse
+// trusts such a credential under Roots, as RootsByVCT says. Call it on
+// the queries you send, at startup or in a test. Without RootsByVCT,
+// Roots are every type's by design, and without Roots, a type
+// RootsByVCT doesn't name is refused: neither falls back, so it
+// reports none.
+func (r X5CIssuerKeyResolver) FallbackTypes(q dcql.Query) map[string][]string {
+	out := map[string][]string{}
+	if len(r.RootsByVCT) == 0 || r.Roots == nil {
+		return out
+	}
+	for _, cq := range q.Credentials {
+		if cq.Format != sdjwtvc.CredentialFormat {
+			continue
+		}
+		meta, err := cq.SDJWTVCMeta()
+		if err != nil {
+			continue
+		}
+		for _, vct := range meta.VCTValues {
+			if _, named := r.RootsByVCT[vct]; !named {
+				out[cq.ID] = append(out[cq.ID], vct)
+			}
+		}
+	}
+	return out
 }
 
 // anchorPools is every trust anchor set r verifies against: Roots and

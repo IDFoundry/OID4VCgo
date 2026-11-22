@@ -3,9 +3,12 @@ package verifier_test
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
+	"github.com/idfoundry/oid4vcgo/dcql"
 	"github.com/idfoundry/oid4vcgo/verifier"
 	"github.com/idfoundry/oid4vcgo/verifier/verifiertest"
 )
@@ -83,5 +86,33 @@ func TestX5CIssuerKeyResolver_RootsByVCT(t *testing.T) {
 	}
 	if chains, err := (verifier.X5CIssuerKeyResolver{Roots: both, Revocation: certrevocation.NoCheck{}}).ResolveIssuerChains(ctx, x5cHeader(pidLeaf)); err != nil || len(chains) == 0 {
 		t.Errorf("ResolveIssuerChains without RootsByVCT: %v", err)
+	}
+}
+
+// FallbackTypes reports, by credential query ID, the types a query asks
+// for that RootsByVCT doesn't name while Roots is set: those every
+// anchor in Roots may sign. A type it names, even with nil anchors, and
+// an mdoc query aren't; nothing is without both RootsByVCT and Roots,
+// where no type falls back.
+func TestX5CIssuerKeyResolver_FallbackTypes(t *testing.T) {
+	roots := x509.NewCertPool()
+	byType := map[string]*x509.CertPool{"urn:pid:1": x509.NewCertPool(), "urn:loyalty:1": nil}
+	query := dcql.Query{Credentials: []dcql.CredentialQuery{
+		{ID: "pid", Format: "dc+sd-jwt", Meta: json.RawMessage(`{"vct_values":["urn:pid:1","urn:pid:legacy"]}`)},
+		{ID: "loyalty", Format: "dc+sd-jwt", Meta: json.RawMessage(`{"vct_values":["urn:loyalty:1"]}`)},
+		{ID: "other", Format: "dc+sd-jwt", Meta: json.RawMessage(`{"vct_values":["urn:other:1","urn:other:2"]}`)},
+		{ID: "mdl", Format: "mso_mdoc", Meta: json.RawMessage(`{"doctype_value":"org.iso.18013.5.1.mDL"}`)},
+	}}
+	for name, tc := range map[string]struct {
+		r    verifier.X5CIssuerKeyResolver
+		want map[string][]string
+	}{
+		"RootsByVCT and Roots": {verifier.X5CIssuerKeyResolver{Roots: roots, RootsByVCT: byType}, map[string][]string{"pid": {"urn:pid:legacy"}, "other": {"urn:other:1", "urn:other:2"}}},
+		"RootsByVCT alone":     {verifier.X5CIssuerKeyResolver{RootsByVCT: byType}, map[string][]string{}},
+		"Roots alone":          {verifier.X5CIssuerKeyResolver{Roots: roots}, map[string][]string{}},
+	} {
+		if got := tc.r.FallbackTypes(query); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: FallbackTypes = %v, want %v", name, got, tc.want)
+		}
 	}
 }
