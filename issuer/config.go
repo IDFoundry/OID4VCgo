@@ -64,7 +64,9 @@ type Limits struct {
 
 	// CredentialOfferLifetime bounds how long a by-reference Credential
 	// Offer (§4.1.3) remains fetchable. Required only when
-	// CredentialOfferEndpoint is set.
+	// CredentialOfferEndpoint is set; at most
+	// MaxProductionCredentialOfferLifetime (a week) under
+	// AssuranceProduction.
 	CredentialOfferLifetime time.Duration
 
 	// DeferredIssuancePollInterval is the minimum time this issuer asks
@@ -76,12 +78,22 @@ type Limits struct {
 
 	// DeferredTransactionLifetime bounds how long a transaction
 	// RequestCredential defers stays answerable (§9). Required only
-	// when Endpoints.DeferredCredential is set.
+	// when Endpoints.DeferredCredential is set; at most
+	// MaxProductionDeferredTransactionLifetime (30 days) under
+	// AssuranceProduction.
 	DeferredTransactionLifetime time.Duration
 
 	// AccessTokenLifetime bounds how long an access token
 	// ExchangePreAuthorizedCode issues remains valid. Required only
-	// when Dependencies.PreAuthorizedCodes is set.
+	// when Dependencies.PreAuthorizedCodes is set. Such a token names no
+	// grant, so revoking the grant doesn't end it: with
+	// Dependencies.AccessTokens set, AssuranceProduction takes at most
+	// MaxProductionAccessTokenLifetime (10 minutes), with no opt-out.
+	// The Wallet also polls the Deferred Credential Endpoint (§9) and
+	// notifies (§11) with it. Under AnonymousPreAuthorizedCode no client
+	// is authenticated for fapigo/server to bind a refresh token to, so
+	// a deferred transaction has to be issued and collected before the
+	// token expires.
 	AccessTokenLifetime time.Duration
 
 	// MaxTxCodeAttempts bounds how many consecutive incorrect tx_code

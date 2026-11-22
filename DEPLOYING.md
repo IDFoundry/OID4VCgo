@@ -113,6 +113,21 @@ each, not a deployment template" says what it does differently.
   (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Lifetimes within production's bounds.** Under
+  `AssuranceProduction`, `New` refuses a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime` (a week, the longest a
+  pre-authorized code lives) and a `Limits.DeferredTransactionLifetime`
+  over `issuer.MaxProductionDeferredTransactionLifetime` (30 days).
+  With `Dependencies.AccessTokens` set, it refuses a
+  `Limits.AccessTokenLifetime` over
+  `issuer.MaxProductionAccessTokenLifetime` (10 minutes): an access
+  token `ExchangePreAuthorizedCode` mints names no grant, so revoking
+  the grant leaves it usable until it expires. There's no opt-out: to
+  issue longer-lived tokens, redeem codes with
+  `RedeemPreAuthorizedCode` and issue each token with fapigo's
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it.
 - [ ] **Access tokens for this Credential Issuer alone.** List
   `Config.Issuer` in the Authorization Server's `server.Config.Resources`,
   and set `serverresource.Options.Resource` to it, so the Credential

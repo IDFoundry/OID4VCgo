@@ -111,3 +111,62 @@ func TestNewAccessTokensOnlyForAnonymousPreAuthorizedCode(t *testing.T) {
 		t.Fatalf("New under AnonymousPreAuthorizedCode without AccessTokens = %v, want it refused", err)
 	}
 }
+
+// TestNewProductionBoundsLifetimes: a production issuer keeps the
+// access tokens it mints itself, which revoking their grant doesn't
+// end, for at most MaxProductionAccessTokenLifetime, whichever client
+// authentication redeems the code, and its by-reference offers and
+// deferred transactions for at most MaxProductionCredentialOfferLifetime
+// and MaxProductionDeferredTransactionLifetime. A bound applies only
+// where its lifetime is used, and development assurance takes any.
+func TestNewProductionBoundsLifetimes(t *testing.T) {
+	setAccessTokenLifetime := func(l *issuer.Limits, d time.Duration) { l.AccessTokenLifetime = d }
+	verified := func(c *issuer.Config, _ *issuer.Dependencies) {
+		c.PreAuthorizedCodeClientAuthentication = issuer.VerifiedPreAuthorizedCode{}
+	}
+	// The Authorization Server issues the tokens (RedeemPreAuthorizedCode).
+	noAccessTokens := func(c *issuer.Config, d *issuer.Dependencies) {
+		verified(c, d)
+		d.AccessTokens = nil
+	}
+	for _, tc := range []struct {
+		name, field  string
+		bound        time.Duration
+		base, unused func(*issuer.Config, *issuer.Dependencies)
+		set          func(*issuer.Limits, time.Duration)
+	}{
+		{"anonymous redemption", "access_token_lifetime", issuer.MaxProductionAccessTokenLifetime, nil, noAccessTokens, setAccessTokenLifetime},
+		{"verified redemption", "access_token_lifetime", issuer.MaxProductionAccessTokenLifetime, verified, noAccessTokens, setAccessTokenLifetime},
+		{"credential offer", "credential_offer_lifetime", issuer.MaxProductionCredentialOfferLifetime, nil,
+			func(c *issuer.Config, _ *issuer.Dependencies) { c.CredentialOfferEndpoint = fapi.URL{} },
+			func(l *issuer.Limits, d time.Duration) { l.CredentialOfferLifetime = d }},
+		{"deferred transaction", "deferred_transaction_lifetime", issuer.MaxProductionDeferredTransactionLifetime, nil,
+			func(c *issuer.Config, _ *issuer.Dependencies) { c.Endpoints.DeferredCredential = fapi.URL{} },
+			func(l *issuer.Limits, d time.Duration) { l.DeferredTransactionLifetime = d }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, deps := preAuthorizedCodeProductionConfig(t)
+			if tc.base != nil {
+				tc.base(&cfg, &deps)
+			}
+			tc.set(&cfg.Limits, tc.bound)
+			if _, err := issuer.New(cfg, deps); err != nil {
+				t.Fatalf("New with %s %s: %v", tc.field, tc.bound, err)
+			}
+			over := tc.bound + time.Second
+			tc.set(&cfg.Limits, over)
+			if _, err := issuer.New(cfg, deps); err == nil || !strings.Contains(err.Error(), "limits."+tc.field) {
+				t.Fatalf("New with %s %s = %v, want it refused", tc.field, over, err)
+			}
+			dev := cfg
+			dev.Assurance = issuer.AssuranceDevelopment
+			if _, err := issuer.New(dev, deps); err != nil {
+				t.Errorf("New under AssuranceDevelopment with %s %s: %v", tc.field, over, err)
+			}
+			tc.unused(&cfg, &deps)
+			if _, err := issuer.New(cfg, deps); err != nil {
+				t.Errorf("New with %s %s unused: %v", tc.field, over, err)
+			}
+		})
+	}
+}

@@ -129,8 +129,9 @@ type ExchangePreAuthorizedCodeResult struct {
 	// Response's refresh_token: one the Authorization Server issued for
 	// this grant, so the Wallet can refresh its credentials (OpenID4VCI
 	// 1.0 §13.5). Revoking its grant ends it, but not this response's
-	// access token, which names no grant, until that expires: for a
-	// grant that may be revoked, prefer RedeemPreAuthorizedCode and
+	// access token, which names no grant, until that expires (at most
+	// MaxProductionAccessTokenLifetime later under AssuranceProduction):
+	// for a grant that may be revoked, prefer RedeemPreAuthorizedCode and
 	// server.Server.IssueAccessToken (see VerifiedPreAuthorizedCode). Issue it with server.IssueRefreshTokenRequest.Resources
 	// set to Config.Issuer alone: without them, the access tokens it
 	// refreshes into are addressed to the Authorization Server, and a
@@ -257,7 +258,9 @@ func (AnonymousPreAuthorizedCode) isPreAuthorizedCodeClientAuthentication() {
 // ExchangePreAuthorizedCode mints through Dependencies.AccessTokens
 // names no grant, so it stays usable until it expires
 // (Config.Limits.AccessTokenLifetime) whatever happens to the grant:
-// keep that lifetime short, if it's used for such a grant at all.
+// AssuranceProduction holds that lifetime to at most
+// MaxProductionAccessTokenLifetime (10 minutes), with no opt-out, so
+// tokens that must live longer are issued this way.
 //
 // With fapigo/server, the Token Endpoint handler reads the request once
 // and does both checks first:

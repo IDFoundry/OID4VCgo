@@ -39,6 +39,35 @@ would, as a phone's data protection does. The mobile package sets it
 for the app's `CredentialStore`, so the Swift and Kotlin libraries
 need no change.
 
+### Production bounds three more lifetimes (`issuer`)
+
+Under `AssuranceProduction`, `issuer.New` now refuses:
+- with `Dependencies.AccessTokens` set, a `Limits.AccessTokenLifetime`
+  over `issuer.MaxProductionAccessTokenLifetime`, 10 minutes. An access
+  token `ExchangePreAuthorizedCode` mints through it names no grant,
+  so revoking the grant (fapigo's `server.Server.RevokeGrant`, or the
+  Wallet revoking its refresh token) left it usable for as long as it
+  was set to live. There's no opt-out: for longer-lived tokens, redeem
+  codes with `RedeemPreAuthorizedCode` (under
+  `VerifiedPreAuthorizedCode`) and issue each token with
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it. Under `AnonymousPreAuthorizedCode`
+  the Wallet gets no refresh token, so it also has to collect a
+  deferred credential within that time;
+- with `CredentialOfferEndpoint` set, a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime`, a week: the longest a
+  pre-authorized code lives (`MaxProductionPreAuthorizedLifetime`).
+  Send an offer for the authorization code grant that must stay usable
+  longer by value;
+- with `Endpoints.DeferredCredential` set, a
+  `Limits.DeferredTransactionLifetime` over
+  `issuer.MaxProductionDeferredTransactionLifetime`, 30 days. Where a
+  review takes longer, deny the transaction and issue with a new
+  Credential Offer once it's done.
+
+**What to change:** lower each to its bound.
+
 ### `AuditEventLegacyDeferredAuthorization` is removed (`issuer`)
 
 Never recorded since v0.84.0, which deprecated it: drop any reference
