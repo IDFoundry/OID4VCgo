@@ -497,11 +497,18 @@ carries no HTTP status, so mark these codes, and `instance_revoked`,
 only for an answer with the status the provider gives them (403; 409
 for `instance_key_registered`, 400 for `evidence_required`): the same
 code in a redirect, or a proxy's answer in front of the provider,
-isn't the provider's refusal. The Swift package's adapter marks a `URLError` as
-network and a `WalletProviderRefusedError` with an error code as
-refused, and the Kotlin library's an `IOException` and a
+isn't the provider's refusal. The mark is the whole `[refused:code] `
+(or `[refused:code]` ending the message), `code` a plain token, 1 to 64
+ASCII letters, digits and underscores, as the protocol's codes are:
+anything else starting `[refused:`, a code with a `]` or a space in it
+say, is `platform` without a detail, so mark only a plain-token code
+(within ABI 16, from OID4VCWallet 0.44.0: before, the code was read up
+to its first `]`). The Swift package's adapter marks a `URLError` as
+network and a `WalletProviderRefusedError` with a plain-token error
+code as refused, and the Kotlin library's an `IOException` and a
 `WalletProviderRefusedException` likewise; their `HttpWalletProvider`
-gives such a code only at its status.
+gives such a code only at its status, and never one that isn't a plain
+token.
 
 ## Wallet
 

@@ -447,6 +447,13 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: nil)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertEqual(error.localizedDescription, "the Wallet Provider refused /v1/wallet-attestation: HTTP 403")
         }
+        // A code that isn't a plain token isn't the protocol's: unmarked,
+        // so a "]" in it can't end the mark early and name another.
+        for code in ["instance_key_expired]", "instance_key_expired] x", "instance key expired"] {
+            XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: code)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+                XCTAssertFalse(error.localizedDescription.hasPrefix("[refused:"), error.localizedDescription)
+            }
+        }
     }
 
     /// The holder cancelling a key's prompt reaches Go marked as a

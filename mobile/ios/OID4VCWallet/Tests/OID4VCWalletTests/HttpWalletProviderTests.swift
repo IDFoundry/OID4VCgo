@@ -166,6 +166,37 @@ final class HttpWalletProviderTests: XCTestCase {
         }
     }
 
+    /// A code that isn't a plain token is no code at all, at any status:
+    /// the protocol's are, and a `]` or a space in one would let an answer
+    /// choose the code Go reads from the mark. Nothing is discarded.
+    func testCodesThatArentPlainTokensAreDropped() async throws {
+        let codes = ["instance_key_expired]", "instance_key_expired] x", "instance key expired",
+                     "instance_key_expired\u{0}", "instance_key_expiré", String(repeating: "a", count: 65)]
+        for status in [302, 403] {
+            for code in codes {
+                let env = try Env()
+                _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                let first = try XCTUnwrap(env.registry.instance())
+                env.server.state.withLock {
+                    $0.refusals = [code]
+                    $0.refusalStatus = status
+                }
+                do {
+                    _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                    XCTFail("\(code) at \(status): attested")
+                } catch let e as WalletProviderRefusedError {
+                    XCTAssertEqual(e.status, status)
+                    XCTAssertNil(e.error, "\(code) at \(status)")
+                    XCTAssertNil(e.description, "\(code) at \(status)")
+                }
+                XCTAssertEqual(try env.registry.instance()?.instanceID, first.instanceID, "\(code) at \(status)")
+            }
+        }
+        XCTAssertTrue(isPlainErrorCode("instance_key_expired"))
+        XCTAssertTrue(isPlainErrorCode(String(repeating: "a", count: 64)))
+        XCTAssertFalse(isPlainErrorCode(""))
+    }
+
     /// `registration_expired` forgets the registration and deletes its
     /// key, as `instance_revoked` does, then registers again, with a new
     /// App Attest key, and asks once more under the new registration.

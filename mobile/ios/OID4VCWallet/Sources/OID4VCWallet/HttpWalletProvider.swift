@@ -70,8 +70,9 @@ import Foundation
 /// status the provider answers them with (403; 409 for
 /// `instance_key_registered`, 400 for `evidence_required`): the same code
 /// in a redirect, or in a page from a proxy in front of the provider, is
-/// a refusal without a code, which discards nothing. On
-/// `instance_revoked`, it forgets the
+/// a refusal without a code, which discards nothing, as is a code that
+/// isn't a plain token (1 to 64 letters, digits and underscores, as the
+/// protocol's are). On `instance_revoked`, it forgets the
 /// registration and deletes its registration key: the next Wallet
 /// Attestation registers the installation again. On
 /// `registration_expired` — the provider no longer accepts the evidence
@@ -508,16 +509,18 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
     }
 
     /// The error for an answer other than the one documented. A code that
-    /// discards the registration, an instance key or a refresh grant
-    /// (``codeStatus``) at a status the provider doesn't answer it with —
-    /// a redirect, or a page from a proxy in front of the provider — isn't
-    /// the provider's refusal: it's dropped, and the answer refused as
-    /// one without a code, which discards nothing.
+    /// isn't a plain token (``isPlainErrorCode(_:)``), as every one of the
+    /// protocol's is, or one that discards the registration, an instance
+    /// key or a refresh grant (``codeStatus``) at a status the provider
+    /// doesn't answer it with — a redirect, or a page from a proxy in
+    /// front of the provider — isn't the provider's refusal: it's dropped,
+    /// and the answer refused as one without a code, which discards
+    /// nothing.
     private func failure(_ path: String, _ answer: WalletProviderAnswer, isJSON: Bool) -> Error {
         let object = isJSON ? parseObject(answer.body) : nil
         var code = (object?["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         var description = object?["error_description"] as? String
-        if let c = code, let want = Self.codeStatus[c], want != answer.status {
+        if let c = code, !isPlainErrorCode(c) || Self.codeStatus[c].map({ $0 != answer.status }) ?? false {
             code = nil
             description = nil
         }
@@ -580,8 +583,10 @@ public final class HttpWalletProvider: WalletProvider, @unchecked Sendable {
 /// The Wallet Provider refused a request with one of the protocol's
 /// errors, or answered other than the protocol documents (a redirect, a
 /// path it doesn't serve). It reaches the wallet as `.platform`, its
-/// `protocolError` ``error`` when there is one. An app's own
-/// ``WalletProvider`` may throw it too, for the same.
+/// `protocolError` ``error`` when there is one, a plain token as the
+/// protocol's codes are (1 to 64 letters, digits and underscores):
+/// another code isn't carried. An app's own ``WalletProvider`` may throw
+/// it too, for the same.
 public struct WalletProviderRefusedError: LocalizedError, Sendable {
     /// A refusal of `path` with HTTP `status` and the protocol's `error`
     /// code.
@@ -745,6 +750,19 @@ protocol SharesWalletProviderState {
 /// object or an assertion.
 func appAttestEvidence(_ data: Data) -> [String: Any] {
     ["kind": "apple-app-attest", "data": encodeBase64URL(data)]
+}
+
+/// Whether `code` is a plain token, as every one of the Wallet Provider
+/// protocol's error codes is: 1 to 64 ASCII letters, digits and
+/// underscores. Only such a code is the provider's, and only such a code
+/// is marked for Go (`[refused:code] `), which reads the mark to its
+/// `] `: a `]` or a space in a code would let an answer choose the code
+/// Go reads.
+func isPlainErrorCode(_ code: String) -> Bool {
+    (1...64).contains(code.utf8.count) && code.utf8.allSatisfy {
+        (UInt8(ascii: "a")...UInt8(ascii: "z")).contains($0) || (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0)
+            || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || $0 == UInt8(ascii: "_")
+    }
 }
 
 func encodeBase64URL(_ d: Data) -> String {

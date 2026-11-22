@@ -68,7 +68,9 @@ import kotlin.concurrent.thread
  * with (403; 409 for `instance_key_registered`, 400 for
  * `evidence_required`): the same code in a redirect, or in a page from a
  * proxy in front of the provider, is a refusal without a code, which
- * discards nothing. On `instance_revoked`, it
+ * discards nothing, as is a code that isn't a plain token (1 to 64
+ * letters, digits and underscores, as the protocol's are). On
+ * `instance_revoked`, it
  * forgets the registration and deletes its registration key: the next
  * Wallet Attestation registers the installation again. On
  * `registration_expired` — the provider no longer accepts the evidence
@@ -547,18 +549,20 @@ public class HttpWalletProvider internal constructor(
 
     /**
      * The exception for an answer other than the one documented. A code
-     * that discards the registration, an instance key or a refresh grant
-     * ([CODE_STATUS]) at a status the provider doesn't answer it with — a
-     * redirect, or a page from a proxy in front of the provider — isn't
-     * the provider's refusal: it's dropped, and the answer refused as one
-     * without a code, which discards nothing.
+     * that isn't a plain token ([isPlainErrorCode]), as every one of the
+     * protocol's is, or one that discards the registration, an instance
+     * key or a refresh grant ([CODE_STATUS]) at a status the provider
+     * doesn't answer it with — a redirect, or a page from a proxy in
+     * front of the provider — isn't the provider's refusal: it's dropped,
+     * and the answer refused as one without a code, which discards
+     * nothing.
      */
     private fun failure(path: String, answer: WalletProviderAnswer, isJSON: Boolean): Exception {
         val o = if (isJSON) parseObject(answer.body) else null
         val sent = o?.stringOrNull("error")?.takeIf { it.isNotEmpty() }
-        val atItsStatus = sent == null || CODE_STATUS[sent].let { it == null || it == answer.status }
-        val code = sent.takeIf { atItsStatus }
-        val description = o?.stringOrNull("error_description")?.takeIf { atItsStatus }
+        val providers = sent == null || isPlainErrorCode(sent) && CODE_STATUS[sent].let { it == null || it == answer.status }
+        val code = sent.takeIf { providers }
+        val description = o?.stringOrNull("error_description")?.takeIf { providers }
         return when {
             answer.status >= 500 || answer.status == 429 || code == INVALID_CHALLENGE ->
                 WalletProviderUnavailableException(answer.status, code, "the Wallet Provider couldn't answer $path: HTTP ${answer.status}" + (code?.let { " $it" } ?: ""))
@@ -691,8 +695,9 @@ private fun checkKeyAttestation(jwt: String, points: List<ByteArray>, nonce: Str
  * errors, or answered other than the protocol documents (a redirect, a
  * path it doesn't serve). It reaches the wallet as
  * [WalletException.Code.platform], its [WalletException.protocolError]
- * [error] when there is one. An app's own [WalletProvider] may throw it
- * too, for the same.
+ * [error] when there is one, a plain token as the protocol's codes are
+ * (1 to 64 letters, digits and underscores): another code isn't carried.
+ * An app's own [WalletProvider] may throw it too, for the same.
  */
 public class WalletProviderRefusedException(
     /** The HTTP status code. */
@@ -875,6 +880,17 @@ internal class RequestDeadline(private val millis: Int, end: () -> Unit) {
 }
 
 private val base64URL: Base64.Encoder = Base64.getUrlEncoder().withoutPadding()
+
+/**
+ * Whether [code] is a plain token, as every one of the Wallet Provider
+ * protocol's error codes is: 1 to 64 ASCII letters, digits and
+ * underscores. Only such a code is the provider's, and only such a code
+ * is marked for Go (`[refused:code] `), which reads the mark to its
+ * `] `: a `]` or a space in a code would let an answer choose the code
+ * Go reads.
+ */
+internal fun isPlainErrorCode(code: String): Boolean =
+    code.length in 1..64 && code.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' }
 
 internal fun encodeBase64URL(b: ByteArray): String = base64URL.encodeToString(b)
 
