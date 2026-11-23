@@ -42,10 +42,10 @@ this for you: give it the distribution point URLs and the CA
 certificates that sign their CRLs, run `go r.Run(ctx)`, and pass
 `r.Checker()`. It fetches only from public addresses by default, keeps
 the last good list when a fetch fails, and refuses a list that isn't
-signed by one of those CAs or is older than the newest it has accepted
-from that CA, so an unreachable or tampered-with distribution point
-(CRLs are often served over plain http) can't evict or roll back a good
-list. Bind each URL to its CA with `URLIssuers`, and persist what
+signed by one of those CAs (checked before the list is parsed) or is
+older than the newest it has accepted from that CA, so an unreachable
+or tampered-with distribution point (CRLs are often served over plain
+http) can't evict or roll back a good list. Bind each URL to its CA with `URLIssuers`, and persist what
 `OnAccept` hands over to pass back as `Floors` on restart. A missing or
 stale CRL fails closed. A trust anchor that isn't self-signed, a
 pinned leaf or an intermediate CA among the roots, is checked against
