@@ -27,7 +27,12 @@
 // issuance or refresh under way.
 // At production assurance, receiving credentials needs a KeyStore
 // declaring durable custody, and the authorization code grant a Durable
-// AuthorizationStore. Config.RedirectURI is a private-use URI scheme in
+// AuthorizationStore; and each of the CredentialStore, DeferredStore,
+// GrantStore and AuthorizationStore must declare it seals its records
+// (sealing.Store, as sqlstore's do with a Sealer), unless
+// Config.UnsealedStores accepts them, as on a phone, whose data
+// protection keeps them. The memory stores keep nothing at rest, and
+// needn't. Config.RedirectURI is a private-use URI scheme in
 // reverse.domain:/path form, such as com.example.wallet:/callback (RFC
 // 8252 §7.1), or with an authority, com.example.wallet://callback, or
 // loopback http (§7.3) — or, in Development only, https —
@@ -81,7 +86,8 @@
 // matching their metadata exactly, an offer's Authorization Server being
 // one the issuer lists, PKCE, PAR and the authorization response's iss
 // in the authorization code grant, and every credential checked against
-// Config.IssuerRoots, or an mdoc against Config.MdocIssuerRoots or
+// Config.IssuerRoots, or an SD-JWT VC against Config.IssuerRootsByVCT
+// and an mdoc against Config.MdocIssuerRoots or
 // MdocIssuerRootsByDocType where set, and for revocation with
 // Config.IssuerRevocation (each trust role, from status lists to mdoc
 // readers, has its own *Revocation field, since a certrevocation.CRLs

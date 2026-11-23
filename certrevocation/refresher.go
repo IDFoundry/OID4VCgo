@@ -26,14 +26,21 @@ import (
 const (
 	// DefaultCRLMaxBytes bounds a fetched CRL's size, as sent: a fetch
 	// asks for no content coding, so no compressed answer is inflated
-	// past it. An IACA's CRL is a few kilobytes, and a large CA shards
-	// its CRLs so each stays well below this; the bound is what a broken
-	// or hostile distribution point can make the process buffer, and
-	// parse before its signature is checked, which allocates several
-	// dozen times the CRL's size for one of nothing but entries. Set
-	// RefresherConfig.MaxBytes lower where the CRLs are known to be
+	// past it. 1 MiB holds about 20,000 revocations, at about 50 bytes
+	// each (a 16-byte serial number, a time and a reason code). The CAs
+	// whose lists this library checks issue few certificates — an
+	// IACA its document signers, an issuer's CA its signing
+	// certificates, a Wallet Provider's CA its attestation signers, a
+	// status list's CA its signers — so their CRLs are a few kilobytes,
+	// hundreds of times below it, and a large CA shards its CRLs. The
+	// bound is also what a broken or hostile distribution point can
+	// make the process buffer, and parse before its signature is
+	// checked, which allocates up to several dozen times the CRL's
+	// size, for one of nothing but entries: about 45 MiB at 1 MiB,
+	// where 8 MiB cost 360 MiB. Set RefresherConfig.MaxBytes higher for
+	// a CA whose lists are larger, or lower where they're known to be
 	// small, as an IACA's are.
-	DefaultCRLMaxBytes = 8 << 20
+	DefaultCRLMaxBytes = 1 << 20
 
 	// DefaultCRLFetchTimeout bounds one fetch, every redirect hop
 	// included, when RefresherConfig.HTTPClient sets no Timeout.
@@ -159,7 +166,8 @@ type RefresherConfig struct {
 	AllowLoopback bool
 
 	// MaxBytes bounds a CRL's size, as sent; zero means
-	// DefaultCRLMaxBytes.
+	// DefaultCRLMaxBytes, 1 MiB. Raise it for a CA whose lists are
+	// larger: one beyond it is refused, and the held list kept.
 	MaxBytes int64
 
 	// MaxInterval is the longest Run waits between passes; zero means

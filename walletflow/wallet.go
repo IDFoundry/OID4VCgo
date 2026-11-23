@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,9 +24,11 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
+	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/identifierlist"
 	"github.com/idfoundry/oid4vcgo/internal/certchain"
 	"github.com/idfoundry/oid4vcgo/internal/defaulttransport"
+	"github.com/idfoundry/oid4vcgo/sealing"
 	"github.com/idfoundry/oid4vcgo/statuslist"
 	"github.com/idfoundry/oid4vcgo/wallet"
 )
@@ -57,21 +60,37 @@ type Config struct {
 
 	// IssuerRoots are the trust anchors for issuers: every received
 	// credential must be signed by a certificate chaining to one of
-	// them, or it's refused — an mdoc only when MdocIssuerRoots and
+	// them, or it's refused — an SD-JWT VC only when IssuerRootsByVCT
+	// doesn't name its type, and an mdoc only when MdocIssuerRoots and
 	// MdocIssuerRootsByDocType don't apply to it. REQUIRED for
-	// StartIssuance, unless the wallet receives only mdocs and those
-	// are set.
+	// StartIssuance, unless the wallet receives only credentials those
+	// apply to and they're set.
 	//
 	// Use the issuers' own CAs, never x509.SystemCertPool or a pool
 	// built from it: that anchors every public CA, a TLS server's
 	// certificate among them. New doesn't refuse one (the verifier's
 	// resolvers do under production), and on macOS, iOS and Windows a
 	// system pool with certificates appended to it can't be told from
-	// any other pool. The same goes for MdocIssuerRoots,
-	// MdocIssuerRootsByDocType, IssuerMetadataRoots and RegistrarRoots.
+	// any other pool. The same goes for IssuerRootsByVCT,
+	// MdocIssuerRoots, MdocIssuerRootsByDocType, IssuerMetadataRoots and
+	// RegistrarRoots.
 	IssuerRoots *x509.CertPool
+	// IssuerRootsByVCT, if set, are each SD-JWT VC type's own trust
+	// anchors, as verifier.X5CIssuerKeyResolver's RootsByVCT: an SD-JWT
+	// VC whose vct it names must chain to that type's anchors, not to
+	// IssuerRoots, so where IssuerRoots are an ecosystem's providers of
+	// every kind, an attestation provider's CA can't sign a PID, say. A
+	// type named with a nil pool is refused. A credential's aka_vcts are
+	// types it says it is of too, and can answer a presentation's query
+	// through, but they're its issuer's own claim (SD-JWT VC draft-19
+	// §7.7): so with IssuerRootsByVCT set, its chain must verify under
+	// each of their types' anchors as well, IssuerRootsByVCT's for a
+	// type it names, else IssuerRoots, else it's refused. CheckStatus
+	// checks a held credential against the anchors configured then, and
+	// its status list's signer against its vct's.
+	IssuerRootsByVCT map[string]*x509.CertPool
 	// IssuerLeafPolicy, if set, decides whether a certificate under
-	// IssuerRoots may sign credentials
+	// IssuerRoots, or IssuerRootsByVCT's, may sign credentials
 	// (wallet.VerifyIssuedCredentialParams.IssuerLeafPolicy): set it
 	// where IssuerRoots also anchor another role, such as Verifiers.
 	// It applies to an mdoc too unless MdocIssuerLeafPolicy is set or
@@ -111,8 +130,9 @@ type Config struct {
 	// MdocIssuerRootsByDocType mdoc.DefaultDocumentSignerPolicy.
 	MdocIssuerLeafPolicy func(leaf *x509.Certificate, chains [][]*x509.Certificate) error
 	// IssuerRevocation checks a received credential's issuer
-	// certificate chain for revocation, under IssuerRoots and the mdoc
-	// roots alike (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
+	// certificate chain for revocation, under IssuerRoots,
+	// IssuerRootsByVCT's and the mdoc roots alike
+	// (wallet.VerifyIssuedCredentialParams.IssuerRevocation):
 	// a credential whose signer, or a CA above it, is revoked is refused
 	// on receipt, deferred or refreshed alike, with an error wrapping
 	// certrevocation.ErrRevoked. CheckStatus checks a held credential's
@@ -123,9 +143,10 @@ type Config struct {
 	// a CA it has no current list from, so use one only where the
 	// issuers' CAs publish CRLs; each role has its own field for that
 	// reason. Outside Development, New requires it, and StatusRevocation,
-	// whenever IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType
-	// is set: certrevocation.NoCheck{} declines. In Development, nil
-	// checks no revocation; see certrevocation.
+	// whenever IssuerRoots, IssuerRootsByVCT, MdocIssuerRoots or
+	// MdocIssuerRootsByDocType is set: certrevocation.NoCheck{}
+	// declines. In Development, nil checks no revocation; see
+	// certrevocation.
 	IssuerRevocation certrevocation.Checker
 
 	// StatusRevocation checks the certificate chain of a status list's
@@ -142,12 +163,13 @@ type Config struct {
 	// StatusIssuers are the Status Issuers that may sign a credential
 	// issuer's status lists on its behalf (draft-ietf-oauth-status-list):
 	// credential issuer (an SD-JWT VC's iss) → the identifiers of its
-	// Status Issuers, each recognized by a certificate under IssuerRoots
-	// naming it (a uniformResourceIdentifier, or for a "dns:" one a
-	// dNSName). CheckStatus otherwise accepts only a status list the
-	// credential's issuer signed itself, with the credential's own key
-	// or a certificate naming its iss, so another issuer under the same
-	// roots can't decide its status. An mdoc's is bound as ISO/IEC
+	// Status Issuers, each recognized by a certificate under IssuerRoots,
+	// or the credential's type's IssuerRootsByVCT, naming it (a
+	// uniformResourceIdentifier, or for a "dns:" one a dNSName).
+	// CheckStatus otherwise accepts only a status list the credential's
+	// issuer signed itself, with the credential's own key or a
+	// certificate naming its iss, so another issuer under the same roots
+	// can't decide its status. An mdoc's is bound as ISO/IEC
 	// 18013-5 §12.3.6 says instead: under the Certificate its MSO's
 	// status names, or else the CA that signed its document signer;
 	// StatusIssuers, keyed by iss, doesn't apply to it.
@@ -161,6 +183,29 @@ type Config struct {
 	// larger, up to each package's MaxTokenBytesLimit.
 	StatusMaxBytes         int
 	IdentifierListMaxBytes int
+
+	// StatusMaxAge bounds how long ago a status list or identifier list
+	// CheckStatus accepts may have been signed (its iat;
+	// statuslist.VerifyOptions.MaxAge). A list signed before a
+	// revocation verifies until its exp, which an issuer may put months
+	// ahead, so anyone who can serve bytes at the list's uri — a CDN, a
+	// mirror, a former owner of the domain — could replay it until then;
+	// with StatusMaxAge, only for StatusMaxAge after the revocation. A
+	// list older, fetched or kept, fails the check, an error rather than
+	// a status: set it above the longest interval the issuers sign their
+	// lists at, 24 hours for issuers that sign them at least daily. It
+	// isn't how long a list fetched is kept before it's fetched again
+	// (Dependencies.StatusCache's CacheOptions.MaxAge). Negative is
+	// refused.
+	//
+	// Outside Development, New requires it whenever the wallet receives
+	// credentials, as StatusRevocation, unless StatusAnyAge is set.
+	// StatusAnyAge accepts a list of any age, until its exp: it declines
+	// the bound as a visible choice, never a StatusMaxAge left unset by
+	// mistake, for issuers whose lists expire soon after they're signed.
+	// It can't be set with StatusMaxAge.
+	StatusMaxAge time.Duration
+	StatusAnyAge bool
 
 	// RequireIssuerName refuses a received SD-JWT VC whose iss its
 	// signing certificate doesn't name
@@ -226,10 +271,10 @@ type Config struct {
 	// matters to the holder still presenting it. Each fetch tells the
 	// list's host only that some credential on it is being checked.
 	//
-	// A wallet that receives credentials (IssuerRoots, MdocIssuerRoots
-	// or MdocIssuerRootsByDocType set) must decide which issuers' offers
-	// it takes, in development too, in one of three ways, or New refuses
-	// it:
+	// A wallet that receives credentials (IssuerRoots, IssuerRootsByVCT,
+	// MdocIssuerRoots or MdocIssuerRootsByDocType set) must decide which
+	// issuers' offers it takes, in development too, in one of three
+	// ways, or New refuses it:
 	//   - CredentialIssuers;
 	//   - signed issuer metadata naming its issuer: IssuerMetadataRoots,
 	//     holding a certificate, with RequireSignedIssuerMetadata and
@@ -277,6 +322,22 @@ type Config struct {
 	// refuses it without a VerifierTrust that verifies one
 	// (wallet.NoVerifierTrust, or none). Off by default.
 	AcceptX509SANDNS bool
+
+	// VerifierRedirectSchemes, if set, are the only URI schemes besides
+	// https a Verifier's redirect_uri may have (OpenID4VP 1.0 §8.2): the
+	// schemes of the Verifier apps the wallet returns holders to, or
+	// "https" alone to allow no other (wallet.Config.VerifierRedirectSchemes).
+	// A redirect with another scheme is dropped as one the wallet never
+	// follows is: Respond and Decline return an error wrapping
+	// wallet.ErrResponseDelivered, the presentation answered, and a
+	// refused request's RequestRefusedError has no RedirectURI. Unset,
+	// a trusted Verifier can send the holder to whichever app handles
+	// the scheme it names, but for those the wallet never follows:
+	// plain http, schemes that run code or read local data, invoke a
+	// Wallet or open a system handler (an app store, a call, a
+	// message), and RedirectURI's. New refuses one that isn't a URI
+	// scheme (RFC 3986 §3.1), and one the wallet never follows.
+	VerifierRedirectSchemes []string
 
 	// RegistrarRoots, if set, are the registrars whose registrations of
 	// Verifiers the wallet checks (the registration package): a
@@ -428,10 +489,30 @@ type Config struct {
 	//     may reach);
 	//   - skips the checks New makes at production assurance: Durable
 	//     Authorizations (and Grants, with RequestRefresh), Keys
-	//     declaring durable custody, Random crypto/rand, roles' pools
-	//     sharing no anchor (or leaf policies), a revocation Checker for
-	//     each role in use — and fapigo/client's own production checks.
+	//     declaring durable custody, stores that seal their records
+	//     (UnsealedStores), Random crypto/rand, roles' pools sharing no
+	//     anchor (or leaf policies), a revocation Checker for each role
+	//     in use, a bound on a status list's age (StatusMaxAge) — and
+	//     fapigo/client's own production checks.
 	Development bool
+
+	// UnsealedStores accepts, outside Development, a
+	// Dependencies.Credentials, Deferred, Grants or Authorizations store
+	// that doesn't declare it seals its records (sealing.Store), which
+	// New otherwise refuses. They hold the holder's credentials and
+	// their claims, the access tokens of pending deferred credentials,
+	// refresh tokens, and the Credential Offers (with any pre-authorized
+	// code) and PKCE verifiers of authorizations in progress: whoever can
+	// read such a store, or its backups, reads the credentials, and can
+	// use a token that isn't bound to a key outside it, a Bearer access
+	// token say. Set it only where something else protects the records
+	// at rest as sealing would: on a phone, the platform's data
+	// protection, under which the mobile package's CredentialStore keeps
+	// them. Otherwise give the stores a Sealer
+	// (github.com/idfoundry/oid4vcgo/sqlstore's Options.Sealer, from
+	// sealing.AESGCMSealer). walletflow's memory stores, the defaults,
+	// keep nothing at rest, so New takes them without it.
+	UnsealedStores bool
 
 	// TLSPins, if set, pins hosts' certificates (see TLSPins) on the
 	// HTTP client New builds when Dependencies.HTTP is nil, in
@@ -476,8 +557,13 @@ type Dependencies struct {
 	// A wallet's holder keys belong in secure hardware that won't
 	// export them (the Secure Enclave, StrongBox), needing the holder's
 	// presence to present; that's the KeyStore's to provide.
-	Keys        KeyStore
-	Credentials CredentialStore // REQUIRED
+	Keys KeyStore
+	// Credentials holds the wallet's credentials. REQUIRED. Outside
+	// Development it must declare it seals its records (sealing.Store),
+	// as Deferred, Grants and Authorizations must, unless
+	// Config.UnsealedStores accepts them; walletflow's memory stores
+	// needn't.
+	Credentials CredentialStore
 	// Provider attests the wallet (Wallet Attestations) and its keys
 	// (Key Attestations), for issuers that require them: HAIP 1.0's,
 	// and any whose Authorization Server takes only a Wallet Attestation
@@ -617,14 +703,23 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	if err := cfg.checkRedirectURIForm(); err != nil {
 		return nil, err
 	}
+	if err := cfg.checkVerifierRedirectSchemes(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateRevocation(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateStatusMaxBytes(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateStatusMaxAge(); err != nil {
+		return nil, err
+	}
 	if !cfg.Development {
 		if err := cfg.checkRevocationChosen(); err != nil {
+			return nil, err
+		}
+		if err := cfg.checkStatusMaxAgeChosen(); err != nil {
 			return nil, err
 		}
 		if err := checkRoleSeparation(cfg); err != nil {
@@ -643,6 +738,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	// The caller's slice stays theirs: changing it later changes nothing.
 	cfg.AllowedPrivateHosts = slices.Clone(cfg.AllowedPrivateHosts)
 	cfg.CredentialIssuers = slices.Clone(cfg.CredentialIssuers)
+	cfg.VerifierRedirectSchemes = slices.Clone(cfg.VerifierRedirectSchemes)
 	systemClock := deps.Clock == nil
 	deps, err := withDefaultDependencies(cfg, deps)
 	if err != nil {
@@ -651,7 +747,7 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 	core, err := wallet.New(wallet.Config{
 		Assurance: cfg.assurance(), ProofSigningAlg: oid4vci.ES256, VerifierTrust: cfg.VerifierTrust,
 		AcceptX509SANDNS: cfg.AcceptX509SANDNS, RequireSignedDCAPIRequests: cfg.RequireSignedDCAPIRequests,
-		IssuerMetadataRoots: cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
+		VerifierRedirectSchemes: cfg.VerifierRedirectSchemes, IssuerMetadataRoots: cfg.IssuerMetadataRoots, IssuerMetadataLeafPolicy: cfg.IssuerMetadataLeafPolicy,
 		IssuerMetadataRevocation:    cfg.IssuerMetadataRevocation,
 		RequireSignedIssuerMetadata: cfg.RequireSignedIssuerMetadata,
 		RequireIssuerMetadataName:   cfg.RequireIssuerMetadataName, MaxIssuerMetadataAge: cfg.MaxIssuerMetadataAge,
@@ -673,6 +769,9 @@ func New(cfg Config, deps Dependencies) (*Wallet, error) {
 		w.statusCache = statuslist.NewCache(statuslist.CacheOptions{Now: deps.Clock})
 	}
 	if err := w.checkReceivingAtNew(); err != nil {
+		return nil, err
+	}
+	if err := w.checkSealedStores(); err != nil {
 		return nil, err
 	}
 	return w, nil
@@ -740,6 +839,48 @@ func (w *Wallet) checkReceivingAtNew() error {
 	return nil
 }
 
+// checkSealedStores refuses, outside Development, a store holding the
+// holder's credentials or tokens that doesn't declare it seals its
+// records, unless Config.UnsealedStores accepts it. Each is checked
+// whatever the Config, as each may hold records an earlier one stored:
+// Wallet.Deferred, RefreshCredential, DeleteCredential and KeysInUse
+// read them all the same. Keys isn't one: what a KeyStore holds is its
+// custody's to protect (keys.KeyCustodyAssurance), and a hardware one
+// holds nothing it could seal.
+func (w *Wallet) checkSealedStores() error {
+	if w.cfg.Development || w.cfg.UnsealedStores {
+		return nil
+	}
+	for _, s := range []struct {
+		name, holds string
+		store       any
+	}{
+		{"Credentials", "the holder's credentials", w.deps.Credentials},
+		{"Deferred", "the access tokens of pending deferred credentials", w.deps.Deferred},
+		{"Grants", "refresh tokens", w.deps.Grants},
+		{"Authorizations", "the Credential Offers and PKCE verifiers of authorizations in progress", w.deps.Authorizations},
+	} {
+		if !sealsRecords(s.store) {
+			return fmt.Errorf("walletflow: Dependencies.%s holds %s: outside Development it must seal its records (implement sealing.Store and declare SealsRecords: sqlstore's stores do when their DB has Options.Sealer, such as sealing.AESGCMSealer), or set Config.UnsealedStores where something else protects them at rest, as a phone's data protection does", s.name, s.holds)
+		}
+	}
+	return nil
+}
+
+// sealsRecords reports whether store declares it seals its records
+// (sealing.Store), or is one of walletflow's memory stores, which keep
+// their records only in the process's memory: nothing at rest to seal.
+// A type wrapping one is a store of its own, which declares for itself.
+func sealsRecords(store any) bool {
+	switch s := store.(type) {
+	case *MemoryCredentialStore, *MemoryDeferredStore, *MemoryGrantStore, *MemoryAuthorizationStore:
+		return true
+	case sealing.Store:
+		return s.SealsRecords()
+	}
+	return false
+}
+
 // checkRedirectURIForm refuses, at every assurance level, a
 // Config.RedirectURI fapigo/client wouldn't build an issuance's client
 // with: New would otherwise take it, and every issuance that
@@ -763,6 +904,23 @@ func (c Config) checkRedirectURIForm() error {
 	}
 	if u, err := url.Parse(c.RedirectURI); err == nil && !c.Development && u.Scheme == "http" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
 		return errors.New("walletflow: outside Development, a loopback Config.RedirectURI names the IP literal 127.0.0.1 or [::1], not a host name (RFC 8252 §8.3)")
+	}
+	return nil
+}
+
+// checkVerifierRedirectSchemes refuses a VerifierRedirectSchemes entry
+// naming RedirectURI's private-use scheme, a redirect with which
+// checkRedirect never follows; wallet.New refuses the other schemes
+// never followed.
+func (c Config) checkVerifierRedirectSchemes() error {
+	own, err := url.Parse(c.RedirectURI)
+	if c.RedirectURI == "" || err != nil || own.Scheme == "http" || own.Scheme == "https" {
+		return nil
+	}
+	for _, scheme := range c.VerifierRedirectSchemes {
+		if strings.EqualFold(scheme, own.Scheme) {
+			return fmt.Errorf("walletflow: Config.VerifierRedirectSchemes names %q, Config.RedirectURI's scheme, which a Verifier's redirect is never followed with", scheme)
+		}
 	}
 	return nil
 }
@@ -874,6 +1032,32 @@ func (c Config) validateStatusMaxBytes() error {
 	return nil
 }
 
+// validateStatusMaxAge refuses a negative StatusMaxAge, which every
+// status check would refuse, and one set with StatusAnyAge.
+func (c Config) validateStatusMaxAge() error {
+	switch {
+	case c.StatusMaxAge < 0:
+		return fmt.Errorf("walletflow: Config.StatusMaxAge is %s: it must be positive", c.StatusMaxAge)
+	case c.StatusMaxAge > 0 && c.StatusAnyAge:
+		return errors.New("walletflow: set Config.StatusMaxAge or StatusAnyAge, not both")
+	}
+	return nil
+}
+
+// checkStatusMaxAgeChosen refuses, in production, a wallet receiving
+// credentials that leaves a status list's age unbounded without
+// StatusAnyAge saying so: any credential received may name a list,
+// which CheckStatus would otherwise accept until its exp, however long
+// before a revocation it was signed.
+func (c Config) checkStatusMaxAgeChosen() error {
+	if c.receivesCredentials() && c.StatusMaxAge == 0 && !c.StatusAnyAge {
+		return errors.New("walletflow: Config.StatusMaxAge is required outside Development when the wallet receives credentials: " +
+			"how long ago a status or identifier list may have been signed, so a list from before a revocation isn't accepted until its exp " +
+			"(24 hours where issuers sign their lists daily); or set StatusAnyAge to accept a list of any age")
+	}
+	return nil
+}
+
 // checkRevocationChosen refuses, in production, a trust role that's in
 // use without a revocation Checker, so a role's certificates go
 // unchecked only where the configuration says so with
@@ -883,7 +1067,7 @@ func (c Config) validateStatusMaxBytes() error {
 // IssuerRevocation, since any credential received may name a status
 // list, signed under the same roots, that CheckStatus fetches.
 func (c Config) checkRevocationChosen() error {
-	const issuerRoots = "IssuerRoots, MdocIssuerRoots or MdocIssuerRootsByDocType"
+	const issuerRoots = "IssuerRoots, IssuerRootsByVCT, MdocIssuerRoots or MdocIssuerRootsByDocType"
 	receives := c.receivesCredentials()
 	verifier, hasVerifier := x5cVerifierRoots(c.VerifierTrust)
 	for _, r := range []struct {
@@ -936,10 +1120,10 @@ func (c Config) checkRevocationChosen() error {
 // separates roles, so don't set one on a pool that shares an anchor
 // with another role's.
 //
-// The credential issuers' pools, IssuerRoots and the mdoc ones, are
-// one role: an ecosystem's CA may certify both its SD-JWT VC issuers
-// and its document signers, and what tells those apart is their leaf
-// policies, not their anchors. With MdocIssuerRoots unset and
+// The credential issuers' pools, IssuerRoots, IssuerRootsByVCT's and
+// the mdoc ones, are one role: an ecosystem's CA may certify both its
+// SD-JWT VC issuers and its document signers, and what tells those
+// apart is their leaf policies, not their anchors. With MdocIssuerRoots unset and
 // MdocIssuerLeafPolicy set, mdocs are received under IssuerRoots with
 // MdocIssuerLeafPolicy, so that pair is checked against the other
 // roles as well as IssuerRoots with IssuerLeafPolicy.
@@ -956,6 +1140,9 @@ func checkRoleSeparation(c Config) error {
 		// MdocIssuerLeafPolicy (issuerTrust): that pair must be told
 		// apart from the other roles too, beside IssuerRoots' own.
 		roles = append(roles, trustRole{"IssuerRoots for mdocs (MdocIssuerLeafPolicy)", c.IssuerRoots, certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
+	}
+	for _, vct := range slices.Sorted(maps.Keys(c.IssuerRootsByVCT)) {
+		roles = append(roles, trustRole{fmt.Sprintf("IssuerRootsByVCT[%q]", vct), c.IssuerRootsByVCT[vct], certchain.SeparatesRoles(c.IssuerLeafPolicy), roleIssuer})
 	}
 	for _, docType := range slices.Sorted(maps.Keys(c.MdocIssuerRootsByDocType)) {
 		roles = append(roles, trustRole{fmt.Sprintf("MdocIssuerRootsByDocType[%q]", docType), c.MdocIssuerRootsByDocType[docType], certchain.SeparatesRoles(c.MdocIssuerLeafPolicy), roleIssuer})
@@ -1133,21 +1320,28 @@ func (w *Wallet) deleteCredential(ctx context.Context, id string) (StoredCredent
 
 // receivesCredentials reports whether c trusts any credential issuer.
 func (c Config) receivesCredentials() bool {
-	return c.IssuerRoots != nil || c.MdocIssuerRoots != nil || len(c.MdocIssuerRootsByDocType) > 0
+	return c.IssuerRoots != nil || len(c.IssuerRootsByVCT) > 0 || c.MdocIssuerRoots != nil || len(c.MdocIssuerRootsByDocType) > 0
 }
 
 // issuerTrust is the trust anchors and leaf policy a received
-// credential of format, and for an mdoc docType, is checked against:
-// for an mdoc, MdocIssuerRootsByDocType's for a type it names, else
-// MdocIssuerRoots, else IssuerRoots, with MdocIssuerLeafPolicy, else
-// IssuerLeafPolicy under IssuerRoots alone. A nil pool is refused by
+// credential of format, and for an SD-JWT VC vct or for an mdoc
+// docType, is checked against: for an SD-JWT VC, IssuerRootsByVCT's for
+// a type it names, else IssuerRoots, with IssuerLeafPolicy; for an mdoc,
+// MdocIssuerRootsByDocType's for a type it names, else MdocIssuerRoots,
+// else IssuerRoots, with MdocIssuerLeafPolicy, else IssuerLeafPolicy
+// under IssuerRoots alone. A nil pool is refused by
 // wallet.VerifyIssuedCredential. With no policy set, the policy is the
 // format's default (wallet.IssuerLeafPolicyFor): never nil, so receipt
 // and every later re-check of a held credential's chain (checkIssuers)
-// apply the same one.
-func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
+// apply the same one. An SD-JWT VC's aka_vcts add anchors of their own
+// (akaRoots).
+func (c Config) issuerTrust(format, vct, docType string) (*x509.CertPool, func(*x509.Certificate, [][]*x509.Certificate) error) {
 	if format != mdoc.CredentialFormat {
-		return c.IssuerRoots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
+		roots := c.IssuerRoots
+		if byType, ok := c.IssuerRootsByVCT[vct]; ok {
+			roots = byType
+		}
+		return roots, wallet.IssuerLeafPolicyFor(format, c.IssuerLeafPolicy)
 	}
 	roots, policy := c.IssuerRoots, c.IssuerLeafPolicy
 	if byType, ok := c.MdocIssuerRootsByDocType[docType]; ok {
@@ -1159,6 +1353,30 @@ func (c Config) issuerTrust(format, docType string) (*x509.CertPool, func(*x509.
 		policy = c.MdocIssuerLeafPolicy
 	}
 	return roots, wallet.IssuerLeafPolicyFor(format, policy)
+}
+
+// akaRoots are the trust anchors, beside its vct's (issuerTrust), an
+// SD-JWT VC of type vct whose aka_vcts are aka must chain to: with
+// IssuerRootsByVCT set, each pool its aka_vcts' types have, once each,
+// IssuerRootsByVCT's for a type it names, else IssuerRoots. A type with
+// no anchors, named with a nil pool or under no IssuerRoots, is an
+// error. Without IssuerRootsByVCT, every type has IssuerRoots: none.
+func (c Config) akaRoots(vct string, aka []string) ([]*x509.CertPool, error) {
+	if len(c.IssuerRootsByVCT) == 0 {
+		return nil, nil
+	}
+	own, _ := c.issuerTrust(sdjwtvc.CredentialFormat, vct, "")
+	var pools []*x509.CertPool
+	for _, t := range aka {
+		roots, _ := c.issuerTrust(sdjwtvc.CredentialFormat, t, "")
+		switch {
+		case roots == nil:
+			return nil, fmt.Errorf("aka_vcts: no trust anchors for credential type %q", t)
+		case roots != own && !slices.Contains(pools, roots):
+			pools = append(pools, roots)
+		}
+	}
+	return pools, nil
 }
 
 // checkIssuance reports what StartIssuance needs that w lacks, whatever

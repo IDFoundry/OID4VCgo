@@ -125,7 +125,10 @@
 // AssuranceProduction requires (certrevocation.NoCheck{} declines it
 // explicitly), and is otherwise trusted from its chain to the
 // configured roots and its validity period alone. A credential's own
-// revocation is its status list's.
+// revocation is its status list's, whose age the Checker's
+// Options.MaxAge bounds, as AssuranceProduction requires too
+// (StatusPolicy.AnyListAge declines it), so a list from before a
+// revocation isn't accepted until its exp.
 //
 // The issuer key resolvers establish who a credential's issuer is, not
 // which types it may issue: where trusted issuers aren't all authorized

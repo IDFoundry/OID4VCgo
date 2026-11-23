@@ -166,6 +166,37 @@ final class HttpWalletProviderTests: XCTestCase {
         }
     }
 
+    /// A code that isn't a plain token is no code at all, at any status:
+    /// the protocol's are, and a `]` or a space in one would let an answer
+    /// choose the code Go reads from the mark. Nothing is discarded.
+    func testCodesThatArentPlainTokensAreDropped() async throws {
+        let codes = ["instance_key_expired]", "instance_key_expired] x", "instance key expired",
+                     "instance_key_expired\u{0}", "instance_key_expiré", String(repeating: "a", count: 65)]
+        for status in [302, 403] {
+            for code in codes {
+                let env = try Env()
+                _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                let first = try XCTUnwrap(env.registry.instance())
+                env.server.state.withLock {
+                    $0.refusals = [code]
+                    $0.refusalStatus = status
+                }
+                do {
+                    _ = try await env.provider.walletAttestation(clientID: "wallet", instanceKey: env.instanceKey().json)
+                    XCTFail("\(code) at \(status): attested")
+                } catch let e as WalletProviderRefusedError {
+                    XCTAssertEqual(e.status, status)
+                    XCTAssertNil(e.error, "\(code) at \(status)")
+                    XCTAssertNil(e.description, "\(code) at \(status)")
+                }
+                XCTAssertEqual(try env.registry.instance()?.instanceID, first.instanceID, "\(code) at \(status)")
+            }
+        }
+        XCTAssertTrue(isPlainErrorCode("instance_key_expired"))
+        XCTAssertTrue(isPlainErrorCode(String(repeating: "a", count: 64)))
+        XCTAssertFalse(isPlainErrorCode(""))
+    }
+
     /// `registration_expired` forgets the registration and deletes its
     /// key, as `instance_revoked` does, then registers again, with a new
     /// App Attest key, and asks once more under the new registration.
@@ -291,6 +322,33 @@ final class HttpWalletProviderTests: XCTestCase {
         XCTAssertEqual(memory.keys.count, 1)
     }
 
+    /// The sweep refuses a registration key store whose prefix is, covers
+    /// or falls under the key store's of a wallet made with any provider
+    /// over the registry, deleting nothing: it would delete the wallet's
+    /// keys. With no wallet made, it can't tell.
+    func testSweepRefusesAStoreOverAWalletsKeys() async throws {
+        let wallets: Set = ["com.example.wallet.keys.", KeychainKeyStore.Options().tagPrefix]
+        for prefix in ["com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.wp.", "org.idfoundry.", ""] {
+            XCTAssertNotNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: prefix, walletPrefixes: wallets), "prefix \(prefix) accepted")
+        }
+        for prefix in [HttpWalletProvider.registrationKeyTagPrefix, "com.example.wallet.wp.", "com.example.wallet.keysx"] {
+            XCTAssertNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: prefix, walletPrefixes: wallets), "prefix \(prefix) refused")
+        }
+        XCTAssertNil(HttpWalletProvider.registrationSweepRefusal(tagPrefix: KeychainKeyStore.Options().tagPrefix, walletPrefixes: []))
+
+        let store = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: "com.example.wallet.wp."))
+        let env = try Env(registrationKeys: store)
+        let left = try store.createKey(purpose: .instance)
+        // A wallet made with another provider over the registry.
+        try env.provider(over: env.registry).addWalletKeys(tagPrefix: "com.example.")
+        do {
+            _ = try await env.provider.sweepOrphanedRegistrationKeys()
+            XCTFail("swept a store over a wallet's keys")
+        } catch is StoreError {
+            XCTAssertNotNil(try store.publicKey(id: left))
+        }
+    }
+
     /// A registration key the provider has seen is replaced by another,
     /// once; the refused one is deleted.
     func testInstanceKeyRegisteredRetries() async throws {
@@ -358,6 +416,30 @@ final class HttpWalletProviderTests: XCTestCase {
         _ = try await (a, b)
         XCTAssertEqual(env.server.state.withLock { $0.registrations }, 1)
         XCTAssertEqual(env.keys.count, 1)
+    }
+
+    /// A call waiting for a registration that stalls — the provider slow
+    /// to answer it — stops waiting when it's cancelled, as Go's
+    /// cancelling the call cancels it, not when the registration ends.
+    func testCancelledWaitForAStalledRegistrationEnds() async throws {
+        let env = try Env()
+        let server = env.server
+        let provider = env.provider
+        server.state.withLock { $0.registrationDelay = 10_000_000_000 }
+        let first = try env.instanceKey().json
+        let next = try env.instanceKey().json
+        let stalled = Task { try await provider.walletAttestation(clientID: "wallet", instanceKey: first) }
+        await until("the registration is sent") { server.state.withLock { $0.requests } >= 2 }
+        let waiting = Task { try await provider.walletAttestation(clientID: "wallet", instanceKey: next) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let cancelled = Date()
+        waiting.cancel()
+        let result = await waiting.result
+        XCTAssertLessThan(Date().timeIntervalSince(cancelled), 2, "the cancelled call waited for the registration")
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+        stalled.cancel()
+        _ = await stalled.result
+        XCTAssertEqual(server.state.withLock { $0.registrations }, 0)
     }
 
     /// An App Attest key a transient failure left unregistered — App

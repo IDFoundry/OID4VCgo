@@ -10,6 +10,11 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
+private const val NO_FAILURE = "no failure"
+
+/** A lost link, as the transport reports the other device disconnecting. */
+private fun lostLink() = ProximityTransportException("the other device disconnected", peerEnded = true)
+
 /**
  * A reader in mdoc peripheral server mode connects to whichever device
  * advertises the holder's service UUID: a device whose answer Go
@@ -82,7 +87,7 @@ class ReaderExchangeTest {
 
     @Test
     fun impostorsArePassedOverAndTheRequestSentAgain() = runBlocking {
-        val lost = ProximityTransportException("the other device disconnected", peerEnded = true)
+        val lost = lostLink()
         val t = Fake(listOf(junk, status20, lost, holder))
         val event = exchange(t).run(establishment)
         assertEquals("verified", event.event)
@@ -120,7 +125,7 @@ class ReaderExchangeTest {
 
     @Test
     fun aDeclineStaysTheOutcomePastALostLink() = runBlocking {
-        val lost = ProximityTransportException("the other device disconnected", peerEnded = true)
+        val lost = lostLink()
         val t = Fake(listOf(status20, lost), connectable = 1)
         val event = exchange(t).run(establishment)
         assertEquals("rejected", event.event)
@@ -130,10 +135,10 @@ class ReaderExchangeTest {
 
     @Test
     fun aLostLinkIsTheOutcomeOnceTheTimeIsUp() = runBlocking {
-        val lost = ProximityTransportException("the other device disconnected", peerEnded = true)
+        val lost = lostLink()
         try {
             exchange(Fake(listOf(lost)), budget = 0.seconds).run(establishment)
-            fail("no failure")
+            fail(NO_FAILURE)
         } catch (e: ProximityTransportException) {
             assertSame(lost, e)
         }
@@ -164,7 +169,7 @@ class ReaderExchangeTest {
         val t = Fake(listOf(off))
         try {
             exchange(t).run(establishment)
-            fail("no failure")
+            fail(NO_FAILURE)
         } catch (e: ProximityTransportException) {
             assertSame(off, e)
         }
@@ -179,10 +184,10 @@ class ReaderExchangeTest {
         assertEquals("declined", event.reason)
         assertEquals(0, t.rejects)
 
-        val lost = ProximityTransportException("the other device disconnected", peerEnded = true)
+        val lost = lostLink()
         try {
             exchange(Fake(listOf(lost)), passesOver = false).run(establishment)
-            fail("no failure")
+            fail(NO_FAILURE)
         } catch (e: ProximityTransportException) {
             assertSame(lost, e)
         }

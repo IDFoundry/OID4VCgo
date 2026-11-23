@@ -80,7 +80,7 @@ func leafUnder(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, pub 
 
 // sign is the fixture's Request Object with header and payload changed
 // by the given functions, signed by key.
-func (f requestFixture) sign(t *testing.T, key *ecdsa.PrivateKey, header func(map[string]any), payload func(map[string]any)) string {
+func (f requestFixture) sign(t *testing.T, key *ecdsa.PrivateKey, header, payload func(map[string]any)) string {
 	t.Helper()
 	h, p := map[string]any{}, map[string]any{}
 	for k, v := range f.header {
@@ -331,6 +331,9 @@ func TestRequestObjectDCQLCheckedAtParse(t *testing.T) {
 	for name, q := range map[string]map[string]any{
 		"too many credential queries":  query(65, given),
 		"the same path, different ids": query(1, map[string]any{"id": "a", "path": []any{"given_name"}}, map[string]any{"id": "b", "path": []any{"given_name"}}),
+		// Read as a float64, 2^53 + 1 is 2^53: the filter would match
+		// another integer than the one asked for.
+		"a values integer beyond 2^53 − 1": query(1, map[string]any{"path": []any{"n"}, "values": []any{json.Number("9007199254740993")}}),
 	} {
 		_, err := wallet.ParseAuthorizationRequest(wallet.ParseAuthorizationRequestParams{
 			RequestObject: f.sign(t, f.key, nil, func(p map[string]any) { p["dcql_query"] = q }),

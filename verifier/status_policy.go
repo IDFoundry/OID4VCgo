@@ -18,9 +18,12 @@ import (
 //	statusCache := statuslist.NewCache(statuslist.CacheOptions{}) // one for the process
 //	...
 //	Status: &verifier.StatusPolicy{Checker: statuslist.Checker{
-//		Roots:   issuerRoots,
-//		Options: statuslist.VerifyOptions{Revocation: certrevocation.CRLs{...}},
-//		Cache:   statusCache,
+//		Roots: issuerRoots,
+//		Options: statuslist.VerifyOptions{
+//			Revocation: certrevocation.CRLs{...},
+//			MaxAge:     24 * time.Hour, // how long ago a list may have been signed
+//		},
+//		Cache: statusCache,
 //	}},
 //
 // Share one statuslist.Cache across every StatusPolicy and request, so
@@ -39,10 +42,26 @@ type StatusPolicy struct {
 	// identifier list with its Fetcher, Roots, Options and Cache (see
 	// RequireValidStatus). Its Roots are REQUIRED. Under
 	// AssuranceProduction, its Fetcher must be HardenedForProduction,
-	// its Cache set — one statuslist.Cache shared by the process — and
-	// its Options.Revocation set — certrevocation.CRLs, a
+	// its Cache set — one statuslist.Cache shared by the process — its
+	// Options.Revocation set — certrevocation.CRLs, a
 	// certrevocation.Checker of your own, or certrevocation.NoCheck{}
-	// to decline checking the list signers' certificates explicitly.
+	// to decline checking the list signers' certificates explicitly —
+	// and its Options.MaxAge set, unless AnyListAge is.
+	//
+	// Its Options.MaxAge bounds how long ago either kind of list may have
+	// been signed (its iat). A list signed before a revocation stays
+	// valid until its exp, which an issuer may put months ahead, so
+	// anyone who can serve bytes at the list's uri — a CDN, a mirror, a
+	// former owner of the domain — could replay it until then; with
+	// MaxAge, only for MaxAge after the revocation. A list older is
+	// refused, so MaxAge must be longer than the interval your issuers
+	// sign their lists at. 24 hours suits issuers that sign them at
+	// least daily (statuslist.Publisher signs a new token every 30
+	// seconds by default), and is the bound
+	// statuslist.DefaultMaxAgeWithoutExp puts on a list without exp. It
+	// isn't the Cache's CacheOptions.MaxAge, which bounds how long a
+	// fetched list is used before it's fetched again.
+	//
 	// Its Fetcher's MaxBytes bounds both kinds of list: zero leaves
 	// each at its package's default, statuslist.DefaultMaxTokenBytes (1
 	// MiB) and identifierlist.DefaultMaxTokenBytes (4 MiB). Its
@@ -67,6 +86,18 @@ type StatusPolicy struct {
 	// this package can check, as RequireStatusReference does: one an
 	// issuer couldn't revoke afterwards.
 	RequireReference bool
+
+	// AnyListAge accepts, under AssuranceProduction, a Checker whose
+	// Options.MaxAge is unset: a status or identifier list is then
+	// accepted until its exp, however long before it was signed, and a
+	// list from before a revocation can be replayed until then (a
+	// status list without exp stays bounded by
+	// statuslist.DefaultMaxAgeWithoutExp). It exists so that declining
+	// the bound is a visible line of code, never a MaxAge left unset by
+	// mistake: set it only where your issuers' lists expire soon after
+	// they're signed, or where whoever serves the lists' uris is trusted
+	// not to serve an old one. It can't be set with Options.MaxAge.
+	AnyListAge bool
 }
 
 // Check checks the status of each of vcs, as the policy says: nil when
@@ -89,17 +120,21 @@ func (p *StatusPolicy) Check(ctx context.Context, vcs ...VerifiedCredential) err
 	return nil
 }
 
-// validate refuses a policy that can't check anything, or whose
-// Checker binds every list's signer to one issuer, and under
-// AssuranceProduction one whose Fetcher may reach the Verifier's own
-// network, that has no Cache, or that hasn't decided its list signers'
-// revocation.
+// validate refuses a policy that can't check anything, whose Checker
+// binds every list's signer to one issuer, or that both bounds a list's
+// age and accepts any, and under AssuranceProduction one whose Fetcher
+// may reach the Verifier's own network, that has no Cache, that hasn't
+// decided its list signers' revocation, or that leaves a list's age
+// unbounded without AnyListAge.
 func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 	if p.Checker.Roots == nil {
 		return errors.New("Status.Checker.Roots is required: the trust anchors for status list signers")
 	}
 	if err := checkSignerUnbound(p.Checker.Options); err != nil {
 		return err
+	}
+	if p.AnyListAge && p.Checker.Options.MaxAge != 0 {
+		return errors.New("set Status.Checker.Options.MaxAge or Status.AnyListAge, not both")
 	}
 	if assurance != AssuranceProduction {
 		return nil
@@ -110,7 +145,23 @@ func (p *StatusPolicy) validate(assurance AssuranceLevel) error {
 	if p.Checker.Cache == nil {
 		return errors.New("under AssuranceProduction, Status.Checker.Cache is required (statuslist.NewCache, one shared by the process): without one every answer fetches each issuer's status list again, ignoring its ttl")
 	}
+	if err := checkListAge(p); err != nil {
+		return err
+	}
 	return validateRevocation("Status.Checker.Options", p.Checker.Options.Revocation)
+}
+
+// checkListAge refuses, under AssuranceProduction, a policy that
+// doesn't bound how long ago a list may have been signed, unless it
+// declines that with AnyListAge.
+func checkListAge(p *StatusPolicy) error {
+	switch age := p.Checker.Options.MaxAge; {
+	case age < 0:
+		return fmt.Errorf("Status.Checker.Options.MaxAge is %s: it must be positive", age)
+	case age == 0 && !p.AnyListAge:
+		return errors.New("under AssuranceProduction, Status.Checker.Options.MaxAge is required: how long ago a status or identifier list may have been signed, so a list from before a revocation isn't accepted until its exp (24 hours where issuers sign their lists daily); or set Status.AnyListAge to accept a list of any age")
+	}
+	return nil
 }
 
 // checkSignerUnbound refuses Options that bind a Status List Token's

@@ -112,6 +112,10 @@ func run(addr, redirect, certOut, dcapiOrigin string) error {
 			"verifier_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: v.CA.Raw})) +
 				string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rv.CA.Raw})),
 			"registrar_roots": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: env.RegistrarCA.Raw})),
+			// A status list signed over a day ago is refused, as
+			// production requires a bound: the issuer signs its lists
+			// every 30 seconds.
+			"status_max_age_seconds": 86400,
 		},
 		"provider_url": provider.URL,
 		"reader":       map[string]any{"issuer_roots": issuerRoots, "reader_chain": reader.chainPEM, "reader_key": reader.keyPEM},

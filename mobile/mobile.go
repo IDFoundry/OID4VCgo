@@ -183,10 +183,11 @@ func (o *Operation) Cancel() { o.cancel() }
 
 // TakeRefusalRedirect returns, once, the redirect_uri the Verifier
 // answered with when StartPresentation, called with this Operation,
-// failed with request_refused; "" for none. Unlike
-// Wallet.TakeRefusalRedirect, which holds the latest refusal of any
-// call, it is this call's own, so concurrent presentations each get
-// their Verifier's.
+// failed with request_refused; "" for none and for one the wallet
+// doesn't follow. Ask the holder before opening one that isn't https,
+// as Wallet.TakeRefusalRedirect says. Unlike Wallet.TakeRefusalRedirect,
+// which holds the latest refusal of any call, it is this call's own, so
+// concurrent presentations each get their Verifier's.
 func (o *Operation) TakeRefusalRedirect() string {
 	if o == nil {
 		return ""

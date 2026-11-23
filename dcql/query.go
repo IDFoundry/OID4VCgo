@@ -439,11 +439,17 @@ type ClaimsQuery struct {
 	// verifier.VerifyResponse's check that what it received matches the
 	// query. Under claim_sets, VerifyResponse keeps only the claims of
 	// the options a presentation satisfies, so a claim it keeps has
-	// passed its filter (unless AllowUnrequestedClaims). A query decoded from
-	// JSON holds its integers as float64, exact only up to 2^53 in
-	// magnitude: a larger value is rounded, so it can match a claim one
-	// off it and miss its own. Keep a values filter's integers within
-	// ±2^53.
+	// passed its filter (unless AllowUnrequestedClaims). Validate
+	// refuses an integer beyond ±(2^53 − 1), and a float32 one beyond
+	// ±2^24, which wouldn't read back from JSON as themselves. A query
+	// read from JSON — by the Wallet, from the Request Object, and by
+	// verifier.Transactions, from its store — holds its numbers as
+	// float64s, which hold every integer exactly only up to 2^53 − 1
+	// (I-JSON, RFC 7493 §2.2), and encoding/json writes a float32
+	// beyond 2^24 as the shortest number that reads back as that
+	// float32. Read back as another integer, a filter would match a
+	// claim the Verifier didn't ask for and miss its own. To filter on
+	// a larger identifier, have it issued as a string.
 	Values []any `json:"values,omitempty"`
 
 	// IntentToRetain is OPTIONAL, for an "mso_mdoc" claim only: whether
@@ -470,12 +476,55 @@ func (c ClaimsQuery) Validate(requireID bool) error {
 		return fmt.Errorf("dcql: claims query: values must be non-empty when present")
 	}
 	for i, v := range c.Values {
-		if !isValuesElement(v) {
+		switch {
+		case !isValuesElement(v):
 			return fmt.Errorf("dcql: claims query: values[%d] is not a string, integer or boolean", i)
+		case !exactInJSON(v):
+			return fmt.Errorf("dcql: claims query: values[%d] is an integer beyond ±(2^53 − 1), or a float32 beyond ±2^24, which JSON doesn't carry exactly", i)
 		}
 	}
 	return nil
 }
+
+// maxSafeInteger is the largest magnitude a values integer may have:
+// 2^53 − 1, the largest integer a float64 holds exactly with every
+// integer below it (I-JSON, RFC 7493 §2.2). Beyond it two integers can
+// share one: 2^53 + 1 decodes as 2^53.
+const maxSafeInteger = 1<<53 - 1
+
+// maxSafeFloat32 is the largest magnitude a float32 values integer may
+// have: 2^24, up to which a float32 holds every integer, and
+// encoding/json writes each as itself. Beyond it, float32(1 << 30) is
+// written 1073741800.
+const maxSafeFloat32 = 1 << 24
+
+// exactInJSON reports whether v, a values element isValuesElement
+// accepts, reads back from its JSON as itself: a string or a boolean,
+// or an integer within ±maxSafeInteger, a float32 one within
+// ±maxSafeFloat32.
+func exactInJSON(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return safeInt64(int64(n))
+	case int64:
+		return safeInt64(n)
+	case uint:
+		return uint64(n) <= maxSafeInteger
+	case uint64:
+		return n <= maxSafeInteger
+	case float64:
+		return math.Abs(n) <= maxSafeInteger
+	case float32:
+		return math.Abs(float64(n)) <= maxSafeFloat32
+	case json.Number:
+		i, err := n.Int64()
+		return err == nil && safeInt64(i)
+	}
+	// A string, a boolean, or an integer of 32 bits or fewer.
+	return true
+}
+
+func safeInt64(n int64) bool { return -maxSafeInteger <= n && n <= maxSafeInteger }
 
 // isValuesElement reports whether v is a string, an integer or a
 // boolean, as a values array's elements must be (§6.3). A JSON number

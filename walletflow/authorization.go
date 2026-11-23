@@ -89,6 +89,11 @@ func checkOfferedTypes(types []OfferedType, metadata oid4vci.Metadata) error {
 // platform's data protection. A production wallet needs a Durable one:
 // the authorization's state must survive the app being suspended while
 // the holder is at the issuer's pages. MemoryAuthorizationStore isn't.
+// Each holds the resolved Credential Offer, with any pre-authorized
+// code it carried, and the PKCE verifier: outside Development, New
+// refuses a store that doesn't declare it seals its records
+// (sealing.Store), as for the CredentialStore, unless
+// Config.UnsealedStores accepts it.
 //
 // ResumeIssuance needs it to hold only this wallet's own authorizations —
 // a native app's on-device storage — never one shared between users or

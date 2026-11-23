@@ -396,7 +396,13 @@ calls at launch. It isn't automatic: it deletes every key in its store
 but its registration's, and every provider made with
 `registrationKeyStore()` shares that store, so it's safe only with one
 Wallet Provider, or with each provider's keys under a prefix of its
-own. The Kotlin client has the same call.
+own. It refuses a store whose prefix is, covers or falls under the
+key store's of a `Wallet` made with a provider over the same registry,
+which tells the provider its prefix; the wallet's sweep refuses a
+store overlapping the registration key store's of any provider made
+over that registry, which each provider records when it's made, or
+the default registration prefix. The Kotlin client has the same
+calls.
 Where `DCAppAttestService.isSupported` is false — the Simulator — it
 refuses to register, in development too. Its tests run it against a
 fake provider and a fake App Attest, and check its client data against
@@ -472,7 +478,7 @@ CRLs it holds, through `certrevocation.CRLs`.
   and a ProximityReader, over one `crlSet` helper) does one pass over
   the configured distribution points with a `certrevocation.Refresher`
   per point, so the hardening is the server side's (public addresses
-  only outside development, 8 MiB cap, same-host redirects, signature
+  only outside development, 1 MiB cap, same-host redirects, signature
   and currency checks, the never-older floor taken from the lists held
   now), and merges what it accepted into the set under the existing
   rule. It runs no loop and starts no goroutine: an app's process is
@@ -924,7 +930,10 @@ the gomobile boundary is cleaned in one place, `classify`:
   to be a plain token, is the `detail`.
 - **URLs:** network errors drop their URL, which can carry a
   `request_uri`, a pre-authorized code or a `response_code`. Any other
-  URL in a message is cut to its scheme and host.
+  URL in a message is cut to its scheme and host, and a URI without
+  `//` (`mailto:`, `urn:`, `data:`, an `openid4vp:` link, an app's
+  redirect with its `code`) to its scheme; a host and port, an IPv6
+  address and a bracketed `[code:detail]` aren't URIs, and are kept.
 - **Control characters and length:** control characters and line and
   paragraph separators become spaces and invisible format characters
   are dropped, so a message can't forge log lines, and it's capped at
@@ -1189,8 +1198,11 @@ on an emulator, in CI too (`mobile-android`).
   every background refresh. The demo shows a BiometricPrompt, without a
   CryptoObject, before each presentation instead.
 - **Instance and DPoP keys** sign silently, as on iOS.
-- **IDs:** a key's ID is its alias after a prefix; the store lists and
-  sweeps only its own prefix's keys (`deleteKeys(except:)`).
+- **IDs:** a key's ID, a UUID, is its alias after a prefix; the store
+  lists and sweeps only aliases that are its prefix and a UUID
+  (`keyIDs()`, `deleteKeys(except:)`), so a store under a prefix that
+  extends another's keeps its keys from the other's sweep, which until
+  OID4VCWallet 0.43.0 deleted them, or failed on an ID with a `.`.
 - **Locked means locked:** with the screen locked, every key's signature
   fails ("Keystore operation failed"), as `setUnlockedDeviceRequired`
   says — so CI unlocks the emulator with its PIN before the tests.
@@ -1806,6 +1818,18 @@ Decisions taken 2026-10-06 (tracked in [#482](https://github.com/IDFoundry/OID4V
   `testReaderReportsADeclineOnceNoOtherDeviceAdvertises`; Kotlin
   `ReaderExchangeTest`), and Go's `TestTryVerifyDocuments_RejectsRepliesNotFromTheHolder`;
   not yet tried against a second device over the radio.
+- **A decline reaches the reader in central client mode:** on two
+  iPhones (2026-11-21, OID4VCWallet 0.41.0), a holder declining as the
+  GATT client showed on the reader as "The connection to the other
+  device was lost." The holder wrote its status 20, without response,
+  and disconnected at once, so the write could go down with the link,
+  and the reader, seeing only the disconnection, couldn't tell a decline
+  from a lost link. Peripheral server mode reported it as declined.
+  `decline()` now keeps the transport open, as after a response, until
+  the reader disconnects or 5 seconds pass; the reader, given the status
+  20, reports the decline and disconnects. `cancel()` still closes at
+  once. Covered by `testDeclineWaitsForTheReaderToEnd` (Swift) and
+  `aDeclineWaitsForTheReaderToEnd` (Kotlin, instrumented).
 - **Bluetooth turning off ends the session:** each transport watches
   the adapter's state (`ACTION_STATE_CHANGED`) from `connect` until
   `close`, as the iOS SDK does with CoreBluetooth's state. Without it,
@@ -2172,14 +2196,23 @@ Go stopped waiting for ran on in the app.
   `CancellationSignal` on its coroutine's cancellation, which dismisses
   the prompt. The provider adapter cancels the provider's coroutine;
   `HttpWalletProvider`'s `HttpURLConnection` can't be interrupted, so
-  its request ends when it does, Go long since returned.
+  its request ends when it does, Go long since returned, and at its
+  timeout at the latest, when a watchdog disconnects it.
+  (`HttpURLConnection`'s own timeouts bound only the connect and each
+  read: until OID4VCWallet 0.43.0 an answer trickled a byte at a time
+  held the request, and the `registering` lock every Wallet Attestation
+  waits for, as long as its sender liked.) A call waiting for that
+  lock, a coroutine `Mutex`, stops when cancelled.
 - **Swift:** `KeychainKeyStore` gives each use an `LAContext` of its
   own (or the presentation's shared one) through
   `kSecUseAuthenticationContext`, and `cancelKeyUse` invalidates it,
   which dismisses the sheet. Keys kept only in memory
   (`persistent: false`) are used without one and can't be cancelled.
   The provider adapter cancels the provider's Task, which ends a
-  `URLSession` request.
+  `URLSession` request, and a wait for another call's registration or
+  assertion (`HttpWalletProvider`'s `registering` and `asserting`
+  locks), which until OID4VCWallet 0.43.0 waited for that call to
+  finish.
 - **Not cancelled:** `KeyStore.CreateKey`, which in the Kotlin library
   waits for the provider's attestation challenge, and a proximity
   session's `Terminate`, which ends a `Respond` between keys but not

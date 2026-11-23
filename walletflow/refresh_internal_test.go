@@ -82,7 +82,7 @@ func TestUnusedGrantAndDeleteErrors(t *testing.T) {
 	keys := NewMemoryKeyStore()
 	grants := failingGrants{NewMemoryGrantStore()}
 	creds := NewMemoryCredentialStore()
-	w, err := New(Config{}, Dependencies{Keys: keys, Credentials: creds, Grants: grants})
+	w, err := New(Config{UnsealedStores: true}, Dependencies{Keys: keys, Credentials: creds, Grants: grants})
 	if err != nil {
 		t.Fatal(err)
 	}

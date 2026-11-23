@@ -548,7 +548,11 @@ public final class ProximityPresentation: @unchecked Sendable {
     }
 
     /// Declines the request, or ends the session before one: the reader
-    /// is told, and nothing is disclosed.
+    /// is told, and nothing is disclosed. The state is final at once; the
+    /// transport stays open until the reader disconnects or a few seconds
+    /// pass, as after a response, so the termination reaches it rather
+    /// than being dropped with the link (the reader would then report a
+    /// lost connection, not a decline).
     public func decline() async {
         switch state {
         case .responding: return
@@ -556,8 +560,11 @@ public final class ProximityPresentation: @unchecked Sendable {
         default: break
         }
         ending.withLock { $0 = .declined }
-        await sendTermination()
-        finish(.declined)
+        let sent = await sendTermination()
+        finish(.declined, letReaderEnd: sent)
+        // As in respond: run's wait for a reader message is over, and
+        // finish's own wait reads now.
+        if sent { task?.cancel() }
     }
 
     /// Ends the session now, from any state. It returns at once: to know
@@ -578,10 +585,18 @@ public final class ProximityPresentation: @unchecked Sendable {
     private let ending = Locked<Ending?>(initialState: nil)
 
     /// Sends status 20, if a reader is connected.
-    private func sendTermination() async {
-        guard let message = try? decode(SendJSON.self, handle.terminate()).send else { return }
-        if case .waitingForReader = state { return }
-        try? await transport.send(message)
+    /// Sends the session termination, once a reader is connected, and
+    /// reports whether it was sent.
+    @discardableResult
+    private func sendTermination() async -> Bool {
+        guard let message = try? decode(SendJSON.self, handle.terminate()).send else { return false }
+        if case .waitingForReader = state { return false }
+        do {
+            try await transport.send(message)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Moves to `final` unless the session is over, then closes the
@@ -757,6 +772,8 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
     /// has none (`VerifiedMdoc.status`), and fails with `.documentNotValid`
     /// otherwise; with `.decline`, nothing checks it, for a reader where
     /// something else stands in. In development, nil is `.decline`.
+    /// Outside `development`, `.check` needs `status.maxAgeSeconds`, or
+    /// `status.anyAge`: how old a list may be.
     public var statusCheck: StatusCheck?
     /// Relaxes what production requires, for a reader trying out a
     /// development issuer's documents; nil, the default, is production.
@@ -872,6 +889,7 @@ public struct ProximityReaderConfiguration: Codable, Sendable {
         case developmentRoots = "development_roots"
         case statusMaxBytes = "status_max_bytes", identifierListMaxBytes = "identifier_list_max_bytes"
         case statusCacheMaxAgeSeconds = "status_cache_max_age_seconds", statusCacheDir = "status_cache_dir"
+        case statusMaxAgeSeconds = "status_max_age_seconds", statusAnyAge = "status_any_age"
     }
 
     /// Decodes a configuration from its flat JSON, refusing a key it

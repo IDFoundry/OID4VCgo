@@ -444,7 +444,8 @@ internal class WalletProviderAdapter(
      * Cancels the calls in progress for the issuance whose instance key
      * is [instanceKeyJWK], which Go no longer waits for: a provider
      * suspended cancellably stops there; one blocked in a request (as
-     * [HttpWalletProvider]'s `HttpURLConnection` is) ends when it does.
+     * [HttpWalletProvider]'s `HttpURLConnection` is) ends when it does,
+     * by its timeout at the latest.
      */
     fun cancel(instanceKeyJWK: ByteArray) {
         calls.cancel(instanceKeyJWK.decodeToString())
@@ -488,9 +489,9 @@ internal fun jwkPoint(jwk: ByteArray): ByteArray? {
  * Runs a Wallet Provider call on Go's thread, which waits for it; an
  * IOException is marked as a network failure, which Go reports as
  * [WalletException.Code.network] (retryable), and a
- * [WalletProviderRefusedException] with an error code as a refusal,
- * which Go reports as [WalletException.Code.platform] with that code as
- * [WalletException.protocolError]. With [calls], it runs as
+ * [WalletProviderRefusedException] with an error code, a plain token, as
+ * a refusal, which Go reports as [WalletException.Code.platform] with
+ * that code as [WalletException.protocolError]. With [calls], it runs as
  * the wait for [instanceKeyJWK] there, so cancelling that ends it.
  */
 internal fun <T> waitForProvider(calls: CancellableWaits? = null, instanceKeyJWK: ByteArray? = null, body: suspend () -> T): T =
@@ -500,8 +501,9 @@ internal fun <T> waitForProvider(calls: CancellableWaits? = null, instanceKeyJWK
         throw StoreException("[network] " + (e.message ?: e.javaClass.simpleName))
     } catch (e: WalletProviderRefusedException) {
         // The protocol's error code, for Go to carry as the error's
-        // detail (protocolError).
-        throw StoreException(e.error?.let { "[refused:$it] " + e.message } ?: (e.message ?: "the Wallet Provider refused"))
+        // detail (protocolError): a plain token only, so the code can't
+        // end the mark early and name another.
+        throw StoreException(e.error?.takeIf(::isPlainErrorCode)?.let { "[refused:$it] " + e.message } ?: (e.message ?: "the Wallet Provider refused"))
     } catch (e: CancellationException) {
         throw StoreException("the Wallet Provider call was cancelled", e)
     }

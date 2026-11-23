@@ -151,3 +151,25 @@ func TestCheckNoAnchor(t *testing.T) {
 		}
 	}
 }
+
+// A "dns:" iss names one of the certificate's dNSName subject
+// alternative names compared in ASCII case only: those are IA5Strings
+// (RFC 5280 §4.2.1.6), so a Unicode case fold onto one, the Kelvin
+// sign's onto "k" or the long s's onto "s", isn't that name.
+func TestCheckIssuerName_DNSFoldsASCIIOnly(t *testing.T) {
+	leaf := &x509.Certificate{DNSNames: []string{"key.example", "issuer.example"}}
+	for iss, ok := range map[string]bool{
+		"dns:key.example":         true,
+		"dns:KEY.Example":         true,
+		"dns://issuer.example":    true,
+		"dns:\u212Aey.example":    false,
+		"dns:i\u017Fsuer.example": false,
+		"dns:another.example":     false,
+		"dns:":                    false,
+		"https://issuer.example":  false,
+	} {
+		if err := CheckIssuerName(leaf, iss); (err == nil) != ok {
+			t.Errorf("CheckIssuerName(%q) = %v, want ok = %v", iss, err, ok)
+		}
+	}
+}

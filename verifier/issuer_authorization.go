@@ -65,20 +65,19 @@ type IssuerAuthorization struct {
 	// just for Type.
 	RequestedTypes []string
 
-	// Issuer is an SD-JWT VC's iss when the issuer key resolver checked
-	// the credential's certificate names it (IssuerNameBinding:
-	// X5CIssuerKeyResolver with RequireIssuerName), and "" otherwise. An
-	// unchecked iss is whatever the signer wrote. A checked one is
-	// whatever the CA that certified the signer wrote: it tells issuers
-	// apart only where no other trusted CA can issue a certificate
-	// naming that issuer (each CA either holds no key an attacker could
-	// use, or is name-constrained to its own issuers' names by
-	// constraints of their type: uniformResourceIdentifier ones for a
-	// URI iss, since a dNSName constraint doesn't confine a URI, and
-	// dNSName ones for a "dns:" iss). Where the roots are several
-	// providers', any of them can
-	// name another's issuer: decide by IssuerAnchor, and use Issuer to
-	// tell apart the issuers under one anchor you trust for all of them.
+	// Issuer is an SD-JWT VC's iss when the issuer key resolver binds names
+	// and the credential's certificate is checked to name it
+	// (IssuerNameBinding: X5CIssuerKeyResolver with RequireIssuerName), and
+	// "" otherwise. An unchecked iss is whatever the signer wrote. A checked
+	// one is whatever the CA that certified the signer wrote: it tells
+	// issuers apart only where no other trusted CA can issue a certificate
+	// naming that issuer (each CA either holds no key an attacker could use,
+	// or is name-constrained to its own issuers' names by constraints of
+	// their type: uniformResourceIdentifier ones for a URI iss, since a
+	// dNSName constraint doesn't confine a URI, and dNSName ones for a
+	// "dns:" iss). Where the roots are several providers', any of them can
+	// name another's issuer: decide by IssuerAnchor, and use Issuer to tell
+	// apart the issuers under one anchor you trust for all of them.
 	Issuer string
 
 	// ClaimedIssuer is an SD-JWT VC's iss as the credential states it,
@@ -152,7 +151,7 @@ func authorizeIssuer(ctx context.Context, req VerifyResponseRequest, cq dcql.Cre
 func setSDJWTVCTypes(a *IssuerAuthorization, req VerifyResponseRequest, cq dcql.CredentialQuery, claims map[string]any) {
 	a.Type, _ = claims["vct"].(string)
 	a.ClaimedIssuer, _ = claims["iss"].(string)
-	if binder, ok := req.IssuerKeys.(IssuerNameBinding); ok && binder.BindsIssuerName() {
+	if issuerNameChecked(req.IssuerKeys, a.ClaimedIssuer, a.IssuerChain) {
 		a.Issuer = a.ClaimedIssuer
 	}
 	if aka, ok := claims["aka_vcts"].([]any); ok {
@@ -172,10 +171,50 @@ func setSDJWTVCTypes(a *IssuerAuthorization, req VerifyResponseRequest, cq dcql.
 	}
 }
 
+// issuerNameChecked reports whether iss, an SD-JWT VC's, is checked to
+// name its issuer, chain being the issuer chain VerifyResponse verified
+// it with (leaf first): keys binds names (IssuerNameBinding), and where
+// it verifies chains, chain's leaf names iss (certchain.CheckIssuerName).
+// An X5CIssuerKeyResolver with RequireIssuerName checked that itself,
+// before resolving the key. Any other resolver that verifies chains has
+// it checked here, on the certificate VerifyResponse verified: one
+// embedding an X5CIssuerKeyResolver inherits its BindsIssuerName
+// whatever its own ResolveIssuerKey checks. One that verifies none,
+// binding iss by the keys it resolves (from that issuer's metadata, or
+// its DID), is taken at its word.
+func issuerNameChecked(keys SDJWTVCIssuerKeyResolver, iss string, chain [][]byte) bool {
+	binder, ok := keys.(IssuerNameBinding)
+	if !ok || !binder.BindsIssuerName() {
+		return false
+	}
+	if _, exact := x5cResolver(keys); exact {
+		return true
+	}
+	if _, verifies := sdJWTVCChainResolver(keys); !verifies {
+		return true
+	}
+	if len(chain) == 0 {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(chain[0])
+	return err == nil && certchain.CheckIssuerName(leaf, iss) == nil
+}
+
 // IssuerNameBinding is implemented by an SDJWTVCIssuerKeyResolver that
 // can refuse a credential whose iss the certificate it verified
 // doesn't name. BindsIssuerName reports whether it does, so
 // IssuerAuthorization.Issuer is set only for a checked iss.
+//
+// A type that embeds X5CIssuerKeyResolver inherits its BindsIssuerName,
+// RequireIssuerName's, even where it overrides ResolveIssuerKey with
+// one that checks no name: override BindsIssuerName too, to report what
+// its own ResolveIssuerKey checks. Either way, for a resolver that
+// verifies chains (SDJWTVCIssuerChainResolver, or one Unwrapping to
+// one), other than X5CIssuerKeyResolver itself, VerifyResponse sets
+// IssuerAuthorization.Issuer only once it has found the iss among the
+// names of the issuer certificate it verified, as RequireIssuerName
+// requires (a "dns:" iss among its dNSName names, any other among its
+// URIs). A resolver that verifies no chains is taken at its word.
 type IssuerNameBinding interface {
 	BindsIssuerName() bool
 }

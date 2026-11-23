@@ -125,7 +125,9 @@ Keychain of keys no credential uses: an issuance the app quit in the
 middle of leaves its keys behind. Each trust role whose roots you set
 needs a revocation choice: checked against the CRLs your app fetches
 (``RevocationChecking/roles``), or declined
-(``RevocationChecking/declined``); see <doc:GoingToProduction>.
+(``RevocationChecking/declined``); and a wallet with issuer roots, how
+old a status list may be (``StatusLists/maxAgeSeconds``); see
+<doc:GoingToProduction>.
 
 ```swift
 /// The app's wallet, created once at launch.
@@ -143,7 +145,10 @@ final class AppWallet {
             // refused before the holder is asked for a PIN.
             issuers: .init(roots: issuerRoots, credentialIssuers: ["https://issuer.example.com"]),
             verifiers: .init(roots: verifierRoots),
-            revocation: .init(roles: [.issuer, .status, .verifier], crls: crls))
+            revocation: .init(roles: [.issuer, .status, .verifier], crls: crls),
+            // A status list signed over a day ago is refused, so one
+            // from before a revocation isn't accepted until its exp.
+            status: .init(maxAgeSeconds: 86_400))
         keys = KeychainKeyStore()
         provider = try makeWalletProvider()
         wallet = try Wallet(

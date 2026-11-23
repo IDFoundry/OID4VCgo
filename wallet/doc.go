@@ -186,10 +186,12 @@
 // are pure (no HTTP). The two HTTP steps around them have defaults:
 // SubmitDirectPostResponse POSTs the built response to response_uri and
 // returns the Verifier's redirect_uri, which the Wallet must then follow
-// (OID4VP §8.2) — (*Wallet).SubmitDirectPostResponse, Respond and
-// RespondSelection send through the Wallet's own hardened client, and
-// the package-level forms need one fapihttp.NewClient built in
-// production — and fetching request_uri —
+// (OID4VP §8.2), unless its scheme is one the Wallet never follows —
+// (*Wallet).SubmitDirectPostResponse, Respond and RespondSelection send
+// through the Wallet's own hardened client, and refuse a scheme
+// Config.VerifierRedirectSchemes doesn't allow, and the package-level
+// forms need one fapihttp.NewClient built in production — and fetching
+// request_uri —
 // (*Wallet).FetchAuthorizationRequest performs §5.10's plain GET, and
 // FetchAuthorizationRequestPost its POST with a fresh wallet_nonce (a
 // link's request_uri_method=post), both through this Wallet's own

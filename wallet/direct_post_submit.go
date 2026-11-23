@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -31,10 +32,16 @@ type DirectPostResult struct {
 	// MUST now send the user agent — the same-device flow's way back to
 	// the Verifier (§8.2; HAIP 1.0 §5.1 requires Wallets to follow it).
 	// It is an absolute URI: an https page, or a scheme the Verifier's
-	// own app registered. Plain http, and one that runs code or reads
-	// local data (javascript:, data:, file:, Android's intent:, content:
-	// and android-app:), are refused. Open a non-https one only
-	// through the platform's handling of app links, never in a web view.
+	// own app registered. Plain http, one that runs code or reads local
+	// data (javascript:, data:, file:, Android's intent:, content: and
+	// android-app:), and one that opens a system handler rather than
+	// the Verifier's page or app (an app install or store, a call, a
+	// message, the settings, a Shortcut or a map: itms-services:,
+	// market:, tel:, sms:, mailto:, ms-settings:, shortcuts:, geo: and
+	// their like) are refused, and through a Wallet whose
+	// Config.VerifierRedirectSchemes is set, any scheme but https and
+	// those it names. Open a non-https one only through the platform's
+	// handling of app links, never in a web view.
 	RedirectURI string
 }
 
@@ -84,8 +91,16 @@ func (e *DirectPostRejectedError) Error() string {
 // address it reaches: in production, client must be one
 // fapihttp.NewClient built, which refuses internal addresses when it
 // dials, with a Timeout. (*Wallet).SubmitDirectPostResponse uses the
-// Wallet's own client, which New has already checked.
+// Wallet's own client, which New has already checked, and refuses a
+// redirect_uri its Config.VerifierRedirectSchemes doesn't allow too.
 func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, responseURI, responseJWE string) (DirectPostResult, error) {
+	return submitDirectPostResponse(ctx, client, responseURI, responseJWE, nil)
+}
+
+// submitDirectPostResponse is SubmitDirectPostResponse, refusing a
+// redirect_uri whose scheme is neither https nor among redirectSchemes
+// when they're set (Config.VerifierRedirectSchemes).
+func submitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, responseURI, responseJWE string, redirectSchemes []string) (DirectPostResult, error) {
 	form := url.Values{"response": {responseJWE}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURI, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -97,7 +112,7 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 		return DirectPostResult{}, fmt.Errorf("wallet: submit direct_post response: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	result, err := readDirectPostReply(resp)
+	result, err := readDirectPostReply(resp, redirectSchemes)
 	if err != nil {
 		var rejected *DirectPostRejectedError
 		if errors.As(err, &rejected) {
@@ -110,14 +125,17 @@ func SubmitDirectPostResponse(ctx context.Context, client fapihttp.HTTPClient, r
 
 // SubmitDirectPostResponse is the package-level SubmitDirectPostResponse
 // sent with this Wallet's own HTTP client (Dependencies.HTTP), so the
-// POST to response_uri has the address checks and timeout New set up.
+// POST to response_uri has the address checks and timeout New set up,
+// and refusing a redirect_uri Config.VerifierRedirectSchemes doesn't
+// allow.
 func (w *Wallet) SubmitDirectPostResponse(ctx context.Context, responseURI, responseJWE string) (DirectPostResult, error) {
-	return SubmitDirectPostResponse(ctx, w.deps.HTTP, responseURI, responseJWE)
+	return submitDirectPostResponse(ctx, w.deps.HTTP, responseURI, responseJWE, w.cfg.VerifierRedirectSchemes)
 }
 
 // readDirectPostReply reads the Verifier's reply to a direct_post
-// response (§8.2).
-func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
+// response (§8.2), refusing a redirect_uri the Wallet doesn't follow
+// (followable).
+func readDirectPostReply(resp *http.Response, redirectSchemes []string) (DirectPostResult, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDirectPostReplyBytes+1))
 	if err != nil {
 		return DirectPostResult{}, fmt.Errorf("read reply: %w", err)
@@ -157,14 +175,28 @@ func readDirectPostReply(resp *http.Response) (DirectPostResult, error) {
 	if reply.RedirectURI == "" {
 		return DirectPostResult{}, nil
 	}
-	// OpenID4VP §8.2: "an absolute URI", which HAIP 1.0 §5.1 has the
-	// Wallet follow: an https page, or the Verifier's own app's scheme.
-	// Not one that runs code or reads local data in what opens it.
-	u, err := url.Parse(reply.RedirectURI)
-	if err != nil || !u.IsAbs() || unsafeRedirectSchemes[strings.ToLower(u.Scheme)] {
-		return DirectPostResult{}, fmt.Errorf("redirect_uri %q isn't an absolute URI the Wallet can follow", reply.RedirectURI)
+	if err := followable(reply.RedirectURI, redirectSchemes); err != nil {
+		return DirectPostResult{}, err
 	}
 	return DirectPostResult{RedirectURI: reply.RedirectURI}, nil
+}
+
+// followable refuses redirectURI unless the Wallet follows it. OpenID4VP
+// §8.2: "an absolute URI", which HAIP 1.0 §5.1 has the Wallet follow:
+// an https page, or the Verifier's own app's scheme. Not one that runs
+// code or reads local data in what opens it, invokes a Wallet or opens
+// a system handler (unsafeRedirectSchemes); and with redirectSchemes
+// set (Config.VerifierRedirectSchemes, in lower case), only https or
+// one of them.
+func followable(redirectURI string, redirectSchemes []string) error {
+	u, err := url.Parse(redirectURI)
+	if err != nil || !u.IsAbs() || unsafeRedirectSchemes[strings.ToLower(u.Scheme)] {
+		return fmt.Errorf("redirect_uri %q isn't an absolute URI the Wallet can follow", redirectURI)
+	}
+	if scheme := strings.ToLower(u.Scheme); len(redirectSchemes) > 0 && scheme != "https" && !slices.Contains(redirectSchemes, scheme) {
+		return fmt.Errorf("redirect_uri %q has a scheme the Wallet doesn't allow (Config.VerifierRedirectSchemes)", redirectURI)
+	}
+	return nil
 }
 
 // sanitizeReplyText drops control characters from Verifier-supplied
@@ -224,9 +256,60 @@ func doWithoutRedirects(client fapihttp.HTTPClient, req *http.Request) (*http.Re
 // app, and one to a Wallet's scheme would start another presentation
 // or issuance straight after the holder consented to this one.
 // walletflow refuses the Wallet's own redirect URI's scheme too.
+//
+// And the schemes that open a system handler rather than a Verifier's
+// page or app, where an honest Verifier never sends the holder after a
+// presentation, but where a redirect straight after the holder opened a
+// link, or consented, looks like the Wallet's own next step: an app's
+// install prompt or store page (iOS's itms-services:, itms-apps: and
+// itms-appss:, Android's market:, Windows's ms-appinstaller: and
+// ms-windows-store:), a call (tel:, and iOS's facetime: and
+// facetime-audio:), a message (sms:, and Android's smsto:, mms: and
+// mmsto:; mailto:), the settings (Windows's ms-settings:), a Shortcut
+// run (iOS's shortcuts:) or a map (geo:, and iOS's maps:). A Verifier's
+// own app's scheme is still followed.
 var unsafeRedirectSchemes = map[string]bool{
 	"http": true, "javascript": true, "data": true, "file": true, "vbscript": true, "blob": true, "about": true,
 	"intent": true, "android-app": true, "content": true,
 	"openid4vp": true, "haip-vp": true, "openid-credential-offer": true, "haip-vci": true,
 	"mdoc-openid4vp": true, "eudi-openid4vp": true,
+	"itms-services": true, "itms-apps": true, "itms-appss": true, "market": true, "ms-appinstaller": true, "ms-windows-store": true,
+	"tel": true, "facetime": true, "facetime-audio": true,
+	"sms": true, "smsto": true, "mms": true, "mmsto": true, "mailto": true,
+	"ms-settings": true, "shortcuts": true, "geo": true, "maps": true,
+}
+
+// checkVerifierRedirectSchemes refuses a Config.VerifierRedirectSchemes
+// entry that isn't a URI scheme (RFC 3986 §3.1), or that names one the
+// Wallet never follows (unsafeRedirectSchemes), and returns the schemes
+// in lower case; nil when there are none.
+func checkVerifierRedirectSchemes(schemes []string) ([]string, error) {
+	if len(schemes) == 0 {
+		return nil, nil
+	}
+	lower := make([]string, len(schemes))
+	for i, scheme := range schemes {
+		if !isURIScheme(scheme) {
+			return nil, fmt.Errorf("wallet: config: verifier_redirect_schemes: %q isn't a URI scheme", scheme)
+		}
+		lower[i] = strings.ToLower(scheme)
+		if unsafeRedirectSchemes[lower[i]] {
+			return nil, fmt.Errorf("wallet: config: verifier_redirect_schemes: a redirect_uri with the scheme %q is never followed", scheme)
+		}
+	}
+	return lower, nil
+}
+
+// isURIScheme reports whether s is a URI scheme: a letter, then
+// letters, digits, "+", "-" and "." (RFC 3986 §3.1).
+func isURIScheme(s string) bool {
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && (r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return s != ""
 }

@@ -129,6 +129,45 @@ func TestCleanText(t *testing.T) {
 	}
 }
 
+// A URI without an authority is cut to its scheme, as a URL is to its
+// host: what follows can carry a code, a token or an identifier. Text
+// that only looks like one, and the error text the wallet writes
+// itself, comes through as it is.
+func TestCleanText_URIsWithoutAuthority(t *testing.T) {
+	for in, want := range map[string]string{
+		`redirect_uri "com.example.wallet:/cb?code=SECRET&state=SECRET" has the Wallet's own scheme, which isn't followed`: `redirect_uri "com.example.wallet:" has the Wallet's own scheme, which isn't followed`,
+		`redirect_uri "mailto:SECRET@example.com?subject=SECRET" isn't an absolute URI the Wallet can follow`:              `redirect_uri "mailto:" isn't an absolute URI the Wallet can follow`,
+		"link openid4vp:?client_id=x509_hash%3AAbc&request_uri=https%3A%2F%2Fv.example%2FSECRET refused":                   "link openid4vp: refused",
+		"offer openid-credential-offer:?credential_offer_uri=SECRET, offered":                                              "offer openid-credential-offer:, offered",
+		"subject urn:uuid:SECRET, data data:image/png;base64,SECRET, call tel:+SECRET":                                     "subject urn:, data data:, call tel:",
+		"(did:example:SECRET).":                         "(did:).",
+		"id urn:example:ietf:params:SECRET":             "id urn:",
+		"redirect_uri:com.example.wallet:/cb?SECRET":    "redirect_uri:com.example.wallet:",
+		"blob:https://v.example/SECRET and mdoc:SECRET": "blob:https://v.example and mdoc:",
+	} {
+		if got := cleanText(in); got != want || strings.Contains(got, "SECRET") {
+			t.Errorf("cleanText(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, kept := range []string{
+		"walletflow: credential offer: wallet: resolve credential offer: neither credential_offer nor credential_offer_uri is present",
+		"invalid_request: the request is malformed, invalid_request:twice",
+		"x509: certificate has expired or is not yet valid: current time 2026-11-22T10:00:00Z is after 2026-11-21T10:00:00Z",
+		"walletflow: wallet attestation: [platform:instance_revoked] wallet attestation: the Wallet Provider refused /v1/wallet-attestation: HTTP 403 instance_revoked",
+		`client_id "x509_hash:Abc-_12" or "x509_san_dns:verifier.example" isn't trusted`,
+		"dial tcp issuer.example:443: connect: connection refused",
+		"address fe80::1%en0, fd12:ab::7 and [fe80::1]:443 aren't public",
+		"the request's origin origin:https://verifier.example isn't expected",
+		"status_max_age_seconds is unset: outside development, set it (86400, a day)",
+		"the offer's grant urn:ietf:params:oauth:grant-type:pre-authorized_code isn't supported",
+		"grant type URN:IETF:PARAMS:oauth:grant-type:jwt-bearer, then urn:ietf:params:oauth:token-type:access_token.",
+	} {
+		if got := cleanText(kept); got != kept {
+			t.Errorf("cleanText(%q) = %q, want it unchanged", kept, got)
+		}
+	}
+}
+
 // A refresh another process is making with the grant, and a refresh or
 // an offer refused while too many deferred credentials are pending, are
 // unavailable, retryable, each with its own detail.

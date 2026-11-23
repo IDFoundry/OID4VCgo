@@ -15,8 +15,9 @@ Every failure from the wallet is a `WalletException`:
   authorization again;
 - `description`: a sentence fit to show the holder;
 - `message`: detail for logs. It never carries personal data, a remote
-  party's own description, or a URL's path or query, so it's safe to
-  log;
+  party's own description, a URL's path or query, or what follows the
+  scheme of a URI without `//` (an app's redirect with its `code`, a
+  `mailto:` or `urn:` URI), so it's safe to log;
 - `refusalRedirect`: for `requestRefused`, where the Verifier asked to
   take the holder. It's a URL, so it isn't in `message`.
 
@@ -62,7 +63,7 @@ fun describe(error: Throwable): Pair<String, Boolean> = when (error) {
 | `untrustedVerifier` | The Verifier or reader isn't one the wallet trusts: nothing was shown | Tell the holder |
 | `untrustedIssuer` | The offer names an issuer outside `issuers.credentialIssuers`: its metadata wasn't fetched, and no PIN asked for. Also an issuer whose metadata isn't signed, or is signed naming another issuer, under `issuerMetadata`'s `requireSigned` and `requireName`; and resuming, refreshing or polling a deferred credential from an issuer the list no longer names: nothing was sent to it, and what the wallet holds from it is kept | Tell the holder |
 | `tlsPin` | A pinned host's certificate matched none of its `tlsPins`: an interception, or keys changed beyond the pins. Nothing was sent | Don't retry; tell the holder to try another network, or ship new pins |
-| `requestRefused` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; `protocolError` is the code it sent. Nothing was shown | From a link, open the exception's `refusalRedirect` if it has one; over the DC API, return a failure to the page. Tell the holder the request wasn't answered |
+| `requestRefused` | The wallet refused a Verifier's request it must not answer (`transaction_data` it doesn't support, say) and told the Verifier; `protocolError` is the code it sent. Nothing was shown | From a link, open the exception's `refusalRedirect` if it has one, asking the holder first when it isn't `https`; over the DC API, return a failure to the page. Tell the holder the request wasn't answered |
 | `documentNotValid` | A `ProximityReader` checking status (`StatusCheck.CHECK`) verified a document whose revocation status isn't valid; `protocolError` is the status (`invalid`, `suspended`, `unknown`, or `0x` and a value) | Don't accept the document, and show its `description` |
 | `noMatchingCredential` | No held credential answers the request | Decline |
 | `invalidSelection` | The selection doesn't answer the request | Choose again |

@@ -7,6 +7,339 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.43.0 → 0.44.0
+
+Built from OID4VCgo v0.87.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### Bound a status list's age outside development (Swift, Kotlin)
+
+Outside `development`, a `Wallet` with issuer roots (`issuers.roots`,
+`issuers.rootsByVCT` or the mdoc ones) and a `ProximityReader` with
+`statusCheck` `.check` (`StatusCheck.CHECK`) need the new
+`status.maxAgeSeconds` (`status_max_age_seconds`): how long ago a status
+or identifier list `checkStatus` accepts may have been signed. Without
+it, the constructor throws `invalidInput`. Set it above the longest
+interval your issuers sign their lists at, `86_400` (a day) for issuers
+that sign them at least daily: a list from before a revocation, served
+again by whoever can serve bytes at its URI, is then refused once it's
+that old, rather than accepted until its `exp`, which an issuer may put
+months ahead. A list older fails the check: `checkStatus` throws, and a
+reader session fails. Where your issuers' lists expire soon after
+they're signed, set `status.anyAge` (`status_any_age`) instead, which
+accepts a list of any age; setting both, or a bound over a year, is
+`invalidInput`. `status.cacheMaxAgeSeconds`, how long a list fetched is
+used before it's asked for again, is a separate setting and unchanged.
+
+### `refreshCRLs` reads at most 1 MiB of a list (Swift, Kotlin)
+
+`Wallet.refreshCRLs()` and `ProximityReader.refreshCRLs()` now refuse
+a distribution point's answer larger than 1 MiB, rather than 8 MiB:
+that point's outcome is failed, and the list held for its CA, if any,
+is kept until its nextUpdate. An IACA's list is a few kilobytes. Where
+a CA's lists are larger, fetch them yourself and hand them over with
+`setCRLs`, or as `revocation.crls` at launch, which have no such
+bound.
+
+## v0.86.0 → v0.87.0
+
+### A wallet's stores must seal their records outside Development (walletflow, sqlstore)
+
+Outside `Development`, `walletflow.New` refuses a `Credentials`,
+`Deferred`, `Grants` or `Authorizations` store that doesn't implement
+`sealing.Store` with `SealsRecords` true, as the issuer and the Wallet
+Provider refuse theirs under production, whether the wallet receives
+credentials or only presents them. They hold the holder's credentials,
+the access tokens of pending deferred credentials, refresh tokens, and
+the Credential Offers and PKCE verifiers of authorizations in
+progress: a copy of an unsealed database reveals the credentials, and
+any token not bound to a key outside it, a Bearer access token say.
+The error names the store and `Config.UnsealedStores`. walletflow's
+memory stores, the defaults, keep nothing at rest and are still taken.
+
+With `sqlstore`, give the DB a Sealer (`sqlstore.Options{Sealer:
+sealer}`, `sealer` from `sealing.AESGCMSealer` with a 32-byte key kept
+outside the database) and upgrade to sqlstore v0.17.0, whose wallet
+stores declare it: an earlier release's are refused, Sealer or not. A
+DB with a Sealer can't read records written without one, and a
+wallet's never expire: to seal them, list each store's records from
+the DB without the Sealer and put them into one with it, over empty
+tables in another schema or file. A store of your own implements
+`SealsRecords`.
+
+The new `Config.UnsealedStores` accepts the stores unsealed: set it
+only where something else protects the records at rest as sealing
+would, as a phone's data protection does. The mobile package sets it
+for the app's `CredentialStore`, so the Swift and Kotlin libraries
+need no change.
+
+### Production bounds three more lifetimes (`issuer`)
+
+Under `AssuranceProduction`, `issuer.New` now refuses:
+- with `Dependencies.AccessTokens` set, a `Limits.AccessTokenLifetime`
+  over `issuer.MaxProductionAccessTokenLifetime`, 10 minutes. An access
+  token `ExchangePreAuthorizedCode` mints through it names no grant,
+  so revoking the grant (fapigo's `server.Server.RevokeGrant`, or the
+  Wallet revoking its refresh token) left it usable for as long as it
+  was set to live. There's no opt-out: for longer-lived tokens, redeem
+  codes with `RedeemPreAuthorizedCode` (under
+  `VerifiedPreAuthorizedCode`) and issue each token with
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it. Under `AnonymousPreAuthorizedCode`
+  the Wallet gets no refresh token, so it also has to collect a
+  deferred credential within that time;
+- with `CredentialOfferEndpoint` set, a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime`, a week: the longest a
+  pre-authorized code lives (`MaxProductionPreAuthorizedLifetime`).
+  Send an offer for the authorization code grant that must stay usable
+  longer by value;
+- with `Endpoints.DeferredCredential` set, a
+  `Limits.DeferredTransactionLifetime` over
+  `issuer.MaxProductionDeferredTransactionLifetime`, 30 days. Where a
+  review takes longer, deny the transaction and issue with a new
+  Credential Offer once it's done.
+
+**What to change:** lower each to its bound.
+
+### Key attestation signers and proof keys under one anchor are refused (`issuer`)
+
+`issuer.New` now refuses, at every assurance level, an
+`X5CAttestationVerifier` whose `Roots`, or under
+`AttestationIssuerBoundToAnchor` whose `Anchors`, may anchor the
+certificates of an `X5CProofBindingKeyResolver` set as
+`Dependencies.ProofBindingKeys`: the two pools both hold a certificate
+with one subject, or either is a system pool, which lists none of its
+roots. Wallets hold the keys of the certificates that resolver takes,
+so under a shared anchor a Wallet's own proof-key certificate could
+sign key attestations, claiming any `key_storage` for any key.
+
+**What to change:** give the two roots with no certificate subject in
+common, or set `X5CAttestationVerifier.LeafPolicy` to one requiring
+what only a Wallet Provider's signing certificates carry (an extended
+key usage or a certificate policy), calling
+`DefaultAttestationLeafPolicy` first. `DefaultAttestationLeafPolicy`
+and `AnyAttestationLeaf` can't tell the two apart, and count as unset.
+
+### `AuditEventLegacyDeferredAuthorization` is removed (`issuer`)
+
+Never recorded since v0.84.0, which deprecated it: drop any reference
+to it, such as a case in an `AuditSink`'s switch.
+
+### A DCQL `values` integer beyond ±(2^53 − 1) is refused (`dcql`, `verifier`, `wallet`, `walletflow`, mobile)
+
+A DCQL query read from JSON holds its numbers as float64s, and no
+float64 holds every integer beyond ±(2^53 − 1) exactly: a `values`
+filter on 9007199254740993 read back as 9007199254740992. A Wallet
+reading the Request Object, and `verifier.Transactions` reading the
+query back from its store to check the answer, then matched an
+integer the Verifier hadn't asked for, and refused the one it had.
+`dcql.Query.Validate` now refuses a `values` integer beyond
+±(2^53 − 1) (I-JSON, RFC 7493 §2.2), and a float32 one beyond ±2^24,
+which encoding/json can write as another integer. So the Verifier's
+request builders, `Transactions.Begin` and `VerifyResponse` refuse a
+query with one, and a wallet or walletflow refuses a request carrying
+one as `invalid_request`.
+
+To filter on such an identifier, have it issued as a string. An mdoc
+element holding one can't be filtered on: request it without `values`
+and compare the value `VerifyResponse` returns. A request begun before
+the upgrade with such a filter fails when it's answered.
+
+### See which of a query's types fall back to `Roots` (`verifier`)
+
+The new `X5CIssuerKeyResolver.FallbackTypes` reports, by credential
+query ID, each type a query's `vct_values` name that `RootsByVCT`
+doesn't, while `Roots` is set too: a credential of that type is
+trusted under `Roots`, so every anchor there may sign one. Where you
+set both, run it on your queries at startup or in a test, and name
+what it reports in `RootsByVCT` (each of a PID type's `vct` values,
+say), or check those types' issuers in `IssuerAuthorized`. It's a
+warning only: nothing calls it, and nothing is refused.
+
+### `certrevocation.DefaultCRLMaxBytes` is 1 MiB (`certrevocation`, mobile)
+
+A `Refresher` refuses a CRL larger than its `RefresherConfig.MaxBytes`,
+`DefaultCRLMaxBytes` when that's zero: now 1 MiB, rather than 8 MiB.
+The bound is also what anyone answering a plain `http` distribution
+point can make the process read and parse before the list's signature
+is checked, which allocates several dozen times its size: about
+360 MiB a fetch at 8 MiB, 45 MiB at 1 MiB. At about 50 bytes a
+revocation, 1 MiB holds some 20,000, hundreds of times what an IACA's,
+an issuer CA's, a Wallet Provider's CA's or a status list signer's
+CA's list holds. A list beyond it is refused (`the response exceeds
+1048576 bytes`): a `Refresher` holding no list for its CA, as after a
+restart, has that CA's certificates refused with `ErrNoCurrentCRL`,
+and one holding an older list does once its nextUpdate passes. For a
+CA whose lists are larger, set `MaxBytes` on its `Refresher`. The
+mobile libraries' `refreshCRLs` reads at most 1 MiB a list too (see
+OID4VCWallet 0.43.0 → 0.44.0 above).
+
+### Bound a status list's age under production (verifier)
+
+Under `AssuranceProduction`, a `verifier.StatusPolicy`
+(`TransactionsConfig.Status`, `VerifyResponseRequest.Status`,
+`mdocdcapi.VerifyParams.Status`, `proximity.WithStatus`) is refused
+unless its `Checker.Options.MaxAge` is set: how long ago a status or
+identifier list may have been signed (its iat). A list signed before a
+revocation otherwise stays acceptable until its exp, however far ahead
+the issuer put it, and anyone who can serve bytes at the list's URI (a
+CDN, a mirror, a former owner of the domain) can replay it until then.
+Set `MaxAge` above the longest interval your issuers sign their lists
+at: 24 hours for issuers that sign them at least daily, as
+`statuslist.Publisher` does by default. A list older is refused, so a
+bound shorter than that fails the status check of every credential the
+issuer's list covers. Where your issuers' lists expire soon after
+they're signed, or whoever serves them is trusted not to serve an old
+one, set the new `StatusPolicy.AnyListAge` instead, which declines the
+bound explicitly. A policy setting both is refused, at every assurance
+level; under `AssuranceDevelopment` nothing else changes.
+
+### Bound a status list's age outside Development (walletflow)
+
+The new `walletflow.Config.StatusMaxAge` bounds how long ago a status
+list or identifier list `CheckStatus` accepts may have been signed: a
+list older, fetched or kept, fails the check with an error. Outside
+`Development`, `New` refuses a `Config` that receives credentials
+(`IssuerRoots`, `IssuerRootsByVCT`, `MdocIssuerRoots` or
+`MdocIssuerRootsByDocType`) without it, unless the new `StatusAnyAge`
+declines the bound, for the same reason as the verifier's above. Set it
+above the longest interval your issuers sign their lists at: 24 hours
+for issuers that sign them at least daily. A `Config` setting both, or
+a negative `StatusMaxAge`, is refused in `Development` too. It isn't
+`Dependencies.StatusCache`'s `CacheOptions.MaxAge`, which bounds how
+long a list fetched is kept before it's fetched again.
+
+## OID4VCWallet 0.42.0 → 0.43.0
+
+Built from OID4VCgo v0.86.0 (see its entry below, whose wallet
+changes reach the mobile libraries); the gomobile ABI is still 16.
+
+### Ask before opening a refused request's redirect that isn't https (Swift, Kotlin)
+
+A refused request's `refusalRedirect`, and `takeRefusalRedirect()`,
+arrive before the holder has done anything but open the link: the
+wallet sends the Verifier its error itself. Ask the holder before
+opening one that isn't `https`, which opens another app and can look
+like the wallet's next step. The library now refuses a redirect that
+opens a system app (an app's install prompt or store page, a call, a
+message, the settings, a Shortcut or a map), as it refused `http`:
+`refusalRedirect` is then nil (null), and `respond` and `decline` fail
+with `protocolError` (Kotlin's `protocol`), the presentation answered.
+
+### Name your Verifiers' app schemes (Swift, Kotlin)
+
+The new `presentation.verifierRedirectSchemes` (`verifier_redirect_schemes`)
+names the only schemes besides `https` a Verifier's redirect may have:
+set it to the schemes of your Verifiers' apps where you know them, or
+to `["https"]` (`listOf("https")`). A redirect with another scheme is
+then refused as above. Empty, the default, follows any scheme the
+library doesn't refuse. A scheme that isn't one, or one never
+followed, is `invalidInput`.
+
+### Hold each SD-JWT VC type to its own issuers (Swift, Kotlin)
+
+The new `issuers.rootsByVCT` (`issuer_roots_by_vct`) is walletflow's
+`IssuerRootsByVCT` (see v0.86.0 below): each SD-JWT VC type's own
+issuers' CAs, by `vct`, in place of `issuers.roots`. Set it where
+`issuers.roots` hold several providers' CAs. Outside `development`,
+its roots need the `issuer` and `status` revocation choice, and are
+kept apart from the other roles' with `issuers.requireEKU`, as
+`issuers.roots` are.
+
+### Key stores sweep only the keys they make (Swift, Kotlin)
+
+`KeychainKeyStore` and `AndroidKeystoreKeyStore` list (`keyIDs()`)
+and sweep (`deleteKeys(except:)`, which `Wallet.sweepOrphanedKeys`
+calls) only the keys whose tag or alias is the store's prefix and a
+UUID, as `createKey` makes them. A store whose prefix extends another's
+no longer loses its keys to the other's sweep, which on Android failed
+instead, with `malformed key ID`, when the longer prefix added a `.`.
+
+Two stores under the same prefix still sweep each other's keys, and on
+iOS a store lists its prefix's keys in every Keychain access group the
+app can read, with `holderAccessGroup` or without. Give each key
+store — each wallet's, each Wallet Provider's registration keys', and
+those of apps that share an access group — a prefix where neither
+extends another's. A document provider extension's store is its app's
+wallet's, and keeps the app's prefix.
+
+### The wallet's and the registration key sweeps refuse each other's stores (Swift, Kotlin)
+
+`HttpWalletProvider.sweepOrphanedRegistrationKeys()` throws, deleting
+nothing (`IllegalArgumentException` in Kotlin, `StoreError` in Swift),
+when its registration key store's prefix is, covers or falls under the
+prefix of the key store of a `Wallet` made with a provider over the
+same registry: it would delete that wallet's keys. The other way round,
+`Wallet.sweepOrphanedKeys` throws, deleting nothing, for a store whose
+prefix is, covers or falls under the prefix of the registration key
+store of any `HttpWalletProvider` made over the same registry as the
+wallet's own provider, as it did for the default registration prefix:
+it would delete the registration key. Keep registration keys under a
+prefix of their own, as `registrationKeyStore()` does.
+
+### The Android Wallet Provider's timeout bounds the whole request (Kotlin)
+
+`HttpWalletProvider`'s `timeoutMillis` now bounds each request from
+connecting to the last byte of its answer, as the Swift library's
+`timeout` does: a request still unanswered then is ended, and fails as
+`network`, as a timeout did. It bounded only the connect and each
+read, so an answer trickled a byte at a time held the call, and every
+Wallet Attestation waiting for a registration under way, as long as
+its sender liked.
+
+## v0.85.0 → v0.86.0
+
+### A Verifier's redirect to a system app is refused (wallet, walletflow)
+
+A Verifier's `redirect_uri` (OpenID4VP 1.0 §8.2) that opens a system
+handler rather than the Verifier's page or app is now refused, as
+`http:` and `javascript:` were: an app's install prompt or store page
+(`itms-services`, `itms-apps`, `itms-appss`, `market`,
+`ms-appinstaller`, `ms-windows-store`), a call (`tel`, `facetime`,
+`facetime-audio`), a message (`sms`, `smsto`, `mms`, `mmsto`,
+`mailto`), the settings (`ms-settings`), a Shortcut (`shortcuts`) or a
+map (`geo`, `maps`). `wallet.SubmitDirectPostResponse`, `Respond` and
+`RespondSelection` return an error wrapping `ErrResponseDelivered`
+instead of the redirect. walletflow's `Respond` and `Decline` return
+that error, the presentation answered, and a refused request's
+`RequestRefusedError.RedirectURI` is empty. A trusted Verifier could
+otherwise send the holder from the wallet straight to one of them,
+looking like the wallet's next step, on a refusal before the holder
+had done anything but open the link. An honest Verifier redirects to
+its page or its own app's scheme, which are still followed.
+
+### Follow only the redirect schemes your Verifiers' apps use (wallet, walletflow)
+
+The new `wallet.Config.VerifierRedirectSchemes` and
+`walletflow.Config.VerifierRedirectSchemes` name the URI schemes,
+besides https, a Verifier's `redirect_uri` may have: the schemes of
+the Verifier apps the wallet returns holders to, or `"https"` alone.
+A redirect with any other is then refused as one with a scheme the
+wallet never follows is (above). Unset, as before, a trusted Verifier
+can send the holder to whichever app handles the scheme it names: set
+it where you know your Verifiers' apps. `New` refuses a scheme that
+isn't one (RFC 3986 §3.1), one the wallet never follows, and, in
+walletflow, `Config.RedirectURI`'s. In `wallet`, the `*Wallet` methods
+apply it; the package-level `SubmitDirectPostResponse`, `Respond` and
+`RespondSelection`, which take no `Config`, don't.
+
+### Hold each SD-JWT VC type to its own issuers (walletflow)
+
+The new `walletflow.Config.IssuerRootsByVCT` gives each SD-JWT VC type
+its own trust anchors, as `MdocIssuerRootsByDocType` does for mdocs and
+the verifier's `X5CIssuerKeyResolver.RootsByVCT` for presentations: a
+received credential whose `vct` it names must chain to that type's
+anchors, not to `IssuerRoots`, and with it set, to each of its
+`aka_vcts` types' too; `CheckStatus` checks a held one again so, and
+its status list's signer under its type's. Where `IssuerRoots` hold
+several providers' CAs (a PID provider's and an attestation provider's,
+say), any of them can otherwise issue a credential of another's type,
+which the wallet stores, shows and offers as that type. Outside
+`Development` its pools need `IssuerRevocation` and `StatusRevocation`,
+and are kept apart from the other roles', as `IssuerRoots` are. Unset,
+nothing changes.
+
 ## v0.84.0 → v0.85.0
 
 ### FAPIgo v0.78.0: `server.New` checks the attestation status checker's configuration

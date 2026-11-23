@@ -38,28 +38,32 @@ type Responded struct {
 //
 // client posts to response_uri, the Verifier's choice: in production it
 // must be one fapihttp.NewClient built, as SubmitDirectPostResponse
-// says. (*Wallet).Respond uses the Wallet's own client instead.
+// says. (*Wallet).Respond uses the Wallet's own client instead, and
+// applies its Config.VerifierRedirectSchemes to the reply.
 func Respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, credentials []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
-	return respond(ctx, client, req, PresentationRequest{Credentials: credentials}, trustedAuthorities)
+	return respond(ctx, client, req, PresentationRequest{Credentials: credentials}, trustedAuthorities, nil)
 }
 
 // Respond is the package-level Respond sent with this Wallet's own HTTP
-// client (Dependencies.HTTP), which New has checked.
+// client (Dependencies.HTTP), which New has checked, refusing a
+// redirect_uri Config.VerifierRedirectSchemes doesn't allow.
 func (w *Wallet) Respond(ctx context.Context, req AuthorizationRequest, credentials []HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
-	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Credentials: credentials}, trustedAuthorities)
+	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Credentials: credentials}, trustedAuthorities, w.cfg.VerifierRedirectSchemes)
 }
 
 // RespondSelection is the package-level RespondSelection sent with this
-// Wallet's own HTTP client (Dependencies.HTTP), which New has checked:
+// Wallet's own HTTP client (Dependencies.HTTP), which New has checked,
+// refusing a redirect_uri Config.VerifierRedirectSchemes doesn't allow:
 // in production, the package-level form's client must be one
 // fapihttp.NewClient built, as SubmitDirectPostResponse says.
 func (w *Wallet) RespondSelection(ctx context.Context, req AuthorizationRequest, selection map[string][]HeldCredential, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
-	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Selection: selection}, trustedAuthorities)
+	return respond(ctx, w.deps.HTTP, req, PresentationRequest{Selection: selection}, trustedAuthorities, w.cfg.VerifierRedirectSchemes)
 }
 
 // respond presents what pr chooses (Credentials to match, or a
-// Selection) for req and submits it.
-func respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, pr PresentationRequest, trustedAuthorities dcql.TrustedAuthoritiesChecker) (Responded, error) {
+// Selection) for req and submits it, refusing a redirect_uri whose
+// scheme is neither https nor among redirectSchemes when they're set.
+func respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationRequest, pr PresentationRequest, trustedAuthorities dcql.TrustedAuthoritiesChecker, redirectSchemes []string) (Responded, error) {
 	pr.Query, pr.Audience, pr.Nonce = req.Query, req.ClientID, req.Nonce
 	pr.ResponseURI, pr.ResponseEncryptionKey, pr.TrustedAuthorities = req.ResponseURI, req.ResponseEncryptionKey, trustedAuthorities
 	vpToken, err := PresentCredentials(ctx, pr)
@@ -80,7 +84,7 @@ func respond(ctx context.Context, client fapihttp.HTTPClient, req AuthorizationR
 	// has it.
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitTimeout)
 	defer cancel()
-	reply, err := SubmitDirectPostResponse(sendCtx, client, req.ResponseURI, responseJWE)
+	reply, err := submitDirectPostResponse(sendCtx, client, req.ResponseURI, responseJWE, redirectSchemes)
 	if err != nil {
 		return Responded{}, fmt.Errorf("wallet: respond: %w", err)
 	}

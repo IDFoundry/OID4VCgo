@@ -751,6 +751,26 @@ func TestVerify_RejectsDisclosableRegisteredClaim(t *testing.T) {
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
+// An issuer JWT's vct must name the credential's type (draft-13
+// §3.2.2.1): one missing, not a string, or empty is refused, as Issue
+// refuses an empty Claims.VCT.
+func TestVerify_RefusesVCTNamingNoType(t *testing.T) {
+	for name, tc := range map[string]struct {
+		payload map[string]any
+		ok      bool
+	}{
+		"a type":       {map[string]any{"vct": "urn:example:1"}, true},
+		"missing":      {map[string]any{"iss": "https://issuer.example"}, false},
+		"not a string": {map[string]any{"vct": 1}, false},
+		"empty":        {map[string]any{"vct": ""}, false},
+	} {
+		sdjwt, pub := signRawSDJWT(t, tc.payload)
+		if _, _, err := Verify(sdjwt, pub, jose.ES256, VerifyOptions{RequireKeyBinding: KeyBindingNotRequired}); (err == nil) != tc.ok {
+			t.Errorf("%s: Verify = %v, want ok = %v", name, err, tc.ok)
+		}
+	}
+}
+
 // An issuer JWT payload with a member twice is refused: encoding/json
 // would read the last vct, a first-wins parser the other.
 func TestVerify_RefusesDuplicateMembers(t *testing.T) {

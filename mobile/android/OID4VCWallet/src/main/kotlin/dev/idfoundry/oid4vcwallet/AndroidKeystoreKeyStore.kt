@@ -241,12 +241,21 @@ public class AndroidKeystoreKeyStore(
          */
         val holderUserAuthentication: Boolean = true,
         /**
-         * Prefixes every key's alias. Keys under another prefix are never
-         * touched, by a sweep or anything else. It must be non-empty, and
-         * must not cover [FileCredentialStore]'s default key alias. The
-         * wallet's mustn't cover, or fall under,
-         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX]:
-         * [Wallet.sweepOrphanedKeys] refuses such a store.
+         * Prefixes every key's alias, before its ID, a UUID. The store
+         * lists and sweeps only aliases of that form
+         * ([AndroidKeystoreKeyStore.keyIDs],
+         * [AndroidKeystoreKeyStore.deleteKeys]), so the keys of a store
+         * whose prefix extends this one's aren't its own; but two stores
+         * under one prefix sweep each other's keys. Give each store — each
+         * wallet's, and each Wallet Provider's registration keys' — a
+         * prefix where neither extends the other. It must be non-empty,
+         * and must not cover [FileCredentialStore]'s default key alias.
+         * The wallet's mustn't cover, or fall under,
+         * [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX], nor the
+         * prefix of its Wallet Provider's registration key store:
+         * [Wallet.sweepOrphanedKeys] refuses such a store, and
+         * [HttpWalletProvider.sweepOrphanedRegistrationKeys] a
+         * registration key store over the wallet's.
          */
         val aliasPrefix: String = "org.idfoundry.oid4vcgo.key.",
         /**
@@ -550,20 +559,25 @@ public class AndroidKeystoreKeyStore(
     /** The ID of the key whose public key is [point] (uncompressed X9.63), or null. */
     internal fun keyID(point: ByteArray): String? = keyIDs().firstOrNull { publicKey(it)?.contentEquals(point) == true }
 
-    /** The IDs of every key this store holds (under its alias prefix). */
-    public fun keyIDs(): List<String> =
-        keystore.aliases().toList().filter { it.startsWith(options.aliasPrefix) }.map { it.removePrefix(options.aliasPrefix) }
+    /**
+     * The IDs of the keys this store holds: those whose alias is
+     * [Options.aliasPrefix] and an ID as [createKey] makes it, a UUID.
+     * Any other alias under the prefix — a key of a store whose prefix
+     * extends this one's — isn't listed.
+     */
+    public fun keyIDs(): List<String> = storeKeyIDs(keystore.aliases().toList(), options.aliasPrefix)
 
     /**
-     * Deletes every key this store holds except [except], and returns how
-     * many it deleted. `Wallet.sweepOrphanedKeys` calls it with the keys
-     * the wallet's credentials are bound to.
+     * Deletes every key this store holds ([keyIDs]) except [except], and
+     * returns how many it deleted. `Wallet.sweepOrphanedKeys` calls it
+     * with the keys the wallet's credentials are bound to.
      *
-     * It deletes only key pairs (`KeyStore.PrivateKeyEntry`) under
-     * [Options.aliasPrefix], as this store makes: a secret key under it —
-     * [FileCredentialStore]'s, under a custom
-     * [FileCredentialStore.Options.keyAlias], or the status cache's — is
-     * kept.
+     * It deletes only key pairs (`KeyStore.PrivateKeyEntry`) whose alias
+     * is [Options.aliasPrefix] and a UUID, as this store makes them: a
+     * secret key under the prefix — [FileCredentialStore]'s, under a
+     * custom [FileCredentialStore.Options.keyAlias], or the status
+     * cache's — is kept, and so are the keys of a store whose prefix
+     * extends this one's.
      */
     public fun deleteKeys(except: Set<String>): Int {
         var deleted = 0
@@ -613,6 +627,19 @@ public class AndroidKeystoreKeyStore(
         const val KEY_ATTESTATION_OID = "1.3.6.1.4.1.11129.2.1.17"
     }
 }
+
+/** A key ID as [AndroidKeystoreKeyStore.createKey] makes it: a UUID, as [UUID.toString] writes it. */
+private val KEY_ID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+/**
+ * The IDs of the keys among Keystore [aliases] that an
+ * [AndroidKeystoreKeyStore] under [prefix] makes: the prefix, then a
+ * UUID. The remainder of any other alias under the prefix isn't such an
+ * ID: a key of a store whose prefix extends [prefix] leaves more than a
+ * UUID after it.
+ */
+internal fun storeKeyIDs(aliases: List<String>, prefix: String): List<String> =
+    aliases.filter { it.startsWith(prefix) }.map { it.substring(prefix.length) }.filter(KEY_ID::matches)
 
 /** One key generation [AndroidKeystoreKeyStore] tries: where, whether the key also agrees keys, and its digests. */
 internal data class KeyAttempt(val strongBox: Boolean?, val agree: Boolean, val digests: List<String>)

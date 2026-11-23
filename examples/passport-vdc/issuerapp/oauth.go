@@ -91,7 +91,7 @@ var approvalTemplate = parsePage("approval", pageHead+`</head><body>
 <input type="hidden" name="interaction" value="{{.Tag}}">
 <label for="code" class="code-label">Confirmation code shown with the offer</label>
 <span class="code-field"><input id="code" name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" required autofocus aria-describedby="code-help"></span>
-<p id="code-help" class="note">Six digits. Approving with it shows you saw the offer page.</p>
+<p id="code-help" class="note">Six digits. Approving with it shows you saw the offer page. Denying works without it, but only a deny with it shows on the offer page.</p>
 <div class="actions">
 <button class="btn" name="decision" value="approve">Approve</button>
 <button class="btn secondary" name="decision" value="deny" formnovalidate>Deny</button>
@@ -197,7 +197,7 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 			result = server.Deny("the request names a resource other than this Credential Issuer")
 			break
 		}
-		if !a.claimTransaction(w, pending, r.FormValue("code")) {
+		if !a.claimTransaction(w, r, pending, r.FormValue("code")) {
 			return
 		}
 		a.progress.update(txID, func(p *offerProgress) { p.authorized = true })
@@ -221,8 +221,13 @@ func (a *App) handleDecision(w http.ResponseWriter, r *http.Request) {
 		}
 		result = server.Authorize(subject, authCtx, a.grantFor(pending, resources))
 	case "deny":
+		// The offer link alone opens this page, so the offer page shows
+		// the offer declined only when the deny came with its code. The
+		// wallet is answered the same either way, so the code isn't
+		// guessed here.
 		result = server.Deny("the holder declined")
-		a.progress.update(txID, func(p *offerProgress) { p.declined = true })
+		declined := a.transactions.confirms(txID, r.FormValue("code"))
+		a.progress.update(txID, func(p *offerProgress) { p.declined = p.declined || declined })
 	default:
 		a.writeHTMLError(w, http.StatusBadRequest, "decision must be approve or deny")
 		return
@@ -273,26 +278,36 @@ func (a *App) grantFor(pending pendingInteraction, resources []string) server.Gr
 }
 
 // claimTransaction redeems pending's transaction with code. On a wrong
-// code it shows the approval page again, still pending, to retry; on
-// any other failure an error page. It reports whether to go on and
+// code it shows the approval page again, still pending, to retry; once
+// the page takes no more codes it ends the interaction; on any other
+// failure it shows an error page. It reports whether to go on and
 // authorize.
-func (a *App) claimTransaction(w http.ResponseWriter, pending pendingInteraction, code string) bool {
-	err := a.transactions.claim(pending.txID, code)
-	if err == nil {
+func (a *App) claimTransaction(w http.ResponseWriter, r *http.Request, pending pendingInteraction, code string) bool {
+	err := a.transactions.claim(pending.txID, pending.tag, code)
+	switch {
+	case err == nil:
 		return true
-	}
-	if errors.Is(err, errWrongCode) {
+	case errors.Is(err, errWrongCode):
 		if _, err := a.transactions.unclaimed(pending.txID); err == nil {
 			// The interaction cookie stays, for another try.
 			a.renderApproval(w, pending, a.cfg.Wallet.ClientID, "That confirmation code is wrong — check the offer page and try again.")
 			return false
 		}
+	case errors.Is(err, errApprovalWrongCodes), errors.Is(err, errTooManyWrongCodes):
+		// Nobody entered the code, so the interaction ends here without
+		// sending the browser back to the wallet (server.DenyLocally),
+		// whose request then expires. Whatever CompleteAuthorization
+		// answers, this page takes no more codes.
+		a.consent.Clear(w)
+		_, _ = a.server.CompleteAuthorization(r.Context(), server.CompleteAuthorizationRequest{
+			Handle: pending.handle, Result: server.DenyLocally("too many wrong confirmation codes"),
+		})
 	}
 	a.writeHTMLError(w, http.StatusBadRequest, transactionErrorMessage(err))
 	return false
 }
 
-func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID string, message string) {
+func (a *App) renderApproval(w http.ResponseWriter, pending pendingInteraction, clientID, message string) {
 	wallet := "A wallet"
 	if clientID == a.cfg.Wallet.ClientID {
 		wallet = "The passport demo wallet"
@@ -308,6 +323,8 @@ func transactionErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, errAlreadyRedeemed):
 		return "this credential offer has already been redeemed — each offer works once, for one wallet"
+	case errors.Is(err, errApprovalWrongCodes):
+		return "too many wrong confirmation codes on this page — check the code on the offer page, then open the offer in your wallet again"
 	case errors.Is(err, errTooManyWrongCodes):
 		return "too many wrong confirmation codes — this offer is void; upload the passport again"
 	default:

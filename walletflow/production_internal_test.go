@@ -33,10 +33,11 @@ type durableKeyStore struct{ *MemoryKeyStore }
 func (durableKeyStore) KeyCustody() keys.KeyCustody { return keys.KeyCustody{Durable: true} }
 
 // durableAuthorizations is a MemoryAuthorizationStore claiming to be
-// Durable, standing in for a persistent one.
+// Durable and to seal its records, standing in for a persistent one.
 type durableAuthorizations struct{ *MemoryAuthorizationStore }
 
-func (durableAuthorizations) Durable() bool { return true }
+func (durableAuthorizations) Durable() bool      { return true }
+func (durableAuthorizations) SealsRecords() bool { return true }
 
 // attestingProvider is a WalletProvider the client never calls here.
 type attestingProvider struct{}
@@ -124,10 +125,12 @@ func TestProductionAssurance(t *testing.T) {
 	}
 }
 
-// durableGrants is a MemoryGrantStore claiming to be Durable.
+// durableGrants is a MemoryGrantStore claiming to be Durable and to
+// seal its records.
 type durableGrants struct{ *MemoryGrantStore }
 
-func (durableGrants) Durable() bool { return true }
+func (durableGrants) Durable() bool      { return true }
+func (durableGrants) SealsRecords() bool { return true }
 
 // At production assurance, asking for refresh tokens needs a durable
 // GrantStore: a refresh token kept only in memory is lost on a restart.
@@ -147,6 +150,69 @@ func TestProductionAssurance_RefreshNeedsDurableGrants(t *testing.T) {
 	}
 	if err := w.checkIssuance(); err != nil {
 		t.Errorf("with a durable GrantStore: checkIssuance = %v", err)
+	}
+}
+
+// dbStores stand in for a database's wallet stores, one of each kind,
+// declaring they seal their records or not as sealed says: sqlstore's
+// with a Sealer, or without one.
+type dbStores struct {
+	*MemoryCredentialStore
+	*MemoryDeferredStore
+	*MemoryGrantStore
+	*MemoryAuthorizationStore
+	sealed bool
+}
+
+func newDBStores(sealed bool) dbStores {
+	return dbStores{NewMemoryCredentialStore(), NewMemoryDeferredStore(), NewMemoryGrantStore(), NewMemoryAuthorizationStore(), sealed}
+}
+
+func (dbStores) Durable() bool        { return true }
+func (s dbStores) SealsRecords() bool { return s.sealed }
+
+// Outside Development, New refuses a store holding the holder's
+// credentials or tokens that doesn't declare it seals its records,
+// naming it and Config.UnsealedStores, whether the wallet receives
+// credentials or only presents them: each store may hold what an earlier
+// Config stored. It takes them with UnsealedStores, or in Development,
+// and takes walletflow's memory stores, which keep nothing at rest.
+func TestProductionAssurance_SealedStores(t *testing.T) {
+	sealed, unsealed := newDBStores(true), newDBStores(false)
+	durable := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: sealed, Deferred: sealed, Grants: sealed, Authorizations: sealed}
+	for name, cfg := range map[string]Config{
+		"receiving":       declined(Config{ClientID: "wallet", RedirectURI: "com.example.wallet:/cb", IssuerRoots: x509.NewCertPool(), RequestRefresh: true}),
+		"presenting only": {},
+	} {
+		if _, err := New(cfg, durable); err != nil {
+			t.Errorf("%s, every store sealed: New = %v", name, err)
+		}
+		for store, unseal := range map[string]func(*Dependencies){
+			"Credentials":    func(d *Dependencies) { d.Credentials = unsealed },
+			"Deferred":       func(d *Dependencies) { d.Deferred = unsealed },
+			"Grants":         func(d *Dependencies) { d.Grants = unsealed },
+			"Authorizations": func(d *Dependencies) { d.Authorizations = unsealed },
+		} {
+			deps := durable
+			unseal(&deps)
+			if _, err := New(cfg, deps); err == nil || !strings.Contains(err.Error(), "Dependencies."+store+" ") || !strings.Contains(err.Error(), "Config.UnsealedStores") {
+				t.Errorf("%s, %s unsealed: New = %v, want it refused, naming it and Config.UnsealedStores", name, store, err)
+			}
+			for opt, accept := range map[string]func(*Config){
+				"UnsealedStores": func(c *Config) { c.UnsealedStores = true },
+				"Development":    func(c *Config) { c.Development = true },
+			} {
+				c := cfg
+				accept(&c)
+				if _, err := New(c, deps); err != nil {
+					t.Errorf("%s, %s unsealed, with %s: New = %v", name, store, opt, err)
+				}
+			}
+		}
+	}
+	memory := Dependencies{Keys: durableKeyStore{NewMemoryKeyStore()}, Credentials: NewMemoryCredentialStore(), Deferred: NewMemoryDeferredStore()}
+	if _, err := New(declined(Config{IssuerRoots: x509.NewCertPool()}), memory); err != nil {
+		t.Errorf("memory stores: New = %v", err)
 	}
 }
 
@@ -221,6 +287,9 @@ func TestNew_RoleSeparation(t *testing.T) {
 		"one pool for mdoc issuers and Verifiers":  {Config{IssuerRoots: verifiers, MdocIssuerRoots: shared, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
 		"one pool for mdoc issuers, both narrowed": {Config{MdocIssuerRoots: shared, MdocIssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 		"a document type's pool and readers":       {Config{IssuerRoots: verifiers, MdocIssuerRootsByDocType: map[string]*x509.CertPool{"a": issuers}, MdocReaderRoots: shared, MdocReaderLeafPolicy: policy}, false},
+		"one pool for issuers and a vct's":         {Config{IssuerRoots: shared, IssuerRootsByVCT: map[string]*x509.CertPool{"a": shared}}, true},
+		"a vct's pool and Verifiers":               {Config{IssuerRoots: verifiers, IssuerRootsByVCT: map[string]*x509.CertPool{"a": issuers}, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, false},
+		"a vct's pool, both narrowed":              {Config{IssuerRootsByVCT: map[string]*x509.CertPool{"a": shared}, IssuerLeafPolicy: policy, VerifierTrust: wallet.X5CVerifierRoots{Roots: shared, LeafPolicy: policy}}, true},
 	} {
 		_, err := New(declined(tc.cfg), deps)
 		refused := err != nil && strings.Contains(err.Error(), "may share a trust anchor")

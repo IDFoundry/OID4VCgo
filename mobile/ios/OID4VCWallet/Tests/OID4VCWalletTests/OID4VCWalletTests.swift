@@ -32,11 +32,13 @@ final class OID4VCWalletTests: XCTestCase {
     /// configuration encodes the same keys as before.
     func testWalletConfigurationJSONRoundTrip() throws {
         let full = #"""
-        {"client_id":"c","redirect_uri":"app:/cb","issuer_roots":"IR","verifier_roots":"VR","registrar_roots":"RR",
+        {"client_id":"c","redirect_uri":"app:/cb","issuer_roots":"IR","issuer_roots_by_vct":{"urn:eudi:pid:1":"PID"},
+         "verifier_roots":"VR","registrar_roots":"RR",
          "mdoc_reader_roots":"MR","mdoc_reader_require_eku":true,"require_trusted_mdoc_reader":true,
          "development":true,"development_roots":"DR","locales":["de","en"],"batch_size":3,"request_refresh":true,
          "copy_policy":"per_verifier","issuance_profile":"haip","proof_key_by_jwk":true,"proof_key_by_index":true,
-         "accept_x509_san_dns":true,"tls_pins":{"a.example":["pin"]},"allowed_private_hosts":["h.example"],
+         "accept_x509_san_dns":true,"verifier_redirect_schemes":["com.example.verifier"],
+         "tls_pins":{"a.example":["pin"]},"allowed_private_hosts":["h.example"],
          "proximity_device_auth":"mac_preferred","verifier_require_eku":"1.1","registrar_require_eku":"1.2",
          "issuer_require_eku":"1.3","issuer_metadata_require_eku":"1.4",
          "status_issuers":{"https://i.example":["https://s.example"]},"require_issuer_name":true,
@@ -47,11 +49,13 @@ final class OID4VCWalletTests: XCTestCase {
          "accept_mdl_signer_without_eku":true,"crls":"C","revocation":["issuer","verifier"],"crl_issuers":"CI",
          "no_revocation_check":["status"],"crl_distribution_points":[{"url":"http://ca.example/ca.crl","issuer":"P"}],
          "crl_distribution_points_from_roots":true,"crl_require_https":true,"status_max_bytes":10,
-         "identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d"}
+         "identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d",
+         "status_max_age_seconds":13,"status_any_age":true}
         """#
         let config = try JSONDecoder().decode(WalletConfiguration.self, from: Data(full.utf8))
         XCTAssertEqual(config.issuers.roots, "IR")
         XCTAssertEqual(config.issuers.mdocRoots, "MIR")
+        XCTAssertEqual(config.issuers.rootsByVCT, ["urn:eudi:pid:1": "PID"])
         XCTAssertEqual(config.issuers.statusIssuers, ["https://i.example": ["https://s.example"]])
         XCTAssertEqual(config.issuers.credentialIssuers, ["https://i.example"])
         XCTAssertTrue(config.issuers.allowAnyCredentialIssuer)
@@ -63,11 +67,14 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.revocation.declined, [.status])
         XCTAssertEqual(config.status.cacheMaxAgeSeconds, 12)
         XCTAssertEqual(config.status.cacheDir, "/d")
+        XCTAssertEqual(config.status.maxAgeSeconds, 13)
+        XCTAssertTrue(config.status.anyAge)
         XCTAssertEqual(config.network.allowedPrivateHosts, ["h.example"])
         XCTAssertEqual(config.issuance.profile, .haip)
         XCTAssertEqual(config.issuance.locales, ["de", "en"])
         XCTAssertEqual(config.presentation.copyPolicy, .perVerifier)
         XCTAssertEqual(config.presentation.proximityDeviceAuth, .macPreferred)
+        XCTAssertEqual(config.presentation.verifierRedirectSchemes, ["com.example.verifier"])
         XCTAssertEqual(config.development?.roots, "DR")
         try assertSameJSON(JSONEncoder().encode(config), Data(full.utf8))
 
@@ -88,7 +95,8 @@ final class OID4VCWalletTests: XCTestCase {
          "revocation":["issuer"],"crl_issuers":"CI","no_revocation_check":["status"],"any_issuer_for_any_type":true,
          "development":true,"status":"check","crl_distribution_points":[{"url":"http://ca.example/ca.crl","issuer":"P"}],
          "crl_distribution_points_from_roots":true,"crl_require_https":true,"development_roots":"DR",
-         "status_max_bytes":10,"identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d"}
+         "status_max_bytes":10,"identifier_list_max_bytes":11,"status_cache_max_age_seconds":12,"status_cache_dir":"/d",
+         "status_max_age_seconds":13,"status_any_age":true}
         """#
         let config = try JSONDecoder().decode(ProximityReaderConfiguration.self, from: Data(full.utf8))
         XCTAssertEqual(config.issuers.roots, "IR")
@@ -102,6 +110,8 @@ final class OID4VCWalletTests: XCTestCase {
         XCTAssertEqual(config.revocation.declined, [.status])
         XCTAssertTrue(config.revocation.requireHTTPS)
         XCTAssertEqual(config.status.maxBytes, 10)
+        XCTAssertEqual(config.status.maxAgeSeconds, 13)
+        XCTAssertTrue(config.status.anyAge)
         XCTAssertEqual(config.statusCheck, .check)
         XCTAssertEqual(config.development?.roots, "DR")
         try assertSameJSON(JSONEncoder().encode(config), Data(full.utf8))
@@ -263,6 +273,31 @@ final class OID4VCWalletTests: XCTestCase {
         #endif
     }
 
+    /// Stores whose prefixes extend another's, with a separator or
+    /// without, keep their keys from its sweep, and it keeps its own from
+    /// theirs: each lists and sweeps only its prefix and a UUID.
+    func testNestedPrefixesKeepEachOthersKeys() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("the iOS Simulator's Keychain needs a signed host app")
+        #else
+        let prefix = "org.idfoundry.oid4vcgo.test.\(UUID())."
+        func store(_ prefix: String) -> KeychainKeyStore {
+            KeychainKeyStore(options: .init(secureEnclave: false, persistent: true, holderUserPresence: false, tagPrefix: prefix))
+        }
+        let keys = store(prefix)
+        let longer = ["b.", "b-", "b"].map { store(prefix + $0) }
+        defer { for s in longer + [keys] { _ = try? s.deleteKeys(except: []) } }
+        let theirs = try longer.map { try $0.createKey(purpose: .dpop) }
+        _ = try keys.createKey(purpose: .dpop)
+        XCTAssertEqual(try keys.deleteKeys(except: []), 1)
+        for (s, id) in zip(longer, theirs) { XCTAssertEqual(try s.keyIDs(), [id]) }
+        let mine = try keys.createKey(purpose: .dpop)
+        for s in longer { XCTAssertEqual(try s.deleteKeys(except: []), 1) }
+        XCTAssertEqual(try keys.keyIDs(), [mine])
+        XCTAssertFalse(KeychainKeyStore.isKeyID(mine.lowercased()))
+        #endif
+    }
+
     /// A sweep refuses a store whose tag prefix is empty, or overlaps the
     /// Wallet Provider registration key's.
     func testSweepRefusesReservedPrefixes() throws {
@@ -273,6 +308,12 @@ final class OID4VCWalletTests: XCTestCase {
         for prefix in [KeychainKeyStore.Options().tagPrefix, "com.example.wallet.keys.", "org.idfoundry.oid4vcgo.key.test."] {
             XCTAssertNil(Wallet.sweepRefusal(tagPrefix: prefix), "prefix \(prefix) refused")
         }
+        // A Wallet Provider's registration key store under a prefix of its own.
+        let registrationStores: Set = ["com.example.wallet.keys."]
+        for prefix in ["com.example.wallet.keys.", "com.example.wallet.", "com.example.wallet.keys.b-"] {
+            XCTAssertNotNil(Wallet.sweepRefusal(tagPrefix: prefix, registrationPrefixes: registrationStores), "prefix \(prefix) accepted")
+        }
+        XCTAssertNil(Wallet.sweepRefusal(tagPrefix: "com.example.wallet.other.", registrationPrefixes: registrationStores))
         let empty = KeychainKeyStore(options: .init(secureEnclave: false, persistent: false, tagPrefix: ""))
         _ = try empty.createKey(purpose: .dpop)
         XCTAssertThrowsError(try empty.deleteKeys(except: []))
@@ -405,6 +446,13 @@ final class OID4VCWalletTests: XCTestCase {
         }
         XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: nil)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
             XCTAssertEqual(error.localizedDescription, "the Wallet Provider refused /v1/wallet-attestation: HTTP 403")
+        }
+        // A code that isn't a plain token isn't the protocol's: unmarked,
+        // so a "]" in it can't end the mark early and name another.
+        for code in ["instance_key_expired]", "instance_key_expired] x", "instance key expired"] {
+            XCTAssertThrowsError(try WalletProviderAdapter(Refusing(code: code)).walletAttestation("c", instanceKeyJWK: Data("{}".utf8))) { error in
+                XCTAssertFalse(error.localizedDescription.hasPrefix("[refused:"), error.localizedDescription)
+            }
         }
     }
 

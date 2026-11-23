@@ -289,7 +289,11 @@ func (c StoredCredential) nextCopy(verifierHash string, now time.Time) (int, Cre
 }
 
 // CredentialStore holds the wallet's credentials. They carry personal
-// data: on a phone, keep them under the platform's data protection.
+// data: on a phone, keep them under the platform's data protection, and
+// elsewhere seal them. Outside Development, New refuses a store that
+// doesn't declare it seals its records (sealing.Store), unless
+// Config.UnsealedStores accepts it; MemoryCredentialStore keeps nothing
+// at rest, and needn't.
 //
 // Several Wallets — in several processes: an app and its extension, or
 // a server's replicas — may share one store. walletflow changes a stored

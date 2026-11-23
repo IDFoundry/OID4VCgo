@@ -151,7 +151,7 @@ func LeafFor(t testing.TB, commonName string, pub crypto.PublicKey, ca *x509.Cer
 // for a test that needs extensions Leaf and Intermediate don't set (a
 // key usage, an extended key usage). A zero SerialNumber, NotBefore or
 // NotAfter gets Leaf's.
-func Issue(t testing.TB, tmpl *x509.Certificate, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
+func Issue(t testing.TB, tmpl, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -198,7 +198,7 @@ func DocumentSigner(t testing.TB, commonName string, ca *x509.Certificate, caKey
 // CrossCertify issues a second CA certificate for ca's own subject and
 // key under parent/parentKey: a CA certified twice, so a chain through
 // it has a path to each parent.
-func CrossCertify(t testing.TB, ca *x509.Certificate, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) *x509.Certificate {
+func CrossCertify(t testing.TB, ca, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) *x509.Certificate {
 	t.Helper()
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(5),

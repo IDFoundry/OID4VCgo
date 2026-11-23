@@ -582,6 +582,10 @@ func New(opts Options) (env *Env, err error) {
 	return e, nil
 }
 
+// VCT is the vct of the SD-JWT VCs the issuer issues
+// (SDJWTConfigurationID's): it begins with IssuerURL.
+func (e *Env) VCT() string { return e.vct }
+
 // Close stops the issuer and every Verifier StartVerifier started.
 func (e *Env) Close() {
 	e.mu.Lock()

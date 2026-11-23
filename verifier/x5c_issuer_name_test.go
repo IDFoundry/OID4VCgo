@@ -19,7 +19,7 @@ import (
 )
 
 // issuerLeaf is a leaf under ca naming uris and dnsNames.
-func issuerLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uris []string, dnsNames []string) *x509.Certificate {
+func issuerLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, uris, dnsNames []string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

@@ -207,8 +207,11 @@ import (
 // token, minted through Dependencies.AccessTokens, names no grant:
 // revoking the grant ends a refresh token issued for it
 // (ExchangePreAuthorizedCodeResult.RefreshToken), but not that access
-// token, which stays usable until it expires. Restrict the refresh
-// token to this Credential Issuer, as the access token is
+// token, which stays usable until it expires. AssuranceProduction
+// keeps its lifetime (Config.Limits.AccessTokenLifetime) to at most
+// MaxProductionAccessTokenLifetime, with no opt-out: tokens that must
+// live longer are the Authorization Server's to issue. Restrict the
+// refresh token to this Credential Issuer, as the access token is
 // (RedeemedPreAuthorizedCode.Resource, which is Config.Issuer):
 //
 //	refresh, err := srv.IssueRefreshToken(ctx, server.IssueRefreshTokenRequest{

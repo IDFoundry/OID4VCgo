@@ -1566,9 +1566,10 @@ changes whether *every* bullet below is `(done)`.
   Verifier's business checks, composed with `Chain`): a `StatusPolicy`,
   as `TransactionsConfig.Status`, `VerifyResponseRequest.Status` or
   `mdocdcapi.VerifyParams.Status`, runs before `Accept`, and
-  `AssuranceProduction` requires it, with a hardened fetcher and a
-  status-list signer revocation choice, or an explicit `NoStatusCheck`
-  (`CheckStatusDecision`). It passes a credential with no status
+  `AssuranceProduction` requires it, with a hardened fetcher, a
+  status-list signer revocation choice and a bound on how long ago a
+  list may have been signed (`Options.MaxAge`, or `AnyListAge` to
+  decline it), or an explicit `NoStatusCheck` (`CheckStatusDecision`). It passes a credential with no status
   reference unless `RequireReference` is set; `RequireValidStatus` and
   `RequireStatusReference` are the same checks as `Accept`s. Certificate
   revocation is checked for a credential's issuer: `X5CIssuerKeyResolver`
@@ -1797,6 +1798,11 @@ changes whether *every* bullet below is `(done)`.
   redirect from it — the Verifier's reply is a 200 carrying JSON
   (§8.2), and following one would resend the response, and take the
   `redirect_uri` the user agent is sent to, from wherever it pointed.
+  That `redirect_uri` is refused when its scheme is plain http, runs
+  code or reads local data, invokes a Wallet, or opens a system handler
+  (an app's install prompt or store page, a call, a message, the
+  settings); `Config.VerifierRedirectSchemes` narrows the rest to https
+  and the Verifier apps' schemes it names, in the `*Wallet` forms.
   Every parser binds the `client_id` to the chain-verified signing
   leaf in one place (`bindClientID`): its `x509_hash`, or, with
   `Config.AcceptX509SANDNS`, an `x509_san_dns` one of its dNSNames
@@ -1903,8 +1909,10 @@ changes whether *every* bullet below is `(done)`.
 - **`sealing`** (done) — sealing records at rest, for every role: the
   `Sealer` interface (`sqlstore.Options.Sealer`,
   `verifier.TransactionCodec.Sealer`), `AESGCMSealer` (AES-256-GCM,
-  refusing a key that isn't 32 random bytes), and `Store`, by which an
-  issuer store declares whether it seals what it holds. It moved out of
+  refusing a key that isn't 32 random bytes), and `Store`, by which a
+  store declares whether it seals what it holds: the issuer's, the
+  Wallet Provider's and walletflow's, which production refuses
+  unsealed unless their `UnsealedStores` is set. It moved out of
   `verifier`, which keeps `AESGCMSealer` and `TransactionSealer` as
   deprecated forwards, since it was always the sealer for every store.
 - **`storage`** (done) — in-memory implementations of every store `issuer`
@@ -1985,7 +1993,10 @@ changes whether *every* bullet below is `(done)`.
 - **`walletflow`** (done) — a holder's wallet as sessions, over a
   `KeyStore` and `CredentialStore` the app supplies, an optional
   `WalletProvider`, and optional stores so deferred credentials, an
-  authorization in progress and refresh tokens survive a restart:
+  authorization in progress and refresh tokens survive a restart
+  (outside `Development`, the `CredentialStore` and these must seal
+  their records, unless `Config.UnsealedStores`, which the mobile
+  façade sets, its records kept by the platform's data protection):
   `StartIssuance` (both grants, deferred and batch issuance),
   `RefreshCredential`,
   `StartPresentation` (OpenID4VP links), and over the

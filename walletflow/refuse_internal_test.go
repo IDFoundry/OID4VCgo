@@ -35,7 +35,10 @@ func TestRefuse_SendsTheErrorResponse(t *testing.T) {
 		_, _ = w.Write([]byte(`{"redirect_uri":"https://verifier.example/done"}`))
 	}))
 	defer ts.Close()
-	w := &Wallet{deps: Dependencies{HTTP: ts.Client()}}
+	w, err := New(Config{Development: true}, Dependencies{Keys: NewMemoryKeyStore(), Credentials: NewMemoryCredentialStore(), HTTP: ts.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = w.refuse(context.Background(), &wallet.RequestRejectedError{
 		Code: "invalid_transaction_data", Description: "unsupported", State: "s1",
 		ResponseURI: ts.URL, ResponseEncryptionKey: &key.PublicKey, ResponseEncryptionEnc: "A128GCM",

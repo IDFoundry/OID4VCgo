@@ -390,7 +390,7 @@ func preAuthorizedCodeProductionConfig(t *testing.T) (issuer.Config, issuer.Depe
 	t.Helper()
 	cfg := validConfig(t)
 	cfg.Assurance = issuer.AssuranceProduction
-	cfg.Limits.AccessTokenLifetime = time.Hour
+	cfg.Limits.AccessTokenLifetime = 5 * time.Minute
 	cfg.Limits.MaxTxCodeAttempts = 3
 	cfg.PreAuthorizedCodeClientAuthentication = issuer.AnonymousPreAuthorizedCode{}
 	deps := validDependencies(t)

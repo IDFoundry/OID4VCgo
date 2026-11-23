@@ -47,7 +47,12 @@ const (
 	// production bounds, replay record and nonces.
 	// Without a Nonce Endpoint, Limits.MaxProofAge must be at most
 	// MaxProductionProofAge; with one, Limits.NonceLifetime at most an
-	// hour. A store that doesn't implement
+	// hour. Limits.AccessTokenLifetime must be at most
+	// MaxProductionAccessTokenLifetime when Dependencies.AccessTokens is
+	// set, Limits.CredentialOfferLifetime at most
+	// MaxProductionCredentialOfferLifetime and
+	// Limits.DeferredTransactionLifetime at most
+	// MaxProductionDeferredTransactionLifetime. A store that doesn't implement
 	// StoreAssurance at all is rejected rather than assumed adequate —
 	// declaring capabilities is not optional under this level. This
 	// does not verify any declaration; a store should still be tested
@@ -220,6 +225,7 @@ func checkProductionAssurance(cfg Config, deps Dependencies) []error {
 		checkProductionProofFreshness(cfg),
 		checkProductionNonceKeys(deps.NonceKeys),
 	)
+	errs = append(errs, checkProductionLifetimes(cfg, deps)...)
 	errs = append(errs, checkProductionKeySources(cfg, deps)...)
 	return append(errs, checkProductionStores(cfg, deps)...)
 }
@@ -313,6 +319,65 @@ func checkProductionProofFreshness(cfg Config) error {
 		return fmt.Errorf("config: limits.max_proof_age is %s; without endpoints.nonce, under AssuranceProduction it must be at most %s (a proof's iat is then its only freshness: set endpoints.nonce, as HAIP 1.0 §4.1 requires, to make each proof single-use)", cfg.Limits.MaxProofAge, MaxProductionProofAge)
 	}
 	return nil
+}
+
+// MaxProductionAccessTokenLifetime is the longest
+// Limits.AccessTokenLifetime AssuranceProduction takes when
+// Dependencies.AccessTokens mints the pre-authorized code grant's
+// access tokens (ExchangePreAuthorizedCode). Such a token names no
+// grant, so revoking the grant (fapigo/server's RevokeGrant, or the
+// Wallet revoking its refresh token, RFC 7009) doesn't end it: it stays
+// usable at the Credential Endpoint until it expires. Ten minutes is
+// how long fapigo/server.RecommendedLimits, and so
+// haip.RecommendedAuthorizationServerConfig, has access tokens live, a
+// ceiling fapigo/server's NoRevocation says to stay under for tokens
+// nothing revokes. There's no opt-out: to issue longer-lived tokens,
+// redeem the code with RedeemPreAuthorizedCode (under
+// VerifiedPreAuthorizedCode) and have the Authorization Server issue
+// them, naming the grant (fapigo/server's Server.IssueAccessToken), so
+// that revoking it ends them.
+const MaxProductionAccessTokenLifetime = 10 * time.Minute
+
+// MaxProductionCredentialOfferLifetime is the longest
+// Limits.CredentialOfferLifetime AssuranceProduction takes when
+// CredentialOfferEndpoint is set: Dependencies.CredentialOffers keeps
+// each by-reference offer, its pre-authorized_code included, and
+// serves it to whoever has its URI, for that long. It is
+// MaxProductionPreAuthorizedLifetime, the longest a pre-authorized code
+// lives, so an offer can be fetched for as long as its code can be
+// redeemed, and is kept no longer. There's no opt-out: an offer for the
+// authorization code grant that must stay usable longer can be sent by
+// value, which nothing stores.
+const MaxProductionCredentialOfferLifetime = MaxProductionPreAuthorizedLifetime
+
+// MaxProductionDeferredTransactionLifetime is the longest
+// Limits.DeferredTransactionLifetime AssuranceProduction takes when
+// Endpoints.DeferredCredential is set. A deferred transaction stays
+// answerable that long once RequestCredential defers it, and again once
+// IssueDeferredCredential issues it, its record holding the holder's
+// binding keys and key attestations, then the issued Credentials. Thirty
+// days leaves a review outside the protocol weeks to finish. There's no
+// opt-out: where one takes longer, deny the transaction
+// (DenyDeferredCredential) and, once the review is done, issue with a
+// new Credential Offer.
+const MaxProductionDeferredTransactionLifetime = 30 * 24 * time.Hour
+
+// checkProductionLifetimes bounds how long a production issuer keeps
+// usable what nothing ends early: the access tokens it mints itself,
+// by-reference Credential Offers and deferred transactions. Each bound
+// applies where its lifetime is used.
+func checkProductionLifetimes(cfg Config, deps Dependencies) []error {
+	var errs []error
+	if deps.PreAuthorizedCodes != nil && deps.AccessTokens != nil && cfg.Limits.AccessTokenLifetime > MaxProductionAccessTokenLifetime {
+		errs = append(errs, fmt.Errorf("config: limits.access_token_lifetime is %s; under AssuranceProduction it must be at most %s when dependencies.access_tokens is set, as an access token ExchangePreAuthorizedCode issues names no grant, so revoking the grant doesn't end it (for longer-lived tokens, have the Authorization Server issue them: RedeemPreAuthorizedCode)", cfg.Limits.AccessTokenLifetime, MaxProductionAccessTokenLifetime))
+	}
+	if !cfg.CredentialOfferEndpoint.IsZero() && cfg.Limits.CredentialOfferLifetime > MaxProductionCredentialOfferLifetime {
+		errs = append(errs, fmt.Errorf("config: limits.credential_offer_lifetime is %s; under AssuranceProduction it must be at most %s, the longest a pre-authorized code lives (send an offer that must stay usable longer by value)", cfg.Limits.CredentialOfferLifetime, MaxProductionCredentialOfferLifetime))
+	}
+	if !cfg.Endpoints.DeferredCredential.IsZero() && cfg.Limits.DeferredTransactionLifetime > MaxProductionDeferredTransactionLifetime {
+		errs = append(errs, fmt.Errorf("config: limits.deferred_transaction_lifetime is %s; under AssuranceProduction it must be at most %s", cfg.Limits.DeferredTransactionLifetime, MaxProductionDeferredTransactionLifetime))
+	}
+	return errs
 }
 
 // issuesAnonymousAccessTokens reports whether this issuer issues the

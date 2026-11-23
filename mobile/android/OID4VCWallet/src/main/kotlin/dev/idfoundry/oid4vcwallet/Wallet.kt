@@ -72,10 +72,12 @@ public data class WalletConfiguration(
      * private network addresses, instead of the hardened one (trusting
      * [Development.roots] too, when set); requires no revocation choice
      * for a trust role, so a role in neither [Revocation.roles] nor
-     * [Revocation.declined] is checked for nothing; skips the check that
-     * different roles' roots share no anchor; and skips the production
-     * checks on receiving credentials: durable stores and keys, and the
-     * random source. Refused (`invalid_input`) unless the app called
+     * [Revocation.declined] is checked for nothing; requires no bound on a
+     * status list's age ([StatusLists.maxAgeSeconds] or
+     * [StatusLists.anyAge]); skips the check that different roles' roots
+     * share no anchor; and skips the production checks on receiving
+     * credentials: durable stores and keys, and the random source.
+     * Refused (`invalid_input`) unless the app called
      * [OID4VC.allowDevelopment], from a debuggable build only.
      */
     val development: Development? = null,
@@ -152,12 +154,12 @@ public data class WalletConfiguration(
          * credential refuse an issuer the list no longer names the same
          * way, keeping what the wallet holds from it.
          *
-         * A wallet with [roots] (or the mdoc ones) must decide which
-         * issuers' offers it takes, or the [Wallet] constructor throws
-         * `invalidInput`: this list; signed issuer metadata naming its
-         * issuer ([IssuerMetadataTrust] with `roots`, `requireSigned` and
-         * `requireName`), which may be combined with it; or
-         * [allowAnyCredentialIssuer], alone.
+         * A wallet with [roots] (or [rootsByVCT], or the mdoc ones) must
+         * decide which issuers' offers it takes, or the [Wallet]
+         * constructor throws `invalidInput`: this list; signed issuer
+         * metadata naming its issuer ([IssuerMetadataTrust] with `roots`,
+         * `requireSigned` and `requireName`), which may be combined with
+         * it; or [allowAnyCredentialIssuer], alone.
          */
         val credentialIssuers: List<String> = emptyList(),
         /**
@@ -169,6 +171,18 @@ public data class WalletConfiguration(
          * whose issuers can't be told apart in advance.
          */
         val allowAnyCredentialIssuer: Boolean = false,
+        /**
+         * Each SD-JWT VC type's own issuers, as PEM certificates by `vct`:
+         * a credential of a type named here must chain to them, not to
+         * [roots], so where [roots] hold several providers' CAs one can't
+         * issue a credential of another's type, which the wallet would show
+         * and offer as that type. A type named with an empty string is
+         * refused. With it set, the types a credential says it's of too
+         * (`aka_vcts`) must be its issuer's: its chain must verify under
+         * each one's roots here, else [roots]. [requireEKU] applies under
+         * them (from OID4VCWallet 0.43.0).
+         */
+        val rootsByVCT: Map<String, String> = emptyMap(),
     )
 
     /** Which signed Credential Issuer Metadata the wallet trusts. */
@@ -394,12 +408,27 @@ public data class WalletConfiguration(
          * needs a key store that is also a [KeyAgreement].
          */
         val proximityDeviceAuth: ProximityDeviceAuth = ProximityDeviceAuth.SIGNATURE,
+        /**
+         * The only URI schemes besides `https` a Verifier's redirect may
+         * have, when set: the schemes of the Verifier apps the wallet
+         * returns holders to, or `listOf("https")` to allow no other. A
+         * redirect with another scheme isn't returned: [Presentation.respond]
+         * and [Presentation.decline] throw [WalletException.Code.protocol],
+         * the presentation answered, and a refusal has no
+         * [WalletException.refusalRedirect]. Empty, the default, allows any
+         * scheme but those the wallet never follows: `http`, schemes that
+         * run code or read local data, invoke a wallet or open a system app
+         * (`market`, `tel`, `sms`, `mailto` and their like), and
+         * [WalletConfiguration.redirectURI]'s. A scheme that isn't one, or
+         * one never followed, is `invalidInput` (from OID4VCWallet 0.43.0).
+         */
+        val verifierRedirectSchemes: List<String> = emptyList(),
     )
 
     /** A trust role whose certificates can be checked for revocation. */
     @Serializable
     public enum class RevocationRole {
-        /** The issuers' signing certificates ([IssuerTrust.roots] and the mdoc roots), on receipt, deferral and refresh. */
+        /** The issuers' signing certificates ([IssuerTrust.roots], [IssuerTrust.rootsByVCT] and the mdoc roots), on receipt, deferral and refresh. */
         @SerialName("issuer") ISSUER,
 
         /** The signers of Credential Issuer Metadata ([IssuerMetadataTrust.roots]). */
@@ -556,6 +585,10 @@ internal data class WalletConfigurationJSON(
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    @SerialName("verifier_redirect_schemes") val verifierRedirectSchemes: List<String> = emptyList(),
+    @SerialName("issuer_roots_by_vct") val issuerRootsByVCT: Map<String, String> = emptyMap(),
+    @SerialName("status_max_age_seconds") val statusMaxAgeSeconds: Long = 0,
+    @SerialName("status_any_age") val statusAnyAge: Boolean = false,
 )
 
 /** Encodes a [WalletConfiguration] as its flat [WalletConfigurationJSON], and decodes one from it. */
@@ -621,6 +654,10 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
         identifierListMaxBytes = c.status.identifierListMaxBytes,
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
+        verifierRedirectSchemes = c.presentation.verifierRedirectSchemes,
+        issuerRootsByVCT = c.issuers.rootsByVCT,
+        statusMaxAgeSeconds = c.status.maxAgeSeconds,
+        statusAnyAge = c.status.anyAge,
     )
 
     private fun grouped(j: WalletConfigurationJSON): WalletConfiguration = WalletConfiguration(
@@ -638,6 +675,7 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             statusIssuers = j.statusIssuers,
             credentialIssuers = j.credentialIssuers,
             allowAnyCredentialIssuer = j.allowAnyCredentialIssuer,
+            rootsByVCT = j.issuerRootsByVCT,
         ),
         issuerMetadata = WalletConfiguration.IssuerMetadataTrust(
             roots = j.issuerMetadataRoots,
@@ -666,7 +704,9 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
             requireHTTPS = j.crlRequireHTTPS,
         ),
-        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        status = StatusLists(
+            j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir, j.statusMaxAgeSeconds, j.statusAnyAge,
+        ),
         network = WalletConfiguration.Network(tlsPins = j.tlsPins, allowedPrivateHosts = j.allowedPrivateHosts),
         issuance = WalletConfiguration.IssuanceOptions(
             locales = j.locales,
@@ -676,7 +716,11 @@ internal object WalletConfigurationSerializer : KSerializer<WalletConfiguration>
             proofKeyByJWK = j.proofKeyByJWK,
             proofKeyByIndex = j.proofKeyByIndex,
         ),
-        presentation = WalletConfiguration.PresentationOptions(copyPolicy = j.copyPolicy, proximityDeviceAuth = j.proximityDeviceAuth),
+        presentation = WalletConfiguration.PresentationOptions(
+            copyPolicy = j.copyPolicy,
+            proximityDeviceAuth = j.proximityDeviceAuth,
+            verifierRedirectSchemes = j.verifierRedirectSchemes,
+        ),
         development = Development.decoded(j.development, j.developmentRoots),
     )
 }
@@ -990,6 +1034,10 @@ public class Wallet(
     // Go holds these too; the wallet keeps them alive with it.
     private val adapters: List<Any>
 
+    // Its registration key stores' prefixes, which sweepOrphanedKeys
+    // refuses a store over.
+    private val httpWalletProvider: HttpWalletProvider? = provider as? HttpWalletProvider
+
     init {
         if (OID4VC.abiVersion != OID4VC.expectedABIVersion) {
             throw WalletException(
@@ -1006,6 +1054,9 @@ public class Wallet(
         val wp = provider?.let { WalletProviderAdapter(it, keyStore, created) }
         val config = StatusCacheKey.configuration(json.encodeToString(WalletConfiguration.serializer(), configuration), configuration.status.cacheDir)
         handle = OID4VC.wrap { Mobile.newWallet(config, keys, credentials, wp) }
+        // The provider's registration key sweep refuses a store over this
+        // wallet's keys.
+        if (provider is HttpWalletProvider && keyStore is AndroidKeystoreKeyStore) provider.addWalletKeys(keyStore.options.aliasPrefix)
         val agreement = (keyStore as? KeyAgreement)?.let(::KeyAgreementAdapter)
         agreement?.let(handle::setKeyAgreement)
         // A call cancelled while it waits for the holder or the provider
@@ -1022,21 +1073,26 @@ public class Wallet(
      * — and returns how many. Call it at launch, before any issuance or
      * refresh: one in progress holds keys of its own.
      *
-     * What it may delete: key pairs under [keyStore]'s
-     * [AndroidKeystoreKeyStore.Options.aliasPrefix] — holder, instance
-     * and DPoP keys — that no credential is bound to. Pass the wallet's
-     * own key store, under a prefix of its own: another key pair of the
-     * app's under that prefix would be deleted too. Secret keys — the
-     * credential store's and the status cache's — are never deleted.
+     * What it may delete: key pairs whose alias is [keyStore]'s
+     * [AndroidKeystoreKeyStore.Options.aliasPrefix] and a UUID, as the
+     * store makes them — holder, instance and DPoP keys — that no
+     * credential is bound to. Pass the wallet's own key store, under a
+     * prefix of its own: another store's keys under the same prefix
+     * would be deleted too. Secret keys — the credential store's and the
+     * status cache's — are never deleted.
      *
      * @throws IllegalArgumentException, deleting nothing, for a store
-     *   whose prefix covers or falls under
-     *   [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX]: that would
-     *   delete the Wallet Provider registration key, which
+     *   whose prefix is, covers or falls under
+     *   [HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX], or the prefix
+     *   of the registration key store, an [AndroidKeystoreKeyStore], of
+     *   any [HttpWalletProvider] made over the registry of the one this
+     *   wallet was built with: that would delete the Wallet Provider
+     *   registration key, which
      *   [HttpWalletProvider.sweepOrphanedRegistrationKeys] sweeps instead.
      */
     public suspend fun sweepOrphanedKeys(keyStore: AndroidKeystoreKeyStore): Int {
-        walletSweepRefusal(keyStore.options.aliasPrefix)?.let { throw IllegalArgumentException(it) }
+        val registrationPrefixes = httpWalletProvider?.registrationKeyPrefixes().orEmpty()
+        walletSweepRefusal(keyStore.options.aliasPrefix, registrationPrefixes)?.let { throw IllegalArgumentException(it) }
         val keep = decode<KeyIDsResult>(OID4VC.offMain { handle.holderKeyIDs() }).keyIDs.toSet()
         return OID4VC.offMain { keyStore.deleteKeys(keep) }
     }
@@ -1045,16 +1101,15 @@ public class Wallet(
         /**
          * Why [sweepOrphanedKeys] refuses a key store under [aliasPrefix],
          * or null: an empty prefix covers every key, and one overlapping
-         * the registration key's prefix covers that key.
+         * the registration key's prefix — the default, or one of
+         * [registrationPrefixes], the Wallet Provider's registration key
+         * stores' — covers that key.
          */
-        internal fun walletSweepRefusal(aliasPrefix: String): String? {
-            val registration = HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX
-            return when {
-                aliasPrefix.isEmpty() -> "sweep keys: the key store's aliasPrefix is empty, which covers every key"
-                aliasPrefix.startsWith(registration) || registration.startsWith(aliasPrefix) ->
-                    "sweep keys: the key store's aliasPrefix $aliasPrefix overlaps the Wallet Provider registration key's, $registration"
-                else -> null
-            }
+        internal fun walletSweepRefusal(aliasPrefix: String, registrationPrefixes: Set<String> = emptySet()): String? {
+            if (aliasPrefix.isEmpty()) return "sweep keys: the key store's aliasPrefix is empty, which covers every key"
+            val registration = (listOf(HttpWalletProvider.REGISTRATION_KEY_ALIAS_PREFIX) + registrationPrefixes.sorted())
+                .firstOrNull { aliasPrefix.startsWith(it) || it.startsWith(aliasPrefix) } ?: return null
+            return "sweep keys: the key store's aliasPrefix $aliasPrefix overlaps the Wallet Provider registration key's, $registration"
         }
     }
 
@@ -1218,7 +1273,9 @@ public class Wallet(
      * Where the Verifier asked to take the holder after the wallet
      * refused its request: when [startPresentation] throws
      * [WalletException.Code.requestRefused], open this URL, if any, as
-     * OpenID4VP §8.2 has a wallet do. It's returned once. It holds the
+     * OpenID4VP §8.2 has a wallet do. The holder has done no more than
+     * open the link, so ask them before opening one that isn't `https`:
+     * it opens another app. It's returned once. It holds the
      * latest refusal of any call: with presentations started
      * concurrently, open the exception's own
      * [WalletException.refusalRedirect] instead, or one Verifier's

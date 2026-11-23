@@ -285,7 +285,7 @@ func New(cfg Config) (*App, error) {
 // newTransactions is scenario sc's relying party: a Verifier signing
 // its requests as sg, with its own endpoints under /s/<sc>/. A trusted
 // one's requests carry its registration, signed by registrar.
-func (a *App) newTransactions(sc Scenario, sg signer, registrar signer) (*verifier.Transactions, error) {
+func (a *App) newTransactions(sc Scenario, sg, registrar signer) (*verifier.Transactions, error) {
 	base := a.cfg.VerifierURL + "/s/" + string(sc)
 	responseURI, err := fapi.ParseEndpointURL(base + "/response")
 	if err != nil {

@@ -31,6 +31,7 @@ func readerConfig(t *testing.T, h harness, reader *testReader, extra map[string]
 	t.Helper()
 	cfg := map[string]any{
 		"issuer_roots": issuerRootsPEM(t, h), "any_issuer_for_any_type": true, "no_revocation_check": []string{"issuer", "status"}, "status": "decline",
+		"status_max_age_seconds": 86400,
 	}
 	var ks KeyStore
 	if reader != nil {
@@ -451,7 +452,9 @@ func TestNewProximityReader_Decisions(t *testing.T) {
 		"the removed production":          {`{` + roots + `, ` + readerDecisions + `, "production": true}`, `"production"`},
 		"status undecided":                {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"]}`, `status is unset`},
 		"status misspelt":                 {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "checked"}`, `"checked"`},
-		"status checked":                  {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "check"}`, ""},
+		"status checked":                  {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "check", "status_max_age_seconds": 86400}`, ""},
+		"status checked, any list age":    {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "check", "status_any_age": true}`, ""},
+		"status checked, list age open":   {`{` + roots + `, "any_issuer_for_any_type": true, "no_revocation_check": ["issuer", "status"], "status": "check"}`, "status_max_age_seconds is unset"},
 		"decided":                         {`{` + roots + `, ` + readerDecisions + `}`, ""},
 		"development, explicitly off":     {`{` + roots + `, ` + readerDecisions + `, "development": false}`, ""},
 		"development":                     {`{` + roots + `, "development": true}`, ""},

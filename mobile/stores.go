@@ -910,7 +910,11 @@ const networkPrefix = "[network]"
 // grant, so a callback marks those codes only for an answer with the
 // status walletprovider.CodeStatus gives them, as the libraries'
 // HttpWalletProvider does: an answer with another isn't the provider's
-// refusal.
+// refusal. The mark is the whole "[refused:<code>] ", code a plain token
+// (errorCode), as the protocol's codes are, or "[refused:<code>]" alone:
+// anything else starting with the prefix — a code with a "]" or a space
+// in it, which could end the mark early and name another code — is a
+// refusal without a code.
 const refusedPrefix = "[refused:"
 
 // providerError is a Wallet Provider callback's err doing what: a
@@ -926,10 +930,8 @@ func providerError(what string, err error) error {
 	case strings.HasPrefix(msg, networkPrefix):
 		return newError(CodeNetwork, fmt.Errorf("%s: %s", what, strings.TrimSpace(strings.TrimPrefix(msg, networkPrefix))))
 	case strings.HasPrefix(msg, refusedPrefix):
-		if code, rest, ok := strings.Cut(strings.TrimPrefix(msg, refusedPrefix), "]"); ok {
-			// errorCode drops a code that isn't a plain token: the
-			// refusal is still platform, with no detail.
-			e := &Error{Code: CodePlatform, Detail: errorCode(code), Message: cleanText(what + ": " + strings.TrimSpace(rest))}
+		if code, rest, ok := refusalMark(msg); ok {
+			e := &Error{Code: CodePlatform, Detail: code, Message: cleanText(what + ": " + strings.TrimSpace(rest))}
 			if sentinel := walletprovider.CodeError(e.Detail); sentinel != nil {
 				return &providerRefusal{err: e, sentinel: sentinel}
 			}
@@ -937,6 +939,19 @@ func providerError(what string, err error) error {
 		}
 	}
 	return newError(CodePlatform, fmt.Errorf("%s: %w", what, err))
+}
+
+// refusalMark is the provider's error code msg is marked with, and the
+// message after the mark: ok only for the whole mark, "[refused:", a
+// plain token (errorCode) and "]", then a space or the end of msg. A
+// code cut short by a "]" in it, or a "]" followed by anything else, is
+// no mark.
+func refusalMark(msg string) (code, rest string, ok bool) {
+	code, rest, found := strings.Cut(strings.TrimPrefix(msg, refusedPrefix), "]")
+	if !found || errorCode(code) == "" || rest != "" && rest[0] != ' ' {
+		return "", "", false
+	}
+	return code, rest, true
 }
 
 // providerRefusal is a native Wallet Provider's refusal whose code

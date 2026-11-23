@@ -82,7 +82,7 @@ type VerifyOptions struct {
 
 // Verify checks a presented SD-JWT or SD-JWT+KB against the Issuer's
 // already-resolved public key — the Issuer-signed JWT's signature,
-// typ, vct and validity, each Disclosure's digest, and, when
+// typ, non-empty vct and validity, each Disclosure's digest, and, when
 // RequireKeyBinding is KeyBindingRequired, the Key Binding JWT against
 // HolderPublicKey — and returns the Processed SD-JWT Payload (RFC 9901
 // §7.1's term) plus the Issuer-signed JWT's raw JOSE header. It refuses
@@ -204,8 +204,14 @@ func verifyIssuerJWT(issuerJWT string, issuerPub crypto.PublicKey, issuerAlg oid
 	if err := checkNumbers(rawPayload); err != nil {
 		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload: %w", err)
 	}
-	if _, ok := decoded["vct"].(string); !ok {
+	switch vct, ok := decoded["vct"].(string); {
+	case !ok:
 		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload is missing the required vct claim")
+	case vct == "":
+		// vct identifies the credential's type, as a collision-resistant
+		// name (draft-13 §3.2.2.1, RFC 7515 §2): "" names none, and
+		// Issue refuses it.
+		return nil, nil, "", fmt.Errorf("sdjwtvc: issuer JWT payload's vct is empty: it must name the credential's type")
 	}
 
 	now := time.Now

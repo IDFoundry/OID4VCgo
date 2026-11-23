@@ -38,11 +38,25 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         /// ``MdocPresentation/respond(answers:)``) asks once: its holder
         /// keys share one authentication context for that call only.
         public var holderUserPresence: Bool
-        /// Prefixes every key's Keychain application tag. Keys under
-        /// another prefix are never touched, by a sweep or anything else.
-        /// A sweep refuses an empty one; and the wallet's mustn't cover,
-        /// or fall under, ``HttpWalletProvider/registrationKeyTagPrefix``,
-        /// which ``Wallet/sweepOrphanedKeys(in:)`` refuses.
+        /// Prefixes every key's Keychain application tag, before its ID, a
+        /// UUID. The store lists and sweeps only tags of that form
+        /// (``KeychainKeyStore/keyIDs()``,
+        /// ``KeychainKeyStore/deleteKeys(except:)``), so the keys of a
+        /// store whose prefix extends this one's aren't its own. But it
+        /// lists them in every Keychain access group the app can read,
+        /// with a ``holderAccessGroup`` or without: a key under this
+        /// prefix, the app's or another app's sharing a group, is this
+        /// store's to sweep. Give every other store — another wallet's,
+        /// a Wallet Provider's registration keys', another app's — a
+        /// prefix where neither extends this one; a document provider
+        /// extension's store is the app's wallet's, and shares its
+        /// prefix. A sweep refuses an empty one; and the wallet's
+        /// mustn't cover, or fall under,
+        /// ``HttpWalletProvider/registrationKeyTagPrefix``, nor the prefix
+        /// of its Wallet Provider's registration key store:
+        /// ``Wallet/sweepOrphanedKeys(in:)`` refuses such a store, and
+        /// ``HttpWalletProvider/sweepOrphanedRegistrationKeys()`` a
+        /// registration key store over the wallet's.
         public var tagPrefix: String
         /// The Keychain access group holder keys are made in, when the
         /// app shares them with an extension — a document provider
@@ -234,13 +248,18 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         }
     }
 
-    /// The IDs of every key this store holds (under its tag prefix).
+    /// The IDs of the keys this store holds: those whose tag is
+    /// ``Options/tagPrefix`` and an ID as ``createKey(purpose:)`` makes
+    /// it, a UUID. Any other tag under the prefix — a key of a store whose
+    /// prefix extends this one's — isn't listed. The keys are those of
+    /// every Keychain access group the app can read.
     public func keyIDs() throws -> [String] {
         try listKeys().map(\.id)
     }
 
-    /// Every key under the tag prefix, and whether a `KeychainKeyStore`
-    /// made it (`createKey` labels it with its purpose).
+    /// Every key whose tag is the tag prefix and an ID as `createKey`
+    /// makes it, and whether a `KeychainKeyStore` made it (`createKey`
+    /// labels it with its purpose).
     private func listKeys() throws -> [(id: String, ours: Bool)] {
         if !options.persistent {
             return lock.withLock { ephemeral.keys.map { ($0, true) } }
@@ -261,8 +280,16 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         return all.compactMap { attrs in
             guard let tag = attrs[kSecAttrApplicationTag as String] as? Data, tag.starts(with: prefix) else { return nil }
             let id = String(decoding: tag.dropFirst(prefix.count), as: UTF8.self)
+            guard Self.isKeyID(id) else { return nil }
             return (id, Self.madeByStore(label: attrs[kSecAttrLabel as String] as? String))
         }
+    }
+
+    /// Whether `id` is a key ID as `createKey` makes it: a UUID, as
+    /// `uuidString` writes it. What a key under a prefix extending this
+    /// store's leaves after this store's prefix is longer.
+    static func isKeyID(_ id: String) -> Bool {
+        UUID(uuidString: id)?.uuidString == id
     }
 
     /// The label prefix `createKey` gives every key, before its purpose.
@@ -273,15 +300,18 @@ public final class KeychainKeyStore: KeyStore, KeyAgreement, @unchecked Sendable
         label?.hasPrefix(labelPrefix) == true
     }
 
-    /// Deletes every key this store holds except `keep`, and returns how
-    /// many it deleted. `Wallet.sweepOrphanedKeys(in:)` calls it with the
-    /// keys the wallet's credentials are bound to.
+    /// Deletes every key this store holds (``keyIDs()``) except `keep`,
+    /// and returns how many it deleted. `Wallet.sweepOrphanedKeys(in:)`
+    /// calls it with the keys the wallet's credentials are bound to.
     ///
     /// It deletes only keys a `KeychainKeyStore` made (labelled with
-    /// their purpose by `createKey`) under `Options.tagPrefix`: another
-    /// of the app's keys under that prefix, made otherwise, is kept. It
-    /// throws for an empty `tagPrefix`, which covers every tagged key in
-    /// the app's Keychain.
+    /// their purpose by `createKey`) whose tag is `Options.tagPrefix` and
+    /// a UUID: another of the app's keys under that prefix, made
+    /// otherwise, is kept, and so are the keys of a store whose prefix
+    /// extends this one's. Another store's under the same prefix, in any
+    /// access group the app can read, are deleted (`Options.tagPrefix`).
+    /// It throws for an empty `tagPrefix`, which covers every tagged key
+    /// in the app's Keychain.
     @discardableResult
     public func deleteKeys(except keep: Set<String>) throws -> Int {
         guard !options.tagPrefix.isEmpty else {

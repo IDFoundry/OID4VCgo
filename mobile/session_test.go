@@ -642,6 +642,7 @@ func TestSessions_ProductionNeedsDurableStores(t *testing.T) {
 	}
 	cfg["development"] = false
 	cfg["no_revocation_check"] = []string{"issuer", "status", "verifier", "registrar"}
+	cfg["status_max_age_seconds"] = 86400
 	raw, _ := json.Marshal(cfg)
 	creds := newGoCredentialStore()
 	creds.ephemeral = true
@@ -667,6 +668,7 @@ func TestSessions_ProductionRedirectURI(t *testing.T) {
 	}
 	cfg["development"] = false
 	cfg["no_revocation_check"] = []string{"issuer", "status", "verifier", "registrar"}
+	cfg["status_max_age_seconds"] = 86400
 	prev := testHTTP.Swap(nil)
 	defer testHTTP.Store(prev)
 	for uri, ok := range map[string]bool{

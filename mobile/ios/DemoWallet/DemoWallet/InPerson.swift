@@ -206,6 +206,9 @@ final class InPersonModel {
     /// signer's chain, and a status list signer's — with `crls` the lists
     /// last fetched, refreshed by refreshCRLs; the others decline it, as
     /// for services that publish no CRLs. A shipping reader checks both.
+    /// A status list signed over a day ago is refused, so one from
+    /// before a revocation, served again, isn't accepted until its exp:
+    /// the demo's issuers sign theirs every minute.
     private static func configuration(_ r: DemoConfiguration.Reader, crls: String) -> ProximityReaderConfiguration {
         let checked = r.revocation ?? []
         return ProximityReaderConfiguration(
@@ -218,6 +221,7 @@ final class InPersonModel {
                               distributionPoints: r.crlDistributionPoints ?? [],
                               distributionPointsFromRoots: r.crlDistributionPointsFromRoots ?? false,
                               requireHTTPS: r.crlRequireHTTPS ?? false),
+            status: StatusLists(maxAgeSeconds: 86_400),
             statusCheck: .check,
             development: r.development == true ? Development() : nil)
     }

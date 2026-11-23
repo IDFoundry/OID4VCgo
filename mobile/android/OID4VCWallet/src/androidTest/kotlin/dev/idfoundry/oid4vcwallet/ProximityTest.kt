@@ -40,6 +40,9 @@ internal class PipeTransport : ProximityTransport {
 
     /** Whether the other end connects at all: false for a reader that never comes. */
     var peerConnects = true
+
+    /** Whether closing this end ends the other's: false for a reader that stays connected. */
+    var closingEndsPeer = true
     @Volatile var closed = false
         private set
 
@@ -63,7 +66,7 @@ internal class PipeTransport : ProximityTransport {
     override fun close() {
         closed = true
         inbox.close()
-        peer.inbox.close()
+        if (closingEndsPeer) peer.inbox.close()
     }
 
     companion object {
@@ -207,14 +210,19 @@ class ProximityTest {
                 declined = listOf(ProximityReaderConfiguration.RevocationRole.ISSUER, ProximityReaderConfiguration.RevocationRole.STATUS),
             ),
         )
-        // The status decision is one of a production reader's.
-        try {
-            ProximityReader(decided)
-            throw AssertionError("a production reader without a status decision was configured")
-        } catch (e: WalletException) {
-            assertEquals(WalletException.Code.invalidInput, e.code)
+        // The status decision is one of a production reader's, and so is,
+        // when it checks status, how old a list may be.
+        val checking = decided.copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK)
+        for (undecided in listOf(decided, checking)) {
+            try {
+                ProximityReader(undecided)
+                throw AssertionError("a production reader without its status decisions was configured: $undecided")
+            } catch (e: WalletException) {
+                assertEquals(WalletException.Code.invalidInput, e.code)
+            }
         }
-        ProximityReader(decided.copy(statusCheck = ProximityReaderConfiguration.StatusCheck.CHECK))
+        ProximityReader(checking.copy(status = StatusLists(maxAgeSeconds = 86_400)))
+        ProximityReader(checking.copy(status = StatusLists(anyAge = true)))
     }
 
     @Test
@@ -568,6 +576,29 @@ class ProximityTest {
         holder.decline()
         assertEquals(ProximityPresentation.State.Declined, holder.state.value)
         assertEquals(ProximityReaderSession.State.Declined, awaitFinal(reader.state) { it.isFinal })
+    }
+
+    /**
+     * A decline, too, leaves the transport open until the reader
+     * disconnects or [ProximityPresentation]'s linger passes, so the
+     * termination isn't dropped with the link. In mdoc central client
+     * mode the reader then reports a decline at once, not a lost
+     * connection.
+     */
+    @Test
+    fun aDeclineWaitsForTheReaderToEnd(): Unit = runBlocking {
+        val s = setup()
+        val (holderEnd, readerEnd) = PipeTransport.pair()
+        readerEnd.closingEndsPeer = false
+        val holder = s.wallet.startProximityPresentation(timeouts, holderEnd, setOf(ProximityBLEMode.CENTRAL_CLIENT))
+        val reader = s.reader.startWith(holder.qrCode, DOC_TYPE, mapOf(NAMESPACE to listOf("family_name")), timeouts, readerEnd)
+        awaitRequest(holder)
+        holder.decline()
+        assertEquals(ProximityPresentation.State.Declined, holder.state.value)
+        assertEquals(ProximityReaderSession.State.Declined, awaitFinal(reader.state) { it.isFinal })
+        assertFalse("closed before the reader could end", holderEnd.closed)
+        withTimeout(30.seconds) { holder.awaitClosed() }
+        assertTrue(holderEnd.closed)
     }
 
     @Test

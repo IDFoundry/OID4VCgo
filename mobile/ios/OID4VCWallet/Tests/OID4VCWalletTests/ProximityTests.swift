@@ -325,8 +325,17 @@ final class ProximityTests: XCTestCase {
             issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status])), keys: nil)) {
             XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
         }
+        // So is, when it checks status, how old a list may be.
+        XCTAssertThrowsError(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]), statusCheck: .check), keys: nil)) {
+            XCTAssertEqual(($0 as? WalletError)?.code, .invalidInput)
+        }
         XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
-            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]), statusCheck: .check), keys: nil))
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]),
+            status: .init(maxAgeSeconds: 86_400), statusCheck: .check), keys: nil))
+        XCTAssertNoThrow(try ProximityReader(configuration: ProximityReaderConfiguration(
+            issuers: .init(roots: issuerRoots, anyIssuerForAnyType: true), revocation: .init(declined: [.issuer, .status]),
+            status: .init(anyAge: true), statusCheck: .check), keys: nil))
     }
 
     /// A reader configuration with a key it doesn't know — a misspelled
@@ -426,6 +435,25 @@ final class ProximityTests: XCTestCase {
         guard case .declined = holder.state else { return XCTFail("holder: \(holder.state)") }
         let result = try await final(reader.states) { $0.isFinal }
         guard case .declined = result else { return XCTFail("reader: \(result)") }
+        try await holder.awaitClosed()
+        XCTAssertTrue(s.pipes[0].closed)
+    }
+
+    /// A decline, too, leaves the transport open until the reader
+    /// disconnects or `readerEndSeconds` pass, so the termination isn't
+    /// dropped with the link. In mdoc central client mode the reader
+    /// then reports a decline at once, not a lost connection.
+    func testDeclineWaitsForTheReaderToEnd() async throws {
+        var s = try await setup()
+        defer { s.env.close() }
+        let (holder, reader) = try start(&s, modes: [.centralClient])
+        s.pipes[1].closingEndsPeer = false
+        _ = try await request(holder)
+        await holder.decline()
+        guard case .declined = holder.state else { return XCTFail("holder: \(holder.state)") }
+        let result = try await final(reader.states) { $0.isFinal }
+        guard case .declined = result else { return XCTFail("reader: \(result)") }
+        XCTAssertFalse(s.pipes[0].closed, "closed before the reader could end")
         try await holder.awaitClosed()
         XCTAssertTrue(s.pipes[0].closed)
     }
@@ -645,7 +673,9 @@ final class ProximityTests: XCTestCase {
         do {
             _ = try await responding.value
             XCTFail("a cancelled response was reported presented")
-        } catch is CancellationError {}
+        } catch is CancellationError {
+            // Expected: the response was cancelled.
+        }
         guard case .cancelled = holder.state else { return XCTFail("holder: \(holder.state)") }
         reader.cancel()
     }

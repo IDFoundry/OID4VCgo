@@ -107,6 +107,7 @@ import dev.idfoundry.oid4vcwallet.BiometricPromptAuthenticator
 import dev.idfoundry.oid4vcwallet.FileCredentialStore
 import dev.idfoundry.oid4vcwallet.FileInstanceRegistry
 import dev.idfoundry.oid4vcwallet.HttpWalletProvider
+import dev.idfoundry.oid4vcwallet.StatusLists
 import dev.idfoundry.oid4vcwallet.Wallet
 import dev.idfoundry.oid4vcwallet.WalletConfiguration
 
@@ -138,8 +139,11 @@ Implement `WalletProvider` yourself, and make the checks
   the chain as [Going to production](GoingToProduction.md#the-wallet-provider)
   lists before attesting.
 - **Transport:** send only to your backend's https URL, with
-  `instanceFollowRedirects = false`, a connect and a read timeout, and a
-  bounded read of the answer.
+  `instanceFollowRedirects = false`, a deadline for the whole request,
+  and a bounded read of the answer. `HttpURLConnection`'s connect and
+  read timeouts bound only the connect and each read, which an answer
+  trickled a byte at a time outlasts: disconnect the connection at the
+  deadline, as `HttpWalletProvider` does.
 - **Answers:** before returning a Wallet Attestation, check its `sub`
   is the request's `clientID` and its `cnf.jwk` the instance key;
   before returning a Key Attestation, check its `nonce` is the
@@ -158,7 +162,9 @@ anything else, sweep the Keystore of keys no credential uses: an
 issuance the app quit in the middle of leaves its keys behind. Each
 trust role whose roots you set needs a revocation choice: checked against
 the CRLs your app fetches (`revocation.roles`), or declined
-(`revocation.declined`); see [Going to production](GoingToProduction.md).
+(`revocation.declined`); and a wallet with issuer roots, how old a
+status list may be (`status.maxAgeSeconds`); see
+[Going to production](GoingToProduction.md).
 
 ```kotlin
 /** The app's wallet, created once. `currentActivity` is the activity the holder sees, for the biometric prompt. */
@@ -186,6 +192,9 @@ class AppWallet(context: Context, currentActivity: () -> Activity?, issuerRoots:
                 ),
                 crls = crls,
             ),
+            // A status list signed over a day ago is refused, so one
+            // from before a revocation isn't accepted until its exp.
+            status = StatusLists(maxAgeSeconds = 86_400),
         ),
         keys,
         FileCredentialStore.standard(context),

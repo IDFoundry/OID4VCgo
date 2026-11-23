@@ -27,8 +27,10 @@ each, not a deployment template" says what it does differently.
 - [ ] **Seal records at rest.** `Options.Sealer` encrypts every issuer,
   verifier transaction, walletflow and Wallet Provider record
   (`sealing.AESGCMSealer` makes one from a 32-byte key; the verifier's
-  `TransactionCodec` takes the same Sealer). Keep the key in a secret
-  manager or KMS, never in the database. An AES-GCM key seals about
+  `TransactionCodec` takes the same Sealer). A wallet on a server
+  needs it too: outside `Development`, `walletflow.New` refuses its
+  stores unsealed, unless `Config.UnsealedStores`. Keep the key in a
+  secret manager or KMS, never in the database. An AES-GCM key seals about
   2^32 records safely: rotate before then with fapigo/sqlstore's
   `RotatingSealer`, which seals with its first sealer and opens with
   any. **Rotate in two phases**, so no replica reads a record sealed
@@ -111,6 +113,39 @@ each, not a deployment template" says what it does differently.
   (all but `Nonces`) must seal it (`sealing.Store`).
 - [ ] **`Config.Assurance = issuer.AssuranceProduction`**, so `New`
   refuses the settings production must not run with.
+- [ ] **Deploying as HAIP: `Config.Profile = haip.IssuerProfile{}`.**
+  Production assurance enforces what binds every deployment, not HAIP
+  1.0: it takes a key-bound configuration without a Nonce Endpoint
+  (each jwt proof is then good for any number of Credentials within
+  `Limits.MaxProofAge`), a configuration without a `scope`, a proof
+  type that doesn't accept ES256, and pre-authorized codes redeemed
+  with `issuer.AnonymousPreAuthorizedCode{}`, which authenticates no
+  client. With the profile, `New` also runs `haip.ValidateIssuerConfig`,
+  at either assurance level, and refuses each of those (HAIP 1.0 §4.1,
+  §7, §4.4.1), and a scope that configurations of different Credential
+  Types, or with different key attestation requirements, share (§4.3,
+  §4.5.1). A HAIP deployment sets it. Its errors start
+  `issuer: profile: haip:` and name what to change: `endpoints.nonce`,
+  a configuration's `scope` or `proof_signing_alg_values_supported`, or
+  `pre_authorized_code_client_authentication`. Take the proof types
+  from `haip.RecommendedIssuerConfig` (jwt proofs carrying a key
+  attestation) and the Authorization Server's settings from
+  `haip.RecommendedAuthorizationServerConfig`.
+- [ ] **Lifetimes within production's bounds.** Under
+  `AssuranceProduction`, `New` refuses a
+  `Limits.CredentialOfferLifetime` over
+  `issuer.MaxProductionCredentialOfferLifetime` (a week, the longest a
+  pre-authorized code lives) and a `Limits.DeferredTransactionLifetime`
+  over `issuer.MaxProductionDeferredTransactionLifetime` (30 days).
+  With `Dependencies.AccessTokens` set, it refuses a
+  `Limits.AccessTokenLifetime` over
+  `issuer.MaxProductionAccessTokenLifetime` (10 minutes): an access
+  token `ExchangePreAuthorizedCode` mints names no grant, so revoking
+  the grant leaves it usable until it expires. There's no opt-out: to
+  issue longer-lived tokens, redeem codes with
+  `RedeemPreAuthorizedCode` and issue each token with fapigo's
+  `server.Server.IssueAccessToken` under the grant's `GrantID`, so
+  that revoking the grant ends it.
 - [ ] **Access tokens for this Credential Issuer alone.** List
   `Config.Issuer` in the Authorization Server's `server.Config.Resources`,
   and set `serverresource.Options.Resource` to it, so the Credential
@@ -221,6 +256,12 @@ each, not a deployment template" says what it does differently.
   `iss` to a URI in the certificate, which any provider's CA can write
   unless it carries `uniformResourceIdentifier` name constraints:
   `dNSName` constraints don't apply to URIs (RFC 5280 §4.2.1.10).
+  Keep those roots and anchors apart from
+  `X5CProofBindingKeyResolver.Roots`, which certify keys Wallets hold:
+  `New` refuses any they may share unless the verifier's `LeafPolicy`
+  requires what only a Wallet Provider's signing certificates carry
+  (an extended key usage or a certificate policy), as a Wallet could
+  otherwise sign its own key attestations.
 - [ ] **Key Attestation and Wallet Attestation status:** the issuer
   checks key attestations' status (`Dependencies.AttestationStatus`,
   `issuer.StatusListAttestationStatus`; required under
@@ -375,7 +416,10 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   - per-type roots: `X5CIssuerKeyResolver.RootsByVCT` and
     `X5ChainIssuerKeyResolver.RootsByDocType` (`WithIssuerRootsByDocType`
     on a proximity reader), each type held to its own providers'
-    anchors;
+    anchors. With `Roots` set too, a type `RootsByVCT` doesn't name
+    falls back to them: `X5CIssuerKeyResolver.FallbackTypes`, run on
+    your queries at startup or in a test, reports which of their
+    `vct_values` do;
   - `IssuerAuthorized` (`WithIssuerAuthorization`) deciding by
     `IssuerAuthorization.IssuerAnchor`, the root that verified the
     chain, compared by key with the anchors you assign to each type
@@ -394,13 +438,25 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   `uniformResourceIdentifier` constraints apply to URIs (RFC 5280
   §4.2.1.10), so `RequireIssuerName` tells such members apart only
   under URI constraints, or for `dns:` issuers.
+
+  A wallet (walletflow) has the same choice for what it receives: with
+  one pool of every provider's roots in `Config.IssuerRoots`, any of
+  them can issue a credential of another's type, which the wallet
+  stores, shows and offers as that type. `Config.IssuerRootsByVCT` and
+  `MdocIssuerRootsByDocType` (`issuers.rootsByVCT` and
+  `issuers.mdocRootsByDocType` in the Swift and Kotlin libraries) hold
+  each type to its own providers' anchors, an SD-JWT VC's `aka_vcts`
+  types too, on receipt and in `CheckStatus`. A Verifier still decides
+  for itself.
 - [ ] **Certificate revocation:** a `certrevocation.Refresher` per
   process (`certrevocation.NewRefresher`), run in the background with
   `Run(ctx)` after one `Refresh(ctx)` before serving, and its
   `Checker()` as every chain's `Revocation`. The Refresher fetches off
   the request path, conditionally, with jitter; a verifier that
   fetches CRLs on the request path stalls presentations whenever a list
-  expires.
+  expires. It reads at most `MaxBytes` of a list, 1 MiB by default,
+  hundreds of times an IACA's or an issuer CA's: raise it for a CA
+  whose lists are larger.
 - [ ] **Status checks: one `statuslist.Cache` per process**, shared by
   every `statuslist.Checker` (`Checker.Cache`; a `verifier.StatusPolicy`
   without one is refused under `AssuranceProduction`). Size `CacheOptions`:
@@ -413,6 +469,18 @@ go everyFewMinutes(func() { db.Sweep(ctx, time.Now()) }) // on every instance
   across restarts needs a `StoreKey` (at least 32 random bytes, kept
   apart from the store, the same on every process sharing it), or a
   kept token is reused only within `MaxAge` of its iat.
+- [ ] **Bound a status list's age:** `statuslist.VerifyOptions.MaxAge`
+  on every status `Checker` (under `AssuranceProduction` a
+  `verifier.StatusPolicy` needs it, or `AnyListAge` to decline it). A
+  list signed before a revocation stays valid until its exp, which an
+  issuer may put months ahead, and anyone who can serve bytes at its
+  URI (a CDN, a mirror, a former owner of the domain) can replay it
+  until then. `MaxAge` refuses a list signed longer ago, wherever it
+  came from, so a revocation takes effect within `MaxAge` whatever is
+  served. Set it above the longest interval your issuers sign their
+  lists at: 24 hours for issuers that sign them at least daily. It
+  isn't `CacheOptions.MaxAge`, which bounds how long a list fetched is
+  used before it's fetched again.
 
 ```go
 crls, _ := certrevocation.NewRefresher(certrevocation.RefresherConfig{
@@ -430,10 +498,11 @@ go crls.Run(ctx)
 
 cache := statuslist.NewCache(statuslist.CacheOptions{MaxEntries: 1024})
 checker := statuslist.Checker{Fetcher: fetcher, Roots: roots, Cache: cache,
-	// Required under production: the list signers' certificates too.
-	// Leave Issuer, IssuerKey and UnboundSigner unset: a StatusPolicy
-	// binds each list's signer to its own credential's issuer.
-	Options: statuslist.VerifyOptions{Revocation: crls.Checker()}}
+	// Required under production: the list signers' certificates too,
+	// and how long ago a list may have been signed. Leave Issuer,
+	// IssuerKey and UnboundSigner unset: a StatusPolicy binds each
+	// list's signer to its own credential's issuer.
+	Options: statuslist.VerifyOptions{Revocation: crls.Checker(), MaxAge: 24 * time.Hour}}
 txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{Sealer: sealer}), cfg)
 ```
 

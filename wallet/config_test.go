@@ -57,6 +57,17 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		"unsupported proof_signing_alg": func(c *wallet.Config, _ *wallet.Dependencies) { c.ProofSigningAlg = jose.Alg("RS256") },
 		"missing clock":                 func(_ *wallet.Config, d *wallet.Dependencies) { d.Clock = nil },
 		"invalid fetch config":          func(c *wallet.Config, _ *wallet.Dependencies) { c.Fetch.MaxResponseBytes = 0 },
+		// A redirect scheme allowed must be a URI scheme (RFC 3986
+		// §3.1) the Wallet ever follows.
+		"empty redirect scheme":        func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{""} },
+		"redirect scheme with a space": func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{"com example"} },
+		"redirect scheme with a colon": func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{"com.example:"} },
+		"redirect scheme from a digit": func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{"1app"} },
+		"http redirect scheme":         func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{"http"} },
+		"system handler redirect scheme": func(c *wallet.Config, _ *wallet.Dependencies) {
+			c.VerifierRedirectSchemes = []string{"https", "Market"}
+		},
+		"wallet redirect scheme": func(c *wallet.Config, _ *wallet.Dependencies) { c.VerifierRedirectSchemes = []string{"openid4vp"} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/internal/prodwallet"
@@ -40,7 +41,9 @@ func assurance(opts options, cfg *walletflow.Config, deps *walletflow.Dependenci
 // the durable stores in store (internal/prodwallet), which receiving
 // credentials requires; StatusRevocation, the status list signers'
 // revocation check, which production requires besides
-// IssuerRevocation; and leaf policies telling Issuer2's certificates
+// IssuerRevocation; StatusMaxAge, a day, the bound on a status list's
+// age production requires too (Issuer2 signs its lists during the
+// run); and leaf policies telling Issuer2's certificates
 // from Verifier2's, which production requires of two roles whose roots
 // share an anchor, as the run's one CA is for both.
 //
@@ -57,7 +60,7 @@ func production(cfg *walletflow.Config, deps *walletflow.Dependencies, opts opti
 		return nil, fmt.Errorf("-store: %w", err)
 	}
 	cfg.Development, cfg.AllowedPrivateHosts = false, opts.allowedPrivateHosts
-	cfg.StatusRevocation = revocation
+	cfg.StatusRevocation, cfg.StatusMaxAge = revocation, 24*time.Hour
 	cfg.IssuerLeafPolicy = commonNamePolicy(issuer2Name, true)
 	roots, ok := cfg.VerifierTrust.(wallet.X5CVerifierRoots)
 	if !ok {

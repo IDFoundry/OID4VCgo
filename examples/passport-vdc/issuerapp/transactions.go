@@ -48,7 +48,8 @@ type transaction struct {
 	code      string
 	expiresAt time.Time
 	claimed   bool
-	failures  int
+	failures  int             // wrong codes, on any approval page
+	approvals map[string]int  // wrong codes on each approval page, by its tag
 	pending   map[string]bool // offered configuration ID → not yet issued
 	review    bool            // defer issuance until an operator decides
 	keep      bool            // kept for refresh: re-issued until expiresAt
@@ -57,9 +58,21 @@ type transaction struct {
 	issued    int // credentials issued, or being issued (reserved)
 }
 
-// maxCodeFailures is how many wrong confirmation codes void a
-// transaction — a million codes, a handful of guesses.
-const maxCodeFailures = 5
+// Wrong confirmation codes count against the approval page they're
+// entered on and against the transaction. The offer link alone, which
+// the offer page shows as a QR code, opens an approval page, but no one
+// page spends the transaction's count: maxCodeFailuresPerApproval end
+// it. maxCodeFailures, on any pages, void the transaction, bounding the
+// guessing: ten guesses at a six-digit code succeed once in 100,000, as
+// issuer.MaxProductionTxCodeAttempts has it for a PIN. That count is
+// shared, though, and the demo's Wallet Provider attests anyone:
+// whoever has the link can open page after page until it's spent.
+// maxCodeFailures is also the pre-authorized offer's PIN limit, which
+// the library counts per offer only (issuer.Limits.MaxTxCodeAttempts).
+const (
+	maxCodeFailures            = 10
+	maxCodeFailuresPerApproval = 3
+)
 
 // maxIssuancesPerPassport bounds how many Credential Requests a passport
 // kept for refresh answers. Each takes a batch of status list indices:
@@ -75,6 +88,7 @@ var (
 	errNoTransaction       = errors.New("issuerapp: the passport transaction is unknown or has expired")
 	errAlreadyRedeemed     = errors.New("issuerapp: this credential offer has already been redeemed")
 	errWrongCode           = errors.New("issuerapp: the confirmation code is wrong")
+	errApprovalWrongCodes  = errors.New("issuerapp: too many wrong confirmation codes on this approval page")
 	errTooManyWrongCodes   = errors.New("issuerapp: too many wrong confirmation codes — the offer is void; upload the passport again")
 	errAlreadyIssued       = errors.New("issuerapp: this credential has already been issued for this passport")
 	errNotOffered          = errors.New("issuerapp: this credential wasn't offered for this passport")
@@ -190,9 +204,13 @@ func (t *transactions) unclaimed(id string) (passport.Evidence, error) {
 }
 
 // claim redeems the transaction for one authorization, if code is its
-// confirmation code. A wrong code counts against it; maxCodeFailures of
-// them void it.
-func (t *transactions) claim(id, code string) error {
+// confirmation code, entered on the approval page whose interaction's
+// tag is approval ("" for none: a pre-authorized offer, claimed when
+// it's made). A wrong code counts against the page and the transaction:
+// maxCodeFailuresPerApproval of them end the page, which then has no
+// code compared (errApprovalWrongCodes), and maxCodeFailures void the
+// transaction.
+func (t *transactions) claim(id, approval, code string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	v, ok := t.lookup(id)
@@ -201,15 +219,34 @@ func (t *transactions) claim(id, code string) error {
 		return errNoTransaction
 	case v.claimed:
 		return errAlreadyRedeemed
+	case v.approvals[approval] >= maxCodeFailuresPerApproval:
+		return errApprovalWrongCodes
 	case subtle.ConstantTimeCompare([]byte(code), []byte(v.code)) != 1:
 		if v.failures++; v.failures >= maxCodeFailures {
 			delete(t.items, id)
 			return errTooManyWrongCodes
 		}
+		if v.approvals == nil {
+			v.approvals = make(map[string]int, 1)
+		}
+		if v.approvals[approval]++; v.approvals[approval] >= maxCodeFailuresPerApproval {
+			return errApprovalWrongCodes
+		}
 		return errWrongCode
 	}
 	v.claimed = true
 	return nil
+}
+
+// confirms reports whether code is the confirmation code of the
+// unexpired transaction under id. It counts nothing, so it's only for a
+// decision answered the same whatever the code, such as a deny: that
+// tells a guesser nothing.
+func (t *transactions) confirms(id, code string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v, ok := t.lookup(id)
+	return ok && subtle.ConstantTimeCompare([]byte(code), []byte(v.code)) == 1
 }
 
 // reserve returns the Evidence of a claimed transaction for issuing

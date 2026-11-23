@@ -77,11 +77,12 @@ func ExampleNewDeviceSession() {
 		proximity.WithIssuerRootsByDocType(map[string]*x509.CertPool{docType: iacaRoots}),
 		proximity.WithAnyIssuerForAnyType(),
 		// The document signer's certificate against the IACA's CRL, and
-		// the document's own status list, signed under the IACA (this
-		// example's document names none, so there's nothing to fetch).
+		// the document's own status list, signed under the IACA within
+		// the last day (this example's document names none, so there's
+		// nothing to fetch).
 		proximity.WithIssuerRevocation(revocation),
 		proximity.WithStatus(&verifier.StatusPolicy{Checker: statuslist.Checker{
-			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation}, Cache: statusCache,
+			Roots: iacaRoots, Options: statuslist.VerifyOptions{Revocation: revocation, MaxAge: 24 * time.Hour}, Cache: statusCache,
 		}}),
 		proximity.WithReaderAuth(readerKey, []*x509.Certificate{readerCert, readerCA}),
 		proximity.WithMaxClockSkew(5*time.Minute),

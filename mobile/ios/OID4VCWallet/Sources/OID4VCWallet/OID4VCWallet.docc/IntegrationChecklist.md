@@ -93,7 +93,9 @@ is a complete, working app on this package to compare against.
 - ``Wallet/checkStatus(id:)`` before relying on a held credential; show
   ``CredentialStatus/Value/unknown`` as not checked, not as valid, and
   ``CredentialStatus/reason`` to say why (an issuer certificate revoked
-  since receipt, revocation lists out of date).
+  since receipt, revocation lists out of date). Outside `development`,
+  ``StatusLists/maxAgeSeconds`` (`86_400` where issuers sign their lists
+  daily), or ``StatusLists/anyAge``, decides how old a list may be.
 - *Check:* both grants against your issuer, including the app being
   terminated during sign-in; an offer from an issuer outside
   ``WalletConfiguration/IssuerTrust/roots`` is refused.
@@ -117,8 +119,9 @@ is a complete, working app on this package to compare against.
   browser the request came from.
 - ``WalletError/Code/requestRefused`` from
   ``Wallet/startPresentation(request:)``: open the error's
-  ``WalletError/refusalRedirect`` when it has one, and tell the holder
-  the request wasn't answered. (<doc:HandlingErrors>)
+  ``WalletError/refusalRedirect`` when it has one, asking the holder
+  first when it isn't `https`, and tell the holder the request wasn't
+  answered. (<doc:HandlingErrors>)
 - ``WalletError/Code/deliveryUnknown`` isn't retried: tell the holder to
   check with the Verifier.
 - *Check:* a Verifier outside ``WalletConfiguration/VerifierTrust/roots`` is
@@ -192,7 +195,9 @@ is a complete, working app on this package to compare against.
   `issuers.anyIssuerForAnyType` or `issuers.rootsByDocType` deciding
   which IACAs issue which document type,
   and `statusCheck: .check`, so a session is `.verified` only for a
-  document that isn't revoked or suspended.
+  document that isn't revoked or suspended, with `status.maxAgeSeconds`
+  (`86_400` where issuers sign their lists daily) so an old list served
+  again isn't taken for a current one.
 - ``ProximityReader/start(qrCode:docType:elements:timeouts:)`` with the
   scanned code, following the session's states.
 - Decide which issuers to accept on ``VerifiedMdoc/issuerChain``, not

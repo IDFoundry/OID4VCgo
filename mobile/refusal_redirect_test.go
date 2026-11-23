@@ -3,6 +3,7 @@ package mobile
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/idfoundry/oid4vcgo/walletflow"
@@ -52,5 +53,26 @@ func TestTakeRefusalRedirect_PerOperation(t *testing.T) {
 	}
 	if got := (*Operation)(nil).TakeRefusalRedirect(); got != "" {
 		t.Errorf("nil Operation's = %q, want none", got)
+	}
+}
+
+// verifier_redirect_schemes reaches walletflow, which refuses as
+// invalid_input a scheme a Verifier's redirect is never followed with —
+// http, a system app's, the wallet's own redirect_uri's — and one that
+// isn't a scheme.
+func TestNewWallet_VerifierRedirectSchemes(t *testing.T) {
+	ks, cs := newGoKeyStore(), newGoCredentialStore()
+	for _, schemes := range []string{`["http"]`, `["market"]`, `["com.example.wallet"]`, `["com example"]`} {
+		_, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","verifier_redirect_schemes":`+schemes+`}`, ks, cs, nil)
+		if code(err) != CodeInvalidInput {
+			t.Errorf("verifier_redirect_schemes %s: %v, want invalid_input", schemes, err)
+		}
+	}
+	if _, err := NewWallet(`{"client_id":"c","redirect_uri":"com.example.wallet:/cb","verifier_redirect_schemes":["https","com.example.verifier"]}`, ks, cs, nil); err != nil {
+		t.Fatal(err)
+	}
+	wcfg, err := walletConfig(config{VerifierRedirectSchemes: []string{"com.example.verifier"}})
+	if err != nil || !slices.Equal(wcfg.VerifierRedirectSchemes, []string{"com.example.verifier"}) {
+		t.Errorf("walletflow.Config = %+v, %v", wcfg.VerifierRedirectSchemes, err)
 	}
 }

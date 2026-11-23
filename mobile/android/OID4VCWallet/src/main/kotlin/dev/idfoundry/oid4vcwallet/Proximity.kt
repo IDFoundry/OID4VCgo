@@ -559,12 +559,18 @@ public class ProximityPresentation internal constructor(
         }
     }
 
-    /** Declines the request, or ends the session before one: the reader is told, and nothing is disclosed. */
+    /**
+     * Declines the request, or ends the session before one: the reader is
+     * told, and nothing is disclosed. The state is final at once; the
+     * transport stays open until the reader disconnects or a few seconds
+     * pass, as after a response, so the termination reaches it rather
+     * than being dropped with the link (the reader would then report a
+     * lost connection, not a decline).
+     */
     public suspend fun decline() {
         if (_state.value.isFinal || _state.value is State.Responding) return
         ending = State.Declined
-        sendTermination()
-        finish(State.Declined)
+        finish(State.Declined, letReaderEnd = sendTermination())
     }
 
     /** Ends the session now, from any state. */
@@ -578,9 +584,11 @@ public class ProximityPresentation internal constructor(
     }
 
     /** Sends status 20, if a reader is connected. */
-    private suspend fun sendTermination() {
+    /** Sends the session termination, once a reader is connected, and reports whether it was sent. */
+    private suspend fun sendTermination(): Boolean {
         val message = decode<SendJSON>(handle.terminate()).send
-        if (_state.value !is State.WaitingForReader) runCatching { transport.send(message) }
+        if (_state.value is State.WaitingForReader) return false
+        return runCatching { transport.send(message) }.isSuccess
     }
 
     private fun advance(from: State, to: State): Boolean = _state.compareAndSet(from, to)
@@ -772,7 +780,9 @@ public data class ProximityReaderConfiguration(
      * status is valid, or that has none ([VerifiedMdoc.status]), and fails
      * with `document_not_valid` otherwise; with [StatusCheck.DECLINE],
      * nothing checks it, for a reader where something else stands in. In
-     * development, null is [StatusCheck.DECLINE].
+     * development, null is [StatusCheck.DECLINE]. Outside [development],
+     * [StatusCheck.CHECK] needs [StatusLists.maxAgeSeconds] in [status], or
+     * [StatusLists.anyAge]: how old a list may be.
      */
     val statusCheck: StatusCheck? = null,
     /**
@@ -923,6 +933,8 @@ internal data class ProximityReaderConfigurationJSON(
     @SerialName("identifier_list_max_bytes") val identifierListMaxBytes: Int = 0,
     @SerialName("status_cache_max_age_seconds") val statusCacheMaxAgeSeconds: Long = 0,
     @SerialName("status_cache_dir") val statusCacheDir: String? = null,
+    @SerialName("status_max_age_seconds") val statusMaxAgeSeconds: Long = 0,
+    @SerialName("status_any_age") val statusAnyAge: Boolean = false,
 )
 
 /** Encodes a [ProximityReaderConfiguration] as its flat [ProximityReaderConfigurationJSON], and decodes one from it. */
@@ -959,6 +971,8 @@ internal object ProximityReaderConfigurationSerializer : KSerializer<ProximityRe
         identifierListMaxBytes = c.status.identifierListMaxBytes,
         statusCacheMaxAgeSeconds = c.status.cacheMaxAgeSeconds,
         statusCacheDir = c.status.cacheDir,
+        statusMaxAgeSeconds = c.status.maxAgeSeconds,
+        statusAnyAge = c.status.anyAge,
     )
 
     // One of reader_key_id and reader_chain without the other is kept,
@@ -990,7 +1004,9 @@ internal object ProximityReaderConfigurationSerializer : KSerializer<ProximityRe
             distributionPointsFromRoots = j.crlDistributionPointsFromRoots,
             requireHTTPS = j.crlRequireHTTPS,
         ),
-        status = StatusLists(j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir),
+        status = StatusLists(
+            j.statusMaxBytes, j.identifierListMaxBytes, j.statusCacheMaxAgeSeconds, j.statusCacheDir, j.statusMaxAgeSeconds, j.statusAnyAge,
+        ),
         statusCheck = j.statusCheck,
         development = Development.decoded(j.development, j.developmentRoots),
     )

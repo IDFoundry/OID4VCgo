@@ -257,7 +257,8 @@ type CredentialStatus struct {
 // First, the certificate chain that signed each copy (an SD-JWT VC's
 // x5c, an mdoc's IssuerAuth x5chain) is verified again, as on receipt:
 // under the issuer roots and leaf policy configured for it now
-// (IssuerRoots, or the mdoc roots for its doctype) and, with
+// (IssuerRoots, IssuerRootsByVCT's for its vct and its aka_vcts', or
+// the mdoc roots for its doctype) and, with
 // Config.IssuerRevocation, against the revocation lists held now. A
 // copy whose signer, or a CA above it, has been revoked since
 // (certrevocation.ErrRevoked), or whose chain no longer verifies, is
@@ -280,7 +281,10 @@ type CredentialStatus struct {
 // ttl and exp allow and statuslist.DefaultCacheMaxAge at most (unless
 // that Cache says otherwise), so a status changed at its issuer may be
 // seen that much later; each check still verifies the kept list for its
-// own credential. A list whose signer's chain has no current CRL under
+// own credential. A list signed longer ago than Config.StatusMaxAge,
+// fetched or kept, fails the check: an error, not a status, so a list
+// from before a revocation, served again, can't make the credential
+// valid. A list whose signer's chain has no current CRL under
 // StatusRevocation leaves the credential StatusUnknown,
 // ReasonNoCurrentCRL, too. A credential without a status or identifier
 // list or a chain to check has nothing to check, and is returned as it
@@ -507,11 +511,11 @@ func revokedCopies(c StoredCredential, now time.Time, refs []statuslist.StatusLi
 func (w *Wallet) checkStatusLists(ctx context.Context, c StoredCredential, live []statuslist.StatusListRef) (statuslist.StatusType, []statuslist.StatusListRef, error) {
 	// The roots configured for the credential, which it was checked
 	// against on receipt unless they've changed since.
-	roots, _ := w.cfg.issuerTrust(c.Format, c.DocType)
+	roots, _ := w.cfg.issuerTrust(c.Format, c.VCT, c.DocType)
 	checker := statuslist.Checker{
 		Fetcher: w.statusFetcher(w.cfg.StatusMaxBytes),
 		Roots:   roots,
-		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation},
+		Options: statuslist.VerifyOptions{Now: w.deps.Clock, Revocation: w.cfg.StatusRevocation, MaxAge: w.cfg.StatusMaxAge},
 		Cache:   w.statusCache,
 	}
 	// Its status is its issuer's to sign, or one of its Status Issuers',
