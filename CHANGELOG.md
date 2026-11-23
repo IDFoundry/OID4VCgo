@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.88.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.87.0...v0.88.0) (2026-11-23)
+
+
+### Features
+
+* **issuer:** add NarrowToAuthorizedClaims to issue only the claims a token authorizes ([7f4ceeb](https://github.com/IDFoundry/OID4VCgo/commit/7f4ceeb56fbc60739f3484264dfc28370c5617ad))
+* **walletprovider:** finish suspensions a dead transition left unset ([cda83e7](https://github.com/IDFoundry/OID4VCgo/commit/cda83e7cbefa566880c18185b48520e6f798d159))
+
+
+### Bug Fixes
+
+* **certrevocation:** check a fetched CRL's signature before parsing it ([a4de8ea](https://github.com/IDFoundry/OID4VCgo/commit/a4de8eafec58a8a528987b2cab66e9460ddefdf4))
+* **conformance-issuer:** issue only the claims the token authorizes ([6c75b4b](https://github.com/IDFoundry/OID4VCgo/commit/6c75b4b8e526a560cdf6e6e1ed5ffcd34a3cf0d5))
+
 ## [0.87.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.86.0...v0.87.0) (2026-11-22)
 
 
