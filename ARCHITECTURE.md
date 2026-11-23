@@ -540,8 +540,11 @@ changes whether *every* bullet below is `(done)`.
     on the instance and set both indices of every one of its keys:
     the state first, then the statuses, then `Instance.KeyStatusesFor`,
     so a transition whose status writes fail part-way stays pending
-    until a retry, a `RevokeWhere` run or the instance's next
-    (refused) request sets the rest. Status writes aren't
+    until a retry, a `FinishTransitions` or `RevokeWhere` run or the
+    instance's next (refused) request sets the rest. `FinishTransitions`
+    also reads back a recently suspended or revoked instance's
+    statuses (`RevokeWhere` a revoked one's), which a racing
+    transition whose process died may have overwritten. Status writes aren't
     transactional with the instance's record, so pending is a state of
     its own, not one rolled back. `Provider.StatusLists` serves the
     lists of the periods a live

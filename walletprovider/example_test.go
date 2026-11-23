@@ -60,7 +60,8 @@ func ExampleNew() {
 	// StatusLists serves /{start}/{n} under StatusListBaseURI.
 	mux.Handle("/statuslists/", http.StripPrefix("/statuslists", p.StatusLists()))
 	// Daily, from any instance: p.SweepStatusLists, then sqlstore's
-	// DB.Sweep deletes instance keys past their retention.
+	// DB.Sweep deletes instance keys past their retention. Hourly:
+	// p.FinishTransitions finishes suspensions and revocations.
 
 	// From monitoring, every few minutes: raise StatusListSize before
 	// Free runs out, as an attestation for one more instance key fails

@@ -7,6 +7,26 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.87.0 → v0.88.0
+
+### Run the Wallet Provider's `FinishTransitions` hourly
+
+`walletprovider.Provider.FinishTransitions(ctx)` finishes every
+pending suspension and revocation. It sets the keys' statuses of each
+suspended or revoked instance whose `KeyStatusesFor` isn't its
+`State`, and reads back those of each one last seen within
+`MaxAttestationTTL` and an hour, setting them again where any reads
+otherwise. A `Resume` racing a `Suspend`, its `VALID` writes landing
+after the suspension's and its process dying before it set them
+`SUSPENDED` again, leaves the instance suspended with
+`KeyStatusesFor` `suspended` and statuses `VALID`: neither its
+requests nor `RevokeWhere` finish it, and its attestations from before
+the suspension read `VALID` until they expire. Run it from a periodic
+job, hourly or more often, alongside or in place of a `RevokeWhere`
+run for revoked instances. Its error is a
+`*walletprovider.FinishTransitionsError` naming each instance it
+failed to finish; the next run tries them again.
+
 ## OID4VCWallet 0.43.0 → 0.44.0
 
 Built from OID4VCgo v0.87.0 (see its entry below, whose wallet

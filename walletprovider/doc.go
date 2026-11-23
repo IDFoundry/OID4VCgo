@@ -145,14 +145,16 @@
 // issued for it; a revocation is final. The state is stored first, and
 // the instance's KeyStatusesFor only once every status is set, so a
 // transition whose status writes fail part-way is finished later: by
-// calling it again, by RevokeWhere's next run for a revocation, or by
-// the instance's next request, which sets them before it's refused. A
-// transition that fails after writing statuses for a state a
-// concurrent one replaced clears that one's KeyStatusesFor, as its
-// writes may have landed after; and RevokeWhere reads back the
-// statuses of an instance revoked recently enough for its attestations
-// to be live, so it finishes too a revocation whose statuses a racing
-// transition overwrote before its process died.
+// calling it again, by FinishTransitions' next run (or RevokeWhere's,
+// for a revocation), or by the instance's next request, which sets
+// them before it's refused. A transition that fails after writing
+// statuses for a state a concurrent one replaced clears that one's
+// KeyStatusesFor, as its writes may have landed after. A transition
+// whose process dies after writing them can't clear it:
+// FinishTransitions, run periodically, reads back the statuses of each
+// instance suspended or revoked recently enough for its attestations
+// to be live, and sets them again where a racing transition overwrote
+// them; RevokeWhere does the same for a revoked instance.
 //
 // Those status changes tell issuers which instance keys belong to one
 // instance, which otherwise the provider alone knows. A transition
