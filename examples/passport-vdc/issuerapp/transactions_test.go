@@ -257,7 +257,7 @@ func TestSweep_DropsExpiredPassportData(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	a := &App{transactions: newTestTransactions(&now, 10), reviews: newReviews(func() time.Time { return now })}
 	mustPut(t, a.transactions)
-	if _, err := a.reviews.add(passport.Evidence{}, MdocConfigurationID, "tx"); err != nil {
+	if _, err := a.reviews.add(passport.Evidence{}, MdocConfigurationID, "tx", nil); err != nil {
 		t.Fatal(err)
 	}
 	a.Sweep()

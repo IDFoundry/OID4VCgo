@@ -82,13 +82,16 @@ func reserveError(err error) error {
 
 // prepareCredential finds the passport transaction the access token's
 // subject names and fills in the requested format from that passport's
-// Evidence. Each credential gets its own status list index, recorded
-// as signed by signer (signerID); done releases the reservation and
-// the indexes if issuing fails.
+// Evidence, with only the claims the token authorizes. Each credential
+// gets its own status list index, recorded as signed by signer
+// (signerID); done releases the reservation and the indexes if issuing
+// fails.
 //
 // The configuration is req.ResolvedConfigurationID, the one the token
 // authorized: a request by credential_identifier (OpenID4VCI §8.2)
-// names no credential_configuration_id at all.
+// names no credential_configuration_id at all. req.AuthorizedClaims
+// are the claims its authorization detail asks for (§5.1.1); the
+// issuer issues whatever Prepare sets, so they're applied here.
 func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issuer.CredentialRequest, signer string) (func(bool), error) {
 	configID := req.ResolvedConfigurationID
 	// Each offered credential is issued once per passport — or again on
@@ -123,7 +126,7 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	// transaction_id to poll, and the review keeps its own copy of the
 	// Evidence until an operator decides (resolveDeferred).
 	if review {
-		if reviewRef, err = a.reviews.add(e, configID, grant.Subject); err != nil {
+		if reviewRef, err = a.reviews.add(e, configID, grant.Subject, req.AuthorizedClaims); err != nil {
 			a.transactions.release(grant.Subject, configID)
 			return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "too many issuances are awaiting review — try again later")
 		}
@@ -132,6 +135,10 @@ func (a *App) prepareCredential(_ context.Context, grant issuer.Grant, req *issu
 	}
 
 	if err := a.fillClaims(e, req); err != nil {
+		done(false)
+		return nil, err
+	}
+	if req.SDJWTClaims, req.MdocClaims, err = a.iss().NarrowToAuthorizedClaims(configID, req.AuthorizedClaims, req.SDJWTClaims, req.MdocClaims); err != nil {
 		done(false)
 		return nil, err
 	}
