@@ -264,8 +264,10 @@ type CredentialRequest struct {
 	// ResolvedConfigurationID; it's ignored on input. Prepare should
 	// issue only these, and the claims the Credential always carries,
 	// rather than the whole dataset. Nothing else narrows issuance to
-	// them: the Issuer issues what Prepare sets. A direct caller of
-	// RequestCredential finds them with ResolveAuthorizedClaims.
+	// them: the Issuer issues what Prepare sets.
+	// NarrowToAuthorizedClaims narrows claims Prepare built from the
+	// whole dataset. A direct caller of RequestCredential finds them
+	// with ResolveAuthorizedClaims.
 	//
 	// Their paths are checked for form alone — each a claims path
 	// pointer, none described twice, by

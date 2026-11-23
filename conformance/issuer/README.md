@@ -144,7 +144,9 @@ OID4VCI side (`issuer.Issuer`): `GET
 via `resource.Verifier`, then calls `RequestCredential` with this
 binary's own fixed, static claim content — `issuer.Issuer` has no user
 database of its own, per `CredentialRequest.SDJWTClaims`'s own doc
-comment), `POST /deferred_credential`, `POST /notification`.
+comment — narrowed to the claims the token's authorization detail
+names, if any, by `Issuer.NarrowToAuthorizedClaims`; the OIDF suite's
+details name none), `POST /deferred_credential`, `POST /notification`.
 
 Options the HAIP plan doesn't use, for
 [`interop/eudi/run-issuer.sh`](../../interop/eudi/run-issuer.sh) and

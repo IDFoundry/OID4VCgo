@@ -54,6 +54,11 @@ type review struct {
 	txID      string // the transaction it's from, whose offer page follows it
 	createdAt time.Time
 	decision  reviewDecision
+
+	// authorized is the request's CredentialRequest.AuthorizedClaims,
+	// which the DeferredTransactionRecord doesn't keep: the credential
+	// issued after the review has only those claims.
+	authorized []oid4vci.ClaimsDescription
 }
 
 // reviews holds deferred Credential Requests in memory, keyed by an
@@ -75,7 +80,7 @@ func newReviews(now func() time.Time) *reviews {
 
 // add holds e for configID, from transaction txID, until a decision,
 // returning its reference.
-func (r *reviews) add(e passport.Evidence, configID, txID string) (string, error) {
+func (r *reviews) add(e passport.Evidence, configID, txID string, authorized []oid4vci.ClaimsDescription) (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("issuerapp: review reference: %w", err)
@@ -88,7 +93,7 @@ func (r *reviews) add(e passport.Evidence, configID, txID string) (string, error
 	if len(r.items) >= maxReviews {
 		return "", errTooManyReviews
 	}
-	r.items[ref] = &review{evidence: e, configID: configID, txID: txID, createdAt: now}
+	r.items[ref] = &review{evidence: e, configID: configID, txID: txID, authorized: authorized, createdAt: now}
 	return ref, nil
 }
 
@@ -236,6 +241,17 @@ func (a *App) resolveDeferred(ctx context.Context, _ issuer.Grant, transactionID
 	var statusIdxs []int
 	// Issued by the current signer's Issuer, so recorded as its.
 	s := a.current()
+	sdjwtClaims, mdocClaims, err = s.issuer.NarrowToAuthorizedClaims(rv.configID, rv.authorized, sdjwtClaims, mdocClaims)
+	var refused *issuer.Error
+	switch {
+	case errors.As(err, &refused):
+		// None of the claims the token authorizes is in this credential.
+		a.reviews.remove(tx.Reference)
+		a.progress.setCredential(rv.txID, credentialFormat(rv.configID), credentialRefused)
+		return s.issuer.DenyDeferredCredential(ctx, transactionID)
+	case err != nil:
+		return err
+	}
 	err = s.issuer.IssueDeferredCredential(ctx, transactionID, issuer.DeferredIssuance{
 		MdocClaims: mdocClaims, SDJWTClaims: sdjwtClaims,
 		PerBatch: func(ctx context.Context, batch []*issuer.CredentialInstance) error {

@@ -3,10 +3,15 @@ package issuerapp_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +19,7 @@ import (
 	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
+	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/credential"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/internal/demotest"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/issuerapp"
 	"github.com/idfoundry/oid4vcgo/examples/passport-vdc/walletapp"
@@ -172,6 +178,108 @@ func TestPreAuthorized_AcceptsAuthorizationDetailsWithClaims(t *testing.T) {
 	if len(token.AuthorizationDetails) != 1 || len(token.AuthorizationDetails[0].Claims) != 1 {
 		t.Errorf("Token Response authorization_details = %+v, want the one asked for, with its claim", token.AuthorizationDetails)
 	}
+}
+
+// TestPreAuthorized_IssuesOnlyAuthorizedClaims: a token whose
+// authorization_details name claims (§5.1.1) gets a credential with
+// those claims and the registered ones, not the passport's whole
+// dataset, in either format, issued at once or after a review.
+func TestPreAuthorized_IssuesOnlyAuthorizedClaims(t *testing.T) {
+	for _, review := range []bool{false, true} {
+		for configID, path := range map[string][]any{
+			issuerapp.SDJWTConfigurationID: {credential.GivenName},
+			issuerapp.MdocConfigurationID:  {credential.ISONamespace, credential.GivenName},
+		} {
+			t.Run(fmt.Sprintf("%s/review=%t", configID, review), func(t *testing.T) {
+				env := demotest.New(t, nil)
+				received, err := receiveAsking(t, env, configID, path, review)
+				if err != nil {
+					t.Fatalf("Receive: %v", err)
+				}
+				i := slices.IndexFunc(received, func(r walletapp.Received) bool { return r.ConfigurationID == configID })
+				if i < 0 {
+					t.Fatalf("received %d credentials, none of %s", len(received), configID)
+				}
+				if got := issuedClaimNames(t, env, received[i]); !slices.Equal(got, []string{credential.GivenName}) {
+					t.Errorf("issued claims = %v, want only %s", got, credential.GivenName)
+				}
+			})
+		}
+	}
+}
+
+// TestPreAuthorized_RefusesAnMdocWithNoAuthorizedClaim: an mdoc whose
+// authorized claims are none it has can't be issued, so the request is
+// refused, at once or when the review's credential is collected.
+func TestPreAuthorized_RefusesAnMdocWithNoAuthorizedClaim(t *testing.T) {
+	for _, review := range []bool{false, true} {
+		t.Run(fmt.Sprintf("review=%t", review), func(t *testing.T) {
+			env := demotest.New(t, nil)
+			received, err := receiveAsking(t, env, issuerapp.MdocConfigurationID, []any{credential.ISONamespace, "no_such_element"}, review)
+			if review && !errors.Is(err, walletapp.ErrDenied) {
+				t.Errorf("Receive: %v, want the reviewed mdoc denied", err)
+			}
+			if slices.ContainsFunc(received, func(r walletapp.Received) bool { return r.Format == mdoc.CredentialFormat }) || statusFormats(env.Issuer.IssuedStatuses())[mdoc.CredentialFormat] {
+				t.Error("an mdoc with none of the authorized claims was issued")
+			}
+		})
+	}
+}
+
+// receiveAsking receives a pre-authorized offer of env's synthetic
+// passport, for review if review is set, with a token asking for
+// configID's claim at path; each review is approved.
+func receiveAsking(t *testing.T, env *demotest.Env, configID string, path []any, review bool) ([]walletapp.Received, error) {
+	t.Helper()
+	ctx := context.Background()
+	offer, err := env.Issuer.CreateOffer(ctx, demotest.SyntheticEvidence(), issuerapp.OfferOptions{PreAuthorized: true, Review: review})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := detailsWalletAsking(t, env, []oid4vci.AuthorizationDetail{{
+		Type: oid4vci.AuthorizationDetailsTypeOpenIDCredential, CredentialConfigurationID: configID,
+		Claims: []oid4vci.ClaimsDescription{{Path: path}},
+	}})
+	cfg.OnPending = func(*walletapp.Pending) {
+		for _, rv := range env.Issuer.Reviews() {
+			_ = env.Issuer.Review(rv.Ref, true)
+		}
+	}
+	return walletapp.Receive(ctx, cfg, offer.URI, walletapp.HeadlessApprover{HTTP: env.HTTP, Code: offer.ConfirmationCode})
+}
+
+// issuedClaimNames is the names of the claims about the holder in r:
+// an SD-JWT VC's, but for the registered ones, or an mdoc's data
+// elements.
+func issuedClaimNames(t *testing.T, env *demotest.Env, r walletapp.Received) []string {
+	t.Helper()
+	issuerPub := env.Issuer.IssuerCertificate().PublicKey
+	if r.Format == sdjwtvc.CredentialFormat {
+		payload, _, err := sdjwtvc.Verify(r.Credential, issuerPub, oid4vci.ES256, sdjwtvc.VerifyOptions{RequireKeyBinding: sdjwtvc.KeyBindingNotRequired})
+		if err != nil {
+			t.Fatalf("sdjwtvc.Verify: %v", err)
+		}
+		for _, registered := range []string{"vct", "iss", "iat", "nbf", "exp", "cnf", "status", "_sd_alg"} {
+			delete(payload, registered)
+		}
+		return slices.Sorted(maps.Keys(payload))
+	}
+	wire, err := base64.RawURLEncoding.DecodeString(r.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := mdoc.UnmarshalIssuerSigned(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, items := range signed.NameSpaces {
+		for _, item := range items {
+			names = append(names, item.ElementIdentifier)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // statusFormats is the formats statuses were allocated for.

@@ -108,7 +108,8 @@ func ExampleNew() {
 // The Credential Endpoint: tokens checks each request's access token
 // and its DPoP proof, here with a fapigo resource verifier sharing the
 // Authorization Server's keys (fapiresource.New). Prepare decides what
-// to issue for the token's subject. The handler's URL is the
+// to issue for the token's subject, and keeps only the claims the
+// token's authorization detail asks for. The handler's URL is the
 // Credential Endpoint Config.Endpoints publishes.
 func ExampleIssuer_CredentialHandler() {
 	var iss *issuer.Issuer            // from issuer.New, as in ExampleNew
@@ -122,11 +123,13 @@ func ExampleIssuer_CredentialHandler() {
 			if !ok {
 				return nil, issuer.NewError(issuer.ErrorCredentialRequestDenied, "no credential for this holder")
 			}
-			req.SDJWTClaims = &sdjwtvc.Claims{
+			claims := &sdjwtvc.Claims{
 				VCT:        "urn:eudi:pid:1",
 				Additional: map[string]any{"given_name": sdjwtvc.SD(givenName)},
 			}
-			return nil, nil
+			var err error
+			req.SDJWTClaims, req.MdocClaims, err = iss.NarrowToAuthorizedClaims(req.ResolvedConfigurationID, req.AuthorizedClaims, claims, nil)
+			return nil, err
 		},
 	})
 	if err != nil {
