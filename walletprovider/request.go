@@ -45,6 +45,45 @@ type requestClaims struct {
 	IssuedAt   int64  `json:"iat"`
 }
 
+// InstanceRequest is a signed request Config.InstanceLimit is asked
+// about: one that verified with the registration key of the instance
+// InstanceID names.
+type InstanceRequest struct {
+	// InstanceID is the instance whose registration key signed the
+	// request.
+	InstanceID string
+
+	// Method and Path are the request's, as it was signed and sent
+	// (Request.Method and Request.Path): through Handler, Path ends with
+	// WalletAttestationPath or KeyAttestationPath, after any prefix it's
+	// mounted under.
+	Method string
+	Path   string
+}
+
+// RateLimited is an error for Config.InstanceLimit to return to refuse
+// a request: it wraps ErrRateLimited and, when retryAfter is positive,
+// says to retry after it, which Handler answers as the 429's
+// Retry-After, rounded up to whole seconds.
+func RateLimited(retryAfter time.Duration) error {
+	return rateLimitedError{retryAfter: retryAfter}
+}
+
+type rateLimitedError struct{ retryAfter time.Duration }
+
+func (e rateLimitedError) Error() string {
+	if e.retryAfter > 0 {
+		return fmt.Sprintf("%v: retry after %v", ErrRateLimited, e.retryAfter)
+	}
+	return ErrRateLimited.Error()
+}
+
+func (e rateLimitedError) Unwrap() error { return ErrRateLimited }
+
+// RetryAfter is how long to wait before retrying, as retryAfter reads
+// it.
+func (e rateLimitedError) RetryAfter() time.Duration { return e.retryAfter }
+
 // SignRequest signs a request to the provider with the instance's
 // registration key, as a wallet does on every request after
 // registration: a JWT whose
@@ -88,6 +127,10 @@ func SignRequest(registrationKey crypto.Signer, instanceID, challenge, method, p
 // ErrInstanceNotFound or ErrInvalidRequest, never ErrInstanceNotActive,
 // and leaves the challenge it names unused, so a forged request can
 // neither learn an instance's state nor burn a wallet's challenge.
+//
+// Config.InstanceLimit, if set, is asked about a request once it has
+// verified, before its challenge is consumed: a request it refuses
+// fails with its error (ErrRateLimited), having changed nothing.
 func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, error) {
 	header, payload, err := jose.DecodeUnverified(req.JWT)
 	if err != nil {
@@ -129,6 +172,11 @@ func (p *Provider) VerifyRequest(ctx context.Context, req Request) (Instance, er
 		return Instance{}, fmt.Errorf("%w: signed for another body", ErrInvalidRequest)
 	case iat.After(now.Add(maxRequestClockSkew)) || iat.Before(now.Add(-p.cfg.ChallengeTTL)):
 		return Instance{}, fmt.Errorf("%w: iat %v isn't recent", ErrInvalidRequest, iat)
+	}
+	if limit := p.cfg.InstanceLimit; limit != nil {
+		if err := limit(ctx, InstanceRequest{InstanceID: in.ID, Method: req.Method, Path: req.Path}); err != nil {
+			return Instance{}, fmt.Errorf("walletprovider: instance %s's request refused by InstanceLimit: %w", in.ID, err)
+		}
 	}
 	// The challenge is used up by every request that verified, whatever
 	// the instance's state, so one refused while the instance is

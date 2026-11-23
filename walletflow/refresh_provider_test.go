@@ -59,6 +59,13 @@ func retiringRefusals(atWalletAttestation bool) map[string]error {
 	return refusals
 }
 
+// rateLimited is the provider's limit on the instance's requests
+// refusing one, as a Client reports it: transient, so it retires
+// nothing.
+func rateLimited() error {
+	return &walletprovider.RefusedError{Status: 429, Code: walletprovider.CodeRateLimited}
+}
+
 // evidenceRequired is the provider's refusal of a request that sent no
 // evidence it needs.
 func evidenceRequired() error {
@@ -140,6 +147,8 @@ func TestRefreshCredential_ProviderRefusalKeepsTheGrant(t *testing.T) {
 		"instance_key_expired at 404":    &walletprovider.RefusedError{Status: 404, Code: walletprovider.CodeInstanceKeyExpired},
 		"instance_key_registered at 403": &walletprovider.RefusedError{Status: 403, Code: walletprovider.CodeInstanceKeyRegistered},
 		"evidence_required at 307":       &walletprovider.RefusedError{Status: 307, Code: walletprovider.CodeEvidenceRequired},
+		"rate_limited":                   rateLimited(),
+		"rate_limited, a native one's":   fmt.Errorf("native provider: %w", walletprovider.ErrRateLimited),
 	})
 }
 
@@ -217,6 +226,7 @@ func TestRefreshCredential_KeyAttestationRefusalKeepsTheGrant(t *testing.T) {
 		"instance_not_active":                    &walletprovider.RefusedError{Status: 403, Code: "instance_not_active"},
 		"evidence_required":                      evidenceRequired(),
 		"evidence_required, a native provider's": fmt.Errorf("native provider: %w", walletprovider.ErrEvidenceRequired),
+		"rate_limited":                           rateLimited(),
 	})
 }
 

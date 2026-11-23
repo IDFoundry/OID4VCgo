@@ -215,10 +215,13 @@
 // written in Go. Requests are bounded, in bytes and in JSON tokens, and
 // decoded strictly, a key's members as a JWK's (RFC 7517 §4's); refusals
 // carry fixed error codes, never internal error text; and every signed
-// request that doesn't verify gets the same 401. The handler does no
-// rate limiting: an integrator wraps it with their own, per client, as
-// the challenge and registration endpoints answer anyone, and the
-// attestation endpoints write to the stores on each request.
+// request that doesn't verify gets the same 401. The handler limits no
+// client's request rate: an integrator wraps it with their own, per
+// client, as the challenge and registration endpoints answer anyone,
+// and the attestation endpoints write to the stores on each request.
+// Config.InstanceLimit limits each instance's signed requests, keyed on
+// the instance their signature proved: asked before anything is
+// written, its refusal (ErrRateLimited) is answered 429 rate_limited.
 //
 // Evidence kinds plug in from subpackages: androidkey.EvidenceVerifier
 // for Android Key Attestation, appattest.EvidenceVerifier for Apple App

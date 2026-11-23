@@ -12,6 +12,7 @@ func TestCodeStatus_IsTheHandlers(t *testing.T) {
 		ErrInstanceKeyRegistered: CodeInstanceKeyRegistered,
 		ErrEvidenceRequired:      CodeEvidenceRequired,
 		ErrInstanceRevoked:       "instance_revoked",
+		ErrRateLimited:           CodeRateLimited,
 	} {
 		got := refusal(err)
 		if got.code != code || got.status != CodeStatus(code) {

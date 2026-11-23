@@ -7,6 +7,41 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## v0.88.0 → v0.89.0
+
+### Limit each Wallet Provider instance's requests (`walletprovider`)
+
+The new `walletprovider.Config.InstanceLimit` limits each instance's
+signed requests (Wallet and Key Attestations), keyed on the instance
+whose registration key signed them. A limit in front of `Handler` can
+key only on the client's address, or on the signed request's `sub`,
+which nothing has verified there, so anyone can name another instance.
+Each signed request consumes a challenge and writes the instance's
+record, and `Suspend`, `Resume` and `Revoke` retry for up to 10
+seconds against its traffic.
+
+**What to change:** set it, alongside the per-client limit in front of
+the service. `VerifyRequest` calls it once the signature has verified
+and before anything is written; return
+`walletprovider.RateLimited(retryAfter)` to refuse:
+
+```go
+cfg.InstanceLimit = func(ctx context.Context, req walletprovider.InstanceRequest) error {
+	if !limiter.Allow(req.InstanceID) {
+		return walletprovider.RateLimited(time.Second)
+	}
+	return nil
+}
+```
+
+`Handler` answers the refusal HTTP 429 `rate_limited`
+(`walletprovider.CodeRateLimited`), with `Retry-After` when the delay
+is positive, and nothing is written, the request's challenge included.
+A `walletprovider.Client`'s refusal matches `ErrRateLimited`;
+`walletflow` keeps the refresh grant and instance key, and the Swift
+and Kotlin libraries' `HttpWalletProvider` reports a 429 as
+unavailable, as before. Unset, nothing is limited.
+
 ## v0.87.0 → v0.88.0
 
 ### Run the Wallet Provider's `FinishTransitions` hourly

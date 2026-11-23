@@ -294,6 +294,29 @@ type Config struct {
 	// at once.
 	OnRecheckRefused func(ctx context.Context, in Instance, err error)
 
+	// InstanceLimit, if set, limits each instance's signed requests:
+	// VerifyRequest, which Handler calls for every one
+	// (WalletAttestationPath, KeyAttestationPath), calls it once the
+	// request has verified with the instance's registration key and
+	// matches its method, path and body, and before anything is
+	// written: before the request's challenge is consumed, and before
+	// the instance's record, its instance keys or its status list
+	// indices change. req names the instance the signature proved, so a
+	// request naming another instance, which doesn't verify, never
+	// reaches it, and can't spend that instance's limit; a replayed
+	// one, its challenge already used, does, as the challenge is
+	// checked after. Return an error
+	// wrapping ErrRateLimited (RateLimited) to refuse the request: it
+	// fails with that error, its challenge left unused, and Handler
+	// answers HTTP 429 rate_limited, with a Retry-After when the error
+	// says when to retry. Any other error fails the request as the
+	// provider's own failure (500). Nil, the default, limits nothing.
+	// It's called on the request's path, concurrently: keep it quick
+	// and safe for concurrent use. A wallet retries a refused request
+	// later with a new challenge; walletflow keeps the refresh grant
+	// and instance key it was for.
+	InstanceLimit func(ctx context.Context, req InstanceRequest) error
+
 	// Assurance is how strict New is about what the provider is built
 	// from; zero means AssuranceDevelopment. Set AssuranceProduction in
 	// production: New then refuses walletprovidertest.FakeVerifier,

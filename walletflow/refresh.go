@@ -720,7 +720,9 @@ const (
 // ErrEvidenceRequired retires nothing: the provider answers it there for
 // a request carrying no evidence for the holder keys, before it looks at
 // the instance key, whose record the refresh's Wallet Attestation has
-// just used, so it says only that the client sent none. A
+// just used, so it says only that the client sent none. Nor does
+// walletprovider.ErrRateLimited, at either step: the provider's limit
+// on the instance's requests refused this one for now. A
 // walletprovider.Client's refusal matches, at the status the provider
 // answers it with (walletprovider.CodeStatus), as does a native
 // provider's that oid4vcgo/mobile marks with walletprovider.CodeError.

@@ -105,6 +105,13 @@ var (
 	// index because the lists are full is attested all the same.
 	ErrTooManyInstanceKeys = errors.New("walletprovider: too many instance keys this period")
 
+	// ErrRateLimited: Config.InstanceLimit refused the instance's
+	// request for now. Nothing was written, the request's challenge
+	// included; the wallet retries later, with a new challenge.
+	// Answered as HTTP 429 rate_limited (CodeRateLimited), and a
+	// Client's RefusedError with that code and status matches it.
+	ErrRateLimited = errors.New("walletprovider: too many requests from the instance")
+
 	// ErrUnavailable: an EvidenceVerifier, EvidenceRechecker or
 	// InstanceKeyRechecker couldn't decide for now, for want of
 	// something it needs and may get later — a revocation list it

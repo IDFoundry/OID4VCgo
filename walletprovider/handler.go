@@ -55,20 +55,23 @@ import (
 // (the request's RequestURI), so Handler may be mounted under a prefix
 // with http.StripPrefix; a proxy in front of it must not rewrite paths.
 //
-// Handler does no rate limiting: wrap it with the deployment's own.
-// ChallengePath and InstancesPath answer anyone, and every challenge
-// is stored until it's used or expires, so limit them per client.
-// WalletAttestationPath and KeyAttestationPath answer only a
-// registered instance, but each request it signs writes to the
-// stores, so limit them per client as well; the provider itself bounds
-// only the status list indices an instance's keys take in a period
+// Handler limits no client's request rate: wrap it with the
+// deployment's own. ChallengePath and InstancesPath answer anyone, and
+// every challenge is stored until it's used or expires, so limit them
+// per client. WalletAttestationPath and KeyAttestationPath answer only
+// a registered instance, but each request it signs consumes a
+// challenge and writes to the stores, so limit them per client as
+// well, and per instance with Config.InstanceLimit, which Handler asks
+// once a request has verified and before it writes anything, answering
+// its refusal 429 rate_limited; the provider itself bounds the status
+// list indices an instance's keys take in a period
 // (Config.MaxInstanceKeysPerPeriod). Each such request updates the
 // instance's record, as Suspend, Resume and Revoke do: those retry an
 // update the instance's requests beat for up to 10 seconds, so an
 // instance's own traffic can't hold off its revocation, but a limit
-// keeps them from needing to. Don't key a limit on the signed
-// request's sub before Handler has verified it: anyone can name
-// another instance there.
+// keeps them from needing to. Don't key a limit in front of Handler on
+// the signed request's sub: anyone can name another instance there,
+// and only InstanceLimit sees the instance the signature proved.
 func (p *Provider) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+ChallengePath, p.serveChallenge)
@@ -106,6 +109,7 @@ var (
 	errUnknownClient = apiError{http.StatusBadRequest, "unknown_client", "The provider doesn't attest that client."}
 	errNoKeyAttested = apiError{http.StatusForbidden, "no_key_attested", "No key could be attested."}
 	errTooManyKeys   = apiError{http.StatusTooManyRequests, "too_many_instance_keys", "The instance has used too many instance keys this period."}
+	errRateLimited   = apiError{http.StatusTooManyRequests, CodeRateLimited, "The instance has sent too many requests: try again later."}
 	errServer        = apiError{http.StatusInternalServerError, "server_error", "The provider couldn't answer."}
 	errUnavailable   = apiError{http.StatusServiceUnavailable, "server_error", "The provider can't answer now: try again later."}
 )
@@ -116,18 +120,28 @@ var (
 const unavailableRetryAfter = "30"
 
 // retryAfter is the Retry-After, in whole seconds, of a 503 answer for
-// err: what an error in its chain with a RetryAfter() time.Duration
-// method says, when that's positive — androidkey.StatusSource's failure
-// says when it fetches Google's list again, so a wallet doesn't retry
-// before — and unavailableRetryAfter otherwise.
+// err: what retryAfterHint says, if anything — androidkey.StatusSource's
+// failure says when it fetches Google's list again, so a wallet doesn't
+// retry before — and unavailableRetryAfter otherwise.
 func retryAfter(err error) string {
+	if s, ok := retryAfterHint(err); ok {
+		return s
+	}
+	return unavailableRetryAfter
+}
+
+// retryAfterHint is what an error in err's chain with a RetryAfter()
+// time.Duration method says, in whole seconds rounded up, when that's
+// positive: a 429 rate_limited's Retry-After (RateLimited), and a
+// 503's.
+func retryAfterHint(err error) (string, bool) {
 	var hint interface{ RetryAfter() time.Duration }
 	if errors.As(err, &hint) {
 		if d := hint.RetryAfter(); d > 0 {
-			return strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10)
+			return strconv.FormatInt(int64((d+time.Second-1)/time.Second), 10), true
 		}
 	}
-	return unavailableRetryAfter
+	return "", false
 }
 
 // errDecoding wraps why a request body was refused, for the log.
@@ -146,6 +160,7 @@ func refusal(err error) apiError {
 		{ErrUnavailable, errUnavailable},
 		{ErrNoKeyAttested, errNoKeyAttested},
 		{ErrTooManyInstanceKeys, errTooManyKeys},
+		{ErrRateLimited, errRateLimited},
 		{ErrInstanceKeyRegistered, errKeyRegistered},
 		{ErrUnknownInstanceKey, errUnknownKey},
 		{ErrInstanceRevoked, errRevoked},
@@ -340,6 +355,8 @@ func (p *Provider) readSigned(w http.ResponseWriter, r *http.Request, v any) (In
 	switch {
 	case err == nil:
 		return in, p.decodeBody(w, r, body, v)
+	case errors.Is(err, ErrRateLimited):
+		p.fail(r, w, errRateLimited, err)
 	case errors.Is(err, ErrInstanceRevoked):
 		p.fail(r, w, errRevoked, err)
 	case errors.Is(err, ErrInstanceNotActive):
@@ -376,6 +393,10 @@ func (p *Provider) fail(r *http.Request, w http.ResponseWriter, a apiError, err 
 		w.Header().Set("WWW-Authenticate", RequestHeader)
 	case http.StatusServiceUnavailable:
 		w.Header().Set("Retry-After", retryAfter(err))
+	case http.StatusTooManyRequests:
+		if s, ok := retryAfterHint(err); ok && a == errRateLimited {
+			w.Header().Set("Retry-After", s)
+		}
 	}
 	writeJSON(w, a.status, errorBody{Error: a.code, Description: a.description})
 }
