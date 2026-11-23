@@ -47,7 +47,8 @@ type ExchangePreAuthorizedCodeRequest struct {
 	// authorization_details parameter is used in ... the Token Request").
 	// Those claims reach Prepare as CredentialRequest.AuthorizedClaims, as
 	// an authorization code's do. The Issuer doesn't narrow issuance to
-	// them itself: it issues what Prepare sets.
+	// them itself: it issues what Prepare sets, which
+	// Issuer.NarrowToAuthorizedClaims narrows.
 	// Their form, and whether the code grants them, are checked before
 	// the code is consumed — the latter by PreAuthorizedCodeStore.Consume's
 	// accept, in the same atomic step that keeps the code single-use —

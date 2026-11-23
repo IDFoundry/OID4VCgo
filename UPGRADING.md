@@ -27,6 +27,34 @@ run for revoked instances. Its error is a
 `*walletprovider.FinishTransitionsError` naming each instance it
 failed to finish; the next run tries them again.
 
+### Issue only the claims a token authorizes (`issuer`)
+
+The new `Issuer.NarrowToAuthorizedClaims` keeps, of the claims
+`Prepare` built, those `CredentialRequest.AuthorizedClaims` asks for
+(the `claims` of the token's `openid_credential` authorization detail,
+OpenID4VCI 1.0 §5.1.1), an SD-JWT VC's `iat`, and those the
+configuration's `credential_metadata` or `TypeMetadata` marks
+mandatory. The Issuer issues whatever `Prepare` sets, so a `Prepare`
+that fills the claims from the whole dataset, as the passport-vdc
+issuer's and `cmd/conformance-issuer`'s did, issues every claim
+whatever the token authorizes.
+
+**What to change:** end `Prepare` with it:
+
+```go
+req.SDJWTClaims, req.MdocClaims, err = iss.NarrowToAuthorizedClaims(
+	req.ResolvedConfigurationID, req.AuthorizedClaims, req.SDJWTClaims, req.MdocClaims)
+```
+
+A `DeferredTransactionRecord` doesn't keep the authorized claims: keep
+`req.AuthorizedClaims` with the business process `Deferral.Reference`
+names, and narrow the `DeferredIssuance`'s claims the same way in
+`Resolve`. It keeps an SD-JWT VC's top-level members whole: where a
+path names a claim within one (`["address", "locality"]`), build that
+member's value yourself. An mdoc it leaves with no data element is
+refused with `credential_request_denied`. A token naming no claims
+leaves the claims as they were.
+
 ## OID4VCWallet 0.43.0 → 0.44.0
 
 Built from OID4VCgo v0.87.0 (see its entry below, whose wallet

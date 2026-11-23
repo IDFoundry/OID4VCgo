@@ -192,6 +192,16 @@ each, not a deployment template" says what it does differently.
   Server serving others, end them before the upgrade serves anyone:
   `AllowedResources` refuses their refresh with `invalid_target`, or
   revoke them.
+- [ ] **Issue only the claims a token authorizes.** A token whose
+  `openid_credential` authorization detail names `claims` (OpenID4VCI
+  1.0 §5.1.1) authorizes those alone, and the Issuer issues whatever
+  `Prepare` sets. End `Prepare` with `Issuer.NarrowToAuthorizedClaims`
+  on `req.AuthorizedClaims`, or build only those claims. It keeps the
+  claims `credential_metadata` marks `mandatory`: mark there those
+  every credential must carry. A deferred transaction's record doesn't
+  keep the authorized claims: store them with the business process your
+  `Deferral.Reference` names, and narrow the `DeferredIssuance`'s
+  claims in `Resolve`.
 - [ ] **Audit: `Dependencies.Audit`**, an `issuer.AuditSink` recording
   the outcome of every pre-authorized code exchange, Credential Request
   and deferred credential, to a log kept apart from the service.

@@ -883,7 +883,10 @@ changes whether *every* bullet below is `(done)`.
   `AuthorizedRequest`. `CredentialHandler` serves the whole Credential
   Endpoint (token check, parse and decrypt, issue, encrypt, errors)
   with the caller deciding only what to issue, in `Prepare`, which runs
-  only once the request is authorized and its proofs verified; it checks
+  only once the request is authorized and its proofs verified, and
+  keeps to the claims the token authorizes
+  (`CredentialRequest.AuthorizedClaims`, which
+  `Issuer.NarrowToAuthorizedClaims` applies); it checks
   tokens through the `AccessTokenVerifier` interface, which
   `issuer/fapiresource` implements with a `fapigo/resource.Verifier`,
   so `issuer` itself still doesn't import `fapigo/resource`. With the
