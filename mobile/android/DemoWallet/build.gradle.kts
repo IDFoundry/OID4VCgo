@@ -58,6 +58,8 @@ androidComponents {
     onVariants { variant ->
         if (demoConfig.isPresent) {
             val bundle = tasks.register<BundleDemoConfig>("bundleDemoConfig${variant.name.replaceFirstChar { it.uppercase() }}") {
+                group = "build"
+                description = "Bundles the -Pdemo.config file into the ${variant.name} APK's assets"
                 config.set(file(demoConfig.get()))
             }
             variant.sources.assets?.addGeneratedSourceDirectory(bundle, BundleDemoConfig::outputDir)

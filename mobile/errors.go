@@ -316,7 +316,8 @@ func cutURIs(s string) string {
 // identifier or a token, so an error naming one keeps it whole. The NID
 // is case-insensitive (RFC 8141 §3.1).
 func isIETFParamsURN(scheme, rest string) bool {
-	return strings.EqualFold(scheme, "urn") && len(rest) > len("ietf:params:") && strings.EqualFold(rest[:len("ietf:params:")], "ietf:params:")
+	const nid = "ietf:params:"
+	return strings.EqualFold(scheme, "urn") && len(rest) > len(nid) && strings.EqualFold(rest[:len(nid)], nid)
 }
 
 // isPort reports whether s is a port number: 1 to 5 ASCII digits.
