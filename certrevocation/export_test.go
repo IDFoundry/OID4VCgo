@@ -16,7 +16,7 @@ func (r *Refresher) SetScheduleForTest(wait func(context.Context, time.Duration)
 // if it's acceptable, without fetching: what a fetch answering body
 // would do.
 func (r *Refresher) AcceptForTest(u string, body []byte) error {
-	list, err := parseCRL(body)
+	list, err := r.parseFetched(u, body)
 	if err != nil {
 		return err
 	}

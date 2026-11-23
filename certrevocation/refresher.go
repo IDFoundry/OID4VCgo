@@ -34,12 +34,12 @@ const (
 	// status list's CA its signers — so their CRLs are a few kilobytes,
 	// hundreds of times below it, and a large CA shards its CRLs. The
 	// bound is also what a broken or hostile distribution point can
-	// make the process buffer, and parse before its signature is
-	// checked, which allocates up to several dozen times the CRL's
-	// size, for one of nothing but entries: about 45 MiB at 1 MiB,
-	// where 8 MiB cost 360 MiB. Set RefresherConfig.MaxBytes higher for
-	// a CA whose lists are larger, or lower where they're known to be
-	// small, as an IACA's are.
+	// make the process buffer. Its signature is checked before the list
+	// is parsed, so only a list a candidate CA signed is parsed, which
+	// allocates up to several dozen times the CRL's size, for one of
+	// nothing but entries: about 45 MiB at 1 MiB. Set
+	// RefresherConfig.MaxBytes higher for a CA whose lists are larger,
+	// or lower where they're known to be small, as an IACA's are.
 	DefaultCRLMaxBytes = 1 << 20
 
 	// DefaultCRLFetchTimeout bounds one fetch, every redirect hop
@@ -464,7 +464,10 @@ func (r *Refresher) Checker() CRLs {
 //
 // A fetch is a GET that must answer 2xx with a CRL no larger than
 // MaxBytes, in DER or as a PEM "X509 CRL" block, whatever its Content-
-// Type. Once a list is held from a URL, the fetch is conditional on the
+// Type. Its signature is checked over its raw bytes before the list is
+// parsed: a list that no issuer the URL may serve lists of signed is
+// refused unparsed, as is one whose DER has bytes after its signature.
+// Once a list is held from a URL, the fetch is conditional on the
 // ETag and Last-Modified its response carried, and a 304 Not Modified
 // fetches the held list again: it's checked as a newly fetched one
 // would be, so a held list past its nextUpdate is still a failure. Redirects are followed only on the same host (see
@@ -565,18 +568,12 @@ func (r *Refresher) acceptable(u string, list, held *x509.RevocationList, now ti
 // if current, names the same — and it isn't older than r's floor for
 // that issuer, by name and key. It returns that issuer's floorKey.
 func (r *Refresher) fromRightIssuer(u string, list, held *x509.RevocationList, now time.Time) (floorKey, error) {
-	bound := r.bound[u]
-	candidates := r.issuers
-	if bound != nil {
-		candidates = []*x509.Certificate{bound}
-	}
+	candidates, bound := r.candidates(u)
 	signer := signerOf(list, candidates)
 	switch {
-	case bound != nil && signer == nil:
-		return floorKey{}, errors.New("the CRL isn't signed by the issuer RefresherConfig.URLIssuers binds this URL to")
 	case signer == nil:
-		return floorKey{}, errors.New("the CRL isn't signed by any of the configured issuers")
-	case bound == nil && held != nil && now.Before(held.NextUpdate) && !bytes.Equal(list.RawIssuer, held.RawIssuer):
+		return floorKey{}, notSignedError(bound)
+	case !bound && held != nil && now.Before(held.NextUpdate) && !bytes.Equal(list.RawIssuer, held.RawIssuer):
 		return floorKey{}, fmt.Errorf("the CRL names another issuer than the held one, current until %s", held.NextUpdate.UTC().Format(time.RFC3339))
 	}
 	k := floorKeyOf(signer)
@@ -594,6 +591,25 @@ func (r *Refresher) fromRightIssuer(u string, list, held *x509.RevocationList, n
 		return floorKey{}, fmt.Errorf("the CRL carries no CRL number, though a list accepted from its issuer did (%s)", floor.number)
 	}
 	return k, nil
+}
+
+// candidates are the issuers whose lists u may serve: the one
+// URLIssuers binds it to, reported as bound, or else every one of
+// Issuers.
+func (r *Refresher) candidates(u string) (issuers []*x509.Certificate, bound bool) {
+	if issuer := r.bound[u]; issuer != nil {
+		return []*x509.Certificate{issuer}, true
+	}
+	return r.issuers, false
+}
+
+// notSignedError is why a list none of a URL's candidates signed is
+// refused.
+func notSignedError(bound bool) error {
+	if bound {
+		return errors.New("the CRL isn't signed by the issuer RefresherConfig.URLIssuers binds this URL to")
+	}
+	return errors.New("the CRL isn't signed by any of the configured issuers")
 }
 
 // signerOf is the one of issuers that, by name and signature, issued
@@ -655,12 +671,18 @@ func (r *Refresher) fetch(ctx context.Context, u string, held heldCRL) (*x509.Re
 	if int64(len(body)) > r.maxBytes {
 		return nil, validators{}, fmt.Errorf("the response exceeds %d bytes", r.maxBytes)
 	}
-	list, err := parseCRL(body)
+	list, err := r.parseFetched(u, body)
 	return list, v, err
 }
 
-// parseCRL parses a DER CRL, or one PEM "X509 CRL" block.
-func parseCRL(body []byte) (*x509.RevocationList, error) {
+// parseFetched parses body, a DER CRL or one PEM "X509 CRL" block
+// fetched from u, once its signature is known to be from one of the
+// issuers whose lists u may serve. Until then the list is only split
+// into its signed bytes, its issuer's name and its signature, so a
+// list from anyone else — one a distribution point, or whoever answers
+// in its place over http, made as large as MaxBytes allows — is
+// refused without parsing its entries.
+func (r *Refresher) parseFetched(u string, body []byte) (*x509.RevocationList, error) {
 	der := body
 	if trimmed := bytes.TrimSpace(body); bytes.HasPrefix(trimmed, []byte("-----BEGIN")) {
 		block, _ := pem.Decode(trimmed)
@@ -668,6 +690,14 @@ func parseCRL(body []byte) (*x509.RevocationList, error) {
 			return nil, errors.New("the response is PEM, but not an X509 CRL block")
 		}
 		der = block.Bytes
+	}
+	candidates, bound := r.candidates(u)
+	signed, err := signedByOneOf(der, candidates)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("parse the CRL: %w", err)
+	case !signed:
+		return nil, notSignedError(bound)
 	}
 	list, err := x509.ParseRevocationList(der)
 	if err != nil {
