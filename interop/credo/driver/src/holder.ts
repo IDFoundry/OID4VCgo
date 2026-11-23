@@ -278,7 +278,7 @@ function errorText(error: unknown): string {
     } else {
       // A thrown value that isn't an Error, such as an error
       // response: its fields, not "[object Object]".
-      parts.push(typeof e === 'object' ? jsonText(e) : String(e))
+      parts.push(typeof e === 'object' ? jsonText(e) : String(e as string | number | boolean | bigint | symbol))
       e = undefined
     }
   }
