@@ -385,7 +385,8 @@ func (p *Provider) newService(cfg ServiceConfig) (*service, error) {
 		attestations: newClientLimiter(attestationRate, attestationBurst),
 		demo:         newDemoVerifier(), store: store, maxDemo: maxDemoInstances,
 	}
-	if s.lib, err = p.library(cfg, s.demo, store, indices); err != nil {
+	limit := instanceLimit(newClientLimiter(instanceRate, instanceBurst), cfg.Now)
+	if s.lib, err = p.library(cfg, s.demo, store, indices, limit); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -415,8 +416,9 @@ type service struct {
 // library is the library Wallet Provider p's service issues with:
 // signed with p's key and certificate, attesting cfg.ClientID, taking
 // the demo-only evidence and, with cfg.AndroidApps, Android Key
-// Attestation and, with cfg.IOSApps, App Attest.
-func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileInstanceStore, indices statuslist.IndexStore) (*wp.Provider, error) {
+// Attestation and, with cfg.IOSApps, App Attest, and limiting each
+// instance's signed requests with limit.
+func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileInstanceStore, indices statuslist.IndexStore, limit func(context.Context, wp.InstanceRequest) error) (*wp.Provider, error) {
 	verifiers := []wp.EvidenceVerifier{demo}
 	platforms := map[wp.Platform]wp.PlatformPolicy{
 		// Whatever the older protocol's checks found, from a software
@@ -449,6 +451,7 @@ func (p *Provider) library(cfg ServiceConfig, demo *demoVerifier, store *fileIns
 		Identifier: p.Issuer, ClientIDs: []string{cfg.ClientID}, WalletName: WalletName,
 		StatusListBaseURI: strings.TrimSuffix(cfg.URL, "/") + wp.StatusPath,
 		Policy:            wp.Policy{Platforms: platforms, MaxKeys: maxAttestedKeys},
+		InstanceLimit:     limit,
 	}, wp.Dependencies{
 		Signer: p.Key, Chain: []*x509.Certificate{p.Certificate},
 		Instances: store, InstanceKeys: store.keys(), Challenges: &wp.MemoryChallengeStore{},

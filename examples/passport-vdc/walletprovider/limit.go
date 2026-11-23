@@ -2,11 +2,14 @@ package walletprovider
 
 import (
 	"container/list"
+	"context"
 	"net"
 	"net/http"
 	"net/netip"
 	"sync"
 	"time"
+
+	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 // The challenge endpoint's limit for each client address: a burst of
@@ -24,6 +27,15 @@ const (
 	// registering instances; maxDemoInstances bounds them.
 	attestationRate  = 2.0
 	attestationBurst = 60.0
+	// The library protocol's limit for each instance's signed requests
+	// (wp.Config.InstanceLimit): a burst of instanceBurst, enough for a
+	// wallet receiving or refreshing several credentials at once, a
+	// Wallet and a Key Attestation each, then instanceRate a second.
+	// Unlike the address limits, it's keyed on the instance the
+	// request's signature proved, so wallets sharing a tunnel's address
+	// don't share it.
+	instanceRate  = 1.0
+	instanceBurst = 30.0
 	// maxLimitedClients bounds the addresses tracked; past it, the one
 	// heard from least recently is forgotten, so a new address is never
 	// turned away for want of room.
@@ -104,4 +116,16 @@ func (l *clientLimiter) refill(b *bucket, now time.Time) float64 {
 		tokens += elapsed * l.rate
 	}
 	return min(tokens, l.burst)
+}
+
+// instanceLimit is a wp.Config.InstanceLimit taking a token from the
+// bucket of the request's instance in l at now(), and refusing the
+// request, to retry after one token's time, when there's none.
+func instanceLimit(l *clientLimiter, now func() time.Time) func(context.Context, wp.InstanceRequest) error {
+	return func(_ context.Context, req wp.InstanceRequest) error {
+		if l.allow(req.InstanceID, now()) {
+			return nil
+		}
+		return wp.RateLimited(time.Duration(float64(time.Second) / l.rate))
+	}
 }
