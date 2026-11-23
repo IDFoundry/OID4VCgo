@@ -671,9 +671,10 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   its `State`: `OnRecheckRefused` hears of it, the request fails as the
   provider's own failure, and the next request sets the rest before it's
   refused. Don't wait for one: `Revoke` (or `Suspend`) the instance
-  `OnRecheckRefused` names, or run
-  `p.RevokeWhere(ctx, func(in walletprovider.Instance) bool { return in.State == walletprovider.StateRevoked }, "")`,
-  which finishes every pending revocation. Google's verdict is
+  `OnRecheckRefused` names, or run `p.FinishTransitions(ctx)` (below),
+  which finishes every pending suspension and revocation, as
+  `p.RevokeWhere(ctx, func(in walletprovider.Instance) bool { return in.State == walletprovider.StateRevoked }, "")`
+  does every pending revocation. Google's verdict is
   consulted first, and wins even when a root removed from `Roots`, a
   tightened `Verifier` or a tightened
   `Policy` would refuse the instance too — whether it names the
@@ -747,6 +748,22 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   revoking or suspending the instance failed: alert when its
   `KeyStatusesFor` isn't its `State`, and `Revoke` or `Suspend` it. It runs
   on the request's path, so hand slow work to another goroutine.
+- [ ] **Run `FinishTransitions` hourly** (from any instance, or
+  several: runs at once are safe). A transition whose process dies
+  mid-way can leave its statuses unfinished where nothing else finds
+  them: a `Resume` racing a `Suspend` whose `VALID` writes land after
+  the suspension's, its process then dying, leaves the instance
+  suspended, recorded as finished, and the attestations issued to it
+  before reading `VALID` until they expire. `FinishTransitions` sets
+  the statuses of every suspended or revoked instance whose statuses
+  are pending, and reads them back for each one last seen within
+  `MaxAttestationTTL` and an hour, setting them again where any reads
+  otherwise; that costs a status read per index of those instances'
+  keys. It goes on past an instance it fails to finish, and its error,
+  a `*walletprovider.FinishTransitionsError`, names each one; the next
+  run tries them again. It leaves active instances alone: one a racing
+  `Suspend` left with `SUSPENDED` statuses is refused by issuers until
+  you `Resume` it again.
 - [ ] **Run `SweepStatusLists` daily** (from any instance, or several:
   runs at once are safe): it deletes
   retired periods' list indices and gives instance keys recorded

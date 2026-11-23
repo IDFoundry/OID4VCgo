@@ -181,8 +181,8 @@ func (p *Provider) settle(ctx context.Context, id string, state State) error {
 // wrote's states: those writes may have overwritten some of the
 // statuses KeyStatusesFor says are set. It isn't cut short by ctx's
 // cancellation; should it fail too, the store is failing, which settle
-// reports, and RevokeWhere still finds a revoked instance's keys not
-// INVALID (statusesSet).
+// reports, and FinishTransitions (or RevokeWhere, for a revocation)
+// still finds the instance's statuses not all set (statusesSet).
 func (p *Provider) unsettle(ctx context.Context, id string, wrote []State) {
 	_ = p.updateForTransition(context.WithoutCancel(ctx), id, func(in *Instance) error {
 		if in.KeyStatusesFor != in.State || !slices.ContainsFunc(wrote, func(s State) bool { return s != in.State }) {
@@ -288,26 +288,65 @@ func (p *Provider) statusesSet(ctx context.Context, id string, status statuslist
 	}
 }
 
-// revocationFinished reports whether in is revoked with every one of
-// its keys' statuses set: recorded as set (KeyStatusesFor) and, while
-// an attestation issued to it may still be live, read back INVALID. A
-// transition that raced the revocation, and failed or died before it
-// could clear the record, may have overwritten some after it was
+// statusesFinished reports whether every one of in's keys' statuses is
+// set for its State: recorded as set (KeyStatusesFor) and, while an
+// attestation issued to it may still be live, read back. A transition
+// that raced the one that stored its State, and failed or died before
+// it could clear the record, may have overwritten some after it was
 // stored. A status that can't be read counts as not set.
-func (p *Provider) revocationFinished(ctx context.Context, in Instance, now time.Time) bool {
-	if in.State != StateRevoked || in.KeyStatusesFor != StateRevoked {
+func (p *Provider) statusesFinished(ctx context.Context, in Instance, now time.Time) bool {
+	if in.KeyStatusesFor != in.State {
 		return false
 	}
 	if !mayHaveLiveAttestations(in, now) {
 		return true
 	}
-	set, err := p.statusesSet(ctx, in.ID, keyStatus[StateRevoked], now)
+	set, err := p.statusesSet(ctx, in.ID, keyStatus[in.State], now)
 	return set && err == nil
 }
 
-// maxRevokeWhereFailures is how many instances RevokeWhere fails to
-// revoke before it stops.
-const maxRevokeWhereFailures = 100
+// maxWalkFailures is how many instances RevokeWhere or
+// FinishTransitions fails on before it stops.
+const maxWalkFailures = 100
+
+// eachInstance walks the whole store (InstanceStore.List), calling act
+// with each instance as it was when read and the time the walk began,
+// and returns how many act reported it acted on, and each one act
+// failed on, in the order it reached them. It goes on past a failure,
+// but stops, with why, when ctx ends, when listing the instances
+// fails, or after maxWalkFailures failures.
+func (p *Provider) eachInstance(ctx context.Context, act func(Instance, time.Time) (bool, error)) (int, []InstanceError, error) {
+	n := 0
+	var failed []InstanceError
+	now := p.now()
+	after := ""
+	for {
+		page, err := p.deps.Instances.List(ctx, after, listPageSize)
+		if err != nil {
+			return n, failed, fmt.Errorf("walletprovider: listing instances: %w", err)
+		}
+		for _, in := range page {
+			acted, err := act(in, now)
+			if err == nil {
+				if acted {
+					n++
+				}
+				continue
+			}
+			failed = append(failed, InstanceError{ID: in.ID, Err: err})
+			switch {
+			case ctx.Err() != nil:
+				return n, failed, ctx.Err()
+			case len(failed) >= maxWalkFailures:
+				return n, failed, fmt.Errorf("walletprovider: stopped after %d instances failed", len(failed))
+			}
+		}
+		if len(page) < listPageSize {
+			return n, failed, nil
+		}
+		after = page[len(page)-1].ID
+	}
+}
 
 // RevokeWhere revokes every instance that match selects — every
 // instance of an app version, say, every one whose device didn't boot
@@ -344,42 +383,68 @@ func (p *Provider) RevokeWhere(ctx context.Context, match func(Instance) bool, r
 	if match == nil {
 		return 0, errors.New("walletprovider: RevokeWhere needs a match function")
 	}
-	revoked := 0
-	var failed []InstanceError
-	result := func(stop error) (int, error) {
-		if len(failed) == 0 && stop == nil {
-			return revoked, nil
+	revoked, failed, stop := p.eachInstance(ctx, func(in Instance, now time.Time) (bool, error) {
+		if in.State == StateRevoked && p.statusesFinished(ctx, in, now) || !match(in) {
+			return false, nil
 		}
-		return revoked, &RevokeWhereError{Failed: failed, Err: stop}
+		return true, p.Revoke(ctx, in.ID, reason)
+	})
+	if len(failed) == 0 && stop == nil {
+		return revoked, nil
 	}
-	now := p.now()
-	after := ""
-	for {
-		page, err := p.deps.Instances.List(ctx, after, listPageSize)
-		if err != nil {
-			return result(fmt.Errorf("walletprovider: listing instances: %w", err))
+	return revoked, &RevokeWhereError{Failed: failed, Err: stop}
+}
+
+// FinishTransitions finishes every suspension and revocation pending,
+// and returns how many instances it finished. For each suspended or
+// revoked instance whose keys' statuses aren't all set, it sets them
+// again, SUSPENDED or INVALID. All set means what it means for
+// RevokeWhere: recorded as set (KeyStatusesFor) and, while an
+// attestation issued to the instance may still be live (for
+// MaxAttestationTTL after its LastSeenAt, and an hour more), read back
+// too. A Resume that raced a Suspend, and whose process died after its
+// VALID writes landed but before it set them SUSPENDED again, leaves an
+// instance suspended, recorded as set, with statuses VALID: neither its
+// requests nor RevokeWhere's run for revocations finish it, and the
+// attestations issued to it before the suspension keep reading VALID
+// until they expire. Run it from a periodic job (from any instance;
+// runs at once are safe), hourly or more often; reading the statuses
+// back costs it a read for each index of the keys of each suspended or
+// revoked instance last seen within that time.
+//
+// It reads an instance again before it sets the statuses, and passes
+// by one that's active by then: a Resume since the walk read it wins,
+// as it does over a Suspend. It passes by active instances: a Suspend
+// that raced a Resume, and died before it set them VALID again, can
+// leave an active instance with statuses SUSPENDED, so issuers refuse
+// its attestations, which costs availability only; resuming it again
+// sets them VALID.
+//
+// It walks the whole store (InstanceStore.List). An instance it fails
+// to finish doesn't stop it: it goes on to the next, and returns a
+// *FinishTransitionsError naming each one that failed. It stops when
+// ctx ends, when listing the instances fails, or after 100 failures.
+// What it didn't finish is left for the next run.
+func (p *Provider) FinishTransitions(ctx context.Context) (int, error) {
+	finished, failed, stop := p.eachInstance(ctx, func(in Instance, now time.Time) (bool, error) {
+		if in.State == StateActive || p.statusesFinished(ctx, in, now) {
+			return false, nil
 		}
-		for _, in := range page {
-			if p.revocationFinished(ctx, in, now) || !match(in) {
-				continue
-			}
-			if err := p.Revoke(ctx, in.ID, reason); err != nil {
-				failed = append(failed, InstanceError{ID: in.ID, Err: err})
-				switch {
-				case ctx.Err() != nil:
-					return result(ctx.Err())
-				case len(failed) >= maxRevokeWhereFailures:
-					return result(fmt.Errorf("walletprovider: stopped after %d instances failed", len(failed)))
-				}
-				continue
-			}
-			revoked++
+		switch fresh, err := p.getInstance(ctx, in.ID); {
+		case errors.Is(err, ErrInstanceNotFound):
+			return false, nil
+		case err != nil:
+			return false, err
+		case fresh.State == StateActive:
+			return false, nil
+		default:
+			return true, p.settle(ctx, in.ID, fresh.State)
 		}
-		if len(page) < listPageSize {
-			return result(nil)
-		}
-		after = page[len(page)-1].ID
+	})
+	if len(failed) == 0 && stop == nil {
+		return finished, nil
 	}
+	return finished, &FinishTransitionsError{Failed: failed, Err: stop}
 }
 
 // InstanceError is the error acting on one instance failed with.
@@ -405,29 +470,60 @@ type RevokeWhereError struct {
 }
 
 func (e *RevokeWhereError) Error() string {
+	return walkErrorString("RevokeWhere", "revoking", e.Failed, e.Err)
+}
+
+// Unwrap returns each failed instance's error, then Err.
+func (e *RevokeWhereError) Unwrap() []error { return walkErrors(e.Failed, e.Err) }
+
+// FinishTransitionsError is FinishTransitions' error when it failed to
+// finish an instance's suspension or revocation, or stopped before it
+// had walked every instance. errors.Is and errors.As see each of its
+// errors.
+type FinishTransitionsError struct {
+	// Failed are the instances whose keys' statuses it failed to set, in
+	// the order it reached them: run FinishTransitions again.
+	Failed []InstanceError
+
+	// Err, when not nil, is why it stopped before it had walked every
+	// instance: ctx's error, listing them failing, or too many failures.
+	Err error
+}
+
+func (e *FinishTransitionsError) Error() string {
+	return walkErrorString("FinishTransitions", "finishing", e.Failed, e.Err)
+}
+
+// Unwrap returns each failed instance's error, then Err.
+func (e *FinishTransitionsError) Unwrap() []error { return walkErrors(e.Failed, e.Err) }
+
+// walkErrorString is the message of the error of op, a walk of the
+// instances (eachInstance) doing verb to each, that failed on failed
+// and stopped for stop.
+func walkErrorString(op, verb string, failed []InstanceError, stop error) string {
 	var b strings.Builder
-	b.WriteString("walletprovider: RevokeWhere")
-	if len(e.Failed) > 0 {
-		ids := make([]string, len(e.Failed))
-		for i, f := range e.Failed {
+	b.WriteString("walletprovider: " + op)
+	if len(failed) > 0 {
+		ids := make([]string, len(failed))
+		for i, f := range failed {
 			ids[i] = f.ID
 		}
-		fmt.Fprintf(&b, ": revoking %d instances failed (%s), the first with: %v", len(e.Failed), strings.Join(ids, ", "), e.Failed[0].Err)
+		fmt.Fprintf(&b, ": %s %d instances failed (%s), the first with: %v", verb, len(failed), strings.Join(ids, ", "), failed[0].Err)
 	}
-	if e.Err != nil {
-		fmt.Fprintf(&b, ": stopped: %v", e.Err)
+	if stop != nil {
+		fmt.Fprintf(&b, ": stopped: %v", stop)
 	}
 	return b.String()
 }
 
-// Unwrap returns each failed instance's error, then Err.
-func (e *RevokeWhereError) Unwrap() []error {
-	errs := make([]error, 0, len(e.Failed)+1)
-	for _, f := range e.Failed {
+// walkErrors is each of failed's errors, then stop.
+func walkErrors(failed []InstanceError, stop error) []error {
+	errs := make([]error, 0, len(failed)+1)
+	for _, f := range failed {
 		errs = append(errs, f.Err)
 	}
-	if e.Err != nil {
-		errs = append(errs, e.Err)
+	if stop != nil {
+		errs = append(errs, stop)
 	}
 	return errs
 }

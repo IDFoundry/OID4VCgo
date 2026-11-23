@@ -99,12 +99,15 @@ type Instance struct {
 	// or revocation is pending: its state is stored, but some of the
 	// statuses may not be set yet. Provider.RevokeWhere then selects a
 	// revoked instance again, and a request from a suspended or revoked
-	// one sets them before it's refused. RevokeWhere also reads back the
-	// statuses of a revoked instance whose KeyStatusesFor says they're
-	// set, while an attestation issued to it may still be live. Register stores StateActive;
-	// it's empty for an instance stored before the provider kept it
-	// (v0.83.0 and before), which is pending until its next transition
-	// completes.
+	// one sets them before it's refused. Provider.FinishTransitions
+	// finishes a pending suspension or revocation too, and also reads
+	// back the statuses of a suspended or revoked instance whose
+	// KeyStatusesFor says they're set, while an attestation issued to
+	// it may still be live, as RevokeWhere does for a revoked one: a
+	// transition whose process died may have overwritten some after it
+	// was stored. Register stores StateActive; it's empty for an
+	// instance stored before the provider kept it (v0.83.0 and before),
+	// which is pending until its next transition completes.
 	KeyStatusesFor State
 
 	CreatedAt  time.Time
