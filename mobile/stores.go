@@ -906,11 +906,12 @@ const networkPrefix = "[network]"
 // code as the detail, so an app can tell the holder why. The Swift
 // package's and Kotlin library's adapters mark a
 // WalletProviderRefusedError (Exception) so. The mark carries no HTTP
-// status, and a code walletprovider.CodeError names discards a refresh
-// grant, so a callback marks those codes only for an answer with the
-// status walletprovider.CodeStatus gives them, as the libraries'
-// HttpWalletProvider does: an answer with another isn't the provider's
-// refusal. The mark is the whole "[refused:<code>] ", code a plain token
+// status, and a code walletprovider.CodeError names may discard a
+// refresh grant, so a callback marks those codes only for an answer
+// with the status walletprovider.CodeStatus gives them, as the
+// libraries' HttpWalletProvider does: an answer with another isn't the
+// provider's refusal. The libraries report a 429, rate_limited among
+// them, as unavailable, marked as network, not as a refusal. The mark is the whole "[refused:<code>] ", code a plain token
 // (errorCode), as the protocol's codes are, or "[refused:<code>]" alone:
 // anything else starting with the prefix — a code with a "]" or a space
 // in it, which could end the mark early and name another code — is a

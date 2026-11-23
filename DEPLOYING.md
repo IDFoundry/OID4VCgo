@@ -641,12 +641,27 @@ txs, _ := verifier.NewTransactions(v, db.Transactions(verifier.TransactionCodec{
   bounds one instance, not an attacker with many: each instance costs
   only one piece of registration evidence, so size `StatusListSize`
   with a margin, as above, and keep `RecentInstanceStatusLists`. It
-  doesn't limit request rates: also **rate-limit
-  `WalletAttestationPath` and `KeyAttestationPath`** per client in
-  front of the service, as the unauthenticated endpoints are. Each
-  signed request consumes a challenge and writes the instance's
-  record. Don't key the limit on the signed request's `sub` before
-  `Handler` has verified it: anyone can name another instance there.
+  doesn't limit request rates. Each signed request
+  (`WalletAttestationPath`, `KeyAttestationPath`) consumes a challenge
+  and writes the instance's record, so limit them twice:
+  - **per client in front of the service**, as the unauthenticated
+    endpoints are. Don't key this limit on the signed request's `sub`:
+    nothing has verified it there, and anyone can name another
+    instance;
+  - **per instance with `Config.InstanceLimit`**, keyed on the
+    `InstanceRequest.InstanceID` it's given: the instance whose
+    registration key signed the request. `VerifyRequest` asks it once
+    the signature has verified and before anything is written, the
+    request's challenge included. Return `walletprovider.RateLimited`
+    (with a retry delay, or 0) to refuse: `Handler` answers HTTP 429
+    `rate_limited`, with `Retry-After` when you gave a delay, and the
+    wallet retries later, keeping its refresh grants and instance key.
+    Size it for one wallet's bursts, as when it receives or refreshes
+    several credentials at once, each issuance taking a Wallet
+    Attestation and often a Key Attestation, and keep its state where every replica sees it, or accept a limit per
+    replica. Any other error it returns fails the request as the
+    provider's own failure (500).
+
   `Suspend`, `Resume` and `Revoke` write the instance's record too,
   retrying for up to 10 seconds while its own requests beat them, so a
   thief's traffic can't hold off a revocation; their `ErrConflict` past

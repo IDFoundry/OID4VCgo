@@ -1,10 +1,14 @@
 package walletprovider
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	wp "github.com/idfoundry/oid4vcgo/walletprovider"
 )
 
 func TestClientAddress(t *testing.T) {
@@ -62,5 +66,32 @@ func TestClientLimiter_FullTable(t *testing.T) {
 	}
 	if l.allow("client-1", now) {
 		t.Error("a drained client still tracked was allowed")
+	}
+}
+
+// TestInstanceLimit: the library protocol's limit gives each instance
+// its own bucket, keyed on the instance the provider verified, and
+// refuses past it with wp.ErrRateLimited, saying when to retry.
+func TestInstanceLimit(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	limit := instanceLimit(newClientLimiter(instanceRate, instanceBurst), func() time.Time { return now })
+	ctx := context.Background()
+	a := wp.InstanceRequest{InstanceID: "a", Method: "POST", Path: wp.WalletAttestationPath}
+	for i := range int(instanceBurst) {
+		if err := limit(ctx, a); err != nil {
+			t.Fatalf("request %d refused within the burst: %v", i, err)
+		}
+	}
+	err := limit(ctx, a)
+	var hint interface{ RetryAfter() time.Duration }
+	if !errors.Is(err, wp.ErrRateLimited) || !errors.As(err, &hint) || hint.RetryAfter() != time.Second {
+		t.Fatalf("past the burst: %v, want ErrRateLimited retrying after 1s", err)
+	}
+	if err := limit(ctx, wp.InstanceRequest{InstanceID: "b", Method: "POST", Path: wp.KeyAttestationPath}); err != nil {
+		t.Fatalf("another instance refused: %v", err)
+	}
+	now = now.Add(time.Second)
+	if err := limit(ctx, a); err != nil {
+		t.Fatalf("a second later: %v", err)
 	}
 }

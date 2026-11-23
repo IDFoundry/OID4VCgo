@@ -72,7 +72,7 @@ func TestRecheckExpired(t *testing.T) {
 // status — a redirect, a proxy's answer — matches none, since walletflow
 // forgets a refresh grant on these.
 func TestRefusedErrorIs(t *testing.T) {
-	sentinels := []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered, walletprovider.ErrEvidenceRequired}
+	sentinels := []error{walletprovider.ErrRegistrationExpired, walletprovider.ErrInstanceKeyExpired, walletprovider.ErrInstanceKeyRegistered, walletprovider.ErrEvidenceRequired, walletprovider.ErrRateLimited}
 	for _, tc := range []struct {
 		code   string
 		status int
@@ -82,12 +82,13 @@ func TestRefusedErrorIs(t *testing.T) {
 		{walletprovider.CodeInstanceKeyExpired, 403, walletprovider.ErrInstanceKeyExpired},
 		{walletprovider.CodeInstanceKeyRegistered, 409, walletprovider.ErrInstanceKeyRegistered},
 		{walletprovider.CodeEvidenceRequired, 400, walletprovider.ErrEvidenceRequired},
+		{walletprovider.CodeRateLimited, 429, walletprovider.ErrRateLimited},
 		{"evidence_rejected", 403, nil},
 	} {
 		if got := walletprovider.CodeError(tc.code); got != tc.want {
 			t.Fatalf("CodeError(%s) = %v, want %v", tc.code, got, tc.want)
 		}
-		for _, status := range []int{tc.status, 302, 307, 400, 401, 403, 404, 409, 418} {
+		for _, status := range []int{tc.status, 302, 307, 400, 401, 403, 404, 409, 418, 429} {
 			want := tc.want
 			if status != tc.status {
 				want = nil
