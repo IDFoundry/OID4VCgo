@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 
 	fapires "github.com/idfoundry/fapigo/resource"
 
+	oid4vci "github.com/idfoundry/oid4vcgo"
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/credential/sdjwtvc"
 	"github.com/idfoundry/oid4vcgo/internal/conformanceconfig"
@@ -72,8 +75,9 @@ func mdocClaimsForRequest(docType string, nameSpaces map[string]map[string]inter
 // resourceVerifier through issuer/fapiresource. What it issues is fixed
 // by cfg — issuer.Issuer has no user database of its own
 // (CredentialRequest.SDJWTClaims' own doc comment), so this binary's
-// own static test data stands in for one. No credential_identifier-based
-// requests yet — see README's own "Status".
+// own static test data stands in for one — narrowed to the claims the
+// token's authorization detail asks for (req.AuthorizedClaims): the
+// issuer issues whatever Prepare sets.
 func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, credentialURL *url.URL, cfg Config) (http.Handler, error) {
 	content, err := credentialContentFor(cfg)
 	if err != nil {
@@ -87,16 +91,54 @@ func credentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Verifier, c
 		URL: credentialURL, Tokens: tokens,
 		Prepare: func(_ context.Context, _ issuer.Grant, req *issuer.CredentialRequest) (func(bool), error) {
 			if cfg.Deferred {
-				req.Defer = &issuer.Deferral{}
+				reference, err := deferralReference(req.AuthorizedClaims)
+				if err != nil {
+					return nil, err
+				}
+				req.Defer = &issuer.Deferral{Reference: reference}
 				return nil, nil
 			}
-			req.SDJWTClaims, req.MdocClaims = content()
+			sdjwtClaims, mdocClaims := content()
+			sdjwtClaims, mdocClaims, err := iss.NarrowToAuthorizedClaims(req.ResolvedConfigurationID, req.AuthorizedClaims, sdjwtClaims, mdocClaims)
+			if err != nil {
+				return nil, err
+			}
+			req.SDJWTClaims, req.MdocClaims = sdjwtClaims, mdocClaims
 			if cfg.lists != nil {
 				req.PerBatch = cfg.lists.perBatch
 			}
 			return nil, nil
 		},
 	})
+}
+
+// deferralReference is the Deferral.Reference carrying authorized, a
+// deferred request's AuthorizedClaims, to the Deferred Credential
+// Endpoint's Resolve: a DeferredTransactionRecord doesn't keep them,
+// and this binary keeps no state of its own beside its stores. "" when
+// every claim is authorized.
+func deferralReference(authorized []oid4vci.ClaimsDescription) (string, error) {
+	if len(authorized) == 0 {
+		return "", nil
+	}
+	raw, err := json.Marshal(authorized)
+	if err != nil {
+		return "", fmt.Errorf("deferred authorized claims: %w", err)
+	}
+	return string(raw), nil
+}
+
+// referencedClaims is the AuthorizedClaims deferralReference carried
+// in reference.
+func referencedClaims(reference string) ([]oid4vci.ClaimsDescription, error) {
+	if reference == "" {
+		return nil, nil
+	}
+	var authorized []oid4vci.ClaimsDescription
+	if err := json.Unmarshal([]byte(reference), &authorized); err != nil {
+		return nil, fmt.Errorf("deferred authorized claims: %w", err)
+	}
+	return authorized, nil
 }
 
 // credentialContentFor returns what this binary issues, fixed by cfg:
@@ -139,8 +181,22 @@ func deferredCredentialHandler(iss *issuer.Issuer, resourceVerifier *fapires.Ver
 	}
 	return iss.DeferredCredentialHandler(issuer.DeferredCredentialHandlerConfig{
 		ProtectedEndpointConfig: issuer.ProtectedEndpointConfig{URL: endpoint, Tokens: tokens},
-		Resolve: func(ctx context.Context, _ issuer.Grant, transactionID string, _ issuer.DeferredTransactionRecord) error {
+		Resolve: func(ctx context.Context, _ issuer.Grant, transactionID string, tx issuer.DeferredTransactionRecord) error {
+			authorized, err := referencedClaims(tx.Reference)
+			if err != nil {
+				return err
+			}
 			sdjwtClaims, mdocClaims := content()
+			sdjwtClaims, mdocClaims, err = iss.NarrowToAuthorizedClaims(tx.CredentialConfigurationID, authorized, sdjwtClaims, mdocClaims)
+			var refused *issuer.Error
+			switch {
+			case errors.As(err, &refused):
+				// None of the claims the token authorizes is in this
+				// credential.
+				return iss.DenyDeferredCredential(ctx, transactionID)
+			case err != nil:
+				return err
+			}
 			issuance := issuer.DeferredIssuance{SDJWTClaims: sdjwtClaims, MdocClaims: mdocClaims}
 			if cfg.lists != nil {
 				issuance.PerBatch = cfg.lists.perBatch
