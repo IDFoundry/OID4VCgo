@@ -14,8 +14,12 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/idfoundry/fapigo v0.78.0 h1:XAylSzmjeUncK8S9tLoNeWDEKJYRbVlCBw6HDZlUIPQ=
 github.com/idfoundry/fapigo v0.78.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
+github.com/idfoundry/fapigo v0.82.3 h1:AvdI1nLfuWPChb7+Ypj84Q/Rg66/ZgFlDqTFAQ3YwpA=
+github.com/idfoundry/fapigo v0.82.3/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo/sqlstore v0.9.1 h1:TikT/HQNfCc+1ySBFf7EORmjHqGfPwjc3Fpru238jHo=
 github.com/idfoundry/fapigo/sqlstore v0.9.1/go.mod h1:iP57T3gMdVvJcGqFcGSiTxQpqYzbVp2qtUqxcLR1nwA=
+github.com/idfoundry/fapigo/sqlstore v0.11.0 h1:9BUDEL5SUmz3VAym7FF7YLbAWPdJwNp1Q2mrdOtWtT0=
+github.com/idfoundry/fapigo/sqlstore v0.11.0/go.mod h1:FD00AYjS/JdWsLUQlaVzMVwSdola0EOQCwPdh9ZKUuM=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
