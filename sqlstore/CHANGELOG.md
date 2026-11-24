@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.17.0...sqlstore/v0.18.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** an Authorization Server or Credential Issuer built on FAPIgo refuses a Wallet's DPoP proofs and Client Attestations whose EC coordinates aren't full size, or whose JOSE headers repeat a member name or spell two names differing only in case. A Wallet refuses an Authorization Server's token or pushed authorization response that repeats or case-varies a member it reads, or has data after its JSON object. A Credential Endpoint request whose path isn't in normal form is refused. Custom access-token claims named as a case variant of a reserved claim, client assertions whose aud is an endpoint URL at revocation and refresh, InteractionNeeded for a request without prompt=none, comparing fapi.Secret with ==, and a Sensitive extension returned in token claims are refused too. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.79.0 to v0.82.3.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.82.3 and fapigo/sqlstore v0.11.0 ([dbf85dc](https://github.com/IDFoundry/OID4VCgo/commit/dbf85dc6f12c20c8e44f5ee188fde3a7a9361013))
+
 ## [0.17.0](https://github.com/IDFoundry/OID4VCgo/compare/sqlstore/v0.16.0...sqlstore/v0.17.0) (2026-11-22)
 
 
