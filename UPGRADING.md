@@ -9,6 +9,43 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## v0.88.0 → v0.89.0
 
+### FAPIgo v0.82.3 and fapigo/sqlstore v0.11.0: stricter peers
+
+OID4VCgo now requires FAPIgo v0.82.3 and fapigo/sqlstore v0.11.0; see
+FAPIgo's UPGRADING.md, sections v0.79.0 to v0.82.3. OID4VCgo's own API
+is unchanged. What can now be refused:
+
+- **A Wallet's DPoP proofs and Client Attestations**, at an
+  Authorization Server and Credential Issuer built on FAPIgo, when its
+  EC keys' `x` or `y` aren't the curve's full size (a leading zero
+  octet dropped), or a JOSE header or attestation repeats a member
+  name or spells two names differing only in case. A Wallet dropping
+  leading zeros fails for about one key in 128, one repeating members
+  every time: the Wallet must be fixed.
+- **An Authorization Server's ambiguous responses**, at a Wallet built
+  on `wallet` or `walletflow`: a token or pushed authorization response
+  that repeats a member, spells one the client reads in another case,
+  or has anything after its JSON object fails with
+  `client.ErrorInvalidResponse`.
+- **A Credential Endpoint request whose path isn't in normal form**
+  (a dot segment, or a percent-encoded unreserved character) is
+  refused with 400 `invalid_request` by `issuer`'s resource checks.
+- **Claims a custom `AccessTokenIssuer`, or an extension with
+  `ReturnInTokenClaims`, names as a case variant of a reserved claim**
+  (`Sub`, `Nonce`) are refused; rename them.
+- **A client assertion whose `aud` is an endpoint URL** rather than the
+  issuer identifier is refused at revocation and refresh.
+- **`server.InteractionNeeded`** now answers only a `prompt=none`
+  request; end a consent page the user abandoned with `DenyLocally`.
+- **A `storage.GrantStore` of your own** must keep a refresh token
+  revoked before it's stored revoked; fapigo/sqlstore v0.10.0 and later
+  do.
+- **Go code** comparing `fapi.Secret` values with `==` no longer
+  compiles; an `extension.Definition` both `Sensitive` and
+  `ReturnInTokenClaims` is refused by `extension.NewRegistry`.
+
+The CIBA changes apply only to a deployment serving CIBA itself.
+
 ### Limit each Wallet Provider instance's requests (`walletprovider`)
 
 The new `walletprovider.Config.InstanceLimit` limits each instance's
