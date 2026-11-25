@@ -2097,10 +2097,11 @@ changes whether *every* bullet below is `(done)`.
   `waltid-interop.yml` (walt.id's Issuer2, Verifier2 and Wallet2, in
   all four directions); `multipaz-interop.yml` (Multipaz in each
   role for ISO/IEC 18013-5 in person, ISO/IEC TS 18013-7 Annex C over
-  the DC API, OpenID4VP and OpenID4VCI); and `credo-interop.yml`
+  the DC API, OpenID4VP and OpenID4VCI); `credo-interop.yml`
   (Credo's OpenID4VCI issuer, OpenID4VP Verifier and holder, in all
-  four directions). Each also checks controls the
-  other side must refuse. Separately, `fuzz.yml` runs the Go fuzz
+  four directions); and `eudiplo-interop.yml` (EUDIPLO's OpenID4VP
+  Verifier, cross-device, over the DC API and over Annex C). Each also
+  checks controls the other side must refuse. Separately, `fuzz.yml` runs the Go fuzz
   targets with mutation, daily.
 
 ## Design rules carried over from FAPIgo

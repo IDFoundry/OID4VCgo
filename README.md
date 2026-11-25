@@ -10,6 +10,7 @@
 [![walt.id interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/waltid-interop.yml)
 [![Multipaz interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/multipaz-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/multipaz-interop.yml)
 [![Credo interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/credo-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/credo-interop.yml)
+[![EUDIPLO interop](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudiplo-interop.yml/badge.svg)](https://github.com/IDFoundry/OID4VCgo/actions/workflows/eudiplo-interop.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/IDFoundry/OID4VCgo/badge)](https://securityscorecards.dev/viewer/?uri=github.com/IDFoundry/OID4VCgo)
 [![Go Reference](https://pkg.go.dev/badge/github.com/idfoundry/oid4vcgo.svg)](https://pkg.go.dev/github.com/idfoundry/oid4vcgo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

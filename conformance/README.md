@@ -218,6 +218,7 @@ The wallets' own settings are those of their runs.
 | OID4VCgo's issuer → OID4VCgo's wallet → EUDI verifier | the issuer's production setup, its status lists in `sqlstore`, revoked through its `POST /status`; the wallet attested by the Wallet Provider, its credentials in `sqlstore` | the fixtures (`scripts/setup`, `scripts/serve`) for what the issued credentials don't cover: the default engine, the `openid4vp` profile, the DC API, `x509_san_dns`, `vct#integrity`, a suspension, and the wallet's own refusals |
 | walt.id Wallet2 → verifier | the PID and mDL presentations and the untrusted-issuer control: `verifier.Transactions`, `AssuranceProduction`, sealed SQLite; the PID's verifier as two instances sharing PostgreSQL, split between them | the `request_uri_method` choices (the default engine) |
 | walt.id: issuer → OID4VCgo's wallet → Verifier2 | the issuer's production setup, its status lists in `sqlstore`; the wallet attested by the Wallet Provider | — |
+| EUDIPLO: issuer → OID4VCgo's wallet → EUDIPLO's Verifier | the issuer's production setup, its status lists in `sqlstore`, revoked through its `POST /status`; the wallet attested by the Wallet Provider | — |
 | walt.id Wallet2 ← issuer | — | Wallet2 adds no key attestation, which production requires; its attester protocol isn't `walletprovider`'s |
 | Multipaz: walletflow ← Multipaz issuer | the Wallet Provider, trusted and untrusted | — |
 | Multipaz wallet → verifier, ← issuer | — | cross-device and DC API presentations, which the binary's transactions engine doesn't route; `attestation` proofs with a bare-key key attestation, which production doesn't take |
@@ -479,6 +480,34 @@ and on each release against the pinned release, and weekly against
 Credo's newest release on npm. See
 [`interop/credo/README.md`](../interop/credo/README.md) for the cases,
 Credo's deviations, and moving the pin.
+
+## Interop with EUDIPLO
+
+`.github/workflows/eudiplo-interop.yml` runs OID4VCgo's wallet against
+[EUDIPLO](https://github.com/openwallet-foundation-labs/eudiplo)'s
+OpenID4VP 1.0 Verifier, from its published image pinned by digest:
+`walletflow` obtains SD-JWT VC and mdoc PIDs from `cmd/conformance-issuer`'s
+production setup, attested by OID4VCgo's Wallet Provider, and presents
+them to EUDIPLO's signed `x509_hash` requests (DCQL, the response
+encrypted, `direct_post.jwt`), over the Digital Credentials API
+(`dc_api.jwt`) and, for the mdoc, ISO/IEC TS 18013-7 Annex C
+(`org-iso-mdoc`, its DeviceRequest signed). EUDIPLO trusts the
+issuer's CAs through a managed trust list of its own and checks each
+credential's Token Status List entry, fetching the issuer's list.
+Controls (both PIDs revoked by the issuer, presentations whose Key
+Binding JWT `nonce` or `aud`, a disclosure, or the issuer's signature
+was changed on the way, and an Annex C answer for another origin) are
+refused by EUDIPLO, each graded by the reason its session gives; the
+wallet's own refusals (an untrusted Verifier CA, a request whose
+`trusted_authorities` no held credential meets) by its error. EUDIPLO
+builds on the same `@openid4vc`, `@sd-jwt` and `@owf/mdoc` libraries
+as Credo, so it isn't a fully independent implementation. One known
+deviation the run asserts, failing if it changes: a revoked mdoc is
+refused as `trust_list_unavailable`. It runs on each pull request,
+daily and on each release against the pinned image, and weekly against
+EUDIPLO's latest. See
+[`interop/eudiplo/README.md`](../interop/eudiplo/README.md) for the
+cases, EUDIPLO's deviations, and moving the pin.
 
 ## OID4VCgo's wallet at production assurance
 
