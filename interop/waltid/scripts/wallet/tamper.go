@@ -476,12 +476,21 @@ func (k *keyring) holderOf(issuerJWT string) (crypto.Signer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cnf.jwk: %w", err)
 	}
+	key, ok := k.signerFor(pub)
+	if !ok {
+		return nil, errors.New("no key of the wallet's is the credential's cnf.jwk")
+	}
+	return key, nil
+}
+
+// signerFor is the wallet's key whose public key is pub.
+func (k *keyring) signerFor(pub *ecdsa.PublicKey) (crypto.Signer, bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	for _, key := range k.keys {
 		if p, ok := key.Public().(*ecdsa.PublicKey); ok && p.Equal(pub) {
-			return key, nil
+			return key, true
 		}
 	}
-	return nil, errors.New("no key of the wallet's is the credential's cnf.jwk")
+	return nil, false
 }

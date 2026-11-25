@@ -155,3 +155,42 @@ func registerAtProvider(ctx context.Context, baseURL, tlsCert string) (*interopw
 	}
 	return interopwp.Register(ctx, baseURL, hc)
 }
+
+// revokingProvider is a Wallet Provider that revokes the wallet's
+// instance as soon as it has attested it, as a provider does that
+// finds the device compromised: the Wallet Attestation it handed out
+// is valid but for its status list entry, which then reads INVALID.
+// Its POST to revokeURL is the provider's admin /revoke
+// (interop/walletprovider). A later Wallet Attestation is the first
+// again, as the provider no longer attests a revoked instance.
+type revokingProvider struct {
+	walletflow.WalletProvider
+	revokeURL string
+
+	attested string
+}
+
+// WalletAttestation implements walletflow.WalletProvider.
+func (p *revokingProvider) WalletAttestation(ctx context.Context, clientID string, instanceKey crypto.PublicKey) (string, error) {
+	if p.attested != "" {
+		return p.attested, nil
+	}
+	jwt, err := p.WalletProvider.WalletAttestation(ctx, clientID, instanceKey)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.revokeURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req) // #nosec G107 -- the operator's own loopback URL
+	if err != nil {
+		return "", err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("revoke the instance: %s", resp.Status)
+	}
+	p.attested = jwt
+	return jwt, nil
+}

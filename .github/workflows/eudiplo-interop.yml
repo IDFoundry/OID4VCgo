@@ -1,5 +1,6 @@
-# Interop: OID4VCgo's wallet against EUDIPLO's OpenID4VP 1.0 Verifier,
-# from its published image pinned by digest, by interop/eudiplo/run.sh.
+# Interop: OID4VCgo's wallet against EUDIPLO's OpenID4VP 1.0 Verifier
+# and its OpenID4VCI 1.0 Credential Issuer, from its published image
+# pinned by digest, by interop/eudiplo/run.sh (and issuer.sh).
 # cmd/conformance-issuer's production setup issues SD-JWT VC and mdoc
 # PIDs to walletflow, attested by OID4VCgo's Wallet Provider, which
 # presents them to EUDIPLO's signed x509_hash requests, the response
@@ -9,8 +10,18 @@
 # credential's Token Status List entry. Then controls (credentials the
 # issuer revoked, presentations changed on their way to EUDIPLO, an
 # Annex C answer for another origin, the wallet's own refusals)
-# refused, each by its reason. It runs here on a disposable runner with
-# a read-only token and no secrets. Pull requests, the daily run and
+# refused, each by its reason. Then EUDIPLO's issuer issues SD-JWT VC
+# and mdoc PIDs to walletflow (pre-authorized code with a tx_code,
+# batches, DPoP, encrypted requests and responses, Wallet and Key
+# Attestations from a second instance of OID4VCgo's Wallet Provider,
+# which EUDIPLO's trust list names and whose status lists it checks),
+# the wallet checking each credential's status on EUDIPLO's lists; and
+# controls (a wrong tx_code, an untrusted or revoked Wallet Attestation,
+# a Key Attestation below the required level, a DPoP proof for another
+# htu, an untrusted issuer, a revoked credential), each refused by its
+# reason; two known gaps of EUDIPLO's are noted, failing once they
+# change. It runs here on a disposable runner with a read-only token
+# and no secrets. Pull requests, the daily run and
 # each release test the pinned image; the weekly run tests EUDIPLO's
 # latest image, to show a break before the pin moves.
 name: EUDIPLO interop
@@ -41,7 +52,7 @@ concurrency:
 jobs:
   interop:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,6 +86,7 @@ jobs:
             ${{ runner.temp }}/eudiplo-interop.log
             ${{ runner.temp }}/eudiplo-work/*.log
             ${{ runner.temp }}/eudiplo-work/wallet-provider/*.log
+            ${{ runner.temp }}/eudiplo-work/wallet-provider-eudiplo/*.log
             ${{ runner.temp }}/eudiplo-work/*-wallet.json
             ${{ runner.temp }}/eudiplo-work/*-session.json
             ${{ runner.temp }}/eudiplo-work/*-session-log.json

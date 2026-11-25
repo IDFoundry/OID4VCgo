@@ -5,7 +5,13 @@
 // startup, whose trust lists name OID4VCgo's issuer's CAs and, for the
 // controls, a CA that issued nothing.
 //
-// Usage: go run ./interop/eudiplo/scripts/setup -out DIR -host HOST -issuer-ca FILE -iaca FILE
+// It also writes EUDIPLO's issuer, in that tenant and in a second one
+// requiring Credential Request and Response encryption (issuer.go):
+// its signing keys under CAs of the run's, and a trust list naming
+// OID4VCgo's Wallet Provider's CA (-wallet-provider-ca) as a wallet
+// provider.
+//
+// Usage: go run ./interop/eudiplo/scripts/setup -out DIR -host HOST -issuer-ca FILE -iaca FILE -wallet-provider-ca FILE -public-url URL
 //
 // DIR receives:
 //
@@ -13,6 +19,9 @@
 //	tls-cert.pem, tls-key.pem     TLS for localhost and HOST, under ca.pem
 //	verifier-key.pem              EUDIPLO's Access Certificate key, for the wallet's negative presentations
 //	client.json                   the tenant's API client: {"id", "secret"}
+//	enc-client.json               the encrypting tenant's
+//	eudiplo-issuer-ca.pem         the CA EUDIPLO's SD-JWT VCs and status lists chain to
+//	eudiplo-iaca.pem              the IACA its mdocs chain to
 //	eudiplo/config/TENANT/...     EUDIPLO's config folder (CONFIG_FOLDER), eudiplo/ its FOLDER
 //
 // The tenant holds: its API client; the Access Certificate's key chain
@@ -79,11 +88,13 @@ func main() {
 	host := flag.String("host", "", "the name EUDIPLO's container reaches this host by")
 	issuerCA := flag.String("issuer-ca", "", "the CA OID4VCgo's issuer's SD-JWT VCs chain to")
 	iaca := flag.String("iaca", "", "the IACA OID4VCgo's issuer's mdocs chain to")
+	wpCA := flag.String("wallet-provider-ca", "", "the CA OID4VCgo's Wallet Provider's attestations chain to, which EUDIPLO's issuer trusts")
+	publicURL := flag.String("public-url", "", "EUDIPLO's PUBLIC_URL, the iss of its status lists")
 	flag.Parse()
-	if *out == "" || *host == "" || *issuerCA == "" || *iaca == "" {
-		fail("-out, -host, -issuer-ca and -iaca are required")
+	if *out == "" || *host == "" || *issuerCA == "" || *iaca == "" || *wpCA == "" || *publicURL == "" {
+		fail("-out, -host, -issuer-ca, -iaca, -wallet-provider-ca and -public-url are required")
 	}
-	if err := run(*out, *host, *issuerCA, *iaca); err != nil {
+	if err := run(*out, *host, *issuerCA, *iaca, *wpCA, *publicURL); err != nil {
 		fail(err.Error())
 	}
 }
@@ -110,12 +121,16 @@ func doc(schema string, spec any) map[string]any {
 	return map[string]any{"$schema": schema, "metadata": map[string]any{"generation": 1}, "spec": spec}
 }
 
-func run(dir, host, issuerCAFile, iacaFile string) error {
+func run(dir, host, issuerCAFile, iacaFile, wpCAFile, publicURL string) error {
 	issuerCA, err := os.ReadFile(issuerCAFile) // #nosec G304 -- the operator's own file
 	if err != nil {
 		return err
 	}
 	iaca, err := os.ReadFile(iacaFile) // #nosec G304 -- the operator's own file
+	if err != nil {
+		return err
+	}
+	wpCA, err := os.ReadFile(wpCAFile) // #nosec G304 -- the operator's own file
 	if err != nil {
 		return err
 	}
@@ -157,14 +172,28 @@ func run(dir, host, issuerCAFile, iacaFile string) error {
 	if err != nil {
 		return err
 	}
-	secret, err := randomHex(32)
+	secret, err := client(f, "client.json", tenant)
 	if err != nil {
 		return err
 	}
-	if err := f.json("client.json", map[string]string{"id": tenant + "-run", "secret": secret}); err != nil {
+	if err := tenantFiles(f, secret, accessKey, accessCert, listKey, string(issuerCA), string(iaca), f["other-ca.pem"]); err != nil {
 		return err
 	}
-	if err := tenantFiles(f, secret, accessKey, accessCert, listKey, string(issuerCA), string(iaca), f["other-ca.pem"]); err != nil {
+	keys, err := newIssuerKeys(f, publicURL)
+	if err != nil {
+		return err
+	}
+	if err := issuerFiles(f, tenant, keys, listKey, string(wpCA), false); err != nil {
+		return err
+	}
+	encSecret, err := client(f, "enc-client.json", encTenant)
+	if err != nil {
+		return err
+	}
+	if err := encTenantFiles(f, encSecret); err != nil {
+		return err
+	}
+	if err := issuerFiles(f, encTenant, keys, listKey, string(wpCA), true); err != nil {
 		return err
 	}
 	for name, content := range f {
@@ -188,12 +217,9 @@ func tenantFiles(f files, secret string, accessKey *ecdsa.PrivateKey, accessCert
 	}
 	docs := map[string]any{
 		at("info.json"): doc(tenantSchema, map[string]any{
-			"name": "OID4VCgo interop", "description": "OID4VCgo's wallet presents to this tenant's Verifier",
+			"name": "OID4VCgo interop", "description": "OID4VCgo's wallet presents to this tenant's Verifier, and receives from its issuer",
 		}),
-		at("clients", "run.json"): doc(clientSchema, map[string]any{
-			"clientId": tenant + "-run", "secret": secret, "description": "interop/eudiplo/run.sh",
-			"roles": []string{"presentation:manage", "presentation:request", "sessions:read"},
-		}),
+		at("clients", "run.json"): clientDoc(tenant, secret),
 		at("key-chains", "access.json"): doc(keyChainSchema, map[string]any{
 			"id": accessKeyChain, "description": "Access Certificate", "usageType": "access", "type": "standalone",
 			"keySource":   map[string]any{"type": "private-jwk", "jwk": privateJWK(accessKey, accessKeyChain)},
@@ -219,6 +245,38 @@ func tenantFiles(f files, secret string, accessKey *ecdsa.PrivateKey, accessCert
 		}
 	}
 	return nil
+}
+
+// client adds to f, as name, a fresh API client of tenant t, returning
+// its secret.
+func client(f files, name, t string) (string, error) {
+	secret, err := randomHex(32)
+	if err != nil {
+		return "", err
+	}
+	return secret, f.json(name, map[string]string{"id": t + "-run", "secret": secret})
+}
+
+// clientDoc is tenant t's API client, for the Verifier's sessions and
+// the issuer's offers and credentials' statuses.
+func clientDoc(t, secret string) map[string]any {
+	return doc(clientSchema, map[string]any{
+		"clientId": t + "-run", "secret": secret, "description": "interop/eudiplo/run.sh",
+		"roles": []string{"presentation:manage", "presentation:request", "sessions:read", "issuance:offer", "credentials:status"},
+	})
+}
+
+// encTenantFiles adds the encrypting tenant's info and client to f.
+func encTenantFiles(f files, secret string) error {
+	at := func(parts ...string) string {
+		return filepath.Join(append([]string{"eudiplo", "config", encTenant}, parts...)...)
+	}
+	if err := f.json(at("info.json"), doc(tenantSchema, map[string]any{
+		"name": "OID4VCgo interop, encrypted", "description": "an issuer requiring Credential Request and Response encryption",
+	})); err != nil {
+		return err
+	}
+	return f.json(at("clients", "run.json"), clientDoc(encTenant, secret))
 }
 
 // trustList is a managed trust list, signed by the tenant's trust list

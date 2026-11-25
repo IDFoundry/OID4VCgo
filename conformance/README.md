@@ -485,7 +485,8 @@ Credo's deviations, and moving the pin.
 
 `.github/workflows/eudiplo-interop.yml` runs OID4VCgo's wallet against
 [EUDIPLO](https://github.com/openwallet-foundation-labs/eudiplo)'s
-OpenID4VP 1.0 Verifier, from its published image pinned by digest:
+OpenID4VP 1.0 Verifier and its OpenID4VCI 1.0 Credential Issuer, from
+its published image pinned by digest. Against the Verifier:
 `walletflow` obtains SD-JWT VC and mdoc PIDs from `cmd/conformance-issuer`'s
 production setup, attested by OID4VCgo's Wallet Provider, and presents
 them to EUDIPLO's signed `x509_hash` requests (DCQL, the response
@@ -503,7 +504,30 @@ wallet's own refusals (an untrusted Verifier CA, a request whose
 builds on the same `@openid4vc`, `@sd-jwt` and `@owf/mdoc` libraries
 as Credo, so it isn't a fully independent implementation. One known
 deviation the run asserts, failing if it changes: a revoked mdoc is
-refused as `trust_list_unavailable`. It runs on each pull request,
+refused as `trust_list_unavailable`.
+
+Against the issuer, `walletflow` redeems EUDIPLO's pre-authorized
+code offers (with a `tx_code`) for SD-JWT VC and mdoc PIDs, batches of
+2, attested by a second instance of OID4VCgo's Wallet Provider, which
+EUDIPLO trusts through a wallet-provider trust list and whose
+attestations' status it checks on the provider's lists; DPoP, Wallet
+Attestations and, for some configurations, Key Attestations are
+required (a `jwt` proof's `key_attestation`, or an `attestation`
+proof), every Credential Request and Response encrypted, and a second
+tenant requires that encryption. The wallet checks each credential's
+chain to EUDIPLO's CA or IACA and its holder binding on receipt, and
+its Token Status List entry: VALID, then INVALID once EUDIPLO revokes
+it. Controls: a wrong `tx_code`, a Wallet Attestation from a provider
+EUDIPLO doesn't trust or whose instance the provider revoked, a Key
+Attestation below the required key storage level and a DPoP proof for
+another `htu`, each refused by EUDIPLO for its reason; and the
+wallet's own refusals (an untrusted issuer CA, a status list from a
+Status Issuer it wasn't told of). Two known gaps of EUDIPLO's are noted
+rather than failed, and fail the run once they change: its PAR refuses
+the `nonce` parameter fapigo's client sends, so the authorization code
+flow isn't covered; and a key-attested `jwt` proof naming its key by
+its index in `attested_keys` isn't verified, as with Credo. It runs on
+each pull request,
 daily and on each release against the pinned image, and weekly against
 EUDIPLO's latest. See
 [`interop/eudiplo/README.md`](../interop/eudiplo/README.md) for the

@@ -53,9 +53,19 @@
 // interop/eudiplo/run.sh runs it against EUDIPLO's Verifier, and with
 // -dcapi answers a Digital Credentials API request instead of
 // -request, as the platform hands it to the wallet (dcapi.go): the
-// result's "dcapi" is what it hands back, which run.sh posts on.
+// result's "dcapi" is what it hands back, which run.sh posts on. It
+// runs it against EUDIPLO's issuer too: with -redirect-uri, an offer of
+// the authorization code grant is redeemed (authorize.go), the
+// issuer's authorization page followed as a browser would, where it
+// asks the holder nothing; -check-status checks each credential's
+// status once received, -status-issuer naming the Status Issuers that
+// may sign an issuer's lists, after -revoke-call has the issuer revoke
+// them (status.go); -revoke-instance has the Wallet Provider revoke the
+// wallet's instance once it has attested it (provider.go); and
+// -tamper-dpop signs each Credential Request's DPoP proof again for
+// another endpoint (dpop.go).
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE] | -dcapi FILE] -out FILE
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID [-revoke-instance URL]] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE | -redirect-uri URI] [-revoke URL | -revoke-call FILE] [-check-status [-status-issuer ISSUER=STATUS_ISSUER]] [-tamper-dpop] [-request URL [-tamper MODE -verifier2-key FILE] | -dcapi FILE] -out FILE
 package main
 
 import (
@@ -102,6 +112,9 @@ type result struct {
 	Revoked  []string   `json:"revoked,omitempty"`
 	// DCAPI is the answer to -dcapi's request, for the page to post on.
 	DCAPI *dcapiAnswer `json:"dcapi,omitempty"`
+	// Authorization is how the authorization code grant went, for an
+	// offer of it (authorize.go).
+	Authorization *authorization `json:"authorization,omitempty"`
 }
 
 // tampered is what -tamper changed of the presentation, and Verifier2's
@@ -116,9 +129,10 @@ type tampered struct {
 // Token Response; IssuerMetadata, how many JSON Credential Issuer
 // Metadata documents it read, and RequestEncryption whether one had
 // credential_request_encryption; RequestEncryptionJWKs, that member's
-// jwks keys; and VerifierJWKs, the request object's client_metadata.jwks
-// keys. Each key is {"alg": ..., "kid": ...}, "absent" for a member it
-// lacks.
+// jwks keys; VerifierJWKs, the request object's client_metadata.jwks
+// keys; and CredentialResponses, each Credential Response's media type
+// (application/jwt when encrypted). Each key is {"alg": ..., "kid":
+// ...}, "absent" for a member it lacks.
 type observed struct {
 	mu                    sync.Mutex
 	TokenTypes            []string            `json:"token_types"`
@@ -126,6 +140,7 @@ type observed struct {
 	RequestEncryption     bool                `json:"credential_request_encryption"`
 	RequestEncryptionJWKs []map[string]string `json:"request_encryption_jwks"`
 	VerifierJWKs          []map[string]string `json:"verifier_jwks"`
+	CredentialResponses   []string            `json:"credential_responses,omitempty"`
 }
 
 // maxRecordedBody bounds what the recorder reads of a response.
@@ -166,6 +181,9 @@ type jwkSet struct {
 func (o *observed) record(req *http.Request, contentType string, body []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/credential") {
+		o.CredentialResponses = append(o.CredentialResponses, contentType)
+	}
 	switch {
 	case strings.HasPrefix(contentType, "application/oauth-authz-req+jwt"):
 		var claims struct {
@@ -224,6 +242,8 @@ type received struct {
 	Claims          []string `json:"claims"`
 	// StatusLists are its copies' status list entries, uri#idx.
 	StatusLists []string `json:"status_lists,omitempty"`
+	// Status is what -check-status found (status.go).
+	Status *checkedStatus `json:"status,omitempty"`
 }
 
 // options are the flags that change what the wallet is, beyond the
@@ -256,6 +276,24 @@ type options struct {
 	// dcapi is a file holding a Digital Credentials API request
 	// (dcapi.go), answered in place of a -request; "" for none.
 	dcapi string
+	// redirectURI is walletflow.Config.RedirectURI, for offers of the
+	// authorization code grant (authorize.go); "" for none.
+	redirectURI string
+	// revokeCall is a file naming the issuer's API call that revokes
+	// what the wallet received (status.go); "" for none. checkStatus
+	// is whether each credential received has its status checked
+	// (Wallet.CheckStatus), after any revocation.
+	revokeCall  string
+	checkStatus bool
+	// statusIssuers is walletflow.Config.StatusIssuers: credential
+	// issuer → the Status Issuers that may sign its status lists.
+	statusIssuers map[string][]string
+	// tamperDPoP has every Credential Request's DPoP proof name another
+	// endpoint (dpop.go).
+	tamperDPoP bool
+	// revokeInstance is the Wallet Provider's admin /revoke: revoke the
+	// wallet's instance once it's attested (provider.go); "" not to.
+	revokeInstance string
 }
 
 func main() {
@@ -286,6 +324,22 @@ func main() {
 	flag.StringVar(&opts.txCode, "tx-code", "", "the Transaction Code to redeem each offer's pre-authorized code with")
 	flag.BoolVar(&opts.haip, "haip", false, "receive under walletflow.ProfileHAIP: a Wallet Attestation at every Token Request")
 	flag.BoolVar(&opts.proofKeyByJWK, "proof-key-by-jwk", false, "name a key-attested jwt proof's key in its jwk header, not by its index (walletflow.Config.ProofKeyByJWK)")
+	flag.StringVar(&opts.revokeCall, "revoke-call", "", `a file of the issuer's API call that revokes the credentials received, {"url", "token", "body"} (status.go), made before -check-status`)
+	flag.StringVar(&opts.revokeInstance, "revoke-instance", "", "with -wallet-provider, its admin /revoke: revoke the wallet's instance once it's attested, so its Wallet Attestation's status reads INVALID (provider.go)")
+	flag.BoolVar(&opts.tamperDPoP, "tamper-dpop", false, "sign every Credential Request's DPoP proof again, its htu another endpoint's (dpop.go)")
+	flag.Func("status-issuer", "ISSUER=STATUS_ISSUER: a Status Issuer that may sign ISSUER's status lists (walletflow.Config.StatusIssuers; repeatable)", func(v string) error {
+		issuer, statusIssuer, ok := strings.Cut(v, "=")
+		if !ok {
+			return fmt.Errorf("want ISSUER=STATUS_ISSUER, not %q", v)
+		}
+		if opts.statusIssuers == nil {
+			opts.statusIssuers = map[string][]string{}
+		}
+		opts.statusIssuers[issuer] = append(opts.statusIssuers[issuer], statusIssuer)
+		return nil
+	})
+	flag.BoolVar(&opts.checkStatus, "check-status", false, "check each credential received's status (Wallet.CheckStatus), recording it in the result's received; the result's observed then stays empty")
+	flag.StringVar(&opts.redirectURI, "redirect-uri", "", "the wallet's redirect URI: redeem an offer of the authorization code grant, following the issuer's authorization page (authorize.go)")
 	flag.StringVar(&opts.dcapi, "dcapi", "", `a Digital Credentials API request to answer instead of -request, as the platform hands it over: {"protocol", "data", "origin"}`)
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
@@ -333,6 +387,12 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 	if transport, err = pt.transport(tlsRoots, res.Observed); err != nil {
 		return fail(err)
 	}
+	if opts.checkStatus {
+		// walletflow's status list fetcher applies its address policy
+		// to an *http.Transport alone: with -check-status, nothing is
+		// observed.
+		transport = transport.(recorder).next
+	}
 	keys := &keyring{KeyStore: walletflow.NewMemoryKeyStore()}
 	var t *tamperer
 	if tamper != "" {
@@ -341,6 +401,11 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 		}
 		transport = t
 		defer func() { res.Tampered = t.outcome() }()
+	}
+	if opts.tamperDPoP {
+		d := &dpopTamperer{next: transport, keys: keys}
+		transport = d
+		defer func() { res.Tampered = d.outcome() }()
 	}
 	client := &http.Client{Transport: transport}
 	// Issuer2's and Verifier2's certificates are checked for
@@ -373,7 +438,7 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 		return fail(err)
 	}
 
-	if err := receive(ctx, w, offered, opts, &res); err != nil {
+	if err := receive(ctx, w, client, offered, opts, &res); err != nil {
 		return fail(err)
 	}
 	if opts.dcapi != "" {
@@ -435,6 +500,7 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 	if opts.haip {
 		cfg.IssuanceProfile = walletflow.ProfileHAIP
 	}
+	cfg.RedirectURI, cfg.StatusIssuers = opts.redirectURI, opts.statusIssuers
 	cfg.ProofKeyByJWK = opts.proofKeyByJWK
 	if opts.attesterConfig != "" {
 		p, err := loadProvider(opts.attesterConfig)
@@ -449,6 +515,9 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 			return err
 		}
 		cfg.ClientID, deps.Provider = opts.clientID, p
+		if opts.revokeInstance != "" {
+			deps.Provider = &revokingProvider{WalletProvider: p, revokeURL: opts.revokeInstance}
+		}
 	}
 	// An org-iso-mdoc request's reader is recognized under the
 	// Verifiers' roots, its revocation unchecked: the reader's
@@ -467,22 +536,36 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 	return nil
 }
 
-// receive redeems each offer, with opts.txCode, then, with opts.revoke,
-// revokes every credential received, recording in res how far it got.
-func receive(ctx context.Context, w *walletflow.Wallet, offered []string, opts options, res *result) error {
+// receive redeems each offer, with opts.txCode, then, with opts.revoke
+// or opts.revokeCall, has the issuer revoke every credential received,
+// and with opts.checkStatus checks each one's status (status.go),
+// recording in res how far it got.
+func receive(ctx context.Context, w *walletflow.Wallet, client *http.Client, offered []string, opts options, res *result) error {
 	var got []walletflow.StoredCredential
 	for _, offer := range offered {
-		creds, err := redeem(ctx, w, offer, opts.txCode, res)
+		creds, err := redeem(ctx, w, client, offer, opts, res)
 		if err != nil {
 			return err
 		}
 		got = append(got, creds...)
 	}
-	if opts.revoke == "" {
+	if opts.revoke != "" {
+		res.Stage = "revoke"
+		if err := revoke(ctx, opts.revoke, got, res); err != nil {
+			return err
+		}
+	}
+	if opts.revokeCall != "" {
+		res.Stage = "revoke"
+		if err := revokeCall(ctx, client, opts.revokeCall, res); err != nil {
+			return err
+		}
+	}
+	if !opts.checkStatus {
 		return nil
 	}
-	res.Stage = "revoke"
-	return revoke(ctx, opts.revoke, got, res)
+	res.Stage = "status"
+	return checkStatus(ctx, w, got, res)
 }
 
 // present answers request with the default selection, recording in res
@@ -507,19 +590,26 @@ func present(ctx context.Context, w *walletflow.Wallet, request string, res *res
 	return nil
 }
 
-// redeem redeems offer's pre-authorized code with txCode, recording in
-// res how far it got and the credentials it received or refused, which
-// it returns.
-func redeem(ctx context.Context, w *walletflow.Wallet, offer, txCode string, res *result) ([]walletflow.StoredCredential, error) {
+// redeem redeems offer, its pre-authorized code with opts.txCode, or by the
+// authorization code grant (authorize, over client), recording in res
+// how far it got and the credentials it received or refused, which it
+// returns.
+func redeem(ctx context.Context, w *walletflow.Wallet, client *http.Client, offer string, opts options, res *result) ([]walletflow.StoredCredential, error) {
 	res.Stage = "offer"
 	s, err := w.StartIssuance(ctx, offer)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = s.Close(ctx) }()
-	res.Stage = "token"
-	if err := s.RedeemPreAuthorizedCode(ctx, txCode); err != nil {
-		return nil, err
+	if s.Offer().Grant == walletflow.GrantAuthorizationCode {
+		if err := authorize(ctx, s, client, opts.redirectURI, res); err != nil {
+			return nil, err
+		}
+	} else {
+		res.Stage = "token"
+		if err := s.RedeemPreAuthorizedCode(ctx, opts.txCode); err != nil {
+			return nil, err
+		}
 	}
 	res.Stage = "credential"
 	got, err := s.RequestCredentials(ctx)
