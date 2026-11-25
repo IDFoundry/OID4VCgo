@@ -171,10 +171,15 @@ jobs:
       - name: go test (race)
         run: go test -race ./...
 
+      # Without its cache, as the lint job: a restored analysis cache
+      # loses staticcheck's knowledge that t.Fatal doesn't return here
+      # too (SA5011 in tests nobody changed), and once saved it fails
+      # every run until deleted.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12
           working-directory: examples/passport-vdc
+          skip-cache: true
 
   # sqlstore/ is its own Go module too, so the library takes no
   # database driver: every store contract against SQLite and, in the
