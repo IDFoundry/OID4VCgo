@@ -50,7 +50,12 @@
 // refuse (tamper.go); the result's "tampered" records the change and
 // Verifier2's answer to it.
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE]] -out FILE
+// interop/eudiplo/run.sh runs it against EUDIPLO's Verifier, and with
+// -dcapi answers a Digital Credentials API request instead of
+// -request, as the platform hands it to the wallet (dcapi.go): the
+// result's "dcapi" is what it hands back, which run.sh posts on.
+//
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE] [-revoke URL] [-request URL [-tamper MODE -verifier2-key FILE] | -dcapi FILE] -out FILE
 package main
 
 import (
@@ -73,6 +78,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/idfoundry/oid4vcgo/certrevocation"
 	"github.com/idfoundry/oid4vcgo/wallet"
 	"github.com/idfoundry/oid4vcgo/walletflow"
 )
@@ -94,6 +100,8 @@ type result struct {
 	Observed *observed  `json:"observed"`
 	Tampered *tampered  `json:"tampered,omitempty"`
 	Revoked  []string   `json:"revoked,omitempty"`
+	// DCAPI is the answer to -dcapi's request, for the page to post on.
+	DCAPI *dcapiAnswer `json:"dcapi,omitempty"`
 }
 
 // tampered is what -tamper changed of the presentation, and Verifier2's
@@ -245,6 +253,9 @@ type options struct {
 	// header rather than by its index (walletflow.Config.ProofKeyByJWK),
 	// for an issuer that takes no index (Credo's).
 	proofKeyByJWK bool
+	// dcapi is a file holding a Digital Credentials API request
+	// (dcapi.go), answered in place of a -request; "" for none.
+	dcapi string
 }
 
 func main() {
@@ -275,6 +286,7 @@ func main() {
 	flag.StringVar(&opts.txCode, "tx-code", "", "the Transaction Code to redeem each offer's pre-authorized code with")
 	flag.BoolVar(&opts.haip, "haip", false, "receive under walletflow.ProfileHAIP: a Wallet Attestation at every Token Request")
 	flag.BoolVar(&opts.proofKeyByJWK, "proof-key-by-jwk", false, "name a key-attested jwt proof's key in its jwk header, not by its index (walletflow.Config.ProofKeyByJWK)")
+	flag.StringVar(&opts.dcapi, "dcapi", "", `a Digital Credentials API request to answer instead of -request, as the platform hands it over: {"protocol", "data", "origin"}`)
 	flag.Parse()
 	if *tamper != "" && (!slices.Contains(tamperModes, *tamper) || *verifier2Key == "") {
 		log.Fatal("-tamper takes one of " + strings.Join(tamperModes, ", ") + ", and -verifier2-key")
@@ -364,6 +376,13 @@ func run(pt parties, offered []string, request, tamper, verifier2Key string, opt
 	if err := receive(ctx, w, offered, opts, &res); err != nil {
 		return fail(err)
 	}
+	if opts.dcapi != "" {
+		if err := presentDCAPI(ctx, w, opts.dcapi, &res); err != nil {
+			return fail(err)
+		}
+		res.Stage = "done"
+		return res
+	}
 	if request == "" {
 		res.Stage = "done"
 		return res
@@ -430,6 +449,14 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 			return err
 		}
 		cfg.ClientID, deps.Provider = opts.clientID, p
+	}
+	// An org-iso-mdoc request's reader is recognized under the
+	// Verifiers' roots, its revocation unchecked: the reader's
+	// certificate is the Verifier's Access Certificate.
+	if opts.dcapi != "" && cfg.VerifierTrust != nil {
+		if roots, ok := cfg.VerifierTrust.(wallet.X5CVerifierRoots); ok {
+			cfg.MdocReaderRoots, cfg.MdocReaderRevocation = roots.Roots, certrevocation.NoCheck{}
+		}
 	}
 	if opts.mdocIssuerCA != "" {
 		var err error
