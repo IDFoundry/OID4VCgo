@@ -20,7 +20,19 @@
 # then controls EUDIPLO must refuse, each by the reason its session
 # gives (failureCode, errorReason): a credential the issuer revoked,
 # presentations changed on their way to EUDIPLO, an Annex C answer for
-# another origin; and the wallet's own refusals. See README.md.
+# another origin; and the wallet's own refusals. Then (issuer.sh):
+#
+#   EUDIPLO's issuer →            pre-authorized code offers with a
+#     our wallet                  tx_code, SD-JWT VC and mdoc PIDs in
+#                                 batches, DPoP, encrypted requests and
+#                                 responses, Wallet and Key Attestations
+#                                 from a second instance of OID4VCgo's
+#                                 Wallet Provider, which EUDIPLO's trust
+#                                 list names; the wallet checks each
+#                                 credential's status on EUDIPLO's lists
+#
+# and controls, each refused by EUDIPLO's OAuth error or the wallet's
+# own. See README.md.
 #
 #   interop/eudiplo/run.sh
 #   EUDIPLO_TAG=latest interop/eudiplo/run.sh
@@ -48,13 +60,16 @@ EUDIPLO_PORT=$((BASE_PORT + 1))
 # lists, as $HOST; OID4VCgo's Wallet Provider and its admin listener.
 ISSUER_PORT=$((BASE_PORT + 2)) OFFERS_PORT=$((BASE_PORT + 3)) TAP_PORT=$((BASE_PORT + 4))
 WP_PORT=$((BASE_PORT + 5)) WP_ADMIN_PORT=$((BASE_PORT + 6))
+# The Wallet Provider EUDIPLO's issuer trusts (issuer.sh), its admin
+# listener, and a second tap, in front of its status lists, as $HOST.
+EWP_PORT=$((BASE_PORT + 7)) EWP_ADMIN_PORT=$((BASE_PORT + 8)) EWP_TAP_PORT=$((BASE_PORT + 9))
 WORK="${WORK:-$(mktemp -d)}"
 NAME="${COMPOSE_PROJECT_NAME:-oid4vcgo-eudiplo}"
 # The client_id interop/eudi/scripts/setup-issuer registers, which the
 # Wallet Provider attests the wallet as.
 CLIENT_ID=oid4vcgo-eudi-interop-wallet
 
-for p in $(seq "$EUDIPLO_PORT" "$WP_ADMIN_PORT"); do
+for p in $(seq "$EUDIPLO_PORT" "$EWP_TAP_PORT"); do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
     echo "port $p is in use; set BASE_PORT" >&2
     exit 2
@@ -93,7 +108,16 @@ build_production "$WORK" "$SRC" issuer=./cmd/conformance-issuer walletprovider=.
 cd "$WORK"
 jq -r '.issuer_ca_pem' issuer-files/driver.json > issuer-ca.pem
 jq -r '.iaca_pem' issuer-files/driver.json > iaca.pem
-(cd "$SRC" && go run ./interop/eudiplo/scripts/setup -out "$WORK" -host "$HOST" -issuer-ca "$WORK/issuer-ca.pem" -iaca "$WORK/iaca.pem")
+# The Wallet Provider for EUDIPLO's issuer, a second instance of
+# OID4VCgo's (issuer.sh): its status lists published as
+# https://$HOST:$EWP_TAP_PORT/statuslists (its -base-url), where
+# EUDIPLO fetches them through serve's second tap.
+start_wallet_provider "$WORK/walletprovider" "$WORK/wallet-provider-eudiplo" "$EWP_PORT" "$EWP_ADMIN_PORT" "$CLIENT_ID" \
+  -base-url "https://$HOST:$EWP_TAP_PORT" -ca-name "OID4VCgo EUDIPLO interop Wallet Provider CA"
+PIDS+=($!)
+wait_ready "http://127.0.0.1:$EWP_ADMIN_PORT/ready"
+(cd "$SRC" && go run ./interop/eudiplo/scripts/setup -out "$WORK" -host "$HOST" -issuer-ca "$WORK/issuer-ca.pem" -iaca "$WORK/iaca.pem" \
+  -wallet-provider-ca "$WORK/wallet-provider-eudiplo/ca.pem" -public-url "https://localhost:$EUDIPLO_PORT")
 
 # OID4VCgo's issuer, as a deployment runs it (its production setup:
 # production assurance, sealed SQLite stores, its status lists'
@@ -125,6 +149,12 @@ jq --arg issuer "https://localhost:$ISSUER_PORT" --arg addr "127.0.0.1:$ISSUER_P
 PIDS+=($!)
 ./serve -dir . -tap "$TAP_BIND:$TAP_PORT=https://127.0.0.1:$ISSUER_PORT" -tap-name localhost > serve.log 2>&1 &
 PIDS+=($!)
+# The second tap dials the Wallet Provider under its own, self-signed,
+# TLS certificate: its directory's ca.pem.
+mkdir -p ewp-tap
+cp tls-cert.pem tls-key.pem ewp-tap/ && cp wallet-provider-eudiplo/tls-cert.pem ewp-tap/ca.pem
+./serve -dir ewp-tap -tap "$TAP_BIND:$EWP_TAP_PORT=https://127.0.0.1:$EWP_PORT" -tap-name localhost > ewp-serve.log 2>&1 &
+PIDS+=($!)
 
 # EUDIPLO, as its docker-compose.yml runs it, but: its config folder
 # (FOLDER, CONFIG_FOLDER) setup's, imported at startup into a fresh
@@ -149,6 +179,7 @@ docker run -d --name "$NAME" -p "127.0.0.1:$EUDIPLO_PORT:3000" --add-host "$HOST
   -e NODE_EXTRA_CA_CERTS=/app/config/tls/ca.pem \
   -e OUTBOUND_URL_ALLOW_PRIVATE_NETWORK=true -e OUTBOUND_URL_ALLOWED_HOSTS="$HOST" \
   -e CONFIG_IMPORT_MODE=replace -e CONFIG_VARIABLE_STRICT=abort -e LOG_ENABLE_SESSION_LOGGER=true -e LOG_SESSION_STORE=errors \
+  -e STATUS_IMMEDIATE_UPDATE=true \
   "$EUDIPLO_IMAGE" >/dev/null
 
 E="https://localhost:$EUDIPLO_PORT"
@@ -415,6 +446,9 @@ if [[ "$(cat annexc-origin-post-status.txt 2>/dev/null)" = 400 ]] && jq -e '.mes
     && jq -e '.status == "failed" and .errorReason == "HPKE decryption failed"' annexc-origin-session.json >/dev/null 2>&1; then
   ok "control: an Annex C answer made for another origin: EUDIPLO refuses it, for its HPKE info (400, HPKE decryption failed)"
 else bad "control: an Annex C answer for another origin: $(dcapi_why annexc-origin)"; fi
+
+# shellcheck source=issuer.sh
+. "$HERE/issuer.sh"
 
 if [[ "$fail" -eq 0 ]]; then echo "RESULT: every case behaved as expected"; else echo "RESULT: FAILED"; fi
 exit "$fail"
