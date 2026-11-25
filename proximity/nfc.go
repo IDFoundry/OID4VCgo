@@ -47,7 +47,7 @@ func NewNFCDeviceSession(random io.Reader, opts ...DeviceOption) (*DeviceSession
 	if err != nil {
 		return nil, err
 	}
-	de, err := encMode.Marshal(deviceEngagement{Version: engagementVersion, Security: security})
+	de, err := encMode.Marshal(newDeviceEngagement(security, nil))
 	if err != nil {
 		return nil, fmt.Errorf("proximity: encode NFC DeviceEngagement: %w", err)
 	}

@@ -2112,6 +2112,17 @@ reached the app.
   that the Go tests verify offline. Not yet: a check against the
   ballot text, which a release must name before calling the feature
   conformant, and a run on phones over BLE.
+- **Advertised in the engagement** (issue #1183). The holder's
+  engagements were version 1.0 with no capabilities, and some readers
+  (Multipaz's Identity Reader among them) send `deviceRequestInfo` only
+  to an mdoc advertising the second edition's ExtendedRequestSupport,
+  so `request_info` was always `null` against them. Every engagement,
+  QR or NFC, is now version 1.1 with `6: {4: true}` and an empty
+  originInfos (`5: []`, as Multipaz writes for ISO/IEC TS 18013-7:2024).
+  No call, JSON shape or wrapper API changed. The SessionTranscript
+  takes the engagement bytes as sent on both sides, which an end-to-end
+  test checks. Not yet checked against the ballot text: the capability
+  identifier comes from Multipaz.
 
 ## Key Attestations name the issuance's instance key (ABI 15)
 

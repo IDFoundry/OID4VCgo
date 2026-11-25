@@ -12,8 +12,27 @@ import (
 )
 
 // engagementVersion is the DeviceEngagement version this package
-// writes (§8.2.1.1). It reads any 1.x.
-const engagementVersion = "1.0"
+// writes (§8.2.1.1): 1.1, the second edition's, as its engagements
+// carry capabilities. It reads any 1.x.
+const engagementVersion = "1.1"
+
+// capabilityExtendedRequestSupport is the second edition's
+// ExtendedRequestSupport capability identifier: true tells the reader
+// the mdoc reads a DeviceRequest's deviceRequestInfo, which a reader
+// sends only to an mdoc that advertises it.
+const capabilityExtendedRequestSupport = 4
+
+// engagementOriginInfos and engagementCapabilities are the version 1.1
+// members every engagement this package writes carries. originInfos
+// (key 5) is an empty array, written even with nothing in it as
+// Multipaz writes it, for readers following ISO/IEC TS 18013-7:2024,
+// which has it in a version 1.1 engagement.
+// capabilities (key 6) is {4: true}: this package parses
+// deviceRequestInfo (DeviceRequest.RequestInfo) on every engagement.
+var (
+	engagementOriginInfos  = cbor.RawMessage{0x80}
+	engagementCapabilities = cbor.RawMessage{0xa1, capabilityExtendedRequestSupport, 0xf5}
+)
 
 // cipherSuite1 is the only cipher suite ISO/IEC 18013-5 defines
 // (§9.1.5.2): ECDH over one of its curves, HKDF-SHA256, AES-256-GCM.
@@ -55,12 +74,28 @@ func (m BLEMode) String() string {
 	}
 }
 
-// deviceEngagement is §8.2.1.1's DeviceEngagement. Later members (5
-// originInfos, 6 capabilities, from version 1.1) are ignored when read.
+// deviceEngagement is §8.2.1.1's DeviceEngagement, with the version 1.1
+// members originInfos (5) and capabilities (6). Read, originInfos is
+// ignored and capabilities is kept as sent for readCapabilities; any
+// other member is ignored.
 type deviceEngagement struct {
 	Version          string            `cbor:"0,keyasint"`
 	Security         cbor.RawMessage   `cbor:"1,keyasint"`
 	RetrievalMethods []cbor.RawMessage `cbor:"2,keyasint,omitempty"`
+	OriginInfos      cbor.RawMessage   `cbor:"5,keyasint,omitempty"`
+	Capabilities     cbor.RawMessage   `cbor:"6,keyasint,omitempty"`
+}
+
+// newDeviceEngagement is the DeviceEngagement this package writes for
+// security and methods, with the version 1.1 members.
+func newDeviceEngagement(security cbor.RawMessage, methods []cbor.RawMessage) deviceEngagement {
+	return deviceEngagement{
+		Version:          engagementVersion,
+		Security:         security,
+		RetrievalMethods: methods,
+		OriginInfos:      engagementOriginInfos,
+		Capabilities:     engagementCapabilities,
+	}
 }
 
 // bleOptions is §8.2.1.1's BleOptions.
@@ -113,11 +148,7 @@ func encodeQREngagement(security cbor.RawMessage, peripheralUUID, centralUUID []
 		return nil, fmt.Errorf("proximity: encode DeviceRetrievalMethod: %w", err)
 	}
 
-	b, err := encMode.Marshal(deviceEngagement{
-		Version:          engagementVersion,
-		Security:         security,
-		RetrievalMethods: []cbor.RawMessage{method},
-	})
+	b, err := encMode.Marshal(newDeviceEngagement(security, []cbor.RawMessage{method}))
 	if err != nil {
 		return nil, fmt.Errorf("proximity: encode DeviceEngagement: %w", err)
 	}
@@ -135,6 +166,10 @@ type parsedEngagement struct {
 	ble     bool
 	bleMode BLEMode
 	uuid    []byte
+	// extendedRequestSupport is whether the engagement advertises the
+	// ExtendedRequestSupport capability (true under key 4 of
+	// capabilities): that the mdoc reads deviceRequestInfo.
+	extendedRequestSupport bool
 }
 
 // parseDeviceEngagement decodes b as a DeviceEngagement: version 1.x,
@@ -161,7 +196,30 @@ func parseDeviceEngagement(b []byte) (parsedEngagement, error) {
 	if pe.ble, pe.bleMode, pe.uuid, err = selectBLEMethod(de.RetrievalMethods); err != nil {
 		return parsedEngagement{}, err
 	}
+	pe.extendedRequestSupport = readCapabilities(de.Capabilities)[capabilityExtendedRequestSupport]
 	return pe, nil
+}
+
+// readCapabilities is the capabilities member's identifiers whose value
+// is true. A member that isn't a map with integer keys advertises
+// nothing rather than failing the engagement, which was accepted, the
+// member ignored, before this package read it.
+func readCapabilities(raw cbor.RawMessage) map[int64]bool {
+	if raw == nil {
+		return nil
+	}
+	var members map[int64]cbor.RawMessage
+	if err := decMode.Unmarshal(raw, &members); err != nil {
+		return nil
+	}
+	out := map[int64]bool{}
+	for id, value := range members {
+		var b bool
+		if decMode.Unmarshal(value, &b) == nil && b {
+			out[id] = true
+		}
+	}
+	return out
 }
 
 // decodeEngagementSecurity decodes the DeviceEngagement's Security:

@@ -102,8 +102,11 @@ with ``ProximityPresentation/UseCase/mandatory``,
 ``ProximityPresentation/UseCase/documentSets`` (groups of indices into
 ``ProximityPresentation/Request/documents``) and
 ``ProximityPresentation/UseCase/purposeHints`` (an `Int32` purpose code
-per controller ID, as the reader sent it). It is `nil` when the reader
-sent none, as a first-edition reader doesn't, which is different from
+per controller ID, as the reader sent it). The engagement tells readers
+that the wallet reads this information (the second edition's
+ExtendedRequestSupport capability), and some send it only when they see
+that. It is `nil` when the reader sent none, as a first-edition reader
+doesn't, which is different from
 present information with no use cases; keep a consent screen that works
 without it.
 

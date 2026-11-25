@@ -22,6 +22,7 @@ import org.multipaz.crypto.AsymmetricKey
 import org.multipaz.crypto.Crypto
 import org.multipaz.crypto.EcPublicKey
 import org.multipaz.documenttype.knowntypes.DrivingLicense
+import org.multipaz.mdoc.engagement.Capability
 import org.multipaz.mdoc.engagement.DeviceEngagement
 import org.multipaz.mdoc.request.DeviceRequest
 import org.multipaz.mdoc.request.DeviceRequestInfo
@@ -170,6 +171,11 @@ class ReaderAuthAllCases(private val peer: Peer, private val pki: Pki) : Checks(
         start.error?.let { return "holder_start: $it" }
         val engagement = start.string("qr")!!.removePrefix("mdoc:").fromBase64Url()
         val deviceEngagement = DeviceEngagement.fromDataItem(Cbor.decode(engagement))
+        // Multipaz's readers send deviceRequestInfo only to an mdoc
+        // whose engagement advertises it.
+        if (deviceEngagement.capabilities[Capability.EXTENDED_REQUEST_SUPPORT]?.asBoolean != true) {
+            return "the engagement (version ${deviceEngagement.version}) doesn't advertise EXTENDED_REQUEST_SUPPORT"
+        }
         val eReaderKey = Crypto.createEcPrivateKey(deviceEngagement.eDeviceKey.curve)
         val transcript = sessionTranscript(engagement, eReaderKey.publicKey)
         val session = SessionEncryption(MdocRole.MDOC_READER, eReaderKey, deviceEngagement.eDeviceKey, Cbor.encode(transcript))

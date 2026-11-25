@@ -46,10 +46,16 @@
 // # Messages
 //
 //   - DeviceEngagement (§8.2.1.1), carried in the QR code (§8.2.2.3):
-//     {0: "1.0", 1: [1, EDeviceKeyBytes], 2: [[2, 1, BleOptions]]}, with
-//     one BLE retrieval method in mdoc peripheral server mode (the
-//     default) or central client mode (WithBLEMode). A reader offered
-//     both selects central client mode (§8.3.3.1.1.1).
+//     {0: "1.1", 1: [1, EDeviceKeyBytes], 2: [[2, 1, BleOptions]],
+//     5: [], 6: {4: true}}, with one BLE retrieval method in mdoc
+//     peripheral server mode (the default) or central client mode
+//     (WithBLEMode). A reader offered both selects central client mode
+//     (§8.3.3.1.1.1). Version 1.1's originInfos (5) is empty, and its
+//     capabilities (6) advertise the second edition's
+//     ExtendedRequestSupport (4): readers that check it send
+//     deviceRequestInfo only to an mdoc that advertises it. NFC
+//     engagements carry the same members without the BLE method. A
+//     reader reads any 1.x engagement, with or without them.
 //   - SessionTranscript (§9.1.5.1): [DeviceEngagementBytes,
 //     EReaderKeyBytes, Handover], Handover null for QR engagement.
 //   - Session keys (§9.1.5.2): ECDH, then HKDF-SHA256 with salt

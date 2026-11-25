@@ -120,8 +120,11 @@ the whole request rather than each document, and say why it asks:
 `Request.requestInfo` holds its use cases, each with a `mandatory` flag,
 `documentSets` (groups of indices into `Request.documents`) and
 `purposeHints` (an integer purpose code per controller ID, as the reader
-sent it). It is null when the reader sent none, as a first-edition
-reader doesn't, so keep a consent screen that works without it.
+sent it). The engagement tells readers that the wallet reads this
+information (the second edition's ExtendedRequestSupport capability),
+and some send it only when they see that. It is null when the reader
+sent none, as a first-edition reader doesn't, so keep a consent screen
+that works without it.
 
 Read `signed` together with the reader's status. `signed` is true when
 a verified signature over the whole request covers this information;

@@ -71,14 +71,20 @@ func annexDDeviceSession(t testing.TB) *DeviceSession {
 	return newDeviceSession(key, nil, de, handover)
 }
 
-// TestAnnexDDeviceEngagement: Annex D's QR DeviceEngagement parses to
-// its published EDeviceKey and BLE central client mode UUID, and
-// encoding those back gives the same bytes.
+// TestAnnexDDeviceEngagement: Annex D's QR DeviceEngagement (version
+// 1.0, no capabilities) parses to its published EDeviceKey and BLE
+// central client mode UUID, and encoding those back gives the same
+// bytes but for the version 1.1 members: its map of three members
+// becomes one of five, version "1.0" becomes "1.1", and originInfos
+// (5: []) and capabilities (6: {4: true}) follow.
 func TestAnnexDDeviceEngagement(t *testing.T) {
 	raw := mustHex(t, annexDDeviceEngagement)
 	pe, err := parseDeviceEngagement(raw)
 	if err != nil {
 		t.Fatalf("parseDeviceEngagement: %v", err)
+	}
+	if pe.extendedRequestSupport {
+		t.Error("Annex D's engagement advertises extended request support")
 	}
 	key := annexDKey(t, annexDEphemeralDeviceKeyD, annexDEphemeralDeviceKeyX, annexDEphemeralDeviceKeyY)
 	if !pe.eDeviceKey.Equal(&key.PublicKey) {
@@ -99,8 +105,14 @@ func TestAnnexDDeviceEngagement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeDeviceEngagement: %v", err)
 	}
-	if !bytes.Equal(encoded, raw) {
-		t.Errorf("re-encoded DeviceEngagement differs:\n got %x\nwant %x", encoded, raw)
+	firstEdition := []byte{0xa3, 0x00, 0x63, '1', '.', '0'}
+	if !bytes.HasPrefix(raw, firstEdition) {
+		t.Fatalf("Annex D's DeviceEngagement doesn't start %x", firstEdition)
+	}
+	want := append([]byte{0xa5, 0x00, 0x63, '1', '.', '1'}, raw[len(firstEdition):]...)
+	want = append(want, 0x05, 0x80, 0x06, 0xa1, 0x04, 0xf5)
+	if !bytes.Equal(encoded, want) {
+		t.Errorf("re-encoded DeviceEngagement differs:\n got %x\nwant %x", encoded, want)
 	}
 
 	qr := encodeQR(raw)

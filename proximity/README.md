@@ -211,6 +211,14 @@ representation Multipaz 0.102.0 builds; that representation, and the
 validity rules below, still have to be checked against the ballot
 text, so they are this library's profile, not a conformance claim.
 
+Every engagement a `DeviceSession` writes, QR or NFC, is version 1.1
+and advertises the second edition's ExtendedRequestSupport capability
+(`6: {4: true}`, with an empty `5: []` originInfos). Some readers,
+Multipaz's Identity Reader among them, send `deviceRequestInfo` only
+to an mdoc that advertises it; to a 1.0 engagement they send a
+first-edition request, with no information. A reader still reads any
+1.x engagement.
+
 `DecodeDeviceRequest` returns an opaque `*DeviceRequest`. Its
 `DocRequests()` and `RequestInfo()` return copies, nil `RequestInfo`
 when the reader sent none and an empty one for present but empty

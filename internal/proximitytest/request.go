@@ -28,6 +28,30 @@ func Tagged(b []byte) ([]byte, error) {
 	return cbor.Marshal(cbor.Tag{Number: 24, Content: b})
 }
 
+// ExtendedRequestSupport reports whether the DeviceEngagement in qr
+// advertises the second edition's ExtendedRequestSupport: true under
+// key 4 of its capabilities (key 6), as a reader checks before it
+// sends deviceRequestInfo.
+func ExtendedRequestSupport(qr string) (bool, error) {
+	de, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(qr, "mdoc:"))
+	if err != nil {
+		return false, fmt.Errorf("proximitytest: QR code: %w", err)
+	}
+	var deMap map[int]cbor.RawMessage
+	if err := cbor.Unmarshal(de, &deMap); err != nil {
+		return false, errors.New("proximitytest: decode the device engagement")
+	}
+	raw, ok := deMap[6]
+	if !ok {
+		return false, nil
+	}
+	var capabilities map[int]any
+	if err := cbor.Unmarshal(raw, &capabilities); err != nil {
+		return false, fmt.Errorf("proximitytest: capabilities: %w", err)
+	}
+	return capabilities[4] == true, nil
+}
+
 // SessionEstablishment is a reader's SessionEstablishment for the
 // holder showing qr ("mdoc:" and its DeviceEngagement), with a fresh
 // ephemeral reader key: build is called with the session's
