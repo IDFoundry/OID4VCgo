@@ -169,8 +169,8 @@ specific module count repeated here — they change as coverage grows,
 and this file isn't the place they're kept in sync.
 
 Besides the OIDF suite, `polaris-interop.yml`, `eudi-interop.yml`,
-`waltid-interop.yml`, `multipaz-interop.yml` and `credo-interop.yml`
-run OID4VCgo against independent implementations on each pull
+`waltid-interop.yml`, `multipaz-interop.yml`, `credo-interop.yml`,
+`eudiplo-interop.yml` and `protocolsoup-interop.yml` run OID4VCgo against independent implementations on each pull
 request, daily and on each release, with negative controls asserted
 by their reasons: the refusing side's own error, or, where it gives
 none that tells, by

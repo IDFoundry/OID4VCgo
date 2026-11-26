@@ -99,8 +99,9 @@ by role.
   CI's `sqlstore` job).
 - A protocol change also runs the interop workflows on its PR
   (`polaris-interop.yml`, `eudi-interop.yml`, `waltid-interop.yml`,
-  `multipaz-interop.yml`, `credo-interop.yml`); run `interop/*/run.sh`
-  locally to see a failure before CI does.
+  `multipaz-interop.yml`, `credo-interop.yml`, `eudiplo-interop.yml`,
+  `protocolsoup-interop.yml`);
+  run `interop/*/run.sh` locally to see a failure before CI does.
 - Include tests for the behavior you're changing, not just the happy path.
 
 ## Reporting a security issue
