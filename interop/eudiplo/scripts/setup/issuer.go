@@ -107,10 +107,10 @@ func issuerFiles(f files, name string, k issuerKeys, listKey *ecdsa.PrivateKey, 
 		return filepath.Join(append([]string{"eudiplo", "config", name}, parts...)...)
 	}
 	docs := map[string]any{
-		at("key-chains", "sdjwt-signer.json"): signer(sdjwtKeyChain, "attestation", "signs SD-JWT VCs", k.sdjwt, k.sdjwtCert),
-		at("key-chains", "mdoc-signer.json"):  signer(mdocKeyChain, "attestation", "signs mdocs (Document Signer)", k.ds, k.dsC),
-		at("key-chains", "status-list.json"):  signer(statusKeyChain, "statusList", "signs SD-JWT VCs' status lists", k.status, k.statusCert),
-		at("key-chains", "mdoc-status-list.json"): signer(mdocStatusKeyChain, "statusList", "signs mdocs' status lists",
+		at(keyChainsDir, "sdjwt-signer.json"): signer(sdjwtKeyChain, "attestation", "signs SD-JWT VCs", k.sdjwt, k.sdjwtCert),
+		at(keyChainsDir, "mdoc-signer.json"):  signer(mdocKeyChain, "attestation", "signs mdocs (Document Signer)", k.ds, k.dsC),
+		at(keyChainsDir, "status-list.json"):  signer(statusKeyChain, "statusList", "signs SD-JWT VCs' status lists", k.status, k.statusCert),
+		at(keyChainsDir, "mdoc-status-list.json"): signer(mdocStatusKeyChain, "statusList", "signs mdocs' status lists",
 			k.mdocStatus, k.mdocStC),
 		at("issuance", "status-lists", "pid-sdjwt.json"): statusList("pid-sdjwt", statusKeyChain),
 		at("issuance", "status-lists", "pid-mdoc.json"):  statusList("pid-mdoc", mdocStatusKeyChain),
@@ -134,7 +134,7 @@ func issuerFiles(f files, name string, k issuerKeys, listKey *ecdsa.PrivateKey, 
 	}
 	if name != tenant {
 		// The Verifier's tenant has its trust list key chain already.
-		docs[at("key-chains", "trust-list.json")] = trustListKeyChainDoc(listKey)
+		docs[at(keyChainsDir, "trust-list.json")] = trustListKeyChainDoc(listKey)
 	}
 	for path, v := range docs {
 		if err := f.json(path, v); err != nil {

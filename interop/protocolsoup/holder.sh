@@ -129,18 +129,20 @@ himport() {  # $1 port, $2 name, $3 offer, $4 tx_code
   harness "$port" /api/import "$(jq -cn --arg o "$offer" --arg t "$tx" '{offer: $o} + (if $t == "" then {} else {tx_code: $t} end)')" "$name-import.json"
 }
 hwhy() {  # $1 file: the harness's answer, briefly
-  echo "$(cat "$1.status" 2>/dev/null) $(jq -c '{error, error_description, credential_format, credential_configuration_id} | with_entries(select(.value != null))' "$1" 2>/dev/null | cut -c1-400)"
+  local file="$1"
+  echo "$(cat "$file.status" 2>/dev/null) $(jq -c '{error, error_description, credential_format, credential_configuration_id} | with_entries(select(.value != null))' "$file" 2>/dev/null | cut -c1-400)"
 }
 # The tap's log of the holder issuer from line $1 on.
-htap() { tail -n +"$(($1 + 1))" holder-serve.log | grep ' tap: ' | sed 's/.* tap: //' || true; }
+htap() { local from="$1"; tail -n +"$((from + 1))" holder-serve.log | grep ' tap: ' | sed 's/.* tap: //' || true; }
 
 # himported checks the harness took case $1's credential, of format
 # $2 and configuration $3, and the tap saw the issuer answer its Token
 # Request (a Wallet Attestation PoP among it) and Credential Request.
 himported() {  # $1 name, $2 format, $3 configuration
-  [[ "$(cat "$1-import.json.status")" = 200 ]] \
-    && jq -e --arg f "$2" --arg c "$3" '.credential_format == $f and .credential_configuration_id == $c' "$1-import.json" >/dev/null 2>&1 \
-    && grep -q '^POST "/token" 200 | pop ' "tap-$1.log" && grep -q '^POST "/credential" 200' "tap-$1.log"
+  local name="$1" format="$2" config="$3"
+  [[ "$(cat "$name-import.json.status")" = 200 ]] \
+    && jq -e --arg f "$format" --arg c "$config" '.credential_format == $f and .credential_configuration_id == $c' "$name-import.json" >/dev/null 2>&1 \
+    && grep -q '^POST "/token" 200 | pop ' "tap-$name.log" && grep -q '^POST "/credential" 200' "tap-$name.log"
 }
 # hreceive has the harness on port $1 redeem an offer of configuration
 # $3 (with the tx_code $4, the harness given $5 instead if set); its
@@ -164,10 +166,11 @@ echo "        observed: $(grep -hF '"/token" 200' tap-harness-sdjwt.log | head -
 # Controls. hrefused checks case $1's import was refused (400), its
 # error and description containing $2, the refusing side's reason.
 hrefused() {  # $1 name, $2 in the error, $3 what the control is
-  if [[ "$(cat "$1-import.json.status")" = 400 ]] \
-      && jq -e --arg r "$2" '"\(.error): \(.error_description)" | contains($r)' "$1-import.json" >/dev/null 2>&1; then
-    ok "control: $3: refused ($(jq -r '"\(.error): \(.error_description)"' "$1-import.json" | cut -c1-240))"
-  else bad "control: $3: $(hwhy "$1-import.json")"; fi
+  local name="$1" reason="$2" what="$3"
+  if [[ "$(cat "$name-import.json.status")" = 400 ]] \
+      && jq -e --arg r "$reason" '"\(.error): \(.error_description)" | contains($r)' "$name-import.json" >/dev/null 2>&1; then
+    ok "control: $what: refused ($(jq -r '"\(.error): \(.error_description)"' "$name-import.json" | cut -c1-240))"
+  else bad "control: $what: $(hwhy "$name-import.json")"; fi
 }
 hreceive "$HARNESS_PORT" harness-wrong-tx-code "$SDJWT" 493817 493810
 hrefused harness-wrong-tx-code 'tx_code does not match' \
@@ -263,7 +266,8 @@ hpresent() {  # $1 name, $2 configuration, $3 approve the Verifier
   curl -sS --max-time 30 "${VERIFIER_AT[@]}" -o "$name-verdict.json" "${redirect/\?response_code=//redeem?response_code=}" || true
 }
 hpwhy() {  # $1 name: the harness's answers and the verifier's verdict
-  echo "resolve $(hwhy "$1-resolve.json"), present $(cat "$1-present.json.status" 2>/dev/null) $(jq -c '{error, error_description, upstream_status, upstream_body}' "$1-present.json" 2>/dev/null | cut -c1-300), verdict $(head -c 300 "$1-verdict.json" 2>/dev/null)"
+  local name="$1"
+  echo "resolve $(hwhy "$name-resolve.json"), present $(cat "$name-present.json.status" 2>/dev/null) $(jq -c '{error, error_description, upstream_status, upstream_body}' "$name-present.json" 2>/dev/null | cut -c1-300), verdict $(head -c 300 "$name-verdict.json" 2>/dev/null)"
 }
 start_verifier sdjwt .
 hpresent present-sdjwt "$SDJWT"
@@ -298,10 +302,11 @@ hpresent present-untrusted-issuer "$SDJWT"
 # vrefused checks the verifier refused case $1's presentation, which
 # the harness delivered: its verdict failed for the reason $2.
 vrefused() {  # $1 name, $2 the verifier's reason, $3 what the control is
-  if jq -e '.upstream_status == 200' "$1-present.json" >/dev/null 2>&1 \
-      && jq -e --arg r "$2" '.status == "failed" and (.error | contains($r))' "$1-verdict.json" >/dev/null 2>&1; then
-    ok "control: $3: OID4VCgo's verifier refuses it ($(jq -r .error "$1-verdict.json" | cut -c1-200))"
-  else bad "control: $3: $(hpwhy "$1")"; fi
+  local name="$1" reason="$2" what="$3"
+  if jq -e '.upstream_status == 200' "$name-present.json" >/dev/null 2>&1 \
+      && jq -e --arg r "$reason" '.status == "failed" and (.error | contains($r))' "$name-verdict.json" >/dev/null 2>&1; then
+    ok "control: $what: OID4VCgo's verifier refuses it ($(jq -r .error "$name-verdict.json" | cut -c1-200))"
+  else bad "control: $what: $(hpwhy "$name")"; fi
 }
 vrefused present-untrusted-issuer 'verifier: resolve issuer key: certchain: certificate chain does not verify against a trusted root' \
   "a credential from an issuer the verifier doesn't trust, for its chain"

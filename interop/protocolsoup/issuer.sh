@@ -40,7 +40,8 @@ preceive() {  # $1 name, $2 configuration, $3 endpoint, $4 tx_code; then the wal
     || echo '{"stage": "wallet", "error": "the wallet failed; see its log"}' > "$name-wallet.json"
 }
 pwhy() {  # $1 name: the wallet's stage and error
-  jq -c '{stage, error, failed} | with_entries(select(.value != null))' "$1-wallet.json" 2>/dev/null | cut -c1-400
+  local name="$1"
+  jq -c '{stage, error, failed} | with_entries(select(.value != null))' "$name-wallet.json" 2>/dev/null | cut -c1-400
 }
 # pissued checks case $1 received one credential of format $2 and
 # configuration $3, as $4 copies (a batch), its token of type $5, and
@@ -48,14 +49,16 @@ pwhy() {  # $1 name: the wallet's stage and error
 # the one before it, if any, is ProtocolSoup's use_dpop_nonce
 # challenge, an error response (application/json).
 pissued() {  # $1 name, $2 format, $3 configuration, $4 copies, $5 token type
-  jq -e --arg f "$2" --arg c "$3" --argjson n "$4" --arg t "$5" '.stage == "done" and (.received | length == 1)
+  local name="$1" format="$2" config="$3" copies="$4" token_type="$5"
+  jq -e --arg f "$format" --arg c "$config" --argjson n "$copies" --arg t "$token_type" '.stage == "done" and (.received | length == 1)
       and .received[0].format == $f and .received[0].configuration_id == $c and .received[0].copies == $n
-      and .observed.token_types == [$t] and (.observed.credential_responses[-1] | startswith("application/jwt"))' "$1-wallet.json" >/dev/null 2>&1
+      and .observed.token_types == [$t] and (.observed.credential_responses[-1] | startswith("application/jwt"))' "$name-wallet.json" >/dev/null 2>&1
 }
 # pobserved is what the wallet's transport saw: the token type, and each
 # Credential Response's media type (application/jwt: encrypted).
 pobserved() {  # $1 name
-  jq -r '"copies \(.received[0].copies // 0), " + (.observed | "token_type \(.token_types | join(",")), Credential Responses \(.credential_responses | map(split(";")[0]) | join(","))")' "$1-wallet.json"
+  local name="$1"
+  jq -r '"copies \(.received[0].copies // 0), " + (.observed | "token_type \(.token_types | join(",")), Credential Responses \(.credential_responses | map(split(";")[0]) | join(","))")' "$name-wallet.json"
 }
 HAIP_SDJWT=UniversityDegreeCredentialSDJWTHAIP HAIP_MDOC=MobileDrivingLicenceMsoMdocHAIP
 PLAIN_SDJWT=UniversityDegreeCredentialSDJWT PLAIN_MDOC=MobileDrivingLicenceMsoMdoc
@@ -102,9 +105,10 @@ else bad "status: $(pwhy status) $(jq -c '.received[0].status' status-wallet.jso
 # checks case $1 stopped at the wallet's stage $2, receiving nothing,
 # with an error containing $3, the refusing side's reason.
 prefused() {  # $1 name, $2 stage, $3 in the error, $4 what the control is
-  if jq -e --arg s "$2" --arg r "$3" '.stage == $s and ((.received // []) | length == 0) and (.error | contains($r))' "$1-wallet.json" >/dev/null 2>&1; then
-    ok "control: $4: refused ($(jq -r '.error | split("error response: ")[-1] | .[:220]' "$1-wallet.json"))"
-  else bad "control: $4: $(pwhy "$1")"; fi
+  local name="$1" stage="$2" reason="$3" what="$4"
+  if jq -e --arg s "$stage" --arg r "$reason" '.stage == $s and ((.received // []) | length == 0) and (.error | contains($r))' "$name-wallet.json" >/dev/null 2>&1; then
+    ok "control: $what: refused ($(jq -r '.error | split("error response: ")[-1] | .[:220]' "$name-wallet.json"))"
+  else bad "control: $what: $(pwhy "$name")"; fi
 }
 preceive wrong-tx-code "$HAIP_SDJWT" pre-authorized true -haip -proof-key-by-jwk -tx-code 000000
 prefused wrong-tx-code token "invalid_grant: invalid tx_code" "a wrong tx_code, by ProtocolSoup's Token Endpoint"

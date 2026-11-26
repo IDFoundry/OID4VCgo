@@ -191,7 +191,7 @@ type jwkSet struct {
 func (o *observed) record(req *http.Request, contentType string, body []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/credential") {
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, issueEndpointSuffix) {
 		o.CredentialResponses = append(o.CredentialResponses, contentType)
 	}
 	switch {
