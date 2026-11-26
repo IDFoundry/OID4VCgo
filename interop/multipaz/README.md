@@ -15,7 +15,7 @@ OpenID4VCI wallet and issuer, against OID4VCgo's.
 | Multipaz reader → OID4VCgo's holder (`walletflow`) | mDL, QR engagement, reader authentication, device signature | Multipaz verifies it; only the requested elements disclosed; the holder recognizes the reader |
 | | The same, deviceMac | Multipaz verifies the MAC |
 | | The reader's certificate under a CA the holder doesn't trust | the holder shows the reader as untrusted |
-| Multipaz reader, second edition → OID4VCgo's holder (`walletflow`) | A request for the mDL and a second document, signed only as a whole (`readerAuthAll`), with `deviceRequestInfo`: two use cases, purpose hints (one negative), an extension | the holder recognizes the reader; its request information is the use cases sent, signed; Multipaz verifies the answer |
+| Multipaz reader, second edition → OID4VCgo's holder (`walletflow`) | A request for the mDL and a second document, signed only as a whole (`readerAuthAll`), with `deviceRequestInfo`: two use cases, purpose hints (one negative), an extension | Multipaz reads `EXTENDED_REQUEST_SUPPORT` in the holder's engagement (each case checks it); the holder recognizes the reader; its request information is the use cases sent, signed; Multipaz verifies the answer |
 | | The same, with present but empty information | the reader recognized; the information present, empty, signed |
 | | The same, with no information | the reader recognized; no information |
 | | Signed per document and as a whole by the trusted reader | the reader recognized; the information signed |

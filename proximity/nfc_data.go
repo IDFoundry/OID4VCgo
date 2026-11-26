@@ -40,7 +40,7 @@ func NewNFCDataDeviceSession(_ io.Reader, parameters NFCDataParameters) (*Device
 	if err != nil {
 		return nil, err
 	}
-	de, err := encMode.Marshal(deviceEngagement{Version: engagementVersion, Security: security})
+	de, err := encMode.Marshal(newDeviceEngagement(security, nil))
 	if err != nil {
 		return nil, err
 	}

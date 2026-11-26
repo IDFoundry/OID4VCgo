@@ -165,6 +165,57 @@ func TestSessions_ProximityRequestInfo(t *testing.T) {
 	}
 }
 
+// The presentation's engagement advertises ExtendedRequestSupport, so a
+// reader that checks it, as Multipaz's readers do, sends its use cases
+// and purpose hints, and they reach request_info whole; a reader that
+// doesn't still gets its request without information answered,
+// request_info null.
+func TestSessions_ProximityAdvertisesExtendedRequestSupport(t *testing.T) {
+	trusted := newTestReader(t)
+	h := newHarness(t, false).withReaderRoots(t, trusted)
+	h.receive(t)
+	hinted := infoBytes(t, map[string]any{"useCases": []any{
+		map[string]any{"mandatory": true, "documentSets": [][]int{{0}}, "purposeHints": map[string]int{"org.example.purpose": 3, "org.example.negative": -2}},
+	}})
+	for name, tc := range map[string]struct {
+		checksCapability bool
+		wantInfo         string
+	}{
+		"reader checks the capability": {true,
+			`{"use_cases":[{"mandatory":true,"document_sets":[[0]],"purpose_hints":{"org.example.negative":-2,"org.example.purpose":3}}],"signed":true}`},
+		"reader ignores the capability": {false, `null`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := h.w.StartProximityPresentation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			qr := decode[struct {
+				QRCode string `json:"qr_code"`
+			}](t, p.Engagement()).QRCode
+			advertised, err := proximitytest.ExtendedRequestSupport(qr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !advertised {
+				t.Fatal("the engagement doesn't advertise ExtendedRequestSupport")
+			}
+			msg := wholeRequest(t, p, &trusted, nil, nil)
+			if tc.checksCapability {
+				msg = wholeRequest(t, p, nil, []testReader{trusted}, hinted)
+			}
+			ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), msg))
+			if ev.Event != "request" {
+				t.Fatalf("HandleMessage = %+v", ev)
+			}
+			got := decode[requestJSON](t, p.Request())
+			if got.Reader.Status != "trusted" || string(got.RequestInfo) != tc.wantInfo {
+				t.Errorf("reader %s, request_info %s; want trusted, %s", got.Reader.Status, got.RequestInfo, tc.wantInfo)
+			}
+		})
+	}
+}
+
 // A refused request — an untrusted whole-request signer under
 // require_trusted_mdoc_reader, or information that isn't
 // #6.24(bstr .cbor map) — leaves request_info null.

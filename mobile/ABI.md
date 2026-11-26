@@ -1407,9 +1407,15 @@ ballot text):
  "signed": true}
 ```
 
+- The presentation's engagement, QR or NFC, advertises that the holder
+  reads it: a version 1.1 DeviceEngagement whose capabilities carry
+  ExtendedRequestSupport (`6: {4: true}`). Some readers, Multipaz's
+  Identity Reader among them, send `deviceRequestInfo` only when they
+  see it; before this was advertised they sent none. The engagement's
+  JSON and the calls are unchanged.
 - It is `null` before the `request` event, after a request the holder
   refused, when the reader sent no `deviceRequestInfo` (a
-  first-edition reader), and when its known fields aren't in the shape
+  first-edition reader, or one ignoring the capability), and when its known fields aren't in the shape
   above or exceed the library's limits: the request still stands, its
   signatures checked over the information as received. The member is always present, so `null` is an
   explicit "none": a library from before it omits the member, which
