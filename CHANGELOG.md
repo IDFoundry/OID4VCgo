@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.90.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.89.0...v0.90.0) (2026-11-26)
+
+
+### Features
+
+* **proximity:** advertise extended request support in DeviceEngagement ([0b81164](https://github.com/IDFoundry/OID4VCgo/commit/0b811641e8ba67250ec41dc6c95182577a4843fa)), closes [#1183](https://github.com/IDFoundry/OID4VCgo/issues/1183)
+* **proximity:** parse a document request's alternative data elements and issuer identifiers ([b19ca13](https://github.com/IDFoundry/OID4VCgo/commit/b19ca1362242343fd80e70775ce4a113c13ff109))
+
 ## [0.89.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.88.0...v0.89.0) (2026-11-24)
 
 
