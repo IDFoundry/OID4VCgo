@@ -65,7 +65,14 @@
 // -tamper-dpop signs each Credential Request's DPoP proof again for
 // another endpoint (dpop.go).
 //
-// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID [-revoke-instance URL]] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] -offer URL [-tx-code CODE | -redirect-uri URI] [-revoke URL | -revoke-call FILE] [-check-status [-status-issuer ISSUER=STATUS_ISSUER]] [-tamper-dpop] [-request URL [-tamper MODE -verifier2-key FILE] | -dcapi FILE] -out FILE
+// interop/protocolsoup/run.sh runs it against ProtocolSoup's Verifier
+// and issuer: -accept-x509-san-dns answers an x509_san_dns client as
+// well as an x509_hash one; a credential the issuer defers is waited
+// for at its Deferred Credential Endpoint, the result's "deferred"
+// counting them, and each received credential's "copies" is how many
+// the issuer issued.
+//
+// Usage: go run ./interop/waltid/scripts/wallet -tls-ca FILE -issuer-ca FILE -verifier-ca FILE [-resolve HOST=ADDR] [-attester-config FILE | -wallet-provider URL -wallet-provider-tls FILE -client-id ID [-revoke-instance URL]] [-mdoc-issuer-ca FILE] [-haip] [-proof-key-by-jwk] [-accept-x509-san-dns] -offer URL [-tx-code CODE | -redirect-uri URI] [-revoke URL | -revoke-call FILE] [-check-status [-status-issuer ISSUER=STATUS_ISSUER]] [-tamper-dpop] [-request URL [-tamper MODE -verifier2-key FILE] | -dcapi FILE] -out FILE
 package main
 
 import (
@@ -106,10 +113,13 @@ type result struct {
 	Error    string     `json:"error,omitempty"`
 	Received []received `json:"received"`
 	Failed   []string   `json:"failed,omitempty"`
-	QueryIDs []string   `json:"query_ids,omitempty"`
-	Observed *observed  `json:"observed"`
-	Tampered *tampered  `json:"tampered,omitempty"`
-	Revoked  []string   `json:"revoked,omitempty"`
+	// Deferred is how many credentials were deferred, then issued
+	// from the Deferred Credential Endpoint.
+	Deferred int       `json:"deferred,omitempty"`
+	QueryIDs []string  `json:"query_ids,omitempty"`
+	Observed *observed `json:"observed"`
+	Tampered *tampered `json:"tampered,omitempty"`
+	Revoked  []string  `json:"revoked,omitempty"`
 	// DCAPI is the answer to -dcapi's request, for the page to post on.
 	DCAPI *dcapiAnswer `json:"dcapi,omitempty"`
 	// Authorization is how the authorization code grant went, for an
@@ -242,6 +252,8 @@ type received struct {
 	Claims          []string `json:"claims"`
 	// StatusLists are its copies' status list entries, uri#idx.
 	StatusLists []string `json:"status_lists,omitempty"`
+	// Copies is how many copies of it the issuer issued (a batch).
+	Copies int `json:"copies"`
 	// Status is what -check-status found (status.go).
 	Status *checkedStatus `json:"status,omitempty"`
 }
@@ -273,6 +285,10 @@ type options struct {
 	// header rather than by its index (walletflow.Config.ProofKeyByJWK),
 	// for an issuer that takes no index (Credo's).
 	proofKeyByJWK bool
+	// acceptSANDNS also answers Verifiers whose client_id has the
+	// x509_san_dns prefix (walletflow.Config.AcceptX509SANDNS), as
+	// ProtocolSoup's can send.
+	acceptSANDNS bool
 	// dcapi is a file holding a Digital Credentials API request
 	// (dcapi.go), answered in place of a -request; "" for none.
 	dcapi string
@@ -324,6 +340,7 @@ func main() {
 	flag.StringVar(&opts.txCode, "tx-code", "", "the Transaction Code to redeem each offer's pre-authorized code with")
 	flag.BoolVar(&opts.haip, "haip", false, "receive under walletflow.ProfileHAIP: a Wallet Attestation at every Token Request")
 	flag.BoolVar(&opts.proofKeyByJWK, "proof-key-by-jwk", false, "name a key-attested jwt proof's key in its jwk header, not by its index (walletflow.Config.ProofKeyByJWK)")
+	flag.BoolVar(&opts.acceptSANDNS, "accept-x509-san-dns", false, "answer a Verifier whose client_id has the x509_san_dns prefix too (walletflow.Config.AcceptX509SANDNS)")
 	flag.StringVar(&opts.revokeCall, "revoke-call", "", `a file of the issuer's API call that revokes the credentials received, {"url", "token", "body"} (status.go), made before -check-status`)
 	flag.StringVar(&opts.revokeInstance, "revoke-instance", "", "with -wallet-provider, its admin /revoke: revoke the wallet's instance once it's attested, so its Wallet Attestation's status reads INVALID (provider.go)")
 	flag.BoolVar(&opts.tamperDPoP, "tamper-dpop", false, "sign every Credential Request's DPoP proof again, its htu another endpoint's (dpop.go)")
@@ -501,7 +518,7 @@ func configure(ctx context.Context, opts options, cfg *walletflow.Config, deps *
 		cfg.IssuanceProfile = walletflow.ProfileHAIP
 	}
 	cfg.RedirectURI, cfg.StatusIssuers = opts.redirectURI, opts.statusIssuers
-	cfg.ProofKeyByJWK = opts.proofKeyByJWK
+	cfg.ProofKeyByJWK, cfg.AcceptX509SANDNS = opts.proofKeyByJWK, opts.acceptSANDNS
 	if opts.attesterConfig != "" {
 		p, err := loadProvider(opts.attesterConfig)
 		if err != nil {
@@ -616,6 +633,19 @@ func redeem(ctx context.Context, w *walletflow.Wallet, client *http.Client, offe
 	if err != nil {
 		return nil, err
 	}
+	// A credential the issuer deferred (OpenID4VCI 1.0 §9) is waited
+	// for at its Deferred Credential Endpoint, polled as the issuer's
+	// interval says.
+	for _, d := range got.Deferred {
+		res.Stage = "deferred"
+		c, err := d.Wait(ctx)
+		if err != nil {
+			return nil, err
+		}
+		res.Deferred++
+		got.Credentials = append(got.Credentials, c)
+	}
+	res.Stage = "credential"
 	for _, c := range got.Credentials {
 		names := make([]string, 0, len(c.Claims))
 		for name := range c.Claims {
@@ -631,7 +661,8 @@ func redeem(ctx context.Context, w *walletflow.Wallet, client *http.Client, offe
 		if len(lists) == 0 && c.StatusList != nil {
 			lists = append(lists, fmt.Sprintf("%s#%d", c.StatusList.URI, c.StatusList.Idx))
 		}
-		res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names, StatusLists: lists})
+		res.Received = append(res.Received, received{Format: c.Format, ConfigurationID: c.ConfigurationID, Claims: names,
+			StatusLists: lists, Copies: len(c.AllCopies())})
 	}
 	for _, f := range got.Failed {
 		res.Failed = append(res.Failed, f.ConfigurationID+": "+f.Err.Error())

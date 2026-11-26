@@ -533,6 +533,47 @@ EUDIPLO's latest. See
 [`interop/eudiplo/README.md`](../interop/eudiplo/README.md) for the
 cases, EUDIPLO's deviations, and moving the pin.
 
+## Interop with ProtocolSoup
+
+`.github/workflows/protocolsoup-interop.yml` runs OID4VCgo against
+[ProtocolSoup](https://github.com/ParleSec/ProtocolSoup) (Go, its own
+SD-JWT VC, mdoc and protocol code, independent of FAPIgo, the
+`@openid4vc` libraries and the EUDI ones), its VC service and wallet
+harness images built from a pinned master commit, in four directions.
+ProtocolSoup is OpenID Certified for OID4VCI 1.0 + HAIP 1.0 (Issuer
+v4.0.0, Wallet v4.1.0) and OID4VP 1.0 + HAIP 1.0 (Verifier and Wallet
+v4.0.0); the pin is a later, uncertified commit. Against its Verifier,
+`walletflow` presents an SD-JWT VC PID from `cmd/conformance-issuer`'s
+production setup, attested by OID4VCgo's Wallet Provider, to its
+signed `x509_hash` requests in its HAIP mode (`direct_post.jwt`, and
+`dc_api.jwt` over the Digital Credentials API) and to its
+`x509_san_dns` client; presentations whose Key Binding JWT `nonce` or
+`aud`, a disclosure, or the issuer's signature was changed on the way
+are refused, each by its policy reason code. Against its issuer,
+`walletflow` redeems pre-authorized code offers (with a `tx_code`) of
+its HAIP SD-JWT VC configuration, with OID4VCgo's Wallet Attestation
+and Key Attestation, DPoP with nonces, encrypted Credential Requests
+and Responses, a batch, deferred issuance, and checks its status list
+entry; a wrong `tx_code` and an untrusted attester are refused by
+ProtocolSoup, an untrusted issuer by the wallet. Its wallet harness,
+driven over its HTTP API, receives the SD-JWT VC PID from OID4VCgo's
+issuer (its own Wallet Attestation, DPoP, a `tx_code`) and presents it
+to `cmd/conformance-verifier` (`x509_hash`, `direct_post.jwt`), with
+controls on each side: a wrong `tx_code` and an untrusted attester
+refused by the issuer, an untrusted issuer or Verifier by the
+harness, an untrusted issuer and a revoked PID by the verifier. Five
+known gaps are noted, failing the run once they change: its Verifier
+fetches status lists only from public addresses; its mdoc checks
+require Basic Constraints in a Document Signer certificate, which
+ISO/IEC 18013-5's profile leaves out, so no mdoc is covered; a
+key-attested proof must name its key by `jwk`; its mdocs' MSO is
+signed, rounded to the day, before its signer's certificate; and the
+harness's Key Attestations carry no `exp`. It runs on each pull
+request, daily and on each release against the pinned commit, and
+weekly against master. See
+[`interop/protocolsoup/README.md`](../interop/protocolsoup/README.md)
+for the cases, ProtocolSoup's deviations, and moving the pin.
+
 ## OID4VCgo's wallet at production assurance
 
 The runs above drive OID4VCgo's wallet at development assurance,
