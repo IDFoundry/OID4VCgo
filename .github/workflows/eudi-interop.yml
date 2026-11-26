@@ -279,12 +279,20 @@ jobs:
 
       # The runner's own JDK supplies keytool, which builds the issuer's
       # keystore.
+      # The stack's files (the EUDI compose files and Keycloak's ABCA
+      # extension from Maven Central), each kept under its pinned SHA-256
+      # and checked again on use, so most runs download none of them.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/eudi-downloads
+          key: eudi-pid-downloads-${{ hashFiles('interop/eudi/run-pid-issuer.sh') }}
+
       - name: Run the interop script
         env:
           PID_ISSUER_IMAGE: ${{ inputs.pid_issuer_image || (github.event.schedule == '15 7 * * 1' && 'ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest') || '' }}
         run: |
           set -o pipefail
-          export WORK="$RUNNER_TEMP/eudi-pid-work"
+          export WORK="$RUNNER_TEMP/eudi-pid-work" DOWNLOAD_CACHE="$RUNNER_TEMP/eudi-downloads"
           mkdir -p "$WORK"
           [ -n "$PID_ISSUER_IMAGE" ] || unset PID_ISSUER_IMAGE
           bash interop/eudi/run-pid-issuer.sh 2>&1 | tee "$RUNNER_TEMP/eudi-pid-interop.log"
@@ -320,13 +328,21 @@ jobs:
           check-latest: true
           cache-dependency-path: sqlstore/go.sum
 
+      # The stack's files (the EUDI compose files and Keycloak's ABCA
+      # extension from Maven Central), each kept under its pinned SHA-256
+      # and checked again on use, so most runs download none of them.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/eudi-downloads
+          key: eudi-pid-downloads-${{ hashFiles('interop/eudi/run-pid-issuer.sh') }}
+
       - name: Run the interop script
         env:
           PID_ISSUER_IMAGE: ${{ inputs.pid_issuer_image || (github.event.schedule == '15 7 * * 1' && 'ghcr.io/eu-digital-identity-wallet/eudi-srv-pid-issuer:latest') || '' }}
           WALLET_ASSURANCE: production
         run: |
           set -o pipefail
-          export WORK="$RUNNER_TEMP/eudi-pid-work"
+          export WORK="$RUNNER_TEMP/eudi-pid-work" DOWNLOAD_CACHE="$RUNNER_TEMP/eudi-downloads"
           mkdir -p "$WORK"
           [ -n "$PID_ISSUER_IMAGE" ] || unset PID_ISSUER_IMAGE
           bash interop/eudi/run-pid-issuer.sh 2>&1 | tee "$RUNNER_TEMP/eudi-pid-interop.log"

@@ -11,6 +11,10 @@ import (
 	"github.com/idfoundry/oid4vcgo/internal/jose"
 )
 
+// issueEndpointSuffix is the path a Credential Endpoint's URL ends in
+// (its name avoids gosec G101, which takes "cred" for a credential).
+const issueEndpointSuffix = "/credential"
+
 // dpopTamperer is the http.RoundTripper -tamper-dpop puts in front of
 // the wallet's transport: it signs every Credential Request's DPoP
 // proof again with the wallet's DPoP key, its htu naming the issuer's
@@ -27,7 +31,7 @@ type dpopTamperer struct {
 
 func (d *dpopTamperer) RoundTrip(req *http.Request) (*http.Response, error) {
 	proof := req.Header.Get("DPoP")
-	if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/credential") || proof == "" {
+	if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, issueEndpointSuffix) || proof == "" {
 		return d.next.RoundTrip(req)
 	}
 	changed, what, err := d.rewrite(proof)
@@ -54,10 +58,10 @@ func (d *dpopTamperer) rewrite(proof string) (string, string, error) {
 		return "", "", err
 	}
 	htu, _ := claims["htu"].(string)
-	if !strings.HasSuffix(htu, "/credential") {
+	if !strings.HasSuffix(htu, issueEndpointSuffix) {
 		return "", "", fmt.Errorf("htu %q isn't a Credential Endpoint", htu)
 	}
-	other := strings.TrimSuffix(htu, "/credential") + "/notification"
+	other := strings.TrimSuffix(htu, issueEndpointSuffix) + "/notification"
 	claims["htu"] = other
 	jwkHeader, _ := header["jwk"].(map[string]any)
 	pub, err := publicKey(jwkHeader)

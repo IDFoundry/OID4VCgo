@@ -55,26 +55,30 @@ eredeem() {  # $1 name; then wallet flags
     || echo '{"stage": "wallet", "error": "the wallet failed; see its log"}' > "$name-wallet.json"
 }
 ewhy() {  # $1 name: the wallet's stage and error, and EUDIPLO's session
-  echo "wallet $(jq -c '{stage, error, failed} | with_entries(select(.value != null))' "$1-wallet.json" 2>/dev/null | cut -c1-400)," \
-    "session $(jq -c . "$1-session.json" 2>/dev/null | cut -c1-200)"
+  local name="$1"
+  echo "wallet $(jq -c '{stage, error, failed} | with_entries(select(.value != null))' "$name-wallet.json" 2>/dev/null | cut -c1-400)," \
+    "session $(jq -c . "$name-session.json" 2>/dev/null | cut -c1-200)"
 }
 # issued checks case $1 received one credential of format $2, as $3
 # copies (a batch), holding the PID's claims, its session completed (the
 # wallet's notification, credential_accepted).
 issued() {  # $1 name, $2 format, $3 copies
-  jq -e --arg f "$2" --argjson n "$3" '.stage == "done" and (.received | length == 1) and .received[0].format == $f
+  local name="$1" format="$2" copies="$3"
+  jq -e --arg f "$format" --argjson n "$copies" '.stage == "done" and (.received | length == 1) and .received[0].format == $f
       and (.received[0].status_lists | length == $n)
       and (if $f == "dc+sd-jwt" then (.received[0].claims | contains(["family_name", "given_name", "birth_date", "cnf", "status"]))
-           else .received[0].claims == ["eu.europa.ec.eudi.pid.1"] end)' "$1-wallet.json" >/dev/null 2>&1 \
-    && jq -e '.status == "completed"' "$1-session.json" >/dev/null 2>&1
+           else .received[0].claims == ["eu.europa.ec.eudi.pid.1"] end)' "$name-wallet.json" >/dev/null 2>&1 \
+    && jq -e '.status == "completed"' "$name-session.json" >/dev/null 2>&1
 }
 # observed is what the wallet's transport saw: the token type, and each
 # Credential Response's media type (application/jwt: encrypted).
 observed() {  # $1 name
-  jq -r '.observed | "token_type \(.token_types | join(",")), Credential Responses \(.credential_responses | map(split(";")[0]) | join(","))"' "$1-wallet.json"
+  local name="$1"
+  jq -r '.observed | "token_type \(.token_types | join(",")), Credential Responses \(.credential_responses | map(split(";")[0]) | join(","))"' "$name-wallet.json"
 }
 encrypted() {  # $1 name: a DPoP token, every Credential Response encrypted
-  jq -e '.observed.token_types == ["DPoP"] and (.observed.credential_responses | length >= 1 and all(startswith("application/jwt")))' "$1-wallet.json" >/dev/null 2>&1
+  local name="$1"
+  jq -e '.observed.token_types == ["DPoP"] and (.observed.credential_responses | length >= 1 and all(startswith("application/jwt")))' "$name-wallet.json" >/dev/null 2>&1
 }
 fetched() {  # the times EUDIPLO fetched the Wallet Provider's status lists
   grep -c ' tap: GET "/statuslists/[0-9]*/[0-9]*" 200' ewp-serve.log || true
@@ -179,10 +183,11 @@ else bad "control: a status list from an unknown Status Issuer: $(ewhy status-is
 # error containing $3, the refusing side's reason, its session still
 # active: EUDIPLO issued nothing.
 refused_at() {  # $1 name, $2 stage, $3 in the error, $4 what the control is
-  if jq -e --arg s "$2" --arg r "$3" '.stage == $s and (.received | length == 0) and (.error | contains($r))' "$1-wallet.json" >/dev/null 2>&1 \
-      && jq -e '.status == "active"' "$1-session.json" >/dev/null 2>&1; then
-    ok "control: $4: refused ($(jq -r '.error | split("error response: ")[-1] | .[:200]' "$1-wallet.json"))"
-  else bad "control: $4: $(ewhy "$1")"; fi
+  local name="$1" stage="$2" reason="$3" what="$4"
+  if jq -e --arg s "$stage" --arg r "$reason" '.stage == $s and (.received | length == 0) and (.error | contains($r))' "$name-wallet.json" >/dev/null 2>&1 \
+      && jq -e '.status == "active"' "$name-session.json" >/dev/null 2>&1; then
+    ok "control: $what: refused ($(jq -r '.error | split("error response: ")[-1] | .[:200]' "$name-wallet.json"))"
+  else bad "control: $what: $(ewhy "$name")"; fi
 }
 ereceive "$TOKEN" wrong-tx-code pid-sdjwt "$TX" -tx-code 493537
 refused_at wrong-tx-code token "invalid_grant: Invalid 'tx_code' provided" "a wrong tx_code, by EUDIPLO's token endpoint"
