@@ -10,7 +10,9 @@ import (
 
 // A reader that finds ExtendedRequestSupport in the holder's QR
 // engagement sends a second-edition request, signed as a whole, with
-// use cases and purpose hints: the holder reads them, signed, and
+// use cases and purpose hints, and its document request carries
+// alternatives and the issuers it accepts: the holder reads them all,
+// the request-level information signed, and
 // recognizes the reader, both sides having derived one
 // SessionTranscript from the engagement as sent; the reader verifies
 // the reply. A reader that ignores the capability still sends a
@@ -26,6 +28,21 @@ func TestExtendedRequestSupport_EndToEnd(t *testing.T) {
 	wantUseCases := []UseCase{
 		{Mandatory: true, DocumentSets: [][]int{{0}}, PurposeHints: map[string]int32{"org.example.purpose": 3, "org.example.negative": -2}},
 		{Mandatory: false, DocumentSets: [][]int{}, PurposeHints: map[string]int32{}},
+	}
+	issuer := bytes.Repeat([]byte{0x5a}, 20)
+	docInfo := map[string]any{
+		"alternativeDataElements": []any{map[string]any{
+			"requestedElement":       []string{mDLNS, "age_over_18"},
+			"alternativeElementSets": [][][]string{{{mDLNS, "age_in_years"}}, {{mDLNS, "birth_date"}}},
+		}},
+		"issuerIdentifiers": [][]byte{issuer},
+	}
+	wantDocInfo := &DocRequestInfo{
+		AlternativeDataElements: []AlternativeDataElements{{
+			RequestedElement:       [2]string{mDLNS, "age_over_18"},
+			AlternativeElementSets: [][][2]string{{{mDLNS, "age_in_years"}}, {{mDLNS, "birth_date"}}},
+		}},
+		IssuerIdentifiers: [][]byte{issuer},
 	}
 
 	for name, extended := range map[string]bool{"reads the capability": true, "ignores the capability": false} {
@@ -44,7 +61,7 @@ func TestExtendedRequestSupport_EndToEnd(t *testing.T) {
 
 			var est []byte
 			if extended {
-				req := testRequest{docs: []testDoc{{docType: mDL}}, all: []testSigner{signer}, info: info}.build(t, reader.SessionTranscriptBytes())
+				req := testRequest{docs: []testDoc{{docType: mDL, requestInfo: docInfo}}, all: []testSigner{signer}, info: info}.build(t, reader.SessionTranscriptBytes())
 				if est, err = reader.establishment(req); err != nil {
 					t.Fatal(err)
 				}
@@ -85,6 +102,9 @@ func TestExtendedRequestSupport_EndToEnd(t *testing.T) {
 			docs := req.DocRequests()
 			if len(docs) != 1 || docs[0].DocType != mDL {
 				t.Fatalf("DocRequests = %+v", docs)
+			}
+			if want := map[bool]*DocRequestInfo{true: wantDocInfo}[extended]; !reflect.DeepEqual(docs[0].RequestInfo, want) || docs[0].RequestInfoError != nil {
+				t.Errorf("document request information %+v (%v), want %+v", docs[0].RequestInfo, docs[0].RequestInfoError, want)
 			}
 			f := flow{holder: holder, reader: reader, req: docs[0]}
 			v, err := reader.Verify(context.Background(), f.respond(t, fx, docs[0].Elements), fx.roots, time.Now())

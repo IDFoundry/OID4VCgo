@@ -327,6 +327,59 @@ public class ProximityPresentation internal constructor(
         @SerialName("purpose_hints") val purposeHints: Map<String, Int>,
     )
 
+    /**
+     * A document request's information (ISO/IEC 18013-5 second edition draft, §10.2.4), as
+     * the reader sent it: alternatives for its requested elements, and the issuers it
+     * accepts. Nothing in it is enforced. An answer still discloses only the document's
+     * [MdocPresentation.Document.elements], so an app can show an alternative but can't
+     * answer with it in place of the element it stands for.
+     *
+     * @property alternativeDataElements Alternatives for some of the document's requested
+     *   elements, in the request's order.
+     * @property issuerIdentifiers The issuers the reader accepts for the document, each the
+     *   KeyIdentifier of an AuthorityKeyIdentifier; empty when it accepts any. They aren't
+     *   matched against the held mdocs: [MdocPresentation.Document.credentials] lists every
+     *   one of the doctype. Compared by content.
+     */
+    @Serializable
+    public data class DocumentRequestInfo(
+        @SerialName("alternative_data_elements") val alternativeDataElements: List<AlternativeDataElements>,
+        @SerialName("issuer_identifiers") val issuerIdentifiers: List<@Serializable(Base64Serializer::class) ByteArray>,
+    ) {
+        /** Whether [other] holds the same alternatives and issuer identifiers, compared by content. */
+        override fun equals(other: Any?): Boolean =
+            other is DocumentRequestInfo && alternativeDataElements == other.alternativeDataElements &&
+                issuerIdentifiers.size == other.issuerIdentifiers.size &&
+                issuerIdentifiers.indices.all { issuerIdentifiers[it].contentEquals(other.issuerIdentifiers[it]) }
+
+        /** A hash consistent with [equals]. */
+        override fun hashCode(): Int =
+            31 * alternativeDataElements.hashCode() + issuerIdentifiers.fold(0) { h, id -> 31 * h + id.contentHashCode() }
+    }
+
+    /**
+     * The elements a reader accepts in place of one it requested.
+     *
+     * @property requestedElement The requested element: always one of the document's elements.
+     * @property alternativeElementSets The alternatives, most preferred first: each a set of
+     *   elements that stand in for [requestedElement] together. They need not be among the
+     *   document's elements.
+     */
+    @Serializable
+    public data class AlternativeDataElements(
+        @SerialName("requested_element") val requestedElement: ElementReference,
+        @SerialName("alternative_element_sets") val alternativeElementSets: List<List<ElementReference>>,
+    )
+
+    /**
+     * A data element, by namespace and identifier.
+     *
+     * @property namespace Its namespace.
+     * @property identifier Its identifier in the namespace.
+     */
+    @Serializable
+    public data class ElementReference(val namespace: String, val identifier: String)
+
     private val engagement: EngagementJSON = decode(handle.engagement())
 
     /** The QR code to show: "mdoc:" and the device engagement. */

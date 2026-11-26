@@ -343,16 +343,16 @@ func TestVerifyDeviceRequest(t *testing.T) {
 			testRequest{docs: testDocs(2, &b), all: []testSigner{a}, info: info}, trustA, ReaderTrusted, &a, true,
 		},
 		"some documents signed, whole request signed": {
-			testRequest{docs: []testDoc{{"org.example.one", &a}, {"org.example.two", nil}}, all: []testSigner{a}, info: info}, trustA, ReaderTrusted, &a, true,
+			testRequest{docs: []testDoc{{docType: "org.example.one", signer: &a}, {docType: "org.example.two"}}, all: []testSigner{a}, info: info}, trustA, ReaderTrusted, &a, true,
 		},
 		"documents only, one trusted reader": {
 			testRequest{docs: testDocs(2, &a), info: info}, trustA, ReaderTrusted, &a, false,
 		},
 		"documents only, two trusted readers": {
-			testRequest{docs: []testDoc{{"org.example.one", &a}, {"org.example.two", &b}}, info: info}, trustAB, ReaderUntrusted, &b, false,
+			testRequest{docs: []testDoc{{docType: "org.example.one", signer: &a}, {docType: "org.example.two", signer: &b}}, info: info}, trustAB, ReaderUntrusted, &b, false,
 		},
 		"documents only, one unsigned": {
-			testRequest{docs: []testDoc{{"org.example.one", &a}, {"org.example.two", nil}}, info: info}, trustA, ReaderUnauthenticated, nil, false,
+			testRequest{docs: []testDoc{{docType: "org.example.one", signer: &a}, {docType: "org.example.two"}}, info: info}, trustA, ReaderUnauthenticated, nil, false,
 		},
 		"unsigned": {
 			testRequest{docs: testDocs(2, nil), info: info}, trustA, ReaderUnauthenticated, nil, false,

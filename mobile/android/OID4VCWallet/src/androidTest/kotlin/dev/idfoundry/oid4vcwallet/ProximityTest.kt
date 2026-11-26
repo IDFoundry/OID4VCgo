@@ -193,6 +193,46 @@ class ProximityTest {
         assertEquals(null, ProximityPresentation.Request(present.reader, present.documents).requestInfo)
     }
 
+    /**
+     * Each document's request_info: missing (an older Go side) and null are both no
+     * information; present information keeps alternatives in order and issuer identifiers as
+     * bytes, empty arrays empty.
+     */
+    @Test
+    fun documentRequestInfoDecoding() {
+        val reader = """{"status":"trusted","name":"Shop","chain":[]}"""
+        fun document(requestInfo: String?): MdocPresentation.Document {
+            val member = requestInfo?.let { ""","request_info":$it""" } ?: ""
+            return decodeProximityRequest("""{"abi":15,"reader":$reader,"documents":[{"doctype":"$DOC_TYPE","elements":[]$member}]}""").documents.single()
+        }
+
+        assertEquals(null, document(null).requestInfo)
+        assertEquals(null, document("null").requestInfo)
+        assertEquals(
+            ProximityPresentation.DocumentRequestInfo(emptyList(), emptyList()),
+            document("""{"alternative_data_elements":[],"issuer_identifiers":[]}""").requestInfo,
+        )
+        val info = document(
+            """{"alternative_data_elements":[{"requested_element":{"namespace":"ns","identifier":"age_over_18"},""" +
+                """"alternative_element_sets":[[{"namespace":"ns","identifier":"age_in_years"}],""" +
+                """[{"namespace":"ns","identifier":"birth_date"},{"namespace":"other","identifier":"x"}]]}],""" +
+                """"issuer_identifiers":["+/8=","AQ=="],"future_member":1}""",
+        ).requestInfo
+        fun ref(namespace: String, identifier: String) = ProximityPresentation.ElementReference(namespace, identifier)
+        assertEquals(
+            ProximityPresentation.DocumentRequestInfo(
+                listOf(
+                    ProximityPresentation.AlternativeDataElements(
+                        ref("ns", "age_over_18"),
+                        listOf(listOf(ref("ns", "age_in_years")), listOf(ref("ns", "birth_date"), ref("other", "x"))),
+                    ),
+                ),
+                listOf(byteArrayOf(0xfb.toByte(), 0xff.toByte()), byteArrayOf(1)),
+            ),
+            info,
+        )
+    }
+
     /** A reader is a production one unless `development` is set: a configuration leaving its decisions open is `invalid_input`. */
     @Test
     fun readerIsProductionByDefault() {

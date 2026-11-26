@@ -1813,7 +1813,13 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         val documents: List<Document>,
     )
 
-    /** One requested document. */
+    /**
+     * One requested document.
+     *
+     * Adding [requestInfo] changed this class's constructor and generated methods: code
+     * compiled against an earlier release must be rebuilt, though calls passing only the
+     * other members still compile.
+     */
     @Serializable
     public data class Document(
         /** Its document type. */
@@ -1822,6 +1828,14 @@ public class MdocPresentation internal constructor(private val handle: MobileMdo
         val elements: List<Element>,
         /** The held mdocs of [doctype]; none when nothing can answer. */
         val credentials: List<CredentialSummary> = emptyList(),
+        /**
+         * An in-person document request's alternatives and accepted issuers
+         * ([ProximityPresentation.DocumentRequestInfo]), or null when the reader sent none,
+         * when it couldn't be read, when this library's Go side predates it, and always for
+         * an org-iso-mdoc request. Nothing in it is enforced: an answer still discloses only
+         * [elements].
+         */
+        @SerialName("request_info") val requestInfo: ProximityPresentation.DocumentRequestInfo? = null,
     )
 
     /** One requested element. */

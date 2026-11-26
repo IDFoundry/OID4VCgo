@@ -206,14 +206,20 @@ The ISO/IEC 18013-5 second-edition draft lets a reader sign the whole
 request (`readerAuthAll`) and send request-level information
 (`deviceRequestInfo`): use cases, each with a `mandatory` flag, document
 sets (groups of the request's documents) and purpose hints (an integer
-purpose code per controller ID). This package reads them in the working
-representation Multipaz 0.102.0 builds; that representation, and the
-validity rules below, still have to be checked against the ballot
-text, so they are this library's profile, not a conformance claim.
+purpose code per controller ID), and per document request information
+(each ItemsRequest's `requestInfo`): alternatives for requested
+elements and the issuers the reader accepts. This package reads the
+members the draft (CD ballot resolution) defines in §10.2.4
+(`alternativeDataElements`, `issuerIdentifiers`) and §10.2.5
+(`useCases`), as Multipaz 0.102.0 also builds them; the validity rules
+below are this library's profile, not a conformance claim.
 
 Every engagement a `DeviceSession` writes, QR or NFC, is version 1.1
 and advertises the second edition's ExtendedRequestSupport capability
-(`6: {4: true}`, with an empty `5: []` originInfos). Some readers,
+(`6: {4: true}`, with an empty `5: []` originInfos), following the
+draft's §9.1: the capability says the mdoc parses `useCases`,
+`alternativeDataElements` and `issuerIdentifiers`, which this package
+does. Some readers,
 Multipaz's Identity Reader among them, send `deviceRequestInfo` only
 to an mdoc that advertises it; to a 1.0 engagement they send a
 first-edition request, with no information. A reader still reads any
@@ -230,13 +236,13 @@ duplicate keys are refused anywhere, the embedded information included.
 A request failing any of these is refused.
 
 The information's known fields are read only when they have the
-working representation's types, document indices name one of the
+types `RequestInfo` describes, document indices name one of the
 request's documents, purpose codes fit a signed 32-bit integer,
 controller IDs hold no control, line separator or invisible format
 characters nor surrounding space (what display text is cleaned of), and the
 counts are within the limits below. Otherwise the request isn't
-refused, since the second edition's final text may shape them
-otherwise: it stands without its information (`RequestInfo()` is nil,
+refused, since the second edition is still a draft: it stands
+without its information (`RequestInfo()` is nil,
 `RequestInfoError()` says why), its signatures still checked over the
 information as received, which is then reported unsigned. Nothing is
 truncated to fit. Unknown fields are accepted and stay signed as
@@ -254,6 +260,49 @@ received; they aren't interpreted.
 
 These are resource policy, not limits from the standard; the existing
 2 MiB message, eight-document and 256-element limits still apply.
+
+### Document request information
+
+Each `DocRequest`'s `RequestInfo` is its DocRequestInfo (§10.2.4), from
+both `ParseDeviceRequest` and `DecodeDeviceRequest`: nil when the
+document request carries none, and an empty one, its lists not nil, for
+information without the members read here. `AlternativeDataElements`
+keeps each set's requested element and its alternatives, most
+preferred first, as `[namespace, element]` pairs; `IssuerIdentifiers`
+keeps each authority key identifier's KeyIdentifier byte for byte. The
+draft's other members (`uniqueDocSetRequired`, `maximumResponseSize`,
+`zkRequest`, `docResponseEncryption`) and extensions are accepted,
+signed inside ItemsRequestBytes, and not read.
+
+A `requestInfo` that isn't a map, null included, refuses the request.
+A map is read only when each list it carries is non-empty (the draft's
+`[+ …]`, which `deviceRequestInfo`'s reading doesn't insist on), each
+element reference is a `[namespace, element]` pair of identifiers as
+the request's own are, each set has `requestedElement` and
+`alternativeElementSets`, its requested element is one the document
+request's `nameSpaces` asks for (as the draft requires), each issuer
+identifier is a non-empty byte string, and the counts are within the
+limits below. Otherwise the document request stands without it
+(`RequestInfo` nil, `RequestInfoError` saying why). Alternatives may
+name elements the request doesn't ask for: they're kept as sent.
+
+| Limit (per document request) | Value |
+|---|---:|
+| `MaxAlternativeDataElements` (sets) | 32 |
+| `MaxAlternativeElementSets` (alternatives per set) | 8 |
+| `MaxElementsPerAlternative` | 8 |
+| `MaxAlternativeElements` (element references in all, requested ones included) | 256 |
+| `MaxIssuerIdentifiers` | 16 |
+| `MaxIssuerIdentifierBytes` | 64 |
+
+Nothing in it is enforced, as for use cases: whether to answer, and
+with which credential, is the application's decision, and issuer
+identifiers aren't matched against held mdocs. A response still
+discloses only elements the document request's `nameSpaces` asks for
+(`BuildDeviceResponse` and `BuildDocument` refuse any other), so the
+holder can't answer with an alternative in place of the element it
+stands for, and this package's reader refuses a response carrying
+elements it didn't ask for.
 
 `VerifyDeviceRequest` (or `DeviceSession.VerifyDeviceRequest`) checks
 every signature the request carries, each `readerAuthAll` over

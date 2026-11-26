@@ -321,6 +321,47 @@ public final class ProximityPresentation: @unchecked Sendable {
         enum CodingKeys: String, CodingKey { case mandatory, documentSets = "document_sets", purposeHints = "purpose_hints" }
     }
 
+    /// A document request's information (ISO/IEC 18013-5 second edition draft, §10.2.4), as the
+    /// reader sent it: alternatives for its requested elements, and the issuers it accepts.
+    /// Nothing in it is enforced. An answer still discloses only the document's
+    /// ``MdocPresentation/Document/elements``, so an app can show an alternative but can't answer
+    /// with it in place of the element it stands for.
+    public struct DocumentRequestInfo: Sendable, Decodable, Equatable {
+        /// Alternatives for some of the document's requested elements, in the request's order.
+        public let alternativeDataElements: [AlternativeDataElements]
+        /// The issuers the reader accepts for the document, each the KeyIdentifier of an
+        /// AuthorityKeyIdentifier; empty when it accepts any. They aren't matched against the
+        /// held mdocs: ``MdocPresentation/Document/credentials`` lists every one of the doctype.
+        public let issuerIdentifiers: [Data]
+
+        enum CodingKeys: String, CodingKey {
+            case alternativeDataElements = "alternative_data_elements"
+            case issuerIdentifiers = "issuer_identifiers"
+        }
+    }
+
+    /// The elements a reader accepts in place of one it requested.
+    public struct AlternativeDataElements: Sendable, Decodable, Equatable {
+        /// The requested element: always one of the document's elements.
+        public let requestedElement: ElementReference
+        /// The alternatives, most preferred first: each a set of elements that stand in for
+        /// ``requestedElement`` together. They need not be among the document's elements.
+        public let alternativeElementSets: [[ElementReference]]
+
+        enum CodingKeys: String, CodingKey {
+            case requestedElement = "requested_element"
+            case alternativeElementSets = "alternative_element_sets"
+        }
+    }
+
+    /// A data element, by namespace and identifier.
+    public struct ElementReference: Sendable, Decodable, Hashable {
+        /// Its namespace.
+        public let namespace: String
+        /// Its identifier in the namespace.
+        public let identifier: String
+    }
+
     /// Decodes the Go side's Request() JSON into the request snapshot: the one decoding path for
     /// the session and for tests.
     static func decodeRequest(_ json: String) throws -> Request {

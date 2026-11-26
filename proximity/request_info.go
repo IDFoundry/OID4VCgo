@@ -52,10 +52,11 @@ const (
 )
 
 // RequestInfo is a DeviceRequest's deviceRequestInfo, as far as this
-// package understands it: the second edition's use cases, in the
-// working representation of Multipaz 0.102.0, which still has to be
-// checked against the ISO/IEC 18013-5 second edition text. Unknown
-// fields are accepted, and signed, but not shown here.
+// package understands it: the use cases of the ISO/IEC 18013-5 second
+// edition draft (CD ballot resolution, §10.2.5), as Multipaz 0.102.0
+// also builds them. Unknown fields are accepted, and signed, but not
+// shown here. Each document request's own information is
+// DocRequest.RequestInfo.
 type RequestInfo struct {
 	// UseCases are the request's use cases, in the request's order;
 	// empty, not nil, when the information lists none.
@@ -126,9 +127,9 @@ type requestInfoBudget struct {
 // for a well-formed map whose known fields don't have RequestInfo's
 // shape, or exceed this package's other limits: the information is
 // then not shown (info is nil), but the request stands, its signatures
-// checked over raw as received. The second edition's final text may
-// shape them otherwise than the working representation does, and a
-// request from a reader following it isn't malformed for that.
+// checked over raw as received. The second edition is still a draft,
+// and a request from a reader following a later text isn't malformed
+// for that.
 func parseDeviceRequestInfo(raw []byte, docCount int) (info *RequestInfo, unread, err error) {
 	if len(raw) > MaxDeviceRequestInfoBytes {
 		return nil, nil, fmt.Errorf("deviceRequestInfo is %d bytes, over %d: %w", len(raw), MaxDeviceRequestInfoBytes, ErrCBORValidation)

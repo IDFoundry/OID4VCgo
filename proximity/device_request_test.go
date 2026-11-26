@@ -40,11 +40,13 @@ func tagged(t testing.TB, raw []byte) cbor.RawMessage {
 	return mustCBOR(t, cbor.Tag{Number: tag24, Content: raw})
 }
 
-// testDoc is one DocRequest of a test request: its docType, and the
-// reader signing it on its own, if any.
+// testDoc is one DocRequest of a test request: its docType, the
+// reader signing it on its own, if any, and its ItemsRequest's
+// requestInfo, if not nil.
 type testDoc struct {
-	docType string
-	signer  *testSigner
+	docType     string
+	signer      *testSigner
+	requestInfo any
 }
 
 // testRequest describes a DeviceRequest to build: its documents, the
@@ -77,9 +79,11 @@ func (r testRequest) build(t testing.TB, transcriptBytes []byte) []byte {
 	var docRequests []any
 	var items []any
 	for _, d := range r.docs {
-		itemsBytes := tagged(t, mustCBOR(t, map[string]any{
-			"docType": d.docType, "nameSpaces": map[string]map[string]bool{mDLNS: {"age_over_18": false}},
-		}))
+		item := map[string]any{"docType": d.docType, "nameSpaces": map[string]map[string]bool{mDLNS: {"age_over_18": false}}}
+		if d.requestInfo != nil {
+			item["requestInfo"] = d.requestInfo
+		}
+		itemsBytes := tagged(t, mustCBOR(t, item))
 		doc := map[string]any{"itemsRequest": itemsBytes}
 		if d.signer != nil {
 			doc["readerAuth"] = sign(*d.signer, []any{"ReaderAuthentication", cbor.RawMessage(transcript), itemsBytes})

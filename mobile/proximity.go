@@ -315,6 +315,18 @@ var extKeyUsageNames = map[x509.ExtKeyUsage]string{
 // signature the request carries having verified; it is not reader
 // trust, which is reader.status, and neither shows that a purpose is
 // true or that the reader may ask for it.
+//
+// Each document also has request_info: its document request's
+// information, or null when the reader sent none or it couldn't be
+// read. Otherwise it is {"alternative_data_elements":
+// [{"requested_element": {"namespace", "identifier"},
+// "alternative_element_sets": [[{"namespace", "identifier"}]]}],
+// "issuer_identifiers": [base64]}: for one of the document's elements,
+// the alternatives the reader accepts in its place, most preferred
+// first, each a set of elements together; and the issuers it accepts,
+// each an authority key identifier's KeyIdentifier, all as the reader
+// sent them, empty arrays never null. Nothing in it is enforced, and
+// Respond still discloses only the document's elements.
 func (p *ProximityPresentation) Request() string {
 	r := p.p.Reader()
 	reader := proximityReaderJSON{Status: r.Status.String(), Chain: []string{}, Certificates: []certificateJSON{}}
@@ -338,12 +350,15 @@ func (p *ProximityPresentation) Request() string {
 	}
 	out := struct {
 		result
-		Reader      proximityReaderJSON `json:"reader"`
-		Documents   []mdocDocumentJSON  `json:"documents"`
-		RequestInfo *requestInfoJSON    `json:"request_info"`
-	}{result: result{ABIVersion}, Reader: reader, Documents: []mdocDocumentJSON{}, RequestInfo: requestInfoOf(p.p.RequestInfo())}
+		Reader      proximityReaderJSON     `json:"reader"`
+		Documents   []proximityDocumentJSON `json:"documents"`
+		RequestInfo *requestInfoJSON        `json:"request_info"`
+	}{result: result{ABIVersion}, Reader: reader, Documents: []proximityDocumentJSON{}, RequestInfo: requestInfoOf(p.p.RequestInfo())}
 	for _, req := range p.p.Requests() {
-		d := mdocDocumentJSON{DocType: req.DocType, Elements: []mdocElementJSON{}, Credentials: []credentialSummary{}}
+		d := proximityDocumentJSON{
+			mdocDocumentJSON: mdocDocumentJSON{DocType: req.DocType, Elements: []mdocElementJSON{}, Credentials: []credentialSummary{}},
+			RequestInfo:      docRequestInfoOf(req.RequestInfo),
+		}
 		for _, e := range req.Elements {
 			d.Elements = append(d.Elements, mdocElementJSON{e.Namespace, e.Identifier, e.Retain})
 		}
@@ -357,6 +372,56 @@ func (p *ProximityPresentation) Request() string {
 	}
 	text, _ := marshal(out)
 	return text
+}
+
+// proximityDocumentJSON is one of Request's documents: an
+// org-iso-mdoc request's, with its request_info.
+type proximityDocumentJSON struct {
+	mdocDocumentJSON
+	RequestInfo *docRequestInfoJSON `json:"request_info"`
+}
+
+// docRequestInfoJSON is a document's request_info.
+type docRequestInfoJSON struct {
+	AlternativeDataElements []alternativeDataElementsJSON `json:"alternative_data_elements"`
+	IssuerIdentifiers       []string                      `json:"issuer_identifiers"`
+}
+
+type alternativeDataElementsJSON struct {
+	RequestedElement       elementReferenceJSON     `json:"requested_element"`
+	AlternativeElementSets [][]elementReferenceJSON `json:"alternative_element_sets"`
+}
+
+type elementReferenceJSON struct {
+	Namespace  string `json:"namespace"`
+	Identifier string `json:"identifier"`
+}
+
+// docRequestInfoOf is info as a document's request_info: nil for nil,
+// and every collection non-nil.
+func docRequestInfoOf(info *proximity.DocRequestInfo) *docRequestInfoJSON {
+	if info == nil {
+		return nil
+	}
+	out := &docRequestInfoJSON{AlternativeDataElements: make([]alternativeDataElementsJSON, 0, len(info.AlternativeDataElements)), IssuerIdentifiers: make([]string, 0, len(info.IssuerIdentifiers))}
+	for _, set := range info.AlternativeDataElements {
+		a := alternativeDataElementsJSON{
+			RequestedElement:       elementReferenceJSON{set.RequestedElement[0], set.RequestedElement[1]},
+			AlternativeElementSets: make([][]elementReferenceJSON, 0, len(set.AlternativeElementSets)),
+		}
+		for _, alt := range set.AlternativeElementSets {
+			refs := make([]elementReferenceJSON, 0, len(alt))
+			for _, e := range alt {
+				refs = append(refs, elementReferenceJSON{e[0], e[1]})
+			}
+			a.AlternativeElementSets = append(a.AlternativeElementSets, refs)
+		}
+		out.AlternativeDataElements = append(out.AlternativeDataElements, a)
+	}
+	for _, id := range info.IssuerIdentifiers {
+		out.IssuerIdentifiers = append(out.IssuerIdentifiers, base64.StdEncoding.EncodeToString(id))
+	}
+	return out
 }
 
 // requestInfoJSON is Request's request_info.

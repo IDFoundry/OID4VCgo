@@ -130,6 +130,23 @@ func purposeHints(_ request: ProximityPresentation.Request) -> (hints: [String],
 }
 ```
 
+### Alternatives and accepted issuers
+
+Each of the request's documents may carry its own information,
+``MdocPresentation/Document/requestInfo``:
+``ProximityPresentation/DocumentRequestInfo/alternativeDataElements``,
+the elements the reader accepts in place of one it asked for (most
+preferred first, each a set to disclose together), and
+``ProximityPresentation/DocumentRequestInfo/issuerIdentifiers``, the
+issuers it accepts for that document (each an authority key
+identifier). It is `nil` when the reader sent none. The reader signs it
+with the document's request. Nothing in it is enforced:
+``MdocPresentation/Document/credentials`` still lists every held mdoc of
+the doctype, and an answer discloses only the document's
+``MdocPresentation/Document/elements``, so you can show the holder that
+a reader would take, say, `age_in_years` instead of `age_over_18`, but
+the wallet can't answer with the alternative.
+
 ### Several documents at once
 
 A reader may ask for several documents in one request: an mDL, a photo
