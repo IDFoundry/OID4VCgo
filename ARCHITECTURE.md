@@ -1344,8 +1344,10 @@ changes whether *every* bullet below is `(done)`.
   holder's request-level path, `DecodeDeviceRequest` and
   `VerifyDeviceRequest`, also reads the second-edition draft's
   `readerAuthAll` and `deviceRequestInfo` (use cases, document sets,
-  purpose hints, as Multipaz 0.102.0 builds them, within fixed resource
-  limits) into an opaque `DeviceRequest` that owns copies of what it
+  purpose hints, as the CD ballot resolution draft defines them and
+  Multipaz 0.102.0 builds them, within fixed resource limits), and
+  each document request's `requestInfo` (alternatives and issuer
+  identifiers, `DocRequest.RequestInfo`), into an opaque `DeviceRequest` that owns copies of what it
   read. Every signature must verify; with `readerAuthAll` its first
   trusted signer is the reader (no fallback to per-document signers),
   and coverage of the information by a verified whole-request signature

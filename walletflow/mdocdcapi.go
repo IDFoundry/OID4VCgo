@@ -12,6 +12,7 @@ import (
 
 	"github.com/idfoundry/oid4vcgo/credential/mdoc"
 	"github.com/idfoundry/oid4vcgo/mdocdcapi"
+	"github.com/idfoundry/oid4vcgo/proximity"
 )
 
 // MdocRequest is one document an org-iso-mdoc request asks for.
@@ -24,6 +25,14 @@ type MdocRequest struct {
 	// Credentials are the held mdocs of DocType; none when nothing held
 	// can answer.
 	Credentials []StoredCredential
+	// RequestInfo is an in-person request's document request
+	// information (proximity.DocRequest.RequestInfo): the alternatives
+	// the reader accepts for its elements, and the issuers it accepts.
+	// It is nil when the reader sent none or it couldn't be read, and
+	// always for an org-iso-mdoc request. Nothing in it is enforced,
+	// and an answer still discloses only Elements: an alternative
+	// can't be disclosed in place of the element it stands for.
+	RequestInfo *proximity.DocRequestInfo
 }
 
 // MdocElement is one requested data element.

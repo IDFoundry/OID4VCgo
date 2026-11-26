@@ -1560,6 +1560,17 @@ public final class MdocPresentation: @unchecked Sendable {
         public let elements: [Element]
         /// The held mdocs of `doctype`; none when nothing can answer.
         public let credentials: [CredentialSummary]
+        /// An in-person document request's alternatives and accepted issuers
+        /// (``ProximityPresentation/DocumentRequestInfo``), or nil when the reader sent none, when
+        /// it couldn't be read, when the library's Go side predates it, and always for an
+        /// org-iso-mdoc request. Nothing in it is enforced: an answer still discloses only
+        /// `elements`.
+        public let requestInfo: ProximityPresentation.DocumentRequestInfo?
+
+        enum CodingKeys: String, CodingKey {
+            case doctype, elements, credentials
+            case requestInfo = "request_info"
+        }
     }
 
     /// One requested element.

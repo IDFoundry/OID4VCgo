@@ -298,7 +298,7 @@ func (p *ProximityPresentation) establish(ctx context.Context, msg []byte) Proxi
 		return ProximityEvent{Send: p.s.Termination(), Ended: true, Err: fmt.Errorf("walletflow: list credentials: %w", err)}
 	}
 	for _, d := range reqs {
-		r := MdocRequest{DocType: d.DocType}
+		r := MdocRequest{DocType: d.DocType, RequestInfo: d.RequestInfo}
 		for _, e := range d.Elements {
 			r.Elements = append(r.Elements, MdocElement{Namespace: e[0], Identifier: e[1], Retain: d.IntentToRetain[e]})
 		}

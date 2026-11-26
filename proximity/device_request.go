@@ -78,6 +78,8 @@ func cloneDocRequests(docs []DocRequest) []DocRequest {
 			IntentToRetain:    maps.Clone(d.IntentToRetain),
 			ItemsRequestBytes: bytes.Clone(d.ItemsRequestBytes),
 			ReaderAuth:        bytes.Clone(d.ReaderAuth),
+			RequestInfo:       d.RequestInfo.clone(),
+			RequestInfoError:  d.RequestInfoError,
 		}
 	}
 	return out

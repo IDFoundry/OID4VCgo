@@ -42,6 +42,22 @@ type DocRequest struct {
 	// ReaderAuth is the request's readerAuth COSE_Sign1 as received, or
 	// nil: DeviceSession.VerifyReaderAuth checks it.
 	ReaderAuth []byte
+
+	// RequestInfo is the document request's DocRequestInfo (its
+	// ItemsRequest's requestInfo), decoded: its alternatives and the
+	// issuers the reader accepts. It is nil when the request carries
+	// none, and when its known members couldn't be read
+	// (RequestInfoError). Reader authentication signs it, inside
+	// ItemsRequestBytes, so a verified readerAuth or readerAuthAll
+	// covers it.
+	RequestInfo *DocRequestInfo
+
+	// RequestInfoError is why RequestInfo is nil though the request
+	// carries requestInfo: its known members don't have the shape
+	// DocRequestInfo describes, or exceed one of this package's limits.
+	// It wraps ErrCBORValidation, and is nil otherwise. The document
+	// request stands without the information.
+	RequestInfoError error
 }
 
 type wireDeviceRequest struct {
@@ -57,7 +73,9 @@ type wireDocRequest struct {
 type wireItemsRequest struct {
 	DocType    string          `cbor:"docType"`
 	NameSpaces cbor.RawMessage `cbor:"nameSpaces"`
-	// requestInfo is optional and not used.
+	// RequestInfo is the DocRequestInfo as received, nil when absent:
+	// parseDocRequestInfo reads it.
+	RequestInfo cbor.RawMessage `cbor:"requestInfo,omitempty"`
 }
 
 // Limits on what one DeviceRequest may ask for, as mdocdcapi's: each
@@ -75,8 +93,11 @@ const (
 // DeviceSession.HandleSessionEstablishment or HandleSessionData
 // returns it. An error wraps ErrCBORDecoding for bytes that aren't
 // well-formed CBOR, or ErrCBORValidation for well-formed CBOR that isn't
-// a DeviceRequest — one asking for a document type twice among them:
-// answer either with DeviceSession.ErrorResponse.
+// a DeviceRequest — one asking for a document type twice among them, or
+// with a requestInfo that isn't a map: answer either with
+// DeviceSession.ErrorResponse. A requestInfo map whose known members it
+// can't read leaves that DocRequest's RequestInfo nil, with
+// RequestInfoError saying why, and the request stands.
 //
 // ParseDeviceRequest reads only the document requests: a second-edition
 // request's readerAuthAll and deviceRequestInfo are neither checked nor
@@ -102,11 +123,11 @@ func ParseDeviceRequest(b []byte) ([]DocRequest, error) {
 // VerifyDeviceRequest), and deviceRequestInfo, when present, must be
 // #6.24(bstr .cbor map) of at most MaxDeviceRequestInfoBytes; neither
 // may be null. Its known fields are read only when they have the
-// working representation RequestInfo describes, within this package's
+// shape RequestInfo describes, within this package's
 // other Max limits, with every document index naming one of the
 // request's DocRequests: otherwise the request stands without them
 // (RequestInfo is nil and RequestInfoError says why), since the second
-// edition's final text may shape them otherwise, and its signatures
+// edition is still a draft, and its signatures
 // are still checked over the information as received. Nothing is
 // truncated to fit. Unknown fields are accepted, and signed as
 // received.
@@ -287,6 +308,16 @@ func parseDocRequest(dr wireDocRequest) (DocRequest, error) {
 			out.Elements = append(out.Elements, pair)
 			out.IntentToRetain[pair] = typed[ns][el]
 		}
+	}
+	if items.RequestInfo != nil {
+		info, unread, err := parseDocRequestInfo(items.RequestInfo, out.Elements)
+		if err != nil {
+			return DocRequest{}, err
+		}
+		if unread != nil {
+			out.RequestInfoError = fmt.Errorf("proximity: requestInfo: %w", unread)
+		}
+		out.RequestInfo = info
 	}
 	return out, nil
 }

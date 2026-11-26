@@ -21,6 +21,13 @@ import (
 // here, not with internal/readerauth's builders.
 func wholeRequest(t *testing.T, p *ProximityPresentation, docSigner *testReader, allSigners []testReader, info []byte) []byte {
 	t.Helper()
+	return wholeRequestWithDocInfo(t, p, docSigner, allSigners, info, nil)
+}
+
+// wholeRequestWithDocInfo is wholeRequest with docInfo, when not nil,
+// as the document request's requestInfo.
+func wholeRequestWithDocInfo(t *testing.T, p *ProximityPresentation, docSigner *testReader, allSigners []testReader, info []byte, docInfo any) []byte {
+	t.Helper()
 	qr := decode[struct {
 		QRCode string `json:"qr_code"`
 	}](t, p.Engagement()).QRCode
@@ -44,7 +51,11 @@ func wholeRequest(t *testing.T, p *ProximityPresentation, docSigner *testReader,
 			}
 			return readerauth.Sign(r.key.Signer, r.key.Chain, tag24(inner))
 		}
-		items, err := cbor.Marshal(map[string]any{"docType": walletflowtest.DocType, "nameSpaces": map[string]map[string]bool{walletflowtest.NameSpace: {"family_name": true}}})
+		itemsRequest := map[string]any{"docType": walletflowtest.DocType, "nameSpaces": map[string]map[string]bool{walletflowtest.NameSpace: {"family_name": true}}}
+		if docInfo != nil {
+			itemsRequest["requestInfo"] = docInfo
+		}
+		items, err := cbor.Marshal(itemsRequest)
 		if err != nil {
 			return nil, err
 		}
@@ -244,6 +255,53 @@ func TestSessions_ProximityRequestInfoRefused(t *testing.T) {
 			}
 			if got := string(decode[requestJSON](t, p.Request()).RequestInfo); got != "null" {
 				t.Errorf("request_info %s, want null", got)
+			}
+		})
+	}
+}
+
+// A document request's information reaches its document's
+// request_info whole, alternatives in order and issuer identifiers as
+// base64; it is an explicit null without any, and when it can't be
+// read, the request answered either way.
+func TestSessions_ProximityDocumentRequestInfo(t *testing.T) {
+	trusted := newTestReader(t)
+	h := newHarness(t, false).withReaderRoots(t, trusted)
+	h.receive(t)
+	ns := walletflowtest.NameSpace
+	for name, tc := range map[string]struct {
+		docInfo any
+		want    string
+	}{
+		"none":  {nil, `null`},
+		"empty": {map[string]any{}, `{"alternative_data_elements":[],"issuer_identifiers":[]}`},
+		"alternatives and issuers": {map[string]any{
+			"alternativeDataElements": []any{map[string]any{
+				"requestedElement":       []string{ns, "family_name"},
+				"alternativeElementSets": [][][]string{{{ns, "given_name"}, {ns, "birth_date"}}, {{"org.example.other", "name"}}},
+			}},
+			"issuerIdentifiers": [][]byte{{0xfb, 0xff}, {1}},
+		}, `{"alternative_data_elements":[{"requested_element":{"namespace":"` + ns + `","identifier":"family_name"},` +
+			`"alternative_element_sets":[[{"namespace":"` + ns + `","identifier":"given_name"},{"namespace":"` + ns + `","identifier":"birth_date"}],` +
+			`[{"namespace":"org.example.other","identifier":"name"}]]}],"issuer_identifiers":["+/8=","AQ=="]}`},
+		"unreadable": {map[string]any{"issuerIdentifiers": []string{"not bytes"}}, `null`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := h.w.StartProximityPresentation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := decode[proximityEvent](t, p.HandleMessage(NewOperation(0), wholeRequestWithDocInfo(t, p, nil, []testReader{trusted}, nil, tc.docInfo)))
+			if ev.Event != "request" {
+				t.Fatalf("HandleMessage = %+v", ev)
+			}
+			got := decode[struct {
+				Documents []struct {
+					RequestInfo json.RawMessage `json:"request_info"`
+				} `json:"documents"`
+			}](t, p.Request())
+			if len(got.Documents) != 1 || string(got.Documents[0].RequestInfo) != tc.want {
+				t.Errorf("documents %+v, want one with request_info %s", got.Documents, tc.want)
 			}
 		})
 	}

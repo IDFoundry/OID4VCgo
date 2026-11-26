@@ -52,7 +52,10 @@
 //     (WithBLEMode). A reader offered both selects central client mode
 //     (§8.3.3.1.1.1). Version 1.1's originInfos (5) is empty, and its
 //     capabilities (6) advertise the second edition's
-//     ExtendedRequestSupport (4): readers that check it send
+//     ExtendedRequestSupport (4), as the ISO/IEC 18013-5 second-edition
+//     draft (CD ballot resolution) §9.1 has an mdoc that parses
+//     useCases, alternativeDataElements and issuerIdentifiers do; this
+//     package parses all three. Readers that check it send
 //     deviceRequestInfo only to an mdoc that advertises it. NFC
 //     engagements carry the same members without the BLE method. A
 //     reader reads any 1.x engagement, with or without them.
@@ -97,18 +100,21 @@
 //     org-iso-mdoc.
 //   - The second edition's whole-request reader authentication and
 //     request information, as the ISO/IEC 18013-5 second-edition draft
-//     describes them and Multipaz 0.102.0 builds them, not yet checked
-//     against the ballot text: DecodeDeviceRequest reads readerAuthAll
-//     and deviceRequestInfo (use cases with their mandatory flags,
-//     document sets and purpose hints) within this package's Max
-//     limits, setting aside information whose known fields it can't
-//     read rather than refusing the request (RequestInfoError), and
+//     (CD ballot resolution) describes them and Multipaz 0.102.0 builds
+//     them: DecodeDeviceRequest reads readerAuthAll and
+//     deviceRequestInfo (§10.2.5's use cases with their mandatory
+//     flags, document sets and purpose hints), and both parsers each
+//     document request's requestInfo (§10.2.4's alternativeDataElements
+//     and issuerIdentifiers, DocRequest.RequestInfo), within this
+//     package's Max limits, setting aside information whose known
+//     fields they can't read rather than refusing the request
+//     (RequestInfoError), and
 //     VerifyDeviceRequest verifies every signature a
 //     request carries. With readerAuthAll, its first trusted signer is
 //     the reader, and RequestAuthentication.RequestInfoSigned says
 //     whether a verified whole-request signature covers the
 //     information: coverage, not trust, and not a check that a purpose
-//     is true or permitted. ParseDeviceRequest stays the first-edition,
+//     is true or permitted. ParseDeviceRequest stays the
 //     document-only parser. This package's reader doesn't send
 //     second-edition requests.
 //   - BLE Ident (§8.3.3.1.1), for mdoc central client mode: BLEIdent.
@@ -149,10 +155,13 @@
 //     documents, and one response answer any of them: BuildDocument and
 //     MarshalDeviceResponse for the holder, EstablishmentDocuments and
 //     VerifyDocuments for the reader.)
-//   - Acting on the second edition's DeviceRequestInfo: its use cases,
-//     document sets and purpose hints are decoded and shown, not
-//     enforced, translated, or checked against the reader's
-//     certificate; that is the application's decision.
+//   - Acting on the second edition's DeviceRequestInfo and
+//     DocRequestInfo: use cases, document sets, purpose hints,
+//     alternative data elements and issuer identifiers are decoded and
+//     shown, not enforced, translated, or checked against the reader's
+//     certificate or the held mdocs; that is the application's
+//     decision. A response discloses only elements a document request's
+//     nameSpaces asks for, never an alternative in their place.
 //   - ISO/IEC 18013-7 (online presentation), OpenID4VP over the Digital
 //     Credentials API, and transaction data.
 //

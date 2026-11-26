@@ -312,6 +312,34 @@ final class ProximityTests: XCTestCase {
         ])
     }
 
+    /// Each document's request_info: missing (an older Go side) and null are both no
+    /// information; present information keeps alternatives in order and issuer identifiers as
+    /// bytes, empty arrays empty.
+    func testDocumentRequestInfoDecoding() throws {
+        let reader = #"{"status":"trusted","name":"Shop","chain":[]}"#
+        func document(_ requestInfo: String?) throws -> MdocPresentation.Document {
+            let member = requestInfo.map { #","request_info":"# + $0 } ?? ""
+            let documents = #"[{"doctype":"org.iso.18013.5.1.mDL","elements":[],"credentials":[]"# + member + "}]"
+            return try XCTUnwrap(try ProximityPresentation.decodeRequest(#"{"abi":15,"reader":"# + reader + #","documents":"# + documents + "}").documents.first)
+        }
+
+        XCTAssertNil(try document(nil).requestInfo)
+        XCTAssertNil(try document("null").requestInfo)
+        let empty = try XCTUnwrap(try document(#"{"alternative_data_elements":[],"issuer_identifiers":[]}"#).requestInfo)
+        XCTAssertTrue(empty.alternativeDataElements.isEmpty && empty.issuerIdentifiers.isEmpty)
+
+        let info = try XCTUnwrap(try document(
+            #"{"alternative_data_elements":[{"requested_element":{"namespace":"ns","identifier":"age_over_18"},"#
+                + #""alternative_element_sets":[[{"namespace":"ns","identifier":"age_in_years"}],"#
+                + #"[{"namespace":"ns","identifier":"birth_date"},{"namespace":"other","identifier":"x"}]]}],"#
+                + #""issuer_identifiers":["+/8=","AQ=="],"future_member":1}"#).requestInfo)
+        let ref = { (namespace: String, identifier: String) in ProximityPresentation.ElementReference(namespace: namespace, identifier: identifier) }
+        XCTAssertEqual(info.alternativeDataElements, [ProximityPresentation.AlternativeDataElements(
+            requestedElement: ref("ns", "age_over_18"),
+            alternativeElementSets: [[ref("ns", "age_in_years")], [ref("ns", "birth_date"), ref("other", "x")]])])
+        XCTAssertEqual(info.issuerIdentifiers, [Data([0xfb, 0xff]), Data([0x01])])
+    }
+
     /// A reader is a production one unless `development` is set: a
     /// configuration leaving its decisions open is `invalidInput`.
     func testReaderIsProductionByDefault() throws {

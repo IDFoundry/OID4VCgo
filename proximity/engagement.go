@@ -17,9 +17,11 @@ import (
 const engagementVersion = "1.1"
 
 // capabilityExtendedRequestSupport is the second edition's
-// ExtendedRequestSupport capability identifier: true tells the reader
-// the mdoc reads a DeviceRequest's deviceRequestInfo, which a reader
-// sends only to an mdoc that advertises it.
+// ExtendedRequestSupport capability identifier (ISO/IEC 18013-5 second
+// edition draft, CD ballot resolution, §9.1): true tells the reader the
+// mdoc parses deviceRequestInfo's useCases and each document request's
+// alternativeDataElements and issuerIdentifiers, information some
+// readers send only to an mdoc that advertises it.
 const capabilityExtendedRequestSupport = 4
 
 // engagementOriginInfos and engagementCapabilities are the version 1.1
@@ -28,7 +30,8 @@ const capabilityExtendedRequestSupport = 4
 // Multipaz writes it, for readers following ISO/IEC TS 18013-7:2024,
 // which has it in a version 1.1 engagement.
 // capabilities (key 6) is {4: true}: this package parses
-// deviceRequestInfo (DeviceRequest.RequestInfo) on every engagement.
+// deviceRequestInfo (DeviceRequest.RequestInfo) and each document
+// request's requestInfo (DocRequest.RequestInfo) on every engagement.
 var (
 	engagementOriginInfos  = cbor.RawMessage{0x80}
 	engagementCapabilities = cbor.RawMessage{0xa1, capabilityExtendedRequestSupport, 0xf5}

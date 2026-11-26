@@ -2109,9 +2109,10 @@ reached the app.
   their release notes.
 - **Evidence.** Go tests, fuzzing, and Multipaz interop cases in
   `interop/multipaz` plus a fixture bundle built and signed by Multipaz
-  that the Go tests verify offline. Not yet: a check against the
-  ballot text, which a release must name before calling the feature
-  conformant, and a run on phones over BLE.
+  that the Go tests verify offline. The use cases' shape is the CD
+  ballot resolution draft's (§10.2.5); its validity rules are the
+  library's profile, not a conformance claim. Not yet: a run on phones
+  over BLE.
 - **Advertised in the engagement** (issue #1183). The holder's
   engagements were version 1.0 with no capabilities, and some readers
   (Multipaz's Identity Reader among them) send `deviceRequestInfo` only
@@ -2121,8 +2122,22 @@ reached the app.
   originInfos (`5: []`, as Multipaz writes for ISO/IEC TS 18013-7:2024).
   No call, JSON shape or wrapper API changed. The SessionTranscript
   takes the engagement bytes as sent on both sides, which an end-to-end
-  test checks. Not yet checked against the ballot text: the capability
-  identifier comes from Multipaz.
+  test checks. The advertisement follows the CD ballot resolution
+  draft's §9.1, under which it means the mdoc parses `useCases`,
+  `alternativeDataElements` and `issuerIdentifiers`: the holder parses
+  all three, the last two from the next item on.
+- **Document request information.** Each document request's
+  DocRequestInfo (its ItemsRequest's `requestInfo`, the draft's
+  §10.2.4) was ignored. `proximity.DocRequest.RequestInfo` now carries
+  its `alternativeDataElements` and `issuerIdentifiers`, within fixed
+  limits, nil with `RequestInfoError` when unreadable; `walletflow`'s
+  `MdocRequest.RequestInfo` and each document's `request_info` in
+  `Request()` (additive within ABI 15) expose it, and Swift's and
+  Kotlin's `MdocPresentation.Document` carry it as `requestInfo`
+  (Kotlin code compiled against an earlier release must be rebuilt).
+  Nothing is enforced, and a response still discloses only requested
+  elements: an app can show alternatives but not answer with one, and
+  issuer identifiers aren't matched against held mdocs.
 
 ## Key Attestations name the issuance's instance key (ABI 15)
 

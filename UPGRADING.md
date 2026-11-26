@@ -7,6 +7,34 @@ that release's own breaking changes: see FAPIgo's UPGRADING.md for
 them. Entries start at v0.55.0; for earlier releases see
 CHANGELOG.md's BREAKING CHANGES sections.
 
+## OID4VCWallet 0.46.0 → 0.47.0
+
+Built from OID4VCgo v0.90.0; the gomobile ABI is still 16.
+
+### In-person engagements advertise extended request support (Swift, Kotlin)
+
+The DeviceEngagement a proximity presentation shows (QR code, NFC) is
+now version `"1.1"`, with an empty OriginInfos and the
+ExtendedRequestSupport capability (ISO/IEC 18013-5 second edition,
+draft §9.1). A reader that reads it may send second-edition request
+information: use cases and purpose hints for the request, and, per
+document, alternative data elements and accepted issuers.
+`MdocPresentation.Document.requestInfo` now carries the latter, as
+`ProximityPresentation.DocumentRequestInfo`, or nil when the reader
+sent none.
+
+- **What to change:** nothing to keep working. To show a reader's
+  alternatives or accepted issuers on the consent screen, read
+  `requestInfo`. The holder still answers only the elements the
+  request names; it can't answer with an alternative.
+- **Kotlin:** `MdocPresentation.Document` has a new constructor
+  parameter, `requestInfo`, defaulted to null, so source that builds
+  one (in tests, say) still compiles, but code compiled against 0.46.0
+  must be rebuilt.
+- **Readers:** a reader that implements only the first edition, and
+  refuses an engagement whose version isn't `"1.0"`, would refuse
+  these. Test against the readers your users meet.
+
 ## v0.88.0 → v0.89.0
 
 ### FAPIgo v0.82.3 and fapigo/sqlstore v0.11.0: stricter peers
