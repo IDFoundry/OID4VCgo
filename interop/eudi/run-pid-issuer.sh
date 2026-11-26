@@ -137,16 +137,37 @@ echo "pid issuer  $PID_ISSUER_IMAGE"
 # fetch URL SHA256 FILE: downloads URL to FILE, refusing it unless its
 # SHA-256 is the pinned one. GitHub's raw and codeload hosts sometimes
 # answer a runner 429 or 404 for a moment: each download is retried.
+# fetch downloads url to out and checks it has the pinned SHA-256 sum.
+# With DOWNLOAD_CACHE set (the workflow caches that directory between
+# runs), a file already there under its sum is used instead, and a
+# download is kept there once checked. Maven Central and GitHub answer
+# a shared runner address 429 when it asks too often, so a failed
+# download is tried again after 30, 60 and 120 seconds.
 fetch() {
-  local url="$1" sum="$2" out="$3"
+  local url="$1" sum="$2" out="$3" cached="" delay
   mkdir -p "$(dirname "$out")"
-  if ! curl -sSfL --retry 4 --retry-all-errors --retry-delay 5 --max-time 120 -o "$out" "$url"; then
-    echo "$url couldn't be downloaded" >&2
-    exit 22
+  if [[ -n "${DOWNLOAD_CACHE:-}" ]]; then
+    cached="$DOWNLOAD_CACHE/$sum"
+    if [[ -f "$cached" && "$(openssl dgst -sha256 -r "$cached" | cut -d' ' -f1)" == "$sum" ]]; then
+      cp "$cached" "$out"
+      return
+    fi
   fi
+  for delay in 30 60 120 0; do
+    curl -sSfL --max-time 120 -o "$out" "$url" && break
+    if [[ "$delay" == 0 ]]; then
+      echo "$url couldn't be downloaded" >&2
+      exit 22
+    fi
+    echo "$url: download failed; trying again in ${delay}s" >&2
+    sleep "$delay"
+  done
   if [[ "$(openssl dgst -sha256 -r "$out" | cut -d' ' -f1)" != "$sum" ]]; then
     echo "$url doesn't have the pinned SHA-256" >&2
     exit 2
+  fi
+  if [[ -n "$cached" ]]; then
+    mkdir -p "$DOWNLOAD_CACHE" && cp "$out" "$cached"
   fi
 }
 
