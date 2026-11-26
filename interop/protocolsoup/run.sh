@@ -204,7 +204,8 @@ PIDS+=($!)
 # protocolsoup-pki/.
 mkdir -p protocolsoup-pki
 docker network create "$NAME" >/dev/null
-docker run -d --name "$NAME-redis" --network "$NAME" redis:8-alpine redis-server --save '' --appendonly no >/dev/null
+# redis:8-alpine, pinned by digest like the parties' images.
+docker run -d --name "$NAME-redis" --network "$NAME" redis:8-alpine@sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483 redis-server --save '' --appendonly no >/dev/null
 docker run -d --name "$NAME-vc" --network "$NAME" -p "127.0.0.1:$PS_INNER_PORT:8080" \
   -v "$WORK/protocolsoup-pki:/app/mdoc-pki" -e SHOWCASE_MDOC_PKI_PATH=/app/mdoc-pki \
   -e SHOWCASE_DPOP_NONCE_REQUIRED=true -e SHOWCASE_DPOP_RESOURCE_NONCE_REQUIRED=true \
@@ -227,9 +228,13 @@ done
 api -o /dev/null -f "$PS/health" || { echo "ProtocolSoup did not start; see $WORK/protocolsoup-vc.log" >&2; exit 2; }
 wait_ready "https://localhost:$ISSUER_PORT/.well-known/openid-credential-issuer"
 # ProtocolSoup's IACA, which signs its SD-JWT VC signer's certificate
-# as well as its Document Signer's.
-for _ in $(seq 1 50); do [[ -s protocolsoup-pki/iaca_root.pem ]] && break; sleep 0.2; done
-cp protocolsoup-pki/iaca_root.pem protocolsoup-iaca.pem
+# as well as its Document Signer's. Copied out of the container: on
+# Linux the files it writes into the bind mount are root's, mode 0600.
+for _ in $(seq 1 50); do
+  docker cp "$NAME-vc:/app/mdoc-pki/iaca_root.pem" protocolsoup-iaca.pem 2>/dev/null && [[ -s protocolsoup-iaca.pem ]] && break
+  sleep 0.2
+done
+[[ -s protocolsoup-iaca.pem ]] || { echo "ProtocolSoup wrote no IACA certificate; see $WORK/protocolsoup-vc.log" >&2; exit 2; }
 
 # pace keeps the run under ProtocolSoup's rate limit, 100 requests a
 # minute from one client (its core.RateLimiter, which every protocol
