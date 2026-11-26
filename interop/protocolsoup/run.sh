@@ -368,10 +368,14 @@ if accepted tamper-relay && jq -e '.tampered.changed == "nothing"' tamper-relay-
 else bad "sdjwt, relayed: $(why tamper-relay)"; fi
 for c in "nonce|nonce_mismatch|kb-jwt nonce mismatch|Key Binding JWT's nonce" \
   "aud|audience_mismatch|kb-jwt audience mismatch|Key Binding JWT's aud" \
-  "disclosure|disclosure_invalid|disclosure digest for claim \"family_name\" is not referenced by the issuer payload|disclosure's value (its digest no longer the Issuer's)" \
+  "disclosure|disclosure_invalid|disclosure digest for claim \"{claim}\" is not referenced by the issuer payload|disclosure's value (its digest no longer the Issuer's)" \
   "issuer|credential_signature_invalid|external SD-JWT issuer trust validation failed|Issuer-signed JWT signed again under a self-signed certificate, which"; do
   IFS='|' read -r mode code reason what <<< "$c"
   present "tamper-$mode" "$SDJWT" "$SDJWT_QUERY" haip direct_post.jwt -tamper "$mode" -verifier2-key verifier-key.pem
+  # The transport changes the presentation's first disclosure, whose
+  # claim depends on the wallet's order: the reason must name that one.
+  claim=$(jq -r '.tampered.changed // "" | capture("^disclosure (?<c>.+)'"'"'s value$").c // ""' "tamper-$mode-wallet.json" 2>/dev/null || true)
+  reason=${reason//\{claim\}/$claim}
   refused "tamper-$mode" "$code" "$reason" "the $what another"
 done
 
