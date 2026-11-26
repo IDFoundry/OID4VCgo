@@ -318,7 +318,8 @@ accepted() {
       and .result.expiry_validated and .result.holder_binding_verified' "$name-result.json" >/dev/null 2>&1
 }
 disclosed() {  # $1 name: what ProtocolSoup says was disclosed
-  jq -c '.result.credential_evidence.disclosed_claims // .result.credential_evidence | keys? // .' "$1-result.json" 2>/dev/null | cut -c1-200
+  local name="$1"
+  jq -c '.result.credential_evidence.disclosed_claims // .result.credential_evidence | keys? // .' "$name-result.json" 2>/dev/null | cut -c1-200
 }
 
 echo "### OID4VCgo's issuer → OID4VCgo's wallet → ProtocolSoup's Verifier"

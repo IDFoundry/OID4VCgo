@@ -83,6 +83,13 @@ const (
 	trustListKeyChain = "oid4vcgo-trust-list"
 )
 
+// keyChainsDir is the tenant's folder of key chain documents.
+const keyChainsDir = "key-chains"
+
+// issuersTrustList is the id of the trust list of OID4VCgo's issuer's
+// CAs, which the presentation configs' queries name.
+const issuersTrustList = "oid4vcgo-issuers"
+
 func main() {
 	out := flag.String("out", "", "directory to write into")
 	host := flag.String("host", "", "the name EUDIPLO's container reaches this host by")
@@ -220,24 +227,24 @@ func tenantFiles(f files, secret string, accessKey *ecdsa.PrivateKey, accessCert
 			"name": "OID4VCgo interop", "description": "OID4VCgo's wallet presents to this tenant's Verifier, and receives from its issuer",
 		}),
 		at("clients", "run.json"): clientDoc(tenant, secret),
-		at("key-chains", "access.json"): doc(keyChainSchema, map[string]any{
+		at(keyChainsDir, "access.json"): doc(keyChainSchema, map[string]any{
 			"id": accessKeyChain, "description": "Access Certificate", "usageType": "access", "type": "standalone",
 			"keySource":   map[string]any{"type": "private-jwk", "jwk": privateJWK(accessKey, accessKeyChain)},
 			"kmsProvider": "db", "crt": []string{accessCert},
 		}),
-		at("key-chains", "trust-list.json"): doc(keyChainSchema, map[string]any{
+		at(keyChainsDir, "trust-list.json"): doc(keyChainSchema, map[string]any{
 			"id": trustListKeyChain, "description": "signs the tenant's trust lists", "usageType": "trustList",
 			"keySource":   map[string]any{"type": "private-jwk", "jwk": privateJWK(listKey, trustListKeyChain)},
 			"kmsProvider": "db",
 		}),
-		at("trust-lists", "oid4vcgo-issuers.json"): trustList("oid4vcgo-issuers", "OID4VCgo's issuer's CAs",
+		at("trust-lists", issuersTrustList+".json"): trustList(issuersTrustList, "OID4VCgo's issuer's CAs",
 			entity("OID4VCgo issuer, SD-JWT VC", issuerCA), entity("OID4VCgo issuer, mdoc", iaca)),
 		at("trust-lists", "other-issuers.json"): trustList("other-issuers", "a CA that issued nothing presented",
 			entity("Unrelated issuer", otherCA)),
-		at("presentation", "pid-sdjwt.json"):           presentation("pid-sdjwt", sdjwtQuery("oid4vcgo-issuers")),
+		at("presentation", "pid-sdjwt.json"):           presentation("pid-sdjwt", sdjwtQuery(issuersTrustList)),
 		at("presentation", "pid-sdjwt-untrusted.json"): presentation("pid-sdjwt-untrusted", sdjwtQuery("other-issuers")),
-		at("presentation", "pid-mdoc.json"):            presentation("pid-mdoc", mdocQuery("oid4vcgo-issuers")),
-		at("presentation", "pid-mdoc-annexc.json"):     readerAuth(presentation("pid-mdoc-annexc", mdocQuery("oid4vcgo-issuers"))),
+		at("presentation", "pid-mdoc.json"):            presentation("pid-mdoc", mdocQuery(issuersTrustList)),
+		at("presentation", "pid-mdoc-annexc.json"):     readerAuth(presentation("pid-mdoc-annexc", mdocQuery(issuersTrustList))),
 	}
 	for name, v := range docs {
 		if err := f.json(name, v); err != nil {
