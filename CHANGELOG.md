@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.91.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.90.0...v0.91.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** every refresh token an Authorization Server on FAPIgo issued before the upgrade stops working, so a Wallet's next refresh gets invalid_grant and walletflow returns ErrReissueRequired: holders need a new Credential Offer. An Authorization Server with mTLS alias endpoints must mark the alias listener (server.WithEndpointRoute) for DPoP requests there, and a resource verifier listing paths under several origins must mark each listener's origin (resource.WithResourceOrigin). Repeated or case-varied claims are refused in request objects, client assertions, DPoP proofs, attestation PoPs and JWT access tokens; under production a client assertion lives at most five minutes. See UPGRADING.md and FAPIgo's UPGRADING.md, v0.82.4 to v0.88.0.
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.88.0 and fapigo/sqlstore v0.13.0 ([18c117b](https://github.com/IDFoundry/OID4VCgo/commit/18c117b1a635c6368e41d8a730afa2521b3357e8))
+
 ## [0.90.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.89.0...v0.90.0) (2026-11-26)
 
 
