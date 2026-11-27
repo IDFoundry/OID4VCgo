@@ -3,7 +3,7 @@ module github.com/idfoundry/oid4vcgo/sqlstore
 go 1.26.11
 
 require (
-	github.com/idfoundry/fapigo v0.88.0
+	github.com/idfoundry/fapigo v0.88.1
 	github.com/idfoundry/fapigo/sqlstore v0.13.0
 	github.com/idfoundry/oid4vcgo v0.82.0
 	github.com/jackc/pgx/v5 v5.13.0

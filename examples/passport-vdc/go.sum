@@ -18,6 +18,8 @@ github.com/idfoundry/fapigo v0.82.3 h1:AvdI1nLfuWPChb7+Ypj84Q/Rg66/ZgFlDqTFAQ3Yw
 github.com/idfoundry/fapigo v0.82.3/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo v0.88.0 h1:QGFf+W9tUrnjb4bOcEM3f+ZVK8ZmdVQM+z4/ET5zbVg=
 github.com/idfoundry/fapigo v0.88.0/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
+github.com/idfoundry/fapigo v0.88.1 h1:st8eWS+Cc0GrJi4v0GMKZ6amhlSGoszu2W/KQZNFzYM=
+github.com/idfoundry/fapigo v0.88.1/go.mod h1:qXytU/tj1YOk8x2rneS++NghF+EyjWP3cnajLZHKe1A=
 github.com/idfoundry/fapigo/sqlstore v0.9.1 h1:TikT/HQNfCc+1ySBFf7EORmjHqGfPwjc3Fpru238jHo=
 github.com/idfoundry/fapigo/sqlstore v0.9.1/go.mod h1:iP57T3gMdVvJcGqFcGSiTxQpqYzbVp2qtUqxcLR1nwA=
 github.com/idfoundry/fapigo/sqlstore v0.11.0 h1:9BUDEL5SUmz3VAym7FF7YLbAWPdJwNp1Q2mrdOtWtT0=
