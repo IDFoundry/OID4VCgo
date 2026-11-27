@@ -9,7 +9,8 @@ CHANGELOG.md's BREAKING CHANGES sections.
 
 ## OID4VCWallet 0.46.0 → 0.47.0
 
-Built from OID4VCgo v0.90.0; the gomobile ABI is still 16.
+Built from OID4VCgo v0.91.0 (see its entry below, whose FAPIgo client
+changes reach the mobile libraries); the gomobile ABI is still 16.
 
 ### In-person engagements advertise extended request support (Swift, Kotlin)
 
@@ -34,6 +35,47 @@ sent none.
 - **Readers:** a reader that implements only the first edition, and
   refuses an engagement whose version isn't `"1.0"`, would refuse
   these. Test against the readers your users meet.
+
+## v0.90.0 → v0.91.0
+
+### FAPIgo v0.88.0 and fapigo/sqlstore v0.13.0
+
+OID4VCgo now requires FAPIgo v0.88.0 and fapigo/sqlstore v0.13.0; see
+FAPIgo's UPGRADING.md, sections v0.82.4 to v0.88.0, and sqlstore
+v0.11.1 to v0.13.0. OID4VCgo's own API is unchanged. What a deployment
+must plan for or can now see refused:
+
+- **Every refresh token an Authorization Server issued before the
+  upgrade stops working** (FAPIgo v0.85.0: codes, refresh tokens and
+  `auth_req_id`s are now stored under digests that cover the issuer,
+  and there is no migration). A Wallet's next refresh of a Credential
+  gets `invalid_grant`: walletflow forgets the refresh grant and
+  returns `ErrReissueRequired`, so the holder needs a new Credential
+  Offer. Plan the deploy for it: tell your Wallets' users, or be ready
+  to offer the Credentials again. Authorization codes in flight at the
+  moment of deploy fail once; access tokens already issued run out
+  their lifetime as usual. OID4VCgo's own pre-authorized code and
+  deferred transaction records are unaffected.
+- **A DPoP proof is accepted only for the URL that received it**
+  (v0.88.0). An Authorization Server with `Config.MTLSEndpoints` whose
+  Wallets send DPoP proofs to the alias URLs must wrap the alias
+  listener in `server.WithEndpointRoute(server.MTLSEndpointAlias, …)`;
+  without it those requests get 400 `invalid_dpop_proof`. A Credential
+  Issuer whose resource verifier lists the same paths under several
+  origins must mark each listener's origin
+  (`resource.WithResourceOrigin`). A single origin, as OID4VCgo's own
+  setups use, needs nothing.
+- **Repeated or case-varied member names** are now refused in request
+  objects, client assertions, DPoP proofs and attestation PoPs, and in
+  JWT access tokens at the Credential Endpoint (v0.87.0), as v0.82.3
+  already did for JOSE headers.
+- **Production assurance** caps a client assertion's lifetime at five
+  minutes (v0.82.4); fapigo/sqlstore refuses a `ClientCacheTTL` over a
+  minute (v0.11.1).
+- **Go code:** a client with `Algorithms.UserInfo` accepts only signed
+  UserInfo (`Config.RequireSignedUserInfo` is removed, v0.83.0), and
+  an issuer key source bound to another issuer is refused at
+  construction (v0.86.0).
 
 ## v0.88.0 → v0.89.0
 
