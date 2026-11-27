@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.91.1](https://github.com/IDFoundry/OID4VCgo/compare/v0.91.0...v0.91.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **deps:** pin FAPIgo v0.88.1 ([843bf90](https://github.com/IDFoundry/OID4VCgo/commit/843bf90e1e2ef8c4b4bbb520e53c049de3c9da22))
+
 ## [0.91.0](https://github.com/IDFoundry/OID4VCgo/compare/v0.90.0...v0.91.0) (2026-11-27)
 
 
