@@ -1,0 +1,16 @@
+# Compose override for the OIDF conformance suite's
+# docker-compose-prebuilt.yml that runs its images by digest, for
+# .github/workflows/oid4vci-conformance.yml and oid4vp-conformance.yml.
+#
+# The suite release is pinned in suite-release.env (SUITE_TAG and
+# SUITE_COMMIT); these are that release's images. Move them together: a
+# new release's tag, its commit, and the digest of each image below, as
+# the registry reports it (docker buildx imagetools inspect IMAGE).
+# mongo is the version the release's compose file names.
+services:
+  mongodb:
+    image: mongo:6.0.13@sha256:b415b12f638e2685d06c58ab7fb5943577c50fadec6d9340ef67d21aeac72070
+  nginx:
+    image: registry.gitlab.com/openid/conformance-suite/nginx:release-v5.3.5@sha256:fd5ae05bf2a8f246f600b16a198dd670051bbad44f0b59d903da6e294e02707d
+  server:
+    image: registry.gitlab.com/openid/conformance-suite:release-v5.3.5@sha256:576ad9d6ea4230a6d58623a03c17c74e2ae1438cceec252f8721daa53a705961

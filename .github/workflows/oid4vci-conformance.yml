@@ -24,18 +24,16 @@ name: OID4VCI Conformance
 # so the Actions tab shows an accurate result — it just isn't wired
 # into anything that blocks a merge.
 #
-# Tracks the OIDF suite's latest master/prebuilt images on every run
-# (no version pin) — simplest, and consistent with how the suite is
-# used locally today. See conformance/README.md's own "Keeping the
-# local suite current" section for why that currency actually matters
-# (a from-scratch run on a current suite has previously surfaced three
-# real bugs a stale local suite had been silently masking). It was
-# pinned from 2026-09-24 to 2026-10-01 while :latest interrupted every
-# oid4vp-1final-verifier-* module (a bug in the suite's own "Rical"
-# condition sequencing); if :latest regresses again, pin the server
-# image with a compose override layered on with a second -f in the
-# "Bring up OIDF conformance suite" step, here and in the sibling
-# oid4vp-conformance.yml.
+# Runs one OIDF conformance suite release, pinned so that only
+# reviewed suite code and images run here: the tag and its commit in
+# conformance/scripts/suite-release.env, the release's images by digest
+# in conformance/scripts/suite-pinned.override.yml (move them together,
+# after reviewing the release). The newer-suite job fails while the
+# suite has published a newer release-v* tag, so a new release shows up
+# as a failing daily run, here and in the sibling workflow, until the
+# pin moves. Until 2026-11-27 this tracked the suite's master and
+# :latest; see conformance/README.md, "Keeping the local suite current",
+# for why staying current matters.
 #
 # No Python setup and no throwaway-cert/config generation step, unlike
 # FAPIgo's own conformance.yml: every script under conformance/ talks to
@@ -53,6 +51,26 @@ permissions:
   contents: read
 
 jobs:
+  newer-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: conformance/scripts/suite-release.env
+          sparse-checkout-cone-mode: false
+
+      - name: Check for a newer suite release
+        run: |
+          . conformance/scripts/suite-release.env
+          newest=$(git ls-remote --tags --refs https://gitlab.com/openid/conformance-suite.git 'release-v*' | sed 's#.*refs/tags/##' | sort -V | tail -1)
+          if [ -z "$newest" ]; then echo "no suite release found" >&2; exit 1; fi
+          echo "OIDF conformance suite: pinned $SUITE_TAG, newest $newest" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$newest" != "$SUITE_TAG" ]; then
+            echo "::error::The OIDF conformance suite released $newest; this runs $SUITE_TAG. Review the release, then move the pin in conformance/scripts/suite-release.env and suite-pinned.override.yml."
+            exit 1
+          fi
+
   conformance:
     runs-on: ubuntu-latest
     # See the sibling oid4vp-conformance.yml's own identical comment —
@@ -84,23 +102,30 @@ jobs:
       # own conformance/issuer/docker-compose.yml own existing default
       # for SUITE_NETWORK, without needing to set it explicitly.
       - name: Clone OIDF conformance suite
-        run: git clone --depth 1 https://gitlab.com/openid/conformance-suite.git /tmp/conformance-suite
+        run: |
+          . conformance/scripts/suite-release.env
+          git clone --depth 1 --branch "$SUITE_TAG" https://gitlab.com/openid/conformance-suite.git /tmp/conformance-suite
+          got=$(git -C /tmp/conformance-suite rev-parse HEAD)
+          if [ "$got" != "$SUITE_COMMIT" ]; then
+            echo "::error::suite tag $SUITE_TAG is at $got, not the pinned $SUITE_COMMIT"
+            exit 1
+          fi
 
       # Prebuilt images — no Java/Maven build needed, mirrors
       # conformance/*/README.md's own "Manual test run" steps.
       - name: Bring up OIDF conformance suite
         working-directory: /tmp/conformance-suite
-        run: docker compose -f docker-compose-prebuilt.yml up -d
+        run: docker compose -f docker-compose-prebuilt.yml -f "$GITHUB_WORKSPACE/conformance/scripts/suite-pinned.override.yml" up -d
 
-      # The suite tracks master and :latest (see the header), so record
-      # what this run tested: a failure can then be told apart as ours
-      # or the suite's, by comparing with an earlier run's file.
+      # Record what this run ran, the pinned release's commit and image
+      # digests as resolved, so a failure can be told apart as ours or
+      # the suite's by comparing with an earlier run's file.
       - name: Record the suite's version
         working-directory: /tmp/conformance-suite
         run: |
           {
             echo "suite commit: $(git rev-parse HEAD) ($(git log -1 --format=%cI))"
-            for c in $(docker compose -f docker-compose-prebuilt.yml ps -q); do
+            for c in $(docker compose -f docker-compose-prebuilt.yml -f "$GITHUB_WORKSPACE/conformance/scripts/suite-pinned.override.yml" ps -q); do
               image=$(docker inspect --format '{{.Config.Image}}' "$c")
               digest=$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "$image")
               echo "$(docker inspect --format '{{.Name}}' "$c" | tr -d /): $image $digest"
@@ -162,14 +187,14 @@ jobs:
         if: always()
         run: |
           (docker compose -f conformance/issuer/docker-compose.yml down) || true
-          (cd /tmp/conformance-suite && docker compose -f docker-compose-prebuilt.yml down -v) || true
+          (cd /tmp/conformance-suite && docker compose -f docker-compose-prebuilt.yml -f "$GITHUB_WORKSPACE/conformance/scripts/suite-pinned.override.yml" down -v) || true
 
   # Report each scheduled (or dispatched) default-branch run on an
   # issue labelled "conformance-oid4vci", opened when the run fails and
   # closed when one passes (.github/scripts/scheduled-alert.sh):
   # nothing else alerts on it.
   alert:
-    needs: conformance
+    needs: [newer-suite, conformance]
     if: always() && github.ref_name == github.event.repository.default_branch && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -177,6 +202,6 @@ jobs:
       actions: read
     uses: ./.github/workflows/scheduled-alert.yml
     with:
-      result: ${{ needs.conformance.result }}
+      result: ${{ (needs.newer-suite.result == 'success' && needs.conformance.result == 'success') && 'success' || 'failure' }}
       label: conformance-oid4vci
       title: Nightly OID4VCI conformance failure

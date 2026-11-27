@@ -633,6 +633,25 @@ and diff the current release tag's changelog
 running — an upgrade is worth doing periodically even without a
 specific reason to suspect drift, not just when something seems off.
 
+CI runs one pinned release, and says when a newer one is out. The
+release's tag and commit are in `conformance/scripts/suite-release.env`,
+and its images by digest in `conformance/scripts/suite-pinned.override.yml`.
+Both conformance workflows' `newer-suite` job fails while a newer
+`release-v*` tag exists, which opens the nightly alert issue. To move
+the pin:
+
+1. Read the new release's changes.
+2. Set `SUITE_TAG` and `SUITE_COMMIT` (`git ls-remote` the tag).
+3. Set each image's digest in the override
+   (`docker buildx imagetools inspect <image>:<tag>`, and the `mongo`
+   version the release's `docker-compose-prebuilt.yml` names).
+4. Dispatch both workflows on the branch before merging: a suite release
+   can need harness changes, not only bug fixes.
+
+Locally, check out the same tag (`git checkout <SUITE_TAG>` in the
+suite clone) and bring it up with the same override, so a local run
+tests what CI tests.
+
 - **`verifier/`** — OID4VP 1.0 Final/HAIP Verifier role
   (`oid4vp-1final-verifier-haip-test-plan`): `cmd/conformance-verifier`
   stands up `verifier.Verifier` behind real HTTP; the suite plays
